@@ -36,8 +36,6 @@ import {
 } from './spawn';
 
 export function getShellTools(): Record<string, Tool> {
-  if (!config.singleAgentMode) return {};
-
   return {
     shell_exec: tool({
       description: `Run a single shell command. Returns { stdout, stderr, exitCode }. Each stream is capped (default ${DEFAULT_EXEC_OUTPUT_LIMIT_BYTES} bytes per stream; pass \`limit\` up to ${MAX_EXEC_OUTPUT_LIMIT} to read more). Truncated output ends with "... (truncated; exceeded N bytes)". For multi-step workflows or interactive tasks use claude_code instead.`,

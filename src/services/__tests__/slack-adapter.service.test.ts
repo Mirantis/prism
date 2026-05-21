@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const {
   mockPrisma,
-  mockBackendClient,
+  mockGetSlackConnection,
   mockSlackMappingService,
   mockSlackHeartbeatTriggerService,
 } = vi.hoisted(() => ({
@@ -20,10 +20,7 @@ const {
     },
     $transaction: vi.fn(),
   },
-  mockBackendClient: {
-    getSlackConnection: vi.fn(),
-    getActiveSlackConnections: vi.fn(),
-  },
+  mockGetSlackConnection: vi.fn(),
   mockSlackMappingService: {
     deleteByConnectionId: vi.fn(),
     getActiveUserMappingsWithDmChannel: vi.fn(),
@@ -36,7 +33,10 @@ const {
 // Stub the module graph — slack-adapter.service.ts pulls in many deps but
 // the disconnectAndDeactivate path only touches what we mock explicitly.
 vi.mock('../../lib/prisma', () => ({ default: mockPrisma }));
-vi.mock('../../lib/backend-client', () => ({ backendClient: mockBackendClient }));
+vi.mock('../../lib/slack-source', () => ({
+  getSlackConnection: mockGetSlackConnection,
+  getActiveSlackConnections: vi.fn(),
+}));
 vi.mock('../slack-mapping.service', () => ({ slackMappingService: mockSlackMappingService }));
 vi.mock('../slack-heartbeat-trigger.service', () => ({
   slackHeartbeatTriggerService: mockSlackHeartbeatTriggerService,
@@ -53,7 +53,6 @@ vi.mock('../../lib/bedrock-provider', () => ({
   isBedrockConfigured: () => false,
   getClassificationModel: vi.fn(),
 }));
-vi.mock('../../utils/encryption', () => ({ decrypt: (s: string) => s }));
 vi.mock('../../utils/slack-formatter', () => ({ formatSlackMessage: (s: string) => s }));
 vi.mock('@slack/bolt', () => ({
   App: class {},
@@ -62,11 +61,7 @@ vi.mock('@slack/bolt', () => ({
 vi.mock('../../logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
-// Pin singleAgentMode: false so the suite stays stable when CI flips
-// the env (test:single-agent). Otherwise the env-flip routes
-// getSlackConnection through lib/slack-source.ts and bypasses the
-// backend-client mock — this whole file is multi-tenant-mode-only.
-vi.mock('../../config', () => ({ config: { singleAgentMode: false } }));
+vi.mock('../../config', () => ({ config: {} }));
 
 import { slackAdapterService } from '../slack-adapter.service';
 
@@ -87,7 +82,7 @@ describe('Requirement: disconnectAndDeactivate cleans up connection rows', () =>
 
   describe('Scenario: active connection with running Bolt app', () => {
     it('should stop the Bolt app, delete all related rows, and rebuild the cache', async () => {
-      mockBackendClient.getSlackConnection.mockResolvedValue({
+      mockGetSlackConnection.mockResolvedValue({
         id: 'conn-001',
         teamId: 'T001',
         teamName: 'Test Workspace',
@@ -130,7 +125,7 @@ describe('Requirement: disconnectAndDeactivate cleans up connection rows', () =>
     });
 
     it('should roll back (not rebuild cache) when a delete inside the transaction fails', async () => {
-      mockBackendClient.getSlackConnection.mockResolvedValue({
+      mockGetSlackConnection.mockResolvedValue({
         id: 'conn-001',
         teamId: 'T001',
         teamName: 'Test Workspace',
@@ -150,7 +145,7 @@ describe('Requirement: disconnectAndDeactivate cleans up connection rows', () =>
 
   describe('Scenario: no Bolt app registered for the connection', () => {
     it('should still delete related rows without trying to stop a missing app', async () => {
-      mockBackendClient.getSlackConnection.mockResolvedValue({
+      mockGetSlackConnection.mockResolvedValue({
         id: 'conn-001',
         teamId: 'T001',
         teamName: 'Test Workspace',
@@ -178,7 +173,7 @@ describe('Requirement: disconnectAndDeactivate cleans up connection rows', () =>
 
   describe('Scenario: connection not found', () => {
     it('should throw and perform no deletes', async () => {
-      mockBackendClient.getSlackConnection.mockResolvedValue(null);
+      mockGetSlackConnection.mockResolvedValue(null);
 
       await expect(
         slackAdapterService.disconnectAndDeactivate('conn-missing'),

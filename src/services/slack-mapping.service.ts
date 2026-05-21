@@ -41,17 +41,12 @@ export interface SlackMappingWithConnection extends SlackMapping {
 class SlackMappingService {
   /**
    * Returns a predicate that tells whether a mapping's connectionId refers
-   * to a currently-active Slack connection. In multi-tenant mode we filter
-   * against the backend's active SlackConnection set. In single-agent mode
-   * there is exactly one connection per container and every mapping in the
-   * local DB belongs to it by construction — the filter is a no-op, so we
-   * return a predicate that always accepts.
+   * to a currently-active Slack connection. There is exactly one connection
+   * per container and every mapping in the local DB belongs to it by
+   * construction — the filter is a no-op.
    */
   private async getActiveConnectionFilter(): Promise<(connectionId: string) => boolean> {
-    if (config.singleAgentMode) return () => true;
-    const connections = await getActiveSlackConnections();
-    const ids = new Set(connections.map(c => c.id));
-    return (id) => ids.has(id);
+    return () => true;
   }
 
   // ============================================================================

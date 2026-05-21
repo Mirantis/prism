@@ -13,7 +13,6 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { IncomingMessage } from 'http';
 import { logger } from '../logger';
 import { config } from '../config';
-import { backendClient } from '../lib/backend-client';
 import { conversationEngineService } from './conversation-engine.service';
 
 // ============================================================================
@@ -93,29 +92,11 @@ class WebSocketGatewayService {
   private handleConnection(ws: AuthenticatedWebSocket, req: IncomingMessage): void {
     ws.isAlive = true;
 
-    // Single-agent mode: the runtime is scoped to one agent and there is no
-    // backend in front of it doing JWT verification. The CLI (prism-cli) and
-    // any other local client connects directly; we pin the connection to the
-    // configured owner without inspecting a token.
-    let userId: string;
-    if (config.singleAgentMode) {
-      userId = config.ownerUserId;
-      ws.userId = userId;
-      // Leave ws.userToken unset — the per-message authorization branch below
-      // skips canAccessProject() in single-agent mode.
-    } else {
-      // Extract user ID from JWT token (backend already verified the signature)
-      const auth = this.extractUserAuth(req);
-      if (!auth) {
-        ws.send(JSON.stringify({ type: 'error', payload: { error: 'Unauthorized' } }));
-        ws.close(4001, 'Unauthorized');
-        return;
-      }
-
-      userId = auth.userId;
-      ws.userId = userId;
-      ws.userToken = auth.token; // Store for MCP access during bootstrap
-    }
+    // The runtime is scoped to one agent and trusts the inbound network
+    // (Nexus routing terminates auth in front of the container). Pin the
+    // connection to the configured owner without inspecting a token.
+    const userId: string = config.ownerUserId;
+    ws.userId = userId;
 
     // Store connection
     const userConnections = this.connections.get(userId) || [];
@@ -202,11 +183,10 @@ class WebSocketGatewayService {
     const mode = payload.mode || message.mode || 'followup';
     const content = payload.content || message.content || '';
     const threadId = payload.threadId || message.threadId;
-    // In single-agent mode the runtime knows the one agent it serves, so the
-    // client can omit `agentId` from the wire (the prism-cli does). Substitute
-    // here before validation so downstream code sees a fully-populated message.
-    const agentId = payload.agentId || message.agentId ||
-      (config.singleAgentMode ? config.agentId : undefined);
+    // The runtime knows the one agent it serves, so the client can omit
+    // `agentId` from the wire (the prism-cli does). Substitute here before
+    // validation so downstream code sees a fully-populated message.
+    const agentId = payload.agentId || message.agentId || config.agentId;
 
     logger.info('Chat message from %s: mode=%s', userId, mode);
 
@@ -282,30 +262,18 @@ class WebSocketGatewayService {
       return;
     }
 
-    // Authorization:
-    // - Single-agent mode: Nexus inbound routing (AGENT-10) terminates auth
-    //   in front of the runtime. Once a request reaches the container we
-    //   trust the connection — same model as the HTTP routes (`internalAuth`
-    //   is a no-op in single-agent mode). We still pin to *this* container's
-    //   agent so a stray client can't address another runtime.
-    // - Multi-tenant legacy: delegate to backend, which in turn consults
-    //   Nexus for org/team membership.
-    if (config.singleAgentMode) {
-      if (agentId !== config.agentId) {
-        ws.send(
-          JSON.stringify({
-            type: 'error',
-            payload: { error: 'Forbidden: this runtime serves a different agent' },
-          })
-        );
-        return;
-      }
-    } else {
-      const hasAccess = await backendClient.canAccessAgent(agentId, userId, ws.userToken);
-      if (!hasAccess) {
-        ws.send(JSON.stringify({ type: 'error', payload: { error: 'Forbidden: no access to this agent' } }));
-        return;
-      }
+    // Authorization: Nexus inbound routing terminates auth in front of the
+    // runtime. Once a request reaches the container we trust the connection.
+    // Still pin to *this* container's agent so a stray client can't address
+    // another runtime.
+    if (agentId !== config.agentId) {
+      ws.send(
+        JSON.stringify({
+          type: 'error',
+          payload: { error: 'Forbidden: this runtime serves a different agent' },
+        })
+      );
+      return;
     }
 
     logger.info('Processing message for %s', userId);
@@ -395,15 +363,12 @@ class WebSocketGatewayService {
       }
     }
 
-    // Single-agent mode: Nexus inbound routing (AGENT-10) terminates auth in
-    // front of the runtime, so we trust the connection here. The Web UI talks
-    // straight to the runtime over WS without a JWT — fall back to the
-    // bootstrap-default owner user (matches the agent's `userId`).
+    // Nexus inbound routing terminates auth in front of the runtime, so we
+    // trust the connection here. The Web UI talks straight to the runtime
+    // over WS without a JWT — fall back to the bootstrap-default owner user
+    // (matches the agent's `userId`).
     if (!token) {
-      if (config.singleAgentMode) {
-        return { userId: config.ownerUserId, token: '' };
-      }
-      return null;
+      return { userId: config.ownerUserId, token: '' };
     }
 
     try {

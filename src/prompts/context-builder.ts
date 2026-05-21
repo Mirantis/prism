@@ -93,28 +93,18 @@ export async function buildSystemPromptParts(
       `**Your Mission**: Proactively advance this vision. During heartbeats, evaluate progress and identify opportunities.`);
   }
 
-  // Available infrastructure — language depends on deployment mode.
-  // Multi-tenant agents reach infrastructure via dedicated Nexus MCP tools
-  // (kubectl, connect-cluster, list_clusters, etc.). Single-agent containers
-  // run inside a Nexus sandbox where credentials + configs flow into the
-  // local shell instead, and the agent invokes CLIs via `shell_exec`.
-  if (config.singleAgentMode) {
-    stableSections.push(
-      `# Connected Infrastructure\n\n` +
-      `Credentials and config files for any integrations connected to this ` +
-      `project are injected into your sandbox automatically. When a user asks ` +
-      `you to interact with external resources, run the appropriate CLI via ` +
-      `\`shell_exec\` — don't refuse based on assumed lack of access. If the ` +
-      `CLI isn't on \`$PATH\`, try installing it via \`mise install <tool>@latest\` ` +
-      `and then re-run. If an integration isn't wired up for a task, the CLI ` +
-      `will return a clear error you can relay back.`,
-    );
-  } else {
-    stableSections.push(
-      `# Connected Infrastructure\n\n` +
-      `Infrastructure access is provided via MCP tools when configured through Nexus.`,
-    );
-  }
+  // Containers run inside a Nexus sandbox where credentials + configs flow
+  // into the local shell; the agent invokes CLIs via `shell_exec`.
+  stableSections.push(
+    `# Connected Infrastructure\n\n` +
+    `Credentials and config files for any integrations connected to this ` +
+    `project are injected into your sandbox automatically. When a user asks ` +
+    `you to interact with external resources, run the appropriate CLI via ` +
+    `\`shell_exec\` — don't refuse based on assumed lack of access. If the ` +
+    `CLI isn't on \`$PATH\`, try installing it via \`mise install <tool>@latest\` ` +
+    `and then re-run. If an integration isn't wired up for a task, the CLI ` +
+    `will return a clear error you can relay back.`,
+  );
 
   // Mode-specific instructions
   if (mode === 'heartbeat') {

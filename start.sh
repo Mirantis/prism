@@ -11,7 +11,7 @@
 #      after `prisma migrate deploy`, so we'd get a confusing
 #      `Environment variable not found: DATABASE_URL` from prisma if
 #      the operator doesn't pre-set it. Mirrors the runtime default
-#      so an unconfigured `docker run … -e SINGLE_AGENT_MODE=true` still
+#      so an unconfigured `docker run` still
 #      works.
 #   2. Apply Prisma migrations against the right schema for the mode.
 #   3. Apply any pending `.prism` import via
@@ -34,14 +34,10 @@ set -e
 
 PRISMA=/app/node_modules/.bin/prisma
 
-if [ "$SINGLE_AGENT_MODE" = "1" ] || [ "$SINGLE_AGENT_MODE" = "true" ]; then
-  : "${DATABASE_URL:=file:/data/agent.db}"
-  export DATABASE_URL
-  node dist/scripts/apply-pending-import.js
-  "$PRISMA" migrate deploy --schema=prisma/sqlite/schema.prisma
-else
-  "$PRISMA" migrate deploy
-fi
+: "${DATABASE_URL:=file:/data/agent.db}"
+export DATABASE_URL
+node dist/scripts/apply-pending-import.js
+"$PRISMA" migrate deploy --schema=prisma/sqlite/schema.prisma
 
 (node dist/scripts/backfill-embeddings.js || \
   echo 'backfill-embeddings failed; continuing startup' >&2) &

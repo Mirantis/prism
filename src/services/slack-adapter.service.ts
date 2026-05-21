@@ -20,7 +20,6 @@ import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { ChannelAdapter } from './channel-adapter.interface';
 import { slackMappingService } from './slack-mapping.service';
-import { decrypt } from '../utils/encryption';
 import {
   formatSlackMessage,
   buildFeedbackAckBlock,
@@ -381,12 +380,9 @@ class SlackAdapterService implements ChannelAdapter {
       return;
     }
 
-    // Bot token source:
-    // - Multi-tenant: encrypted at rest in backend DB; decrypt here.
-    // - Single-agent: the token comes from env via slack-config (plaintext,
-    //   or a `__nexus_cred:…__` sentinel that the MITM swaps on the wire).
-    //   Either way, no decryption step.
-    const botToken = config.singleAgentMode ? connection.botToken : decrypt(connection.botToken);
+    // Bot token comes from env via slack-config (plaintext, or a
+    // `__nexus_cred:…__` sentinel that the MITM swaps on the wire).
+    const botToken = connection.botToken;
 
     // App token is global (from environment), not per-workspace
     const appToken = process.env.SLACK_APP_TOKEN;

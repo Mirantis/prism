@@ -31,10 +31,8 @@ COPY src ./src
 COPY prisma ./prisma
 COPY tsconfig.json ./
 
-# Generate both Prisma clients (Postgres for multi-tenant, SQLite for
-# single-agent mode). Skipped by --ignore-scripts above, so do it explicitly.
-RUN npx prisma generate \
- && npx prisma generate --schema=prisma/sqlite/schema.prisma
+# Generate the Prisma client. Skipped by --ignore-scripts above, so do it explicitly.
+RUN npx prisma generate --schema=prisma/sqlite/schema.prisma
 
 # Build runtime TypeScript
 RUN npx tsc
@@ -128,10 +126,9 @@ RUN curl -fsSL https://mise.jdx.dev/install.sh | MISE_VERSION=${MISE_VERSION} sh
 ENV PATH="/home/node/.local/share/mise/shims:/home/node/.local/bin:${PATH}"
 USER root
 
-# Copy Prisma schemas and generate both clients for runtime
+# Copy the Prisma schema and generate the client for runtime
 COPY prisma ./prisma
-RUN npx prisma generate \
- && npx prisma generate --schema=prisma/sqlite/schema.prisma
+RUN npx prisma generate --schema=prisma/sqlite/schema.prisma
 
 # Copy built application
 COPY --from=builder /app/dist ./dist

@@ -12,11 +12,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Use vi.hoisted to create mocks that are available before vi.mock hoisting
-const { mockChat, mockCanAccessAgent, mockConfig } = vi.hoisted(() => ({
+const { mockChat, mockConfig } = vi.hoisted(() => ({
   mockChat: vi.fn(),
-  mockCanAccessAgent: vi.fn(),
   mockConfig: {
-    singleAgentMode: false,
     agentId: undefined as string | undefined,
     ownerUserId: '00000000-0000-0000-0000-000000000001',
   },
@@ -25,12 +23,6 @@ const { mockChat, mockCanAccessAgent, mockConfig } = vi.hoisted(() => ({
 vi.mock('../conversation-engine.service', () => ({
   conversationEngineService: {
     chat: mockChat,
-  },
-}));
-
-vi.mock('../../lib/backend-client', () => ({
-  backendClient: {
-    canAccessAgent: mockCanAccessAgent,
   },
 }));
 
@@ -73,10 +65,9 @@ describe('Requirement: WebSocket Gateway', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Default: multi-tenant mode; user has access
-    mockCanAccessAgent.mockResolvedValue(true);
-    mockConfig.singleAgentMode = false;
-    mockConfig.agentId = undefined;
+    // Most tests use 'agent-123' as the message's agentId; pin AGENT_ID to
+    // the same value so the access-control check passes.
+    mockConfig.agentId = 'agent-123';
 
     // Reset service state
     service.connections = new Map();
@@ -130,9 +121,12 @@ describe('Requirement: WebSocket Gateway', () => {
       expect(result).toEqual({ userId: 'user-xyz', token });
     });
 
-    it('should return null when no token is provided', () => {
+    it('falls back to the owner user when no token is provided', () => {
       const req = { url: '/api/ws', headers: { host: 'localhost:3003' } };
-      expect(service.extractUserAuth(req)).toBeNull();
+      expect(service.extractUserAuth(req)).toEqual({
+        userId: mockConfig.ownerUserId,
+        token: '',
+      });
     });
 
     it('should return null for a malformed token', () => {
@@ -339,32 +333,7 @@ describe('Requirement: WebSocket Gateway', () => {
   });
 
   describe('Scenario: Access control', () => {
-    it('should reject when user has no access to agent', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-
-      service.connections.set(userId, [ws]);
-      mockCanAccessAgent.mockResolvedValue(false);
-
-      await service.processMessage(ws, userId, {
-        type: 'chat',
-        content: 'Test',
-        agentId: 'agent-123',
-      });
-
-      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({
-        type: 'error',
-        payload: { error: 'Forbidden: no access to this agent' },
-      }));
-      expect(mockChat).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('Scenario: Access control (single-agent mode)', () => {
     beforeEach(() => {
-      mockConfig.singleAgentMode = true;
       mockConfig.agentId = 'agent-bobby';
     });
 
@@ -381,7 +350,6 @@ describe('Requirement: WebSocket Gateway', () => {
         agentId: 'agent-bobby',
       });
 
-      expect(mockCanAccessAgent).not.toHaveBeenCalled();
       expect(mockChat).toHaveBeenCalled();
     });
 
@@ -398,7 +366,6 @@ describe('Requirement: WebSocket Gateway', () => {
         agentId: 'agent-alice',
       });
 
-      expect(mockCanAccessAgent).not.toHaveBeenCalled();
       expect(mockChat).not.toHaveBeenCalled();
       expect(ws.send).toHaveBeenCalledWith(
         JSON.stringify({

@@ -4,16 +4,12 @@
  * Express router exposing the runtime's REST surface — the agent-runtime
  * owns its own data, so these routes are the canonical CRUD layer for
  * heartbeat, cron, Slack mappings, threads, agent identity, and
- * subagent wiring. Called by the bundled Web UI in single-agent mode,
- * and (in multi-tenant) by the backend's MCP tools / push flows.
- *
- * In multi-tenant mode the routes are protected by INTERNAL_API_SECRET
- * (`internalAuth` middleware). In single-agent mode `internalAuth` is a
- * no-op because Nexus inbound routing terminates auth in front of the
- * container (see AGENT-10).
+ * subagent wiring. Called by the bundled Web UI. Nexus inbound routing
+ * terminates auth in front of the container; routes are not protected
+ * by an internal secret.
  *
  * Agent identity:
- *   GET    /agents/me                              - Single-agent identity (Web UI bootstrap)
+ *   GET    /agents/me                              - Agent identity (Web UI bootstrap)
  *   PATCH  /agents/:agentId/name                   - Rename agent
  *   GET    /agents/:agentId/model                  - Effective model (override or env default)
  *   PATCH  /agents/:agentId/model                  - Set/clear per-agent LLM model override
@@ -21,9 +17,8 @@
  *   DELETE /agents/:agentId                        - Delete agent
  *
  * Backup / restore:
- *   GET    /agents/:agentId/export                 - Single-agent: gzipped snapshot of live SQLite
- *   GET    /agents/:agentId/export-prism           - Multi-tenant: materialize agent slice → .prism
- *   POST   /agents/:agentId/import                 - Single-agent: upload + restart-to-apply
+ *   GET    /agents/:agentId/export                 - Gzipped snapshot of live SQLite
+ *   POST   /agents/:agentId/import                 - Upload + restart-to-apply
  *
  * Heartbeat management:
  *   POST   /agents/:agentId/heartbeat/start        - Start/restart heartbeat timer (force-enables)
@@ -79,8 +74,8 @@
  *   POST   /agents                                             - Bootstrap agent
  *   POST   /agents/slack/deliver                               - Deliver a message
  *   POST   /agents/slack/{initialize,shutdown}                 - Slack adapter lifecycle
- *   POST   /agents/slack/{add,remove}-connection               - Multi-tenant connection wiring
- *   POST   /agents/slack/link-user                             - Multi-tenant user link
+ *   POST   /agents/slack/{add,remove}-connection               - Slack connection wiring
+ *   POST   /agents/slack/link-user                             - Slack user link
  *   GET    /agents/slack/is-connected/:userId                  - Connection check
  *   GET    /agents/slack/channel-name                          - Resolve channel id → name
  */
@@ -89,7 +84,6 @@ import { Router, Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import multer from 'multer';
 import { AgentType, MessageRole, MessageTrigger, Prisma, ThreadStatus } from '@prisma/client';
-import { internalAuth } from '../server';
 import { config } from '../config';
 import { logger } from '../logger';
 import { prisma } from '../lib/prisma';
@@ -106,7 +100,6 @@ import {
 } from '../services/agent-workspace.service';
 import {
   exportAgent as exportAgentArchive,
-  exportAgentFromPostgres,
   importAgent as importAgentArchive,
   ArchiveValidationError,
 } from '../services/agent-archive.service';
@@ -139,23 +132,17 @@ function uploadPrismFile(req: Request, res: Response, next: (err?: unknown) => v
 
 const router = Router();
 
-router.use(internalAuth);
-
 // ============================================================================
-// Single-agent identity
+// Agent identity
 // ============================================================================
 
 /**
  * GET /agents/me
- * Returns the identity of the single agent this runtime owns. Available only
- * in single-agent mode; the Web UI calls this on boot to resolve `agentId`
- * and `userId` without needing them in the URL.
+ * Returns the identity of the single agent this runtime owns. The Web UI
+ * calls this on boot to resolve `agentId` and `userId` without needing
+ * them in the URL.
  */
 router.get('/me', async (_req: Request, res: Response) => {
-  if (!config.singleAgentMode) {
-    res.status(404).json({ error: 'Not in single-agent mode' });
-    return;
-  }
   try {
     if (!config.agentId) {
       res.status(500).json({ error: 'AGENT_ID not configured' });
@@ -265,10 +252,6 @@ router.patch('/:agentId/model', async (req: Request<{ agentId: string }>, res: R
  * flight don't tear the file. Single-agent only.
  */
 router.get('/:agentId/export', async (req: Request<{ agentId: string }>, res: Response) => {
-  if (!config.singleAgentMode) {
-    res.status(404).json({ error: 'Not in single-agent mode' });
-    return;
-  }
   try {
     const agent = await agentWorkspaceService.getAgentById(req.params.agentId);
     if (!agent) {
@@ -295,60 +278,13 @@ router.get('/:agentId/export', async (req: Request<{ agentId: string }>, res: Re
 });
 
 /**
- * GET /agents/:agentId/export-prism
- * Multi-tenant counterpart of `/export`. Materializes the agent's slice
- * from shared Postgres into a temp SQLite (schema via `prisma migrate deploy` +
- * row-copy), then streams the `VACUUM INTO`-snapshot gzip. The artifact
- * is bit-compatible with `/import` on a fresh single-agent runtime.
- *
- * Returns 404 in single-agent mode — operators should use `/export` there
- * (which snapshots the live DB directly with no Postgres detour).
- */
-router.get('/:agentId/export-prism', async (req: Request<{ agentId: string }>, res: Response) => {
-  if (config.singleAgentMode) {
-    res.status(404).json({ error: 'Not available in single-agent mode — use /export' });
-    return;
-  }
-  try {
-    const { stream, filename, cleanup } = await exportAgentFromPostgres(req.params.agentId);
-    res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.on('close', cleanup);
-    stream.on('error', (err) => {
-      logger.error({ err }, `[Management] export-prism stream error for ${req.params.agentId}`);
-      cleanup();
-      if (!res.headersSent) res.status(500).end();
-      else res.destroy(err);
-    });
-    stream.pipe(res);
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to export-prism for agent ${req.params.agentId}: ${msg}`);
-    if (!res.headersSent) {
-      const status = msg.includes('not found') ? 404 : 500;
-      res.status(status).json({ error: msg });
-    }
-  }
-});
-
-/**
  * POST /agents/:agentId/import
  * Multipart upload of a `.prism` file. Validates the archive, stages it for
  * the next process restart, then exits the process — bootstrap pickup
- * swaps the file into place before Prisma opens the DB. Single-agent only.
+ * swaps the file into place before Prisma opens the DB.
  */
 router.post(
   '/:agentId/import',
-  // Mode guard sits ahead of multer so multi-tenant requests get a
-  // clean 404 instead of multipart-parse errors on the way to the
-  // same 404 — the route shape doesn't exist outside single-agent mode.
-  (req: Request, res: Response, next: (err?: unknown) => void) => {
-    if (!config.singleAgentMode) {
-      res.status(404).json({ error: 'Not in single-agent mode' });
-      return;
-    }
-    next();
-  },
   uploadPrismFile,
   async (req: Request<{ agentId: string }>, res: Response) => {
     try {

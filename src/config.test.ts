@@ -42,12 +42,6 @@ describe('config', () => {
     expect(cfg.port).toBe(4000);
   });
 
-  it('reads INTERNAL_API_SECRET from env', async () => {
-    process.env.INTERNAL_API_SECRET = 'my-secret';
-    const cfg = await loadConfig();
-    expect(cfg.internalApiSecret).toBe('my-secret');
-  });
-
   it('reads BEDROCK_MODEL_ID with default', async () => {
     delete process.env.BEDROCK_MODEL_ID;
     const cfg = await loadConfig();

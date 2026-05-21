@@ -9,16 +9,17 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Pin singleAgentMode=false at module load — most tests in this file
-// exercise the multi-tenant flow (backendClient-mediated SlackConnection
-// lookup + active-connection filter). The dedicated single-agent describe
-// at the bottom flips this per-test via the outer beforeEach.
 vi.mock('../../config', () => ({
-  config: { singleAgentMode: false },
+  config: {},
 }));
 
 // Use vi.hoisted to create mocks that are available before vi.mock hoisting
-const { mockPrisma, mockBackendClient, mockGetSlackConfig } = vi.hoisted(() => ({
+const {
+  mockPrisma,
+  mockGetSlackConfig,
+  mockGetSlackConnection,
+  mockGetActiveSlackConnections,
+} = vi.hoisted(() => ({
   mockPrisma: {
     slackMapping: {
       findUnique: vi.fn(),
@@ -35,41 +36,31 @@ const { mockPrisma, mockBackendClient, mockGetSlackConfig } = vi.hoisted(() => (
       findUnique: vi.fn(),
     },
   },
-  mockBackendClient: {
-    getSlackConnection: vi.fn(),
-    getActiveSlackConnections: vi.fn(),
-  },
-  // Single-agent mode resolves SlackConnection via slack-config's
-  // env-sourced singleton (see lib/slack-source.ts:21,29). Mocking the
-  // singleton source lets the bottom `Single-agent mode` describe block
-  // exercise the in-source no-op filter without touching backendClient.
   mockGetSlackConfig: vi.fn(),
+  mockGetSlackConnection: vi.fn(),
+  mockGetActiveSlackConnections: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({
   default: mockPrisma,
 }));
 
-vi.mock('../../lib/backend-client', () => ({
-  backendClient: mockBackendClient,
-}));
-
 vi.mock('../../lib/slack-config', () => ({
   getSlackConfig: mockGetSlackConfig,
 }));
 
-import { config } from '../../config';
+vi.mock('../../lib/slack-source', () => ({
+  getSlackConnection: mockGetSlackConnection,
+  getActiveSlackConnections: mockGetActiveSlackConnections,
+}));
+
 // Import after mocking
 import { slackMappingService } from '../slack-mapping.service';
 
-// File-wide reset: every test starts in multi-tenant mode. The
-// `Single-agent mode` describe at the bottom flips this back to true in
-// its own inner beforeEach (which runs after this one). Without this
-// outer reset, a test running after the single-agent block would inherit
-// singleAgentMode=true.
 beforeEach(() => {
-  (config as { singleAgentMode: boolean }).singleAgentMode = false;
   mockGetSlackConfig.mockReset();
+  mockGetSlackConnection.mockReset();
+  mockGetActiveSlackConnections.mockReset();
 });
 
 // ============================================================================
@@ -155,7 +146,7 @@ describe('Requirement: User Mappings (DM Mode)', () => {
       ];
       mockPrisma.slackMapping.findMany.mockResolvedValue(mappings);
 
-      mockBackendClient.getSlackConnection
+      mockGetSlackConnection
         .mockResolvedValueOnce({ id: 'conn-001', teamId: 'T001', teamName: 'Workspace 1', isActive: true })
         .mockResolvedValueOnce({ id: 'conn-002', teamId: 'T002', teamName: 'Workspace 2', isActive: true });
 
@@ -314,7 +305,7 @@ describe('Requirement: Channel Mappings (Team Mode)', () => {
       const mapping = createTestChannelMapping({ agentId: 'agent-001' });
       mockPrisma.slackMapping.findUnique.mockResolvedValue(mapping);
 
-      mockBackendClient.getSlackConnection.mockResolvedValue({
+      mockGetSlackConnection.mockResolvedValue({
         id: 'conn-001',
         userId: 'user-001',
         teamId: 'T001',
@@ -333,7 +324,7 @@ describe('Requirement: Channel Mappings (Team Mode)', () => {
       expect(mockPrisma.slackMapping.findUnique).toHaveBeenCalledWith({
         where: { slackChannelId: 'C789GHI' },
       });
-      expect(mockBackendClient.getSlackConnection).toHaveBeenCalledWith('conn-001');
+      expect(mockGetSlackConnection).toHaveBeenCalledWith('conn-001');
       expect(result).not.toBeNull();
       expect(result!.connection.teamId).toBe('T001');
       expect(result!.connection.agent.name).toBe('Prism');
@@ -486,11 +477,11 @@ describe('Requirement: General Queries', () => {
   describe('Scenario: getActiveUserMappingsWithDmChannel', () => {
     it('should return active user mappings with DM channel and connection info', async () => {
       const mappings = [createTestUserMapping()];
-      mockBackendClient.getActiveSlackConnections.mockResolvedValue([
+      mockGetActiveSlackConnections.mockResolvedValue([
         { id: 'conn-001', teamId: 'T001', isActive: true },
       ]);
       mockPrisma.slackMapping.findMany.mockResolvedValue(mappings);
-      mockBackendClient.getSlackConnection.mockResolvedValue({
+      mockGetSlackConnection.mockResolvedValue({
         id: 'conn-001', teamId: 'T001', isActive: true,
       });
 
@@ -508,7 +499,7 @@ describe('Requirement: General Queries', () => {
 
     it('should exclude mappings from inactive connections', async () => {
       // No active connections from backend
-      mockBackendClient.getActiveSlackConnections.mockResolvedValue([]);
+      mockGetActiveSlackConnections.mockResolvedValue([]);
       mockPrisma.slackMapping.findMany.mockResolvedValue([
         createTestUserMapping(),
       ]);
@@ -520,7 +511,7 @@ describe('Requirement: General Queries', () => {
     });
 
     it('should exclude mappings without DM channel', async () => {
-      mockBackendClient.getActiveSlackConnections.mockResolvedValue([
+      mockGetActiveSlackConnections.mockResolvedValue([
         { id: 'conn-001', teamId: 'T001', isActive: true },
       ]);
       mockPrisma.slackMapping.findMany.mockResolvedValue([]);
@@ -555,7 +546,7 @@ describe('Requirement: General Queries', () => {
 
   describe('Scenario: countUserMappings', () => {
     it('should count active user mappings with DM channel', async () => {
-      mockBackendClient.getActiveSlackConnections.mockResolvedValue([
+      mockGetActiveSlackConnections.mockResolvedValue([
         { id: 'conn-001' },
         { id: 'conn-002' },
         { id: 'conn-003' },
@@ -572,7 +563,7 @@ describe('Requirement: General Queries', () => {
     });
 
     it('should return 0 when user has no active mappings', async () => {
-      mockBackendClient.getActiveSlackConnections.mockResolvedValue([]);
+      mockGetActiveSlackConnections.mockResolvedValue([]);
       mockPrisma.slackMapping.findMany.mockResolvedValue([]);
 
       const result = await slackMappingService.countUserMappings('user-no-slack');
@@ -582,134 +573,3 @@ describe('Requirement: General Queries', () => {
   });
 });
 
-// ============================================================================
-// Single-agent mode
-//
-// In single-agent mode the container holds exactly one Slack connection,
-// synthesized from env (`SLACK_BOT_TOKEN`) by `lib/slack-config.ts`. The
-// service-side branches that change behavior are:
-//
-//   - `getActiveConnectionFilter()` returns `() => true` (no-op accept-all),
-//     bypassing the multi-tenant `getActiveSlackConnections()` call.
-//   - `getSlackConnection(...)` resolves via `getSlackConfig()` instead of
-//     `backendClient.getSlackConnection(...)`, returning the singleton
-//     regardless of the connectionId persisted on the SlackMapping row.
-//
-// These tests assert both behaviors, including the negative assertion
-// that the multi-tenant code paths (`mockBackendClient.*`) are never hit.
-// ============================================================================
-
-describe('Requirement: Single-agent mode (env-sourced singleton + no-op filter)', () => {
-  // Synthetic singleton matching what `lib/slack-config.ts` produces: id is
-  // the teamId so `connectionId === teamId` for all single-agent mappings
-  // created post-link. Pre-link mappings carry whatever connectionId was
-  // persisted in the prior multi-tenant DB; getSlackConnection() returns
-  // the singleton for them too (legacy path documented in slack-source.ts).
-  const singletonRecord = {
-    id: 'T_SINGLE',
-    teamId: 'T_SINGLE',
-    teamName: 'Single-agent workspace',
-    botToken: 'xoxb-test',
-    botUserId: 'B_SINGLE',
-    installedAt: '2024-06-01T00:00:00Z',
-    isActive: true,
-  };
-
-  beforeEach(() => {
-    (config as { singleAgentMode: boolean }).singleAgentMode = true;
-    mockGetSlackConfig.mockResolvedValue(singletonRecord);
-  });
-
-  describe('Scenario: findUserMappingsByLensUserId', () => {
-    it('resolves connection metadata via the env-sourced singleton, not backendClient', async () => {
-      const mappings = [
-        createTestUserMapping(),
-        createTestUserMapping({ id: 'mapping-user-002', connectionId: 'conn-002' }),
-      ];
-      mockPrisma.slackMapping.findMany.mockResolvedValue(mappings);
-
-      const result = await slackMappingService.findUserMappingsByLensUserId('user-001');
-
-      expect(result).toHaveLength(2);
-      // Both mappings carry the singleton's metadata regardless of the
-      // (legacy) connectionId persisted on the row.
-      expect(result[0].connection.teamId).toBe('T_SINGLE');
-      expect(result[1].connection.teamId).toBe('T_SINGLE');
-      expect(mockGetSlackConfig).toHaveBeenCalled();
-      expect(mockBackendClient.getSlackConnection).not.toHaveBeenCalled();
-    });
-
-    it('skips a mapping when getSlackConfig returns null (token unset / boot failure)', async () => {
-      mockGetSlackConfig.mockResolvedValue(null);
-      mockPrisma.slackMapping.findMany.mockResolvedValue([createTestUserMapping()]);
-
-      const result = await slackMappingService.findUserMappingsByLensUserId('user-001');
-
-      expect(result).toHaveLength(0);
-      expect(mockBackendClient.getSlackConnection).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('Scenario: getActiveUserMappingsWithDmChannel', () => {
-    it('returns every mapping (no-op filter), each tagged with the singleton', async () => {
-      // Three user mappings spanning three distinct connectionIds. In
-      // multi-tenant the active-set filter would drop any that aren't
-      // currently active; in single-agent every mapping passes.
-      const mappings = [
-        createTestUserMapping({ id: 'm1', connectionId: 'conn-001' }),
-        createTestUserMapping({ id: 'm2', connectionId: 'conn-002' }),
-        createTestUserMapping({ id: 'm3', connectionId: 'conn-003' }),
-      ];
-      mockPrisma.slackMapping.findMany.mockResolvedValue(mappings);
-
-      const result = await slackMappingService.getActiveUserMappingsWithDmChannel();
-
-      expect(result).toHaveLength(3);
-      for (const r of result) {
-        expect(r.connection.teamId).toBe('T_SINGLE');
-        expect(r.connection.isActive).toBe(true);
-      }
-      expect(mockBackendClient.getActiveSlackConnections).not.toHaveBeenCalled();
-      expect(mockBackendClient.getSlackConnection).not.toHaveBeenCalled();
-    });
-
-    it('omits mappings when the singleton is unavailable (pre-token-validate boot)', async () => {
-      mockGetSlackConfig.mockResolvedValue(null);
-      mockPrisma.slackMapping.findMany.mockResolvedValue([createTestUserMapping()]);
-
-      const result = await slackMappingService.getActiveUserMappingsWithDmChannel();
-
-      expect(result).toHaveLength(0);
-      expect(mockBackendClient.getActiveSlackConnections).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('Scenario: countUserMappings', () => {
-    it('counts every matching mapping (no-op filter), regardless of connectionId', async () => {
-      mockPrisma.slackMapping.findMany.mockResolvedValue([
-        { connectionId: 'conn-001' },
-        { connectionId: 'conn-002' }, // would be filtered out in multi-tenant if not active
-        { connectionId: 'conn-stale' }, // ditto
-      ]);
-
-      const count = await slackMappingService.countUserMappings('user-001');
-
-      expect(count).toBe(3);
-      expect(mockBackendClient.getActiveSlackConnections).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('Scenario: countAllMappings', () => {
-    it('counts every matching mapping across DM and channel rows', async () => {
-      mockPrisma.slackMapping.findMany.mockResolvedValue([
-        { connectionId: 'conn-001' },
-        { connectionId: 'conn-002' },
-      ]);
-
-      const count = await slackMappingService.countAllMappings('user-001');
-
-      expect(count).toBe(2);
-      expect(mockBackendClient.getActiveSlackConnections).not.toHaveBeenCalled();
-    });
-  });
-});

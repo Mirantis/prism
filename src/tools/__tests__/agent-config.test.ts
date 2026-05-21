@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockPrisma, mockHeartbeatService, mockEncryptToken } = vi.hoisted(() => ({
+const { mockPrisma, mockHeartbeatService } = vi.hoisted(() => ({
   mockPrisma: {
     agentWorkspace: {
       findUnique: vi.fn(),
@@ -10,7 +10,6 @@ const { mockPrisma, mockHeartbeatService, mockEncryptToken } = vi.hoisted(() => 
   mockHeartbeatService: {
     startHeartbeat: vi.fn(),
   },
-  mockEncryptToken: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({
@@ -20,10 +19,6 @@ vi.mock('../../lib/prisma', () => ({
 
 vi.mock('../../services/heartbeat.service', () => ({
   heartbeatService: mockHeartbeatService,
-}));
-
-vi.mock('../../utils/encryption', () => ({
-  encryptToken: mockEncryptToken,
 }));
 
 import { getAgentConfigTools } from '../agent-config';
@@ -312,13 +307,11 @@ describe('getAgentConfigTools', () => {
   });
 
   describe('store_nexus_token', () => {
-    it('encrypts and stores the token', async () => {
-      mockEncryptToken.mockReturnValue('encrypted-token');
+    it('stores the token', async () => {
       await tools.store_nexus_token.execute({ token: 'my-token' });
-      expect(mockEncryptToken).toHaveBeenCalledWith('my-token');
       expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
         where: { id: agentId },
-        data: { nexusMcpAgentToken: 'encrypted-token' },
+        data: { nexusMcpAgentToken: 'my-token' },
       });
     });
   });

@@ -3,12 +3,11 @@
  *
  * On startup:
  * 1. Start HTTP server
- * 2. Wait for backend to be available
- * 3. Load all agents and start heartbeat timers
- * 4. Load all cron tasks and schedule them
+ * 2. Resolve (or bootstrap) the single AgentWorkspace row
+ * 3. Start heartbeat timers and schedule cron tasks
  *
  * On shutdown:
- * - Stop all heartbeats and cron jobs
+ * - Stop all heartbeats, cron jobs, sessions, queues
  */
 
 import { createServer } from 'http';
@@ -25,8 +24,6 @@ if (dotenvLoadInfo.error) {
   logger.info('[dotenv] injected %d env var(s) from %s', dotenvLoadInfo.loadedCount, dotenvLoadInfo.path);
 }
 import { createApp } from './server';
-import { backendClient } from './lib/backend-client';
-import { agentWorkspaceService } from './services/agent-workspace.service';
 import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
 import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
 import { heartbeatService } from './services/heartbeat.service';
@@ -62,74 +59,44 @@ const server = httpServer.listen(config.port, async () => {
   logger.info(`Health: http://localhost:${config.port}/health`);
 
   try {
-    // Multi-tenant mode waits for the lens-agents/backend proxy to come up.
-    // Single-agent mode has no backend dependency at startup.
-    if (!config.singleAgentMode) {
-      await backendClient.waitForBackend();
-    } else {
-      // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
-      // below either picks up the existing row via findFirst() or creates
-      // a fresh one with a generated UUID.
-      // Auth is handled by Nexus inbound routing (AGENT-10) in front of the
-      // runtime; the container itself trusts every incoming connection.
-      logger.info(
-        {
-          agentId: config.agentId ?? '<unset, will resolve>',
-        },
-        '[SingleAgent] starting in single-agent mode',
-      );
-    }
+    // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
+    // either picks up the existing row via findFirst() or creates a
+    // fresh one with a generated UUID. Auth is handled by Nexus inbound
+    // routing in front of the runtime; the container itself trusts
+    // every incoming connection.
+    logger.info(
+      { agentId: config.agentId ?? '<unset, will resolve>' },
+      '[Startup] resolving agent workspace',
+    );
+    const agent = await resolveOrBootstrapSingleAgent();
 
-    // Single-agent mode: resolve (or bootstrap) the one AgentWorkspace row
-    // before anything else touches it, so cleanup/heartbeat/cron all see it.
-    const singleAgent = config.singleAgentMode ? await resolveOrBootstrapSingleAgent() : null;
-
-    // Clear stale RUNNING status from previous process crashes
+    // Clear stale RUNNING status from previous process crashes.
     await prisma.agentWorkspace.updateMany({
-      where: singleAgent
-        ? { id: singleAgent.id, status: 'RUNNING' }
-        : { status: 'RUNNING' },
+      where: { id: agent.id, status: 'RUNNING' },
       data: { status: 'IDLE' },
     });
 
-    // Load agents and start heartbeat timers. In single-agent mode, just the
-    // one we just resolved; in multi-tenant mode, every agent in the DB.
-    const agents = singleAgent ? [singleAgent] : await agentWorkspaceService.getAllAgents();
-    for (const agent of agents) {
-      heartbeatService.startHeartbeat(agent);
-    }
-    logger.info(`Heartbeats started for ${agents.length} agent(s)`);
+    heartbeatService.startHeartbeat(agent);
+    logger.info('Heartbeat started');
 
-    // Load active cron tasks. In single-agent mode, only this agent's.
-    const cronTasks = await cronSchedulerService.listActiveCronTasks(
-      singleAgent ? singleAgent.id : undefined
-    );
+    const cronTasks = await cronSchedulerService.listActiveCronTasks(agent.id);
     for (const task of cronTasks) {
       cronSchedulerService.scheduleTask(task);
     }
     logger.info(`Cron tasks scheduled: ${cronTasks.length}`);
 
-    // Initialize session manager (daily resets, idle timeouts)
     await sessionManagerService.initialize();
     logger.info('Session manager initialized');
 
-    // Initialize all channel adapters (WebSocket no-op, Slack connects to workspaces)
     await messageDeliveryService.initializeAll();
 
-    // Start the in-memory throttle queue (used identically in multi-tenant
-    // and single-agent modes; see queues/slack-heartbeat-throttle-queue.ts
-    // header for the design rationale).
     await getSlackHeartbeatThrottleQueue().start();
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`Failed to initialize services: ${msg}`);
-    if (config.singleAgentMode) {
-      // Single-agent containers should fail loudly; there's nothing to fall
-      // back to and lazy init would mask config errors (missing AGENT_ID,
-      // invalid SLACK_BOT_TOKEN, etc.).
-      process.exit(1);
-    }
-    logger.error('Services will be initialized lazily on first request');
+    // Fail loudly — there's nothing to fall back to and lazy init would
+    // mask config errors (missing AGENT_ID, invalid SLACK_BOT_TOKEN, etc.).
+    process.exit(1);
   }
 });
 

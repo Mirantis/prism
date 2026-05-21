@@ -11,7 +11,6 @@ import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { heartbeatService } from '../services/heartbeat.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
-import { encryptToken } from '../utils/encryption';
 import { applyEdits } from '../lib/apply-edit';
 import { logger } from '../logger';
 
@@ -215,10 +214,9 @@ export function getAgentConfigTools(agentId: string): Record<string, Tool> {
         projectId: z.string().optional().describe('Project ID for admin URL'),
       }),
       execute: async ({ token, projectId }) => {
-        const encryptedToken = encryptToken(token);
         await prisma.agentWorkspace.update({
           where: { id: agentId },
-          data: { nexusMcpAgentToken: encryptedToken },
+          data: { nexusMcpAgentToken: token },
         });
         const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
         const adminUrl = projectId

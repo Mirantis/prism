@@ -16,15 +16,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mocks
 // ============================================================================
 
-// Pin singleAgentMode=false at module load — most tests in this file
-// exercise the multi-tenant flow (backendClient-mediated SlackConnection
-// lookup). The dedicated single-agent describe at the bottom flips this
-// per-test via the outer beforeEach.
 vi.mock('../../config', () => ({
-  config: { singleAgentMode: false },
+  config: {},
 }));
 
-const { mockPrisma, mockBackendClient, mockGetSlackConfig } = vi.hoisted(() => ({
+const { mockPrisma, mockGetSlackConnection } = vi.hoisted(() => ({
   mockPrisma: {
     conversationThread: {
       findUnique: vi.fn(),
@@ -36,24 +32,16 @@ const { mockPrisma, mockBackendClient, mockGetSlackConfig } = vi.hoisted(() => (
       findMany: vi.fn(),
     },
   },
-  mockBackendClient: {
-    getSlackConnection: vi.fn(),
-  },
-  // Single-agent mode resolves SlackConnection via slack-config's
-  // env-sourced singleton (see lib/slack-source.ts:21,29).
-  mockGetSlackConfig: vi.fn(),
+  mockGetSlackConnection: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({
   default: mockPrisma,
 }));
 
-vi.mock('../../lib/backend-client', () => ({
-  backendClient: mockBackendClient,
-}));
-
-vi.mock('../../lib/slack-config', () => ({
-  getSlackConfig: mockGetSlackConfig,
+vi.mock('../../lib/slack-source', () => ({
+  getSlackConnection: mockGetSlackConnection,
+  getActiveSlackConnections: vi.fn(),
 }));
 
 const mockConversationsReplies = vi.fn();
@@ -68,15 +56,10 @@ vi.mock('../slack-adapter.service', () => ({
 }));
 
 // Import after mocking
-import { config } from '../../config';
 import { SlackThreadProvider } from '../providers/slack-thread.provider';
 
-// File-wide reset: every test starts in multi-tenant mode. The
-// `Single-agent mode` describe at the bottom flips this back to true in
-// its own inner beforeEach (which runs after this one).
 beforeEach(() => {
-  (config as { singleAgentMode: boolean }).singleAgentMode = false;
-  mockGetSlackConfig.mockReset();
+  mockGetSlackConnection.mockReset();
 });
 
 // ============================================================================
@@ -114,7 +97,7 @@ function setupThreadMetadata() {
     connectionId: 'conn-001',
   });
 
-  mockBackendClient.getSlackConnection.mockResolvedValue({
+  mockGetSlackConnection.mockResolvedValue({
     id: 'conn-001',
     teamId,
     botUserId,
@@ -649,103 +632,3 @@ describe('Requirement: Slack Thread Provider', () => {
   });
 });
 
-// ============================================================================
-// Single-agent mode
-//
-// In single-agent mode the SlackConnection is the env-sourced singleton from
-// `lib/slack-config.ts`, not a backend lookup. SlackThreadProvider doesn't
-// know which mode it's in — it just calls `getSlackConnection(...)`, which
-// in `lib/slack-source.ts:28-40` branches to `getSlackConfig()` when
-// `config.singleAgentMode` is true. These tests assert the provider works
-// end-to-end through that branch and that `backendClient.getSlackConnection`
-// is never called.
-// ============================================================================
-
-describe('Requirement: Slack Thread Provider — single-agent mode', () => {
-  let provider: SlackThreadProvider;
-
-  // Synthetic singleton matching what `lib/slack-config.ts` produces.
-  // Note: id === teamId in single-agent mode.
-  const singletonRecord = {
-    id: teamId,
-    teamId,
-    teamName: 'Single-agent workspace',
-    botToken: 'xoxb-test',
-    botUserId,
-    installedAt: '2024-06-01T00:00:00Z',
-    isActive: true,
-  };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    (config as { singleAgentMode: boolean }).singleAgentMode = true;
-    mockGetSlackConfig.mockResolvedValue(singletonRecord);
-
-    provider = new SlackThreadProvider();
-    setupMockApp();
-
-    // Same thread metadata setup as the multi-tenant suite, except we do
-    // NOT prime backendClient — slack-source's single-agent branch never
-    // hits it. Mappings persisted at link time still carry their original
-    // connectionId, but `getSlackConnection` returns the singleton anyway.
-    mockPrisma.conversationThread.findUnique.mockResolvedValue({
-      externalChannelId: channelId,
-      externalThreadId: threadTs,
-    });
-    mockPrisma.slackMapping.findFirst.mockResolvedValue({
-      connectionId: 'conn-001',
-    });
-    mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
-  });
-
-  it('resolves the connection via getSlackConfig and never touches backendClient', async () => {
-    mockConversationsReplies.mockResolvedValue({
-      messages: [
-        { user: 'U200', text: 'hello from single-agent', ts: '1710000010.000000' },
-      ],
-      response_metadata: {},
-    });
-    mockUsersInfo.mockResolvedValue({ user: { real_name: 'Bob', name: 'bob' } });
-
-    const messages = await provider.getMessages(threadId);
-
-    expect(messages).toHaveLength(1);
-    expect(messages[0].content).toBe('<@U200:Bob>: hello from single-agent');
-    expect(mockGetSlackConfig).toHaveBeenCalled();
-    expect(mockBackendClient.getSlackConnection).not.toHaveBeenCalled();
-  });
-
-  it('uses the singleton even when the persisted connectionId is a legacy id', async () => {
-    // A mapping created in multi-tenant might persist a connectionId like
-    // `conn-old-uuid`. After cutover to single-agent, getSlackConnection
-    // returns the singleton regardless (per slack-source.ts:32-37 docstring).
-    mockPrisma.slackMapping.findFirst.mockResolvedValue({
-      connectionId: 'legacy-postgres-uuid-deadbeef',
-    });
-    mockConversationsReplies.mockResolvedValue({
-      messages: [{ user: botUserId, text: 'agent reply', ts: '1710000020.000000' }],
-      response_metadata: {},
-    });
-
-    const messages = await provider.getMessages(threadId);
-
-    expect(messages).toHaveLength(1);
-    expect(messages[0].role).toBe('AGENT');
-    expect(mockBackendClient.getSlackConnection).not.toHaveBeenCalled();
-  });
-
-  it('throws when getSlackConfig returns null (env-sourced token unavailable)', async () => {
-    mockGetSlackConfig.mockResolvedValue(null);
-
-    // resolveSlackThread throws when getSlackConnection returns null —
-    // getMessages doesn't catch, so the error surfaces to the caller.
-    // Asserting that the error path is reached without ever falling
-    // through to backendClient validates the single-agent branch is
-    // the one taken.
-    await expect(provider.getMessages(threadId)).rejects.toThrow(
-      /No SlackConnection found for connectionId/,
-    );
-    expect(mockConversationsReplies).not.toHaveBeenCalled();
-    expect(mockBackendClient.getSlackConnection).not.toHaveBeenCalled();
-  });
-});
