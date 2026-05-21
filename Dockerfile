@@ -41,6 +41,12 @@ COPY web ./web
 RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
     cd web && npm install --no-audit --ignore-scripts && npm run build
 
+# Build the prism CLI the same way — also not a declared workspace. Bundled
+# into the image so an operator can `docker exec -it <container> prism`.
+COPY cli ./cli
+RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
+    cd cli && npm install --no-audit --ignore-scripts && npm run build
+
 # Stage 2: Production
 FROM node:24-bookworm-slim AS runner
 
@@ -129,6 +135,16 @@ COPY --from=builder /app/dist ./dist
 # `express.static` when SINGLE_AGENT_MODE=true; the wrapper sandbox image
 # enables that mode at runtime.
 COPY --from=builder /app/web/dist ./web/dist
+
+# prism CLI: Ink-based TUI for talking to this runtime. Bundled so an
+# operator can `docker exec -it <container> prism` and connect over the
+# in-container default (http://localhost:3003).
+COPY cli/package.json ./cli/
+RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
+    cd cli && npm install --omit=dev --no-audit --ignore-scripts
+COPY --from=builder /app/cli/dist ./cli/dist
+RUN chmod +x /app/cli/dist/index.js \
+ && ln -s /app/cli/dist/index.js /usr/local/bin/prism
 
 # Startup orchestrator (shared with Dockerfile.nexus-sandbox). The
 # pending-import preflight is compiled into `dist/scripts/apply-pending-

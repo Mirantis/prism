@@ -8,6 +8,7 @@ on:
       - 'Dockerfile.nexus-sandbox'
       - 'src/**'
       - 'web/**'
+      - 'cli/**'
       - 'prisma/**'
       - 'tsconfig.json'
       - 'start.sh'

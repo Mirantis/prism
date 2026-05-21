@@ -7,6 +7,7 @@ on:
       - 'Dockerfile'
       - 'src/**'
       - 'web/**'
+      - 'cli/**'
       - 'prisma/**'
       - 'tsconfig.json'
       - 'start.sh'
