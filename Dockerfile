@@ -1,4 +1,4 @@
-# Agent Runtime Dockerfile
+# Prism Agent Dockerfile
 # Multi-stage build for smaller production image.
 #
 # Base: node:24-bookworm-slim (glibc). Previously node:24-alpine (musl); the
@@ -10,17 +10,7 @@ FROM node:24-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Copy package files for workspace resolution. All workspace manifests are
-# copied so `npm ci` (full install, below) can resolve the workspace graph
-# without scoping to a subset — that scoping was the cause of `@types/
-# react-dom` being marked `devOptional` and dropped from the install.
 COPY package.json package-lock.json ./
-COPY packages/lens-agents/agent-runtime/package.json ./packages/lens-agents/agent-runtime/
-COPY packages/lens-agents/agent-runtime/web/package.json ./packages/lens-agents/agent-runtime/web/
-COPY packages/lens-agents/backend/package.json ./packages/lens-agents/backend/
-COPY packages/lens-agents/e2e/package.json ./packages/lens-agents/e2e/
-COPY packages/lens-agents/frontend/package.json ./packages/lens-agents/frontend/
-COPY packages/lens-agents/prism-cli/package.json ./packages/lens-agents/prism-cli/
 
 # Skip husky install in Docker
 ENV HUSKY=0
@@ -28,29 +18,28 @@ ENV HUSKY=0
 # openssl is needed by Prisma's query engine on Debian slim (not shipped by default).
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies for the entire workspace. We previously filtered to
-# `--workspace=agent-runtime --workspace=agent-runtime-web --workspace=prism-cli`
-# but that drops devDependencies npm flags as `devOptional` (notably
-# `@types/react-dom`, only declared by agent-runtime-web), and the web build
-# then fails with TS7016 on `react-dom/client`. Installing all workspaces in
-# the builder stage is harmless — only the runner stage's `--omit=dev`
-# install ends up in the final image.
 # .npmrc mounted as secret so token never persists in image layers.
 RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
     npm ci --ignore-scripts
 
-# Copy agent-runtime + prism-cli source code
-COPY packages/lens-agents/agent-runtime ./packages/lens-agents/agent-runtime
-COPY packages/lens-agents/prism-cli ./packages/lens-agents/prism-cli
+# Copy source for the runtime
+COPY src ./src
+COPY prisma ./prisma
+COPY tsconfig.json ./
 
 # Generate both Prisma clients (Postgres for multi-tenant, SQLite for
 # single-agent mode). Skipped by --ignore-scripts above, so do it explicitly.
-RUN npx prisma generate --schema=packages/lens-agents/agent-runtime/prisma/schema.prisma \
- && npx prisma generate --schema=packages/lens-agents/agent-runtime/prisma/sqlite/schema.prisma
+RUN npx prisma generate \
+ && npx prisma generate --schema=prisma/sqlite/schema.prisma
 
-# Build TypeScript for both packages
-RUN npm run build --workspace=agent-runtime \
- && npm run build --workspace=prism-cli
+# Build runtime TypeScript
+RUN npx tsc
+
+# Build web bundle as a self-contained step — web/ is not wired up as an npm
+# workspace in this repo, so install its deps here and run its build script.
+COPY web ./web
+RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
+    cd web && npm install --no-audit --ignore-scripts && npm run build
 
 # Stage 2: Production
 FROM node:24-bookworm-slim AS runner
@@ -84,16 +73,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install only production dependencies
 # .npmrc mounted as secret so token never persists in image layers
 COPY package.json package-lock.json ./
-COPY packages/lens-agents/agent-runtime/package.json ./packages/lens-agents/agent-runtime/
-COPY packages/lens-agents/prism-cli/package.json ./packages/lens-agents/prism-cli/
 
 RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
-    npm ci --workspace=agent-runtime --workspace=prism-cli --omit=dev --ignore-scripts
+    npm ci --omit=dev --ignore-scripts
 
 # `npm ci --ignore-scripts` skipped better-sqlite3's prebuild-install step
 # (which downloads the platform-specific native binding). Rebuild just that
 # package so single-agent mode's SQLite + sqlite-vec path works.
-RUN npm rebuild --workspace=agent-runtime better-sqlite3
+RUN npm rebuild better-sqlite3
 
 # Claude Code CLI: the `claude_code` / `claude_code_status` MCP tools spawn
 # this binary as a sub-agent in single-agent mode. Installed globally so a
@@ -131,31 +118,24 @@ ENV PATH="/home/node/.local/share/mise/shims:/home/node/.local/bin:${PATH}"
 USER root
 
 # Copy Prisma schemas and generate both clients for runtime
-COPY packages/lens-agents/agent-runtime/prisma ./packages/lens-agents/agent-runtime/prisma
-RUN npx prisma generate --schema=packages/lens-agents/agent-runtime/prisma/schema.prisma \
- && npx prisma generate --schema=packages/lens-agents/agent-runtime/prisma/sqlite/schema.prisma
+COPY prisma ./prisma
+RUN npx prisma generate \
+ && npx prisma generate --schema=prisma/sqlite/schema.prisma
 
 # Copy built application
-COPY --from=builder /app/packages/lens-agents/agent-runtime/dist ./packages/lens-agents/agent-runtime/dist
+COPY --from=builder /app/dist ./dist
 
 # Copy the built Web UI bundle. Server.ts conditionally serves `web/dist` from
 # `express.static` when SINGLE_AGENT_MODE=true; the wrapper sandbox image
 # enables that mode at runtime.
-COPY --from=builder /app/packages/lens-agents/agent-runtime/web/dist ./packages/lens-agents/agent-runtime/web/dist
-
-# prism-cli: the Ink-based TUI for talking to this runtime. Lives alongside
-# the runtime so an operator can `docker exec -it <container> prism` and
-# connect over the in-container default (http://localhost:3003).
-COPY --from=builder /app/packages/lens-agents/prism-cli/dist ./packages/lens-agents/prism-cli/dist
-RUN chmod +x /app/packages/lens-agents/prism-cli/dist/index.js \
- && ln -s /app/packages/lens-agents/prism-cli/dist/index.js /usr/local/bin/prism
+COPY --from=builder /app/web/dist ./web/dist
 
 # Startup orchestrator (shared with Dockerfile.nexus-sandbox). The
 # pending-import preflight is compiled into `dist/scripts/apply-pending-
 # import.js` by the builder stage above — same code path the `dev:single`
 # npm script runs via tsx.
-COPY packages/lens-agents/agent-runtime/start.sh ./packages/lens-agents/agent-runtime/start.sh
-RUN chmod +x ./packages/lens-agents/agent-runtime/start.sh
+COPY start.sh ./
+RUN chmod +x ./start.sh
 
 # Set environment
 ENV NODE_ENV=production
@@ -168,8 +148,6 @@ EXPOSE 3003
 # directory.
 RUN mkdir -p /data && chown -R node:node /data
 VOLUME ["/data"]
-
-WORKDIR /app/packages/lens-agents/agent-runtime
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
