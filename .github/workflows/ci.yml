@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+  pull-requests: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Install npm 11.12.1
+        run: npm install -g npm@11.12.1
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Build the package
+        run: npm run build
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Parallel job that re-runs the agent-runtime suite under
+  # `SINGLE_AGENT_MODE=true`. Catches regressions in code that branches
+  # on `config.singleAgentMode` when only one branch has dedicated test
+  # coverage. Files that test mode-specific behavior pin the mode
+  # explicitly (see `lib/slack-source.test.ts`, `services/memory-store.test.ts`,
+  # `services/__tests__/slack-mapping.service.test.ts`,
+  # `services/__tests__/slack-thread.provider.test.ts`); this job only
+  # changes behavior for tests that don't pin a mode.
+  test-agent:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Install npm 11.12.1
+        run: npm install -g npm@11.12.1
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run agent runtime tests
+        run: npm run test:single-agent
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Install npm 11.12.1
+        run: npm install -g npm@11.12.1
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lint Markdown
+        run: npm run lint:md
+
+      - name: Lint
+        run: npm run lint

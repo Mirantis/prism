@@ -1,0 +1,44 @@
+name: Docker Build
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'Dockerfile.nexus-sandbox'
+      - 'src/**'
+      - 'web/**'
+      - 'prisma/**'
+      - 'tsconfig.json'
+      - 'start.sh'
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+  packages: read
+  pull-requests: read
+
+jobs:
+  build-prism:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > .npmrc-secret
+          docker build \
+            --secret id=npmrc,src=.npmrc-secret \
+            -f Dockerfile \
+            .
+          rm -f .npmrc-secret
+
+      - name: Build nexus-sandbox Docker image
+        run: |
+          printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > .npmrc-secret
+          docker build \
+            --secret id=npmrc,src=.npmrc-secret \
+            -f Dockerfile.nexus-sandbox \
+            .
+          rm -f .npmrc-secret
