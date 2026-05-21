@@ -1,0 +1,35 @@
+node_modules
+.node_modules-*
+dist
+.next
+.env
+.env.local
+.env.e2e.local
+*.log
+*.tsbuildinfo
+.DS_Store
+coverage
+
+# Claude Code local settings
+.claude/settings.local.json
+.claude/worktrees/
+.claude/projects/
+.claude/scheduled_tasks.lock
+
+# Other agentic tool local state
+.lens-agents/
+
+# MCP client config (contains auth tokens)
+.mcp.json
+
+# Docker BuildKit secret for the @lensapp npm registry. Generated on-the-fly
+# in CI from secrets.GITHUB_TOKEN; created manually for local docker builds.
+.npmrc-secret
+
+# mcporter temp files
+tmp/
+
+# Single-agent SQLite databases (host-local; produced by `npm run dev:single`)
+*.db
+*.db-shm
+*.db-wal
