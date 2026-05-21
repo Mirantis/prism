@@ -181,15 +181,12 @@ Respond with exactly one word: WORTHY or SKIP`;
       threadId = thread.id;
     }
 
-    // Build message content with sender attribution for channel messages
-    let messageContent = message;
-    if (metadata?.channel === 'slack' && metadata?.senderName) {
-      messageContent = `[${metadata.senderName}]: ${message}`;
-    }
-
-    // Store user message with sender info
+    // Store user message with sender info. The message text arrives
+    // already prefixed with the sender's mention marker when the caller
+    // (e.g. the Slack adapter) wants the agent to see it in conversation
+    // history — see `slackAdapterService.buildSenderTaggedContent`.
     await conversationService.addMessage(threadId, {
-      content: messageContent,
+      content: message,
       role: 'USER',
       triggeredBy: 'USER_INPUT',
       senderExternalId: metadata?.senderSlackUserId,
@@ -229,7 +226,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       userId,
       agentId,
       mode: 'chat',
-      prompt: messageContent,
+      prompt: message,
       threadId,
       isChannelMessage,
     })) {
@@ -267,7 +264,7 @@ Respond with exactly one word: WORTHY or SKIP`;
     // attach the accumulated blocks and the feedback decision here.
     if (bufferedStep) {
       const includeFeedback = await this.shouldShowFeedback(
-        threadId, messageContent, bufferedStep.text, userId, agentId,
+        threadId, message, bufferedStep.text, userId, agentId,
       );
       agentMessage = await messageDeliveryService.publish(
         userId,

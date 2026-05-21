@@ -154,7 +154,7 @@ describe('Requirement: Slack Thread Provider', () => {
 
       // First message: user
       expect(messages[0].role).toBe('USER');
-      expect(messages[0].content).toBe('[Alice]: Hello bot');
+      expect(messages[0].content).toBe('<@U100:Alice>: Hello bot');
       expect(messages[0].senderName).toBe('Alice');
       expect(messages[0].senderExternalId).toBe('U100');
 
@@ -165,7 +165,7 @@ describe('Requirement: Slack Thread Provider', () => {
 
       // Third message: user
       expect(messages[2].role).toBe('USER');
-      expect(messages[2].content).toBe('[Alice]: Can you help?');
+      expect(messages[2].content).toBe('<@U100:Alice>: Can you help?');
     });
 
     it('should call conversations.replies with correct parameters', async () => {
@@ -201,9 +201,9 @@ describe('Requirement: Slack Thread Provider', () => {
       const result = await provider.getRecentMessages(threadId, 3);
 
       expect(result).toHaveLength(3);
-      expect(result[0].content).toBe('[Alice]: Message 7');
-      expect(result[1].content).toBe('[Alice]: Message 8');
-      expect(result[2].content).toBe('[Alice]: Message 9');
+      expect(result[0].content).toBe('<@U100:Alice>: Message 7');
+      expect(result[1].content).toBe('<@U100:Alice>: Message 8');
+      expect(result[2].content).toBe('<@U100:Alice>: Message 9');
     });
   });
 
@@ -262,8 +262,8 @@ describe('Requirement: Slack Thread Provider', () => {
       const messages = await provider.getMessages(threadId);
 
       expect(messages).toHaveLength(2);
-      expect(messages[0].content).toBe('[Alice]: Page 1');
-      expect(messages[1].content).toBe('[Alice]: Page 2');
+      expect(messages[0].content).toBe('<@U100:Alice>: Page 1');
+      expect(messages[1].content).toBe('<@U100:Alice>: Page 2');
       expect(mockConversationsReplies).toHaveBeenCalledTimes(2);
       expect(mockConversationsReplies).toHaveBeenNthCalledWith(2, expect.objectContaining({
         cursor: 'cursor_page2',
@@ -330,8 +330,8 @@ describe('Requirement: Slack Thread Provider', () => {
       const messages = await provider.getMessages(threadId);
 
       // User messages should have sender name prepended (matching conversation engine format)
-      expect(messages[0].content).toBe('[Alice]: Hello bot');
-      expect(messages[2].content).toBe('[Bob]: Can I join?');
+      expect(messages[0].content).toBe('<@U100:Alice>: Hello bot');
+      expect(messages[2].content).toBe('<@U200:Bob>: Can I join?');
 
       // Agent messages should NOT have sender name prepended
       expect(messages[1].content).toBe('Hi there!');
@@ -382,6 +382,110 @@ describe('Requirement: Slack Thread Provider', () => {
       const messages = await provider.getMessages(threadId);
 
       expect(messages[0].senderName).toBe('U100');
+    });
+  });
+
+  describe('Scenario: Mention enrichment in message bodies', () => {
+    it('rewrites <@U…> tokens inside message text to the combined <@U…:Name> form', async () => {
+      // Alice (the sender) mentions Bob in her message body. The provider
+      // should enrich the body's <@U_BOB> token using the same users.info
+      // lookup that resolves the sender's name, so the agent sees the
+      // canonical marker for everyone referenced in the conversation.
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'hey <@U200> can you take a look?', ts: '1710000001.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockUsersInfo.mockImplementation(async ({ user }: { user: string }) => {
+        if (user === 'U100') return { user: { real_name: 'Alice' } };
+        if (user === 'U200') return { user: { real_name: 'Bob' } };
+        throw new Error(`unexpected user ${user}`);
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].content).toBe('<@U100:Alice>: hey <@U200:Bob> can you take a look?');
+    });
+
+    it('collects sender and mention IDs in a single batch (one users.info call per unique ID)', async () => {
+      // Sender U100 mentions U200 once, then U200 mentions back. There are
+      // exactly two unique IDs across senders + mentions; users.info must
+      // be called exactly twice — no N+1.
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'ping <@U200>', ts: '1710000001.000000' },
+          { user: 'U200', text: 'sup <@U100>', ts: '1710000002.000000' },
+          { user: 'U100', text: 'thanks <@U200>', ts: '1710000003.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockUsersInfo.mockImplementation(async ({ user }: { user: string }) => {
+        if (user === 'U100') return { user: { real_name: 'Alice' } };
+        if (user === 'U200') return { user: { real_name: 'Bob' } };
+        throw new Error(`unexpected user ${user}`);
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(mockUsersInfo).toHaveBeenCalledTimes(2);
+      const lookedUp = mockUsersInfo.mock.calls.map((c) => c[0].user).sort();
+      expect(lookedUp).toEqual(['U100', 'U200']);
+
+      expect(messages[0].content).toBe('<@U100:Alice>: ping <@U200:Bob>');
+      expect(messages[1].content).toBe('<@U200:Bob>: sup <@U100:Alice>');
+      expect(messages[2].content).toBe('<@U100:Alice>: thanks <@U200:Bob>');
+    });
+
+    it('sanitizes display names containing reserved marker characters', async () => {
+      // Names with `<`, `>`, `:`, or control chars would break the
+      // <@USERID:Name> regex consumers rely on. The provider must strip
+      // them before embedding the name in the marker.
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'UEVE', text: 'hello', ts: '1710000001.000000' },
+          { user: 'U100', text: 'morning <@UEVE>', ts: '1710000002.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockUsersInfo.mockImplementation(async ({ user }: { user: string }) => {
+        if (user === 'UEVE') return { user: { real_name: 'Eve: <evil>' } };
+        if (user === 'U100') return { user: { real_name: 'Alice' } };
+        throw new Error(`unexpected user ${user}`);
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      // Reserved chars stripped from BOTH the sender prefix and the
+      // enriched mention inside the body.
+      expect(messages[0].content).toBe('<@UEVE:Eve evil>: hello');
+      expect(messages[1].content).toBe('<@U100:Alice>: morning <@UEVE:Eve evil>');
+    });
+
+    it('leaves unresolved <@U…> mentions in the body as bare tokens', async () => {
+      // If users.info fails for an ID mentioned inside the body, we should
+      // NOT emit a malformed `<@U_X:>` marker — just leave the bare
+      // `<@U_X>` token in place. The sender's name still resolves; the
+      // body mention degrades gracefully.
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'who is <@UUNKNOWN> again?', ts: '1710000001.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockUsersInfo.mockImplementation(async ({ user }: { user: string }) => {
+        if (user === 'U100') return { user: { real_name: 'Alice' } };
+        // UUNKNOWN throws — getUserInfo / resolveUserNames swallows.
+        throw new Error('user_not_found');
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].content).toBe('<@U100:Alice>: who is <@UUNKNOWN> again?');
     });
   });
 
@@ -606,7 +710,7 @@ describe('Requirement: Slack Thread Provider — single-agent mode', () => {
     const messages = await provider.getMessages(threadId);
 
     expect(messages).toHaveLength(1);
-    expect(messages[0].content).toBe('[Bob]: hello from single-agent');
+    expect(messages[0].content).toBe('<@U200:Bob>: hello from single-agent');
     expect(mockGetSlackConfig).toHaveBeenCalled();
     expect(mockBackendClient.getSlackConnection).not.toHaveBeenCalled();
   });

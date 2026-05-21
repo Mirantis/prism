@@ -142,6 +142,11 @@ export class SlackThreadProvider implements ThreadMessageProvider {
 
   /**
    * Map Slack messages to ConversationMessage format.
+   *
+   * Senders and any `<@USERID>` tokens inside message bodies are rewritten to
+   * the combined `<@USERID:displayName>` form so the agent can copy the token
+   * verbatim into a reply — the Slack adapter's outbound rewrite then turns
+   * it into a real Slack mention that fires a notification.
    */
   private async mapToConversationMessages(
     threadId: string,
@@ -150,13 +155,26 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     teamId: string,
     toolCallsByTs: Map<string, Prisma.JsonValue>,
   ): Promise<ConversationMessage[]> {
-    const userIds = [...new Set(
-      slackMessages
-        .filter(m => m.user && m.user !== botUserId)
-        .map(m => m.user!)
-    )];
+    // Collect every Slack user ID we'll need a name for: senders + any
+    // user mentioned via `<@U…>` inside message bodies. Resolved in one batch.
+    const senderIds = slackMessages
+      .filter(m => m.user && m.user !== botUserId)
+      .map(m => m.user!);
+    const mentionIds = slackMessages.flatMap(m =>
+      [...(m.text || '').matchAll(/<@([A-Z0-9]+)>/g)].map(match => match[1]),
+    );
+    const userIds = [...new Set([...senderIds, ...mentionIds])];
 
     const userNames = await this.resolveUserNames(userIds, teamId);
+
+    const sanitizeName = (name: string): string =>
+      name.replace(/[<>:\x00-\x1f]/g, '').trim() || name;
+
+    const enrichMentions = (text: string): string =>
+      text.replace(/<@([A-Z0-9]+)>/g, (_match, uid: string) => {
+        const name = userNames.get(uid);
+        return name ? `<@${uid}:${sanitizeName(name)}>` : `<@${uid}>`;
+      });
 
     return slackMessages.map(msg => {
       // Only treat messages from OUR bot as AGENT — other bots are treated as users
@@ -165,13 +183,16 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         ? 'Agent'
         : userNames.get(msg.user!) || msg.user || 'Unknown';
 
-      // Prepend [senderName]: for user messages when we have a real sender and non-empty text
-      const text = msg.text || '';
+      const rawText = msg.text || '';
+      const enrichedText = enrichMentions(rawText);
+
+      // Prefix user messages with the sender's combined mention marker so
+      // the agent always sees the canonical token for whoever is speaking.
       let content: string;
-      if (isOurAgent || !msg.user || !text) {
-        content = text;
+      if (isOurAgent || !msg.user || !enrichedText) {
+        content = enrichedText;
       } else {
-        content = `[${senderName}]: ${text}`;
+        content = `<@${msg.user}:${sanitizeName(senderName)}>: ${enrichedText}`;
       }
 
       return {

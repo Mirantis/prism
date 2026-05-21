@@ -312,58 +312,6 @@ describe('Requirement: Conversation Engine', () => {
     });
   });
 
-  describe('Scenario: Sender name prepending for Slack messages', () => {
-    it('should prepend sender name for Slack messages with senderName', async () => {
-      await conversationEngineService.chat({
-        userId: 'user-123',
-        agentId: 'agent-123',
-        message: 'what pods are running?',
-        metadata: {
-          channel: 'slack',
-          channelId: 'C123',
-          senderName: 'Alice',
-          senderSlackUserId: 'U123',
-          slackThreadTs: '1000',
-        },
-      });
-
-      expect(mockAddMessage).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ content: '[Alice]: what pods are running?' })
-      );
-      expect(mockInvokeStream).toHaveBeenCalledWith(
-        expect.objectContaining({ prompt: '[Alice]: what pods are running?' })
-      );
-    });
-
-    it('should not prepend when senderName is missing', async () => {
-      await conversationEngineService.chat({
-        userId: 'user-123',
-        agentId: 'agent-123',
-        message: 'what pods are running?',
-        metadata: { channel: 'slack', channelId: 'C123', slackThreadTs: '1000' },
-      });
-
-      expect(mockAddMessage).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ content: 'what pods are running?' })
-      );
-    });
-
-    it('should not prepend for DM messages (no metadata)', async () => {
-      await conversationEngineService.chat({
-        userId: 'user-123',
-        agentId: 'agent-123',
-        message: 'what pods are running?',
-      });
-
-      expect(mockAddMessage).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ content: 'what pods are running?' })
-      );
-    });
-  });
-
   describe('Scenario: Channel context includes threadId', () => {
     it('should include threadId in channelContext when metadata has slack channel info', async () => {
       await conversationEngineService.chat({

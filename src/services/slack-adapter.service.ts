@@ -176,8 +176,12 @@ class SlackAdapterService implements ChannelAdapter {
         }
 
         try {
-          const formatted = formatSlackMessage(
+          const outboundText = await this.rewriteOutboundMentions(
             message.content,
+            connection.teamId,
+          );
+          const formatted = formatSlackMessage(
+            outboundText,
             message.triggeredBy || undefined,
             (message.toolCalls as Array<{ tool: string }>) ?? undefined,
             includeFeedback ? { feedbackMessageId: message.id } : undefined,
@@ -253,8 +257,12 @@ class SlackAdapterService implements ChannelAdapter {
     }
 
     try {
-      const formatted = formatSlackMessage(
+      const outboundText = await this.rewriteOutboundMentions(
         content,
+        mapping.connection.teamId,
+      );
+      const formatted = formatSlackMessage(
+        outboundText,
         undefined,
         toolCalls,
         includeFeedback && messageId ? { feedbackMessageId: messageId } : undefined,
@@ -588,6 +596,16 @@ class SlackAdapterService implements ChannelAdapter {
       // Resolve user mentions to display names
       const resolvedText = await this.resolveMentions(messageText, teamId);
 
+      // Look up the sender's Slack identity and tag the message with the
+      // sender's <@USERID:Name> marker so the agent can emit a real
+      // mention back to them on reply.
+      const senderInfo = await this.getUserInfo(slackUserId, teamId);
+      const taggedText = this.buildSenderTaggedContent(
+        slackUserId,
+        senderInfo?.real_name || senderInfo?.name,
+        resolvedText,
+      );
+
       // Route through local conversation engine (direct call).
       // Pass metadata.channel so the engine builds a channelContext and the
       // reply is scoped to Slack only — without it, delivery falls through
@@ -595,7 +613,7 @@ class SlackAdapterService implements ChannelAdapter {
       await conversationEngineService.chat({
         userId: mapping.lensUserId!,
         agentId: mapping.agentId,
-        message: resolvedText,
+        message: taggedText,
         metadata: { channel: 'slack' },
       });
     } catch (error: unknown) {
@@ -780,19 +798,21 @@ class SlackAdapterService implements ChannelAdapter {
       // Strip bot mention only, then resolve remaining user mentions to display names
       const withoutBot = messageText.replace(new RegExp(`<@${botUserId}>`, 'g'), '').trim();
       const text = await this.resolveMentions(withoutBot, mapping.connection.teamId);
+      const senderName = userInfo?.real_name || userInfo?.name;
+      const taggedText = this.buildSenderTaggedContent(slackUserId, senderName, text);
 
       // Route through local conversation engine (direct call)
       await conversationEngineService.chat({
         userId,
         agentId: mapping.agentId,
         threadId: thread.id,
-        message: text,
+        message: taggedText,
         metadata: {
           channel: 'slack',
           channelId,
           slackThreadTs: slackThreadId,
           senderSlackUserId: slackUserId,
-          senderName: userInfo?.real_name || userInfo?.name,
+          senderName,
         },
       });
     } catch (error: unknown) {
@@ -1345,10 +1365,41 @@ class SlackAdapterService implements ChannelAdapter {
   }
 
   /**
-   * Resolve user mentions in message text
+   * Build the sender-tagged form of an inbound message — `<@U:Name>: text`.
    *
-   * Replaces <@USERID> patterns with @display_name using the Slack API,
-   * and converts broadcast mentions (<!channel>, <!here>, <!everyone>) to readable form.
+   * The agent's conversation history then carries the speaker's canonical
+   * Slack mention token, which the agent can copy verbatim into a reply
+   * (where `rewriteOutboundMentions()` strips the embedded name and Slack
+   * fires a real notification).
+   *
+   * Falls back to `[Name]: text` when only the display name is known,
+   * and to the bare message when nothing is known.
+   */
+  private buildSenderTaggedContent(
+    slackUserId: string | undefined,
+    senderName: string | undefined,
+    text: string,
+  ): string {
+    if (!senderName) return text;
+    const sanitized = senderName.replace(/[<>:\x00-\x1f]/g, '').trim() || senderName;
+    const tag = slackUserId ? `<@${slackUserId}:${sanitized}>` : `[${senderName}]`;
+    return `${tag}: ${text}`;
+  }
+
+  /**
+   * Resolve user mentions on inbound Slack text.
+   *
+   * Rewrites each bare `<@USERID>` token to the combined form
+   * `<@USERID:displayName>` so downstream consumers (the agent, the stored
+   * message history) see both the canonical ID and a human-readable name.
+   * `rewriteOutboundMentions()` is the inverse and is applied before
+   * delivering agent output back to Slack.
+   *
+   * Idempotent over already-resolved `<@USERID:Name>` tokens — the regex
+   * only matches the bare form (no colon).
+   *
+   * Also converts broadcast mentions (`<!channel>`, `<!here>`, `<!everyone>`)
+   * to readable plain-text form.
    */
   private async resolveMentions(text: string, teamId: string): Promise<string> {
     // Convert broadcast mentions first
@@ -1357,7 +1408,8 @@ class SlackAdapterService implements ChannelAdapter {
       .replace(/<!here>/g, '@here')
       .replace(/<!everyone>/g, '@everyone');
 
-    // Find all user mention patterns
+    // Match only the bare <@ID> form so this function is idempotent over
+    // already-resolved <@ID:Name> tokens.
     const mentionPattern = /<@([A-Z0-9]+)>/g;
     const matches = [...resolved.matchAll(mentionPattern)];
     if (matches.length === 0) return resolved;
@@ -1371,8 +1423,53 @@ class SlackAdapterService implements ChannelAdapter {
       })
     );
     for (const match of matches) {
-      const displayName = userInfoMap.get(match[1]) || match[1];
-      resolved = resolved.replace(match[0], `@${displayName}`);
+      const rawName = userInfoMap.get(match[1]) || match[1];
+      // Sanitize: strip `>`, `:`, and control chars so the combined marker
+      // stays unambiguous for the inverse regex.
+      const sanitizedName = rawName.replace(/[<>:\x00-\x1f]/g, '').trim() || match[1];
+      resolved = resolved.replace(match[0], `<@${match[1]}:${sanitizedName}>`);
+    }
+    return resolved;
+  }
+
+  /**
+   * Inverse of {@link resolveMentions} for outbound delivery.
+   *
+   * Converts each `<@USERID:displayName>` (or bare `<@USERID>`) the agent
+   * emitted back into Slack's native `<@USERID>` mention syntax, which Slack
+   * renders as a clickable user pill and uses to fire a real notification.
+   *
+   * Best-effort validation: any USERID that does not resolve via
+   * {@link getUserInfo} is treated as hallucinated or stale. With an
+   * embedded display name we downgrade to plain `@displayName`; without
+   * one, the unknown bare token is dropped.
+   */
+  private async rewriteOutboundMentions(text: string, teamId: string): Promise<string> {
+    const mentionPattern = /<@([A-Z0-9]+)(?::([^>]+))?>/g;
+    const matches = [...text.matchAll(mentionPattern)];
+    if (matches.length === 0) return text;
+
+    const uniqueUserIds = [...new Set(matches.map((m) => m[1]))];
+    const validity = new Map<string, boolean>();
+    await Promise.all(
+      uniqueUserIds.map(async (uid) => {
+        const userInfo = await this.getUserInfo(uid, teamId);
+        validity.set(uid, userInfo !== null);
+      })
+    );
+
+    let resolved = text;
+    for (const match of matches) {
+      const [token, uid, embeddedName] = match;
+      if (validity.get(uid)) {
+        resolved = resolved.replace(token, `<@${uid}>`);
+      } else if (embeddedName) {
+        logger.info('Downgrading unknown Slack mention %s to plain text', uid);
+        resolved = resolved.replace(token, `@${embeddedName}`);
+      } else {
+        logger.info('Dropping unknown bare Slack mention %s', uid);
+        resolved = resolved.replace(token, '');
+      }
     }
     return resolved;
   }
