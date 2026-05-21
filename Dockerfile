@@ -37,15 +37,19 @@ RUN npx tsc
 
 # Build web bundle as a self-contained step — web/ is not wired up as an npm
 # workspace in this repo, so install its deps here and run its build script.
+# `--userconfig` points npm at the mounted secret .npmrc; npm doesn't walk up
+# from the cwd to find it, so without this flag @lensapp/* deps 404.
 COPY web ./web
 RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
-    cd web && npm install --no-audit --ignore-scripts && npm run build
+    cd web && npm install --userconfig=/app/.npmrc --no-audit --ignore-scripts \
+ && npm run build
 
 # Build the prism CLI the same way — also not a declared workspace. Bundled
 # into the image so an operator can `docker exec -it <container> prism`.
 COPY cli ./cli
 RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
-    cd cli && npm install --no-audit --ignore-scripts && npm run build
+    cd cli && npm install --userconfig=/app/.npmrc --no-audit --ignore-scripts \
+ && npm run build
 
 # Stage 2: Production
 FROM node:24-bookworm-slim AS runner
@@ -141,7 +145,7 @@ COPY --from=builder /app/web/dist ./web/dist
 # in-container default (http://localhost:3003).
 COPY cli/package.json ./cli/
 RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
-    cd cli && npm install --omit=dev --no-audit --ignore-scripts
+    cd cli && npm install --userconfig=/app/.npmrc --omit=dev --no-audit --ignore-scripts
 COPY --from=builder /app/cli/dist ./cli/dist
 RUN chmod +x /app/cli/dist/index.js \
  && ln -s /app/cli/dist/index.js /usr/local/bin/prism
