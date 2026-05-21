@@ -7,27 +7,14 @@ scheduling in-process, manages Slack connections via Bolt SDK with Socket Mode,
 runs the conversation engine and message delivery locally, and delivers results
 directly to users via local channel adapters (WebSocket, Slack).
 
-## Deployment modes
+## Deployment shape
 
-Two deployment topologies share this codebase; `config.singleAgentMode`
-(env `SINGLE_AGENT_MODE`) selects at startup.
-
-- **Multi-tenant (default)**: shared PostgreSQL + pgvector, backend
-  mediates access, Slack connections come from the backend's
-  `SlackConnection` table (encrypted bot tokens, decrypted with
-  `ENCRYPTION_KEY`). Bedrock via AWS SigV4.
-- **Single-agent**: one `AGENT_ID` per container, no backend, embedded
-  SQLite + sqlite-vec at `file:/data/agent.db`. Slack creds come from
-  env (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`), validated via
-  `auth.test` on boot; may be Nexus credential sentinels
-  (`__nexus_cred:<uuid>__`) rewritten by the MITM proxy. Bedrock via
-  Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the SDK auto-selects
-  Bearer over SigV4. No `ENCRYPTION_KEY` needed. No pg-boss.
-
-Most of the sections below describe the runtime behaviors that apply
-to both modes; the ones that diverge (database source, Slack connection
-source, backend communication, env vars, startup sequence) flag the
-single-agent shape inline.
+One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
+`file:/data/agent.db`. Slack creds come from env (`SLACK_BOT_TOKEN`,
+`SLACK_APP_TOKEN`), validated via `auth.test` on boot; may be Nexus
+credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
+proxy. Bedrock via Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the
+SDK auto-selects Bearer over SigV4 when set.
 
 ## Local development (single-agent mode)
 
@@ -126,12 +113,12 @@ Vite-proxy-shaped that would mask a real bug.
 
 ## Principles
 
-- **Self-sufficient** - Builds its own context locally: reads agent data and conversation history directly from its own database (PostgreSQL in multi-tenant, SQLite in single-agent).
+- **Self-sufficient** - Builds its own context locally: reads agent data and conversation history directly from its own embedded SQLite database.
 - **Owns conversation engine** - Runs `ConversationEngineService` locally: manages chat flow, thread management, and iterates `invokeStream()` directly (no HTTP, no queue) so each step is delivered as it arrives.
 - **Owns message delivery** - Runs `MessageDeliveryService` locally: stores messages via `conversationService` and delivers via local adapters. User-initiated messages deliver only to the originating channel; autonomous messages (heartbeat/cron) broadcast to all connected channels.
 - **Owns channel adapters** - WebSocket and Slack adapters run locally, registered with `messageDeliveryService` in `index.ts`.
 - **Owns scheduling** - Heartbeat timers and cron jobs run in-process (not in the backend).
-- **Owns Slack connections** - Runs Bolt apps with Socket Mode, receives and routes messages, handles verification codes, calls Slack APIs directly. In multi-tenant mode, SlackConnection data (tokens, workspace info) is fetched from the backend via `/internal/api/slack-connections` -- agent-runtime does NOT have direct database access to the backend's `SlackConnection` table. In single-agent mode, the one connection is synthesized from `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars (validated via `auth.test` on boot; see `lib/slack-config.ts`). Bot token in env may be a Nexus credential sentinel that the MITM proxy rewrites on the wire; a `SlackWebClient` subclass (`lib/slack-web-client.ts`) strips the body `token` field so auth flows only via the `Authorization` header.
+- **Owns Slack connections** - Runs Bolt apps with Socket Mode, receives and routes messages, handles verification codes, calls Slack APIs directly. The one connection is synthesized from `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars (validated via `auth.test` on boot; see `lib/slack-config.ts`). Bot token in env may be a Nexus credential sentinel that the MITM proxy rewrites on the wire; a `SlackWebClient` subclass (`lib/slack-web-client.ts`) strips the body `token` field so auth flows only via the `Authorization` header.
 - **Owns agent data** - Agent CRUD, ownership validation, nexus token management, and subagent relationships via `agentWorkspaceService` (direct Prisma access). `CreateAgentInput` requires a pre-generated `id` field -- the backend generates the UUID and passes it when creating the `AgentWorkspace`. Note: `orgId` and `teamId` are NOT in `AgentWorkspace` -- they live exclusively in the backend-only `Agent` table.
 - **Direct database access** - Has its own Prisma client (Postgres in multi-tenant, SQLite in single-agent; selected at runtime in `lib/prisma.ts`) for agent data (CRUD, ownership, nexus tokens, subagents), conversation data (threads, messages, active thread resolution), agent field updates (heartbeat timestamp, heartbeat status), cron task state (list, update run timestamps, delete one-shot tasks), Slack message queue drain (pending heartbeat trigger messages), and Slack mapping CRUD. In single-agent mode, vector search over `memory_entries.embedding` goes through a sibling `better-sqlite3` handle that loads the `sqlite-vec` extension (see `lib/sqlite-bootstrap.ts`).
 - **No direct imports from backend** - Communicates via HTTP and MCP only.

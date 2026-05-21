@@ -11,7 +11,6 @@
 import { AgentWorkspace, Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../lib/prisma';
-import { encryptToken, decryptToken } from '../utils/encryption';
 import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
 import { logger } from '../logger';
 import { config } from '../config';
@@ -113,28 +112,17 @@ class AgentWorkspaceService {
   // ============================================================================
 
   async getNexusMcpAgentToken(agentId: string): Promise<string | null> {
-    // Single-agent mode doesn't use the multi-tenant encrypted Nexus MCP
-    // token. Tool creds are injected at the sandbox proxy layer instead,
-    // so there's nothing to decrypt here — skip to silence the log noise.
-    if (config.singleAgentMode) return null;
+    // Tool creds are injected at the sandbox proxy layer; this is kept for
+    // operators that explicitly stored a token via the store_nexus_token tool.
     const agent = await this.getAgentById(agentId);
-    if (!agent.nexusMcpAgentToken) {
-      return null;
-    }
-    try {
-      return decryptToken(agent.nexusMcpAgentToken);
-    } catch (error) {
-      logger.error('[AgentCrud] Failed to decrypt Nexus MCP token for agent %s: %s', agentId, error instanceof Error ? error.message : String(error));
-      return null;
-    }
+    return agent.nexusMcpAgentToken ?? null;
   }
 
   async setNexusMcpAgentToken(agentId: string, token: string | null, nexusAgentTokenId?: string | null): Promise<void> {
-    const encryptedToken = token ? encryptToken(token) : null;
     await prisma.agentWorkspace.update({
       where: { id: agentId },
       data: {
-        nexusMcpAgentToken: encryptedToken,
+        nexusMcpAgentToken: token,
         ...(nexusAgentTokenId !== undefined ? { nexusAgentTokenId } : {}),
       },
     });

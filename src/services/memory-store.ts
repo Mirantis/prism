@@ -1,19 +1,14 @@
 /**
  * Memory Embedding Store
  *
- * Provider-aware wrapper around vector storage + search for memory entries.
- * - Postgres: pgvector via Prisma raw SQL (existing behavior, lifted as-is).
- * - SQLite (single-agent mode): sqlite-vec `memory_entry_vec` virtual table
- *   via a sibling better-sqlite3 handle, because Prisma's SQLite engine
- *   refuses `load_extension`.
- *
- * Consumers (`embedding.service.ts`) call through this abstraction rather
- * than inlining raw SQL. The active store is picked once at module load
- * based on `config.singleAgentMode`.
+ * Vector storage + search for memory entries via sqlite-vec's
+ * `memory_entry_vec` virtual table, accessed through a sibling
+ * better-sqlite3 handle (Prisma's SQLite engine refuses
+ * `load_extension`). Consumers (`embedding.service.ts`) call through
+ * this abstraction rather than inlining raw SQL.
  */
 
 import prisma from '../lib/prisma';
-import { config } from '../config';
 import { logger } from '../logger';
 import { initSqliteVec, EMBEDDING_DIMENSION } from '../lib/sqlite-bootstrap';
 import type { MemorySearchResult } from './memory-manager.service';
@@ -38,72 +33,7 @@ export interface MemoryEmbeddingStore {
 }
 
 // ============================================================================
-// Postgres (pgvector) implementation — current behavior lifted from
-// embedding.service.ts without functional change.
-// ============================================================================
-
-const pgStore: MemoryEmbeddingStore = {
-  async storeEmbedding(entryId, embedding) {
-    if (embedding.length !== EMBEDDING_DIMENSION) {
-      throw new Error(
-        `Embedding dimensionality mismatch: expected ${EMBEDDING_DIMENSION}, got ${embedding.length}`,
-      );
-    }
-    const vectorStr = `[${embedding.join(',')}]`;
-    await prisma.$executeRaw`UPDATE "memory_entries" SET "embedding" = ${vectorStr}::vector WHERE "id" = ${entryId}`;
-  },
-
-  async searchByEmbedding(agentId, queryEmbedding, options) {
-    const threshold = options.similarityThreshold ?? DEFAULT_SIMILARITY_THRESHOLD;
-
-    if (queryEmbedding.length !== EMBEDDING_DIMENSION) {
-      logger.warn(
-        { agentId, actual: queryEmbedding.length, expected: EMBEDDING_DIMENSION },
-        'Skipping embedding search due to dimension mismatch',
-      );
-      return [];
-    }
-
-    const vectorStr = `[${queryEmbedding.join(',')}]`;
-    const clampedLimit = Math.max(1, Math.min(options.limit, MAX_SEARCH_LIMIT));
-
-    const categoryFilter = options.categories?.length
-      ? `AND "category" = ANY($6::text[])`
-      : '';
-
-    const sql = `
-      SELECT "id", "content", "category", "importance", "createdAt"
-      FROM "memory_entries"
-      WHERE "agentId" = $1
-        AND "embedding" IS NOT NULL
-        AND "createdAt" >= $2
-        AND 1 - ("embedding" <=> $3::vector) >= $4
-        ${categoryFilter}
-      ORDER BY "embedding" <=> $3::vector ASC
-      LIMIT $5
-    `;
-
-    const params: unknown[] = [agentId, options.cutoffDate, vectorStr, threshold, clampedLimit];
-    if (options.categories?.length) {
-      params.push(options.categories);
-    }
-
-    const rows = await prisma.$queryRawUnsafe<
-      Array<{ id: string; content: string; category: string; importance: number; createdAt: Date }>
-    >(sql, ...params);
-
-    return rows.map((row) => ({
-      id: row.id,
-      content: row.content,
-      category: row.category,
-      importance: row.importance,
-      createdAt: row.createdAt,
-    }));
-  },
-};
-
-// ============================================================================
-// SQLite (sqlite-vec) implementation — new.
+// SQLite (sqlite-vec) implementation.
 //
 // `memory_entries` (Prisma table) stores metadata + a packed Float32Array
 // blob in the `embedding` column so the durable source of truth survives
@@ -225,6 +155,4 @@ const sqliteStore: MemoryEmbeddingStore = {
 // Module-level selector
 // ============================================================================
 
-export const memoryEmbeddingStore: MemoryEmbeddingStore = config.singleAgentMode
-  ? sqliteStore
-  : pgStore;
+export const memoryEmbeddingStore: MemoryEmbeddingStore = sqliteStore;

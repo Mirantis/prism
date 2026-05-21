@@ -1,22 +1,29 @@
 /**
- * Slack Config (single-agent mode)
+ * Slack Config
  *
- * When SINGLE_AGENT_MODE is on, Slack configuration comes from env
- * (`SLACK_BOT_TOKEN`) rather than backend's `SlackConnection` table.
- * At first access we validate the token via Slack's `auth.test` + `bots.info`
- * (mirroring backend's `configureSlack` controller) and cache the resulting
- * `SlackConnectionRecord`-shaped singleton. Everything downstream
+ * Slack configuration comes from env (`SLACK_BOT_TOKEN`). At first access
+ * we validate the token via Slack's `auth.test` + `bots.info` and cache
+ * the resulting `SlackConnectionRecord` singleton. Downstream services
  * (`slack-adapter.service`, `slack-mapping.service`, `slack-thread.provider`)
- * consumes the same shape it consumes from `backendClient` today.
+ * consume the same shape.
  *
- * If `SLACK_EXPECTED_APP_ID` is set, the bot token's `app_id` must match —
- * same safety net backend enforces today. Unset means "any app accepted".
+ * If `SLACK_EXPECTED_APP_ID` is set, the bot token's `app_id` must match.
+ * Unset means "any app accepted".
  */
 
 import { config } from '../config';
 import { logger } from '../logger';
 import { SlackWebClient } from './slack-web-client';
-import type { SlackConnectionRecord } from './backend-client';
+
+export interface SlackConnectionRecord {
+  id: string;
+  teamId: string;
+  teamName: string;
+  botToken: string;
+  botUserId: string;
+  installedAt: string;
+  isActive: boolean;
+}
 
 let cached: SlackConnectionRecord | null | undefined;
 let inflight: Promise<SlackConnectionRecord | null> | undefined;

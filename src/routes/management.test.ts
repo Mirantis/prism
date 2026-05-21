@@ -8,7 +8,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import { Prisma } from '@prisma/client';
-import { config } from '../config';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -179,58 +178,7 @@ describe('Management Routes', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    config.internalApiSecret = 'test-secret';
-    // The auth + most lifecycle tests exercise the multi-tenant path. The
-    // single-agent CI job runs the same suite with `SINGLE_AGENT_MODE=true`
-    // in env, which would otherwise make `internalAuth` a no-op and break
-    // the 401/500 assertions. Force multi-tenant for the default suite.
-    config.singleAgentMode = false;
     app = createApp();
-  });
-
-  // ==========================================================================
-  // Authentication
-  // ==========================================================================
-
-  describe('authentication', () => {
-    it('returns 401 without Authorization header', async () => {
-      const res = await request(app)
-        .post('/agents/agent-1/heartbeat/start')
-        .send({ agent: { id: 'agent-1', userId: 'user-1' } });
-
-      expect(res.status).toBe(401);
-      expect(res.body.error).toBe('Unauthorized');
-    });
-
-    it('returns 401 with incorrect token', async () => {
-      const res = await request(app)
-        .post('/agents/agent-1/heartbeat/start')
-        .set('Authorization', 'Bearer wrong-secret')
-        .send({ agent: { id: 'agent-1', userId: 'user-1' } });
-
-      expect(res.status).toBe(401);
-    });
-
-    it('returns 500 when INTERNAL_API_SECRET is not configured', async () => {
-      config.internalApiSecret = undefined;
-      app = createApp();
-
-      const res = await request(app)
-        .post('/agents/agent-1/heartbeat/start')
-        .set('Authorization', 'Bearer anything')
-        .send({ agent: { id: 'agent-1', userId: 'user-1' } });
-
-      expect(res.status).toBe(500);
-      expect(res.body.error).toContain('INTERNAL_API_SECRET');
-    });
-
-    it('passes through with valid token', async () => {
-      const res = await authedRequest(app)
-        .post('/agents/agent-1/heartbeat/stop')
-        .send();
-
-      expect(res.status).toBe(200);
-    });
   });
 
   // ==========================================================================
@@ -1726,34 +1674,11 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
-  // Backup / restore (single-agent only)
+  // Backup / restore
   // ==========================================================================
 
   describe('backup / restore', () => {
-    describe('multi-tenant mode', () => {
-      it('GET /agents/:agentId/export returns 404', async () => {
-        // singleAgentMode defaults to false in beforeEach
-        const res = await authedRequest(app).get('/agents/agent-1/export');
-        expect(res.status).toBe(404);
-        expect(res.body.error).toBe('Not in single-agent mode');
-      });
-
-      it('POST /agents/:agentId/import returns 404', async () => {
-        const res = await authedRequest(app)
-          .post('/agents/agent-1/import')
-          .attach('file', Buffer.from('not-a-real-archive'), 'backup.prism');
-        expect(res.status).toBe(404);
-        expect(res.body.error).toBe('Not in single-agent mode');
-      });
-    });
-
-    describe('single-agent mode', () => {
-      beforeEach(() => {
-        config.singleAgentMode = true;
-        app = createApp();
-      });
-
-      it('GET /agents/:agentId/export streams a gzipped snapshot', async () => {
+    it('GET /agents/:agentId/export streams a gzipped snapshot', async () => {
         mockGetAgentById.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
         const { Readable } = await import('stream');
         const payload = Buffer.from('fake-gzip-payload');
@@ -1825,6 +1750,5 @@ describe('Management Routes', () => {
         expect(res.body.error).toContain('Missing');
         expect(mockImportAgent).not.toHaveBeenCalled();
       });
-    });
   });
 });

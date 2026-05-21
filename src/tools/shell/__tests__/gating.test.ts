@@ -1,35 +1,12 @@
 /**
- * Gating: getShellTools() returns the shell tool record only when
- * `config.singleAgentMode` is true. In multi-tenant mode the same
- * tool surface is served by the Nexus-hosted shell sandbox — the
- * in-process registration here would conflict.
+ * getShellTools() returns the shell tool record. The tool surface is the
+ * in-process implementation an operator can invoke from a sandboxed agent.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { getShellTools } from '../index';
 
-vi.mock('../../../config', () => ({
-  config: { singleAgentMode: false },
-}));
-
-import { config } from '../../../config';
-
-async function importFresh() {
-  vi.resetModules();
-  return import('../index');
-}
-
-describe('getShellTools gating', () => {
-  beforeEach(() => {
-    (config as { singleAgentMode: boolean }).singleAgentMode = false;
-  });
-
-  it('returns an empty record in multi-tenant mode', async () => {
-    const { getShellTools } = await importFresh();
-    expect(Object.keys(getShellTools())).toEqual([]);
-  });
-
-  it('returns the expected tools when single-agent mode is on', async () => {
-    (config as { singleAgentMode: boolean }).singleAgentMode = true;
-    const { getShellTools } = await importFresh();
+describe('getShellTools', () => {
+  it('returns the expected tools', () => {
     const names = Object.keys(getShellTools()).sort();
     expect(names).toEqual(
       [

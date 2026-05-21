@@ -29,16 +29,8 @@ class EmbeddingService {
       return provider.embedding(config.bedrockEmbeddingModelId);
     }
 
-    if (config.singleAgentMode) {
-      const provider = createBedrockProvider();
-      return provider.embedding(config.bedrockEmbeddingModelId);
-    }
-
-    logger.debug(
-      { agentId, hasAgentToken: Boolean(agentToken), hasNexusLlmBaseUrl: Boolean(config.nexusLlmBaseUrl) },
-      'No Nexus agent token or LLM base URL — skipping embedding',
-    );
-    return null;
+    const provider = createBedrockProvider();
+    return provider.embedding(config.bedrockEmbeddingModelId);
   }
 
   /**

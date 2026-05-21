@@ -1,22 +1,12 @@
-// SQLite variant of the agent-runtime schema.
-// Used in SINGLE_AGENT_MODE where each container owns a file-backed DB
-// (e.g. DATABASE_URL=file:/data/agent.db).
-//
-// Kept manually in sync with ../schema.prisma (the Postgres source of truth).
-// Differences vs the Postgres schema:
-//   - datasource.provider = sqlite
-//   - MemoryEntry.embedding is Bytes? (packed Float32Array) instead of
-//     pgvector's Unsupported("vector(1024)"). Vector search happens
-//     via the `memory_entry_vec` vec0 virtual table (not modeled in
-//     Prisma — created at runtime via better-sqlite3 + sqlite-vec).
-//   - @db.Text annotations stripped (no-op on SQLite, Prisma warns).
-//
-// Generator output goes to a distinct path so both clients can coexist
-// in node_modules, selected at runtime by config.singleAgentMode.
+// Agent-runtime schema (SQLite).
+// Each container owns a file-backed DB (DATABASE_URL=file:/data/agent.db
+// by default). MemoryEntry.embedding is Bytes? (packed Float32Array);
+// vector search happens via the `memory_entry_vec` vec0 virtual table
+// (not modeled in Prisma — created at runtime via better-sqlite3 +
+// sqlite-vec).
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../../node_modules/.prisma/client-sqlite"
 }
 
 datasource db {
