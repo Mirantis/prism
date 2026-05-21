@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - 'Dockerfile'
-      - 'Dockerfile.nexus-sandbox'
       - 'src/**'
       - 'web/**'
       - 'cli/**'
@@ -32,14 +31,5 @@ jobs:
           docker build \
             --secret id=npmrc,src=.npmrc-secret \
             -f Dockerfile \
-            .
-          rm -f .npmrc-secret
-
-      - name: Build nexus-sandbox Docker image
-        run: |
-          printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > .npmrc-secret
-          docker build \
-            --secret id=npmrc,src=.npmrc-secret \
-            -f Dockerfile.nexus-sandbox \
             .
           rm -f .npmrc-secret
