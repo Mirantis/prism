@@ -10,7 +10,11 @@ FROM node:24-bookworm-slim AS builder
 
 WORKDIR /app
 
+# All three workspace manifests up front so a single root `npm ci` resolves
+# the full graph (root + web + cli) against the committed lockfile.
 COPY package.json package-lock.json ./
+COPY web/package.json ./web/
+COPY cli/package.json ./cli/
 
 # Skip husky install in Docker
 ENV HUSKY=0
@@ -35,21 +39,14 @@ RUN npx prisma generate \
 # Build runtime TypeScript
 RUN npx tsc
 
-# Build web bundle as a self-contained step — web/ is not wired up as an npm
-# workspace in this repo, so install its deps here and run its build script.
-# `--userconfig` points npm at the mounted secret .npmrc; npm doesn't walk up
-# from the cwd to find it, so without this flag @lensapp/* deps 404.
+# Build the web bundle from the workspace.
 COPY web ./web
-RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
-    cd web && npm install --userconfig=/app/.npmrc --no-audit --ignore-scripts \
- && npm run build
+RUN npm run build --workspace=prism-agent-web
 
-# Build the prism CLI the same way — also not a declared workspace. Bundled
-# into the image so an operator can `docker exec -it <container> prism`.
+# Build the prism CLI from the workspace. Bundled into the image so an
+# operator can `docker exec -it <container> prism`.
 COPY cli ./cli
-RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
-    cd cli && npm install --userconfig=/app/.npmrc --no-audit --ignore-scripts \
- && npm run build
+RUN npm run build --workspace=prism-cli
 
 # Stage 2: Production
 FROM node:24-bookworm-slim AS runner
@@ -80,12 +77,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iptables \
     && rm -rf /var/lib/apt/lists/*
 
-# Install only production dependencies
-# .npmrc mounted as secret so token never persists in image layers
+# Install only production dependencies. Scope to root + cli — the web
+# workspace's node_modules isn't needed at runtime (we only ship its
+# built dist/), so skip it to keep the image smaller.
+# .npmrc mounted as secret so token never persists in image layers.
 COPY package.json package-lock.json ./
+COPY web/package.json ./web/
+COPY cli/package.json ./cli/
 
 RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
-    npm ci --omit=dev --ignore-scripts
+    npm ci --workspace=prism-cli --include-workspace-root --omit=dev --ignore-scripts
 
 # `npm ci --ignore-scripts` skipped better-sqlite3's prebuild-install step
 # (which downloads the platform-specific native binding). Rebuild just that
@@ -142,10 +143,8 @@ COPY --from=builder /app/web/dist ./web/dist
 
 # prism CLI: Ink-based TUI for talking to this runtime. Bundled so an
 # operator can `docker exec -it <container> prism` and connect over the
-# in-container default (http://localhost:3003).
-COPY cli/package.json ./cli/
-RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
-    cd cli && npm install --userconfig=/app/.npmrc --omit=dev --no-audit --ignore-scripts
+# in-container default (http://localhost:3003). Prod deps were installed
+# by the workspace-scoped `npm ci` above; just drop in the built dist.
 COPY --from=builder /app/cli/dist ./cli/dist
 RUN chmod +x /app/cli/dist/index.js \
  && ln -s /app/cli/dist/index.js /usr/local/bin/prism
