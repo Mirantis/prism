@@ -1,0 +1,252 @@
+/**
+ * Message Delivery Service
+ *
+ * Unified entry point for all agent messages. Provides a single publish() function
+ * that handles both persistence (storing in DB) and delivery (sending to all channels).
+ *
+ * Key design principles:
+ * - All agent messages go through publish() - one function for store + deliver
+ * - Callers don't need to know about channels or database details
+ * - Adding new channels requires zero changes to calling code
+ * - Consistent logging and error handling across all channels
+ */
+
+import { ConversationMessage } from '@prisma/client';
+import { ChannelAdapter } from './channel-adapter.interface';
+import { conversationService } from './conversation.service';
+import { logger } from '../logger';
+
+// ============================================================================
+// Types
+// ============================================================================
+
+/**
+ * What triggered this message
+ */
+export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK';
+
+/**
+ * Options for publishing a message
+ */
+export interface PublishOptions {
+  /** Tool calls made during message generation */
+  toolCalls?: Array<{
+    tool: string;
+    input: string;
+    output: string;
+    success: boolean;
+    timestamp: string;
+  }>;
+  /** UI blocks for rich rendering */
+  blocks?: unknown[];
+  /**
+   * Per-message context: routing (channel/channelId/threadTs) + rendering
+   * hints (e.g. `includeFeedback`). The caller (conversation engine for
+   * user turns; heartbeat/cron leave it undefined) is the single owner of
+   * this object — `publish` just forwards it.
+   */
+  channelContext?: {
+    channel: 'slack' | 'websocket';
+    channelId?: string;
+    threadTs?: string;
+    /** Internal database thread ID */
+    threadId: string;
+    includeFeedback?: boolean;
+  };
+}
+
+/**
+ * Result of delivery to a single adapter
+ */
+interface DeliveryResult {
+  adapter: string;
+  delivered: boolean;
+  reason?: string;
+}
+
+// ============================================================================
+// Message Delivery Service
+// ============================================================================
+
+export class MessageDeliveryService {
+  private adapters: ChannelAdapter[] = [];
+
+  /**
+   * Register a channel adapter
+   */
+  register(adapter: ChannelAdapter): void {
+    this.adapters.push(adapter);
+    logger.info('Registered channel adapter: %s', adapter.name);
+  }
+
+  /**
+   * Get all registered adapters (for testing)
+   */
+  getAdapters(): readonly ChannelAdapter[] {
+    return this.adapters;
+  }
+
+  /**
+   * SINGLE FUNCTION: Store message in DB + deliver to all channels
+   */
+  async publish(
+    userId: string,
+    threadId: string,
+    content: string,
+    triggeredBy: MessageTrigger,
+    options?: PublishOptions
+  ): Promise<ConversationMessage> {
+    // 1. Store in database directly via Prisma
+    const message = await conversationService.addMessage(threadId, {
+      content,
+      role: 'AGENT',
+      triggeredBy,
+      toolCalls: options?.toolCalls,
+      blocks: options?.blocks,
+    });
+
+    // 2. Deliver to all connected channels.
+    // channelContext is the single source of routing + rendering hints; we
+    // forward it as-is and let the adapter decide what to do with it.
+    await this.deliverToAll(userId, message, options?.channelContext);
+
+    return message;
+  }
+
+  /**
+   * Publish a message for autonomous background services (heartbeat, cron)
+   *
+   * Gets or creates the active thread for the user before publishing.
+   */
+  async publishToActiveThread(
+    agentId: string,
+    userId: string,
+    content: string,
+    triggeredBy: 'HEARTBEAT' | 'CRON_TASK',
+    options?: PublishOptions
+  ): Promise<ConversationMessage> {
+    // Get or create active thread for this user
+    const thread = await conversationService.getOrCreateActiveThread(agentId, userId);
+
+    // Use the standard publish method
+    return this.publish(userId, thread.id, content, triggeredBy, options);
+  }
+
+  /**
+   * Internal: Deliver to all connected channels
+   */
+  private async deliverToAll(
+    userId: string,
+    message: ConversationMessage,
+    channelContext?: PublishOptions['channelContext']
+  ): Promise<void> {
+    if (this.adapters.length === 0) {
+      logger.warn('No channel adapters registered, message stored but not delivered');
+      return;
+    }
+
+    // Fail-closed: USER_INPUT replies must always be scoped to a channel.
+    // If a caller forgot to pass channelContext, broadcasting would leak the
+    // reply to every connected adapter (e.g. a Slack DM response showing up
+    // in webchat). Better to log loudly and drop delivery than to leak.
+    // Heartbeat/cron (HEARTBEAT/CRON_TASK) legitimately broadcast and are unaffected.
+    if (!channelContext && message.triggeredBy === 'USER_INPUT') {
+      logger.error(
+        '[MessageDelivery] user-input message %s (thread %s) lacks channelContext — skipping delivery to prevent cross-channel leak',
+        message.id,
+        message.threadId,
+      );
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      this.adapters.map(async (adapter): Promise<DeliveryResult> => {
+        try {
+          // When channelContext is set (user-initiated), only deliver to the originating channel.
+          // When channelContext is absent (heartbeat/cron), broadcast to all connected channels.
+          if (channelContext) {
+            if (channelContext.channel !== adapter.name) {
+              return { adapter: adapter.name, delivered: false, reason: 'not originating channel' };
+            }
+          }
+          const connected = await adapter.isUserConnected(userId);
+          if (connected) {
+            await adapter.deliver(userId, message, channelContext);
+            return { adapter: adapter.name, delivered: true };
+          }
+          return { adapter: adapter.name, delivered: false, reason: 'not connected' };
+        } catch (error: unknown) {
+          logger.error('Failed to deliver via %s: %s', adapter.name, error instanceof Error ? error.message : String(error));
+          return { adapter: adapter.name, delivered: false, reason: error instanceof Error ? error.message : String(error) };
+        }
+      })
+    );
+
+    const delivered = results.filter(
+      (r) => r.status === 'fulfilled' && r.value.delivered
+    ).length;
+
+    const adapterStatuses = results.map((r) => {
+      if (r.status === 'fulfilled') {
+        return r.value.delivered ? `${r.value.adapter}:✓` : `${r.value.adapter}:✗`;
+      }
+      return `unknown:err`;
+    });
+
+    logger.info(
+      'Message delivered to %d/%d channel(s) for user %s [%s]',
+      delivered, this.adapters.length, userId, adapterStatuses.join(', ')
+    );
+  }
+
+  /**
+   * Initialize all registered adapters
+   */
+  async initializeAll(): Promise<void> {
+    logger.info('Initializing %d channel adapter(s)', this.adapters.length);
+
+    for (const adapter of this.adapters) {
+      try {
+        await adapter.initialize();
+        logger.info('%s adapter initialized', adapter.name);
+      } catch (error: unknown) {
+        logger.error('Failed to initialize %s: %s', adapter.name, error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+
+  /**
+   * Shutdown all registered adapters
+   */
+  async shutdownAll(): Promise<void> {
+    logger.info('Shutting down %d channel adapter(s)', this.adapters.length);
+
+    for (const adapter of this.adapters) {
+      try {
+        await adapter.shutdown();
+        logger.info('%s adapter shut down', adapter.name);
+      } catch (error: unknown) {
+        logger.error('Failed to shutdown %s: %s', adapter.name, error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+
+  /**
+   * Check if any adapter has an active connection for a user
+   */
+  async isUserConnectedToAny(userId: string): Promise<boolean> {
+    for (const adapter of this.adapters) {
+      try {
+        if (await adapter.isUserConnected(userId)) {
+          return true;
+        }
+      } catch {
+        // Ignore errors, continue checking
+      }
+    }
+    return false;
+  }
+}
+
+// Export singleton instance
+export const messageDeliveryService = new MessageDeliveryService();

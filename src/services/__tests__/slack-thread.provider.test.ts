@@ -1,0 +1,647 @@
+/**
+ * Slack Thread Provider Tests
+ *
+ * Tests for SlackThreadProvider covering:
+ * - Message fetching from Slack API
+ * - Message mapping to ConversationMessage format
+ * - Role detection (bot vs user)
+ * - User name resolution
+ * - Pagination handling
+ * - Error cases (missing thread metadata, no Slack app, no mapping)
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// ============================================================================
+// Mocks
+// ============================================================================
+
+// Pin singleAgentMode=false at module load — most tests in this file
+// exercise the multi-tenant flow (backendClient-mediated SlackConnection
+// lookup). The dedicated single-agent describe at the bottom flips this
+// per-test via the outer beforeEach.
+vi.mock('../../config', () => ({
+  config: { singleAgentMode: false },
+}));
+
+const { mockPrisma, mockBackendClient, mockGetSlackConfig } = vi.hoisted(() => ({
+  mockPrisma: {
+    conversationThread: {
+      findUnique: vi.fn(),
+    },
+    slackMapping: {
+      findFirst: vi.fn(),
+    },
+    conversationMessage: {
+      findMany: vi.fn(),
+    },
+  },
+  mockBackendClient: {
+    getSlackConnection: vi.fn(),
+  },
+  // Single-agent mode resolves SlackConnection via slack-config's
+  // env-sourced singleton (see lib/slack-source.ts:21,29).
+  mockGetSlackConfig: vi.fn(),
+}));
+
+vi.mock('../../lib/prisma', () => ({
+  default: mockPrisma,
+}));
+
+vi.mock('../../lib/backend-client', () => ({
+  backendClient: mockBackendClient,
+}));
+
+vi.mock('../../lib/slack-config', () => ({
+  getSlackConfig: mockGetSlackConfig,
+}));
+
+const mockConversationsReplies = vi.fn();
+const mockUsersInfo = vi.fn();
+
+const mockGetAppForTeam = vi.fn();
+
+vi.mock('../slack-adapter.service', () => ({
+  slackAdapterService: {
+    getAppForTeam: (...args: unknown[]) => mockGetAppForTeam(...args),
+  },
+}));
+
+// Import after mocking
+import { config } from '../../config';
+import { SlackThreadProvider } from '../providers/slack-thread.provider';
+
+// File-wide reset: every test starts in multi-tenant mode. The
+// `Single-agent mode` describe at the bottom flips this back to true in
+// its own inner beforeEach (which runs after this one).
+beforeEach(() => {
+  (config as { singleAgentMode: boolean }).singleAgentMode = false;
+  mockGetSlackConfig.mockReset();
+});
+
+// ============================================================================
+// Test Setup
+// ============================================================================
+
+const threadId = 'thread-001';
+const channelId = 'C12345';
+const threadTs = '1710000000.000000';
+const teamId = 'T_TEAM1';
+const botUserId = 'B001';
+
+function setupMockApp() {
+  mockGetAppForTeam.mockReturnValue({
+    app: {
+      client: {
+        conversations: { replies: mockConversationsReplies },
+        users: { info: mockUsersInfo },
+      },
+    },
+    botUserId,
+    teamId,
+    teamName: 'Test Workspace',
+    isSocketMode: true,
+  });
+}
+
+function setupThreadMetadata() {
+  mockPrisma.conversationThread.findUnique.mockResolvedValue({
+    externalChannelId: channelId,
+    externalThreadId: threadTs,
+  });
+
+  mockPrisma.slackMapping.findFirst.mockResolvedValue({
+    connectionId: 'conn-001',
+  });
+
+  mockBackendClient.getSlackConnection.mockResolvedValue({
+    id: 'conn-001',
+    teamId,
+    botUserId,
+    isActive: true,
+  });
+}
+
+describe('Requirement: Slack Thread Provider', () => {
+  let provider: SlackThreadProvider;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    provider = new SlackThreadProvider();
+    setupMockApp();
+    setupThreadMetadata();
+    mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+  });
+
+  describe('Scenario: Basic message fetching', () => {
+    it('should fetch and map Slack thread messages', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'Hello bot', ts: '1710000001.000000' },
+          { user: botUserId, text: 'Hi there!', ts: '1710000002.000000' },
+          { user: 'U100', text: 'Can you help?', ts: '1710000003.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockUsersInfo.mockResolvedValue({
+        user: { real_name: 'Alice', name: 'alice' },
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages).toHaveLength(3);
+
+      // First message: user
+      expect(messages[0].role).toBe('USER');
+      expect(messages[0].content).toBe('[Alice]: Hello bot');
+      expect(messages[0].senderName).toBe('Alice');
+      expect(messages[0].senderExternalId).toBe('U100');
+
+      // Second message: bot
+      expect(messages[1].role).toBe('AGENT');
+      expect(messages[1].content).toBe('Hi there!');
+      expect(messages[1].senderName).toBeNull();
+
+      // Third message: user
+      expect(messages[2].role).toBe('USER');
+      expect(messages[2].content).toBe('[Alice]: Can you help?');
+    });
+
+    it('should call conversations.replies with correct parameters', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [],
+        response_metadata: {},
+      });
+
+      await provider.getMessages(threadId);
+
+      expect(mockConversationsReplies).toHaveBeenCalledWith({
+        channel: channelId,
+        ts: threadTs,
+        limit: 200,
+      });
+    });
+  });
+
+  describe('Scenario: Recent messages with limit', () => {
+    it('should return only the last N messages', async () => {
+      const messages = Array.from({ length: 10 }, (_, i) => ({
+        user: 'U100',
+        text: `Message ${i}`,
+        ts: `171000000${i}.000000`,
+      }));
+
+      mockConversationsReplies.mockResolvedValue({
+        messages,
+        response_metadata: {},
+      });
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+
+      const result = await provider.getRecentMessages(threadId, 3);
+
+      expect(result).toHaveLength(3);
+      expect(result[0].content).toBe('[Alice]: Message 7');
+      expect(result[1].content).toBe('[Alice]: Message 8');
+      expect(result[2].content).toBe('[Alice]: Message 9');
+    });
+  });
+
+  describe('Scenario: Bot detection', () => {
+    it('should treat other bots as USER, not AGENT', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U_OTHER', bot_id: 'B_SOMETHING', text: 'Other bot message', ts: '1710000001.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockUsersInfo.mockResolvedValue({
+        user: { real_name: 'Some Bot', name: 'somebot' },
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].role).toBe('USER');
+      expect(messages[0].senderName).toBe('Some Bot');
+    });
+
+    it('should detect our bot by matching botUserId', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: botUserId, text: 'Agent message', ts: '1710000001.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].role).toBe('AGENT');
+      expect(messages[0].senderName).toBeNull();
+    });
+  });
+
+  describe('Scenario: Pagination', () => {
+    it('should paginate through multiple pages of replies', async () => {
+      mockConversationsReplies
+        .mockResolvedValueOnce({
+          messages: [
+            { user: 'U100', text: 'Page 1', ts: '1710000001.000000' },
+          ],
+          response_metadata: { next_cursor: 'cursor_page2' },
+        })
+        .mockResolvedValueOnce({
+          messages: [
+            { user: 'U100', text: 'Page 2', ts: '1710000002.000000' },
+          ],
+          response_metadata: {},
+        });
+
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages).toHaveLength(2);
+      expect(messages[0].content).toBe('[Alice]: Page 1');
+      expect(messages[1].content).toBe('[Alice]: Page 2');
+      expect(mockConversationsReplies).toHaveBeenCalledTimes(2);
+      expect(mockConversationsReplies).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        cursor: 'cursor_page2',
+      }));
+    });
+  });
+
+  describe('Scenario: Deterministic IDs', () => {
+    it('should generate consistent IDs for the same thread+ts', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'Hello', ts: '1710000001.000000' },
+        ],
+        response_metadata: {},
+      });
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+
+      const messages1 = await provider.getMessages(threadId);
+      const messages2 = await provider.getMessages(threadId);
+
+      expect(messages1[0].id).toBe(messages2[0].id);
+    });
+  });
+
+  describe('Scenario: User name resolution', () => {
+    it('should resolve user names via Slack API', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'Hello', ts: '1710000001.000000' },
+          { user: 'U200', text: 'World', ts: '1710000002.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockUsersInfo
+        .mockResolvedValueOnce({ user: { real_name: 'Alice', name: 'alice' } })
+        .mockResolvedValueOnce({ user: { real_name: 'Bob', name: 'bob' } });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].senderName).toBe('Alice');
+      expect(messages[1].senderName).toBe('Bob');
+    });
+
+    it('should include sender name in message content for LLM context', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'Hello bot', ts: '1710000001.000000' },
+          { user: botUserId, text: 'Hi there!', ts: '1710000002.000000' },
+          { user: 'U200', text: 'Can I join?', ts: '1710000003.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockUsersInfo
+        .mockImplementation(async ({ user }: { user: string }) => {
+          const users: Record<string, { real_name: string; name: string }> = {
+            U100: { real_name: 'Alice', name: 'alice' },
+            U200: { real_name: 'Bob', name: 'bob' },
+          };
+          return { user: users[user] || undefined };
+        });
+
+      const messages = await provider.getMessages(threadId);
+
+      // User messages should have sender name prepended (matching conversation engine format)
+      expect(messages[0].content).toBe('[Alice]: Hello bot');
+      expect(messages[2].content).toBe('[Bob]: Can I join?');
+
+      // Agent messages should NOT have sender name prepended
+      expect(messages[1].content).toBe('Hi there!');
+    });
+
+    it('should not prepend sender name for messages without a user', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { text: 'System message with no user', ts: '1710000001.000000' },
+          { user: undefined, text: 'Another system message', ts: '1710000002.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].content).toBe('System message with no user');
+      expect(messages[1].content).toBe('Another system message');
+    });
+
+    it('should not prepend sender name for messages with empty text', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: '', ts: '1710000001.000000' },
+          { user: 'U100', ts: '1710000002.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].content).toBe('');
+      expect(messages[1].content).toBe('');
+    });
+
+    it('should fall back to user ID when API fails', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'Hello', ts: '1710000001.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockUsersInfo.mockRejectedValue(new Error('API error'));
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].senderName).toBe('U100');
+    });
+  });
+
+  describe('Scenario: Timestamp to Date conversion', () => {
+    it('should convert Slack ts to JavaScript Date', async () => {
+      const ts = '1710000000.000000'; // 2024-03-09T16:00:00.000Z
+      mockConversationsReplies.mockResolvedValue({
+        messages: [{ user: 'U100', text: 'Hello', ts }],
+        response_metadata: {},
+      });
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].createdAt).toEqual(new Date(1710000000 * 1000));
+    });
+  });
+
+  describe('Scenario: Error handling', () => {
+    it('should throw when thread is missing externalChannelId', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalChannelId: null,
+        externalThreadId: threadTs,
+      });
+
+      await expect(provider.getMessages(threadId)).rejects.toThrow(
+        /missing externalChannelId/
+      );
+    });
+
+    it('should throw when thread is missing externalThreadId', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalChannelId: channelId,
+        externalThreadId: null,
+      });
+
+      await expect(provider.getMessages(threadId)).rejects.toThrow(
+        /missing externalChannelId or externalThreadId/
+      );
+    });
+
+    it('should throw when no SlackMapping found for channel', async () => {
+      mockPrisma.slackMapping.findFirst.mockResolvedValue(null);
+
+      await expect(provider.getMessages(threadId)).rejects.toThrow(
+        /No SlackMapping found/
+      );
+    });
+
+    it('should throw when no Slack app found for team', async () => {
+      mockGetAppForTeam.mockReturnValue(undefined);
+
+      await expect(provider.getMessages(threadId)).rejects.toThrow(
+        /No Slack app found/
+      );
+    });
+  });
+
+  describe('Scenario: Tool call enrichment from database', () => {
+    const sampleToolCalls = [
+      { tool: 'search', input: '{"query":"test"}', output: '{"results":[]}', success: true, timestamp: '2024-03-09T16:00:02Z' },
+    ];
+
+    it('should enrich agent messages with tool calls when externalMessageId matches', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'Search for test', ts: '1710000001.000000' },
+          { user: botUserId, text: 'Here are the results', ts: '1710000002.000000' },
+        ],
+        response_metadata: {},
+      });
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+        { externalMessageId: '1710000002.000000', toolCalls: sampleToolCalls },
+      ]);
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[1].role).toBe('AGENT');
+      expect(messages[1].toolCalls).toEqual(sampleToolCalls);
+    });
+
+    it('should leave user messages unchanged', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'Hello', ts: '1710000001.000000' },
+        ],
+        response_metadata: {},
+      });
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+        { externalMessageId: '1710000001.000000', toolCalls: sampleToolCalls },
+      ]);
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].role).toBe('USER');
+      expect(messages[0].toolCalls).toBeNull();
+    });
+
+    it('should not enrich when no DB records have tool calls', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: botUserId, text: 'Plain response', ts: '1710000001.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].role).toBe('AGENT');
+      expect(messages[0].toolCalls).toBeNull();
+    });
+
+    it('should not enrich when externalMessageId does not match', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: botUserId, text: 'Response', ts: '1710000001.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+        { externalMessageId: '9999999999.000000', toolCalls: sampleToolCalls },
+      ]);
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].toolCalls).toBeNull();
+    });
+
+    it('should handle multiple agent messages with different tool calls', async () => {
+      const toolCalls1 = [{ tool: 'search', input: '{}', output: '{}', success: true, timestamp: '2024-03-09T16:00:01Z' }];
+      const toolCalls2 = [{ tool: 'deploy', input: '{}', output: '{}', success: true, timestamp: '2024-03-09T16:00:03Z' }];
+
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'Do search', ts: '1710000001.000000' },
+          { user: botUserId, text: 'Search results', ts: '1710000002.000000' },
+          { user: 'U100', text: 'Now deploy', ts: '1710000003.000000' },
+          { user: botUserId, text: 'Deployed', ts: '1710000004.000000' },
+        ],
+        response_metadata: {},
+      });
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+        { externalMessageId: '1710000002.000000', toolCalls: toolCalls1 },
+        { externalMessageId: '1710000004.000000', toolCalls: toolCalls2 },
+      ]);
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[1].toolCalls).toEqual(toolCalls1);
+      expect(messages[3].toolCalls).toEqual(toolCalls2);
+    });
+  });
+});
+
+// ============================================================================
+// Single-agent mode
+//
+// In single-agent mode the SlackConnection is the env-sourced singleton from
+// `lib/slack-config.ts`, not a backend lookup. SlackThreadProvider doesn't
+// know which mode it's in — it just calls `getSlackConnection(...)`, which
+// in `lib/slack-source.ts:28-40` branches to `getSlackConfig()` when
+// `config.singleAgentMode` is true. These tests assert the provider works
+// end-to-end through that branch and that `backendClient.getSlackConnection`
+// is never called.
+// ============================================================================
+
+describe('Requirement: Slack Thread Provider — single-agent mode', () => {
+  let provider: SlackThreadProvider;
+
+  // Synthetic singleton matching what `lib/slack-config.ts` produces.
+  // Note: id === teamId in single-agent mode.
+  const singletonRecord = {
+    id: teamId,
+    teamId,
+    teamName: 'Single-agent workspace',
+    botToken: 'xoxb-test',
+    botUserId,
+    installedAt: '2024-06-01T00:00:00Z',
+    isActive: true,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (config as { singleAgentMode: boolean }).singleAgentMode = true;
+    mockGetSlackConfig.mockResolvedValue(singletonRecord);
+
+    provider = new SlackThreadProvider();
+    setupMockApp();
+
+    // Same thread metadata setup as the multi-tenant suite, except we do
+    // NOT prime backendClient — slack-source's single-agent branch never
+    // hits it. Mappings persisted at link time still carry their original
+    // connectionId, but `getSlackConnection` returns the singleton anyway.
+    mockPrisma.conversationThread.findUnique.mockResolvedValue({
+      externalChannelId: channelId,
+      externalThreadId: threadTs,
+    });
+    mockPrisma.slackMapping.findFirst.mockResolvedValue({
+      connectionId: 'conn-001',
+    });
+    mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+  });
+
+  it('resolves the connection via getSlackConfig and never touches backendClient', async () => {
+    mockConversationsReplies.mockResolvedValue({
+      messages: [
+        { user: 'U200', text: 'hello from single-agent', ts: '1710000010.000000' },
+      ],
+      response_metadata: {},
+    });
+    mockUsersInfo.mockResolvedValue({ user: { real_name: 'Bob', name: 'bob' } });
+
+    const messages = await provider.getMessages(threadId);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe('[Bob]: hello from single-agent');
+    expect(mockGetSlackConfig).toHaveBeenCalled();
+    expect(mockBackendClient.getSlackConnection).not.toHaveBeenCalled();
+  });
+
+  it('uses the singleton even when the persisted connectionId is a legacy id', async () => {
+    // A mapping created in multi-tenant might persist a connectionId like
+    // `conn-old-uuid`. After cutover to single-agent, getSlackConnection
+    // returns the singleton regardless (per slack-source.ts:32-37 docstring).
+    mockPrisma.slackMapping.findFirst.mockResolvedValue({
+      connectionId: 'legacy-postgres-uuid-deadbeef',
+    });
+    mockConversationsReplies.mockResolvedValue({
+      messages: [{ user: botUserId, text: 'agent reply', ts: '1710000020.000000' }],
+      response_metadata: {},
+    });
+
+    const messages = await provider.getMessages(threadId);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].role).toBe('AGENT');
+    expect(mockBackendClient.getSlackConnection).not.toHaveBeenCalled();
+  });
+
+  it('throws when getSlackConfig returns null (env-sourced token unavailable)', async () => {
+    mockGetSlackConfig.mockResolvedValue(null);
+
+    // resolveSlackThread throws when getSlackConnection returns null —
+    // getMessages doesn't catch, so the error surfaces to the caller.
+    // Asserting that the error path is reached without ever falling
+    // through to backendClient validates the single-agent branch is
+    // the one taken.
+    await expect(provider.getMessages(threadId)).rejects.toThrow(
+      /No SlackConnection found for connectionId/,
+    );
+    expect(mockConversationsReplies).not.toHaveBeenCalled();
+    expect(mockBackendClient.getSlackConnection).not.toHaveBeenCalled();
+  });
+});

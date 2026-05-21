@@ -1,0 +1,1569 @@
+/**
+ * Slack Adapter Service (Agent-Runtime)
+ *
+ * Implements ChannelAdapter for Slack message delivery using Bolt SDK with Socket Mode.
+ * Handles incoming Slack messages and routes them through the backend's conversation engine.
+ *
+ * Key features:
+ * - Socket Mode for real-time bidirectional communication
+ * - One Bolt app per connected workspace
+ * - Message delivery via DM channel (personal mode) or Slack channel (team mode)
+ * - Incoming message handling via backend chat endpoint
+ * - Channel support for team agent participation
+ */
+
+import { App, LogLevel, SayFn } from '@slack/bolt';
+import { logger } from '../logger';
+import { ConversationMessage } from '@prisma/client';
+import { generateObject } from 'ai';
+import { z } from 'zod';
+import prisma from '../lib/prisma';
+import { ChannelAdapter } from './channel-adapter.interface';
+import { slackMappingService } from './slack-mapping.service';
+import { decrypt } from '../utils/encryption';
+import {
+  formatSlackMessage,
+  buildFeedbackAckBlock,
+  FEEDBACK_BLOCK_ID,
+  FEEDBACK_ACK_BLOCK_ID,
+  FEEDBACK_ACTION_UP,
+  FEEDBACK_ACTION_DOWN,
+  FEEDBACK_RATING_UP,
+  FEEDBACK_RATING_DOWN,
+  FeedbackRating,
+} from '../utils/slack-formatter';
+import { trackEvent } from '../lib/telemetry';
+import { isBedrockConfigured } from '../lib/bedrock-provider';
+import { getClassificationModel } from '../lib/nexus-provider';
+import { agentWorkspaceService } from './agent-workspace.service';
+import { slackMessageQueueService } from './slack-message-queue.service';
+import { slackHeartbeatTriggerService } from './slack-heartbeat-trigger.service';
+import { heartbeatService } from './heartbeat.service';
+import { conversationService } from './conversation.service';
+import { conversationEngineService } from './conversation-engine.service';
+import { getSlackHeartbeatThrottleQueue } from '../queues/slack-heartbeat-throttle-queue';
+import { channelLearningQueue } from '../queues/channel-learning.queue';
+import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
+import { stripBodyToken } from '../lib/slack-web-client';
+import { config } from '../config';
+
+// ============================================================================
+// Tunables
+// ============================================================================
+
+/**
+ * Duration (ms) to keep the inline "Thanks for the feedback!" ack visible
+ * before auto-removing it via a second chat.update. Short enough to feel
+ * transient, long enough that the clicker registers the confirmation.
+ */
+export const FEEDBACK_ACK_LINGER_MS = 3000;
+
+// ============================================================================
+// Types
+// ============================================================================
+
+type ThreadAction =
+  | { action: 'respond' }
+  | { action: 'react'; emoji: string }
+  | { action: 'ignore' };
+
+const threadClassificationSchema = z.object({
+  action: z.enum(['respond', 'react', 'ignore']),
+  emoji: z.string().optional(),
+});
+
+export interface SlackApp {
+  app: App;
+  teamId: string;
+  teamName: string;
+  isSocketMode: boolean;
+  botUserId: string;
+}
+
+// ============================================================================
+// Slack Adapter Service
+// ============================================================================
+
+class SlackAdapterService implements ChannelAdapter {
+  readonly name = 'slack';
+
+  /** Active Slack Bolt apps by teamId */
+  private apps: Map<string, SlackApp> = new Map();
+
+  /**
+   * Get the Slack Bolt app for a team.
+   * Used by SlackThreadProvider to access the Slack API client.
+   */
+  getAppForTeam(teamId: string): SlackApp | undefined {
+    return this.apps.get(teamId);
+  }
+
+  /**
+   * List metadata for every connected Slack workspace. Used by the
+   * Web UI to display workspace name + bot user on the Channels page.
+   */
+  listConnectedWorkspaces(): Array<{ teamId: string; teamName: string; botUserId: string }> {
+    return [...this.apps.values()].map(({ teamId, teamName, botUserId }) => ({
+      teamId,
+      teamName,
+      botUserId,
+    }));
+  }
+
+  /** Cache of user connections for quick lookup */
+  private userConnectionCache: Map<string, Set<string>> = new Map(); // lensUserId -> teamIds
+
+  /**
+   * Deliver a message to the user via Slack DM or channel
+   *
+   * If channelContext is provided and it's a Slack channel, delivers to that channel.
+   * Otherwise, sends to all connected Slack workspaces where the user has a DM mapping.
+   */
+  async deliver(
+    userId: string,
+    message: ConversationMessage,
+    channelContext?: { channel: string; channelId?: string; threadTs?: string; threadId: string; includeFeedback?: boolean }
+  ): Promise<void> {
+    const includeFeedback = channelContext?.includeFeedback === true;
+
+    // If channelContext is provided and it's for Slack, deliver to that channel
+    if (channelContext?.channel === 'slack' && channelContext.channelId) {
+      await this.deliverToChannel(
+        channelContext.channelId,
+        message.content,
+        channelContext.threadId,
+        channelContext.threadTs,
+        (message.toolCalls as Array<{ tool: string }>) ?? undefined,
+        message.id,
+        includeFeedback,
+      );
+      return;
+    }
+
+    // Look up agentId from the message's thread to scope delivery
+    const thread = await prisma.conversationThread.findUnique({
+      where: { id: message.threadId },
+      select: { agentId: true },
+    });
+
+    // Deliver to active Slack mappings, filtered by agent when possible
+    const mappings = await prisma.slackMapping.findMany({
+      where: {
+        lensUserId: userId,
+        ...(thread?.agentId && { agentId: thread.agentId }),
+      },
+    });
+
+    for (const mapping of mappings) {
+      // Fetch connection data from backend API
+      const connection = await getSlackConnection(mapping.connectionId);
+      if (!connection) {
+        logger.warn('Slack connection %s not found for mapping %s', mapping.connectionId, mapping.id);
+        continue;
+      }
+
+      // Skip inactive connections
+      if (!connection.isActive) {
+        continue;
+      }
+
+      // Deliver to DM channel (personal mode)
+      if (mapping.dmChannelId) {
+        const slackApp = this.apps.get(connection.teamId);
+        if (!slackApp) {
+          logger.warn('Slack app not found for team %s', connection.teamId);
+          continue;
+        }
+
+        try {
+          const formatted = formatSlackMessage(
+            message.content,
+            message.triggeredBy || undefined,
+            (message.toolCalls as Array<{ tool: string }>) ?? undefined,
+            includeFeedback ? { feedbackMessageId: message.id } : undefined,
+          );
+
+          const dmResponse = await slackApp.app.client.chat.postMessage({
+            channel: mapping.dmChannelId,
+            text: formatted.text,
+            blocks: formatted.blocks,
+            metadata: {
+              event_type: 'lens_platform_message',
+              event_payload: {
+                messageId: message.id,
+                threadId: message.threadId,
+                triggeredBy: message.triggeredBy,
+              },
+            },
+          });
+
+          if (dmResponse.ts) {
+            await conversationService.setExternalMessageId(message.id, dmResponse.ts);
+          }
+
+          logger.info('Delivered message to Slack DM %s for user %s', connection.teamName, userId);
+        } catch (error: unknown) {
+          const errMsg = error instanceof Error ? error.message : String(error);
+          logger.error('Slack DM delivery failed for %s: %s', connection.teamName, errMsg);
+        }
+      }
+
+      // Deliver to Slack channel (team mode)
+      if (mapping.slackChannelId) {
+        await this.deliverToChannel(
+          mapping.slackChannelId,
+          message.content,
+          message.threadId,
+          undefined,
+          (message.toolCalls as Array<{ tool: string }>) ?? undefined,
+          message.id,
+          includeFeedback,
+        );
+      }
+    }
+  }
+
+  /**
+   * Deliver a message to a Slack channel (team mode)
+   *
+   * Used when the agent is participating in a channel conversation.
+   */
+  async deliverToChannel(
+    channelId: string,
+    content: string,
+    threadId: string,
+    threadTs?: string,
+    toolCalls?: Array<{ tool: string }>,
+    messageId?: string,
+    includeFeedback: boolean = false,
+  ): Promise<void> {
+    // Find the mapping for this channel
+    const mapping = await slackMappingService.findByChannelId(channelId);
+
+    if (!mapping) {
+      logger.warn('No channel mapping found for channel %s', channelId);
+      return;
+    }
+
+    const slackApp = this.apps.get(mapping.connection.teamId);
+
+    if (!slackApp) {
+      logger.warn('Slack app not found for team %s', mapping.connection.teamId);
+      return;
+    }
+
+    try {
+      const formatted = formatSlackMessage(
+        content,
+        undefined,
+        toolCalls,
+        includeFeedback && messageId ? { feedbackMessageId: messageId } : undefined,
+      );
+
+      const response = await slackApp.app.client.chat.postMessage({
+        channel: channelId,
+        thread_ts: threadTs, // Reply in thread if specified
+        text: formatted.text,
+        blocks: formatted.blocks,
+      });
+
+      // Only set external ID when responding in an existing Slack thread.
+      // When posting a new top-level message (e.g. heartbeat/cron broadcast),
+      // skip setExternalId to avoid corrupting the webchat active thread.
+      if (threadTs) {
+        logger.info('Setting external thread ID for channel %s ts %s to threadId %s', channelId, threadTs, threadId);
+        await conversationService.setExternalId(threadId, threadTs);
+      }
+
+      // Link DB record to Slack message for tool call enrichment
+      if (messageId && response.ts) {
+        await conversationService.setExternalMessageId(messageId, response.ts);
+      }
+
+      logger.info('Delivered message to Slack channel %s', mapping.slackChannelName || channelId);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Slack channel delivery failed for %s: %s', channelId, message);
+    }
+  }
+
+  /**
+   * Check if user has an active Slack connection
+   */
+  async isUserConnected(userId: string): Promise<boolean> {
+    // Check cache first
+    const cachedTeams = this.userConnectionCache.get(userId);
+    if (cachedTeams && cachedTeams.size > 0) {
+      return true;
+    }
+
+    // Query database via slackMappingService (includes both DM and channel mappings)
+    const count = await slackMappingService.countAllMappings(userId);
+    return count > 0;
+  }
+
+  /**
+   * Initialize Slack adapter
+   *
+   * Loads all active Slack connections from the database and creates
+   * Bolt apps with Socket Mode for each workspace.
+   */
+  async initialize(): Promise<void> {
+    logger.info('Initializing Slack adapter...');
+
+    try {
+      // Source of truth for what "configured" means:
+      //   - single-agent: env `SLACK_BOT_TOKEN` (validated by slack-config).
+      //   - multi-tenant: backend's active SlackConnection rows.
+      // An empty list is the not-configured case in either mode.
+      const connections = await getActiveSlackConnections();
+      if (connections.length === 0) {
+        logger.info('No active Slack connections; adapter idle');
+        return;
+      }
+
+      for (const connection of connections) {
+        try {
+          await this.initializeConnection(connection.id);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.error('Failed to initialize Slack connection for %s: %s', connection.teamName, message);
+        }
+      }
+
+      // Build user connection cache
+      await this.rebuildUserCache();
+
+      logger.info('Slack adapter initialized: %d workspace(s)', this.apps.size);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Failed to initialize Slack adapter: %s', message);
+    }
+  }
+
+  /**
+   * Shutdown Slack adapter
+   *
+   * Stops all Bolt apps gracefully.
+   */
+  async shutdown(): Promise<void> {
+    logger.info('Shutting down Slack adapter...');
+
+    for (const [teamId, slackApp] of this.apps) {
+      try {
+        if (slackApp.isSocketMode) {
+          await slackApp.app.stop();
+        }
+        logger.info('Stopped Slack app for %s', slackApp.teamName);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error('Failed to stop Slack app for %s: %s', teamId, message);
+      }
+    }
+
+    this.apps.clear();
+    this.userConnectionCache.clear();
+  }
+
+  /**
+   * Initialize a single Slack connection
+   *
+   * Creates a Bolt app with the stored tokens and sets up message handlers.
+   */
+  async initializeConnection(connectionId: string): Promise<void> {
+    const connection = await getSlackConnection(connectionId);
+
+    if (!connection || !connection.isActive) {
+      return;
+    }
+
+    // Bot token source:
+    // - Multi-tenant: encrypted at rest in backend DB; decrypt here.
+    // - Single-agent: the token comes from env via slack-config (plaintext,
+    //   or a `__nexus_cred:…__` sentinel that the MITM swaps on the wire).
+    //   Either way, no decryption step.
+    const botToken = config.singleAgentMode ? connection.botToken : decrypt(connection.botToken);
+
+    // App token is global (from environment), not per-workspace
+    const appToken = process.env.SLACK_APP_TOKEN;
+
+    // Determine if Socket Mode is available
+    const isSocketMode = !!appToken;
+
+    // Create Bolt app. clientOptions forwards to the internal WebClient:
+    //   - `agent`: routes axios through the Nexus sandbox proxy when
+    //     `HTTPS_PROXY` is set (axios does not auto-honor it).
+    //   - `requestInterceptor: stripBodyToken`: drops the `token` field
+    //     from outbound bodies so bot-token auth flows only via
+    //     `Authorization` header — required when the bot token is a
+    //     Nexus `__nexus_cred:<uuid>__` sentinel (header-only rewrite).
+    const app = new App({
+      token: botToken,
+      ...(isSocketMode && {
+        appToken,
+        socketMode: true,
+      }),
+      clientOptions: { requestInterceptor: stripBodyToken },
+      logLevel: process.env.NODE_ENV === 'production' ? LogLevel.WARN : LogLevel.INFO,
+    });
+
+    // Handle async errors from Socket Mode to prevent process crash
+    app.error(async (error) => {
+      logger.error('Slack app error for %s: %s', connection.teamName, error instanceof Error ? error.message : String(error));
+    });
+
+    // Set up message handlers
+    this.setupMessageHandler(app, connectionId, connection.botUserId, connection.teamId);
+    this.setupChannelEventHandlers(app, connectionId, connection.botUserId);
+    this.setupFeedbackActionHandlers(app);
+
+    // Start Socket Mode if available
+    if (isSocketMode) {
+      try {
+        await app.start();
+        logger.info('Slack Socket Mode connected: %s', connection.teamName);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error('Slack Socket Mode failed for %s. The server will continue without this Slack connection: %s', connection.teamName, message);
+        return;
+      }
+    } else {
+      logger.warn('Slack connection %s - Socket Mode not available (no app token)', connection.teamName);
+    }
+
+    this.apps.set(connection.teamId, {
+      app,
+      teamId: connection.teamId,
+      teamName: connection.teamName,
+      isSocketMode,
+      botUserId: connection.botUserId,
+    });
+  }
+
+  /**
+   * Set up message handler for incoming Slack DM messages
+   */
+  private setupMessageHandler(app: App, connectionId: string, botUserId: string, teamId: string): void {
+    logger.info('Setting up message handler for team %s, bot %s', teamId, botUserId);
+
+    // Handle direct messages to the bot
+    app.message(async ({ message, say }) => {
+      try {
+        logger.info('RAW Slack message received');
+
+      // Type guard for message events
+      const msg = message as {
+        subtype?: string;
+        user?: string;
+        text?: string;
+        channel: string;
+        channel_type?: string;
+        bot_id?: string;
+        thread_ts?: string;
+        ts: string;
+      };
+
+      // Skip bot messages and message subtypes (edits, deletes, etc.)
+      if (msg.subtype) {
+        logger.info('Skipping message with subtype: %s', msg.subtype);
+        return;
+      }
+      if (!msg.user || !msg.text) {
+        logger.info('Skipping message without user or text');
+        return;
+      }
+      // In e2e tests, user tokens from Slack apps attach bot_id to every message.
+      // SLACK_SKIP_BOT_ID_CHECK=true relaxes this to only skip the bot's own messages.
+      if (msg.bot_id) {
+        if (process.env.SLACK_SKIP_BOT_ID_CHECK === 'true') {
+          if (msg.user === botUserId) {
+            logger.info('Skipping own bot message');
+            return;
+          }
+        } else {
+          logger.info('Skipping bot message');
+          return;
+        }
+      }
+
+      const slackUserId: string = msg.user;
+      const messageText: string = msg.text.trim();
+      const channelId: string = msg.channel;
+
+      logger.info('Processing message: channel=%s, channel_type=%s', channelId, msg.channel_type);
+
+      if (!messageText) {
+        logger.info('Skipping empty message');
+        return;
+      }
+
+      // Route based on channel type
+      if (msg.channel_type === 'im') {
+        logger.info('Routing to DM handler');
+        // DM message - existing logic
+        await this.handleDmMessage(connectionId, slackUserId, messageText, channelId, say, teamId, msg.ts);
+      } else {
+        logger.info('Routing to channel handler');
+        // Channel message - route to channel handler
+        await this.handleChannelMessage(
+          connectionId,
+          channelId,
+          slackUserId,
+          messageText,
+          msg.thread_ts,
+          msg.ts,
+          say,
+          botUserId,
+          teamId
+        );
+      }
+      } catch (error) {
+        // Re-extract context from the raw event — locals above are scoped inside the try.
+        const rawMsg = message as { channel?: string; channel_type?: string; user?: string; ts?: string };
+        logger.error(
+          {
+            err: error,
+            connectionId,
+            teamId,
+            channel: rawMsg.channel,
+            channelType: rawMsg.channel_type,
+            slackUserId: rawMsg.user,
+            eventTs: rawMsg.ts,
+          },
+          'Error in message handler'
+        );
+      }
+    });
+  }
+
+  /**
+   * Handle DM messages (personal agent mode)
+   */
+  private async handleDmMessage(
+    connectionId: string,
+    slackUserId: string,
+    messageText: string,
+    dmChannelId: string,
+    say: SayFn,
+    teamId: string,
+    eventTs?: string
+  ): Promise<void> {
+    logger.info('Slack DM from %s', slackUserId);
+
+    try {
+      // Check if this looks like a verification code (6 hex chars, possibly with formatting)
+      // Strip common Slack formatting: *bold*, _italic_, ~strike~
+      const strippedText = messageText.replace(/[*_~`]/g, '').trim();
+      const codeMatch = strippedText.match(/^[A-Fa-f0-9]{6}$/);
+      if (codeMatch) {
+        const code = strippedText.toUpperCase();
+        // Verify directly using local service (agent-runtime owns verification)
+        const result = await this.verifyDmLinkCode(code, slackUserId, dmChannelId);
+
+        if (result.success) {
+          await say(`✅ ${result.message}`);
+          // Rebuild user cache after linking
+          await this.rebuildUserCache();
+        } else {
+          await say(`❌ ${result.message}`);
+        }
+        return;
+      }
+
+      // Find the user mapping for this Slack user
+      const mapping = await slackMappingService.findUserMapping(connectionId, slackUserId);
+
+      if (!mapping) {
+        await say(
+          "👋 Hi! I don't recognize you yet.\n\nTo link your Lens Platform account:\n1. Go to *Settings → Channels* in the web app\n2. Click *Link Account* under Slack\n3. Send me the 6-character code you receive\n\nOnce linked, you can chat with me about your Kubernetes clusters!"
+        );
+        return;
+      }
+
+      // Store DM channel ID if not already stored
+      if (!mapping.dmChannelId) {
+        await slackMappingService.updateDmChannelId(mapping.id, dmChannelId);
+      }
+
+      // Resolve user mentions to display names
+      const resolvedText = await this.resolveMentions(messageText, teamId);
+
+      // Route through local conversation engine (direct call).
+      // Pass metadata.channel so the engine builds a channelContext and the
+      // reply is scoped to Slack only — without it, delivery falls through
+      // to the broadcast path and the DM reply leaks into webchat too.
+      await conversationEngineService.chat({
+        userId: mapping.lensUserId!,
+        agentId: mapping.agentId,
+        message: resolvedText,
+        metadata: { channel: 'slack' },
+      });
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(
+        {
+          err: error,
+          slackUserId,
+          channel: dmChannelId,
+          connectionId,
+          teamId,
+          eventTs,
+        },
+        'Slack DM processing error'
+      );
+      await say(`Sorry, I encountered an error processing your message: ${errMsg}`);
+    }
+  }
+
+  /**
+   * Handle channel messages (team agent mode)
+   *
+   * Passive learning: Queue messages for agent to learn from
+   * Active response: Only respond in threads the bot started or when mentioned
+   */
+  private async handleChannelMessage(
+    connectionId: string,
+    channelId: string,
+    slackUserId: string,
+    messageText: string,
+    threadTs: string | undefined,
+    messageTs: string,
+    say: SayFn,
+    botUserId: string,
+    teamId: string
+  ): Promise<void> {
+    // Check if this looks like a verification code FIRST (before channel link check)
+    // This allows linking an unlinked channel
+    // Strip bot mention first so "@Bot ABC123" is detected as a verification code
+    const textForCodeCheck = messageText.replace(new RegExp(`<@${botUserId}>`, 'g'), '').trim();
+    const strippedText = textForCodeCheck.replace(/[*_~`]/g, '').trim();
+    if (this.isVerificationCode(strippedText)) {
+      logger.info('Received potential verification code in channel %s', channelId);
+      const result = await this.verifyAndLinkChannel(strippedText.toUpperCase(), channelId, slackUserId, teamId);
+      try {
+        await say(result.success ? `✅ ${result.message}` : `❌ ${result.message}`);
+      } catch (sayError) {
+        logger.warn('Failed to post verification result in channel %s: %s', channelId, sayError instanceof Error ? sayError.message : String(sayError));
+      }
+      return;
+    }
+
+    // Check if this channel is a heartbeat trigger channel (direct local call)
+    const triggerCheck = await slackHeartbeatTriggerService.isHeartbeatTriggerChannel(channelId);
+
+    if (triggerCheck.isTrigger) {
+      logger.info(`[SlackAdapter] Heartbeat trigger received in channel ${channelId} for agent ${triggerCheck.agentId}`);
+      const userInfo = await this.getUserInfo(slackUserId, teamId);
+      const senderName = userInfo?.real_name || userInfo?.name || slackUserId;
+
+      await slackMessageQueueService.enqueue(triggerCheck.agentId!, {
+        sender: senderName,
+        text: messageText,
+        timestamp: new Date().toISOString(),
+      });
+      // Fire-and-forget: throttle errors shouldn't surface to the user
+      // since the message was already enqueued successfully
+      this.throttledNotify(triggerCheck.agentId!).catch((err) => {
+        logger.error('[SlackAdapter] throttledNotify failed for agent %s: %s', triggerCheck.agentId, err instanceof Error ? err.message : String(err));
+      });
+      return;
+    }
+
+    // Check if channel is linked to an agent
+    const mapping = await slackMappingService.findByChannelId(channelId);
+    if (!mapping) {
+      // Channel not linked — if the bot was @mentioned, prompt the user to link
+      if (messageText.includes(`<@${botUserId}>`)) {
+        await say("I'm not activated in this channel yet.\n\nPlease enter a verification code from your agent settings to link me.");
+      }
+      return;
+    }
+
+    // For channel mappings, lensUserId is the agent owner who linked the channel
+    // This must be set - do not fall back to connection.userId (which is the admin who installed the app)
+    if (!mapping.lensUserId) {
+      logger.warn('Channel mapping for %s has no lensUserId - skipping (legacy mapping?)', channelId);
+      if (messageText.includes(`<@${botUserId}>`)) {
+        await say("This channel has an incomplete configuration. Please unlink and re-link the channel.");
+      }
+      return;
+    }
+    const userId = mapping.lensUserId;
+
+    // Check if mentioned in the message
+    const isMentioned = messageText.includes(`<@${botUserId}>`);
+
+    logger.info(
+      'Slack channel message from %s in %s (threadTs=%s, isMentioned=%s, botUserId=%s, text=%s)',
+      slackUserId,
+      mapping.slackChannelName || channelId,
+      threadTs ?? 'none',
+      isMentioned,
+      botUserId,
+      messageText.slice(0, 80)
+    );
+
+    // For top-level messages (not in a thread), only respond if mentioned
+    if (!threadTs && !isMentioned) {
+      // Queue for passive learning (agent will process async)
+      logger.info(
+        'Queueing channel message for learning: top-level message without bot mention (agent=%s, channel=%s)',
+        mapping.agentId,
+        mapping.slackChannelName || channelId
+      );
+      await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, messageText, mapping.connection.teamId);
+      return;
+    }
+
+    // For thread messages, check if bot is participating in the thread
+    if (threadTs && !isMentioned) {
+      const { result, messages } = await this.isBotInThread(channelId, threadTs, mapping.connection.teamId);
+
+      if (result.action === 'ignore') {
+        logger.info(
+          'Queueing channel message for learning: thread message where bot is not participating (agent=%s, channel=%s)',
+          mapping.agentId,
+          mapping.slackChannelName || channelId
+        );
+        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, messageText, mapping.connection.teamId);
+        return;
+      }
+
+      if (result.action === 'react') {
+        await this.addReaction(channelId, messageTs, mapping.connection.teamId, result.emoji);
+        logger.info(
+          'Queueing channel message for learning: thread message warranted only a reaction (heuristic) (agent=%s, channel=%s)',
+          mapping.agentId,
+          mapping.slackChannelName || channelId
+        );
+        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, messageText, mapping.connection.teamId);
+        return;
+      }
+
+      // result.action === 'respond' — double-check with LLM
+      const llmResult = await this.classifyThreadMessage(messages, botUserId, mapping.agentId);
+
+      if (llmResult.action === 'ignore') {
+        logger.info(
+          'Queueing channel message for learning: LLM classifier decided to ignore thread message (agent=%s, channel=%s)',
+          mapping.agentId,
+          mapping.slackChannelName || channelId
+        );
+        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, messageText, mapping.connection.teamId);
+        return;
+      }
+
+      if (llmResult.action === 'react') {
+        await this.addReaction(channelId, messageTs, mapping.connection.teamId, llmResult.emoji);
+        logger.info(
+          'Queueing channel message for learning: LLM classifier decided only a reaction (no response) (agent=%s, channel=%s)',
+          mapping.agentId,
+          mapping.slackChannelName || channelId
+        );
+        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, messageText, mapping.connection.teamId);
+        return;
+      }
+    }
+
+    // Bot should respond - process through conversation engine
+    try {
+      // Get or create thread bound to this Slack thread
+      const slackThreadId = threadTs || messageTs;
+      const thread = await conversationService.getOrCreateThreadByExternalId(
+        userId, mapping.agentId, slackThreadId, { channelId }
+      );
+
+      // Add participant tracking
+      const userInfo = await this.getUserInfo(slackUserId, mapping.connection.teamId);
+      await this.addParticipant(thread.id, slackUserId, userInfo?.real_name || userInfo?.name || 'Unknown');
+
+      // Strip bot mention only, then resolve remaining user mentions to display names
+      const withoutBot = messageText.replace(new RegExp(`<@${botUserId}>`, 'g'), '').trim();
+      const text = await this.resolveMentions(withoutBot, mapping.connection.teamId);
+
+      // Route through local conversation engine (direct call)
+      await conversationEngineService.chat({
+        userId,
+        agentId: mapping.agentId,
+        threadId: thread.id,
+        message: text,
+        metadata: {
+          channel: 'slack',
+          channelId,
+          slackThreadTs: slackThreadId,
+          senderSlackUserId: slackUserId,
+          senderName: userInfo?.real_name || userInfo?.name,
+        },
+      });
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(
+        {
+          err: error,
+          slackUserId,
+          channel: channelId,
+          connectionId,
+          teamId,
+          threadTs,
+          messageTs,
+        },
+        'Slack channel message processing error'
+      );
+      await say({
+        text: `Sorry, I encountered an error: ${errMsg}`,
+        thread_ts: threadTs || messageTs,
+      });
+    }
+  }
+
+  /**
+   * Register Slack Block Kit action handlers for 👍/👎 feedback buttons.
+   *
+   * Socket Mode delivers block_actions events on the existing Bolt app, so no
+   * HTTP endpoint or signing-secret wiring is needed.
+   *
+   * On click:
+   *   1. ack() the interaction
+   *   2. resolve the ConversationMessage by externalMessageId (= body.message.ts)
+   *   3. emit 'message feedback' via the OTEL telemetry pipeline with userId=null
+   *      (we have no reliable Slack-user → Lens-user mapping) and the raw
+   *      Slack user id recorded as the 'slack.user.id' property
+   *   4. chat.update the Slack message: swap the actions block for an inline
+   *      'Thanks for the feedback!' context block. Visible to everyone in the
+   *      channel thread — also serves as idempotency (buttons gone → no more
+   *      clicks).
+   */
+  private setupFeedbackActionHandlers(app: App): void {
+    const handler = (rating: FeedbackRating) => async ({ ack, body, client }: {
+      ack: () => Promise<void>;
+      body: unknown;
+      client: { chat: { update: (args: unknown) => Promise<unknown> } };
+    }): Promise<void> => {
+      await ack();
+
+      try {
+        await this.handleFeedbackAction(body, client, rating);
+      } catch (error) {
+        logger.error(
+          '[SlackAdapter] Feedback action handler failed: %s',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    app.action(FEEDBACK_ACTION_UP, handler(FEEDBACK_RATING_UP) as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    app.action(FEEDBACK_ACTION_DOWN, handler(FEEDBACK_RATING_DOWN) as any);
+  }
+
+  /**
+   * Core feedback-click logic (separated so it can be unit-tested without Bolt).
+   */
+  async handleFeedbackAction(
+    body: unknown,
+    client: { chat: { update: (args: unknown) => Promise<unknown> } },
+    rating: FeedbackRating,
+  ): Promise<void> {
+    const payload = body as {
+      user?: { id?: string };
+      channel?: { id?: string };
+      message?: { ts?: string; text?: string; blocks?: Array<{ block_id?: string; type?: string }> };
+      actions?: Array<{ action_id?: string; value?: string }>;
+    };
+
+    const action = payload.actions?.[0];
+    const slackUserId = payload.user?.id;
+    const channelId = payload.channel?.id;
+    const messageTs = payload.message?.ts;
+    const messageId = action?.value;
+
+    if (!action || !slackUserId || !channelId || !messageTs || !messageId) {
+      logger.warn('[SlackAdapter] Feedback payload missing required fields');
+      return;
+    }
+
+    // Resolve the ConversationMessage + thread to capture agent/thread attrs for telemetry.
+    const conversationMessage = await prisma.conversationMessage.findFirst({
+      where: { id: messageId, externalMessageId: messageTs },
+      include: { thread: { select: { agentId: true } } },
+    });
+
+    if (!conversationMessage) {
+      logger.warn(
+        '[SlackAdapter] Feedback click for unknown message id=%s ts=%s',
+        messageId,
+        messageTs,
+      );
+      // Still acknowledge so the user isn't left with dangling buttons.
+      await this.replaceFeedbackButtonsWithAck(client, channelId, messageTs, payload.message);
+      return;
+    }
+
+    trackEvent('message feedback', null, {
+      'message.id': messageId,
+      'thread.id': conversationMessage.threadId,
+      'agent.id': conversationMessage.thread.agentId,
+      'channel.type': 'slack',
+      'feedback.rating': rating,
+      'feedback.source': 'slack_blockkit',
+      'slack.user.id': slackUserId,
+    });
+
+    await this.replaceFeedbackButtonsWithAck(client, channelId, messageTs, payload.message);
+  }
+
+  /**
+   * Swap the feedback actions block on the original Slack message for an
+   * inline generic "Thanks for the feedback!" context block via chat.update,
+   * then auto-remove that ack block after FEEDBACK_ACK_LINGER_MS so the
+   * message returns to a clean state.
+   *
+   * Visible to everyone in channel/team mode while the ack lingers — gives
+   * other viewers a transient "feedback was recorded" signal without
+   * revealing which rating was given. Also serves as idempotency: the buttons
+   * are removed on the first update so no further clicks are possible (the
+   * first rater's rating is the one captured in telemetry).
+   */
+  private async replaceFeedbackButtonsWithAck(
+    client: { chat: { update: (args: unknown) => Promise<unknown> } },
+    channelId: string,
+    messageTs: string,
+    original: { text?: string; blocks?: Array<{ block_id?: string; type?: string }> } | undefined,
+  ): Promise<void> {
+    // Strip any prior feedback-related blocks (actions + any lingering ack),
+    // so concurrent clicks or re-entries don't stack blocks.
+    const cleanedBlocks = (original?.blocks ?? []).filter(
+      (b) => b.block_id !== FEEDBACK_BLOCK_ID && b.block_id !== FEEDBACK_ACK_BLOCK_ID,
+    );
+    // Note: `text` is intentionally omitted from chat.update — Slack keeps the
+    // original notification fallback. Echoing it back tripped `msg_too_long`
+    // for very long agent replies, since slack-formatter sets text=content.
+
+    try {
+      await client.chat.update({
+        channel: channelId,
+        ts: messageTs,
+        blocks: [...cleanedBlocks, buildFeedbackAckBlock()],
+      });
+    } catch (error) {
+      logger.warn(
+        '[SlackAdapter] Failed to replace feedback buttons with ack: %s',
+        error instanceof Error ? error.message : String(error),
+      );
+      return;
+    }
+
+    // Schedule the ack block to auto-remove so the message settles back to a
+    // clean state. Best-effort: failures are logged and swallowed. unref() so
+    // a pending timer doesn't keep the process alive on shutdown.
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          await client.chat.update({
+            channel: channelId,
+            ts: messageTs,
+            blocks: cleanedBlocks,
+          });
+        } catch (error) {
+          logger.warn(
+            '[SlackAdapter] Failed to clear feedback ack block: %s',
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      })();
+    }, FEEDBACK_ACK_LINGER_MS);
+    timer.unref?.();
+  }
+
+  /**
+   * Set up channel-specific event handlers
+   */
+  private setupChannelEventHandlers(app: App, connectionId: string, botUserId: string): void {
+    // Handle bot joining a channel
+    app.event('member_joined_channel', async ({ event, client }) => {
+      const evt = event as { user: string; channel: string };
+
+      // Only handle when the bot itself joins
+      if (evt.user !== botUserId) {
+        return;
+      }
+
+      logger.info('Bot joined channel %s', evt.channel);
+
+      // Check if channel already has a linked agent
+      const existingMapping = await slackMappingService.findByChannelId(evt.channel);
+      if (existingMapping) {
+        // Already linked, no action needed
+        logger.info('Channel %s already linked to an agent', evt.channel);
+        return;
+      }
+
+      // Post welcome message asking for verification code
+      try {
+        await client.chat.postMessage({
+          channel: evt.channel,
+          text: "👋 Hi! I've been added to this channel.\n\nTo activate me, please enter the verification code from your agent settings.\nYou can find this in *Settings → Channels → Link to Channel*.",
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error('Failed to post welcome message to channel %s: %s', evt.channel, message);
+      }
+    });
+
+    // Handle bot being removed from a channel
+    app.event('member_left_channel', async ({ event }) => {
+      const evt = event as { user: string; channel: string };
+
+      // Only handle when the bot itself leaves
+      if (evt.user !== botUserId) {
+        return;
+      }
+
+      logger.info('Bot left channel %s', evt.channel);
+
+      // Remove channel mapping if exists
+      try {
+        await slackMappingService.deleteChannelMapping(evt.channel);
+        logger.info('Removed channel mapping for %s', evt.channel);
+      } catch {
+        // Mapping might not exist, that's fine
+      }
+    });
+  }
+
+  /**
+   * Check if this looks like a verification code
+   */
+  private isVerificationCode(text: string): boolean {
+    return /^[A-Fa-f0-9]{6}$/.test(text?.trim() || '');
+  }
+
+  /**
+   * Verify a DM link code directly (local Prisma — same logic as management route)
+   */
+  private async verifyDmLinkCode(
+    code: string,
+    slackUserId: string,
+    dmChannelId: string
+  ): Promise<{ success: boolean; message: string }> {
+    const upperCode = code.toUpperCase();
+    const verification = await prisma.slackVerificationCode.findUnique({
+      where: { code_type: { code: upperCode, type: 'DM' } },
+    });
+
+    if (!verification) {
+      return { success: false, message: 'Invalid code. Please generate a new code from the Lens Agents web app.' };
+    }
+
+    if (new Date() > verification.expiresAt) {
+      await prisma.slackVerificationCode.delete({
+        where: { code_type: { code: upperCode, type: 'DM' } },
+      }).catch(() => {});
+      return { success: false, message: 'Code expired. Please generate a new code from the Lens Agents web app.' };
+    }
+
+    // Check if this Slack user is already linked to someone
+    const existingSlackLink = await prisma.slackMapping.findFirst({
+      where: {
+        connectionId: verification.connectionId,
+        slackUserId,
+      },
+    });
+
+    if (existingSlackLink) {
+      if (existingSlackLink.lensUserId === verification.lensUserId) {
+        return { success: false, message: 'Your Slack account is already linked to another agent. Unlink it first from that agent\'s settings.' };
+      }
+      return { success: false, message: 'This Slack account is already linked to another Lens Platform user.' };
+    }
+
+    // Atomic: create mapping + consume code
+    await prisma.$transaction([
+      prisma.slackMapping.create({
+        data: {
+          connectionId: verification.connectionId,
+          agentId: verification.agentId,
+          slackUserId,
+          lensUserId: verification.lensUserId,
+          dmChannelId,
+        },
+      }),
+      prisma.slackVerificationCode.delete({
+        where: { code_type: { code: upperCode, type: 'DM' } },
+      }),
+    ]);
+
+    logger.info('Slack account linked via code: %s -> %s', slackUserId, verification.lensUserId);
+
+    return { success: true, message: 'Your Slack account is now linked to Lens Platform! You can now chat with your agent here.' };
+  }
+
+  /**
+   * Verify and link a channel to an agent
+   */
+  private async verifyAndLinkChannel(
+    code: string,
+    channelId: string,
+    slackUserId: string,
+    teamId?: string
+  ): Promise<{ success: boolean; message: string; agentName?: string }> {
+    try {
+      // Fetch channel name if we have teamId
+      let channelName: string | undefined;
+      if (teamId) {
+        channelName = (await this.getChannelName(channelId, teamId)) || undefined;
+      }
+
+      // Verify directly using local Prisma (same logic as management route)
+      const result = await this.verifyChannelLinkCodeLocal(code, channelId, channelName);
+
+      if (result.success) {
+        return {
+          success: true,
+          message: `Linked! I'm now connected to ${result.agentName || 'your agent'}. Mention me anytime you need help!`,
+          agentName: result.agentName,
+        };
+      }
+
+      return { success: false, message: result.message || 'Invalid or expired code' };
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      return { success: false, message: `Verification failed: ${errMsg}` };
+    }
+  }
+
+  /**
+   * Verify a channel link code directly (local Prisma)
+   */
+  private async verifyChannelLinkCodeLocal(
+    code: string,
+    channelId: string,
+    channelName?: string
+  ): Promise<{ success: boolean; message: string; agentName?: string }> {
+    const upperCode = code.toUpperCase();
+    const verification = await prisma.slackVerificationCode.findUnique({
+      where: { code_type: { code: upperCode, type: 'CHANNEL' } },
+    });
+
+    if (!verification) {
+      return { success: false, message: 'Invalid code. Please generate a new code from the Lens Agents web app.' };
+    }
+
+    if (new Date() > verification.expiresAt) {
+      await prisma.slackVerificationCode.delete({
+        where: { code_type: { code: upperCode, type: 'CHANNEL' } },
+      }).catch(() => {});
+      return { success: false, message: 'Code expired. Please generate a new code from the Lens Agents web app.' };
+    }
+
+    // Check if this channel is already linked
+    const existingChannelLink = await prisma.slackMapping.findUnique({
+      where: { slackChannelId: channelId },
+    });
+
+    if (existingChannelLink) {
+      return { success: false, message: 'This channel is already linked to an agent.' };
+    }
+
+    // Atomic: create channel mapping + consume code
+    await prisma.$transaction([
+      prisma.slackMapping.create({
+        data: {
+          connectionId: verification.connectionId,
+          agentId: verification.agentId,
+          slackChannelId: channelId,
+          slackChannelName: channelName || channelId,
+          lensUserId: verification.lensUserId,
+          slackUserId: null,
+          dmChannelId: null,
+        },
+      }),
+      prisma.slackVerificationCode.delete({
+        where: { code_type: { code: upperCode, type: 'CHANNEL' } },
+      }),
+    ]);
+
+    logger.info('Slack channel linked via code: %s -> %s\'s agent', channelId, verification.lensUserId);
+
+    return {
+      success: true,
+      message: `Channel linked to ${verification.agentName}!`,
+      agentName: verification.agentName ?? undefined,
+    };
+  }
+
+  /**
+   * Check if bot is participating in a thread (heuristic pass)
+   *
+   * Returns a ThreadAction plus the raw thread messages so the caller
+   * can forward them to the LLM classifier without re-fetching.
+   */
+  private async isBotInThread(
+    channelId: string,
+    threadTs: string,
+    teamId: string,
+  ): Promise<{ result: ThreadAction; messages: Array<{ user?: string; text?: string }> }> {
+    const slackApp = this.apps.get(teamId);
+    if (!slackApp) return { result: { action: 'ignore' }, messages: [] };
+
+    try {
+      const reply = await slackApp.app.client.conversations.replies({
+        channel: channelId,
+        ts: threadTs,
+        limit: 100,
+      });
+
+      const messages = (reply.messages || []) as Array<{ user?: string; text?: string }>;
+
+      let lastBotIndex = -1;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].user === slackApp.botUserId) {
+          lastBotIndex = i;
+          break;
+        }
+      }
+
+      // Bot never posted in this thread
+      if (lastBotIndex === -1) return { result: { action: 'ignore' }, messages };
+
+      // Check if conversation branched to another user after bot's last reply
+      for (let i = lastBotIndex + 1; i < messages.length; i++) {
+        const text = messages[i].text || '';
+        for (const match of text.matchAll(/<@([A-Z0-9]+)>/g)) {
+          if (match[1] !== slackApp.botUserId) {
+            return { result: { action: 'react', emoji: 'eyes' }, messages };
+          }
+        }
+      }
+
+      // Bot is participating and no branching detected — pass to LLM
+      return { result: { action: 'respond' }, messages };
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error('isBotInThread failed for channel %s, thread %s: %s', channelId, threadTs, errMsg);
+      return { result: { action: 'ignore' }, messages: [] };
+    }
+  }
+
+  /**
+   * Classify a thread message using a lightweight LLM (Haiku)
+   *
+   * Second pass after the heuristic. Decides whether the bot should respond,
+   * react with an emoji, or ignore the message entirely.
+   */
+  private async classifyThreadMessage(
+    messages: Array<{ user?: string; text?: string }>,
+    botUserId: string,
+    agentId: string,
+  ): Promise<ThreadAction> {
+    if (!isBedrockConfigured()) {
+      return { action: 'respond' };
+    }
+
+    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken(agentId);
+    if (!agentToken) {
+      logger.warn({ agentId }, '[Slack:ThreadClassifier] No Nexus agent token — falling back to respond');
+      return { action: 'respond' };
+    }
+
+    try {
+      const recent = messages.slice(-10);
+      const transcript = recent
+        .map((m) => {
+          const label = m.user === botUserId ? '[Bot]' : `[User:${m.user ?? 'unknown'}]`;
+          return `${label}: ${m.text ?? ''}`;
+        })
+        .join('\n');
+
+      const { object } = await generateObject({
+        model: getClassificationModel(agentToken),
+        schema: threadClassificationSchema,
+        temperature: 0,
+        system: [
+          'You are a Slack thread classifier for an AI assistant bot.',
+          'Given the recent messages in a thread, decide what the bot should do with the LAST message.',
+          '',
+          'Return a JSON object with:',
+          '- action: "respond" if the last message is directed at the bot or expects the bot to answer',
+          '- action: "react" if the bot should acknowledge it read the message but not reply (e.g. someone is talking to another human). Also pick a contextually appropriate Slack emoji name (e.g. "eyes", "thumbsup", "thinking_face", "white_check_mark").',
+          '- action: "ignore" if the message is completely irrelevant to the bot',
+          '',
+          'When action is "react", include an "emoji" field with the Slack reaction emoji name.',
+        ].join('\n'),
+        prompt: transcript,
+      });
+
+      if (object.action === 'react') {
+        return { action: 'react', emoji: object.emoji ?? 'eyes' };
+      }
+      return { action: object.action };
+    } catch (error) {
+      logger.warn('Thread classification failed, falling back to respond: %s', error instanceof Error ? error.message : String(error));
+      return { action: 'respond' };
+    }
+  }
+
+  /**
+   * Add a reaction emoji to a Slack message (best-effort, awaited).
+   *
+   * Errors are caught and logged; failures do not propagate to the caller.
+   */
+  private async addReaction(
+    channelId: string,
+    messageTs: string,
+    teamId: string,
+    emoji: string,
+  ): Promise<void> {
+    const slackApp = this.apps.get(teamId);
+    if (!slackApp) return;
+
+    try {
+      await slackApp.app.client.reactions.add({
+        channel: channelId,
+        timestamp: messageTs,
+        name: emoji,
+      });
+    } catch (error) {
+      logger.warn('Failed to add reaction %s: %s', emoji, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /**
+   * Get user info from Slack
+   */
+  private async getUserInfo(slackUserId: string, teamId: string): Promise<{ real_name?: string; name?: string } | null> {
+    const slackApp = this.apps.get(teamId);
+    if (!slackApp) return null;
+
+    try {
+      const result = await slackApp.app.client.users.info({ user: slackUserId });
+      return result.user as { real_name?: string; name?: string } | undefined ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Resolve user mentions in message text
+   *
+   * Replaces <@USERID> patterns with @display_name using the Slack API,
+   * and converts broadcast mentions (<!channel>, <!here>, <!everyone>) to readable form.
+   */
+  private async resolveMentions(text: string, teamId: string): Promise<string> {
+    // Convert broadcast mentions first
+    let resolved = text
+      .replace(/<!channel>/g, '@channel')
+      .replace(/<!here>/g, '@here')
+      .replace(/<!everyone>/g, '@everyone');
+
+    // Find all user mention patterns
+    const mentionPattern = /<@([A-Z0-9]+)>/g;
+    const matches = [...resolved.matchAll(mentionPattern)];
+    if (matches.length === 0) return resolved;
+
+    const uniqueUserIds = [...new Set(matches.map((m) => m[1]))];
+    const userInfoMap = new Map<string, string>();
+    await Promise.all(
+      uniqueUserIds.map(async (uid) => {
+        const userInfo = await this.getUserInfo(uid, teamId);
+        userInfoMap.set(uid, userInfo?.real_name || userInfo?.name || uid);
+      })
+    );
+    for (const match of matches) {
+      const displayName = userInfoMap.get(match[1]) || match[1];
+      resolved = resolved.replace(match[0], `@${displayName}`);
+    }
+    return resolved;
+  }
+
+  /**
+   * Notify with throttle awareness.
+   *
+   * Attempts an atomic claim on the trigger. If claimed, notifies immediately.
+   * If throttled, schedules a deferred notification via setTimeout.
+   */
+  private async throttledNotify(agentId: string): Promise<void> {
+    // Direct local call to the trigger service (no HTTP)
+    const result = await slackHeartbeatTriggerService.tryClaimTrigger(agentId);
+
+    if (result.claimed) {
+      try {
+        // Direct local call to heartbeat service
+        heartbeatService.triggerFromSlack(agentId);
+      } catch (error) {
+        logger.error('[ThrottledNotify] Failed to trigger heartbeat for agent %s: %s', agentId, error instanceof Error ? error.message : String(error));
+      }
+    } else if (result.remainingSeconds && result.remainingSeconds > 0) {
+      await getSlackHeartbeatThrottleQueue().scheduleDeferred(agentId, result.remainingSeconds);
+    }
+  }
+
+  /**
+   * Queue a message for passive learning
+   */
+  private async queueForLearning(
+    agentId: string,
+    userId: string,
+    channelId: string,
+    slackUserId: string,
+    messageText: string,
+    teamId: string
+  ): Promise<void> {
+    const channelName = await this.getChannelName(channelId, teamId);
+    const userInfo = await this.getUserInfo(slackUserId, teamId);
+    await channelLearningQueue.add({
+      agentId,
+      userId,
+      channelId,
+      channelName: channelName ?? undefined,
+      message: messageText,
+      senderName: userInfo?.real_name || userInfo?.name || undefined,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Add a participant to a conversation thread
+   */
+  private async addParticipant(threadId: string, externalUserId: string, displayName: string): Promise<void> {
+    try {
+      await prisma.conversationParticipant.upsert({
+        where: {
+          threadId_externalUserId_channel: {
+            threadId,
+            externalUserId,
+            channel: 'slack',
+          },
+        },
+        update: {
+          displayName,
+        },
+        create: {
+          threadId,
+          externalUserId,
+          displayName,
+          channel: 'slack',
+        },
+      });
+    } catch (error: unknown) {
+      // Log but don't fail if participant tracking fails
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn('Failed to add participant %s: %s', externalUserId, message);
+    }
+  }
+
+  /**
+   * Rebuild user connection cache from database
+   */
+  private async rebuildUserCache(): Promise<void> {
+    this.userConnectionCache.clear();
+
+    const mappings = await slackMappingService.getActiveUserMappingsWithDmChannel();
+
+    for (const mapping of mappings) {
+      if (!mapping.lensUserId) continue;
+
+      let teams = this.userConnectionCache.get(mapping.lensUserId);
+      if (!teams) {
+        teams = new Set();
+        this.userConnectionCache.set(mapping.lensUserId, teams);
+      }
+      teams.add(mapping.connection.teamId);
+    }
+
+    logger.info('Slack user cache built: %d user(s)', this.userConnectionCache.size);
+  }
+
+  /**
+   * Disconnect and stop the Bolt app for a connection, and delete all rows
+   * that reference this connectionId (SlackMapping, SlackVerificationCode,
+   * SlackHeartbeatTrigger). No FK cascade exists because SlackConnection
+   * lives in the backend-only DB.
+   *
+   * The backend has already deactivated the connection in its own database.
+   */
+  async disconnectAndDeactivate(connectionId: string): Promise<void> {
+    const connection = await getSlackConnection(connectionId);
+    if (!connection) {
+      throw new Error('Connection not found');
+    }
+
+    // Stop the Bolt app first so no new messages arrive during cleanup.
+    const slackApp = this.apps.get(connection.teamId);
+    try {
+      if (slackApp?.isSocketMode) {
+        await slackApp.app.stop();
+      }
+    } catch (error) {
+      logger.warn(
+        { error, teamId: connection.teamId, teamName: connection.teamName, connectionId },
+        'Failed to stop Slack app during disconnect; continuing with cleanup',
+      );
+    } finally {
+      this.apps.delete(connection.teamId);
+    }
+
+    // Remove all rows that reference this connectionId in a single
+    // transaction so a failure in any one delete rolls back the others —
+    // otherwise a partial cleanup would leave the caller with no clean way
+    // to retry.
+    const { mappings, codes, triggers } = await prisma.$transaction(async (tx) => {
+      const mappingCount = await slackMappingService.deleteByConnectionId(connectionId, tx);
+      const codeResult = await tx.slackVerificationCode.deleteMany({ where: { connectionId } });
+      const triggerCount = await slackHeartbeatTriggerService.deleteByConnectionId(
+        connectionId,
+        tx,
+      );
+      return { mappings: mappingCount, codes: codeResult.count, triggers: triggerCount };
+    });
+
+    // Rebuild cache after mappings are deleted so stale entries are not
+    // re-populated.
+    await this.rebuildUserCache();
+
+    logger.info(
+      { teamName: connection.teamName, mappings, codes, triggers },
+      'Disconnected Slack connection and removed mappings',
+    );
+  }
+
+  /**
+   * Create or update a user mapping
+   *
+   * Called when a Slack user links their account.
+   */
+  async linkSlackUser(
+    connectionId: string,
+    slackUserId: string,
+    lensUserId: string,
+    agentId: string,
+    dmChannelId?: string
+  ): Promise<void> {
+    await slackMappingService.upsertUserMapping(connectionId, slackUserId, lensUserId, agentId, dmChannelId);
+
+    // Rebuild cache
+    await this.rebuildUserCache();
+
+    logger.info('Linked Slack user %s to Lens user %s', slackUserId, lensUserId);
+  }
+
+  /**
+   * Get channel name from Slack API
+   */
+  async getChannelName(channelId: string, teamId: string): Promise<string | null> {
+    const slackApp = this.apps.get(teamId);
+    if (!slackApp) return null;
+
+    try {
+      const result = await slackApp.app.client.conversations.info({ channel: channelId });
+      const channel = result.channel as { name?: string } | undefined;
+      return channel?.name ?? null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+// Export singleton instance
+export const slackAdapterService = new SlackAdapterService();

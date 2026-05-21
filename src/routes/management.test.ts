@@ -1,0 +1,1830 @@
+/**
+ * Management Routes Tests
+ *
+ * Tests for all route handlers: heartbeat start/stop/trigger/status,
+ * cron schedule/unschedule, auth validation, and error responses.
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import request from 'supertest';
+import { Prisma } from '@prisma/client';
+import { config } from '../config';
+
+// ---------------------------------------------------------------------------
+// Hoisted mocks
+// ---------------------------------------------------------------------------
+
+const {
+  mockStartHeartbeat,
+  mockStopHeartbeat,
+  mockTriggerHeartbeat,
+  mockGetStatus,
+  mockScheduleTask,
+  mockUnscheduleTask,
+  mockGetAgentById,
+  mockGetThread,
+  mockListThreads,
+  mockAddMessage,
+  mockDeactivateThread,
+  mockGetOrCreateActiveThread,
+  mockSetExternalId,
+  mockGetOrCreateThreadByExternalId,
+  mockPrisma,
+  mockSlackHeartbeatTriggerService,
+} = vi.hoisted(() => ({
+  mockStartHeartbeat: vi.fn(),
+  mockStopHeartbeat: vi.fn(),
+  mockTriggerHeartbeat: vi.fn(),
+  mockGetStatus: vi.fn(),
+  mockScheduleTask: vi.fn(),
+  mockUnscheduleTask: vi.fn(),
+  mockGetAgentById: vi.fn(),
+  mockGetThread: vi.fn(),
+  mockListThreads: vi.fn(),
+  mockAddMessage: vi.fn(),
+  mockDeactivateThread: vi.fn(),
+  mockGetOrCreateActiveThread: vi.fn(),
+  mockSetExternalId: vi.fn(),
+  mockGetOrCreateThreadByExternalId: vi.fn(),
+  mockSlackHeartbeatTriggerService: {
+    isHeartbeatTriggerChannel: vi.fn(),
+    getActiveTriggers: vi.fn(),
+    createTrigger: vi.fn(),
+    updateThrottle: vi.fn(),
+    deleteTrigger: vi.fn(),
+    tryClaimTrigger: vi.fn(),
+  },
+  mockPrisma: {
+    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
+    slackVerificationCode: {
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      delete: vi.fn(),
+      deleteMany: vi.fn(),
+    },
+    slackMapping: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      create: vi.fn(),
+    },
+    cronTask: {
+      create: vi.fn(),
+      delete: vi.fn(),
+      findMany: vi.fn(),
+    },
+    agentWorkspace: {
+      update: vi.fn(),
+    },
+  },
+}));
+
+vi.mock('../services/heartbeat.service', () => ({
+  heartbeatService: {
+    startHeartbeat: mockStartHeartbeat,
+    stopHeartbeat: mockStopHeartbeat,
+    triggerHeartbeat: mockTriggerHeartbeat,
+    getStatus: mockGetStatus,
+  },
+}));
+
+vi.mock('../services/cron-scheduler.service', () => ({
+  cronSchedulerService: {
+    scheduleTask: mockScheduleTask,
+    unscheduleTask: mockUnscheduleTask,
+  },
+}));
+
+vi.mock('../services/agent-workspace.service', async () => {
+  const actual = await vi.importActual<typeof import('../services/agent-workspace.service')>(
+    '../services/agent-workspace.service',
+  );
+  // Keep the real instance (so `renameAgent` and other prototype methods stay
+  // available) but redirect `getAgentById` to the controllable mock.
+  (actual.agentWorkspaceService as unknown as { getAgentById: typeof mockGetAgentById }).getAgentById =
+    mockGetAgentById;
+  return actual;
+});
+
+vi.mock('../services/conversation.service', () => ({
+  conversationService: {
+    getThread: mockGetThread,
+    listThreads: mockListThreads,
+    addMessage: mockAddMessage,
+    deactivateThread: mockDeactivateThread,
+    getOrCreateActiveThread: mockGetOrCreateActiveThread,
+    setExternalId: mockSetExternalId,
+    getOrCreateThreadByExternalId: mockGetOrCreateThreadByExternalId,
+  },
+}));
+
+vi.mock('../services/slack-heartbeat-trigger.service', () => ({
+  slackHeartbeatTriggerService: mockSlackHeartbeatTriggerService,
+}));
+
+const { mockExportAgent, mockImportAgent } = vi.hoisted(() => ({
+  mockExportAgent: vi.fn(),
+  mockImportAgent: vi.fn(),
+}));
+
+vi.mock('../services/agent-archive.service', async () => {
+  const actual = await vi.importActual<typeof import('../services/agent-archive.service')>(
+    '../services/agent-archive.service',
+  );
+  return {
+    ...actual,
+    exportAgent: mockExportAgent,
+    importAgent: mockImportAgent,
+  };
+});
+
+
+vi.mock('../lib/prisma', () => ({
+  prisma: mockPrisma,
+}));
+
+// Must mock invoke so the createApp import chain does not pull in real dependencies
+vi.mock('../invoke', () => ({
+  invoke: vi.fn(),
+}));
+
+// ---------------------------------------------------------------------------
+// Import under test
+// ---------------------------------------------------------------------------
+
+import { createApp } from '../server';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function authedRequest(app: ReturnType<typeof createApp>) {
+  return {
+    post: (url: string) =>
+      request(app).post(url).set('Authorization', 'Bearer test-secret'),
+    get: (url: string) =>
+      request(app).get(url).set('Authorization', 'Bearer test-secret'),
+    patch: (url: string) =>
+      request(app).patch(url).set('Authorization', 'Bearer test-secret'),
+    delete: (url: string) =>
+      request(app).delete(url).set('Authorization', 'Bearer test-secret'),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('Management Routes', () => {
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    config.internalApiSecret = 'test-secret';
+    // The auth + most lifecycle tests exercise the multi-tenant path. The
+    // single-agent CI job runs the same suite with `SINGLE_AGENT_MODE=true`
+    // in env, which would otherwise make `internalAuth` a no-op and break
+    // the 401/500 assertions. Force multi-tenant for the default suite.
+    config.singleAgentMode = false;
+    app = createApp();
+  });
+
+  // ==========================================================================
+  // Authentication
+  // ==========================================================================
+
+  describe('authentication', () => {
+    it('returns 401 without Authorization header', async () => {
+      const res = await request(app)
+        .post('/agents/agent-1/heartbeat/start')
+        .send({ agent: { id: 'agent-1', userId: 'user-1' } });
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('Unauthorized');
+    });
+
+    it('returns 401 with incorrect token', async () => {
+      const res = await request(app)
+        .post('/agents/agent-1/heartbeat/start')
+        .set('Authorization', 'Bearer wrong-secret')
+        .send({ agent: { id: 'agent-1', userId: 'user-1' } });
+
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 500 when INTERNAL_API_SECRET is not configured', async () => {
+      config.internalApiSecret = undefined;
+      app = createApp();
+
+      const res = await request(app)
+        .post('/agents/agent-1/heartbeat/start')
+        .set('Authorization', 'Bearer anything')
+        .send({ agent: { id: 'agent-1', userId: 'user-1' } });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toContain('INTERNAL_API_SECRET');
+    });
+
+    it('passes through with valid token', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/heartbeat/stop')
+        .send();
+
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // ==========================================================================
+  // POST /:agentId/heartbeat/start
+  // ==========================================================================
+
+  describe('POST /:agentId/heartbeat/start', () => {
+    it('starts heartbeat and forces heartbeatStatus to ENABLED', async () => {
+      const agent = {
+        id: 'agent-1',
+        userId: 'user-1',
+        heartbeatIntervalMs: 60000,
+        heartbeatStatus: 'STOPPED',
+      };
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/heartbeat/start')
+        .send({ agent });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain('agent-1');
+      // The /start endpoint's whole purpose is to turn the heartbeat on,
+      // regardless of the body's persisted heartbeatStatus.
+      expect(mockStartHeartbeat).toHaveBeenCalledWith({
+        ...agent,
+        heartbeatStatus: 'ENABLED',
+      });
+    });
+
+    it('returns 400 when agent is missing from body', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/heartbeat/start')
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Missing agent in request body');
+    });
+
+    it('returns 500 when startHeartbeat throws', async () => {
+      mockStartHeartbeat.mockImplementation(() => {
+        throw new Error('Invalid agent');
+      });
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/heartbeat/start')
+        .send({ agent: { id: 'agent-1', userId: 'user-1' } });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Invalid agent');
+    });
+  });
+
+  // ==========================================================================
+  // POST /:agentId/heartbeat/stop
+  // ==========================================================================
+
+  describe('POST /:agentId/heartbeat/stop', () => {
+    it('stops heartbeat and returns success', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/heartbeat/stop')
+        .send();
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(mockStopHeartbeat).toHaveBeenCalledWith('agent-1');
+    });
+
+    it('returns 500 when stopHeartbeat throws', async () => {
+      mockStopHeartbeat.mockImplementation(() => {
+        throw new Error('Unexpected error');
+      });
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/heartbeat/stop')
+        .send();
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Unexpected error');
+    });
+  });
+
+  // ==========================================================================
+  // POST /:agentId/heartbeat/trigger
+  // ==========================================================================
+
+  describe('POST /:agentId/heartbeat/trigger', () => {
+    it('triggers heartbeat and returns the result', async () => {
+      mockTriggerHeartbeat.mockResolvedValue({ action: 'ok', message: 'All clear' });
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/heartbeat/trigger')
+        .send();
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.result).toEqual({ action: 'ok', message: 'All clear' });
+      expect(mockTriggerHeartbeat).toHaveBeenCalledWith('agent-1');
+    });
+
+    it('returns 500 when triggerHeartbeat rejects', async () => {
+      mockTriggerHeartbeat.mockRejectedValue(new Error('Heartbeat error'));
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/heartbeat/trigger')
+        .send();
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Heartbeat error');
+    });
+  });
+
+  // ==========================================================================
+  // GET /:agentId/heartbeat/status
+  // ==========================================================================
+
+  describe('GET /:agentId/heartbeat/status', () => {
+    it('returns heartbeat status when active', async () => {
+      mockGetStatus.mockReturnValue({
+        isActive: true,
+        lastRun: '2025-01-15T12:00:00Z',
+        isRunning: false,
+        consecutiveErrors: 0,
+      });
+
+      const res = await authedRequest(app)
+        .get('/agents/agent-1/heartbeat/status');
+
+      expect(res.status).toBe(200);
+      expect(res.body.isActive).toBe(true);
+      expect(res.body.lastRun).toBe('2025-01-15T12:00:00Z');
+    });
+
+    it('returns default inactive status when agent has no heartbeat', async () => {
+      mockGetStatus.mockReturnValue(null);
+
+      const res = await authedRequest(app)
+        .get('/agents/agent-1/heartbeat/status');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        isActive: false,
+        lastRun: null,
+        isRunning: false,
+        consecutiveErrors: 0,
+      });
+    });
+
+    it('returns 500 when getStatus throws', async () => {
+      mockGetStatus.mockImplementation(() => {
+        throw new Error('Status error');
+      });
+
+      const res = await authedRequest(app)
+        .get('/agents/agent-1/heartbeat/status');
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Status error');
+    });
+  });
+
+  // ==========================================================================
+  // PATCH /:agentId/heartbeat/interval
+  // ==========================================================================
+
+  describe('PATCH /:agentId/heartbeat/interval', () => {
+    it('updates the interval, restarts the timer, and returns the new status', async () => {
+      mockGetAgentById.mockResolvedValue({
+        id: 'agent-1',
+        userId: 'user-1',
+        heartbeatIntervalMs: 480 * 60_000,
+      });
+      const updated = { id: 'agent-1', userId: 'user-1', heartbeatIntervalMs: 5 * 60_000 };
+      mockPrisma.agentWorkspace.update.mockResolvedValue(updated);
+      mockGetStatus.mockReturnValue({
+        isActive: true,
+        lastRun: null,
+        isRunning: false,
+        consecutiveErrors: 0,
+        intervalMs: 5 * 60_000,
+      });
+
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/heartbeat/interval')
+        .send({ intervalMs: 5 * 60_000 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.intervalMs).toBe(5 * 60_000);
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: 'agent-1' },
+        data: { heartbeatIntervalMs: 5 * 60_000 },
+      });
+      expect(mockStartHeartbeat).toHaveBeenCalledWith(updated);
+      // Must NOT call stopHeartbeat — that would race the fire-and-forget
+      // status write and could leave the agent persisted as STOPPED.
+      expect(mockStopHeartbeat).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when intervalMs is missing or not a number', async () => {
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/heartbeat/interval')
+        .send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('finite number');
+    });
+
+    it('returns 400 when intervalMs is below the 1-minute floor', async () => {
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/heartbeat/interval')
+        .send({ intervalMs: 1000 });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('1 minute');
+    });
+
+    it('returns 400 when intervalMs exceeds the 1-week ceiling', async () => {
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/heartbeat/interval')
+        .send({ intervalMs: 7 * 24 * 60 * 60_000 + 1 });
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 404 when the agent is not found', async () => {
+      mockGetAgentById.mockResolvedValue(null);
+      const res = await authedRequest(app)
+        .patch('/agents/agent-x/heartbeat/interval')
+        .send({ intervalMs: 5 * 60_000 });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('Agent not found');
+    });
+
+    it('returns 500 when Prisma update throws', async () => {
+      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1' });
+      mockPrisma.agentWorkspace.update.mockRejectedValue(new Error('DB error'));
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/heartbeat/interval')
+        .send({ intervalMs: 5 * 60_000 });
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // PATCH /:agentId/name
+  // ==========================================================================
+
+  describe('PATCH /:agentId/name', () => {
+    it('renames the agent and returns the updated identity', async () => {
+      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Old' });
+      mockPrisma.agentWorkspace.update.mockResolvedValue({
+        id: 'agent-1',
+        userId: 'user-1',
+        name: 'NewName',
+      });
+
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/name')
+        .send({ name: '  NewName  ' }); // whitespace trimmed
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ agentId: 'agent-1', userId: 'user-1', name: 'NewName' });
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: 'agent-1' },
+        data: { name: 'NewName' },
+      });
+    });
+
+    it('returns 400 when name is missing', async () => {
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/name')
+        .send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('non-empty');
+    });
+
+    it('returns 400 when name is empty / only whitespace', async () => {
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/name')
+        .send({ name: '   ' });
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 400 when name exceeds 64 chars', async () => {
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/name')
+        .send({ name: 'a'.repeat(65) });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('64');
+    });
+
+    it('returns 404 when the agent is not found', async () => {
+      const p2025 = new Prisma.PrismaClientKnownRequestError(
+        'Record to update not found.',
+        { code: 'P2025', clientVersion: '0' },
+      );
+      mockPrisma.agentWorkspace.update.mockRejectedValue(p2025);
+      const res = await authedRequest(app)
+        .patch('/agents/agent-x/name')
+        .send({ name: 'NewName' });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('Agent not found');
+    });
+
+    it('returns 500 when Prisma update throws', async () => {
+      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Old' });
+      mockPrisma.agentWorkspace.update.mockRejectedValue(new Error('DB error'));
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/name')
+        .send({ name: 'NewName' });
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // POST /:agentId/cron-tasks
+  // ==========================================================================
+
+  describe('POST /:agentId/cron-tasks', () => {
+    const persistedTask = {
+      id: 'ct-1',
+      agentId: 'agent-1',
+      userId: 'user-1',
+      name: 'Daily Report',
+      schedule: '0 9 * * *',
+      instruction: 'Generate report',
+      isActive: true,
+      nextRunAt: null,
+      lastRunAt: null,
+      createdAt: new Date('2025-01-01T00:00:00Z'),
+      updatedAt: new Date('2025-01-01T00:00:00Z'),
+    };
+
+    it('creates a cron task, persists it, schedules it, and returns the row', async () => {
+      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
+      mockPrisma.cronTask.create.mockResolvedValue(persistedTask);
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/cron-tasks')
+        .send({ name: 'Daily Report', schedule: '0 9 * * *', instruction: 'Generate report' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.id).toBe('ct-1');
+      expect(res.body.name).toBe('Daily Report');
+      expect(mockPrisma.cronTask.create).toHaveBeenCalledWith({
+        data: {
+          agentId: 'agent-1',
+          userId: 'user-1',
+          name: 'Daily Report',
+          schedule: '0 9 * * *',
+          instruction: 'Generate report',
+          nextRunAt: null,
+        },
+      });
+      expect(mockScheduleTask).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'ct-1', agentId: 'agent-1', userId: 'user-1' }),
+      );
+    });
+
+    it('returns 400 when name is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/cron-tasks')
+        .send({ schedule: '0 9 * * *', instruction: 'x' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Missing required fields');
+      expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when schedule is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/cron-tasks')
+        .send({ name: 'x', instruction: 'x' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Missing required fields');
+    });
+
+    it('returns 404 when agent is not found', async () => {
+      mockGetAgentById.mockResolvedValue(null);
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-x/cron-tasks')
+        .send({ name: 'x', schedule: '0 9 * * *', instruction: 'x' });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('Agent not found');
+      expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when the schedule is not a valid cron expression', async () => {
+      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/cron-tasks')
+        .send({ name: 'x', schedule: 'definitely not a cron', instruction: 'x' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Invalid cron expression');
+      expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when Prisma create throws', async () => {
+      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
+      mockPrisma.cronTask.create.mockRejectedValue(new Error('DB error'));
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/cron-tasks')
+        .send({ name: 'x', schedule: '0 9 * * *', instruction: 'x' });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // DELETE /:agentId/cron-tasks/:taskId
+  // ==========================================================================
+
+  describe('DELETE /:agentId/cron-tasks/:taskId', () => {
+    it('unschedules and deletes the task', async () => {
+      mockPrisma.cronTask.delete.mockResolvedValue({ id: 'ct-1' });
+
+      const res = await authedRequest(app)
+        .delete('/agents/agent-1/cron-tasks/ct-1');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(mockUnscheduleTask).toHaveBeenCalledWith('ct-1');
+      expect(mockPrisma.cronTask.delete).toHaveBeenCalledWith({ where: { id: 'ct-1' } });
+    });
+
+    it('returns 404 when the task does not exist (Prisma P2025)', async () => {
+      mockPrisma.cronTask.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Not found', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      const res = await authedRequest(app)
+        .delete('/agents/agent-1/cron-tasks/ct-missing');
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('Cron task not found');
+    });
+
+    it('returns 500 when Prisma delete throws an unexpected error', async () => {
+      mockPrisma.cronTask.delete.mockRejectedValue(new Error('Delete error'));
+
+      const res = await authedRequest(app)
+        .delete('/agents/agent-1/cron-tasks/ct-1');
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Delete error');
+    });
+  });
+
+  // ==========================================================================
+  // Slack Heartbeat Trigger Management
+  // ==========================================================================
+
+  describe('GET /slack-heartbeat-trigger/channel/:channelId', () => {
+    it('returns isTrigger result for a channel', async () => {
+      mockSlackHeartbeatTriggerService.isHeartbeatTriggerChannel.mockResolvedValueOnce({
+        isTrigger: true,
+        userId: 'user-1',
+        agentId: 'agent-1',
+      });
+
+      const res = await authedRequest(app)
+        .get('/agents/slack-heartbeat-trigger/channel/C123');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ isTrigger: true, userId: 'user-1', agentId: 'agent-1' });
+      expect(mockSlackHeartbeatTriggerService.isHeartbeatTriggerChannel).toHaveBeenCalledWith('C123');
+    });
+
+    it('returns 500 when service throws', async () => {
+      mockSlackHeartbeatTriggerService.isHeartbeatTriggerChannel.mockRejectedValueOnce(
+        new Error('DB error'),
+      );
+
+      const res = await authedRequest(app)
+        .get('/agents/slack-heartbeat-trigger/channel/C123');
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  describe('GET /:agentId/slack-heartbeat-trigger', () => {
+    it('returns 400 when userId query param is missing', async () => {
+      const res = await authedRequest(app)
+        .get('/agents/agent-1/slack-heartbeat-trigger');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('userId');
+    });
+
+    it('returns active triggers for the agent', async () => {
+      const triggers = [{ id: 'trigger-1', agentId: 'agent-1', slackChannelId: 'C123' }];
+      mockSlackHeartbeatTriggerService.getActiveTriggers.mockResolvedValueOnce(triggers);
+
+      const res = await authedRequest(app)
+        .get('/agents/agent-1/slack-heartbeat-trigger?userId=user-1');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(triggers);
+      expect(mockSlackHeartbeatTriggerService.getActiveTriggers).toHaveBeenCalledWith('user-1', 'agent-1');
+    });
+
+    it('returns 500 when service throws', async () => {
+      mockSlackHeartbeatTriggerService.getActiveTriggers.mockRejectedValueOnce(
+        new Error('DB error'),
+      );
+
+      const res = await authedRequest(app)
+        .get('/agents/agent-1/slack-heartbeat-trigger?userId=user-1');
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  describe('POST /:agentId/slack-heartbeat-trigger', () => {
+    it('returns 400 when required fields are missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/slack-heartbeat-trigger')
+        .send({ connectionId: 'conn-1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('connectionId');
+    });
+
+    it('creates a trigger and returns 201', async () => {
+      const trigger = {
+        id: 'trigger-new',
+        connectionId: 'conn-1',
+        slackChannelId: 'C123',
+        agentId: 'agent-1',
+      };
+      mockSlackHeartbeatTriggerService.createTrigger.mockResolvedValueOnce(trigger);
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/slack-heartbeat-trigger')
+        .send({
+          connectionId: 'conn-1',
+          channelId: 'C123',
+          channelName: 'general',
+          userId: 'user-1',
+          throttleSeconds: 300,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toEqual(trigger);
+      expect(mockSlackHeartbeatTriggerService.createTrigger).toHaveBeenCalledWith(
+        'conn-1', 'C123', 'general', 'agent-1', 'user-1', 300,
+      );
+    });
+
+    it('passes null channelName when omitted', async () => {
+      mockSlackHeartbeatTriggerService.createTrigger.mockResolvedValueOnce({ id: 'trigger-new' });
+
+      await authedRequest(app)
+        .post('/agents/agent-1/slack-heartbeat-trigger')
+        .send({ connectionId: 'conn-1', channelId: 'C123', userId: 'user-1' });
+
+      expect(mockSlackHeartbeatTriggerService.createTrigger).toHaveBeenCalledWith(
+        'conn-1', 'C123', null, 'agent-1', 'user-1', undefined,
+      );
+    });
+
+    it('returns 500 when service throws', async () => {
+      mockSlackHeartbeatTriggerService.createTrigger.mockRejectedValueOnce(
+        new Error('Unique constraint'),
+      );
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/slack-heartbeat-trigger')
+        .send({ connectionId: 'conn-1', channelId: 'C123', userId: 'user-1' });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Unique constraint');
+    });
+  });
+
+  describe('PATCH /:agentId/slack-heartbeat-trigger', () => {
+    it('returns 400 when required fields are missing', async () => {
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/slack-heartbeat-trigger')
+        .send({ triggerId: 'trigger-1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('triggerId');
+    });
+
+    it('updates throttle and returns the updated trigger', async () => {
+      const updated = { id: 'trigger-1', throttleSeconds: 600 };
+      mockSlackHeartbeatTriggerService.updateThrottle.mockResolvedValueOnce(updated);
+
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/slack-heartbeat-trigger')
+        .send({ triggerId: 'trigger-1', userId: 'user-1', throttleSeconds: 600 });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(updated);
+      expect(mockSlackHeartbeatTriggerService.updateThrottle).toHaveBeenCalledWith(
+        'trigger-1', 'user-1', 600,
+      );
+    });
+
+    it('returns 404 when trigger is not found', async () => {
+      mockSlackHeartbeatTriggerService.updateThrottle.mockResolvedValueOnce(null);
+
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/slack-heartbeat-trigger')
+        .send({ triggerId: 'trigger-missing', userId: 'user-1', throttleSeconds: 600 });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain('not found');
+    });
+
+    it('returns 500 when service throws', async () => {
+      mockSlackHeartbeatTriggerService.updateThrottle.mockRejectedValueOnce(
+        new Error('DB error'),
+      );
+
+      const res = await authedRequest(app)
+        .patch('/agents/agent-1/slack-heartbeat-trigger')
+        .send({ triggerId: 'trigger-1', userId: 'user-1', throttleSeconds: 600 });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  describe('DELETE /:agentId/slack-heartbeat-trigger/:id', () => {
+    it('returns 400 when userId query param is missing', async () => {
+      const res = await authedRequest(app)
+        .delete('/agents/agent-1/slack-heartbeat-trigger/trigger-1');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('userId');
+    });
+
+    it('deletes the trigger and returns success', async () => {
+      mockSlackHeartbeatTriggerService.deleteTrigger.mockResolvedValueOnce(undefined);
+
+      const res = await authedRequest(app)
+        .delete('/agents/agent-1/slack-heartbeat-trigger/trigger-1?userId=user-1');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(mockSlackHeartbeatTriggerService.deleteTrigger).toHaveBeenCalledWith('trigger-1', 'user-1');
+    });
+
+    it('returns 500 when service throws', async () => {
+      mockSlackHeartbeatTriggerService.deleteTrigger.mockRejectedValueOnce(
+        new Error('DB error'),
+      );
+
+      const res = await authedRequest(app)
+        .delete('/agents/agent-1/slack-heartbeat-trigger/trigger-1?userId=user-1');
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  describe('POST /:agentId/slack-heartbeat-trigger/claim', () => {
+    it('returns claimed result', async () => {
+      mockSlackHeartbeatTriggerService.tryClaimTrigger.mockResolvedValueOnce({ claimed: true });
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/slack-heartbeat-trigger/claim')
+        .send();
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ claimed: true });
+      expect(mockSlackHeartbeatTriggerService.tryClaimTrigger).toHaveBeenCalledWith('agent-1');
+    });
+
+    it('returns throttled result with remaining seconds', async () => {
+      mockSlackHeartbeatTriggerService.tryClaimTrigger.mockResolvedValueOnce({
+        claimed: false,
+        remainingSeconds: 120,
+      });
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/slack-heartbeat-trigger/claim')
+        .send();
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ claimed: false, remainingSeconds: 120 });
+    });
+
+    it('returns 500 when service throws', async () => {
+      mockSlackHeartbeatTriggerService.tryClaimTrigger.mockRejectedValueOnce(
+        new Error('DB error'),
+      );
+
+      const res = await authedRequest(app)
+        .post('/agents/agent-1/slack-heartbeat-trigger/claim')
+        .send();
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // POST /slack/verify-channel-link-code
+  // ==========================================================================
+
+  describe('POST /slack/verify-channel-link-code', () => {
+    it('returns 400 when code is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-channel-link-code')
+        .send({ channelId: 'C789' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('code');
+    });
+
+    it('returns 400 when channelId is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-channel-link-code')
+        .send({ code: 'AAAAAA' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('channelId');
+    });
+
+    it('returns failure for non-existent code', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValue(null);
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-channel-link-code')
+        .send({ code: 'ZZZZZZ', channelId: 'C789' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Invalid code');
+    });
+
+    it('returns failure for expired code', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValue({
+        id: 'vc-002',
+        code: 'AAAAAA',
+        type: 'CHANNEL',
+        lensUserId: 'user-001',
+        connectionId: 'conn-001',
+        agentId: 'agent-001',
+        agentName: 'Test Agent',
+        expiresAt: new Date(Date.now() - 60 * 1000),
+        createdAt: new Date(),
+      });
+      mockPrisma.slackVerificationCode.delete.mockResolvedValue({});
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-channel-link-code')
+        .send({ code: 'AAAAAA', channelId: 'C789' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('expired');
+    });
+
+    it('normalizes codes to uppercase', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValue(null);
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-channel-link-code')
+        .send({ code: 'abcdef', channelId: 'C789' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(false);
+      expect(mockPrisma.slackVerificationCode.findUnique).toHaveBeenCalledWith({
+        where: { code_type: { code: 'ABCDEF', type: 'CHANNEL' } },
+      });
+    });
+
+    it('returns failure when channel is already linked', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValue({
+        id: 'vc-004',
+        code: 'DDD444',
+        type: 'CHANNEL',
+        lensUserId: 'user-001',
+        connectionId: 'conn-001',
+        agentId: 'agent-001',
+        agentName: 'Test Agent',
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        createdAt: new Date(),
+      });
+      mockPrisma.slackMapping.findUnique.mockResolvedValue({
+        id: 'mapping-existing',
+        slackChannelId: 'C789',
+        agentId: 'agent-002',
+      });
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-channel-link-code')
+        .send({ code: 'DDD444', channelId: 'C789', channelName: 'general' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('already linked');
+    });
+
+    it('atomically creates channel mapping and deletes code on success', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValue({
+        id: 'vc-005',
+        code: 'EEE555',
+        type: 'CHANNEL',
+        lensUserId: 'user-001',
+        connectionId: 'conn-001',
+        agentId: 'agent-001',
+        agentName: 'Test Agent',
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        createdAt: new Date(),
+      });
+      mockPrisma.slackMapping.findUnique.mockResolvedValue(null);
+      mockPrisma.slackMapping.create.mockResolvedValue({
+        id: 'mapping-new',
+        connectionId: 'conn-001',
+        agentId: 'agent-001',
+        slackChannelId: 'C789',
+        slackChannelName: 'general',
+        lensUserId: 'user-001',
+      });
+      mockPrisma.slackVerificationCode.delete.mockResolvedValue({});
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-channel-link-code')
+        .send({ code: 'EEE555', channelId: 'C789', channelName: 'general' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.agentName).toBe('Test Agent');
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
+      expect(mockPrisma.slackMapping.create).toHaveBeenCalledWith({
+        data: {
+          connectionId: 'conn-001',
+          agentId: 'agent-001',
+          slackChannelId: 'C789',
+          slackChannelName: 'general',
+          lensUserId: 'user-001',
+          slackUserId: null,
+          dmChannelId: null,
+        },
+      });
+    });
+  });
+
+  // ==========================================================================
+  // POST /threads/get-or-create-active
+  // ==========================================================================
+
+  describe('POST /threads/get-or-create-active', () => {
+    it('returns the thread on success', async () => {
+      const thread = { id: 'thread-1', agentId: 'agent-1', userId: 'user-1', status: 'ACTIVE' };
+      mockGetOrCreateActiveThread.mockResolvedValue(thread);
+
+      const res = await authedRequest(app)
+        .post('/agents/threads/get-or-create-active')
+        .send({ agentId: 'agent-1', userId: 'user-1' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe('thread-1');
+      expect(mockGetOrCreateActiveThread).toHaveBeenCalledWith('agent-1', 'user-1');
+    });
+
+    it('returns 400 when agentId is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/threads/get-or-create-active')
+        .send({ userId: 'user-1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('agentId');
+    });
+
+    it('returns 400 when userId is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/threads/get-or-create-active')
+        .send({ agentId: 'agent-1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('userId');
+    });
+
+    it('returns 500 when getOrCreateActiveThread throws', async () => {
+      mockGetOrCreateActiveThread.mockRejectedValue(new Error('DB error'));
+
+      const res = await authedRequest(app)
+        .post('/agents/threads/get-or-create-active')
+        .send({ agentId: 'agent-1', userId: 'user-1' });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // GET /threads
+  // ==========================================================================
+
+  describe('GET /threads', () => {
+    it('returns 400 when userId is missing', async () => {
+      const res = await authedRequest(app)
+        .get('/agents/threads?agentId=agent-1');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('userId');
+    });
+
+    it('returns 400 when agentId is missing', async () => {
+      const res = await authedRequest(app)
+        .get('/agents/threads?userId=user-1');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('agentId');
+    });
+
+    it('returns threads on success', async () => {
+      const threads = [
+        { id: 'thread-1', title: 'Debugging session' },
+        { id: 'thread-2', title: 'Security review' },
+      ];
+      mockListThreads.mockResolvedValue(threads);
+
+      const res = await authedRequest(app)
+        .get('/agents/threads?userId=user-1&agentId=agent-1');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(2);
+      expect(res.body[0].id).toBe('thread-1');
+      expect(mockListThreads).toHaveBeenCalledWith('user-1', 'agent-1', {
+        status: undefined,
+        limit: undefined,
+      });
+    });
+
+    it('passes status and limit query params', async () => {
+      mockListThreads.mockResolvedValue([]);
+
+      const res = await authedRequest(app)
+        .get('/agents/threads?userId=user-1&agentId=agent-1&status=ACTIVE&limit=5');
+
+      expect(res.status).toBe(200);
+      expect(mockListThreads).toHaveBeenCalledWith('user-1', 'agent-1', {
+        status: 'ACTIVE',
+        limit: 5,
+      });
+    });
+
+    it('returns 500 when listThreads throws', async () => {
+      mockListThreads.mockRejectedValue(new Error('DB error'));
+
+      const res = await authedRequest(app)
+        .get('/agents/threads?userId=user-1&agentId=agent-1');
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // GET /threads/:threadId
+  // ==========================================================================
+
+  describe('GET /threads/:threadId', () => {
+    it('returns 400 when userId is missing', async () => {
+      const res = await authedRequest(app)
+        .get('/agents/threads/thread-1?agentId=agent-1');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('userId');
+    });
+
+    it('returns 400 when agentId is missing', async () => {
+      const res = await authedRequest(app)
+        .get('/agents/threads/thread-1?userId=user-1');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('agentId');
+    });
+
+    it('returns 404 when thread is not found', async () => {
+      mockGetThread.mockResolvedValue(null);
+
+      const res = await authedRequest(app)
+        .get('/agents/threads/thread-1?userId=user-1&agentId=agent-1');
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('Thread not found');
+      expect(mockGetThread).toHaveBeenCalledWith('user-1', 'agent-1', 'thread-1');
+    });
+
+    it('returns thread with messages on success', async () => {
+      const thread = {
+        id: 'thread-1',
+        userId: 'user-1',
+        agentId: 'agent-1',
+        messages: [
+          { id: 'msg-1', role: 'USER', content: 'Hello' },
+          { id: 'msg-2', role: 'AGENT', content: 'Hi there!' },
+        ],
+      };
+      mockGetThread.mockResolvedValue(thread);
+
+      const res = await authedRequest(app)
+        .get('/agents/threads/thread-1?userId=user-1&agentId=agent-1');
+
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe('thread-1');
+      expect(res.body.messages).toHaveLength(2);
+      expect(mockGetThread).toHaveBeenCalledWith('user-1', 'agent-1', 'thread-1');
+    });
+
+    it('returns 500 when getThread throws', async () => {
+      mockGetThread.mockRejectedValue(new Error('DB error'));
+
+      const res = await authedRequest(app)
+        .get('/agents/threads/thread-1?userId=user-1&agentId=agent-1');
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // POST /threads/:threadId/messages
+  // ==========================================================================
+
+  describe('POST /threads/:threadId/messages', () => {
+    it('returns 400 when required fields are missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/threads/thread-1/messages')
+        .send({ content: 'Hello' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('role');
+      expect(res.body.error).toContain('triggeredBy');
+    });
+
+    it('returns 201 with the created message on success', async () => {
+      const message = {
+        id: 'msg-1',
+        threadId: 'thread-1',
+        role: 'USER',
+        content: 'Hello',
+        triggeredBy: 'USER_INPUT',
+        createdAt: '2026-01-01T00:00:00Z',
+      };
+      mockAddMessage.mockResolvedValue(message);
+
+      const res = await authedRequest(app)
+        .post('/agents/threads/thread-1/messages')
+        .send({ content: 'Hello', role: 'USER', triggeredBy: 'USER_INPUT' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.id).toBe('msg-1');
+      expect(res.body.content).toBe('Hello');
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-1', {
+        content: 'Hello',
+        role: 'USER',
+        triggeredBy: 'USER_INPUT',
+        toolCalls: undefined,
+        blocks: undefined,
+        tokenCount: undefined,
+        senderExternalId: undefined,
+        senderName: undefined,
+      });
+    });
+
+    it('returns 500 when addMessage throws', async () => {
+      mockAddMessage.mockRejectedValue(new Error('DB error'));
+
+      const res = await authedRequest(app)
+        .post('/agents/threads/thread-1/messages')
+        .send({ content: 'Hello', role: 'USER', triggeredBy: 'USER_INPUT' });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // POST /threads/:threadId/archive
+  // ==========================================================================
+
+  describe('POST /threads/:threadId/archive', () => {
+    it('deactivates thread and returns success', async () => {
+      mockDeactivateThread.mockResolvedValue(undefined);
+
+      const res = await authedRequest(app)
+        .post('/agents/threads/thread-1/archive')
+        .send({});
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(mockDeactivateThread).toHaveBeenCalledWith('thread-1', undefined, undefined);
+    });
+
+    it('passes agentId and userId when provided', async () => {
+      mockDeactivateThread.mockResolvedValue(undefined);
+
+      const res = await authedRequest(app)
+        .post('/agents/threads/thread-1/archive')
+        .send({ agentId: 'agent-1', userId: 'user-1' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(mockDeactivateThread).toHaveBeenCalledWith('thread-1', 'agent-1', 'user-1');
+    });
+
+    it('returns 500 when deactivateThread throws', async () => {
+      mockDeactivateThread.mockRejectedValue(new Error('DB error'));
+
+      const res = await authedRequest(app)
+        .post('/agents/threads/thread-1/archive')
+        .send({});
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // POST /threads/:threadId/set-external-id
+  // ==========================================================================
+
+  describe('POST /threads/:threadId/set-external-id', () => {
+    it('sets external ID and returns success', async () => {
+      mockSetExternalId.mockResolvedValue(undefined);
+
+      const res = await authedRequest(app)
+        .post('/agents/threads/thread-1/set-external-id')
+        .send({ externalThreadId: '1234.5678' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(mockSetExternalId).toHaveBeenCalledWith('thread-1', '1234.5678');
+    });
+
+    it('returns 400 when externalThreadId is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/threads/thread-1/set-external-id')
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('externalThreadId');
+    });
+
+    it('returns 500 when setExternalId throws', async () => {
+      mockSetExternalId.mockRejectedValue(new Error('DB error'));
+
+      const res = await authedRequest(app)
+        .post('/agents/threads/thread-1/set-external-id')
+        .send({ externalThreadId: '1234.5678' });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // POST /threads/get-or-create-by-external-id
+  // ==========================================================================
+
+  describe('POST /threads/get-or-create-by-external-id', () => {
+    it('returns thread when all required fields provided', async () => {
+      const mockThread = { id: 'thread-ext-1', agentId: 'agent-1', userId: 'user-1', externalThreadId: '1234.5678' };
+      mockGetOrCreateThreadByExternalId.mockResolvedValue(mockThread);
+
+      const res = await authedRequest(app)
+        .post('/agents/threads/get-or-create-by-external-id')
+        .send({ userId: 'user-1', agentId: 'agent-1', externalThreadId: '1234.5678', channelId: 'C123' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(mockThread);
+      expect(mockGetOrCreateThreadByExternalId).toHaveBeenCalledWith(
+        'user-1', 'agent-1', '1234.5678', { channelId: 'C123' }
+      );
+    });
+
+    it('omits channelId option when not provided', async () => {
+      mockGetOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-ext-2' });
+
+      await authedRequest(app)
+        .post('/agents/threads/get-or-create-by-external-id')
+        .send({ userId: 'user-1', agentId: 'agent-1', externalThreadId: '1234.5678' });
+
+      expect(mockGetOrCreateThreadByExternalId).toHaveBeenCalledWith(
+        'user-1', 'agent-1', '1234.5678', undefined
+      );
+    });
+
+    it('returns 400 when required fields are missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/threads/get-or-create-by-external-id')
+        .send({ userId: 'user-1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('userId, agentId, externalThreadId');
+    });
+
+    it('returns 500 when service throws', async () => {
+      mockGetOrCreateThreadByExternalId.mockRejectedValue(new Error('DB error'));
+
+      const res = await authedRequest(app)
+        .post('/agents/threads/get-or-create-by-external-id')
+        .send({ userId: 'user-1', agentId: 'agent-1', externalThreadId: '1234.5678' });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // POST /slack/verify-link-code
+  // ==========================================================================
+
+  describe('POST /slack/verify-link-code', () => {
+    it('returns 400 when code is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-link-code')
+        .send({ slackUserId: 'U123', dmChannelId: 'D456' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('code');
+    });
+
+    it('returns 400 when slackUserId is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-link-code')
+        .send({ code: 'AAAAAA', dmChannelId: 'D456' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('slackUserId');
+    });
+
+    it('returns 400 when dmChannelId is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-link-code')
+        .send({ code: 'AAAAAA', slackUserId: 'U123' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('dmChannelId');
+    });
+
+    it('normalizes codes to uppercase', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValueOnce(null);
+
+      await authedRequest(app)
+        .post('/agents/slack/verify-link-code')
+        .send({ code: 'abcdef', slackUserId: 'U123', dmChannelId: 'D456' });
+
+      expect(mockPrisma.slackVerificationCode.findUnique).toHaveBeenCalledWith({
+        where: { code_type: { code: 'ABCDEF', type: 'DM' } },
+      });
+    });
+
+    it('returns failure for non-existent code', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValueOnce(null);
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-link-code')
+        .send({ code: 'ZZZZZZ', slackUserId: 'U123', dmChannelId: 'D456' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Invalid code');
+    });
+
+    it('returns failure for expired code and deletes it', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValueOnce({
+        id: 'vc-010',
+        code: 'AAAAAA',
+        type: 'DM',
+        lensUserId: 'user-001',
+        connectionId: 'conn-001',
+        agentId: 'agent-001',
+        expiresAt: new Date(Date.now() - 60 * 1000),
+        createdAt: new Date(),
+      });
+      mockPrisma.slackVerificationCode.delete.mockResolvedValueOnce({});
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-link-code')
+        .send({ code: 'AAAAAA', slackUserId: 'U123', dmChannelId: 'D456' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('expired');
+      expect(mockPrisma.slackVerificationCode.delete).toHaveBeenCalledWith({
+        where: { code_type: { code: 'AAAAAA', type: 'DM' } },
+      });
+    });
+
+    it('returns failure when Slack user is already linked to same agent (same lensUserId)', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValueOnce({
+        id: 'vc-011',
+        code: 'BBB222',
+        type: 'DM',
+        lensUserId: 'user-001',
+        connectionId: 'conn-001',
+        agentId: 'agent-001',
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        createdAt: new Date(),
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValueOnce({
+        id: 'mapping-existing',
+        connectionId: 'conn-001',
+        slackUserId: 'U123',
+        lensUserId: 'user-001',
+        agentId: 'agent-001',
+      });
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-link-code')
+        .send({ code: 'BBB222', slackUserId: 'U123', dmChannelId: 'D456' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('already linked');
+    });
+
+    it('returns failure when Slack user is linked to a different Lens user', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValueOnce({
+        id: 'vc-012',
+        code: 'CCC333',
+        type: 'DM',
+        lensUserId: 'user-001',
+        connectionId: 'conn-001',
+        agentId: 'agent-001',
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        createdAt: new Date(),
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValueOnce({
+        id: 'mapping-other',
+        connectionId: 'conn-001',
+        slackUserId: 'U123',
+        lensUserId: 'user-999',
+        agentId: 'agent-001',
+      });
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-link-code')
+        .send({ code: 'CCC333', slackUserId: 'U123', dmChannelId: 'D456' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('already linked to another Lens Platform user');
+    });
+
+    it('atomically creates DM mapping and deletes code on success', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValueOnce({
+        id: 'vc-013',
+        code: 'DDD444',
+        type: 'DM',
+        lensUserId: 'user-001',
+        connectionId: 'conn-001',
+        agentId: 'agent-001',
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        createdAt: new Date(),
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.slackMapping.create.mockResolvedValueOnce({
+        id: 'mapping-new',
+        connectionId: 'conn-001',
+        agentId: 'agent-001',
+        slackUserId: 'U123',
+        dmChannelId: 'D456',
+        lensUserId: 'user-001',
+      });
+      mockPrisma.slackVerificationCode.delete.mockResolvedValueOnce({});
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-link-code')
+        .send({ code: 'DDD444', slackUserId: 'U123', dmChannelId: 'D456' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain('linked');
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
+      expect(mockPrisma.slackMapping.create).toHaveBeenCalledWith({
+        data: {
+          connectionId: 'conn-001',
+          agentId: 'agent-001',
+          slackUserId: 'U123',
+          lensUserId: 'user-001',
+          dmChannelId: 'D456',
+        },
+      });
+    });
+  });
+
+  // ==========================================================================
+  // POST /slack/create-verification-code
+  // ==========================================================================
+
+  describe('POST /slack/create-verification-code', () => {
+    const validBody = {
+      type: 'DM',
+      lensUserId: 'user-001',
+      connectionId: 'conn-001',
+      agentId: 'agent-001',
+      agentName: 'Test Agent',
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    };
+
+    beforeEach(() => {
+      mockPrisma.slackVerificationCode.deleteMany.mockResolvedValue({ count: 0 });
+    });
+
+    it('returns 400 when required fields are missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/slack/create-verification-code')
+        .send({ type: 'DM', lensUserId: 'user-001' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Missing required fields');
+    });
+
+    it('creates a verification code on first attempt', async () => {
+      mockPrisma.slackVerificationCode.create.mockResolvedValueOnce({
+        id: 'vc-new',
+        code: 'ABC123',
+      });
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/create-verification-code')
+        .send(validBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.code).toBeDefined();
+      expect(mockPrisma.slackVerificationCode.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries on P2002 unique constraint collision and succeeds', async () => {
+      const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '5.0.0',
+      });
+      mockPrisma.slackVerificationCode.create
+        .mockRejectedValueOnce(p2002)
+        .mockRejectedValueOnce(p2002)
+        .mockResolvedValueOnce({ id: 'vc-new', code: 'DEF456' });
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/create-verification-code')
+        .send(validBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.code).toBeDefined();
+      expect(mockPrisma.slackVerificationCode.create).toHaveBeenCalledTimes(3);
+    });
+
+    it('returns 500 after exhausting all retry attempts', async () => {
+      const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '5.0.0',
+      });
+      mockPrisma.slackVerificationCode.create
+        .mockRejectedValueOnce(p2002)
+        .mockRejectedValueOnce(p2002)
+        .mockRejectedValueOnce(p2002)
+        .mockRejectedValueOnce(p2002)
+        .mockRejectedValueOnce(p2002);
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/create-verification-code')
+        .send(validBody);
+
+      expect(res.status).toBe(500);
+      expect(mockPrisma.slackVerificationCode.create).toHaveBeenCalledTimes(5);
+    });
+
+    it('throws immediately on non-P2002 Prisma errors', async () => {
+      mockPrisma.slackVerificationCode.create.mockRejectedValueOnce(
+        new Error('Connection refused'),
+      );
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/create-verification-code')
+        .send(validBody);
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Connection refused');
+      expect(mockPrisma.slackVerificationCode.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ==========================================================================
+  // Backup / restore (single-agent only)
+  // ==========================================================================
+
+  describe('backup / restore', () => {
+    describe('multi-tenant mode', () => {
+      it('GET /agents/:agentId/export returns 404', async () => {
+        // singleAgentMode defaults to false in beforeEach
+        const res = await authedRequest(app).get('/agents/agent-1/export');
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe('Not in single-agent mode');
+      });
+
+      it('POST /agents/:agentId/import returns 404', async () => {
+        const res = await authedRequest(app)
+          .post('/agents/agent-1/import')
+          .attach('file', Buffer.from('not-a-real-archive'), 'backup.prism');
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe('Not in single-agent mode');
+      });
+    });
+
+    describe('single-agent mode', () => {
+      beforeEach(() => {
+        config.singleAgentMode = true;
+        app = createApp();
+      });
+
+      it('GET /agents/:agentId/export streams a gzipped snapshot', async () => {
+        mockGetAgentById.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
+        const { Readable } = await import('stream');
+        const payload = Buffer.from('fake-gzip-payload');
+        const cleanup = vi.fn();
+        mockExportAgent.mockResolvedValue({
+          stream: Readable.from([payload]),
+          filename: 'my-bot-20260513-1200.prism',
+          cleanup,
+        });
+
+        const res = await request(app).get('/agents/agent-1/export').buffer(true);
+
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toBe('application/octet-stream');
+        expect(res.headers['content-disposition']).toContain('my-bot-20260513-1200.prism');
+        expect(mockExportAgent).toHaveBeenCalledWith('My Bot');
+      });
+
+      it('GET /agents/:agentId/export returns 404 when agent is missing', async () => {
+        mockGetAgentById.mockResolvedValue(null);
+        const res = await request(app).get('/agents/agent-1/export');
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe('Agent not found');
+        expect(mockExportAgent).not.toHaveBeenCalled();
+      });
+
+      it('POST /agents/:agentId/import stages the archive and signals restart', async () => {
+        mockGetAgentById.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
+        mockImportAgent.mockResolvedValue(undefined);
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+        const res = await request(app)
+          .post('/agents/agent-1/import')
+          .attach('file', Buffer.from('upload-bytes'), 'backup.prism');
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true, restarting: true });
+        expect(mockImportAgent).toHaveBeenCalledOnce();
+        const calledWith = mockImportAgent.mock.calls[0]?.[0] as Buffer;
+        expect(Buffer.isBuffer(calledWith)).toBe(true);
+        expect(calledWith.toString()).toBe('upload-bytes');
+
+        // process.exit is scheduled on a 100ms setTimeout after res.finish; let
+        // the macro-task queue drain so the spy actually fires.
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(exitSpy).toHaveBeenCalledWith(0);
+        exitSpy.mockRestore();
+      });
+
+      it('POST /agents/:agentId/import returns 400 when validation fails', async () => {
+        mockGetAgentById.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
+        const { ArchiveValidationError } = await import('../services/agent-archive.service');
+        mockImportAgent.mockRejectedValue(new ArchiveValidationError('Schema version mismatch'));
+
+        const res = await request(app)
+          .post('/agents/agent-1/import')
+          .attach('file', Buffer.from('bad-bytes'), 'backup.prism');
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe('Schema version mismatch');
+      });
+
+      it('POST /agents/:agentId/import returns 400 when the file field is missing', async () => {
+        mockGetAgentById.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
+
+        const res = await request(app).post('/agents/agent-1/import');
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain('Missing');
+        expect(mockImportAgent).not.toHaveBeenCalled();
+      });
+    });
+  });
+});

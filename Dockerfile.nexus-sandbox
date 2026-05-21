@@ -1,0 +1,52 @@
+# Wraps an already-built agent-runtime image with the nexus-agent-sandbox
+# runtime. The sandbox takes over as ENTRYPOINT, applies Nexus policy
+# (outbound proxy + credential injection) and then execs the agent process
+# via AGENT_COMMAND.
+#
+# Build:
+#   docker build \
+#     --build-arg AGENT_RUNTIME_IMAGE=lens-agents/agent-runtime:latest \
+#     -f packages/lens-agents/agent-runtime/Dockerfile.nexus-sandbox \
+#     -t lens-agents/agent-runtime:nexus-sandbox .
+#
+# The agent-runtime image must be Debian-based (glibc) — the sandbox binary
+# is linked against glibc and won't run on Alpine/musl.
+
+ARG NEXUS_SANDBOX_IMAGE=ghcr.io/lensapp/nexus-agent-sandbox:latest
+ARG AGENT_RUNTIME_IMAGE=lens-agents/agent-runtime:latest
+
+FROM ${NEXUS_SANDBOX_IMAGE} AS nexus-sandbox
+
+FROM ${AGENT_RUNTIME_IMAGE}
+
+USER root
+
+COPY --from=nexus-sandbox /usr/bin/nexus-agent-sandbox /usr/bin/nexus-agent-sandbox
+
+# iptables — sandbox installs outbound routing rules when running as root.
+# ca-certificates — TLS for outbound calls via the proxy.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        iptables \
+    && rm -rf /var/lib/apt/lists/*
+
+# SANDBOX_USER: unprivileged user the sandbox drops to before exec. The
+# node:bookworm-slim base already provides `node` (uid 1000).
+# WORKSPACE_PATH: cwd for the agent command; matches the WORKDIR baked in by
+# the agent-runtime image.
+# IDLE_TIMEOUT_MS: bumped to 24h because agent-runtime is a long-running
+# service, not an interactive Claude session. (Sandbox default is 30 min.)
+# AGENT_COMMAND: command the sandbox execs via `sh -c` after applying policy.
+# Mirrors the original Dockerfile CMD.
+# NEXUS_WS_URL / SANDBOX_TOKEN must be supplied at docker-run / ECS-task time.
+ENV SANDBOX_USER=node
+ENV WORKSPACE_PATH=/app/packages/lens-agents/agent-runtime
+ENV IDLE_TIMEOUT_MS=86400000
+# Boot logic (DATABASE_URL default in single-agent mode, prisma migrate
+# deploy against the right schema, optional embedding-backfill in
+# background, exec node) is shared with the bare image's CMD via
+# `start.sh` (in the agent-runtime image at WORKSPACE_PATH). Single
+# source of truth — no inline shell-string escaping here.
+ENV AGENT_COMMAND="./start.sh"
+
+ENTRYPOINT ["/usr/bin/nexus-agent-sandbox"]
