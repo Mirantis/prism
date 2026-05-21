@@ -10,7 +10,7 @@ and REST. There is no auth — the CLI is intended for local-dev only.
 # 1. Start an agent-runtime in single-agent mode (sets
 #    SINGLE_AGENT_MODE=true, NEXUS_PROJECT_ID=local,
 #    DATABASE_URL=file:./agent.db, runs a build first).
-npm run start:single --workspace=agent-runtime
+npm run start:single
 
 # 2. In another terminal, start the CLI.
 npm run dev --workspace=prism-cli
