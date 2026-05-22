@@ -1,0 +1,23 @@
+Feature: Agent Chat
+  As a user I want to chat with my personal agent
+  so that I can get help with tasks
+
+  Background:
+    Given I am logged in
+    And I have a personal agent
+
+  Scenario: Send a message and receive a response
+    When I navigate to the agent chat page
+    And I type "hello" in the chat input
+    And I send the message
+    Then I should see my message "hello" in the conversation
+    And I should see an agent response in the conversation
+
+  Scenario: Chat shows message history
+    Given I have a conversation with the following messages:
+      | role  | content             |
+      | USER  | What is Kubernetes? |
+      | AGENT | Kubernetes is...    |
+    When I navigate to the agent chat page
+    Then I should see the message "What is Kubernetes?" in the conversation
+    And I should see the message "Kubernetes is..." in the conversation
