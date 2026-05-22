@@ -9,6 +9,7 @@
     "predev": "DATABASE_URL=file:./agent.db prisma migrate deploy --schema=prisma/sqlite/schema.prisma",
     "dev": "DATABASE_URL=file:./agent.db tsx watch src/index.ts",
     "dev:web": "npm --workspace=prism-agent-web run dev",
+    "dev:tui": "npm --workspace=prism-cli run dev",
     "dev:single": "tsx src/scripts/apply-pending-import.ts && prisma migrate deploy --schema=prisma/sqlite/schema.prisma && concurrently --kill-others-on-exit --prefix \"[{name}]\" --names \"runtime,web\" --prefix-colors \"cyan,green\" \"npm run dev\" \"npm run dev:web\"",
     "build": "tsc && npm run build:web",
     "build:web": "npm --workspace=prism-agent-web run build",
