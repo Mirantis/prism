@@ -43,18 +43,15 @@ describe('slack-source', () => {
     expect(result).toEqual([]);
   });
 
-  it('getSlackConnection returns the singleton regardless of the id passed', async () => {
-    // Legacy mappings may persist a connectionId that predates this runtime;
-    // since there is exactly one connection per container, callers always
-    // receive the same record.
+  it('getSlackConnection returns the singleton', async () => {
     mockGetSlackConfig.mockResolvedValue(singletonRecord);
-    const result = await getSlackConnection('legacy-connection-id');
+    const result = await getSlackConnection();
     expect(result).toEqual(singletonRecord);
   });
 
   it('getSlackConnection returns null when Slack is disabled', async () => {
     mockGetSlackConfig.mockResolvedValue(null);
-    const result = await getSlackConnection('any-id');
+    const result = await getSlackConnection();
     expect(result).toBeNull();
   });
 });

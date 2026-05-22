@@ -324,7 +324,7 @@ describe('Requirement: Channel Mappings (Team Mode)', () => {
       expect(mockPrisma.slackMapping.findUnique).toHaveBeenCalledWith({
         where: { slackChannelId: 'C789GHI' },
       });
-      expect(mockGetSlackConnection).toHaveBeenCalledWith('conn-001');
+      expect(mockGetSlackConnection).toHaveBeenCalledWith();
       expect(result).not.toBeNull();
       expect(result!.connection.teamId).toBe('T001');
       expect(result!.connection.agent.name).toBe('Prism');

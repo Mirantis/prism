@@ -90,7 +90,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       );
     }
 
-    const connection = await getSlackConnection(mapping.connectionId);
+    const connection = await getSlackConnection();
     if (!connection) {
       throw new Error(
         `No SlackConnection found for connectionId ${mapping.connectionId} (thread ${threadId})`
