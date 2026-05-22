@@ -10,7 +10,7 @@
  * - Stop all heartbeats, cron jobs, sessions, queues
  */
 
-import { createServer } from 'http';
+import { createServer, IncomingMessage, Server, ServerResponse } from 'http';
 import { config, dotenvLoadInfo } from './config';
 import { logger } from './logger';
 
@@ -54,10 +54,7 @@ messageDeliveryService.register(slackAdapterService);
 // Initialize WebSocket gateway before listening
 webSocketGatewayService.initialize(httpServer);
 
-const server = httpServer.listen(config.port, async () => {
-  logger.info(`Running on http://localhost:${config.port}`);
-  logger.info(`Health: http://localhost:${config.port}/health`);
-
+const initialize = async () => {
   try {
     // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
     // either picks up the existing row via findFirst() or creates a
@@ -98,10 +95,19 @@ const server = httpServer.listen(config.port, async () => {
     // mask config errors (missing AGENT_ID, invalid SLACK_BOT_TOKEN, etc.).
     process.exit(1);
   }
-});
+};
+
+const getServer = async () => {
+ await initialize();
+
+ return httpServer.listen(config.port, async () => {
+    logger.info(`Running on http://localhost:${config.port}`);
+    logger.info(`Health: http://localhost:${config.port}/health`);
+  });
+};
 
 // Graceful shutdown
-const shutdown = async (signal: string) => {
+const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResponse>,signal: string) => {
   logger.info(`${signal} received, shutting down...`);
 
   heartbeatService.stopAll();
@@ -125,5 +131,15 @@ const shutdown = async (signal: string) => {
   }, 5000).unref();
 };
 
-process.on('SIGTERM', () => void shutdown('SIGTERM'));
-process.on('SIGINT', () => void shutdown('SIGINT'));
+const start = async () => {
+  const server = await getServer();
+
+  process.on('SIGTERM', () => void shutdown(server, 'SIGTERM'));
+  process.on('SIGINT', () => void shutdown(server, 'SIGINT'));
+};
+
+start().catch((error) => {
+  const msg = error instanceof Error ? error.message : 'Unknown error';
+  logger.error(`Failed to start server: ${msg}`);
+  process.exit(1);
+});
