@@ -39,16 +39,6 @@ export interface SlackMappingWithConnection extends SlackMapping {
 // ============================================================================
 
 class SlackMappingService {
-  /**
-   * Returns a predicate that tells whether a mapping's connectionId refers
-   * to a currently-active Slack connection. There is exactly one connection
-   * per container and every mapping in the local DB belongs to it by
-   * construction — the filter is a no-op.
-   */
-  private async getActiveConnectionFilter(): Promise<(connectionId: string) => boolean> {
-    return () => true;
-  }
-
   // ============================================================================
   // User Mappings (DM Mode)
   // ============================================================================
@@ -292,7 +282,7 @@ class SlackMappingService {
   async getActiveUserMappingsWithDmChannel(): Promise<
     Array<SlackMapping & { connection: { teamId: string; isActive: boolean } }>
   > {
-    const isActive = await this.getActiveConnectionFilter();
+    const isActive = true;
 
     const mappings = await prisma.slackMapping.findMany({
       where: {
@@ -304,7 +294,7 @@ class SlackMappingService {
     // Filter to only active connections and attach connection data
     const results: Array<SlackMapping & { connection: { teamId: string; isActive: boolean } }> = [];
     for (const mapping of mappings) {
-      if (!isActive(mapping.connectionId)) continue;
+      if (!isActive) continue;
       const conn = await getSlackConnection();
       if (conn && conn.isActive) {
         results.push({
@@ -330,7 +320,7 @@ class SlackMappingService {
    * Count user mappings for a Lens user (DM only)
    */
   async countUserMappings(lensUserId: string): Promise<number> {
-    const isActive = await this.getActiveConnectionFilter();
+    const isActive = true;
 
     const mappings = await prisma.slackMapping.findMany({
       where: {
@@ -340,14 +330,14 @@ class SlackMappingService {
       select: { connectionId: true },
     });
 
-    return mappings.filter(m => isActive(m.connectionId)).length;
+    return mappings.filter(() => isActive).length;
   }
 
   /**
    * Count all active mappings for a Lens user (DM + channel)
    */
   async countAllMappings(lensUserId: string): Promise<number> {
-    const isActive = await this.getActiveConnectionFilter();
+    const isActive = true;
 
     const mappings = await prisma.slackMapping.findMany({
       where: {
@@ -360,7 +350,7 @@ class SlackMappingService {
       select: { connectionId: true },
     });
 
-    return mappings.filter(m => isActive(m.connectionId)).length;
+    return mappings.filter(() => isActive).length;
   }
 }
 

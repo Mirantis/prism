@@ -243,6 +243,5 @@ Prism exposes the following surfaces:
 | `npm test` | Run the test suite in watch mode |
 | `npm run test:run` | Single test run |
 | `npm run test:coverage` | Coverage report |
-| `npm run test:single-agent` | Tests in single-agent mode |
 | `npm run db:migrate` | Apply database migrations |
 | `npm run prisma:generate` | Regenerate the database client |
