@@ -187,6 +187,13 @@ class WebSocketGatewayService {
     // `agentId` from the wire (the prism-cli does). Substitute here before
     // validation so downstream code sees a fully-populated message.
     const agentId = payload.agentId || message.agentId || config.agentId;
+    if (!agentId) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        payload: { error: 'Agent runtime is still initializing; retry shortly' },
+      }));
+      return;
+    }
 
     logger.info('Chat message from %s: mode=%s', userId, mode);
 
