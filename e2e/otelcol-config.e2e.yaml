@@ -1,0 +1,33 @@
+# OTEL Collector config for e2e tests.
+# Short batch timeout (2s) so tests don't wait for the production 5-minute flush.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 2s
+
+exporters:
+  awss3:
+    marshaler: otlp_json
+    s3uploader:
+      region: us-east-1
+      s3_bucket: telemetry-test
+      s3_prefix: lens-agents
+      s3_partition_format: "year=%Y/month=%m/day=%d/hour=%H"
+      file_prefix: telemetry
+      endpoint: http://minio:9000
+      s3_force_path_style: true
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [awss3, debug]

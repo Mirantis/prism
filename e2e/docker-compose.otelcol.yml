@@ -1,0 +1,36 @@
+# Telemetry test stack: MinIO (fake S3) + OTEL Collector.
+# Started/stopped by global-setup.ts / global-teardown.ts.
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 2;
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb local/telemetry-test --ignore-existing;
+      "
+
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.149.0
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "4318:4318"
+    volumes:
+      - ./otelcol-config.e2e.yaml:/etc/otelcol-contrib/config.yaml
+    environment:
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin

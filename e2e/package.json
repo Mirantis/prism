@@ -1,0 +1,31 @@
+{
+  "name": "prism-agent-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "echo 'No build step for e2e tests'",
+    "test": "npx bddgen && npx playwright test",
+    "test:headed": "npx bddgen && npx playwright test --headed",
+    "test:debug": "npx bddgen && npx playwright test --debug",
+    "test:report": "npx playwright show-report",
+    "test:e2e:tui": "vitest run -c tui/vitest.config.ts"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1029.0",
+    "@playwright/test": "^1.52.0",
+    "@prisma/client": "^6.6.0",
+    "@slack/web-api": "^7.14.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.9.0",
+    "express": "^5.1.0",
+    "jose": "^6.0.11",
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.0",
+    "playwright-bdd": "^8.5.0",
+    "prisma": "^6.6.0",
+    "strip-ansi": "^7.1.0",
+    "vitest": "^4.0.18"
+  },
+  "devDependenciesNotes": {
+    "@types/express": "provided by root overrides"
+  }
+}
