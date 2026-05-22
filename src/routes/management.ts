@@ -1611,29 +1611,12 @@ router.post('/:agentId/validate-ownership', async (req: Request<{ agentId: strin
 });
 
 /**
- * PUT /agents/:agentId/nexus-token
- * Set or clear the encrypted Nexus MCP agent token.
- * Body: { token } (null to clear)
- */
-router.put('/:agentId/nexus-token', async (req: Request<{ agentId: string }>, res: Response) => {
-  try {
-    const { token, nexusAgentTokenId } = req.body;
-    await agentWorkspaceService.setNexusMcpAgentToken(req.params.agentId, token ?? null, nexusAgentTokenId ?? null);
-    res.json({ success: true });
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to set nexus token for agent ${req.params.agentId}: ${msg}`);
-    res.status(500).json({ error: msg });
-  }
-});
-
-/**
  * GET /agents/:agentId/nexus-token
  * Get the decrypted Nexus MCP agent token.
  */
 router.get('/:agentId/nexus-token', async (req: Request<{ agentId: string }>, res: Response) => {
   try {
-    const token = await agentWorkspaceService.getNexusMcpAgentToken(req.params.agentId);
+    const token = await agentWorkspaceService.getNexusMcpAgentToken();
     res.json({ token });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';

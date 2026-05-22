@@ -120,7 +120,7 @@ class ConversationEngineService {
     userId: string,
     agentId: string,
   ): Promise<boolean> {
-    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken(agentId);
+    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken();
     if (!agentToken) {
       logger.debug({ agentId }, '[Feedback:Gate] No Nexus agent token — suppressing feedback');
       return false;

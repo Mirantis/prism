@@ -1273,7 +1273,7 @@ class SlackAdapterService implements ChannelAdapter {
       return { action: 'respond' };
     }
 
-    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken(agentId);
+    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken();
     if (!agentToken) {
       logger.warn({ agentId }, '[Slack:ThreadClassifier] No Nexus agent token — falling back to respond');
       return { action: 'respond' };

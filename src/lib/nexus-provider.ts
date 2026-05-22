@@ -34,7 +34,7 @@ export function createNexusProvider(nexusLlmBaseUrl: string, agentToken: string)
  * Build the classification-gate model instance, routed through Nexus.
  *
  * Callers must resolve a Nexus agent token via
- * `agentWorkspaceService.getNexusMcpAgentToken(agentId)` first and apply
+ * `agentWorkspaceService.getNexusMcpAgentToken()` first and apply
  * their own fallback when the token is missing.
  */
 export function getClassificationModel(agentToken: string) {
