@@ -8,15 +8,17 @@ import { expect } from '@playwright/test';
 const { Then } = createBdd();
 
 Then('I should see the agent stat cards', async ({ page }) => {
-  await expect(page.getByText('Proactivity')).toBeVisible();
-  await expect(page.getByText('Heartbeat', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('Last Heartbeat')).toBeVisible();
-  await expect(page.getByText('Created')).toBeVisible();
+  // Profile page exposes identity + heartbeat status cards. Use exact:true
+  // because the page intro paragraph ("Agent identity, heartbeat status,
+  // and workspace markdown files.") substring-matches several of these.
+  await expect(page.getByText('Identity', { exact: true })).toBeVisible();
+  await expect(page.getByText('Heartbeat Status', { exact: true })).toBeVisible();
+  await expect(page.getByText('Last heartbeat', { exact: true })).toBeVisible();
 });
 
 Then('I should see the agent type badge', async ({ page }) => {
-  // The agent type is rendered as a Badge near the agent name
-  await expect(page.getByText('Agent', { exact: true }).first()).toBeVisible();
+  // The "Agent" tab label is the closest analog to the old agent-type badge.
+  await expect(page.getByRole('tab', { name: 'Agent' })).toBeVisible();
 });
 
 Then('I should see the heartbeat status', async ({ page }) => {

@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
 import { config } from 'dotenv';
-import { DEFAULT_AGENT_ID } from './fixtures/test-data';
+import { DEFAULT_AGENT_ID, TEST_USER } from './fixtures/test-data';
 
 // Load e2e environment variables (.env.e2e.local overrides for secrets)
 config({ path: path.resolve(__dirname, '.env.e2e') });
@@ -37,6 +37,8 @@ process.env.AGENT_ID = DEFAULT_AGENT_ID;
 if (process.env.TEST_WORKER_INDEX === undefined) {
   fs.rmSync(E2E_DB_FILE, { force: true });
   fs.rmSync(`${E2E_DB_FILE}-journal`, { force: true });
+  fs.rmSync(`${E2E_DB_FILE}-wal`, { force: true });
+  fs.rmSync(`${E2E_DB_FILE}-shm`, { force: true });
   execSync('npx prisma migrate deploy --schema=prisma/sqlite/schema.prisma', {
     cwd: REPO_ROOT,
     env: { ...process.env, DATABASE_URL: E2E_DATABASE_URL },
@@ -86,10 +88,22 @@ export default defineConfig({
       port: RUNTIME_PORT,
       timeout: 60_000,
       reuseExistingServer: !process.env.CI,
+      // Playwright's webServer.stdout defaults to 'ignore'; opt in so the
+      // runtime's pino logs (which go to stdout) show up with [WebServer]
+      // prefix in the test output, alongside the stderr stream that's
+      // already piped by default.
+      stdout: 'pipe',
+      stderr: 'pipe',
       env: {
         PORT: String(RUNTIME_PORT),
         DATABASE_URL: E2E_DATABASE_URL,
         AGENT_ID: DEFAULT_AGENT_ID,
+        // Heartbeat-driven broadcasts publish under config.ownerUserId, and
+        // the slack adapter delivers via SlackMapping rows scoped by
+        // lensUserId. db-helper.seed() uses TEST_USER.id, so the SPA's
+        // verification flow stamps that same id into the mapping — pin
+        // ownerUserId here so both sides agree.
+        OWNER_USER_ID: TEST_USER.id,
         BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID ?? '',
         AWS_REGION: process.env.AWS_REGION || 'us-east-1',
         AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || '',
@@ -100,6 +114,7 @@ export default defineConfig({
         OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || '',
         SLACK_BOT_TOKEN: process.env.SLACK_E2E_BOT_TOKEN || '',
         SLACK_APP_TOKEN: process.env.SLACK_APP_TOKEN || '',
+        SLACK_EXPECTED_APP_ID: process.env.SLACK_E2E_EXPECTED_APP_ID || '',
         SLACK_SKIP_BOT_ID_CHECK: 'true',
       },
     },

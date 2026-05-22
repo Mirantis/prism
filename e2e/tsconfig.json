@@ -8,11 +8,7 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": ".",
-    "resolveJsonModule": true,
-    "paths": {
-      "@prisma/client": ["../agent-runtime/node_modules/.prisma/client"],
-      ".prisma/backend-client": ["../backend/node_modules/.prisma/backend-client"]
-    }
+    "resolveJsonModule": true
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules", "dist"]
