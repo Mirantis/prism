@@ -1,9 +1,5 @@
 /**
- * Shell tools — direct AI SDK tools (single-agent mode only).
- *
- * In multi-tenant mode the same tool surface is served by the
- * Nexus-hosted shell sandbox (reached via the per-agent Nexus MCP
- * token) — so this factory returns an empty record there.
+ * Shell tools — direct AI SDK tools.
  */
 
 import { Tool, tool } from 'ai';
