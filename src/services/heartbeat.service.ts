@@ -393,7 +393,7 @@ class HeartbeatService {
   ): Promise<boolean> {
     if (!heartbeatResponse.trim()) return false;
 
-    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken(agentId);
+    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken();
     if (!agentToken) {
       logger.warn({ agentId }, '[Heartbeat:Gate] No Nexus agent token — defaulting to deliver');
       return true;

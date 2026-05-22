@@ -99,7 +99,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     }
 
     // 2. Get Nexus agent token
-    const nexusAgentToken = await agentWorkspaceService.getNexusMcpAgentToken(request.agentId);
+    const nexusAgentToken = await agentWorkspaceService.getNexusMcpAgentToken();
 
     const modelId = resolveEffectiveModel(context.model);
     const routeInfo = nexusAgentToken ? 'via Nexus' : 'direct';

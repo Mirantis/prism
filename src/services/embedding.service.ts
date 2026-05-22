@@ -23,7 +23,7 @@ const BEDROCK_EMBEDDING_PROVIDER_OPTIONS = {
 
 class EmbeddingService {
   private async getEmbeddingModel(agentId: string) {
-    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken(agentId);
+    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken();
     if (agentToken && config.nexusLlmBaseUrl) {
       const provider = createNexusProvider(config.nexusLlmBaseUrl, agentToken);
       return provider.embedding(config.bedrockEmbeddingModelId);

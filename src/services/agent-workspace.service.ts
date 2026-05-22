@@ -111,21 +111,11 @@ class AgentWorkspaceService {
   // Nexus MCP Agent Token
   // ============================================================================
 
-  async getNexusMcpAgentToken(agentId: string): Promise<string | null> {
-    // Tool creds are injected at the sandbox proxy layer; this is kept for
-    // operators that explicitly stored a token via the store_nexus_token tool.
-    const agent = await this.getAgentById(agentId);
-    return agent.nexusMcpAgentToken ?? null;
-  }
-
-  async setNexusMcpAgentToken(agentId: string, token: string | null, nexusAgentTokenId?: string | null): Promise<void> {
-    await prisma.agentWorkspace.update({
-      where: { id: agentId },
-      data: {
-        nexusMcpAgentToken: token,
-        ...(nexusAgentTokenId !== undefined ? { nexusAgentTokenId } : {}),
-      },
-    });
+  async getNexusMcpAgentToken(): Promise<string | null> {
+    // Tool creds are injected at the sandbox proxy layer, so the runtime
+    // never needs an explicit token. Kept as a no-op so call sites can
+    // continue to thread an `Authorization` header when one exists.
+    return null;
   }
 
   // ============================================================================
