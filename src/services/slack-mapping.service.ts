@@ -91,7 +91,7 @@ class SlackMappingService {
     // Fetch connection data from backend for each mapping
     const results: Array<SlackMapping & { connection: { teamId: string; teamName: string; isActive: boolean } }> = [];
     for (const mapping of mappings) {
-      const conn = await getSlackConnection(mapping.connectionId);
+      const conn = await getSlackConnection();
       if (conn) {
         results.push({
           ...mapping,
@@ -180,7 +180,7 @@ class SlackMappingService {
     if (!mapping) return null;
 
     // Fetch connection data from backend
-    const conn = await getSlackConnection(mapping.connectionId);
+    const conn = await getSlackConnection();
     if (!conn) return null;
 
     // Fetch agent data from local database
@@ -305,7 +305,7 @@ class SlackMappingService {
     const results: Array<SlackMapping & { connection: { teamId: string; isActive: boolean } }> = [];
     for (const mapping of mappings) {
       if (!isActive(mapping.connectionId)) continue;
-      const conn = await getSlackConnection(mapping.connectionId);
+      const conn = await getSlackConnection();
       if (conn && conn.isActive) {
         results.push({
           ...mapping,

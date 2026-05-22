@@ -157,7 +157,7 @@ class SlackAdapterService implements ChannelAdapter {
 
     for (const mapping of mappings) {
       // Fetch connection data from backend API
-      const connection = await getSlackConnection(mapping.connectionId);
+      const connection = await getSlackConnection();
       if (!connection) {
         logger.warn('Slack connection %s not found for mapping %s', mapping.connectionId, mapping.id);
         continue;
@@ -374,7 +374,7 @@ class SlackAdapterService implements ChannelAdapter {
    * Creates a Bolt app with the stored tokens and sets up message handlers.
    */
   async initializeConnection(connectionId: string): Promise<void> {
-    const connection = await getSlackConnection(connectionId);
+    const connection = await getSlackConnection();
 
     if (!connection || !connection.isActive) {
       return;
@@ -1592,7 +1592,7 @@ class SlackAdapterService implements ChannelAdapter {
    * The backend has already deactivated the connection in its own database.
    */
   async disconnectAndDeactivate(connectionId: string): Promise<void> {
-    const connection = await getSlackConnection(connectionId);
+    const connection = await getSlackConnection();
     if (!connection) {
       throw new Error('Connection not found');
     }
