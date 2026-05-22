@@ -44,7 +44,6 @@ Given(
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        authorization: `Bearer ${process.env.INTERNAL_API_SECRET}`,
       },
       body: JSON.stringify({
         connectionId,

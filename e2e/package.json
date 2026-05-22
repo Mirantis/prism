@@ -2,6 +2,7 @@
   "name": "prism-agent-e2e",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "scripts": {
     "build": "echo 'No build step for e2e tests'",
     "test": "npx bddgen && npx playwright test",

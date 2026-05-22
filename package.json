@@ -2,6 +2,7 @@
   "name": "prism-agent",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "main": "dist/index.js",
   "workspaces": ["web", "cli", "e2e"],
   "scripts": {

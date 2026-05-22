@@ -158,7 +158,7 @@ function probeHealth(port: number): Promise<boolean> {
 // ----------------------------------------------------------------------------
 
 export interface StartPrismOptions {
-  /** Env block; must include PRISM_WS_URL and PRISM_HTTP_URL pointing at the runtime. */
+  /** Env block; must include PRISM_HTTP_URL pointing at the runtime. */
   env: NodeJS.ProcessEnv;
   cols?: number;
   rows?: number;

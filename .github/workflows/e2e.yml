@@ -34,21 +34,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: lens
-          POSTGRES_PASSWORD: lens
-          POSTGRES_DB: lens_platform_e2e
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U lens"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - uses: actions/checkout@v4
 
@@ -71,9 +56,6 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_E2E_BEDROCK_ROLE_ARN }}
           aws-region: us-east-1
-
-      - name: Create backend-only database
-        run: PGPASSWORD=lens psql -h localhost -U lens -d postgres -c "CREATE DATABASE lens_agents_backend_e2e"
 
       - name: Generate Prisma client
         run: npx prisma generate --schema prisma/sqlite/schema.prisma

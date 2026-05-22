@@ -1,13 +1,11 @@
-# Lens Agents — End-to-End Tests
+# Prism Agent — End-to-End Tests
 
-Playwright BDD tests for the Lens Agents subsystem (backend, agent-runtime, frontend).
-
+Playwright BDD tests for this repo’s single-agent runtime + web SPA (and related integrations like Slack/telemetry).
 ## Prerequisites
 
 - Node.js 24+
-- PostgreSQL running locally with a `lens_platform_e2e` database
+- Docker (for the OTEL Collector + MinIO test stack)
 - Playwright browsers installed (`npx playwright install chromium`)
-
 ## Environment Variables
 
 The tests load `.env.e2e` for service configuration (database, auth, etc.).
@@ -26,18 +24,16 @@ export AWS_SESSION_TOKEN=
 
 ## Running Tests
 
-From the `packages/lens-agents/e2e` directory:
+From the repo root:
 
-```bash
 # Headless (default) — runs in the background with no browser window
-npm test
+npm run test --workspace=prism-agent-e2e
 
 # Headed — opens a visible browser window
-npm run test:headed
+npm run test:headed --workspace=prism-agent-e2e
 
 # Debug — opens Playwright Inspector for step-by-step execution
-npm run test:debug
-```
+npm run test:debug --workspace=prism-agent-e2e
 
 ### Viewing Reports
 
@@ -102,9 +98,9 @@ User Token Scopes:
 
 ## How It Works
 
-1. **Global setup** starts a mock JWKS server, runs Prisma migrations, seeds the database, and generates a NextAuth session cookie (`storageState.json`).
-2. Playwright launches three dev servers (backend :3001, agent-runtime :3003, frontend :3000).
-3. Feature files in `features/` are executed using step definitions from `steps/`.
-4. **Global teardown** stops the mock JWKS server.
+1. Playwright config provisions `prisma/sqlite/e2e.db` and runs Prisma migrations (at config load).
+2. Playwright starts two dev servers: agent-runtime (:3003 via tsx) and the Vite web app (:5173).
+3. `global-setup.ts` starts the OTEL Collector + MinIO stack and seeds the SQLite DB.
+4. `global-teardown.ts` stops the OTEL stack and disconnects Prisma.
 
 Tests run sequentially (`workers: 1`) because they share a single database and agent state.

@@ -7,18 +7,17 @@ import { expect } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
 import { AgentDetailPage } from '../pages/agent-detail.page';
 import { ProfilePage } from '../pages/profile.page';
-import { getCurrentAgentId } from './common.steps';
 
 const { When, Then } = createBdd();
 
 When('I navigate to the agent chat page', async ({ page }) => {
   const homePage = new HomePage(page);
-  await homePage.navigate(getCurrentAgentId());
+  await homePage.navigate();
 });
 
 When('I navigate to the agent detail page', async ({ page }) => {
   const detailPage = new AgentDetailPage(page);
-  await detailPage.navigate(getCurrentAgentId());
+  await detailPage.navigate();
 });
 
 When('I navigate to the profile page', async ({ page }) => {

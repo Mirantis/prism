@@ -47,10 +47,10 @@ jobs:
           printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > .npmrc-secret
           docker build \
             --secret id=npmrc,src=.npmrc-secret \
-            -t $ECR_REGISTRY/prism-agent:$IMAGE_TAG \
-            -t $ECR_REGISTRY/prism-agent:latest \
+            -t $ECR_REGISTRY/lens-platform/prism-agent:$IMAGE_TAG \
+            -t $ECR_REGISTRY/lens-platform/prism-agent:latest \
             -f Dockerfile \
             .
           rm -f .npmrc-secret
-          docker push $ECR_REGISTRY/prism-agent:$IMAGE_TAG
-          docker push $ECR_REGISTRY/prism-agent:latest
+          docker push $ECR_REGISTRY/lens-platform/prism-agent:$IMAGE_TAG
+          docker push $ECR_REGISTRY/lens-platform/prism-agent:latest

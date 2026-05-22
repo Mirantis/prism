@@ -1,11 +1,8 @@
 /**
- * Chat Page Object — chat interface at /orgs/:orgId/teams/:teamId/agents/:id/chat.
+ * Chat Page Object — chat interface at /chat.
  *
- * Selectors are based on:
- *   packages/lens-agents/frontend/src/pages/orgs/[orgId]/teams/[teamId]/agents/[id]/chat.tsx
- *   packages/lens-agents/frontend/src/components/chat/AgentChat.tsx
- *   packages/lens-agents/frontend/src/components/chat/ChatInput.tsx
- *   packages/lens-agents/frontend/src/components/chat/ChatMessage.tsx
+ * The single-agent SPA reads agent identity from /agents/me, so no
+ * agentId in the URL. Selectors mirror web/src/components/chat/*.
  */
 
 import { Page, Locator } from '@playwright/test';
@@ -21,8 +18,8 @@ export class HomePage extends BasePage {
     this.sendButton = page.locator('button[type="submit"]');
   }
 
-  async navigate(agentId: string) {
-    await this.goto(`/orgs/test-org-id/teams/test-team-id/agents/${agentId}/chat`);
+  async navigate() {
+    await this.goto('/chat');
     await this.page.waitForLoadState('networkidle');
   }
 

@@ -15,6 +15,14 @@ The agent is not a chatbot session — it persists between conversations,
 maintains its own memory, runs heartbeat checks on a schedule, can put work on
 its own calendar, and can act over a shell.
 
+## Web UI
+
+![Prism Web UI](docs/images/web-ui.png)
+
+## Terminal UI
+
+![Prism Terminal UI](docs/images/terminal-ui.png)
+
 ## Features
 
 ### Conversational interface

@@ -1,7 +1,11 @@
 /**
- * Channels Page Object — /orgs/:orgId/channels.
+ * Channels Page Object — /channels in single-agent mode.
  *
- * Handles org-level Slack workspace configuration.
+ * The single-agent SPA reads the Slack workspace from env
+ * (SLACK_BOT_TOKEN, validated via auth.test on runtime boot), so there
+ * is no in-UI "Configure Slack" flow. This page object just waits for
+ * the configured branch to render and exposes the "Get Channel Link
+ * Code" affordance used by the slack-channel e2e flow.
  */
 
 import { Page } from '@playwright/test';
@@ -13,52 +17,34 @@ export class ChannelsPage extends BasePage {
   }
 
   async navigate() {
-    await this.goto('/orgs/test-org-id/channels');
+    await this.goto('/channels');
     await this.page.waitForLoadState('networkidle');
   }
 
   /**
-   * Configure a Slack workspace by entering the bot token.
-   * Assumes the workspace is not yet configured.
+   * Wait for the configured-Slack branch of /channels to render. In
+   * single-agent mode the workspace is set up automatically from env;
+   * this is just a readiness check (the `botToken` arg is ignored,
+   * kept for call-site compatibility with the @slack Before hook).
    */
-  async configureSlack(botToken: string) {
-    // Wait for the page to settle into either "Connected" or "Configure Slack" state
-    const connected = this.page.getByText('Connected', { exact: true });
-    const configureButton = this.page.getByRole('button', { name: 'Configure Slack' });
-
-    const alreadyConfigured = await Promise.race([
-      connected.waitFor({ timeout: 10_000 }).then(() => true),
-      configureButton.waitFor({ timeout: 10_000 }).then(() => false),
-    ]);
-
-    if (alreadyConfigured) {
-      return;
-    }
-
-    await configureButton.click();
-    await this.page.getByPlaceholder('xoxb-').fill(botToken);
-    await this.page.getByRole('button', { name: 'Configure' }).click();
-
-    // Wait for the "Connected" badge to appear
-    await connected.waitFor({ timeout: 15_000 });
+  async configureSlack(_botToken: string) {
+    // The "Slack" h3 only renders in the configured branch of /channels;
+    // the empty-state card shows "No Slack workspace configured" instead.
+    await this.page
+      .getByRole('heading', { name: 'Slack', level: 3 })
+      .waitFor({ timeout: 15_000 });
   }
 
   /**
-   * Disconnect the currently connected Slack workspace. Assumes the
-   * workspace is connected and the current user is an org admin.
+   * Click "Get Channel Link Code" and return the 6-char hex code from
+   * the .font-mono.text-2xl block that appears.
    */
-  async disconnectSlack() {
-    await this.page.getByRole('button', { name: 'Disconnect' }).click();
-
-    // Confirm in the AlertDialog
-    const dialog = this.page.getByRole('alertdialog');
-    await dialog.waitFor({ timeout: 5_000 });
-    await dialog.getByRole('button', { name: 'Disconnect' }).click();
-
-    // After a successful disconnect, the UI swaps in the "Configure Slack"
-    // button (the empty-state card). Wait for it to settle.
-    await this.page
-      .getByRole('button', { name: 'Configure Slack' })
-      .waitFor({ timeout: 15_000 });
+  async getChannelLinkCode(): Promise<string> {
+    await this.page.getByRole('button', { name: 'Get Channel Link Code' }).click();
+    const codeEl = this.page.locator('.font-mono.text-2xl');
+    await codeEl.waitFor({ timeout: 10_000 });
+    const code = await codeEl.textContent();
+    if (!code) throw new Error('Channel link code not found');
+    return code.trim();
   }
 }

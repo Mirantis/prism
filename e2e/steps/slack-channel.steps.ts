@@ -9,7 +9,6 @@
 
 import { createBdd } from 'playwright-bdd';
 import { expect, test } from '@playwright/test';
-import { getCurrentAgentId } from './common.steps';
 import { getPrisma } from '../support/db-helper';
 import {
   createSlackUserClient,
@@ -17,7 +16,6 @@ import {
   waitForBotReply,
 } from '../support/slack-helper';
 import { getSlackState, resetSlackState } from '../support/slack-state';
-import { AgentDetailPage } from '../pages/agent-detail.page';
 import { ChannelsPage } from '../pages/channels.page';
 
 const { Given, When, Then, Before, After } = createBdd();
@@ -105,18 +103,33 @@ Given('the bot is invited to the channel', async () => {
     channel: slack.channelId,
     users: slack.botUserId,
   });
+
+  // After a fresh invite, Slack takes a few seconds to start routing
+  // message events for this channel to the bot's Socket Mode socket.
+  // Poll the channel membership until the bot appears, then add a small
+  // settle window. Without this the verification-code post races ahead
+  // of event-subscription propagation and the bot never sees the code.
+  const start = Date.now();
+  while (Date.now() - start < 15_000) {
+    const info = await slack.userClient!.conversations.members({
+      channel: slack.channelId,
+    });
+    if (info.members?.includes(slack.botUserId!)) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await new Promise((r) => setTimeout(r, 2_000));
 });
 
 Given('I link the channel to the agent via the UI', async ({ page }) => {
   const slack = getSlackState();
-  const agentId = getCurrentAgentId();
-  const agentDetail = new AgentDetailPage(page);
+  const channelsPage = new ChannelsPage(page);
 
-  // Navigate to the agent detail page
-  await agentDetail.navigate(agentId);
+  // Channel link codes live on /channels in single-agent mode (the legacy
+  // agent-detail page no longer hosts this flow).
+  await channelsPage.navigate();
 
   // Click "Get Channel Link Code" and grab the 6-char hex code
-  const code = await agentDetail.getChannelLinkCode();
+  const code = await channelsPage.getChannelLinkCode();
 
   // Post the verification code in the Slack channel
   await slack.userClient!.chat.postMessage({
