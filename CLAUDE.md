@@ -64,27 +64,9 @@ their tokens are unset. The SPA shell, navigation, profile, `/agents/me`,
 tokens** here, not Nexus credential sentinels — there's no MITM proxy in
 front to rewrite them. See `.env.example` for the full single-agent block.
 
-### Mode B — container backend, Vite on host (UI work only)
-
-When you need the real Nexus-injected credentials (Slack workspace, Bedrock
-key) and don't want them in your shell env, leave the prod-shape runtime in
-the container and only hot-reload the UI:
-
-```bash
-# Container already running from a prior `docker run … :nexus-sandbox`.
-cd packages/lens-agents/agent-runtime
-npm run dev:web    # Vite on :5173 proxying to :3003
-```
-
-Browser → `http://localhost:5173`. UI HMR is the same as Mode A; **runtime
-changes need an image rebuild in this mode** — use Mode A instead if you're
-editing both.
-
 ### Runtime code changes
 
-- Mode A: `tsx watch` restarts on every save (~1s).
-- Mode B: rebuild the bare image + wrapper (see the snippet under
-  "Single-agent deployment" in the root `README.md`).
+`tsx watch` restarts on every save (~1s).
 
 ### Production-shape preview (no HMR, no Vite)
 
@@ -93,14 +75,11 @@ Skip the image rebuild while still hitting `:3003` directly: volume-mount
 
 ```bash
 docker run -d --name prism-smoke \
-  --cap-add=NET_ADMIN \
   -v /tmp/agent-data:/data \
-  -v "$PWD/packages/lens-agents/agent-runtime/web/dist:/app/packages/lens-agents/agent-runtime/web/dist:ro" \
+  -v "$PWD/web/dist:/app/web/dist:ro" \
   -p 3003:3003 \
   -e AGENT_ID="$(uuidgen)" \
-  -e NEXUS_WS_URL="ws://host.docker.internal:3002/v1/sandbox" \
-  -e SANDBOX_TOKEN="<minted>" \
-  lens-agents/agent-runtime:nexus-sandbox
+  prism-agent:latest
 ```
 
 Then `npm run build --workspace=prism-agent-web` on the host updates the
@@ -300,32 +279,13 @@ On shutdown, the Slack adapter is gracefully shut down (disconnects all Socket M
 
 ### Single-agent mode (what you set on `docker run`)
 
-The only env vars the operator supplies at container start:
-
-| Variable | Purpose |
-|----------|---------|
-| `AGENT_ID` | UUID of the one `AgentWorkspace` this container owns |
-| `NEXUS_WS_URL` | Nexus sandbox WebSocket URL |
-| `SANDBOX_TOKEN` | Short-lived sandbox token from Nexus |
-
-Everything else — Slack tokens, the Bedrock Bearer API key,
-`HTTPS_PROXY`, the proxy CA certs, even `DATABASE_URL` (defaults to
-`file:/data/agent.db`) — is **injected by the Nexus sandbox at
-runtime** from the project's policy. The operator doesn't set them on
-`docker run`; they configure the Nexus project (credentials, env
-entries, routes, SigV4 / Bearer rules) and the sandbox delivers them
-into the container. In particular:
-
-- `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` come in as Nexus credential
-  sentinels that the MITM proxy rewrites on the wire.
-- `AWS_BEARER_TOKEN_BEDROCK` likewise. When it's set, the Vercel AI
-  SDK auto-selects Bearer auth over SigV4 — no `AWS_ACCESS_KEY_ID`
-  / `AWS_SECRET_ACCESS_KEY` needed in this mode.
-- All outbound HTTPS is captured by the Nexus sandbox via transparent
-  TCP redirect (iptables NAT). The runtime makes plain HTTPS calls;
-  no `HTTPS_PROXY`, no per-SDK proxy-agent wiring.
-- `ENCRYPTION_KEY`, `INTERNAL_API_SECRET`, `BACKEND_URL` are unused
-  in single-agent mode.
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `AGENT_ID` | UUID of the one `AgentWorkspace` this container owns | bootstrapped on first boot |
+| `DATABASE_URL` | SQLite URL for the runtime DB | `file:/data/agent.db` |
+| `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
+| `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
+| `AWS_BEARER_TOKEN_BEDROCK` | Bedrock Bearer API key; selected over SigV4 when set | — |
 
 ## Chat Flow
 

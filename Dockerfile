@@ -1,9 +1,7 @@
 # Prism Agent Dockerfile
 # Multi-stage build for smaller production image.
 #
-# Base: node:24-bookworm-slim (glibc). Previously node:24-alpine (musl); the
-# switch is required so the image can be wrapped by Dockerfile.nexus-sandbox,
-# which layers a glibc-linked nexus-agent-sandbox binary on top.
+# Base: node:24-bookworm-slim (glibc).
 
 # Stage 1: Build
 FROM node:24-bookworm-slim AS builder
@@ -143,10 +141,9 @@ COPY --from=builder /app/cli/dist ./cli/dist
 RUN chmod +x /app/cli/dist/index.js \
  && ln -s /app/cli/dist/index.js /usr/local/bin/prism
 
-# Startup orchestrator (shared with Dockerfile.nexus-sandbox). The
-# pending-import preflight is compiled into `dist/scripts/apply-pending-
-# import.js` by the builder stage above — same code path the `dev:single`
-# npm script runs via tsx.
+# Startup orchestrator. The pending-import preflight is compiled into
+# `dist/scripts/apply-pending-import.js` by the builder stage above —
+# same code path the `dev:single` npm script runs via tsx.
 COPY start.sh ./
 RUN chmod +x ./start.sh
 
@@ -156,9 +153,8 @@ ENV PORT=3003
 
 EXPOSE 3003
 
-# Per-agent SQLite DB lives here in single-agent mode. Owned by node so the
-# privilege-dropped sandbox process can write. Multi-tenant mode ignores this
-# directory.
+# Per-agent SQLite DB lives here. Owned by node so the runtime user can
+# write.
 RUN mkdir -p /data && chown -R node:node /data
 VOLUME ["/data"]
 
@@ -166,11 +162,7 @@ VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD wget -q --spider http://127.0.0.1:3003/health || exit 1
 
-# Drop the runtime user from root → node. The Nexus k8s agent supervisor
-# starts the container as runAsUser:0, installs iptables, then setuids to
-# the image's declared USER before exec'ing AGENT_COMMAND (see
-# nexus-sandbox-core::privilege::apply). Multi-tenant deploys and local
-# `docker run` honor this USER directly. The agent has no root-requiring
+# Drop the runtime user from root → node. The agent has no root-requiring
 # runtime path: port 3003 is unprivileged, /data is already chown'd to
 # node above, and the generated Prisma client + dist layers are 0755/0644.
 USER node

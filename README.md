@@ -1,6 +1,6 @@
 # Prism
 
-> Standalone agent runtime: long-lived AI agents with persistent memory,
+> Standalone agent runtime: long-lived AI agent with persistent memory,
 > scheduled work, heartbeat checks, and Slack/WebSocket chat — running
 > in a single container.
 
@@ -143,15 +143,8 @@ lives in the container at `/data/agent.db` and is the only persistence.
 
 ```bash
 npm install
-NEXUS_PROJECT_ID=<project-uuid> \
-AWS_BEARER_TOKEN_BEDROCK=<bedrock-key> \
-npm run dev
+AWS_BEARER_TOKEN_BEDROCK=<bedrock-key> npm run dev
 ```
-
-`NEXUS_PROJECT_ID` is the Nexus project this agent lives in; it's used to
-authorize WebSocket chat against Nexus. `NEXUS_URL` defaults to
-`http://localhost:3002` — override it if Nexus is reachable at a different
-address.
 
 The runtime listens on port `3003`. Health check:
 
@@ -169,7 +162,6 @@ the existing workspace and reuse it.
 docker build -t prism .
 docker run -p 3003:3003 \
   -v prism-data:/data \
-  -e NEXUS_PROJECT_ID=<project-uuid> \
   -e AWS_BEARER_TOKEN_BEDROCK=<bedrock-key> \
   prism
 ```
@@ -178,12 +170,6 @@ Mount a volume at `/data` so the agent's database survives container
 restarts.
 
 ## Configuration
-
-### Required
-
-| Variable | Purpose |
-|----------|---------|
-| `NEXUS_PROJECT_ID` | Nexus project this agent lives in. Used to authorize WebSocket chat — callers must have access to this project in Nexus. Startup fails if unset |
 
 ### Credentials
 
