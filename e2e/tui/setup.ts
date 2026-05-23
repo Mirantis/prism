@@ -61,7 +61,6 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
 
   const runtimeEnv: NodeJS.ProcessEnv = {
     ...process.env,
-    NEXUS_PROJECT_ID: 'tui-e2e',
     DATABASE_URL: `file:${dbPath}`,
     PORT: String(port),
     // Only pass BEDROCK_MODEL_ID through when the surrounding env actually

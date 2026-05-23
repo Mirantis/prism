@@ -7,9 +7,9 @@ local-dev only.
 ## Quickstart
 
 ```bash
-# 1. Start an agent-runtime (sets DATABASE_URL=file:./agent.db, runs a
-#    build first).
-npm run start:single
+# 1. Start an agent-runtime (defaults DATABASE_URL to file:./agent.db,
+#    runs a build first).
+npm start
 
 # 2. In another terminal, start the CLI.
 npm run dev --workspace=prism-cli

@@ -1,9 +1,5 @@
 #!/bin/sh
-# Agent Runtime startup orchestrator.
-#
-# Single source of truth for boot logic, invoked by both Dockerfiles:
-#   - Dockerfile sets `CMD ["./start.sh"]`
-#   - Dockerfile.nexus-sandbox sets `ENV AGENT_COMMAND="./start.sh"`
+# Agent Runtime startup orchestrator (invoked via `CMD ["./start.sh"]`).
 #
 # Responsibilities:
 #   1. Default DATABASE_URL in single-agent mode BEFORE the prisma CLI
@@ -27,8 +23,7 @@
 #      handling + crash semantics match a clean process tree).
 #
 # Direct path to the workspace-hoisted prisma binary — avoids `npx`'s
-# startup call to registry.npmjs.org, which the Nexus sandbox proxy
-# (default_action=Deny) rejects.
+# startup registry round-trip.
 
 set -e
 
