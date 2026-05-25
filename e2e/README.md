@@ -1,11 +1,13 @@
 # Prism Agent — End-to-End Tests
 
 Playwright BDD tests for this repo’s single-agent runtime + web SPA (and related integrations like Slack/telemetry).
+
 ## Prerequisites
 
 - Node.js 24+
 - Docker (for the OTEL Collector + MinIO test stack)
 - Playwright browsers installed (`npx playwright install chromium`)
+
 ## Environment Variables
 
 The tests load `.env.e2e` for service configuration (database, auth, etc.).
@@ -26,6 +28,7 @@ export AWS_SESSION_TOKEN=
 
 From the repo root:
 
+```bash
 # Headless (default) — runs in the background with no browser window
 npm run test --workspace=prism-agent-e2e
 
@@ -34,6 +37,7 @@ npm run test:headed --workspace=prism-agent-e2e
 
 # Debug — opens Playwright Inspector for step-by-step execution
 npm run test:debug --workspace=prism-agent-e2e
+```
 
 ### Viewing Reports
 
