@@ -1,5 +1,5 @@
 {
-  "name": "agent-runtime-web",
+  "name": "prism-agent-web",
   "version": "0.1.0",
   "private": true,
   "type": "module",

@@ -5,15 +5,15 @@
 #
 # Build:
 #   docker build \
-#     --build-arg AGENT_RUNTIME_IMAGE=lens-agents/agent-runtime:latest \
-#     -f packages/lens-agents/agent-runtime/Dockerfile.nexus-sandbox \
-#     -t lens-agents/agent-runtime:nexus-sandbox .
+#     --build-arg AGENT_RUNTIME_IMAGE=prism-agent:latest \
+#     -f Dockerfile.nexus-sandbox \
+#     -t prism-agent:nexus-sandbox .
 #
 # The agent-runtime image must be Debian-based (glibc) — the sandbox binary
 # is linked against glibc and won't run on Alpine/musl.
 
 ARG NEXUS_SANDBOX_IMAGE=ghcr.io/lensapp/nexus-agent-sandbox:latest
-ARG AGENT_RUNTIME_IMAGE=lens-agents/agent-runtime:latest
+ARG AGENT_RUNTIME_IMAGE=prism-agent:latest
 
 FROM ${NEXUS_SANDBOX_IMAGE} AS nexus-sandbox
 
@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Mirrors the original Dockerfile CMD.
 # NEXUS_WS_URL / SANDBOX_TOKEN must be supplied at docker-run / ECS-task time.
 ENV SANDBOX_USER=node
-ENV WORKSPACE_PATH=/app/packages/lens-agents/agent-runtime
+ENV WORKSPACE_PATH=/app
 ENV IDLE_TIMEOUT_MS=86400000
 # Boot logic (DATABASE_URL default in single-agent mode, prisma migrate
 # deploy against the right schema, optional embedding-backfill in

@@ -120,7 +120,7 @@ docker run -d --name prism-smoke \
   lens-agents/agent-runtime:nexus-sandbox
 ```
 
-Then `npm run build --workspace=agent-runtime-web` on the host updates the
+Then `npm run build --workspace=prism-agent-web` on the host updates the
 bundle in place; refresh `:3003` to see it. Useful for catching anything
 Vite-proxy-shaped that would mask a real bug.
 

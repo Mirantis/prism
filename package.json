@@ -1,15 +1,16 @@
 {
-  "name": "agent-runtime",
+  "name": "prism-agent",
   "version": "0.1.0",
   "private": true,
   "main": "dist/index.js",
+  "workspaces": ["web", "cli"],
   "scripts": {
     "db:migrate": "prisma migrate dev",
     "dev": "tsx watch src/index.ts",
-    "dev:web": "npm --workspace=agent-runtime-web run dev",
+    "dev:web": "npm --workspace=prism-agent-web run dev",
     "dev:single": "tsx src/scripts/apply-pending-import.ts && prisma migrate deploy --schema=prisma/sqlite/schema.prisma && concurrently --kill-others-on-exit --prefix \"[{name}]\" --names \"runtime,web\" --prefix-colors \"cyan,green\" \"npm run dev\" \"npm run dev:web\"",
     "build": "tsc && npm run build:web",
-    "build:web": "npm --workspace=agent-runtime-web run build",
+    "build:web": "npm --workspace=prism-agent-web run build",
     "start": "node dist/index.js",
     "prestart:single": "npm run build",
     "start:single": "SINGLE_AGENT_MODE=true NEXUS_PROJECT_ID=local DATABASE_URL=file:./agent.db node dist/index.js",
@@ -18,7 +19,9 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:single-agent": "SINGLE_AGENT_MODE=true vitest run"
+    "test:single-agent": "SINGLE_AGENT_MODE=true vitest run",
+    "lint": "oxlint",
+    "lint:md": "markdownlint-cli2 \"**/*.md\""
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^4.0.77",
@@ -57,6 +60,8 @@
     "@types/supertest": "^7.2.0",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.0.18",
+    "markdownlint-cli2": "^0.21.0",
+    "oxlint": "^1.51.0",
     "supertest": "^7.2.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

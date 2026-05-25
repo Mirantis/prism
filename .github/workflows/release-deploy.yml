@@ -1,0 +1,117 @@
+name: Release Deploy
+
+# Manual production build + push, gated by an environment approval.
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+
+permissions:
+  id-token: write
+  contents: write # for `gh release create` (creates and pushes the tag)
+  packages: read
+
+concurrency:
+  group: release-deploy-production
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      release_sha: ${{ steps.meta.outputs.release_sha }}
+    steps:
+      - name: Generate version and resolve release SHA marker
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Time-based version: vYYYY.M.DDHHMMSS (UTC). Seconds prevent
+          # collisions between runs that land in the same minute.
+          VERSION="v$(TZ=UTC date +'%Y.%-m.%-d%H%M%S')"
+          RELEASE_SHA=$(gh api "repos/$GH_REPO/branches/main" --jq '.commit.sha')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "Generated version: $VERSION"
+          echo "Release SHA marker (main HEAD): $RELEASE_SHA"
+
+  approve:
+    needs: prepare
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Approved release ${{ needs.prepare.outputs.version }}"
+
+  build-and-push:
+    needs: [prepare, approve]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS via OIDC (production)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID_PRODUCTION }}:role/github-actions-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to production ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > .npmrc-secret
+          docker build \
+            --secret id=npmrc,src=.npmrc-secret \
+            -t $ECR_REGISTRY/prism-agent:$VERSION \
+            -t $ECR_REGISTRY/prism-agent:$IMAGE_TAG \
+            -t $ECR_REGISTRY/prism-agent:latest \
+            -f Dockerfile \
+            .
+          rm -f .npmrc-secret
+          docker push $ECR_REGISTRY/prism-agent:$VERSION
+          docker push $ECR_REGISTRY/prism-agent:$IMAGE_TAG
+          docker push $ECR_REGISTRY/prism-agent:latest
+
+  publish-release:
+    needs: [prepare, build-and-push]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Prepend the deployed image identity to GitHub's auto-generated
+          # release notes so the release page documents exactly what shipped.
+          GENERATED=$(gh api -X POST "repos/$GH_REPO/releases/generate-notes" \
+            -f tag_name="$VERSION" \
+            -f target_commitish="$RELEASE_SHA" \
+            --jq '.body')
+
+          # printf rather than heredoc so backticks stay literal.
+          {
+            printf '## Deployed image\n\n'
+            printf -- '- prism-agent: `%s`\n' "$BUILD_SHA"
+            printf '\n---\n\n%s\n' "$GENERATED"
+          } > /tmp/release-notes.md
+
+          gh release create "$VERSION" \
+            --target "$RELEASE_SHA" \
+            --title "$VERSION" \
+            --notes-file /tmp/release-notes.md
