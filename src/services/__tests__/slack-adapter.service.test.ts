@@ -199,7 +199,7 @@ describe('Requirement: buildSenderTaggedContent prepares inbound text for the ag
   // conversation engine.
   type AdapterWithHelper = {
     buildSenderTaggedContent(
-      slackUserId: string | undefined,
+      slackUserId: string,
       senderName: string | undefined,
       text: string,
     ): string;
@@ -221,29 +221,17 @@ describe('Requirement: buildSenderTaggedContent prepares inbound text for the ag
         .toBe('<@UEVE:Eve evil>: hello');
     });
 
-    it('falls back to the original name when sanitization would empty it', () => {
-      // A name made entirely of reserved characters would otherwise leave
-      // an empty `<@U:>` marker — keep the raw name in that pathological
-      // case rather than emitting a broken token.
+    it('drops the name segment when sanitization would empty it', () => {
+      // A name made entirely of reserved characters would leave an empty
+      // `<@U:>` marker — emit the bare `<@U>` token instead so the mention
+      // still resolves on Slack.
       expect(helper.buildSenderTaggedContent('UWEIRD', ':<>', 'sup'))
-        .toBe('<@UWEIRD::<>>: sup');
+        .toBe('<@UWEIRD>: sup');
     });
   });
 
-  describe('Scenario: only the display name is known', () => {
-    it('falls back to the [Name]: bracket form', () => {
-      expect(helper.buildSenderTaggedContent(undefined, 'Alice', 'hi'))
-        .toBe('[Alice]: hi');
-    });
-  });
-
-  describe('Scenario: no sender attribution at all', () => {
-    it('returns the message unchanged', () => {
-      expect(helper.buildSenderTaggedContent(undefined, undefined, 'hello'))
-        .toBe('hello');
-    });
-
-    it('returns the message unchanged even when only the ID is known', () => {
+  describe('Scenario: only the Slack user ID is known', () => {
+    it('returns the message unchanged when the display name is missing', () => {
       // Without a display name we have nothing meaningful to render, so
       // skip the tag entirely rather than emit `<@U123:>: …`.
       expect(helper.buildSenderTaggedContent('U123', undefined, 'hello'))

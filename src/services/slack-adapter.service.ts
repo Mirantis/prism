@@ -31,6 +31,8 @@ import {
   FEEDBACK_RATING_UP,
   FEEDBACK_RATING_DOWN,
   FeedbackRating,
+  FormatSlackMessageOptions,
+  SlackBlock,
 } from '../utils/slack-formatter';
 import { trackEvent } from '../lib/telemetry';
 import { isBedrockConfigured } from '../lib/bedrock-provider';
@@ -176,12 +178,9 @@ class SlackAdapterService implements ChannelAdapter {
         }
 
         try {
-          const outboundText = await this.rewriteOutboundMentions(
+          const formatted = await this.prepareOutboundMessage(
             message.content,
             connection.teamId,
-          );
-          const formatted = formatSlackMessage(
-            outboundText,
             message.triggeredBy || undefined,
             (message.toolCalls as Array<{ tool: string }>) ?? undefined,
             includeFeedback ? { feedbackMessageId: message.id } : undefined,
@@ -257,12 +256,9 @@ class SlackAdapterService implements ChannelAdapter {
     }
 
     try {
-      const outboundText = await this.rewriteOutboundMentions(
+      const formatted = await this.prepareOutboundMessage(
         content,
         mapping.connection.teamId,
-      );
-      const formatted = formatSlackMessage(
-        outboundText,
         undefined,
         toolCalls,
         includeFeedback && messageId ? { feedbackMessageId: messageId } : undefined,
@@ -1372,17 +1368,16 @@ class SlackAdapterService implements ChannelAdapter {
    * (where `rewriteOutboundMentions()` strips the embedded name and Slack
    * fires a real notification).
    *
-   * Falls back to `[Name]: text` when only the display name is known,
-   * and to the bare message when nothing is known.
+   * Falls back to the bare message when the sender's display name is unknown.
    */
   private buildSenderTaggedContent(
-    slackUserId: string | undefined,
+    slackUserId: string,
     senderName: string | undefined,
     text: string,
   ): string {
     if (!senderName) return text;
-    const sanitized = senderName.replace(/[<>:\x00-\x1f]/g, '').trim() || senderName;
-    const tag = slackUserId ? `<@${slackUserId}:${sanitized}>` : `[${senderName}]`;
+    const sanitized = senderName.replace(/[<>:\x00-\x1f]/g, '').trim();
+    const tag = sanitized ? `<@${slackUserId}:${sanitized}>` : `<@${slackUserId}>`;
     return `${tag}: ${text}`;
   }
 
@@ -1430,6 +1425,26 @@ class SlackAdapterService implements ChannelAdapter {
       resolved = resolved.replace(match[0], `<@${match[1]}:${sanitizedName}>`);
     }
     return resolved;
+  }
+
+  /**
+   * Prepare agent output for a Slack `chat.postMessage`.
+   *
+   * Pairs {@link rewriteOutboundMentions} with {@link formatSlackMessage} so
+   * every delivery path normalizes `<@USERID:Name>` tokens back to Slack's
+   * native mention syntax before Block Kit rendering. Callers must route
+   * outbound text through this helper rather than calling the two steps
+   * directly — otherwise mentions silently degrade to plain text.
+   */
+  private async prepareOutboundMessage(
+    content: string,
+    teamId: string,
+    triggeredBy: string | undefined,
+    toolCalls: Array<{ tool: string }> | undefined,
+    options: FormatSlackMessageOptions | undefined,
+  ): Promise<{ text: string; blocks: SlackBlock[] }> {
+    const outboundText = await this.rewriteOutboundMentions(content, teamId);
+    return formatSlackMessage(outboundText, triggeredBy, toolCalls, options);
   }
 
   /**
