@@ -68,6 +68,9 @@ jobs:
         run: npm run test --workspace=prism-agent-e2e
         env:
           CI: true
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
           AWS_REGION: us-east-1
           # Slack E2E — @slack tests skip gracefully if these aren't set
           SLACK_CLIENT_ID: ${{ secrets.SLACK_E2E_CLIENT_ID }}
@@ -83,6 +86,9 @@ jobs:
         run: npm run test:e2e:tui --workspace=prism-agent-e2e
         env:
           CI: true
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
           AWS_REGION: us-east-1
 
       - name: Upload test report

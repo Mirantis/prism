@@ -38,7 +38,7 @@ cd packages/lens-agents/agent-runtime
 
 # First time only:
 cp .env.example .env
-$EDITOR .env                          # uncomment SINGLE_AGENT_MODE=true + DATABASE_URL
+$EDITOR .env                          # uncomment DATABASE_URL
 
 # Every time:
 npm run dev:single
@@ -46,12 +46,9 @@ npm run dev:single
 ```
 
 `dev:single` applies pending Prisma migrations to SQLite before
-launching tsx-watch + Vite concurrently — same pattern as backend's
-`nodemon.json` for multi-tenant Postgres. You never run migrate manually.
-`SINGLE_AGENT_MODE=true` and the SQLite `DATABASE_URL` come from `.env`,
-which the runtime auto-loads via dotenv. Compare with bare `npm run dev`,
-which boots multi-tenant against Postgres (the same way it does inside the
-root-level `npm run dev` concurrently bundle).
+launching tsx-watch + Vite concurrently. You never run migrate manually.
+The SQLite `DATABASE_URL` comes from `.env`, which the runtime auto-loads
+via dotenv.
 
 Browser → `http://localhost:5173`. UI edits hot-reload in <1s, runtime
 TypeScript edits restart the server in ~1s. The Vite proxy forwards `/agents`
@@ -100,7 +97,6 @@ docker run -d --name prism-smoke \
   -v /tmp/agent-data:/data \
   -v "$PWD/packages/lens-agents/agent-runtime/web/dist:/app/packages/lens-agents/agent-runtime/web/dist:ro" \
   -p 3003:3003 \
-  -e SINGLE_AGENT_MODE=true \
   -e AGENT_ID="$(uuidgen)" \
   -e NEXUS_WS_URL="ws://host.docker.internal:3002/v1/sandbox" \
   -e SANDBOX_TOKEN="<minted>" \
@@ -308,7 +304,6 @@ The only env vars the operator supplies at container start:
 
 | Variable | Purpose |
 |----------|---------|
-| `SINGLE_AGENT_MODE=true` | Enables single-agent mode |
 | `AGENT_ID` | UUID of the one `AgentWorkspace` this container owns |
 | `NEXUS_WS_URL` | Nexus sandbox WebSocket URL |
 | `SANDBOX_TOKEN` | Short-lived sandbox token from Nexus |

@@ -92,11 +92,9 @@ RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
 RUN npm rebuild better-sqlite3
 
 # Claude Code CLI: the `claude_code` / `claude_code_status` MCP tools spawn
-# this binary as a sub-agent in single-agent mode. Installed globally so a
-# child `spawn('claude', …)` finds it on PATH. Auth piggybacks on the
-# parent's inherited env (AWS_BEARER_TOKEN_BEDROCK, CLAUDE_CODE_USE_BEDROCK).
-# Harmless in multi-tenant mode — the MCP tool is only registered when
-# config.singleAgentMode is true, so the binary simply goes unused.
+# this binary as a sub-agent. Installed globally so a child
+# `spawn('claude', …)` finds it on PATH. Auth piggybacks on the parent's
+# inherited env (AWS_BEARER_TOKEN_BEDROCK, CLAUDE_CODE_USE_BEDROCK).
 RUN npm install -g @anthropic-ai/claude-code
 
 # Operator CLIs via mise — parity with the multi-tenant Nexus-hosted
@@ -133,9 +131,8 @@ RUN npx prisma generate --schema=prisma/sqlite/schema.prisma
 # Copy built application
 COPY --from=builder /app/dist ./dist
 
-# Copy the built Web UI bundle. Server.ts conditionally serves `web/dist` from
-# `express.static` when SINGLE_AGENT_MODE=true; the wrapper sandbox image
-# enables that mode at runtime.
+# Copy the built Web UI bundle. Server.ts serves `web/dist` via
+# `express.static` for non-API routes.
 COPY --from=builder /app/web/dist ./web/dist
 
 # prism CLI: Ink-based TUI for talking to this runtime. Bundled so an

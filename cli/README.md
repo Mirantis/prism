@@ -1,15 +1,14 @@
 # prism-cli
 
 Standalone Ink-based terminal UI for Prism. Talks to an `agent-runtime`
-running in single-agent mode (`SINGLE_AGENT_MODE=true`) over WebSocket
-and REST. There is no auth — the CLI is intended for local-dev only.
+over WebSocket and REST. There is no auth — the CLI is intended for
+local-dev only.
 
 ## Quickstart
 
 ```bash
-# 1. Start an agent-runtime in single-agent mode (sets
-#    SINGLE_AGENT_MODE=true, NEXUS_PROJECT_ID=local,
-#    DATABASE_URL=file:./agent.db, runs a build first).
+# 1. Start an agent-runtime (sets DATABASE_URL=file:./agent.db, runs a
+#    build first).
 npm run start:single
 
 # 2. In another terminal, start the CLI.

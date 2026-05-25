@@ -13,8 +13,6 @@
  *   - loads the sqlite-vec loadable extension
  *   - enables WAL + foreign keys
  *   - ensures the `memory_entry_vec` virtual table exists
- *
- * It is only used when `config.singleAgentMode` is true.
  */
 
 import Database from 'better-sqlite3';

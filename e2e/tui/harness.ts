@@ -45,7 +45,7 @@ function tailString(buf: string, max = 8_000): string {
 // ----------------------------------------------------------------------------
 
 export interface StartRuntimeOptions {
-  /** Env block including PORT, DATABASE_URL, SINGLE_AGENT_MODE, etc. */
+  /** Env block including PORT, DATABASE_URL, etc. */
   env: NodeJS.ProcessEnv;
 }
 
