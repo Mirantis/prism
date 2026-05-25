@@ -47,6 +47,13 @@ function tailString(buf: string, max = 8_000): string {
 export interface StartRuntimeOptions {
   /** Env block including PORT, DATABASE_URL, etc. */
   env: NodeJS.ProcessEnv;
+  /**
+   * Tee runtime stdout/stderr to the test process's stderr (with a `[runtime]`
+   * prefix) in addition to the in-memory buffer. Default: on under CI, off
+   * locally. Useful for debugging hangs where the in-buffer log tail never
+   * makes it to the reporter (e.g. vitest's stacktrace symbolication crashes).
+   */
+  verbose?: boolean;
 }
 
 export interface RuntimeHandle {
@@ -78,9 +85,15 @@ export function startRuntime(opts: StartRuntimeOptions): RuntimeHandle {
     },
   );
 
+  const verbose = opts.verbose ?? !!process.env.CI;
   let buffer = '';
-  child.stdout?.on('data', (chunk: Buffer) => { buffer += chunk.toString(); });
-  child.stderr?.on('data', (chunk: Buffer) => { buffer += chunk.toString(); });
+  const sink = (chunk: Buffer) => {
+    const s = chunk.toString();
+    buffer += s;
+    if (verbose) process.stderr.write(s.replace(/^/gm, '[runtime] '));
+  };
+  child.stdout?.on('data', sink);
+  child.stderr?.on('data', sink);
 
   let exited = false;
   let exitCode: number | null = null;
@@ -226,19 +239,23 @@ export function startPrism(opts: StartPrismOptions): TuiSession {
       while (Date.now() - start < timeoutMs) {
         if (matches(stripAnsi(buffer))) return;
         if (exitCode !== null) {
-          throw new Error(
+          const msg =
             `prism-cli exited (code ${exitCode}, signal ${exitSignal}) before frame matched ${matcher}.\n` +
-              `--- pty output ---\n${stripAnsi(buffer)}\n` +
-              `--- runtime log ---\n${runtimeLogTail()}`,
-          );
+            `--- pty output ---\n${stripAnsi(buffer)}\n` +
+            `--- runtime log ---\n${runtimeLogTail()}`;
+          // Print directly: vitest's stacktrace symbolication occasionally
+          // crashes on inline source-maps and swallows the thrown error.
+          if (process.env.CI) process.stderr.write(`\n[harness] ${msg}\n`);
+          throw new Error(msg);
         }
         await sleep(50);
       }
-      throw new Error(
+      const msg =
         `Timed out after ${timeoutMs}ms waiting for ${matcher}.\n` +
-          `--- pty output ---\n${stripAnsi(buffer)}\n` +
-          `--- runtime log ---\n${runtimeLogTail()}`,
-      );
+        `--- pty output ---\n${stripAnsi(buffer)}\n` +
+        `--- runtime log ---\n${runtimeLogTail()}`;
+      if (process.env.CI) process.stderr.write(`\n[harness] ${msg}\n`);
+      throw new Error(msg);
     },
 
     async waitForExit(timeoutMs = 10_000) {
