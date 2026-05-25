@@ -5,27 +5,52 @@
  * (DATABASE_URL is pinned by global-setup to file:./e2e.db).
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { DEFAULT_AGENT_ID, TEST_USER, DEFAULT_AGENT_SEED } from '../fixtures/test-data';
 
-// Tables in dependency-safe order (children first). resetAll() deletes them
-// in this order; foreign keys are enforced under better-sqlite3 so the
-// order matters.
-const TABLES = [
-  'pending_slack_messages',
-  'slack_heartbeat_triggers',
-  'slack_verification_codes',
-  'slack_mappings',
-  'agent_subagents',
-  'cron_tasks',
-  'memory_entries',
-  'conversation_participants',
-  'conversation_messages',
-  'conversation_threads',
-  'agent_workspaces',
-];
-
 let prisma: PrismaClient | null = null;
+let cachedDeleteOrder: string[] | null = null;
+
+/**
+ * Derive tables to clear from Prisma DMMF + topo-sort so foreign-key-owning
+ * rows (children) are deleted before the rows they reference (parents).
+ * Beats a hand-maintained constant: adding a model to schema.prisma can't
+ * silently rot into cross-scenario leakage.
+ */
+function getDeleteOrder(): string[] {
+  if (cachedDeleteOrder) return cachedDeleteOrder;
+
+  const models = Prisma.dmmf.datamodel.models;
+  const modelToTable = new Map(models.map((m) => [m.name, m.dbName ?? m.name]));
+
+  // adj[A] = [B, ...] when model A has an FK reference to model B.
+  // (Owning side carries relationFromFields; the inverse side doesn't.)
+  const adj = new Map<string, string[]>();
+  for (const m of models) {
+    const refs: string[] = [];
+    for (const f of m.fields) {
+      if (f.kind === 'object' && (f.relationFromFields?.length ?? 0) > 0) {
+        refs.push(f.type);
+      }
+    }
+    adj.set(m.name, refs);
+  }
+
+  // DFS post-order, then reverse: yields A before B when A has FK to B,
+  // i.e. delete A (child) before B (parent).
+  const visited = new Set<string>();
+  const postOrder: string[] = [];
+  const visit = (name: string) => {
+    if (visited.has(name)) return;
+    visited.add(name);
+    for (const ref of adj.get(name) ?? []) visit(ref);
+    postOrder.push(name);
+  };
+  for (const name of adj.keys()) visit(name);
+
+  cachedDeleteOrder = postOrder.reverse().map((n) => modelToTable.get(n)!);
+  return cachedDeleteOrder;
+}
 
 export function getPrisma(): PrismaClient {
   if (!prisma) {
@@ -43,8 +68,8 @@ export function getPrisma(): PrismaClient {
  */
 export async function resetAll(): Promise<void> {
   const db = getPrisma();
-  for (const table of TABLES) {
-    await db.$executeRawUnsafe(`DELETE FROM ${table}`);
+  for (const table of getDeleteOrder()) {
+    await db.$executeRawUnsafe(`DELETE FROM "${table}"`);
   }
 }
 

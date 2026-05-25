@@ -25,17 +25,16 @@ Then('I should see my message {string} in the conversation', async ({ page }, te
 
 Then('I should see an agent response in the conversation', async ({ page }) => {
   const homePage = new HomePage(page);
-  // Wait longer for real LLM response from Bedrock
-  await homePage.waitForAgentResponse(13_000);
+  await homePage.waitForAgentResponse();
   const agentMessages = homePage.getAgentMessages();
   await expect(agentMessages.first()).toBeVisible();
 
-  // Agent-runtime surfaces LLM failures as a response bubble starting with
-  // "I encountered an error…" — reject any bubble containing "error" so the
-  // test doesn't pass on degraded responses.
-  const latestAgentMessage = agentMessages.last();
-  const text = (await latestAgentMessage.textContent()) ?? '';
-  expect(text.toLowerCase()).not.toContain('error');
+  // Wait for streaming to finish before reading text, otherwise we'd race the
+  // partial frames. Agent-runtime surfaces LLM failures as a bubble starting
+  // with "I encountered an error…" (see lib/llm-errors.ts#buildErrorStep), so
+  // anchor the rejection to that prefix rather than a bare substring.
+  await homePage.waitForStreamComplete();
+  await expect(agentMessages.last()).not.toHaveText(/^\s*I encountered an error/i);
 });
 
 Then('I should see the message {string} in the conversation', async ({ page }, text: string) => {
