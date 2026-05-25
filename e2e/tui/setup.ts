@@ -64,8 +64,13 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
     NEXUS_PROJECT_ID: 'tui-e2e',
     DATABASE_URL: `file:${dbPath}`,
     PORT: String(port),
-    BEDROCK_MODEL_ID:
-      process.env.BEDROCK_MODEL_ID ?? 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    // Only pass BEDROCK_MODEL_ID through when the surrounding env actually
+    // sets it; otherwise let the runtime's own default (src/config.ts) win.
+    // The Playwright e2e suite does the same, and the CI IAM role is
+    // provisioned around that default.
+    ...(process.env.BEDROCK_MODEL_ID
+      ? { BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID }
+      : {}),
     NEXUS_URL: 'http://127.0.0.1:1',
     NODE_ENV: 'development',
     // AWS creds + region inherited from the surrounding shell / CI.
@@ -84,7 +89,9 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
     ...process.env,
     // wsUrl is derived from httpUrl by the CLI; no PRISM_WS_URL.
     PRISM_HTTP_URL: `http://127.0.0.1:${port}`,
-    BEDROCK_MODEL_ID: runtimeEnv.BEDROCK_MODEL_ID,
+    ...(runtimeEnv.BEDROCK_MODEL_ID
+      ? { BEDROCK_MODEL_ID: runtimeEnv.BEDROCK_MODEL_ID }
+      : {}),
     NODE_ENV: 'development',
   };
   const prismEnv = { ...baseEnv, ...(opts.prismEnvOverrides ?? {}) };
