@@ -78,10 +78,9 @@ describe('getAgentConfigTools', () => {
       'update_heartbeat_config',
       'update_settings',
       'update_vision',
-      'store_nexus_token',
       'clear_bootstrap',
     ]));
-    expect(names).toHaveLength(9);
+    expect(names).toHaveLength(8);
   });
 
   describe('rename_self', () => {
@@ -302,16 +301,6 @@ describe('getAgentConfigTools', () => {
       expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
         where: { id: agentId },
         data: { visionMd: '# Vision' },
-      });
-    });
-  });
-
-  describe('store_nexus_token', () => {
-    it('stores the token', async () => {
-      await tools.store_nexus_token.execute({ token: 'my-token' });
-      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
-        where: { id: agentId },
-        data: { nexusMcpAgentToken: 'my-token' },
       });
     });
   });
