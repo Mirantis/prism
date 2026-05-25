@@ -190,3 +190,52 @@ describe('Requirement: disconnectAndDeactivate cleans up connection rows', () =>
     });
   });
 });
+
+describe('Requirement: buildSenderTaggedContent prepares inbound text for the agent', () => {
+  // The helper takes a sender's Slack ID + display name and prepends a
+  // `<@USERID:Name>: ` marker so the agent's conversation history carries
+  // the canonical Slack mention token for whoever is speaking. Both inbound
+  // handlers (DM, channel) call this before forwarding the message to the
+  // conversation engine.
+  type AdapterWithHelper = {
+    buildSenderTaggedContent(
+      slackUserId: string,
+      senderName: string | undefined,
+      text: string,
+    ): string;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const helper = (slackAdapterService as any) as AdapterWithHelper;
+
+  describe('Scenario: both Slack user ID and display name available', () => {
+    it('produces the <@USERID:Name>: prefix', () => {
+      expect(helper.buildSenderTaggedContent('U123', 'Alice', 'what pods are running?'))
+        .toBe('<@U123:Alice>: what pods are running?');
+    });
+
+    it('sanitizes display names that contain marker-reserved characters', () => {
+      // `<`, `>`, `:`, and control chars are stripped before being embedded
+      // in the marker so consumers (e.g. the outbound rewrite regex) can
+      // reliably parse `<@U…:Name>` tokens.
+      expect(helper.buildSenderTaggedContent('UEVE', 'Eve: <evil>', 'hello'))
+        .toBe('<@UEVE:Eve evil>: hello');
+    });
+
+    it('drops the name segment when sanitization would empty it', () => {
+      // A name made entirely of reserved characters would leave an empty
+      // `<@U:>` marker — emit the bare `<@U>` token instead so the mention
+      // still resolves on Slack.
+      expect(helper.buildSenderTaggedContent('UWEIRD', ':<>', 'sup'))
+        .toBe('<@UWEIRD>: sup');
+    });
+  });
+
+  describe('Scenario: only the Slack user ID is known', () => {
+    it('returns the message unchanged when the display name is missing', () => {
+      // Without a display name we have nothing meaningful to render, so
+      // skip the tag entirely rather than emit `<@U123:>: …`.
+      expect(helper.buildSenderTaggedContent('U123', undefined, 'hello'))
+        .toBe('hello');
+    });
+  });
+});

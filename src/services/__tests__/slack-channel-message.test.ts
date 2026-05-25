@@ -302,7 +302,7 @@ describe('Requirement: Channel message mention detection', () => {
 
       expect(mockConversationEngineService.chat).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: "what's the weather?",
+          message: `<@${SLACK_USER_ID}:Alice>: what's the weather?`,
         })
       );
     });
@@ -323,7 +323,7 @@ describe('Requirement: Channel message mention detection', () => {
       // Both mentions stripped; interior whitespace preserved (only outer .trim())
       expect(mockConversationEngineService.chat).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: 'hey  help',
+          message: `<@${SLACK_USER_ID}:Alice>: hey  help`,
         })
       );
     });
@@ -345,10 +345,11 @@ describe('Requirement: Channel message mention detection', () => {
 
       // resolveMentions receives the text with bot mention already stripped
       expect(resolveMentions).toHaveBeenCalledWith('cc <@U_ALICE> help', TEAM_ID);
-      // Final message sent to engine is the resolved output
+      // Final message sent to engine is the resolved output, prefixed with
+      // the sender's <@USERID:Name> tag.
       expect(mockConversationEngineService.chat).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: 'cc @Alice help',
+          message: `<@${SLACK_USER_ID}:Alice>: cc @Alice help`,
         })
       );
     });
