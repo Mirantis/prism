@@ -61,4 +61,14 @@ export class HomePage extends BasePage {
       { timeout },
     );
   }
+
+  /**
+   * Wait for streaming to finish — the typing indicator disappears when
+   * isTyping flips to false at end-of-stream.
+   */
+  async waitForStreamComplete(timeout = 60_000) {
+    await this.page
+      .getByTestId('chat-typing-indicator')
+      .waitFor({ state: 'detached', timeout });
+  }
 }

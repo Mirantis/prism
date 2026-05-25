@@ -35,15 +35,36 @@ process.env.DATABASE_URL = E2E_DATABASE_URL;
 // fresh UUID on first boot and the seeded agent would never match.
 process.env.AGENT_ID = DEFAULT_AGENT_ID;
 if (process.env.TEST_WORKER_INDEX === undefined) {
-  fs.rmSync(E2E_DB_FILE, { force: true });
-  fs.rmSync(`${E2E_DB_FILE}-journal`, { force: true });
-  fs.rmSync(`${E2E_DB_FILE}-wal`, { force: true });
-  fs.rmSync(`${E2E_DB_FILE}-shm`, { force: true });
+  // If a runtime from a previous local run is still listening on :3003,
+  // Playwright's reuseExistingServer will adopt it — and that process has
+  // an open FD on e2e.db. Unlinking the file here would orphan that FD:
+  // the runtime keeps writing to the deleted inode while seed() writes
+  // land on a fresh file the runtime never reads. Skip the wipe in that
+  // case; globalSetup's resetAll() + seed() clears state via Prisma
+  // through the same file. `prisma migrate deploy` is idempotent and
+  // safe with open FDs, so it always runs.
+  if (!isRuntimeAlive(RUNTIME_PORT)) {
+    fs.rmSync(E2E_DB_FILE, { force: true });
+    fs.rmSync(`${E2E_DB_FILE}-journal`, { force: true });
+    fs.rmSync(`${E2E_DB_FILE}-wal`, { force: true });
+    fs.rmSync(`${E2E_DB_FILE}-shm`, { force: true });
+  }
   execSync('npx prisma migrate deploy --schema=prisma/sqlite/schema.prisma', {
     cwd: REPO_ROOT,
     env: { ...process.env, DATABASE_URL: E2E_DATABASE_URL },
     stdio: 'inherit',
   });
+}
+
+function isRuntimeAlive(port: number): boolean {
+  try {
+    execSync(`curl -sf -o /dev/null --max-time 1 http://localhost:${port}/health`, {
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const testDir = defineBddConfig({
