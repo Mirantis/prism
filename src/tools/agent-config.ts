@@ -2,8 +2,8 @@
  * Agent-config tools — direct AI SDK tools (no MCP round trip).
  *
  * Update soul / memory / user / heartbeat / settings / vision /
- * nexus-token / bootstrap. Direct Prisma writes + in-process service
- * calls (heartbeatService.startHeartbeat after config changes).
+ * bootstrap. Direct Prisma writes + in-process service calls
+ * (heartbeatService.startHeartbeat after config changes).
  */
 
 import { Tool, tool } from 'ai';
@@ -205,26 +205,6 @@ export function getAgentConfigTools(agentId: string): Record<string, Tool> {
       description: "Update the user's vision document. Supports full replacement (newContent) or targeted edits.",
       inputSchema: workspaceFileInputSchema,
       execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'visionMd', input, 'Vision'),
-    }),
-
-    store_nexus_token: tool({
-      description: 'Store a Nexus MCP agent token for future use.',
-      inputSchema: z.object({
-        token: z.string().describe('The agent token string'),
-        projectId: z.string().optional().describe('Project ID for admin URL'),
-      }),
-      execute: async ({ token, projectId }) => {
-        await prisma.agentWorkspace.update({
-          where: { id: agentId },
-          data: { nexusMcpAgentToken: token },
-        });
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-        const adminUrl = projectId
-          ? `${frontendUrl}/settings/mcp-admin/projects/${projectId}`
-          : `${frontendUrl}/settings/mcp-admin`;
-
-        return { success: true, message: 'Nexus agent token stored securely.', adminUrl };
-      },
     }),
 
     clear_bootstrap: tool({

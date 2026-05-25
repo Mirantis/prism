@@ -2,13 +2,13 @@
  * Slack Adapter Service (Agent-Runtime)
  *
  * Implements ChannelAdapter for Slack message delivery using Bolt SDK with Socket Mode.
- * Handles incoming Slack messages and routes them through the backend's conversation engine.
+ * Handles incoming Slack messages and routes them through the local conversation engine.
  *
  * Key features:
  * - Socket Mode for real-time bidirectional communication
  * - One Bolt app per connected workspace
  * - Message delivery via DM channel (personal mode) or Slack channel (team mode)
- * - Incoming message handling via backend chat endpoint
+ * - Incoming message handling via local conversationEngineService.chat()
  * - Channel support for team agent participation
  */
 
@@ -156,7 +156,6 @@ class SlackAdapterService implements ChannelAdapter {
     });
 
     for (const mapping of mappings) {
-      // Fetch connection data from backend API
       const connection = await getSlackConnection();
       if (!connection) {
         logger.warn('Slack connection %s not found for mapping %s', mapping.connectionId, mapping.id);
@@ -315,10 +314,8 @@ class SlackAdapterService implements ChannelAdapter {
     logger.info('Initializing Slack adapter...');
 
     try {
-      // Source of truth for what "configured" means:
-      //   - single-agent: env `SLACK_BOT_TOKEN` (validated by slack-config).
-      //   - multi-tenant: backend's active SlackConnection rows.
-      // An empty list is the not-configured case in either mode.
+      // Source of truth: env `SLACK_BOT_TOKEN` (validated by slack-config).
+      // An empty list is the not-configured case.
       const connections = await getActiveSlackConnections();
       if (connections.length === 0) {
         logger.info('No active Slack connections; adapter idle');
@@ -1586,10 +1583,8 @@ class SlackAdapterService implements ChannelAdapter {
   /**
    * Disconnect and stop the Bolt app for a connection, and delete all rows
    * that reference this connectionId (SlackMapping, SlackVerificationCode,
-   * SlackHeartbeatTrigger). No FK cascade exists because SlackConnection
-   * lives in the backend-only DB.
-   *
-   * The backend has already deactivated the connection in its own database.
+   * SlackHeartbeatTrigger). The connection itself is env-sourced — there's
+   * no separate connection row to deactivate.
    */
   async disconnectAndDeactivate(connectionId: string): Promise<void> {
     const connection = await getSlackConnection();

@@ -545,26 +545,22 @@ describe('Requirement: General Queries', () => {
   });
 
   describe('Scenario: countUserMappings', () => {
-    it('should count active user mappings with DM channel', async () => {
-      mockGetActiveSlackConnections.mockResolvedValue([
-        { id: 'conn-001' },
-        { id: 'conn-002' },
-        { id: 'conn-003' },
-      ]);
-      mockPrisma.slackMapping.findMany.mockResolvedValue([
-        { connectionId: 'conn-001' },
-        { connectionId: 'conn-002' },
-        { connectionId: 'conn-003' },
-      ]);
+    it('should count user mappings with DM channel', async () => {
+      mockPrisma.slackMapping.count.mockResolvedValue(3);
 
       const result = await slackMappingService.countUserMappings('user-001');
 
+      expect(mockPrisma.slackMapping.count).toHaveBeenCalledWith({
+        where: {
+          lensUserId: 'user-001',
+          dmChannelId: { not: null },
+        },
+      });
       expect(result).toBe(3);
     });
 
-    it('should return 0 when user has no active mappings', async () => {
-      mockGetActiveSlackConnections.mockResolvedValue([]);
-      mockPrisma.slackMapping.findMany.mockResolvedValue([]);
+    it('should return 0 when user has no mappings', async () => {
+      mockPrisma.slackMapping.count.mockResolvedValue(0);
 
       const result = await slackMappingService.countUserMappings('user-no-slack');
 

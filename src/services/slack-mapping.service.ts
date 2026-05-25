@@ -13,7 +13,7 @@
 
 import { Prisma, SlackMapping } from '@prisma/client';
 import prisma from '../lib/prisma';
-import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
+import { getSlackConnection } from '../lib/slack-source';
 import { config } from '../config';
 
 // ============================================================================
@@ -282,8 +282,6 @@ class SlackMappingService {
   async getActiveUserMappingsWithDmChannel(): Promise<
     Array<SlackMapping & { connection: { teamId: string; isActive: boolean } }>
   > {
-    const isActive = true;
-
     const mappings = await prisma.slackMapping.findMany({
       where: {
         dmChannelId: { not: null },
@@ -291,12 +289,10 @@ class SlackMappingService {
       },
     });
 
-    // Filter to only active connections and attach connection data
     const results: Array<SlackMapping & { connection: { teamId: string; isActive: boolean } }> = [];
     for (const mapping of mappings) {
-      if (!isActive) continue;
       const conn = await getSlackConnection();
-      if (conn && conn.isActive) {
+      if (conn?.isActive) {
         results.push({
           ...mapping,
           connection: { teamId: conn.teamId, isActive: conn.isActive },
@@ -320,26 +316,19 @@ class SlackMappingService {
    * Count user mappings for a Lens user (DM only)
    */
   async countUserMappings(lensUserId: string): Promise<number> {
-    const isActive = true;
-
-    const mappings = await prisma.slackMapping.findMany({
+    return prisma.slackMapping.count({
       where: {
         lensUserId,
         dmChannelId: { not: null },
       },
-      select: { connectionId: true },
     });
-
-    return mappings.filter(() => isActive).length;
   }
 
   /**
-   * Count all active mappings for a Lens user (DM + channel)
+   * Count all mappings for a Lens user (DM + channel)
    */
   async countAllMappings(lensUserId: string): Promise<number> {
-    const isActive = true;
-
-    const mappings = await prisma.slackMapping.findMany({
+    return prisma.slackMapping.count({
       where: {
         lensUserId,
         OR: [
@@ -347,10 +336,7 @@ class SlackMappingService {
           { slackChannelId: { not: null } },
         ],
       },
-      select: { connectionId: true },
     });
-
-    return mappings.filter(() => isActive).length;
   }
 }
 
