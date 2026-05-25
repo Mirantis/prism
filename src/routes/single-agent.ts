@@ -1,10 +1,9 @@
 /**
  * Single-Agent Routes
  *
- * No-auth read endpoints exposed only when `config.singleAgentMode === true`.
- * The runtime owns exactly one agent in this mode and has no backend in front
- * of it, so a local client (prism-cli) can fetch the active thread and recent
- * messages without a token.
+ * No-auth read endpoints. The runtime owns exactly one agent and has no
+ * backend in front of it, so a local client (prism-cli) can fetch the
+ * active thread and recent messages without a token.
  *
  *   GET /single-agent/active-thread       — { threadId }
  *   GET /single-agent/messages?limit=N    — ConversationMessage[]

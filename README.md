@@ -143,7 +143,6 @@ lives in the container at `/data/agent.db` and is the only persistence.
 
 ```bash
 npm install
-SINGLE_AGENT_MODE=true \
 NEXUS_PROJECT_ID=<project-uuid> \
 AWS_BEARER_TOKEN_BEDROCK=<bedrock-key> \
 npm run dev
@@ -170,7 +169,6 @@ the existing workspace and reuse it.
 docker build -t prism .
 docker run -p 3003:3003 \
   -v prism-data:/data \
-  -e SINGLE_AGENT_MODE=true \
   -e NEXUS_PROJECT_ID=<project-uuid> \
   -e AWS_BEARER_TOKEN_BEDROCK=<bedrock-key> \
   prism
@@ -185,7 +183,6 @@ restarts.
 
 | Variable | Purpose |
 |----------|---------|
-| `SINGLE_AGENT_MODE` | Set to `true` to run as a standalone agent |
 | `NEXUS_PROJECT_ID` | Nexus project this agent lives in. Used to authorize WebSocket chat — callers must have access to this project in Nexus. Startup fails if unset |
 
 ### Credentials
