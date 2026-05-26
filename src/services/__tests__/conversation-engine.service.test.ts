@@ -19,7 +19,6 @@ const {
   mockCountAgentMessages,
   mockGenerateText,
   mockIsTelemetryEnabled,
-  mockGetNexusMcpAgentToken,
 } = vi.hoisted(() => ({
   mockGetOrCreateActiveThread: vi.fn(),
   mockAddMessage: vi.fn(),
@@ -28,7 +27,6 @@ const {
   mockCountAgentMessages: vi.fn(),
   mockGenerateText: vi.fn(),
   mockIsTelemetryEnabled: vi.fn(),
-  mockGetNexusMcpAgentToken: vi.fn(),
 }));
 
 /**
@@ -85,12 +83,6 @@ vi.mock('../../lib/telemetry', () => ({
   isTelemetryEnabled: mockIsTelemetryEnabled,
 }));
 
-vi.mock('../agent-workspace.service', () => ({
-  agentWorkspaceService: {
-    getNexusMcpAgentToken: mockGetNexusMcpAgentToken,
-  },
-}));
-
 // Import after mocking
 import { conversationEngineService } from '../conversation-engine.service';
 
@@ -123,7 +115,6 @@ describe('Requirement: Conversation Engine', () => {
     // Default: telemetry off so unrelated scenarios don't exercise the classifier.
     mockIsTelemetryEnabled.mockReturnValue(false);
     mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
-    mockGetNexusMcpAgentToken.mockResolvedValue('nexus-token');
   });
 
   describe('Scenario: Chat message processing', () => {

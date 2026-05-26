@@ -17,7 +17,6 @@ const {
   mockGetChannelBehaviorInstructions,
   mockGetTaskToolInstructions,
   mockGetAgentContext,
-  mockGetNexusAgentToken,
   mockGetSubagents,
   mockCreateTaskTool,
   mockSetProcessing,
@@ -36,7 +35,6 @@ const {
   mockGetChannelBehaviorInstructions: vi.fn(),
   mockGetTaskToolInstructions: vi.fn(),
   mockGetAgentContext: vi.fn(),
-  mockGetNexusAgentToken: vi.fn(),
   mockGetSubagents: vi.fn(),
   mockCreateTaskTool: vi.fn(),
   mockSetProcessing: vi.fn(),
@@ -117,7 +115,6 @@ vi.mock('./lib/task-tool', () => ({
 
 vi.mock('./services/agent-workspace.service', () => ({
   agentWorkspaceService: {
-    getNexusMcpAgentToken: mockGetNexusAgentToken,
     getSubagents: mockGetSubagents,
   },
   resolveEffectiveModel: (stored: string | null | undefined) =>
@@ -165,7 +162,6 @@ describe('invoke', () => {
     mockBuildConversationMessages.mockReturnValue([]);
     mockGetChannelBehaviorInstructions.mockReturnValue('channel instructions');
     mockGetAgentContext.mockResolvedValue(createTestAgentContext());
-    mockGetNexusAgentToken.mockResolvedValue(null);
     mockGetSubagents.mockResolvedValue([]);
     mockGetTaskToolInstructions.mockReturnValue('task tool instructions');
     mockCreateTaskTool.mockReturnValue({ description: 'mock task tool' });
@@ -298,8 +294,7 @@ describe('invoke', () => {
     });
   });
 
-  it('adds Nexus MCP tools when nexusAgentToken is available', async () => {
-    mockGetNexusAgentToken.mockResolvedValue('agent-token');
+  it('adds Nexus MCP tools when nexusMcpUrl is configured', async () => {
     mockGetMCPTools.mockResolvedValue({ kubectl: {} });
 
     await invoke(createTestInvokeRequest());

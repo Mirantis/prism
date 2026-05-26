@@ -90,12 +90,6 @@ vi.mock('../../lib/nexus-provider', () => ({
   getClassificationModel: vi.fn(),
 }));
 
-vi.mock('../agent-workspace.service', () => ({
-  agentWorkspaceService: {
-    getNexusMcpAgentToken: vi.fn().mockResolvedValue(null),
-  },
-}));
-
 vi.mock('../../utils/encryption', () => ({
   decrypt: vi.fn(),
 }));

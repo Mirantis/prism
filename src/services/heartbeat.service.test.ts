@@ -20,7 +20,6 @@ const {
   mockDrainSlackMessages,
   mockGenerateText,
   mockGetClassificationModel,
-  mockGetNexusMcpAgentToken,
   mockLoggerInfo,
   mockLoggerDebug,
 } = vi.hoisted(() => ({
@@ -31,7 +30,6 @@ const {
   mockDrainSlackMessages: vi.fn(),
   mockGenerateText: vi.fn(),
   mockGetClassificationModel: vi.fn(),
-  mockGetNexusMcpAgentToken: vi.fn(),
   mockLoggerInfo: vi.fn(),
   mockLoggerDebug: vi.fn(),
 }));
@@ -65,12 +63,6 @@ vi.mock('ai', () => ({
 
 vi.mock('../lib/nexus-provider', () => ({
   getClassificationModel: mockGetClassificationModel,
-}));
-
-vi.mock('./agent-workspace.service', () => ({
-  agentWorkspaceService: {
-    getNexusMcpAgentToken: mockGetNexusMcpAgentToken,
-  },
 }));
 
 vi.mock('../logger', () => ({
@@ -120,8 +112,6 @@ describe('HeartbeatService', () => {
     // Default: gate suppresses (most tests override this)
     mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
     mockGetClassificationModel.mockReturnValue('classification-model');
-    mockGetNexusMcpAgentToken.mockResolvedValue('nexus-token');
-
     // Sensible defaults
     mockInvoke.mockResolvedValue({ response: 'All systems healthy.', toolCalls: [], steps: [] });
     mockUpdateHeartbeatTimestamp.mockResolvedValue(undefined);

@@ -69,7 +69,6 @@
  *
  * Misc:
  *   POST   /agents/:agentId/validate-ownership                 - Owner check
- *   GET    /agents/:agentId/nexus-token                        - Decrypt Nexus token
  *   POST   /agents/chat                                        - Synchronous chat invoke
  *   POST   /agents                                             - Bootstrap agent
  *   POST   /agents/slack/deliver                               - Deliver a message
@@ -1606,21 +1605,6 @@ router.post('/:agentId/validate-ownership', async (req: Request<{ agentId: strin
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to validate ownership for agent ${req.params.agentId}: ${msg}`);
-    res.status(500).json({ error: msg });
-  }
-});
-
-/**
- * GET /agents/:agentId/nexus-token
- * Get the decrypted Nexus MCP agent token.
- */
-router.get('/:agentId/nexus-token', async (req: Request<{ agentId: string }>, res: Response) => {
-  try {
-    const token = await agentWorkspaceService.getNexusMcpAgentToken();
-    res.json({ token });
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to get nexus token for agent ${req.params.agentId}: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
