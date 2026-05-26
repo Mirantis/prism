@@ -18,7 +18,9 @@ export const dotenvLoadInfo = {
  * Centralized configuration — single place for all env var reads.
  */
 
-const nexusUrl = process.env.NEXUS_URL || 'http://localhost:3002';
+const nexusApiUrl = process.env.NEXUS_API_URL || 'http://localhost:3002';
+const projectId = process.env.PROJECT_ID;
+const awsRegion = process.env.AWS_REGION || 'us-east-1';
 
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
@@ -28,7 +30,7 @@ export const config = {
   bedrockModelId: process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-4-7',
   bedrockClassificationModelId: process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
   bedrockEmbeddingModelId: process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0',
-  awsRegion: process.env.AWS_REGION || 'us-east-1',
+  awsRegion,
   awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID,
   awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   awsSessionToken: process.env.AWS_SESSION_TOKEN, // Optional, only needed for temporary credentials
@@ -48,7 +50,7 @@ export const config = {
   agentName: process.env.AGENT_NAME || 'Prism',
   teamName: process.env.TEAM_NAME || 'Local',
 
-  nexusUrl,
+  nexusApiUrl,
 
   // Slack — bot token + optional app-id safety check.
   slackBotToken: process.env.SLACK_BOT_TOKEN,
@@ -56,15 +58,19 @@ export const config = {
 
   // External MCP server URL — Nexus hosts kubectl / GitHub / AWS
   // tools as a real cross-process MCP server.
-  nexusMcpUrl: `${nexusUrl}/mcp`,
+  nexusMcpUrl: `${nexusApiUrl}/mcp`,
 
   // Langfuse observability (optional — disabled when keys not set)
   langfuseSecretKey: process.env.LANGFUSE_SECRET_KEY,
   langfusePublicKey: process.env.LANGFUSE_PUBLIC_KEY,
   langfuseBaseUrl: process.env.LANGFUSE_BASE_URL || 'http://localhost:3100',
 
-  // Nexus LLM proxy base URL (auto-resolve project route: /v1/llm/bedrock/{region})
-  nexusLlmBaseUrl: `${nexusUrl}/v1/llm/bedrock/${process.env.AWS_REGION || 'us-east-1'}`,
+  // Nexus LLM proxy base URL. /{projectId}/llm/bedrock/{region} when
+  // PROJECT_ID is set; falls back to /bedrock/{region} otherwise (e.g.,
+  // a direct Bedrock-shaped local proxy without project scoping).
+  nexusLlmBaseUrl: projectId
+    ? `${nexusApiUrl}/${projectId}/llm/bedrock/${awsRegion}`
+    : `${nexusApiUrl}/bedrock/${awsRegion}`,
 
   // OpenTelemetry (optional — disabled when not set)
   otelEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || '',
