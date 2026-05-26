@@ -266,7 +266,7 @@ On shutdown, the Slack adapter is gracefully shut down (disconnects all Socket M
 | `INTERNAL_API_SECRET` | Shared secret for backend communication | Required |
 | `BACKEND_URL` | Backend base URL | `http://localhost:3001` |
 | `INTERNAL_MCP_URL` | Internal MCP server URL | `http://localhost:3003/internal/mcp` |
-| `NEXUS_URL` | Nexus server URL | `http://localhost:3002` |
+| `NEXUS_API_URL` | Nexus server URL | `http://localhost:3002` |
 | `ENCRYPTION_KEY` | 32-byte hex key for token encryption/decryption (must match backend) | Required |
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `us.anthropic.claude-opus-4-7` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat DELIVER/SUPPRESS) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |

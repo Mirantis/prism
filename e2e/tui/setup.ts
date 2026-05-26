@@ -70,7 +70,7 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
     ...(process.env.BEDROCK_MODEL_ID
       ? { BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID }
       : {}),
-    NEXUS_URL: 'http://127.0.0.1:1',
+    NEXUS_API_URL: 'http://127.0.0.1:1',
     NODE_ENV: 'development',
     // AWS creds + region inherited from the surrounding shell / CI.
   };

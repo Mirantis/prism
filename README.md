@@ -186,7 +186,7 @@ restarts.
 | `PORT` | HTTP port | `3003` |
 | `DATABASE_URL` | SQLite path | `file:/data/agent.db` |
 | `AGENT_ID` | Pin the agent's UUID. When unset, a fresh UUID is generated on first boot and reused on subsequent boots via the workspace row in the DB | generated |
-| `NEXUS_URL` | Base URL of the Nexus instance used for WebSocket authorization and the MCP/LLM proxy | `http://localhost:3002` |
+| `NEXUS_API_URL` | Base URL of the Nexus instance used for WebSocket authorization and the MCP/LLM proxy | `http://localhost:3002` |
 | `AGENT_NAME` | Display name on first boot | `Prism` |
 | `TEAM_NAME` | Team name on first boot | `Local` |
 | `OWNER_USER_ID` | Owner user ID on first boot. The default is a local sentinel — Slack identity linking later overlays the real `lensUserId` per-message | `00000000-0000-0000-0000-000000000001` |
