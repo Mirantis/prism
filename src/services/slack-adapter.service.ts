@@ -34,7 +34,6 @@ import {
   SlackBlock,
 } from '../utils/slack-formatter';
 import { trackEvent } from '../lib/telemetry';
-import { isBedrockConfigured } from '../lib/bedrock-provider';
 import { getClassificationModel } from '../lib/nexus-provider';
 import { slackMessageQueueService } from './slack-message-queue.service';
 import { slackHeartbeatTriggerService } from './slack-heartbeat-trigger.service';
@@ -1265,10 +1264,6 @@ class SlackAdapterService implements ChannelAdapter {
     botUserId: string,
     agentId: string,
   ): Promise<ThreadAction> {
-    if (!isBedrockConfigured()) {
-      return { action: 'respond' };
-    }
-
     try {
       const recent = messages.slice(-10);
       const transcript = recent
