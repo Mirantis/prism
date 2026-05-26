@@ -397,22 +397,6 @@ describe('HeartbeatService', () => {
       expect(mockDeliverMessage).toHaveBeenCalled();
     });
 
-    it('no Nexus agent token → gate skipped, fail-open, message delivered', async () => {
-      mockInvoke.mockResolvedValue({
-        response: 'Pod frontend-abc is in CrashLoopBackOff!',
-        toolCalls: [],
-        steps: [{ text: 'Pod frontend-abc is in CrashLoopBackOff!', toolCalls: [] }],
-      });
-      mockGetNexusMcpAgentToken.mockResolvedValue(null);
-
-      heartbeatService.startHeartbeat(createAgent());
-      const result = await heartbeatService.triggerHeartbeat('agent-1');
-
-      expect(result.shouldSkip).toBe(false);
-      expect(mockGenerateText).not.toHaveBeenCalled();
-      expect(mockDeliverMessage).toHaveBeenCalled();
-    });
-
     it('empty response → gate not called, suppressed', async () => {
       mockInvoke.mockResolvedValue({ response: '', toolCalls: [], steps: [] });
 

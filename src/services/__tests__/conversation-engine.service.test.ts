@@ -484,33 +484,6 @@ describe('Requirement: Conversation Engine', () => {
       );
     });
 
-    it('skips feedback (and skips the classifier call) when the agent has no Nexus token', async () => {
-      mockIsTelemetryEnabled.mockReturnValue(true);
-      mockGetNexusMcpAgentToken.mockResolvedValue(null);
-      mockCountAgentMessages.mockResolvedValue(1);
-      mockInvokeStream.mockReturnValue(streamFromSteps([
-        { text: AGENT_TEXT, toolCalls: [] },
-      ]));
-
-      await conversationEngineService.chat({
-        userId: 'user-123',
-        agentId: 'agent-123',
-        message: 'Explain x in detail',
-        metadata: slackChannelMeta,
-      });
-
-      expect(mockGenerateText).not.toHaveBeenCalled();
-      expect(mockPublish).toHaveBeenCalledWith(
-        'user-123',
-        'thread-123',
-        AGENT_TEXT,
-        'USER_INPUT',
-        expect.objectContaining({
-          channelContext: expect.objectContaining({ includeFeedback: false }),
-        }),
-      );
-    });
-
     it('folds includeFeedback=false when the classifier replies SKIP', async () => {
       mockIsTelemetryEnabled.mockReturnValue(true);
       mockGenerateText.mockResolvedValue({ text: 'SKIP' });

@@ -111,7 +111,7 @@ class AgentWorkspaceService {
   // Nexus MCP Agent Token
   // ============================================================================
 
-  async getNexusMcpAgentToken(): Promise<string | null> {
+  async getNexusMcpAgentToken(): Promise<null> {
     // Tool creds are injected at the sandbox proxy layer, so the runtime
     // never needs an explicit token. Kept as a no-op so call sites can
     // continue to thread an `Authorization` header when one exists.

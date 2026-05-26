@@ -18,7 +18,7 @@ export const dotenvLoadInfo = {
  * Centralized configuration — single place for all env var reads.
  */
 
-const nexusApiUrl = process.env.NEXUS_API_URL || 'http://localhost:3002';
+const nexusApiUrl = process.env.NEXUS_API_URL;
 const projectId = process.env.PROJECT_ID;
 const awsRegion = process.env.AWS_REGION || 'us-east-1';
 
@@ -57,8 +57,9 @@ export const config = {
   slackExpectedAppId: process.env.SLACK_EXPECTED_APP_ID,
 
   // External MCP server URL — Nexus hosts kubectl / GitHub / AWS
-  // tools as a real cross-process MCP server.
-  nexusMcpUrl: `${nexusApiUrl}/mcp`,
+  // tools as a real cross-process MCP server. null when NEXUS_API_URL
+  // is unset so call sites can skip Nexus entirely.
+  nexusMcpUrl: nexusApiUrl ? `${nexusApiUrl}/mcp` : null,
 
   // Langfuse observability (optional — disabled when keys not set)
   langfuseSecretKey: process.env.LANGFUSE_SECRET_KEY,
@@ -66,11 +67,14 @@ export const config = {
   langfuseBaseUrl: process.env.LANGFUSE_BASE_URL || 'http://localhost:3100',
 
   // Nexus LLM proxy base URL. /{projectId}/llm/bedrock/{region} when
-  // PROJECT_ID is set; falls back to /bedrock/{region} otherwise (e.g.,
-  // a direct Bedrock-shaped local proxy without project scoping).
-  nexusLlmBaseUrl: projectId
-    ? `${nexusApiUrl}/${projectId}/llm/bedrock/${awsRegion}`
-    : `${nexusApiUrl}/bedrock/${awsRegion}`,
+  // PROJECT_ID is set; /bedrock/{region} when PROJECT_ID is unset; and
+  // null when NEXUS_API_URL itself is unset (callers route direct
+  // Bedrock instead of going through Nexus).
+  nexusLlmBaseUrl: nexusApiUrl
+    ? (projectId
+        ? `${nexusApiUrl}/${projectId}/llm/bedrock/${awsRegion}`
+        : `${nexusApiUrl}/bedrock/${awsRegion}`)
+    : null,
 
   // OpenTelemetry (optional — disabled when not set)
   otelEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || '',

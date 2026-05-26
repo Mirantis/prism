@@ -16,7 +16,6 @@ import { invoke } from '../invoke';
 import { AgentWorkspace } from '@prisma/client';
 import { messageDeliveryService } from './message-delivery.service';
 import { getClassificationModel } from '../lib/nexus-provider';
-import { agentWorkspaceService } from './agent-workspace.service';
 import { agentStatusService } from './agent-status.service';
 import { slackMessageQueueService } from './slack-message-queue.service';
 import { isLangfuseEnabled } from '../lib/langfuse';
@@ -393,12 +392,6 @@ class HeartbeatService {
   ): Promise<boolean> {
     if (!heartbeatResponse.trim()) return false;
 
-    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken();
-    if (!agentToken) {
-      logger.warn({ agentId }, '[Heartbeat:Gate] No Nexus agent token — defaulting to deliver');
-      return true;
-    }
-
     const lastAlertContext = lastAlertText
       ? `## Last Alert Sent to User (${lastAlertAt ? formatTimeAgo(lastAlertAt) : 'recently'})\n${lastAlertText}`
       : 'No previous alert has been sent.';
@@ -419,7 +412,7 @@ Respond with exactly one word: DELIVER or SUPPRESS`;
 
     try {
       const result = await generateText({
-        model: getClassificationModel(agentToken),
+        model: getClassificationModel(),
         system: systemPrompt,
         messages: [{ role: 'user' as const, content: `${lastAlertContext}\n\n## New Heartbeat Report\n${heartbeatResponse}` }],
         maxOutputTokens: 10,

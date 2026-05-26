@@ -7,7 +7,7 @@
  */
 
 import { embed, embedMany, type EmbeddingModel } from 'ai';
-import { createBedrockProvider } from '../lib/bedrock-provider';
+import { createProvider } from '../lib/create-provider';
 import { config } from '../config';
 import { logger } from '../logger';
 import { memoryEmbeddingStore, type SearchOptions } from './memory-store';
@@ -19,7 +19,7 @@ const BEDROCK_EMBEDDING_PROVIDER_OPTIONS = {
 
 class EmbeddingService {
   private getEmbeddingModel(): EmbeddingModel {
-    return createBedrockProvider().embedding(config.bedrockEmbeddingModelId);
+    return createProvider().embedding(config.bedrockEmbeddingModelId);
   }
 
   /** Generate an embedding vector for the given text. */

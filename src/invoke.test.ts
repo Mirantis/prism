@@ -312,7 +312,6 @@ describe('invoke', () => {
   });
 
   it('passes x-mcp-tools header when calling Nexus MCP', async () => {
-    mockGetNexusAgentToken.mockResolvedValue('agent-token');
     mockGetMCPTools.mockResolvedValue({});
 
     await invoke(createTestInvokeRequest());
@@ -320,7 +319,6 @@ describe('invoke', () => {
     const nexusCall = mockGetMCPTools.mock.calls[0][0];
     expect(nexusCall).toMatchObject({
       url: 'http://localhost:3002/mcp',
-      token: 'agent-token',
       extraHeaders: {
         'x-mcp-tools': expect.stringContaining('shell_exec'),
       },
@@ -337,13 +335,13 @@ describe('invoke', () => {
     );
   });
 
-  it('does not add Nexus MCP tools when no agent token', async () => {
-    mockGetNexusAgentToken.mockResolvedValue(null);
+  it('does not add Nexus MCP tools when nexusMcpUrl is unset', async () => {
+    config.nexusMcpUrl = null;
     mockGetAgentContext.mockResolvedValue(createTestAgentContext({ isBootstrapPhase: false }));
 
     await invoke(createTestInvokeRequest());
 
-    // No nexus token → no MCP fetch at all (built-ins are direct).
+    // No nexus URL → no MCP fetch at all (built-ins are direct).
     expect(mockGetMCPTools).not.toHaveBeenCalled();
   });
 
