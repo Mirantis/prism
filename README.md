@@ -135,7 +135,9 @@ context from compounding indefinitely.
 ## How it runs
 
 One container, one agent. The embedded database (SQLite with vector search)
-lives in the container at `/data/agent.db` and is the only persistence.
+lives in the container at `/data/agent.db` (or `prisma/sqlite/agent.db`
+next to the schema when running locally without Docker) and is the only
+persistence.
 
 ## Getting started
 
@@ -184,7 +186,7 @@ restarts.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `PORT` | HTTP port | `3003` |
-| `DATABASE_URL` | SQLite path | `file:/data/agent.db` |
+| `DATABASE_URL` | SQLite URL. The local default resolves to `prisma/sqlite/agent.db` (Prisma's schema-relative rule); the Docker image's `start.sh` overrides to `file:/data/agent.db` so the mounted `/data` volume is used | `file:./agent.db` (Docker: `file:/data/agent.db`) |
 | `AGENT_ID` | Pin the agent's UUID. When unset, a fresh UUID is generated on first boot and reused on subsequent boots via the workspace row in the DB | generated |
 | `NEXUS_API_URL` | Base URL of the Nexus instance used for WebSocket authorization and the MCP/LLM proxy | `http://localhost:3002` |
 | `AGENT_NAME` | Display name on first boot | `Prism` |
