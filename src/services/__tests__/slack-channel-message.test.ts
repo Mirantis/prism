@@ -90,10 +90,6 @@ vi.mock('../../lib/nexus-provider', () => ({
   getClassificationModel: vi.fn(),
 }));
 
-vi.mock('../../utils/encryption', () => ({
-  decrypt: vi.fn(),
-}));
-
 vi.mock('@slack/bolt', () => ({
   App: vi.fn(),
   LogLevel: { DEBUG: 'debug', INFO: 'info' },

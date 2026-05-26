@@ -117,7 +117,6 @@ Multi-tenant (default) communicates through the following channels:
 
 2. **Runtime Database** (PostgreSQL via Prisma) - Agent-runtime reads/writes directly for:
    - **Agent CRUD** (create, delete, list, lookup, ownership validation, subagents) via `agentWorkspaceService`
-   - **Nexus token management** (encrypt/decrypt via shared `ENCRYPTION_KEY`)
    - Conversation history (thread context, recent messages)
    - Active thread resolution
    - Thread and message CRUD
@@ -153,10 +152,6 @@ The runtime hosts one MCP server and connects to another externally:
 
 1. **Internal MCP** (`/internal/mcp`) - memory, config, cron tools (served in-process by agent-runtime)
 2. **Nexus MCP** - kubectl, GitHub, AWS tools (external)
-
-### Auth
-
-All internal communication uses `INTERNAL_API_SECRET` bearer token.
 
 ## Key Services
 
@@ -263,11 +258,7 @@ On shutdown, the Slack adapter is gracefully shut down (disconnects all Socket M
 |----------|---------|---------|
 | `PORT` | Agent runtime server port | `3003` |
 | `DATABASE_URL` | PostgreSQL connection string (runtime database) | Required |
-| `INTERNAL_API_SECRET` | Shared secret for backend communication | Required |
-| `BACKEND_URL` | Backend base URL | `http://localhost:3001` |
-| `INTERNAL_MCP_URL` | Internal MCP server URL | `http://localhost:3003/internal/mcp` |
 | `NEXUS_API_URL` | Nexus server URL | `http://localhost:3002` |
-| `ENCRYPTION_KEY` | 32-byte hex key for token encryption/decryption (must match backend) | Required |
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `us.anthropic.claude-opus-4-7` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat DELIVER/SUPPRESS) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
