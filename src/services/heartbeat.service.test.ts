@@ -61,7 +61,7 @@ vi.mock('ai', () => ({
   generateText: mockGenerateText,
 }));
 
-vi.mock('../lib/nexus-provider', () => ({
+vi.mock('../lib/classification', () => ({
   getClassificationModel: mockGetClassificationModel,
 }));
 

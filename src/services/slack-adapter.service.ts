@@ -34,7 +34,7 @@ import {
   SlackBlock,
 } from '../utils/slack-formatter';
 import { trackEvent } from '../lib/telemetry';
-import { getClassificationModel } from '../lib/nexus-provider';
+import { getClassificationModel } from '../lib/classification';
 import { slackMessageQueueService } from './slack-message-queue.service';
 import { slackHeartbeatTriggerService } from './slack-heartbeat-trigger.service';
 import { heartbeatService } from './heartbeat.service';

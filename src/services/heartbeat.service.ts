@@ -15,7 +15,7 @@ import { generateText } from 'ai';
 import { invoke } from '../invoke';
 import { AgentWorkspace } from '@prisma/client';
 import { messageDeliveryService } from './message-delivery.service';
-import { getClassificationModel } from '../lib/nexus-provider';
+import { getClassificationModel } from '../lib/classification';
 import { agentStatusService } from './agent-status.service';
 import { slackMessageQueueService } from './slack-message-queue.service';
 import { isLangfuseEnabled } from '../lib/langfuse';

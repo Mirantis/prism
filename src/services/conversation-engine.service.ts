@@ -13,7 +13,7 @@ import { invokeStream } from '../invoke';
 import { ToolCallRecord, InvokeStep, UIBlock } from '../types';
 import { logger } from '../logger';
 import prisma from '../lib/prisma';
-import { getClassificationModel } from '../lib/nexus-provider';
+import { getClassificationModel } from '../lib/classification';
 import { isLangfuseEnabled } from '../lib/langfuse';
 import { isTelemetryEnabled } from '../lib/telemetry';
 

@@ -14,7 +14,6 @@ import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
 import { config } from '../config';
 import { isAnthropicModelId } from './bedrock-provider';
-import { createProvider } from './create-provider';
 
 export function createNexusProvider(nexusLlmBaseUrl: string) {
   const sharedOptions = {
@@ -28,14 +27,4 @@ export function createNexusProvider(nexusLlmBaseUrl: string) {
   return Object.assign(dispatcher, {
     embedding: (modelId: string) => generic.embedding(modelId),
   });
-}
-
-/**
- * Build the classification-gate model instance. Routes through Nexus
- * when NEXUS_API_URL is configured, otherwise falls back to direct
- * Bedrock — the gate's classification model (default Haiku) is supported
- * either way; Nexus is only needed for usage/audit tracking.
- */
-export function getClassificationModel() {
-  return createProvider()(config.bedrockClassificationModelId);
 }
