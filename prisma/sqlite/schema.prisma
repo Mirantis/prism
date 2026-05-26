@@ -206,8 +206,7 @@ model CronTask {
 // SQLite note: `embedding` holds a packed Float32Array as BLOB. Vector
 // search does NOT go through Prisma — use the `memory_entry_vec` vec0
 // virtual table via sqlite-vec. See src/lib/sqlite-bootstrap.ts for
-// setup and src/services/memory-store.ts for the query path
-// (provider-aware: pgvector in multi-tenant, sqlite-vec here).
+// setup and src/services/memory-store.ts for the query path.
 
 model MemoryEntry {
   id         String   @id @default(uuid())

@@ -1,5 +1,5 @@
 /**
- * SQLite bootstrap for single-agent mode.
+ * SQLite bootstrap.
  *
  * Prisma's bundled SQLite engine refuses `SELECT load_extension(...)` ("not
  * authorized"), so we keep a sibling `better-sqlite3` connection open
@@ -59,13 +59,13 @@ export function initSqliteVec(): Database.Database {
   // pgvector parity) is built around cosine distance.
   //
   // FIXME(memory-rebuild-scale): unconditional rebuild is fine for the
-  // realistic single-agent scale (hundreds–low thousands of entries =
+  // realistic scale per agent (hundreds–low thousands of entries =
   // sub-second cold start) but becomes an issue at 10k+ entries
   // (seconds → tens of seconds). Likely fix is a schema-version sentinel
   // (e.g. `pragma user_version`) that skips the rebuild when the
   // existing vec0 already matches the current expected version. Punted
   // because we expect to revisit the memory system architecture before
-  // single agents accumulate that much memory.
+  // agents accumulate that much memory.
   db.exec(`DROP TABLE IF EXISTS memory_entry_vec`);
   db.exec(
     `CREATE VIRTUAL TABLE memory_entry_vec USING vec0(

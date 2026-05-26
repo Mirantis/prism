@@ -105,7 +105,7 @@ import {
 import { parseSchedule } from '../tools/cron';
 import cron from 'node-cron';
 
-// 100 MiB cap — single-agent DBs are tens of MB in practice; this keeps a
+// 100 MiB cap — agent DBs are tens of MB in practice; this keeps a
 // malformed / oversized upload from filling memory before validation runs.
 const archiveUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 
@@ -241,7 +241,7 @@ router.patch('/:agentId/model', async (req: Request<{ agentId: string }>, res: R
 });
 
 // ============================================================================
-// Backup / restore (single-agent only)
+// Backup / restore
 // ============================================================================
 
 /**

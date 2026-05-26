@@ -1,8 +1,7 @@
 /**
- * Resolve the on-disk path for the single-agent SQLite database the way
- * Prisma does it, so every non-Prisma consumer (sqlite-vec bootstrap,
- * backup/restore service) ends up opening the same file Prisma reads and
- * writes.
+ * Resolve the on-disk path for the SQLite database the way Prisma does
+ * it, so every non-Prisma consumer (sqlite-vec bootstrap, backup/restore
+ * service) ends up opening the same file Prisma reads and writes.
  *
  * Prisma's rule for SQLite (per the official docs): relative paths in
  * `DATABASE_URL=file:...` are resolved relative to the **directory
@@ -27,7 +26,7 @@ const SCHEMA_DIR = path.resolve(__dirname, '..', '..', 'prisma', 'sqlite');
 
 export function resolvePrismaSqlitePath(databaseUrl: string | undefined): string {
   if (!databaseUrl) {
-    throw new Error('DATABASE_URL is required for SQLite single-agent mode');
+    throw new Error('DATABASE_URL is required');
   }
   const raw = databaseUrl.startsWith('file:') ? databaseUrl.slice('file:'.length) : databaseUrl;
   // SQLite's in-memory tokens (`:memory:`, named shared-cache `file::memory:?cache=…`)

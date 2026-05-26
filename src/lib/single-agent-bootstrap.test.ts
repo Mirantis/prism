@@ -1,6 +1,6 @@
 /**
  * Tests for single-agent-bootstrap: resolve-or-create the one
- * AgentWorkspace single-agent mode runs against.
+ * AgentWorkspace the runtime runs against.
  *
  * Mocks Prisma + agentWorkspaceService so each case is isolated to its
  * resolution branch (AGENT_ID set/unset × row exists/missing).

@@ -31,9 +31,9 @@ Given(
     const slack = getSlackState();
     const agentId = getCurrentAgentId();
 
-    // In single-agent mode the Slack connection is synthesized from env by
-    // lib/slack-config.ts with id === teamId, so SLACK_E2E_TEAM_ID is also
-    // the connectionId the runtime expects.
+    // The Slack connection is synthesized from env by lib/slack-config.ts
+    // with id === teamId, so SLACK_E2E_TEAM_ID is also the connectionId
+    // the runtime expects.
     const connectionId = process.env.SLACK_E2E_TEAM_ID;
     if (!connectionId) {
       throw new Error('SLACK_E2E_TEAM_ID is not set — required for slack heartbeat e2e');

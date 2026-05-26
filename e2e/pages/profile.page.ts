@@ -1,5 +1,5 @@
 /**
- * Profile Page Object — single-agent profile view at /profile.
+ * Profile Page Object — profile view at /profile.
  *
  * Renders agent identity (name + model), the workspace markdown
  * tabs, and the heartbeat status card.

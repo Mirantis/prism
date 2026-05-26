@@ -15,16 +15,15 @@
  * Two authentication paths exist side by side; the SDK picks between them
  * automatically based on which environment is populated:
  *
- * 1. Bearer token (single-agent / Nexus sandbox): when
- *    `AWS_BEARER_TOKEN_BEDROCK` is set, `@ai-sdk/amazon-bedrock` short-
- *    circuits SigV4 and sends `Authorization: Bearer <token>` directly to
- *    Bedrock. In the Nexus sandbox the env var holds a `__nexus_cred:<uuid>__`
- *    sentinel; the MITM proxy rewrites the header on the wire to the real
- *    Bedrock API key. No AWS credentials live in the container.
+ * 1. Bearer token: when `AWS_BEARER_TOKEN_BEDROCK` is set,
+ *    `@ai-sdk/amazon-bedrock` short-circuits SigV4 and sends
+ *    `Authorization: Bearer <token>` directly to Bedrock. The env var
+ *    may hold a `__nexus_cred:<uuid>__` sentinel that the MITM proxy
+ *    rewrites on the wire to the real Bedrock API key.
  *
- * 2. SigV4 (multi-tenant / ECS task role): when no bearer token is set, the
- *    SDK uses the shared credential provider options below. ECS resolves via
- *    task role / container metadata; local dev can use explicit access keys.
+ * 2. SigV4: when no bearer token is set, the SDK uses the shared
+ *    credential provider options below — ECS task role / container
+ *    metadata in production, explicit access keys for local dev.
  */
 
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';

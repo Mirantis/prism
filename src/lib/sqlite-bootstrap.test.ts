@@ -1,7 +1,7 @@
 /**
  * Tests for sqlite-bootstrap: the sibling better-sqlite3 handle used for
- * sqlite-vec in single-agent mode. We run these against an in-memory SQLite
- * so the tests don't write anything to disk.
+ * sqlite-vec. We run these against an in-memory SQLite so the tests
+ * don't write anything to disk.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';

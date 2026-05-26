@@ -1,9 +1,9 @@
 /**
  * TUI Adapter (prism-cli).
  *
- * Bridges the Ink UI to an agent-runtime running in single-agent mode over
- * WebSocket. The CLI does not know the agentId or userId — the runtime owns
- * both server-side and substitutes them when our envelopes omit them.
+ * Bridges the Ink UI to an agent-runtime over WebSocket. The CLI does
+ * not know the agentId or userId — the runtime owns both server-side
+ * and substitutes them when our envelopes omit them.
  *
  * The agent-runtime base URL comes from `httpUrl` in ~/.prism/settings.json
  * (override via `PRISM_HTTP_URL`). The WebSocket URL is derived from it.
@@ -91,9 +91,10 @@ class TuiAdapter {
   }
 
   /**
-   * Replay the active thread's recent messages on mount. Calls the runtime's
-   * single-agent REST endpoint; if it returns non-2xx (runtime down, or not in
-   * single-agent mode), we render with an empty history rather than blocking.
+   * Replay the active thread's recent messages on mount. Calls the
+   * runtime's `/single-agent/messages` REST endpoint; if it returns
+   * non-2xx (e.g. runtime down), we render with an empty history rather
+   * than blocking.
    */
   async loadHistory(args: {
     userId: string;
@@ -115,8 +116,8 @@ class TuiAdapter {
   }
 
   /**
-   * Send a user message. The runtime fills in `agentId` (and resolves the
-   * active thread) in single-agent mode, so we only send the content + mode.
+   * Send a user message. The runtime fills in `agentId` (and resolves
+   * the active thread), so we only send the content + mode.
    */
   async submitUserMessage(_args: {
     userId: string;

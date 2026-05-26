@@ -7,10 +7,10 @@
  * parses the NDJSON stream, buffers assistant text for drain-on-read
  * polling, and tracks completion state.
  *
- * Designed for single-agent-mode: one in-process manager per
- * agent-runtime, at most MAX_CONCURRENT tasks running at once. The
- * agent invokes `startTask()` via the `claude_code` MCP tool and
- * polls via `readStatus()` from `claude_code_status`.
+ * One in-process manager per agent-runtime, at most MAX_CONCURRENT
+ * tasks running at once. The agent invokes `startTask()` via the
+ * `claude_code` MCP tool and polls via `readStatus()` from
+ * `claude_code_status`.
  */
 import { ChildProcess, spawn } from 'child_process';
 import { createInterface } from 'readline';

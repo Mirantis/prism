@@ -7,8 +7,8 @@
  * - auto-reconnect with exponential backoff (1s → 30s)
  * - inbound `ping` → `pong` reply for the server's keepalive
  *
- * No auth, no headers, no query params — the CLI talks to an agent-runtime
- * running in single-agent mode directly.
+ * No auth, no headers, no query params — the CLI talks to the agent
+ * runtime directly.
  */
 
 import { EventEmitter } from 'events';

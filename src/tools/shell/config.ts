@@ -1,5 +1,5 @@
 /**
- * Shared constants for the single-agent-mode shell tools.
+ * Shared constants for the shell tools.
  *
  * `workspaceRoot` mirrors upstream's `/home/sandbox` concept — the
  * default cwd for commands and the base used to resolve relative

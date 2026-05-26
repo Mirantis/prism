@@ -1,20 +1,18 @@
 /**
- * Single-Agent Bootstrap
+ * Agent Bootstrap
  *
- * Resolves the one `AgentWorkspace` row that single-agent mode runs
- * against. If it doesn't exist yet, creates it with sensible defaults
+ * Resolves the one `AgentWorkspace` row the runtime runs against. If
+ * it doesn't exist yet, creates it with sensible defaults
  * (`config.ownerUserId` / `agentName` / `teamName`) so a fresh container
  * — green-field, or after a `/data` wipe — boots without external
  * seeding.
  *
  * Resolution order:
- *   1. `AGENT_ID` set + row exists → use it (today's behavior).
+ *   1. `AGENT_ID` set + row exists → use it.
  *   2. `AGENT_ID` set + row missing → bootstrap with that ID.
- *   3. `AGENT_ID` unset + DB has any row → use `findFirst()` (single-agent
- *      = exactly one agent, so this is unambiguous).
+ *   3. `AGENT_ID` unset + DB has any row → use `findFirst()` (exactly
+ *      one agent per container, so this is unambiguous).
  *   4. `AGENT_ID` unset + DB empty → bootstrap with a generated UUID.
- *
- * Multi-tenant mode never reaches here.
  */
 
 import { AgentWorkspace } from '@prisma/client';

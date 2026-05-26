@@ -23,6 +23,21 @@ its own calendar, and can act over a shell.
 
 ![Prism Terminal UI](docs/images/terminal-ui.png)
 
+## Quick Start
+
+### Using Docker
+
+Start the agent and boot into terminal ui:
+
+```bash
+docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK ghcr.io/lensapp/prism-agent:latest /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
+```
+
+`AWS_BEARER_TOKEN_BEDROCK` must be set in your shell environment — `-e
+AWS_BEARER_TOKEN_BEDROCK` (no `=`) passes the value through from the
+parent shell. The agent's SQLite database is persisted in the
+`prism-data` named volume across container restarts.
+
 ## Features
 
 ### Conversational interface
