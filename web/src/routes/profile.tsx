@@ -64,7 +64,7 @@ function ProfilePage() {
 
   const { data: details, isLoading } = useQuery({
     queryKey: ['agent-details', agent.agentId],
-    queryFn: () => runtimeApi.details(agent.agentId),
+    queryFn: () => runtimeApi.details(),
   });
 
   if (isLoading) {
@@ -100,7 +100,7 @@ function ProfilePage() {
           <DropdownMenuContent align="end">
             <DropdownMenuItem
               render={
-                <a href={`/agents/${agent.agentId}/export`} download>
+                <a href="/agents/export" download>
                   <Download className="size-4" />
                   Export
                 </a>
@@ -117,7 +117,6 @@ function ProfilePage() {
       <RestoreBackupDialog
         open={restoreOpen}
         onOpenChange={setRestoreOpen}
-        agentId={agent.agentId}
       />
 
       <Card>
@@ -166,7 +165,7 @@ function AgentNameField() {
   const [error, setError] = useState<string | null>(null);
 
   const renameMut = useMutation({
-    mutationFn: (n: string) => runtimeApi.updateAgentName(agent.agentId, n),
+    mutationFn: (n: string) => runtimeApi.updateAgentName(n),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['agent', 'me'] });
       setEditing(false);
@@ -253,13 +252,13 @@ function ModelField() {
 
   const { data: modelInfo } = useQuery({
     queryKey: ['agent-model', agent.agentId],
-    queryFn: () => runtimeApi.getModel(agent.agentId),
+    queryFn: () => runtimeApi.getModel(),
   });
 
   const effective = modelInfo?.model ?? '';
 
   const updateMut = useMutation({
-    mutationFn: (next: string | null) => runtimeApi.updateModel(agent.agentId, next),
+    mutationFn: (next: string | null) => runtimeApi.updateModel(next),
     onSuccess: (data) => {
       queryClient.setQueryData(['agent-model', agent.agentId], data);
       queryClient.invalidateQueries({ queryKey: ['agent-details', agent.agentId] });
@@ -354,20 +353,20 @@ function StatusPanel({ details, isLoading }: { details: AgentDetails | undefined
 
   const { data: hbStatus } = useQuery({
     queryKey: ['heartbeat-status', agent.agentId],
-    queryFn: () => runtimeApi.heartbeatStatus(agent.agentId),
+    queryFn: () => runtimeApi.heartbeatStatus(),
     refetchInterval: 5000,
   });
 
   const startMut = useMutation({
-    mutationFn: () => runtimeApi.heartbeatStart(agent.agentId, details!),
+    mutationFn: () => runtimeApi.heartbeatStart(details!),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['heartbeat-status', agent.agentId] }),
   });
   const stopMut = useMutation({
-    mutationFn: () => runtimeApi.heartbeatStop(agent.agentId),
+    mutationFn: () => runtimeApi.heartbeatStop(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['heartbeat-status', agent.agentId] }),
   });
   const triggerMut = useMutation({
-    mutationFn: () => runtimeApi.heartbeatTrigger(agent.agentId),
+    mutationFn: () => runtimeApi.heartbeatTrigger(),
   });
 
   const statusLabel = details?.status ?? 'unknown';
@@ -454,7 +453,7 @@ function IntervalEditor({
 
   const updateMut = useMutation({
     mutationFn: (mins: number) =>
-      runtimeApi.updateHeartbeatInterval(agentId, mins * 60000),
+      runtimeApi.updateHeartbeatInterval(mins * 60000),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['heartbeat-status', agentId] });
       setEditing(false);

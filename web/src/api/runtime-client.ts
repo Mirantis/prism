@@ -54,36 +54,36 @@ export const runtimeApi = {
   me: () => request<AgentSummary>('/agents/me'),
 
   // Agent profile
-  details: (agentId: string) =>
-    request<{ agent: AgentDetails }>(`/agents/${agentId}/details`).then((r) => r.agent),
+  details: () =>
+    request<{ agent: AgentDetails }>('/agents/details').then((r) => r.agent),
 
   // Heartbeat
-  heartbeatStatus: (agentId: string) =>
-    request<HeartbeatStatus>(`/agents/${agentId}/heartbeat/status`),
-  heartbeatStart: (agentId: string, agent: AgentDetails) =>
-    request<{ success: boolean }>(`/agents/${agentId}/heartbeat/start`, {
+  heartbeatStatus: () =>
+    request<HeartbeatStatus>('/agents/heartbeat/status'),
+  heartbeatStart: (agent: AgentDetails) =>
+    request<{ success: boolean }>('/agents/heartbeat/start', {
       method: 'POST',
       body: JSON.stringify({ agent }),
     }),
-  heartbeatStop: (agentId: string) =>
-    request<{ success: boolean }>(`/agents/${agentId}/heartbeat/stop`, { method: 'POST' }),
-  heartbeatTrigger: (agentId: string) =>
-    request<{ success: boolean }>(`/agents/${agentId}/heartbeat/trigger`, { method: 'POST' }),
-  updateHeartbeatInterval: (agentId: string, intervalMs: number) =>
-    request<HeartbeatStatus>(`/agents/${agentId}/heartbeat/interval`, {
+  heartbeatStop: () =>
+    request<{ success: boolean }>('/agents/heartbeat/stop', { method: 'POST' }),
+  heartbeatTrigger: () =>
+    request<{ success: boolean }>('/agents/heartbeat/trigger', { method: 'POST' }),
+  updateHeartbeatInterval: (intervalMs: number) =>
+    request<HeartbeatStatus>('/agents/heartbeat/interval', {
       method: 'PATCH',
       body: JSON.stringify({ intervalMs }),
     }),
-  updateAgentName: (agentId: string, name: string) =>
-    request<AgentSummary>(`/agents/${agentId}/name`, {
+  updateAgentName: (name: string) =>
+    request<AgentSummary>('/agents/name', {
       method: 'PATCH',
       body: JSON.stringify({ name }),
     }),
 
   // Model selector
-  getModel: (agentId: string) => request<ModelInfo>(`/agents/${agentId}/model`),
-  updateModel: (agentId: string, model: string | null) =>
-    request<ModelInfo>(`/agents/${agentId}/model`, {
+  getModel: () => request<ModelInfo>('/agents/model'),
+  updateModel: (model: string | null) =>
+    request<ModelInfo>('/agents/model', {
       method: 'PATCH',
       body: JSON.stringify({ model }),
     }),
@@ -116,14 +116,14 @@ export const runtimeApi = {
 
   // Slack mappings
   slackWorkspaces: () => request<{ workspaces: SlackWorkspace[] }>('/agents/slack/workspaces'),
-  slackLinkStatus: (agentId: string, connectionId: string) => {
+  slackLinkStatus: (connectionId: string) => {
     const params = new URLSearchParams({ connectionId });
-    return request<SlackLinkStatus>(`/agents/${agentId}/slack-link-status?${params.toString()}`);
+    return request<SlackLinkStatus>(`/agents/slack-link-status?${params.toString()}`);
   },
-  slackChannelMappings: (agentId: string, connectionId: string) => {
+  slackChannelMappings: (connectionId: string) => {
     const params = new URLSearchParams({ connectionId });
     return request<{ channels: SlackChannelMapping[] }>(
-      `/agents/${agentId}/slack-channel-mappings?${params.toString()}`,
+      `/agents/slack-channel-mappings?${params.toString()}`,
     );
   },
   createSlackVerificationCode: (body: {
@@ -138,10 +138,10 @@ export const runtimeApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  deleteDmMapping: (agentId: string, connectionId: string) => {
+  deleteDmMapping: (connectionId: string) => {
     const params = new URLSearchParams({ connectionId });
     return request<{ deleted: number }>(
-      `/agents/${agentId}/slack/dm-mapping?${params.toString()}`,
+      `/agents/slack/dm-mapping?${params.toString()}`,
       { method: 'DELETE' },
     );
   },
@@ -156,52 +156,50 @@ export const runtimeApi = {
   },
 
   // Heartbeat triggers
-  listHeartbeatTriggers: (agentId: string, userId: string) => {
+  listHeartbeatTriggers: (userId: string) => {
     const params = new URLSearchParams({ userId });
     return request<SlackHeartbeatTrigger[]>(
-      `/agents/${agentId}/slack-heartbeat-trigger?${params.toString()}`,
+      `/agents/slack-heartbeat-trigger?${params.toString()}`,
     );
   },
   createHeartbeatTrigger: (
-    agentId: string,
     body: { connectionId: string; channelId: string; channelName?: string; userId: string; throttleSeconds?: number },
   ) =>
-    request<SlackHeartbeatTrigger>(`/agents/${agentId}/slack-heartbeat-trigger`, {
+    request<SlackHeartbeatTrigger>('/agents/slack-heartbeat-trigger', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
   updateHeartbeatTriggerThrottle: (
-    agentId: string,
     body: { triggerId: string; userId: string; throttleSeconds: number },
   ) =>
-    request<SlackHeartbeatTrigger>(`/agents/${agentId}/slack-heartbeat-trigger`, {
+    request<SlackHeartbeatTrigger>('/agents/slack-heartbeat-trigger', {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
-  deleteHeartbeatTrigger: (agentId: string, triggerId: string, userId: string) => {
+  deleteHeartbeatTrigger: (triggerId: string, userId: string) => {
     const params = new URLSearchParams({ userId });
     return request<{ success: true }>(
-      `/agents/${agentId}/slack-heartbeat-trigger/${triggerId}?${params.toString()}`,
+      `/agents/slack-heartbeat-trigger/${triggerId}?${params.toString()}`,
       { method: 'DELETE' },
     );
   },
 
   // Cron tasks
-  listCronTasks: (agentId: string) =>
-    request<CronTask[]>(`/agents/${agentId}/cron-tasks`),
-  createCronTask: (agentId: string, body: { name: string; schedule: string; instruction: string }) =>
-    request<CronTask>(`/agents/${agentId}/cron-tasks`, {
+  listCronTasks: () =>
+    request<CronTask[]>('/agents/cron-tasks'),
+  createCronTask: (body: { name: string; schedule: string; instruction: string }) =>
+    request<CronTask>('/agents/cron-tasks', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  deleteCronTask: (agentId: string, taskId: string) =>
-    request<{ success: true }>(`/agents/${agentId}/cron-tasks/${taskId}`, { method: 'DELETE' }),
+  deleteCronTask: (taskId: string) =>
+    request<{ success: true }>(`/agents/cron-tasks/${taskId}`, { method: 'DELETE' }),
 
   // Backup / restore
-  importAgent: (agentId: string, file: File) => {
+  importAgent: (file: File) => {
     const fd = new FormData();
     fd.append('file', file);
-    return request<{ ok: true; restarting: true }>(`/agents/${agentId}/import`, {
+    return request<{ ok: true; restarting: true }>('/agents/import', {
       method: 'POST',
       body: fd,
     });

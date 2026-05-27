@@ -25,7 +25,7 @@ import { getAgentConfigTools } from '../agent-config';
 
 function createTestAgentWorkspace(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'agent-456',
+    id: 'test-agent-id',
     userId: 'user-123',
     name: 'Prism',
     soulMd: '# Soul\nYou are Prism, a helpful assistant.',
@@ -35,6 +35,7 @@ function createTestAgentWorkspace(overrides: Record<string, unknown> = {}) {
     visionMd: '',
     bootstrapMd: '',
     agentMd: '',
+    nexusMcpAgentToken: null,
     heartbeatIntervalMs: 28800000,
     proactivity: 3,
     verbosity: 3,
@@ -43,7 +44,7 @@ function createTestAgentWorkspace(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const agentId = 'agent-456';
+const agentId = 'test-agent-id';
 
 type ToolExecute = (input: Record<string, unknown>) => Promise<unknown>;
 
@@ -61,7 +62,7 @@ describe('getAgentConfigTools', () => {
     vi.clearAllMocks();
     mockPrisma.agentWorkspace.update.mockResolvedValue(testAgent);
     mockPrisma.agentWorkspace.findUnique.mockResolvedValue(testAgent);
-    tools = getAgentConfigTools(agentId) as unknown as Record<
+    tools = getAgentConfigTools() as unknown as Record<
       string,
       { execute: ToolExecute }
     >;

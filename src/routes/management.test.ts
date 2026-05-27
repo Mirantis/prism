@@ -20,7 +20,7 @@ const {
   mockGetStatus,
   mockScheduleTask,
   mockUnscheduleTask,
-  mockGetAgentById,
+  mockGetAgent,
   mockGetThread,
   mockListThreads,
   mockAddMessage,
@@ -37,7 +37,7 @@ const {
   mockGetStatus: vi.fn(),
   mockScheduleTask: vi.fn(),
   mockUnscheduleTask: vi.fn(),
-  mockGetAgentById: vi.fn(),
+  mockGetAgent: vi.fn(),
   mockGetThread: vi.fn(),
   mockListThreads: vi.fn(),
   mockAddMessage: vi.fn(),
@@ -98,9 +98,9 @@ vi.mock('../services/agent-workspace.service', async () => {
     '../services/agent-workspace.service',
   );
   // Keep the real instance (so `renameAgent` and other prototype methods stay
-  // available) but redirect `getAgentById` to the controllable mock.
-  (actual.agentWorkspaceService as unknown as { getAgentById: typeof mockGetAgentById }).getAgentById =
-    mockGetAgentById;
+  // available) but redirect `getAgent` to the controllable mock.
+  (actual.agentWorkspaceService as unknown as { getAgent: typeof mockGetAgent }).getAgent =
+    mockGetAgent;
   return actual;
 });
 
@@ -182,10 +182,10 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
-  // POST /:agentId/heartbeat/start
+  // POST /heartbeat/start
   // ==========================================================================
 
-  describe('POST /:agentId/heartbeat/start', () => {
+  describe('POST /heartbeat/start', () => {
     it('starts heartbeat and forces heartbeatStatus to ENABLED', async () => {
       const agent = {
         id: 'agent-1',
@@ -195,12 +195,12 @@ describe('Management Routes', () => {
       };
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/heartbeat/start')
+        .post('/agents/heartbeat/start')
         .send({ agent });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.message).toContain('agent-1');
+      expect(res.body.message).toBe('Heartbeat started');
       // The /start endpoint's whole purpose is to turn the heartbeat on,
       // regardless of the body's persisted heartbeatStatus.
       expect(mockStartHeartbeat).toHaveBeenCalledWith({
@@ -211,7 +211,7 @@ describe('Management Routes', () => {
 
     it('returns 400 when agent is missing from body', async () => {
       const res = await authedRequest(app)
-        .post('/agents/agent-1/heartbeat/start')
+        .post('/agents/heartbeat/start')
         .send({});
 
       expect(res.status).toBe(400);
@@ -224,7 +224,7 @@ describe('Management Routes', () => {
       });
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/heartbeat/start')
+        .post('/agents/heartbeat/start')
         .send({ agent: { id: 'agent-1', userId: 'user-1' } });
 
       expect(res.status).toBe(500);
@@ -233,18 +233,18 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
-  // POST /:agentId/heartbeat/stop
+  // POST /heartbeat/stop
   // ==========================================================================
 
-  describe('POST /:agentId/heartbeat/stop', () => {
+  describe('POST /heartbeat/stop', () => {
     it('stops heartbeat and returns success', async () => {
       const res = await authedRequest(app)
-        .post('/agents/agent-1/heartbeat/stop')
+        .post('/agents/heartbeat/stop')
         .send();
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(mockStopHeartbeat).toHaveBeenCalledWith('agent-1');
+      expect(mockStopHeartbeat).toHaveBeenCalledWith();
     });
 
     it('returns 500 when stopHeartbeat throws', async () => {
@@ -253,7 +253,7 @@ describe('Management Routes', () => {
       });
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/heartbeat/stop')
+        .post('/agents/heartbeat/stop')
         .send();
 
       expect(res.status).toBe(500);
@@ -262,28 +262,28 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
-  // POST /:agentId/heartbeat/trigger
+  // POST /heartbeat/trigger
   // ==========================================================================
 
-  describe('POST /:agentId/heartbeat/trigger', () => {
+  describe('POST /heartbeat/trigger', () => {
     it('triggers heartbeat and returns the result', async () => {
       mockTriggerHeartbeat.mockResolvedValue({ action: 'ok', message: 'All clear' });
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/heartbeat/trigger')
+        .post('/agents/heartbeat/trigger')
         .send();
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.result).toEqual({ action: 'ok', message: 'All clear' });
-      expect(mockTriggerHeartbeat).toHaveBeenCalledWith('agent-1');
+      expect(mockTriggerHeartbeat).toHaveBeenCalledWith();
     });
 
     it('returns 500 when triggerHeartbeat rejects', async () => {
       mockTriggerHeartbeat.mockRejectedValue(new Error('Heartbeat error'));
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/heartbeat/trigger')
+        .post('/agents/heartbeat/trigger')
         .send();
 
       expect(res.status).toBe(500);
@@ -292,10 +292,10 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
-  // GET /:agentId/heartbeat/status
+  // GET /heartbeat/status
   // ==========================================================================
 
-  describe('GET /:agentId/heartbeat/status', () => {
+  describe('GET /heartbeat/status', () => {
     it('returns heartbeat status when active', async () => {
       mockGetStatus.mockReturnValue({
         isActive: true,
@@ -305,7 +305,7 @@ describe('Management Routes', () => {
       });
 
       const res = await authedRequest(app)
-        .get('/agents/agent-1/heartbeat/status');
+        .get('/agents/heartbeat/status');
 
       expect(res.status).toBe(200);
       expect(res.body.isActive).toBe(true);
@@ -316,7 +316,7 @@ describe('Management Routes', () => {
       mockGetStatus.mockReturnValue(null);
 
       const res = await authedRequest(app)
-        .get('/agents/agent-1/heartbeat/status');
+        .get('/agents/heartbeat/status');
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({
@@ -333,7 +333,7 @@ describe('Management Routes', () => {
       });
 
       const res = await authedRequest(app)
-        .get('/agents/agent-1/heartbeat/status');
+        .get('/agents/heartbeat/status');
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Status error');
@@ -341,12 +341,12 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
-  // PATCH /:agentId/heartbeat/interval
+  // PATCH /heartbeat/interval
   // ==========================================================================
 
-  describe('PATCH /:agentId/heartbeat/interval', () => {
+  describe('PATCH /heartbeat/interval', () => {
     it('updates the interval, restarts the timer, and returns the new status', async () => {
-      mockGetAgentById.mockResolvedValue({
+      mockGetAgent.mockResolvedValue({
         id: 'agent-1',
         userId: 'user-1',
         heartbeatIntervalMs: 480 * 60_000,
@@ -362,7 +362,7 @@ describe('Management Routes', () => {
       });
 
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/heartbeat/interval')
+        .patch('/agents/heartbeat/interval')
         .send({ intervalMs: 5 * 60_000 });
 
       expect(res.status).toBe(200);
@@ -379,7 +379,7 @@ describe('Management Routes', () => {
 
     it('returns 400 when intervalMs is missing or not a number', async () => {
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/heartbeat/interval')
+        .patch('/agents/heartbeat/interval')
         .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('finite number');
@@ -387,7 +387,7 @@ describe('Management Routes', () => {
 
     it('returns 400 when intervalMs is below the 1-minute floor', async () => {
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/heartbeat/interval')
+        .patch('/agents/heartbeat/interval')
         .send({ intervalMs: 1000 });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('1 minute');
@@ -395,25 +395,25 @@ describe('Management Routes', () => {
 
     it('returns 400 when intervalMs exceeds the 1-week ceiling', async () => {
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/heartbeat/interval')
+        .patch('/agents/heartbeat/interval')
         .send({ intervalMs: 7 * 24 * 60 * 60_000 + 1 });
       expect(res.status).toBe(400);
     });
 
-    it('returns 404 when the agent is not found', async () => {
-      mockGetAgentById.mockResolvedValue(null);
+    it('returns 500 when the agent is missing', async () => {
+      mockGetAgent.mockRejectedValue(new Error('Agent not found'));
       const res = await authedRequest(app)
-        .patch('/agents/agent-x/heartbeat/interval')
+        .patch('/agents/heartbeat/interval')
         .send({ intervalMs: 5 * 60_000 });
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(500);
       expect(res.body.error).toBe('Agent not found');
     });
 
     it('returns 500 when Prisma update throws', async () => {
-      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1' });
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1' });
       mockPrisma.agentWorkspace.update.mockRejectedValue(new Error('DB error'));
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/heartbeat/interval')
+        .patch('/agents/heartbeat/interval')
         .send({ intervalMs: 5 * 60_000 });
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('DB error');
@@ -421,12 +421,12 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
-  // PATCH /:agentId/name
+  // PATCH /name
   // ==========================================================================
 
-  describe('PATCH /:agentId/name', () => {
+  describe('PATCH /name', () => {
     it('renames the agent and returns the updated identity', async () => {
-      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Old' });
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Old' });
       mockPrisma.agentWorkspace.update.mockResolvedValue({
         id: 'agent-1',
         userId: 'user-1',
@@ -434,7 +434,7 @@ describe('Management Routes', () => {
       });
 
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/name')
+        .patch('/agents/name')
         .send({ name: '  NewName  ' }); // whitespace trimmed
 
       expect(res.status).toBe(200);
@@ -447,7 +447,7 @@ describe('Management Routes', () => {
 
     it('returns 400 when name is missing', async () => {
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/name')
+        .patch('/agents/name')
         .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('non-empty');
@@ -455,37 +455,33 @@ describe('Management Routes', () => {
 
     it('returns 400 when name is empty / only whitespace', async () => {
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/name')
+        .patch('/agents/name')
         .send({ name: '   ' });
       expect(res.status).toBe(400);
     });
 
     it('returns 400 when name exceeds 64 chars', async () => {
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/name')
+        .patch('/agents/name')
         .send({ name: 'a'.repeat(65) });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('64');
     });
 
-    it('returns 404 when the agent is not found', async () => {
-      const p2025 = new Prisma.PrismaClientKnownRequestError(
-        'Record to update not found.',
-        { code: 'P2025', clientVersion: '0' },
-      );
-      mockPrisma.agentWorkspace.update.mockRejectedValue(p2025);
+    it('returns 500 when the agent is missing', async () => {
+      mockGetAgent.mockRejectedValue(new Error('Agent not found'));
       const res = await authedRequest(app)
-        .patch('/agents/agent-x/name')
+        .patch('/agents/name')
         .send({ name: 'NewName' });
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(500);
       expect(res.body.error).toBe('Agent not found');
     });
 
     it('returns 500 when Prisma update throws', async () => {
-      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Old' });
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Old' });
       mockPrisma.agentWorkspace.update.mockRejectedValue(new Error('DB error'));
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/name')
+        .patch('/agents/name')
         .send({ name: 'NewName' });
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('DB error');
@@ -493,10 +489,10 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
-  // POST /:agentId/cron-tasks
+  // POST /cron-tasks
   // ==========================================================================
 
-  describe('POST /:agentId/cron-tasks', () => {
+  describe('POST /cron-tasks', () => {
     const persistedTask = {
       id: 'ct-1',
       agentId: 'agent-1',
@@ -512,11 +508,11 @@ describe('Management Routes', () => {
     };
 
     it('creates a cron task, persists it, schedules it, and returns the row', async () => {
-      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
       mockPrisma.cronTask.create.mockResolvedValue(persistedTask);
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/cron-tasks')
+        .post('/agents/cron-tasks')
         .send({ name: 'Daily Report', schedule: '0 9 * * *', instruction: 'Generate report' });
 
       expect(res.status).toBe(201);
@@ -539,7 +535,7 @@ describe('Management Routes', () => {
 
     it('returns 400 when name is missing', async () => {
       const res = await authedRequest(app)
-        .post('/agents/agent-1/cron-tasks')
+        .post('/agents/cron-tasks')
         .send({ schedule: '0 9 * * *', instruction: 'x' });
 
       expect(res.status).toBe(400);
@@ -549,30 +545,30 @@ describe('Management Routes', () => {
 
     it('returns 400 when schedule is missing', async () => {
       const res = await authedRequest(app)
-        .post('/agents/agent-1/cron-tasks')
+        .post('/agents/cron-tasks')
         .send({ name: 'x', instruction: 'x' });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('Missing required fields');
     });
 
-    it('returns 404 when agent is not found', async () => {
-      mockGetAgentById.mockResolvedValue(null);
+    it('returns 500 when agent is missing', async () => {
+      mockGetAgent.mockRejectedValue(new Error('Agent not found'));
 
       const res = await authedRequest(app)
-        .post('/agents/agent-x/cron-tasks')
+        .post('/agents/cron-tasks')
         .send({ name: 'x', schedule: '0 9 * * *', instruction: 'x' });
 
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(500);
       expect(res.body.error).toBe('Agent not found');
       expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
     });
 
     it('returns 400 when the schedule is not a valid cron expression', async () => {
-      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/cron-tasks')
+        .post('/agents/cron-tasks')
         .send({ name: 'x', schedule: 'definitely not a cron', instruction: 'x' });
 
       expect(res.status).toBe(400);
@@ -581,11 +577,11 @@ describe('Management Routes', () => {
     });
 
     it('returns 500 when Prisma create throws', async () => {
-      mockGetAgentById.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
       mockPrisma.cronTask.create.mockRejectedValue(new Error('DB error'));
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/cron-tasks')
+        .post('/agents/cron-tasks')
         .send({ name: 'x', schedule: '0 9 * * *', instruction: 'x' });
 
       expect(res.status).toBe(500);
@@ -594,15 +590,15 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
-  // DELETE /:agentId/cron-tasks/:taskId
+  // DELETE /cron-tasks/:taskId
   // ==========================================================================
 
-  describe('DELETE /:agentId/cron-tasks/:taskId', () => {
+  describe('DELETE /cron-tasks/:taskId', () => {
     it('unschedules and deletes the task', async () => {
       mockPrisma.cronTask.delete.mockResolvedValue({ id: 'ct-1' });
 
       const res = await authedRequest(app)
-        .delete('/agents/agent-1/cron-tasks/ct-1');
+        .delete('/agents/cron-tasks/ct-1');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -619,7 +615,7 @@ describe('Management Routes', () => {
       );
 
       const res = await authedRequest(app)
-        .delete('/agents/agent-1/cron-tasks/ct-missing');
+        .delete('/agents/cron-tasks/ct-missing');
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('Cron task not found');
@@ -629,7 +625,7 @@ describe('Management Routes', () => {
       mockPrisma.cronTask.delete.mockRejectedValue(new Error('Delete error'));
 
       const res = await authedRequest(app)
-        .delete('/agents/agent-1/cron-tasks/ct-1');
+        .delete('/agents/cron-tasks/ct-1');
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Delete error');
@@ -669,10 +665,10 @@ describe('Management Routes', () => {
     });
   });
 
-  describe('GET /:agentId/slack-heartbeat-trigger', () => {
+  describe('GET /slack-heartbeat-trigger', () => {
     it('returns 400 when userId query param is missing', async () => {
       const res = await authedRequest(app)
-        .get('/agents/agent-1/slack-heartbeat-trigger');
+        .get('/agents/slack-heartbeat-trigger');
 
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('userId');
@@ -683,11 +679,11 @@ describe('Management Routes', () => {
       mockSlackHeartbeatTriggerService.getActiveTriggers.mockResolvedValueOnce(triggers);
 
       const res = await authedRequest(app)
-        .get('/agents/agent-1/slack-heartbeat-trigger?userId=user-1');
+        .get('/agents/slack-heartbeat-trigger?userId=user-1');
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual(triggers);
-      expect(mockSlackHeartbeatTriggerService.getActiveTriggers).toHaveBeenCalledWith('user-1', 'agent-1');
+      expect(mockSlackHeartbeatTriggerService.getActiveTriggers).toHaveBeenCalledWith('user-1');
     });
 
     it('returns 500 when service throws', async () => {
@@ -696,17 +692,17 @@ describe('Management Routes', () => {
       );
 
       const res = await authedRequest(app)
-        .get('/agents/agent-1/slack-heartbeat-trigger?userId=user-1');
+        .get('/agents/slack-heartbeat-trigger?userId=user-1');
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('DB error');
     });
   });
 
-  describe('POST /:agentId/slack-heartbeat-trigger', () => {
+  describe('POST /slack-heartbeat-trigger', () => {
     it('returns 400 when required fields are missing', async () => {
       const res = await authedRequest(app)
-        .post('/agents/agent-1/slack-heartbeat-trigger')
+        .post('/agents/slack-heartbeat-trigger')
         .send({ connectionId: 'conn-1' });
 
       expect(res.status).toBe(400);
@@ -723,7 +719,7 @@ describe('Management Routes', () => {
       mockSlackHeartbeatTriggerService.createTrigger.mockResolvedValueOnce(trigger);
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/slack-heartbeat-trigger')
+        .post('/agents/slack-heartbeat-trigger')
         .send({
           connectionId: 'conn-1',
           channelId: 'C123',
@@ -735,7 +731,7 @@ describe('Management Routes', () => {
       expect(res.status).toBe(201);
       expect(res.body).toEqual(trigger);
       expect(mockSlackHeartbeatTriggerService.createTrigger).toHaveBeenCalledWith(
-        'conn-1', 'C123', 'general', 'agent-1', 'user-1', 300,
+        'conn-1', 'C123', 'general', 'user-1', 300,
       );
     });
 
@@ -743,11 +739,11 @@ describe('Management Routes', () => {
       mockSlackHeartbeatTriggerService.createTrigger.mockResolvedValueOnce({ id: 'trigger-new' });
 
       await authedRequest(app)
-        .post('/agents/agent-1/slack-heartbeat-trigger')
+        .post('/agents/slack-heartbeat-trigger')
         .send({ connectionId: 'conn-1', channelId: 'C123', userId: 'user-1' });
 
       expect(mockSlackHeartbeatTriggerService.createTrigger).toHaveBeenCalledWith(
-        'conn-1', 'C123', null, 'agent-1', 'user-1', undefined,
+        'conn-1', 'C123', null, 'user-1', undefined,
       );
     });
 
@@ -757,7 +753,7 @@ describe('Management Routes', () => {
       );
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/slack-heartbeat-trigger')
+        .post('/agents/slack-heartbeat-trigger')
         .send({ connectionId: 'conn-1', channelId: 'C123', userId: 'user-1' });
 
       expect(res.status).toBe(500);
@@ -765,10 +761,10 @@ describe('Management Routes', () => {
     });
   });
 
-  describe('PATCH /:agentId/slack-heartbeat-trigger', () => {
+  describe('PATCH /slack-heartbeat-trigger', () => {
     it('returns 400 when required fields are missing', async () => {
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/slack-heartbeat-trigger')
+        .patch('/agents/slack-heartbeat-trigger')
         .send({ triggerId: 'trigger-1' });
 
       expect(res.status).toBe(400);
@@ -780,7 +776,7 @@ describe('Management Routes', () => {
       mockSlackHeartbeatTriggerService.updateThrottle.mockResolvedValueOnce(updated);
 
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/slack-heartbeat-trigger')
+        .patch('/agents/slack-heartbeat-trigger')
         .send({ triggerId: 'trigger-1', userId: 'user-1', throttleSeconds: 600 });
 
       expect(res.status).toBe(200);
@@ -794,7 +790,7 @@ describe('Management Routes', () => {
       mockSlackHeartbeatTriggerService.updateThrottle.mockResolvedValueOnce(null);
 
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/slack-heartbeat-trigger')
+        .patch('/agents/slack-heartbeat-trigger')
         .send({ triggerId: 'trigger-missing', userId: 'user-1', throttleSeconds: 600 });
 
       expect(res.status).toBe(404);
@@ -807,7 +803,7 @@ describe('Management Routes', () => {
       );
 
       const res = await authedRequest(app)
-        .patch('/agents/agent-1/slack-heartbeat-trigger')
+        .patch('/agents/slack-heartbeat-trigger')
         .send({ triggerId: 'trigger-1', userId: 'user-1', throttleSeconds: 600 });
 
       expect(res.status).toBe(500);
@@ -815,10 +811,10 @@ describe('Management Routes', () => {
     });
   });
 
-  describe('DELETE /:agentId/slack-heartbeat-trigger/:id', () => {
+  describe('DELETE /slack-heartbeat-trigger/:id', () => {
     it('returns 400 when userId query param is missing', async () => {
       const res = await authedRequest(app)
-        .delete('/agents/agent-1/slack-heartbeat-trigger/trigger-1');
+        .delete('/agents/slack-heartbeat-trigger/trigger-1');
 
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('userId');
@@ -828,7 +824,7 @@ describe('Management Routes', () => {
       mockSlackHeartbeatTriggerService.deleteTrigger.mockResolvedValueOnce(undefined);
 
       const res = await authedRequest(app)
-        .delete('/agents/agent-1/slack-heartbeat-trigger/trigger-1?userId=user-1');
+        .delete('/agents/slack-heartbeat-trigger/trigger-1?userId=user-1');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -841,24 +837,24 @@ describe('Management Routes', () => {
       );
 
       const res = await authedRequest(app)
-        .delete('/agents/agent-1/slack-heartbeat-trigger/trigger-1?userId=user-1');
+        .delete('/agents/slack-heartbeat-trigger/trigger-1?userId=user-1');
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('DB error');
     });
   });
 
-  describe('POST /:agentId/slack-heartbeat-trigger/claim', () => {
+  describe('POST /slack-heartbeat-trigger/claim', () => {
     it('returns claimed result', async () => {
       mockSlackHeartbeatTriggerService.tryClaimTrigger.mockResolvedValueOnce({ claimed: true });
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/slack-heartbeat-trigger/claim')
+        .post('/agents/slack-heartbeat-trigger/claim')
         .send();
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ claimed: true });
-      expect(mockSlackHeartbeatTriggerService.tryClaimTrigger).toHaveBeenCalledWith('agent-1');
+      expect(mockSlackHeartbeatTriggerService.tryClaimTrigger).toHaveBeenCalledWith();
     });
 
     it('returns throttled result with remaining seconds', async () => {
@@ -868,7 +864,7 @@ describe('Management Routes', () => {
       });
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/slack-heartbeat-trigger/claim')
+        .post('/agents/slack-heartbeat-trigger/claim')
         .send();
 
       expect(res.status).toBe(200);
@@ -881,7 +877,7 @@ describe('Management Routes', () => {
       );
 
       const res = await authedRequest(app)
-        .post('/agents/agent-1/slack-heartbeat-trigger/claim')
+        .post('/agents/slack-heartbeat-trigger/claim')
         .send();
 
       expect(res.status).toBe(500);
@@ -1280,19 +1276,19 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(mockDeactivateThread).toHaveBeenCalledWith('thread-1', undefined, undefined);
+      expect(mockDeactivateThread).toHaveBeenCalledWith('thread-1', undefined);
     });
 
-    it('passes agentId and userId when provided', async () => {
+    it('passes userId when provided', async () => {
       mockDeactivateThread.mockResolvedValue(undefined);
 
       const res = await authedRequest(app)
         .post('/agents/threads/thread-1/archive')
-        .send({ agentId: 'agent-1', userId: 'user-1' });
+        .send({ userId: 'user-1' });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(mockDeactivateThread).toHaveBeenCalledWith('thread-1', 'agent-1', 'user-1');
+      expect(mockDeactivateThread).toHaveBeenCalledWith('thread-1', 'user-1');
     });
 
     it('returns 500 when deactivateThread throws', async () => {
@@ -1678,8 +1674,8 @@ describe('Management Routes', () => {
   // ==========================================================================
 
   describe('backup / restore', () => {
-    it('GET /agents/:agentId/export streams a gzipped snapshot', async () => {
-        mockGetAgentById.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
+    it('GET /agents/export streams a gzipped snapshot', async () => {
+        mockGetAgent.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
         const { Readable } = await import('stream');
         const payload = Buffer.from('fake-gzip-payload');
         const cleanup = vi.fn();
@@ -1689,7 +1685,7 @@ describe('Management Routes', () => {
           cleanup,
         });
 
-        const res = await request(app).get('/agents/agent-1/export').buffer(true);
+        const res = await request(app).get('/agents/export').buffer(true);
 
         expect(res.status).toBe(200);
         expect(res.headers['content-type']).toBe('application/octet-stream');
@@ -1697,21 +1693,21 @@ describe('Management Routes', () => {
         expect(mockExportAgent).toHaveBeenCalledWith('My Bot');
       });
 
-      it('GET /agents/:agentId/export returns 404 when agent is missing', async () => {
-        mockGetAgentById.mockResolvedValue(null);
-        const res = await request(app).get('/agents/agent-1/export');
-        expect(res.status).toBe(404);
+      it('GET /agents/export returns 500 when agent is missing', async () => {
+        mockGetAgent.mockRejectedValue(new Error('Agent not found'));
+        const res = await request(app).get('/agents/export');
+        expect(res.status).toBe(500);
         expect(res.body.error).toBe('Agent not found');
         expect(mockExportAgent).not.toHaveBeenCalled();
       });
 
-      it('POST /agents/:agentId/import stages the archive and signals restart', async () => {
-        mockGetAgentById.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
+      it('POST /agents/import stages the archive and signals restart', async () => {
+        mockGetAgent.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
         mockImportAgent.mockResolvedValue(undefined);
         const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 
         const res = await request(app)
-          .post('/agents/agent-1/import')
+          .post('/agents/import')
           .attach('file', Buffer.from('upload-bytes'), 'backup.prism');
 
         expect(res.status).toBe(200);
@@ -1728,23 +1724,23 @@ describe('Management Routes', () => {
         exitSpy.mockRestore();
       });
 
-      it('POST /agents/:agentId/import returns 400 when validation fails', async () => {
-        mockGetAgentById.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
+      it('POST /agents/import returns 400 when validation fails', async () => {
+        mockGetAgent.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
         const { ArchiveValidationError } = await import('../services/agent-archive.service');
         mockImportAgent.mockRejectedValue(new ArchiveValidationError('Schema version mismatch'));
 
         const res = await request(app)
-          .post('/agents/agent-1/import')
+          .post('/agents/import')
           .attach('file', Buffer.from('bad-bytes'), 'backup.prism');
 
         expect(res.status).toBe(400);
         expect(res.body.error).toBe('Schema version mismatch');
       });
 
-      it('POST /agents/:agentId/import returns 400 when the file field is missing', async () => {
-        mockGetAgentById.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
+      it('POST /agents/import returns 400 when the file field is missing', async () => {
+        mockGetAgent.mockResolvedValue({ id: 'agent-1', name: 'My Bot' });
 
-        const res = await request(app).post('/agents/agent-1/import');
+        const res = await request(app).post('/agents/import');
 
         expect(res.status).toBe(400);
         expect(res.body.error).toContain('Missing');

@@ -14,10 +14,10 @@ class ContextService {
     userId: string,
     options: { agentId: string; threadId?: string; includeConversation?: boolean }
   ): Promise<AgentContext> {
-    const { agentId, threadId, includeConversation = true } = options;
+    const { threadId, includeConversation = true } = options;
 
     // 1. Fetch agent from database
-    const agent = await agentWorkspaceService.getAgentById(agentId);
+    const agent = await agentWorkspaceService.getAgent();
 
     const isBootstrapPhase = !!(agent.bootstrapMd && agent.bootstrapMd.trim());
 

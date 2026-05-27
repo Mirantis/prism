@@ -112,7 +112,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       {
         ...getMemoryTools(request.userId, request.agentId),
         ...getCronTools(request.userId, request.agentId),
-        ...getAgentConfigTools(request.agentId),
+        ...getAgentConfigTools(),
         ...getShellTools(),
       },
       request.mode,
@@ -312,7 +312,7 @@ export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
   let agentName = 'Agent';
   if (request.agentId) {
     try {
-      const agent = await agentWorkspaceService.getAgentById(request.agentId);
+      const agent = await agentWorkspaceService.getAgent();
       agentName = agent.name;
     } catch {
       // Leave default; the friendly error will come back through the stream.

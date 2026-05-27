@@ -11,6 +11,7 @@
 
 import prisma from '../lib/prisma';
 import { Prisma, SlackHeartbeatTrigger } from '@prisma/client';
+import { config } from '../config';
 
 export interface ClaimResult {
   claimed: boolean;
@@ -22,9 +23,9 @@ class SlackHeartbeatTriggerService {
   /**
    * Get all active triggers for a specific user.
    */
-  async getActiveTriggers(userId: string, agentId: string) {
+  async getActiveTriggers(userId: string) {
     return prisma.slackHeartbeatTrigger.findMany({
-      where: { userId, agentId, isActive: true },
+      where: { userId, isActive: true },
       include: { agentWorkspace: { select: { name: true } } },
       orderBy: { createdAt: 'desc' },
     });
@@ -37,16 +38,16 @@ class SlackHeartbeatTriggerService {
     connectionId: string,
     channelId: string,
     channelName: string | null,
-    agentId: string,
     userId: string,
     throttleSeconds?: number,
   ): Promise<SlackHeartbeatTrigger> {
+    if (!config.agentId) throw new Error('AGENT_ID not configured');
     return prisma.slackHeartbeatTrigger.create({
       data: {
         connectionId,
         slackChannelId: channelId,
         slackChannelName: channelName,
-        agentId,
+        agentId: config.agentId,
         userId,
         isActive: true,
         ...(throttleSeconds !== undefined && { throttleSeconds }),
@@ -109,9 +110,9 @@ class SlackHeartbeatTriggerService {
    * single-claimer invariant: if a concurrent writer claimed between
    * our read and update, `count === 0` and we treat it as throttled.
    */
-  async tryClaimTrigger(agentId: string): Promise<ClaimResult> {
+  async tryClaimTrigger(): Promise<ClaimResult> {
     const trigger = await prisma.slackHeartbeatTrigger.findFirst({
-      where: { agentId, isActive: true },
+      where: { isActive: true },
       select: { id: true, lastTriggeredAt: true, throttleSeconds: true },
     });
 

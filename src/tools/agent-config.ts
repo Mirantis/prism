@@ -13,6 +13,7 @@ import { heartbeatService } from '../services/heartbeat.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { applyEdits } from '../lib/apply-edit';
 import { logger } from '../logger';
+import { config } from '../config';
 
 /** Shared input schema for workspace-file update tools (dual-mode: full replace or targeted edits). */
 const workspaceFileInputSchema = z.object({
@@ -76,7 +77,9 @@ async function resolveWorkspaceFileUpdate(
   return { success: true, message: `${label} updated: ${changeDescription}` };
 }
 
-export function getAgentConfigTools(agentId: string): Record<string, Tool> {
+export function getAgentConfigTools(): Record<string, Tool> {
+  if (!config.agentId) throw new Error('AGENT_ID not configured');
+  const agentId = config.agentId;
   return {
     rename_self: tool({
       description:
@@ -86,7 +89,7 @@ export function getAgentConfigTools(agentId: string): Record<string, Tool> {
       }),
       execute: async ({ name }) => {
         try {
-          const updated = await agentWorkspaceService.renameAgent(agentId, name);
+          const updated = await agentWorkspaceService.renameAgent(name);
           return {
             success: true,
             message: `Renamed agent to "${updated.name}".`,

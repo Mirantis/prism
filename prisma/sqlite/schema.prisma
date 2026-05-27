@@ -85,6 +85,9 @@ model AgentWorkspace {
   dailyResetHour  Int  @default(4)
   idleTimeoutMins Int?
 
+  nexusMcpAgentToken String?
+  nexusAgentTokenId  String?
+
   status           AgentStatus @default(IDLE)
   lastHeartbeat    DateTime?
   currentSessionId String?

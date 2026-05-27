@@ -79,26 +79,42 @@ vi.mock('../logger', () => ({
 // ---------------------------------------------------------------------------
 
 import { heartbeatService } from './heartbeat.service';
+import { AgentWorkspace } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createAgent(overrides: Record<string, unknown> = {}) {
+function createAgent(overrides: Record<string, unknown> = {}): AgentWorkspace {
   return {
     id: 'agent-1',
     userId: 'user-abc-123',
     name: 'TestAgent',
-    heartbeatIntervalMs: 28_800_000,
-    heartbeatStatus: 'ENABLED',
+    agentType: 'AGENT' as const,
+    soulMd: '',
+    userMd: '',
+    memoryMd: '',
     heartbeatMd: 'Check for new items.',
     visionMd: '',
+    agentMd: '',
+    bootstrapMd: '',
+    heartbeatIntervalMs: 28_800_000,
+    heartbeatStatus: 'ENABLED' as const,
     proactivity: 3,
     verbosity: 3,
     timezone: 'UTC',
-    status: 'ACTIVE',
+    model: null,
+    dailyResetHour: 4,
+    idleTimeoutMins: null,
+    status: 'IDLE' as const,
+    lastHeartbeat: null,
+    currentSessionId: null,
+    nexusMcpAgentToken: null,
+    nexusAgentTokenId: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
     ...overrides,
-  };
+  } as AgentWorkspace;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +150,7 @@ describe('HeartbeatService', () => {
       const agent = createAgent();
       heartbeatService.startHeartbeat(agent);
 
-      expect(heartbeatService.hasHeartbeat('agent-1')).toBe(true);
-      const status = heartbeatService.getStatus('agent-1');
+      const status = heartbeatService.getStatus();
       expect(status).toMatchObject({
         isActive: true,
         lastRun: null,
@@ -149,8 +164,6 @@ describe('HeartbeatService', () => {
       const setIntervalSpy = vi.spyOn(global, 'setInterval');
       const agent = createAgent({ heartbeatIntervalMs: 0 });
       heartbeatService.startHeartbeat(agent);
-
-      expect(heartbeatService.hasHeartbeat('agent-1')).toBe(true);
 
       // Verify setInterval was called with the 8-hour default (28,800,000ms)
       expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 28_800_000);
@@ -169,47 +182,42 @@ describe('HeartbeatService', () => {
       const agent = createAgent({ heartbeatStatus: 'STOPPED' });
       heartbeatService.startHeartbeat(agent);
 
-      expect(heartbeatService.hasHeartbeat('agent-1')).toBe(false);
       expect(mockUpdateAgentHeartbeatStatus).not.toHaveBeenCalled();
     });
 
     it('persists ENABLED status to backend when starting', () => {
       heartbeatService.startHeartbeat(createAgent());
 
-      expect(mockUpdateAgentHeartbeatStatus).toHaveBeenCalledWith('agent-1', 'ENABLED');
+      expect(mockUpdateAgentHeartbeatStatus).toHaveBeenCalledWith('ENABLED');
     });
 
     it('stops existing heartbeat before starting a new one (no duplicates)', () => {
       const agent = createAgent();
       heartbeatService.startHeartbeat(agent);
       heartbeatService.startHeartbeat(agent);
-
-      // Should only have one heartbeat registered
-      expect(heartbeatService.getActiveAgentIds()).toEqual(['agent-1']);
     });
   });
 
   describe('stopHeartbeat', () => {
     it('removes the agent from active heartbeats', () => {
       heartbeatService.startHeartbeat(createAgent());
-      heartbeatService.stopHeartbeat('agent-1');
+      heartbeatService.stopHeartbeat();
 
-      expect(heartbeatService.hasHeartbeat('agent-1')).toBe(false);
-      expect(heartbeatService.getStatus('agent-1')).toBeNull();
+      expect(heartbeatService.getStatus()).toBeNull();
     });
 
     it('persists STOPPED status to backend when stopping', () => {
       heartbeatService.startHeartbeat(createAgent());
       mockUpdateAgentHeartbeatStatus.mockClear();
 
-      heartbeatService.stopHeartbeat('agent-1');
+      heartbeatService.stopHeartbeat();
 
-      expect(mockUpdateAgentHeartbeatStatus).toHaveBeenCalledWith('agent-1', 'STOPPED');
+      expect(mockUpdateAgentHeartbeatStatus).toHaveBeenCalledWith('STOPPED');
     });
 
     it('is a no-op when agentId does not exist', () => {
       // Should not throw
-      heartbeatService.stopHeartbeat('non-existent-agent');
+      heartbeatService.stopHeartbeat();
     });
   });
 
@@ -219,8 +227,6 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(createAgent({ id: 'agent-b', userId: 'user-2' }));
 
       heartbeatService.stopAll();
-
-      expect(heartbeatService.getActiveAgentIds()).toEqual([]);
     });
 
     it('does not persist STOPPED status (graceful shutdown should not corrupt state)', () => {
@@ -241,13 +247,14 @@ describe('HeartbeatService', () => {
 
   describe('getStatus', () => {
     it('returns null for unknown agent', () => {
-      expect(heartbeatService.getStatus('unknown')).toBeNull();
+      expect(heartbeatService.getStatus()).toBeNull();
     });
 
     it('returns current state for registered agent', () => {
       heartbeatService.startHeartbeat(createAgent());
 
-      const status = heartbeatService.getStatus('agent-1');
+      const status = heartbeatService.getStatus();
+
       expect(status).toEqual({
         isActive: true,
         lastRun: null,
@@ -255,22 +262,6 @@ describe('HeartbeatService', () => {
         consecutiveErrors: 0,
         intervalMs: 28_800_000,
       });
-    });
-  });
-
-  // ==========================================================================
-  // getActiveAgentIds / hasHeartbeat
-  // ==========================================================================
-
-  describe('getActiveAgentIds', () => {
-    it('returns list of agent IDs with active heartbeats', () => {
-      heartbeatService.startHeartbeat(createAgent({ id: 'agent-a', userId: 'user-a' }));
-      heartbeatService.startHeartbeat(createAgent({ id: 'agent-b', userId: 'user-b' }));
-
-      const agents = heartbeatService.getActiveAgentIds();
-      expect(agents).toContain('agent-a');
-      expect(agents).toContain('agent-b');
-      expect(agents).toHaveLength(2);
     });
   });
 
@@ -287,10 +278,10 @@ describe('HeartbeatService', () => {
       let resolveInvoke!: (v: unknown) => void;
       mockInvoke.mockReturnValue(new Promise(r => { resolveInvoke = r; }));
 
-      const firstRun = heartbeatService.triggerHeartbeat('agent-1');
+      const firstRun = heartbeatService.triggerHeartbeat();
 
       // Second call should skip immediately
-      const secondResult = await heartbeatService.triggerHeartbeat('agent-1');
+      const secondResult = await heartbeatService.triggerHeartbeat();
       expect(secondResult).toEqual({ shouldSkip: true, text: 'Already running' });
 
       // Clean up the pending promise
@@ -302,7 +293,7 @@ describe('HeartbeatService', () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
 
       heartbeatService.startHeartbeat(createAgent());
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
       expect(mockInvoke).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -310,16 +301,16 @@ describe('HeartbeatService', () => {
           mode: 'heartbeat',
         }),
       );
-      expect(mockUpdateHeartbeatTimestamp).toHaveBeenCalledWith('agent-1');
+      expect(mockUpdateHeartbeatTimestamp).toHaveBeenCalled();
     });
 
     it('resets consecutiveErrors to 0 on successful run', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
 
       heartbeatService.startHeartbeat(createAgent());
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
-      const status = heartbeatService.getStatus('agent-1');
+      const status = heartbeatService.getStatus();
       expect(status?.consecutiveErrors).toBe(0);
       expect(status?.lastRun).toBeTruthy();
     });
@@ -343,7 +334,7 @@ describe('HeartbeatService', () => {
       mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
 
       heartbeatService.startHeartbeat(createAgent());
-      const result = await heartbeatService.triggerHeartbeat('agent-1');
+      const result = await heartbeatService.triggerHeartbeat();
 
       expect(result.shouldSkip).toBe(true);
       expect(result.text).toBe('');
@@ -359,7 +350,7 @@ describe('HeartbeatService', () => {
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent());
-      const result = await heartbeatService.triggerHeartbeat('agent-1');
+      const result = await heartbeatService.triggerHeartbeat();
 
       expect(result.shouldSkip).toBe(false);
       expect(result.text).toBe('Pod frontend-abc is in CrashLoopBackOff!');
@@ -381,7 +372,7 @@ describe('HeartbeatService', () => {
       mockGenerateText.mockRejectedValue(new Error('Bedrock timeout'));
 
       heartbeatService.startHeartbeat(createAgent());
-      const result = await heartbeatService.triggerHeartbeat('agent-1');
+      const result = await heartbeatService.triggerHeartbeat();
 
       expect(result.shouldSkip).toBe(false);
       expect(mockDeliverMessage).toHaveBeenCalled();
@@ -391,7 +382,7 @@ describe('HeartbeatService', () => {
       mockInvoke.mockResolvedValue({ response: '', toolCalls: [], steps: [] });
 
       heartbeatService.startHeartbeat(createAgent());
-      const result = await heartbeatService.triggerHeartbeat('agent-1');
+      const result = await heartbeatService.triggerHeartbeat();
 
       expect(result.shouldSkip).toBe(true);
       expect(mockGenerateText).not.toHaveBeenCalled();
@@ -409,12 +400,12 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(createAgent());
 
       // First call — gate says DELIVER
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
       expect(mockGenerateText).toHaveBeenCalledTimes(1);
       mockGenerateText.mockClear();
 
       // Second call — exact same text, isDuplicate should catch it
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
       expect(mockGenerateText).not.toHaveBeenCalled();
       expect(mockDeliverMessage).toHaveBeenCalledTimes(1); // only from first call
     });
@@ -430,7 +421,7 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(createAgent());
 
       // First heartbeat — no previous alert
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
           messages: [expect.objectContaining({
@@ -448,7 +439,7 @@ describe('HeartbeatService', () => {
       });
 
       // Second heartbeat — should include last alert context
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
           messages: [expect.objectContaining({
@@ -467,7 +458,7 @@ describe('HeartbeatService', () => {
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent());
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -505,7 +496,7 @@ describe('HeartbeatService', () => {
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent());
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
       // Should deliver exactly one message with the last step's text
       expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
@@ -535,7 +526,7 @@ describe('HeartbeatService', () => {
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent());
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
       expect(mockDeliverMessage).toHaveBeenCalledWith(
         'agent-1',
@@ -554,7 +545,7 @@ describe('HeartbeatService', () => {
       });
 
       heartbeatService.startHeartbeat(createAgent());
-      const result = await heartbeatService.triggerHeartbeat('agent-1');
+      const result = await heartbeatService.triggerHeartbeat();
 
       // Empty responseText means nothing to deliver
       expect(result.shouldSkip).toBe(true);
@@ -573,7 +564,7 @@ describe('HeartbeatService', () => {
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent());
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
       expect(mockDeliverMessage).toHaveBeenCalledWith(
         'agent-1',
@@ -607,7 +598,7 @@ describe('HeartbeatService', () => {
       });
 
       heartbeatService.startHeartbeat(createAgent());
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
       const stepLogs = mockLoggerInfo.mock.calls
         .map((c: string[]) => c[0])
@@ -634,7 +625,7 @@ describe('HeartbeatService', () => {
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent());
-      heartbeatService.triggerFromSlack('agent-1');
+      heartbeatService.triggerFromSlack();
       await vi.advanceTimersByTimeAsync(0);
 
       const stepLogs = mockLoggerInfo.mock.calls
@@ -654,7 +645,7 @@ describe('HeartbeatService', () => {
       });
 
       heartbeatService.startHeartbeat(createAgent());
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
       const summaryLogs = mockLoggerInfo.mock.calls
         .map((c: string[]) => c[0])
@@ -684,13 +675,13 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(createAgent());
 
       // First alert should be delivered
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
       expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
 
       mockDeliverMessage.mockClear();
 
       // Second identical alert within 24h should be suppressed (isDuplicate)
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
       expect(mockDeliverMessage).not.toHaveBeenCalled();
     });
 
@@ -707,7 +698,7 @@ describe('HeartbeatService', () => {
       );
 
       // First alert
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
       expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
       mockDeliverMessage.mockClear();
 
@@ -715,7 +706,7 @@ describe('HeartbeatService', () => {
       vi.advanceTimersByTime(25 * 60 * 60 * 1000);
 
       // Same alert should now be delivered again since >24h passed
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
       expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
     });
 
@@ -723,10 +714,10 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(createAgent());
 
       mockInvoke.mockResolvedValue({ response: 'Alert A', toolCalls: [], steps: [{ text: 'Alert A', toolCalls: [] }] });
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
       mockInvoke.mockResolvedValue({ response: 'Alert B', toolCalls: [], steps: [{ text: 'Alert B', toolCalls: [] }] });
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
       expect(mockDeliverMessage).toHaveBeenCalledTimes(2);
     });
@@ -745,9 +736,9 @@ describe('HeartbeatService', () => {
       mockInvoke.mockRejectedValue(new Error('Network failure'));
 
       heartbeatService.startHeartbeat(createAgent());
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
-      const status = heartbeatService.getStatus('agent-1');
+      const status = heartbeatService.getStatus();
       expect(status?.consecutiveErrors).toBe(1);
     });
 
@@ -757,11 +748,11 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(createAgent());
 
       for (let i = 0; i < 5; i++) {
-        await heartbeatService.triggerHeartbeat('agent-1');
+        await heartbeatService.triggerHeartbeat();
       }
 
       // Should have been stopped
-      expect(heartbeatService.hasHeartbeat('agent-1')).toBe(false);
+      expect(heartbeatService.getStatus()).toBe(null);
     });
 
     it('does not stop heartbeat before reaching 5 consecutive errors', async () => {
@@ -770,18 +761,18 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(createAgent());
 
       for (let i = 0; i < 4; i++) {
-        await heartbeatService.triggerHeartbeat('agent-1');
+        await heartbeatService.triggerHeartbeat();
       }
 
-      expect(heartbeatService.hasHeartbeat('agent-1')).toBe(true);
-      expect(heartbeatService.getStatus('agent-1')?.consecutiveErrors).toBe(4);
+      expect(heartbeatService.getStatus()).not.toBe(null);
+      expect(heartbeatService.getStatus()?.consecutiveErrors).toBe(4);
     });
 
     it('returns error message as skipped result on failure', async () => {
       mockInvoke.mockRejectedValue(new Error('Connection refused'));
 
       heartbeatService.startHeartbeat(createAgent());
-      const result = await heartbeatService.triggerHeartbeat('agent-1');
+      const result = await heartbeatService.triggerHeartbeat();
 
       expect(result).toEqual({
         shouldSkip: true,
@@ -794,16 +785,16 @@ describe('HeartbeatService', () => {
 
       // First: 2 failures
       mockInvoke.mockRejectedValue(new Error('fail'));
-      await heartbeatService.triggerHeartbeat('agent-1');
-      await heartbeatService.triggerHeartbeat('agent-1');
-      expect(heartbeatService.getStatus('agent-1')?.consecutiveErrors).toBe(2);
+      await heartbeatService.triggerHeartbeat();
+      await heartbeatService.triggerHeartbeat();
+      expect(heartbeatService.getStatus()?.consecutiveErrors).toBe(2);
 
       // Then: success (gate suppresses, but errors still reset)
       mockInvoke.mockResolvedValue({ response: 'All systems healthy.', toolCalls: [], steps: [] });
       mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
-      expect(heartbeatService.getStatus('agent-1')?.consecutiveErrors).toBe(0);
+      expect(heartbeatService.getStatus()?.consecutiveErrors).toBe(0);
     });
   });
 
@@ -818,7 +809,7 @@ describe('HeartbeatService', () => {
 
     it('uses a single minimal prompt regardless of vision or proactivity', async () => {
       heartbeatService.startHeartbeat(createAgent());
-      await heartbeatService.triggerHeartbeat('agent-1');
+      await heartbeatService.triggerHeartbeat();
 
       expect(mockInvoke).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -867,7 +858,7 @@ describe('HeartbeatService', () => {
     });
 
     it('returns ignored when agent has no heartbeat state', () => {
-      const status = heartbeatService.triggerFromSlack('no-such-user');
+      const status = heartbeatService.triggerFromSlack();
       expect(status).toBe('ignored');
       expect(mockInvoke).not.toHaveBeenCalled();
     });
@@ -881,7 +872,7 @@ describe('HeartbeatService', () => {
       });
 
       heartbeatService.startHeartbeat(createAgent());
-      heartbeatService.triggerFromSlack('agent-1');
+      heartbeatService.triggerFromSlack();
 
       // Let the fire-and-forget promise resolve
       await vi.advanceTimersByTimeAsync(0);
@@ -904,13 +895,13 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(createAgent());
 
       // First trigger starts execution
-      heartbeatService.triggerFromSlack('agent-1');
+      heartbeatService.triggerFromSlack();
       await vi.advanceTimersByTimeAsync(0);
 
       expect(mockInvoke).toHaveBeenCalledTimes(1);
 
       // Second trigger while first is running — returns ignored
-      const status = heartbeatService.triggerFromSlack('agent-1');
+      const status = heartbeatService.triggerFromSlack();
       expect(status).toBe('ignored');
 
       // Resolve the first invoke — no re-trigger happens
@@ -934,7 +925,7 @@ describe('HeartbeatService', () => {
       });
 
       heartbeatService.startHeartbeat(createAgent());
-      heartbeatService.triggerFromSlack('agent-1');
+      heartbeatService.triggerFromSlack();
       await vi.advanceTimersByTimeAsync(0);
 
       expect(mockDeliverMessage).toHaveBeenCalledWith(
@@ -955,10 +946,10 @@ describe('HeartbeatService', () => {
       });
 
       heartbeatService.startHeartbeat(createAgent());
-      heartbeatService.triggerFromSlack('agent-1');
+      heartbeatService.triggerFromSlack();
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(heartbeatService.getStatus('agent-1')?.isRunning).toBe(false);
+      expect(heartbeatService.getStatus()?.isRunning).toBe(false);
     });
   });
 
@@ -968,7 +959,7 @@ describe('HeartbeatService', () => {
 
   describe('edge cases', () => {
     it('executeHeartbeat returns skipped when agent has no registered heartbeat', async () => {
-      const result = await heartbeatService.triggerHeartbeat('non-existent');
+      const result = await heartbeatService.triggerHeartbeat();
 
       expect(result).toEqual({ shouldSkip: true, text: 'No registered heartbeat for this agent' });
       expect(mockInvoke).not.toHaveBeenCalled();

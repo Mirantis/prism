@@ -61,9 +61,9 @@ export class SlackHeartbeatThrottleQueue {
     logger.info({ agentId }, '[ThrottleQueue] Deferred trigger firing for agent %s', agentId);
 
     try {
-      const result = await slackHeartbeatTriggerService.tryClaimTrigger(agentId);
+      const result = await slackHeartbeatTriggerService.tryClaimTrigger();
       if (result.claimed) {
-        heartbeatService.triggerFromSlack(agentId);
+        heartbeatService.triggerFromSlack();
         logger.info({ agentId }, '[ThrottleQueue] Triggered heartbeat for agent %s', agentId);
       } else {
         logger.info(

@@ -42,12 +42,16 @@ class AgentStatusService {
     });
   }
 
-  async updateHeartbeatTimestamp(agentId: string): Promise<void> {
-    await this.updateAgentById(agentId, { lastHeartbeat: new Date() });
+  async updateHeartbeatTimestamp(): Promise<void> {
+    const agent = await prisma.agentWorkspace.findFirstOrThrow();
+
+    await this.updateAgentById(agent.id, { lastHeartbeat: new Date() });
   }
 
-  async updateAgentHeartbeatStatus(agentId: string, heartbeatStatus: AgentHeartbeatStatus): Promise<void> {
-    await this.updateAgentById(agentId, { heartbeatStatus });
+  async updateAgentHeartbeatStatus(heartbeatStatus: AgentHeartbeatStatus): Promise<void> {
+    const agent = await prisma.agentWorkspace.findFirstOrThrow();
+
+    await this.updateAgentById(agent.id, { heartbeatStatus });
   }
 
   async updateAgentStatus(agentId: string, status: AgentStatus): Promise<void> {

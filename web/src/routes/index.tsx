@@ -32,7 +32,7 @@ function OverviewPage() {
 
   const { data: details, isLoading } = useQuery({
     queryKey: ['agent-details', agent.agentId],
-    queryFn: () => runtimeApi.details(agent.agentId),
+    queryFn: () => runtimeApi.details(),
   });
 
   if (isLoading) {
@@ -164,7 +164,7 @@ function HeartbeatCard({ onClick }: { onClick: () => void }) {
   const agent = useAgent();
   const { data: hbStatus, isLoading } = useQuery({
     queryKey: ['heartbeat-status', agent.agentId],
-    queryFn: () => runtimeApi.heartbeatStatus(agent.agentId),
+    queryFn: () => runtimeApi.heartbeatStatus(),
     refetchInterval: 30_000,
   });
 
@@ -204,12 +204,12 @@ function ChannelsCard({ onClick }: { onClick: () => void }) {
 
   const { data: linkStatus } = useQuery({
     queryKey: ['slack-link-status', agent.agentId, workspace?.teamId],
-    queryFn: () => runtimeApi.slackLinkStatus(agent.agentId, workspace!.teamId),
+    queryFn: () => runtimeApi.slackLinkStatus(workspace!.teamId),
     enabled: !!workspace,
   });
   const { data: channelsResp } = useQuery({
     queryKey: ['slack-channel-mappings', agent.agentId, workspace?.teamId],
-    queryFn: () => runtimeApi.slackChannelMappings(agent.agentId, workspace!.teamId),
+    queryFn: () => runtimeApi.slackChannelMappings(workspace!.teamId),
     enabled: !!workspace,
   });
 
@@ -245,7 +245,7 @@ function ScheduledTasksCard({ onClick }: { onClick: () => void }) {
   const agent = useAgent();
   const { data: tasks, isLoading } = useQuery({
     queryKey: ['cron-tasks', agent.agentId],
-    queryFn: () => runtimeApi.listCronTasks(agent.agentId),
+    queryFn: () => runtimeApi.listCronTasks(),
   });
 
   const activeTasks = tasks?.filter((t) => t.isActive) ?? [];

@@ -42,12 +42,12 @@ function CronPage() {
 
   const { data: tasks, isLoading } = useQuery({
     queryKey: ['cron-tasks', agent.agentId],
-    queryFn: () => runtimeApi.listCronTasks(agent.agentId),
+    queryFn: () => runtimeApi.listCronTasks(),
   });
 
   const scheduleMut = useMutation({
     mutationFn: (input: { name: string; schedule: string; instruction: string }) =>
-      runtimeApi.createCronTask(agent.agentId, input),
+      runtimeApi.createCronTask(input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cron-tasks', agent.agentId] });
       resetModal();
@@ -55,7 +55,7 @@ function CronPage() {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (taskId: string) => runtimeApi.deleteCronTask(agent.agentId, taskId),
+    mutationFn: (taskId: string) => runtimeApi.deleteCronTask(taskId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cron-tasks', agent.agentId] });
       setDeleteTarget(null);
