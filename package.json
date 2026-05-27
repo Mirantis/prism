@@ -4,7 +4,11 @@
   "private": true,
   "license": "Apache-2.0",
   "main": "dist/index.js",
-  "workspaces": ["web", "cli", "e2e"],
+  "workspaces": [
+    "web",
+    "cli",
+    "e2e"
+  ],
   "scripts": {
     "db:migrate": "prisma migrate dev",
     "predev": "prisma migrate deploy --schema=prisma/sqlite/schema.prisma",
@@ -63,9 +67,11 @@
     "@types/supertest": "^7.2.0",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.0.18",
+    "concurrently": "^9.2.1",
+    "esbuild": "^0.28.0",
     "markdownlint-cli2": "^0.21.0",
     "oxlint": "^1.51.0",
-    "concurrently": "^9.2.1",
+    "postject": "^1.0.0-alpha.6",
     "supertest": "^7.2.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
