@@ -33,8 +33,12 @@ export function createApp() {
   app.use('/single-agent', singleAgentRouter);
 
   // Prism Web UI. Skip the SPA mount silently when web/dist isn't
-  // present (dev runs Vite separately on :5173).
-  const webDist = path.resolve(__dirname, '../web/dist');
+  // present (dev runs Vite separately on :5173). `PRISM_WEB_DIR` lets the
+  // packaged binary point at its sidecar copy (the bundled `__dirname`
+  // doesn't resolve to a real path inside a SEA).
+  const webDist = process.env.PRISM_WEB_DIR
+    ? path.resolve(process.env.PRISM_WEB_DIR)
+    : path.resolve(__dirname, '../web/dist');
   if (fs.existsSync(webDist)) {
     app.use(express.static(webDist, { index: 'index.html' }));
     app.get(/^\/(?!agents|api|health|single-agent).*/, (_req, res) => {

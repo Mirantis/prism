@@ -1,0 +1,53 @@
+name: Create Binary
+
+# Build the distributable `prism` (terminal UI) and `prism-server` (runtime)
+# Node SEA binaries for macOS, Linux and Windows on every push to main, and
+# smoke-test them. Not uploaded anywhere yet — flip on the upload-artifact
+# step below when distribution is wanted.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # SEA needs a released Node line; 22 ships SEA + matches the build
+          # target in scripts/build-sea.mjs. (The Dockerfile/CI pin 26 — when
+          # that line actually exists, bump this too.)
+          node-version: '22'
+          cache: 'npm'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The runtime serves the bundled SPA, so prism-server needs web/dist.
+      - run: npm run build:web
+
+      - run: node scripts/build-sea.mjs prism
+      - run: node scripts/build-sea.mjs prism-server
+      - run: node scripts/collect-natives.mjs
+
+      - run: node scripts/smoke-sea.mjs
+
+      # Retrieve the binaries from a run by enabling this:
+      # - uses: actions/upload-artifact@v4
+      #   with:
+      #     name: prism-${{ matrix.os }}
+      #     path: dist-sea/
+      #     if-no-files-found: error
