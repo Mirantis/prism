@@ -1,8 +1,8 @@
 /**
- * Agent Detail Page Object — the /profile route in single-agent mode.
+ * Agent Detail Page Object — the /profile route.
  *
- * The legacy "agent detail page" concept maps onto /profile in this SPA;
- * step phrases like "I navigate to the agent detail page" still resolve
+ * The legacy "agent detail page" concept maps onto /profile; step
+ * phrases like "I navigate to the agent detail page" still resolve
  * here. Selectors mirror web/src/routes/profile.tsx.
  */
 

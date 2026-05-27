@@ -70,9 +70,10 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
     ...(process.env.BEDROCK_MODEL_ID
       ? { BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID }
       : {}),
-    NEXUS_API_URL: 'http://127.0.0.1:1',
     NODE_ENV: 'development',
     // AWS creds + region inherited from the surrounding shell / CI.
+    // NEXUS_API_URL deliberately not set — createProvider falls back to
+    // direct Bedrock when it's unset, which is what the TUI suite wants.
   };
 
   let runtime: RuntimeHandle;

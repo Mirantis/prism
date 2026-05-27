@@ -30,8 +30,7 @@ interface WebSocketMessage {
   mode?: 'steer' | 'followup' | 'collect';
   content?: string;
   threadId?: string;
-  // Optional in single-agent mode: the runtime substitutes `config.agentId`
-  // when omitted. Multi-tenant clients must still send it.
+  // Optional: the runtime substitutes `config.agentId` when omitted.
   agentId?: string;
 }
 

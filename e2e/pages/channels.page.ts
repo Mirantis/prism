@@ -1,11 +1,11 @@
 /**
- * Channels Page Object — /channels in single-agent mode.
+ * Channels Page Object — /channels.
  *
- * The single-agent SPA reads the Slack workspace from env
- * (SLACK_BOT_TOKEN, validated via auth.test on runtime boot), so there
- * is no in-UI "Configure Slack" flow. This page object just waits for
- * the configured branch to render and exposes the "Get Channel Link
- * Code" affordance used by the slack-channel e2e flow.
+ * The SPA reads the Slack workspace from env (SLACK_BOT_TOKEN,
+ * validated via auth.test on runtime boot), so there is no in-UI
+ * "Configure Slack" flow. This page object just waits for the
+ * configured branch to render and exposes the "Get Channel Link Code"
+ * affordance used by the slack-channel e2e flow.
  */
 
 import { Page } from '@playwright/test';
@@ -22,10 +22,10 @@ export class ChannelsPage extends BasePage {
   }
 
   /**
-   * Wait for the configured-Slack branch of /channels to render. In
-   * single-agent mode the workspace is set up automatically from env;
-   * this is just a readiness check (the `botToken` arg is ignored,
-   * kept for call-site compatibility with the @slack Before hook).
+   * Wait for the configured-Slack branch of /channels to render. The
+   * workspace is set up automatically from env; this is just a
+   * readiness check (the `botToken` arg is ignored, kept for call-site
+   * compatibility with the @slack Before hook).
    */
   async configureSlack(_botToken: string) {
     // The "Slack" h3 only renders in the configured branch of /channels;

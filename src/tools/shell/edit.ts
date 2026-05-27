@@ -3,8 +3,7 @@
  * `nexus-monorepo/crates/nexus-shell-sandbox/src/handlers/file_handlers.rs`.
  *
  * Exact-match replacement with a whitespace-tolerant line-trimmed
- * fallback. Behavior mirrors upstream verbatim so the agent sees the
- * same semantics in single-agent and multi-tenant modes.
+ * fallback. Behavior mirrors upstream verbatim.
  */
 
 export interface EditResult {

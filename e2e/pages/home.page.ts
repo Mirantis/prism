@@ -1,8 +1,8 @@
 /**
  * Chat Page Object — chat interface at /chat.
  *
- * The single-agent SPA reads agent identity from /agents/me, so no
- * agentId in the URL. Selectors mirror web/src/components/chat/*.
+ * The SPA reads agent identity from /agents/me, so there's no agentId
+ * in the URL. Selectors mirror web/src/components/chat/*.
  */
 
 import { Page, Locator } from '@playwright/test';

@@ -15,11 +15,10 @@ import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
 import { config } from '../config';
 import { isAnthropicModelId } from './bedrock-provider';
 
-export function createNexusProvider(nexusLlmBaseUrl: string, agentToken: string) {
+export function createNexusProvider(nexusLlmBaseUrl: string) {
   const sharedOptions = {
     region: config.awsRegion,
     baseURL: nexusLlmBaseUrl,
-    apiKey: agentToken,
   };
   const anthropic = createBedrockAnthropic(sharedOptions);
   const generic = createAmazonBedrock(sharedOptions);
@@ -28,15 +27,4 @@ export function createNexusProvider(nexusLlmBaseUrl: string, agentToken: string)
   return Object.assign(dispatcher, {
     embedding: (modelId: string) => generic.embedding(modelId),
   });
-}
-
-/**
- * Build the classification-gate model instance, routed through Nexus.
- *
- * Callers must resolve a Nexus agent token via
- * `agentWorkspaceService.getNexusMcpAgentToken()` first and apply
- * their own fallback when the token is missing.
- */
-export function getClassificationModel(agentToken: string) {
-  return createNexusProvider(config.nexusLlmBaseUrl, agentToken)(config.bedrockClassificationModelId);
 }

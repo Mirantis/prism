@@ -19,7 +19,6 @@ const {
   mockCountAgentMessages,
   mockGenerateText,
   mockIsTelemetryEnabled,
-  mockGetNexusMcpAgentToken,
 } = vi.hoisted(() => ({
   mockGetOrCreateActiveThread: vi.fn(),
   mockAddMessage: vi.fn(),
@@ -28,7 +27,6 @@ const {
   mockCountAgentMessages: vi.fn(),
   mockGenerateText: vi.fn(),
   mockIsTelemetryEnabled: vi.fn(),
-  mockGetNexusMcpAgentToken: vi.fn(),
 }));
 
 /**
@@ -73,7 +71,7 @@ vi.mock('ai', () => ({
   generateText: mockGenerateText,
 }));
 
-vi.mock('../../lib/nexus-provider', () => ({
+vi.mock('../../lib/classification', () => ({
   getClassificationModel: () => ({}),
 }));
 
@@ -83,12 +81,6 @@ vi.mock('../../lib/langfuse', () => ({
 
 vi.mock('../../lib/telemetry', () => ({
   isTelemetryEnabled: mockIsTelemetryEnabled,
-}));
-
-vi.mock('../agent-workspace.service', () => ({
-  agentWorkspaceService: {
-    getNexusMcpAgentToken: mockGetNexusMcpAgentToken,
-  },
 }));
 
 // Import after mocking
@@ -123,7 +115,6 @@ describe('Requirement: Conversation Engine', () => {
     // Default: telemetry off so unrelated scenarios don't exercise the classifier.
     mockIsTelemetryEnabled.mockReturnValue(false);
     mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
-    mockGetNexusMcpAgentToken.mockResolvedValue('nexus-token');
   });
 
   describe('Scenario: Chat message processing', () => {
@@ -460,33 +451,6 @@ describe('Requirement: Conversation Engine', () => {
 
     it('skips feedback (and skips the classifier call) when telemetry is disabled', async () => {
       mockIsTelemetryEnabled.mockReturnValue(false);
-      mockCountAgentMessages.mockResolvedValue(1);
-      mockInvokeStream.mockReturnValue(streamFromSteps([
-        { text: AGENT_TEXT, toolCalls: [] },
-      ]));
-
-      await conversationEngineService.chat({
-        userId: 'user-123',
-        agentId: 'agent-123',
-        message: 'Explain x in detail',
-        metadata: slackChannelMeta,
-      });
-
-      expect(mockGenerateText).not.toHaveBeenCalled();
-      expect(mockPublish).toHaveBeenCalledWith(
-        'user-123',
-        'thread-123',
-        AGENT_TEXT,
-        'USER_INPUT',
-        expect.objectContaining({
-          channelContext: expect.objectContaining({ includeFeedback: false }),
-        }),
-      );
-    });
-
-    it('skips feedback (and skips the classifier call) when the agent has no Nexus token', async () => {
-      mockIsTelemetryEnabled.mockReturnValue(true);
-      mockGetNexusMcpAgentToken.mockResolvedValue(null);
       mockCountAgentMessages.mockResolvedValue(1);
       mockInvokeStream.mockReturnValue(streamFromSteps([
         { text: AGENT_TEXT, toolCalls: [] },

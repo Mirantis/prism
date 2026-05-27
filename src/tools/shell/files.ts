@@ -1,14 +1,12 @@
 /**
- * File manipulation tools for single-agent mode:
+ * File manipulation tools:
  *   - shell_read_file
  *   - shell_write_file
  *   - shell_edit_file
  *
  * Mirror the upstream input schemas + behavior from
  * `nexus-monorepo/packages/nexus/src/mcp/handlers/shell.schemas.ts` and
- * `crates/nexus-shell-sandbox/src/handlers/file_handlers.rs`. The
- * agent sees the same tool contract in both single-agent and
- * multi-tenant modes.
+ * `crates/nexus-shell-sandbox/src/handlers/file_handlers.rs`.
  *
  * Security model (inherited from upstream): `resolvePath` resolves
  * relative paths against the workspace root and normalizes absolute

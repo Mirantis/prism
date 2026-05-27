@@ -2,14 +2,13 @@
 # Agent Runtime startup orchestrator (invoked via `CMD ["./start.sh"]`).
 #
 # Responsibilities:
-#   1. Default DATABASE_URL in single-agent mode BEFORE the prisma CLI
-#      runs. Node's `src/config.ts` has the same default but it loads
-#      after `prisma migrate deploy`, so we'd get a confusing
+#   1. Default DATABASE_URL BEFORE the prisma CLI runs. Node's
+#      `src/config.ts` has the same default but it loads after
+#      `prisma migrate deploy`, so we'd get a confusing
 #      `Environment variable not found: DATABASE_URL` from prisma if
-#      the operator doesn't pre-set it. Mirrors the runtime default
-#      so an unconfigured `docker run` still
-#      works.
-#   2. Apply Prisma migrations against the right schema for the mode.
+#      the operator doesn't pre-set it. Mirrors the runtime default so
+#      an unconfigured `docker run` still works.
+#   2. Apply Prisma migrations.
 #   3. Apply any pending `.prism` import via
 #      `dist/scripts/apply-pending-import.js` BEFORE prisma migrate
 #      deploy / backfill / server open the SQLite file. Shared with the

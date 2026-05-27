@@ -16,6 +16,8 @@
     "build:web": "npm --workspace=prism-agent-web run build",
     "prestart": "npm run build",
     "start": "node dist/index.js",
+    "docker:build": "printf '@lensapp:registry=https://npm.pkg.github.com/\\n//npm.pkg.github.com/:_authToken=%s\\n' \"$NODE_AUTH_TOKEN\" > .npmrc-secret && docker build --load --secret id=npmrc,src=.npmrc-secret -t prism-agent:local -f Dockerfile . ; rm -f .npmrc-secret",
+    "docker:run": "docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK --entrypoint /bin/sh prism-agent:local -c './start.sh > /dev/null 2>&1 & exec prism'",
     "postinstall": "npm run prisma:generate",
     "prisma:generate": "prisma generate --schema=prisma/sqlite/schema.prisma",
     "test": "vitest",

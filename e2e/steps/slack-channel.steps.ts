@@ -124,8 +124,8 @@ Given('I link the channel to the agent via the UI', async ({ page }) => {
   const slack = getSlackState();
   const channelsPage = new ChannelsPage(page);
 
-  // Channel link codes live on /channels in single-agent mode (the legacy
-  // agent-detail page no longer hosts this flow).
+  // Channel link codes live on /channels (the legacy agent-detail page
+  // no longer hosts this flow).
   await channelsPage.navigate();
 
   // Click "Get Channel Link Code" and grab the 6-char hex code

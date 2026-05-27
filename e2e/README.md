@@ -1,6 +1,6 @@
 # Prism Agent — End-to-End Tests
 
-Playwright BDD tests for this repo’s single-agent runtime + web SPA (and related integrations like Slack/telemetry).
+Playwright BDD tests for the agent runtime + web SPA (and related integrations like Slack/telemetry).
 
 ## Prerequisites
 

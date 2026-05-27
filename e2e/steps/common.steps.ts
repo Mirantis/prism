@@ -27,8 +27,8 @@ Before(async () => {
 // ========== Given ==========
 
 Given('I am logged in', async ({ page }) => {
-  // No-op: the web UI has no auth gate in single-agent mode.
-  // This step is kept so existing feature backgrounds stay readable.
+  // No-op: the web UI has no auth gate. Kept so existing feature
+  // backgrounds stay readable.
 });
 
 Given('I have a personal agent', async () => {

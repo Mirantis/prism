@@ -1,32 +1,23 @@
 /**
  * Agent Archive Service
  *
- * Save-game / restore for a single-agent Prism container. A `.prism` file
- * is a gzipped copy of `/data/agent.db`. Export takes a consistent VACUUM
- * INTO snapshot (so live writes from heartbeat/cron don't tear the file).
- * Import gunzips to a private scratch file next to the live DB, validates
- * it, and only then atomic-renames to `/data/agent.db.next` — that one
- * file's existence is the entire pending-import protocol, no separate
- * marker. The caller then exits, and on next boot
+ * Save-game / restore for a Prism container. A `.prism` file is a
+ * gzipped copy of `/data/agent.db`. Export takes a consistent VACUUM
+ * INTO snapshot (so live writes from heartbeat/cron don't tear the
+ * file). Import gunzips to a private scratch file next to the live DB,
+ * validates it, and only then atomic-renames to `/data/agent.db.next`
+ * — that one file's existence is the entire pending-import protocol,
+ * no separate marker. The caller then exits, and on next boot
  * `apply-pending-import.ts` (run by both `start.sh` in prod and the
  * `dev:single` npm script in dev) renames `.next` into place before any
  * process opens the DB.
  *
  * Validation on import: PRAGMA integrity_check + an exact match of the
- * applied Prisma migration set between the uploaded file and the runtime's
- * current DB. A mismatch is rejected up front so we never restart into a
- * file the runtime can't read.
+ * applied Prisma migration set between the uploaded file and the
+ * runtime's current DB. A mismatch is rejected up front so we never
+ * restart into a file the runtime can't read.
  *
- * Two export entry points share the gzip/`VACUUM INTO` tail:
- *   - `exportAgent()` — single-agent mode, snapshots the live SQLite at
- *     `config.databaseUrl`.
- *   - `exportAgentFromPostgres()` — multi-tenant mode, materializes the
- *     agent's slice into a temp SQLite (via `prisma migrate deploy` +
- *     row-copy against the runtime's connected Postgres client) and
- *     snapshots that. `migrate deploy` populates `_prisma_migrations`,
- *     which the receiving runtime's import path requires.
- *     The on-disk format is identical, so the receiving single-agent
- *     container's import path accepts both interchangeably.
+ * `exportAgent()` snapshots the live SQLite at `config.databaseUrl`.
  */
 
 import Database from 'better-sqlite3';

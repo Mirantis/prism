@@ -52,9 +52,8 @@ class CronSchedulerService {
   /**
    * List active cron tasks from the database.
    * Called during startup to initialize the scheduler.
-   * If `agentId` is provided, limits the result to that agent — used by
-   * single-agent mode so one container's scheduler doesn't pick up other
-   * agents' tasks.
+   * If `agentId` is provided, limits the result to that agent so the
+   * container's scheduler doesn't pick up other agents' tasks.
    */
   async listActiveCronTasks(agentId?: string): Promise<BackendCronTask[]> {
     const rows = await prisma.cronTask.findMany({

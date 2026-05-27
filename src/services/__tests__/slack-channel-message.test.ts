@@ -86,18 +86,8 @@ vi.mock('../../lib/bedrock-provider', () => ({
   isBedrockConfigured: vi.fn().mockReturnValue(false),
 }));
 
-vi.mock('../../lib/nexus-provider', () => ({
+vi.mock('../../lib/classification', () => ({
   getClassificationModel: vi.fn(),
-}));
-
-vi.mock('../agent-workspace.service', () => ({
-  agentWorkspaceService: {
-    getNexusMcpAgentToken: vi.fn().mockResolvedValue(null),
-  },
-}));
-
-vi.mock('../../utils/encryption', () => ({
-  decrypt: vi.fn(),
 }));
 
 vi.mock('@slack/bolt', () => ({

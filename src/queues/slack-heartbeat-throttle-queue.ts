@@ -17,8 +17,6 @@
  * In practice the window is seconds to minutes, and if the process does
  * restart inside that window the next incoming Slack message re-triggers
  * the heartbeat anyway — durability wasn't worth the Postgres dependency.
- * The in-memory implementation works identically in multi-tenant and
- * single-agent (SQLite) modes.
  */
 
 import { slackHeartbeatTriggerService } from '../services/slack-heartbeat-trigger.service';

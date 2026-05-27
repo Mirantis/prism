@@ -60,12 +60,8 @@ ENV HUSKY=0
 # pull zstd-compressed archives. ripgrep is also installed via apt
 # instead of via mise because mise's aqua backend lacks a linux/arm64
 # build for it; Debian's package is single-binary and works everywhere.
-# Ships in single-agent mode so `shell_exec` from agents has the same
-# toolchain surface as the multi-tenant Nexus-hosted shell sandbox.
-# iptables is required by the nexus-agent-sandbox supervisor that the
-# Nexus k8s agent provisioner injects via an init container at runtime
-# — it runs as root inside this image and shells out to iptables to
-# cage outbound traffic through its embedded HTTPS proxy.
+# Ships so `shell_exec` from agents has the same toolchain surface as
+# the upstream Nexus-hosted shell sandbox.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openssl wget \
         git ca-certificates curl libatomic1 gcc libc-dev make zstd \
@@ -86,7 +82,7 @@ RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
 
 # `npm ci --ignore-scripts` skipped better-sqlite3's prebuild-install step
 # (which downloads the platform-specific native binding). Rebuild just that
-# package so single-agent mode's SQLite + sqlite-vec path works.
+# package so the SQLite + sqlite-vec path works.
 RUN npm rebuild better-sqlite3
 
 # Claude Code CLI: the `claude_code` / `claude_code_status` MCP tools spawn
@@ -95,7 +91,7 @@ RUN npm rebuild better-sqlite3
 # inherited env (AWS_BEARER_TOKEN_BEDROCK, CLAUDE_CODE_USE_BEDROCK).
 RUN npm install -g @anthropic-ai/claude-code
 
-# Operator CLIs via mise — parity with the multi-tenant Nexus-hosted
+# Operator CLIs via mise — parity with the upstream Nexus-hosted
 # shell sandbox (`nexus-monorepo/crates/nexus-shell-sandbox/Dockerfile:24-30`).
 # Without these, FU-5's `shell_exec` is mostly useless beyond `ls /data`:
 # agents asking the obvious "list pods in cluster X" / "open a PR" /

@@ -9,8 +9,8 @@
 import { generateText, ModelMessage, SystemModelMessage, Tool, stepCountIs } from 'ai';
 import { config } from './config';
 import { logger } from './logger';
-import { createBedrockProvider, isBedrockConfigured } from './lib/bedrock-provider';
-import { createNexusProvider } from './lib/nexus-provider';
+import { isBedrockConfigured } from './lib/bedrock-provider';
+import { createProvider } from './lib/create-provider';
 import { getMCPTools } from './lib/mcp-client';
 import { getMemoryTools } from './tools/memory';
 import { getCronTools } from './tools/cron';
@@ -98,18 +98,12 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       context.lastHeartbeatAlertAt = request.lastHeartbeatAlertAt;
     }
 
-    // 2. Get Nexus agent token
-    const nexusAgentToken = await agentWorkspaceService.getNexusMcpAgentToken();
-
     const modelId = resolveEffectiveModel(context.model);
-    const routeInfo = nexusAgentToken ? 'via Nexus' : 'direct';
-    logger.info(`Invoking in ${request.mode} mode with model ${modelId} ${routeInfo} for agent ${context.agentName}`);
+    logger.info(`Invoking in ${request.mode} mode with model ${modelId} for agent ${context.agentName}`);
 
-    // 3. Create provider and model — route through Nexus when agent has a token
-    const provider = nexusAgentToken && config.nexusLlmBaseUrl
-      ? createNexusProvider(config.nexusLlmBaseUrl, nexusAgentToken)
-      : createBedrockProvider();
-    const model = provider(modelId);
+    // 3. Create provider and model — createProvider picks Nexus when
+    // configured, direct Bedrock otherwise.
+    const model = createProvider()(modelId);
 
     // 4. Collect tools — built-ins are direct AI SDK tools (no MCP
     // round trip); only the Nexus MCP server (cross-process) still
@@ -124,10 +118,9 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       request.mode,
     );
 
-    const nexusTools: Record<string, Tool> = config.nexusMcpUrl && nexusAgentToken
+    const nexusTools: Record<string, Tool> = config.nexusMcpUrl
       ? await getMCPTools({
           url: config.nexusMcpUrl,
-          token: nexusAgentToken,
           extraHeaders: { 'x-mcp-tools': NEXUS_MCP_TOOLS },
         })
       : {};

@@ -2,8 +2,8 @@
  * Process harness for the TUI e2e suite.
  *
  * Two processes per session:
- *  - `agent-runtime` as a plain background server in single-agent mode
- *    (no PTY — it's just an HTTP+WS endpoint).
+ *  - `agent-runtime` as a plain background server (no PTY — it's just
+ *    an HTTP+WS endpoint).
  *  - `prism-cli` under a real PTY pointed at the runtime over WebSocket.
  *    Ink requires raw-mode stdin, which only a TTY (or PTY) provides.
  */

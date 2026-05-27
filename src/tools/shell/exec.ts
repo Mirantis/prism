@@ -1,5 +1,5 @@
 /**
- * `shell_exec` tool — single-agent in-process port of
+ * `shell_exec` tool — in-process port of
  * `nexus-monorepo/packages/nexus/src/mcp/handlers/shell.handlers.ts :: shell_exec`.
  *
  * Runs a single shell command in a bash subprocess with a timeout.

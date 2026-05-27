@@ -35,7 +35,6 @@ function createTestAgentWorkspace(overrides: Record<string, unknown> = {}) {
     visionMd: '',
     bootstrapMd: '',
     agentMd: '',
-    nexusMcpAgentToken: null,
     heartbeatIntervalMs: 28800000,
     proactivity: 3,
     verbosity: 3,

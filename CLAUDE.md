@@ -16,26 +16,14 @@ credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy. Bedrock via Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the
 SDK auto-selects Bearer over SigV4 when set.
 
-## Local development (single-agent mode)
+## Local development
 
-Single-agent mode is the recommended local dev loop for **all** agent-runtime
-work — services, MCP tools, prompts, conversation engine, heartbeats, cron,
-Slack adapter, WS gateway, and the bundled Web UI under `web/`. No Docker,
-no backend, no shared Postgres — just `tsx watch` + an embedded SQLite file
-and optional Vite for UI HMR.
-
-Two flavours, pick by what you're touching:
-
-### Mode A — fully local (fastest)
-
-`tsx watch` runtime + Vite dev server with HMR, both on host. All scripts
-run from `packages/lens-agents/agent-runtime/` (the runtime is a
-self-contained workspace — root-level scripts deliberately stay focused on
-the multi-tenant stack).
+The recommended local dev loop for **all** agent-runtime work — services,
+MCP tools, prompts, conversation engine, heartbeats, cron, Slack adapter,
+WS gateway, and the bundled Web UI under `web/` — is `tsx watch` against an
+embedded SQLite file, with optional Vite for UI HMR.
 
 ```bash
-cd packages/lens-agents/agent-runtime
-
 # First time only:
 cp .env.example .env
 $EDITOR .env                          # uncomment DATABASE_URL
@@ -55,14 +43,13 @@ TypeScript edits restart the server in ~1s. The Vite proxy forwards `/agents`
 and `/api/ws` to `:3003` so the SPA code doesn't know it's not hitting the
 same origin.
 
-The runtime auto-loads `agent-runtime/.env` via dotenv. Slack and Bedrock are
-optional — `lib/slack-config.ts` and `lib/bedrock-provider.ts` fail-open when
-their tokens are unset. The SPA shell, navigation, profile, `/agents/me`,
+The runtime auto-loads `.env` via dotenv. Slack and Bedrock are optional —
+`lib/slack-config.ts` and `lib/bedrock-provider.ts` fail-open when their
+tokens are unset. The SPA shell, navigation, profile, `/agents/me`,
 `/agents/:id/details`, `/agents/:id/cron-tasks` work with zero extra env. Add
 `AWS_BEARER_TOKEN_BEDROCK` (or AWS SigV4) in `.env` for chat;
-`SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` for Slack flows. These must be **real
-tokens** here, not Nexus credential sentinels — there's no MITM proxy in
-front to rewrite them. See `.env.example` for the full single-agent block.
+`SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` for Slack flows. See `.env.example`
+for the full env block.
 
 ### Runtime code changes
 
@@ -95,7 +82,7 @@ Vite-proxy-shaped that would mask a real bug.
 - **Owns scheduling** - Heartbeat timers and cron jobs run in-process (not in the backend).
 - **Owns Slack connections** - Runs Bolt apps with Socket Mode, receives and routes messages, handles verification codes, calls Slack APIs directly. The one connection is synthesized from `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars (validated via `auth.test` on boot; see `lib/slack-config.ts`). Bot token in env may be a Nexus credential sentinel that the MITM proxy rewrites on the wire; a `SlackWebClient` subclass (`lib/slack-web-client.ts`) strips the body `token` field so auth flows only via the `Authorization` header.
 - **Owns agent data** - Agent CRUD, ownership validation, nexus token management, and subagent relationships via `agentWorkspaceService` (direct Prisma access). `CreateAgentInput` requires a pre-generated `id` field -- the backend generates the UUID and passes it when creating the `AgentWorkspace`. Note: `orgId` and `teamId` are NOT in `AgentWorkspace` -- they live exclusively in the backend-only `Agent` table.
-- **Direct database access** - Has its own Prisma client (Postgres in multi-tenant, SQLite in single-agent; selected at runtime in `lib/prisma.ts`) for agent data (CRUD, ownership, nexus tokens, subagents), conversation data (threads, messages, active thread resolution), agent field updates (heartbeat timestamp, heartbeat status), cron task state (list, update run timestamps, delete one-shot tasks), Slack message queue drain (pending heartbeat trigger messages), and Slack mapping CRUD. In single-agent mode, vector search over `memory_entries.embedding` goes through a sibling `better-sqlite3` handle that loads the `sqlite-vec` extension (see `lib/sqlite-bootstrap.ts`).
+- **Direct database access** - Has its own Prisma client (SQLite) for agent data (CRUD, ownership, subagents), conversation data (threads, messages, active thread resolution), agent field updates (heartbeat timestamp, heartbeat status), cron task state (list, update run timestamps, delete one-shot tasks), Slack message queue drain (pending heartbeat trigger messages), and Slack mapping CRUD. Vector search over `memory_entries.embedding` goes through a sibling `better-sqlite3` handle that loads the `sqlite-vec` extension (see `lib/sqlite-bootstrap.ts`).
 - **No direct imports from backend** - Communicates via HTTP and MCP only.
 - **SOLID** - Each service (heartbeat, cron, invoke, conversation engine, message delivery) has a single responsibility.
 
@@ -117,7 +104,6 @@ Multi-tenant (default) communicates through the following channels:
 
 2. **Runtime Database** (PostgreSQL via Prisma) - Agent-runtime reads/writes directly for:
    - **Agent CRUD** (create, delete, list, lookup, ownership validation, subagents) via `agentWorkspaceService`
-   - **Nexus token management** (encrypt/decrypt via shared `ENCRYPTION_KEY`)
    - Conversation history (thread context, recent messages)
    - Active thread resolution
    - Thread and message CRUD
@@ -153,10 +139,6 @@ The runtime hosts one MCP server and connects to another externally:
 
 1. **Internal MCP** (`/internal/mcp`) - memory, config, cron tools (served in-process by agent-runtime)
 2. **Nexus MCP** - kubectl, GitHub, AWS tools (external)
-
-### Auth
-
-All internal communication uses `INTERNAL_API_SECRET` bearer token.
 
 ## Key Services
 
@@ -246,9 +228,9 @@ src/
 1. Create HTTP server and initialize WebSocket gateway on `/api/ws`
 2. Register channel adapters with `messageDeliveryService` (WebSocket adapter, Slack adapter)
 3. Start listening on port 3003
-4. **Multi-tenant**: wait for backend to be available (`/health`). **Single-agent**: skip; assert `AGENT_ID` is set.
-5. **Multi-tenant**: fetch all agents via `agentWorkspaceService.getAllAgents()`. **Single-agent**: load only the one agent identified by `AGENT_ID`.
-6. Initialize Slack adapter. In multi-tenant, this fetches active `SlackConnection` rows from the backend API. In single-agent, `lib/slack-config.ts` synthesizes one connection from env (`SLACK_BOT_TOKEN`) via `auth.test`.
+4. Assert `AGENT_ID` is set (or auto-bootstrap one on first boot).
+5. Load the one agent identified by `AGENT_ID`.
+6. Initialize Slack adapter — `lib/slack-config.ts` synthesizes one connection from env (`SLACK_BOT_TOKEN`) via `auth.test`.
 7. Start heartbeat timers for each agent
 8. Fetch all active cron tasks directly from the database via `cronSchedulerService.listActiveCronTasks()`
 9. Schedule all cron jobs
@@ -257,35 +239,25 @@ On shutdown, the Slack adapter is gracefully shut down (disconnects all Socket M
 
 ## Environment Variables
 
-### Multi-tenant mode (what you set on the deployment)
+What the operator sets on `docker run`:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `PORT` | Agent runtime server port | `3003` |
-| `DATABASE_URL` | PostgreSQL connection string (runtime database) | Required |
-| `INTERNAL_API_SECRET` | Shared secret for backend communication | Required |
-| `BACKEND_URL` | Backend base URL | `http://localhost:3001` |
-| `INTERNAL_MCP_URL` | Internal MCP server URL | `http://localhost:3003/internal/mcp` |
-| `NEXUS_API_URL` | Nexus server URL | `http://localhost:3002` |
-| `ENCRYPTION_KEY` | 32-byte hex key for token encryption/decryption (must match backend) | Required |
-| `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `us.anthropic.claude-opus-4-7` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat DELIVER/SUPPRESS) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
-| `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
-| `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | Required |
-| `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | Required |
-| `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
-| `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
-| `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |
-
-### Single-agent mode (what you set on `docker run`)
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
 | `AGENT_ID` | UUID of the one `AgentWorkspace` this container owns | bootstrapped on first boot |
 | `DATABASE_URL` | SQLite URL for the runtime DB | `file:/data/agent.db` |
+| `NEXUS_API_URL` | Nexus server URL (LLM proxy + MCP tools) | — |
 | `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
 | `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock Bearer API key; selected over SigV4 when set | — |
+| `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
+| `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
+| `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | — |
+| `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `us.anthropic.claude-opus-4-7` |
+| `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat DELIVER/SUPPRESS) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
+| `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
+| `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |
 
 ## Chat Flow
 

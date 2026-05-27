@@ -9,12 +9,11 @@
 import { generateText } from 'ai';
 import { messageDeliveryService } from './message-delivery.service';
 import { conversationService } from './conversation.service';
-import { agentWorkspaceService } from './agent-workspace.service';
 import { invokeStream } from '../invoke';
 import { ToolCallRecord, InvokeStep, UIBlock } from '../types';
 import { logger } from '../logger';
 import prisma from '../lib/prisma';
-import { getClassificationModel } from '../lib/nexus-provider';
+import { getClassificationModel } from '../lib/classification';
 import { isLangfuseEnabled } from '../lib/langfuse';
 import { isTelemetryEnabled } from '../lib/telemetry';
 
@@ -120,12 +119,6 @@ class ConversationEngineService {
     userId: string,
     agentId: string,
   ): Promise<boolean> {
-    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken();
-    if (!agentToken) {
-      logger.debug({ agentId }, '[Feedback:Gate] No Nexus agent token — suppressing feedback');
-      return false;
-    }
-
     const systemPrompt = `You are a gate deciding whether to ask a user to rate an agent's reply with thumbs-up/down.
 
 Reply WORTHY when the agent's response is a substantive answer where a rating carries useful signal:
@@ -143,7 +136,7 @@ Respond with exactly one word: WORTHY or SKIP`;
 
     try {
       const result = await generateText({
-        model: getClassificationModel(agentToken),
+        model: getClassificationModel(),
         system: systemPrompt,
         messages: [
           {

@@ -15,7 +15,8 @@ type MCPToolSet = Record<string, Tool>;
 
 export interface MCPConnectionConfig {
   url: string;
-  token: string;
+  /** Optional auth token. When unset, no Authorization header is sent. */
+  token?: string;
   /** Optional header name for the token (default: Authorization with Bearer prefix) */
   headerName?: string;
   /** Additional headers to send with requests */
@@ -33,10 +34,12 @@ export async function getMCPTools(config: MCPConnectionConfig): Promise<MCPToolS
       ...config.extraHeaders,
     };
 
-    if (config.headerName) {
-      headers[config.headerName] = config.token;
-    } else {
-      headers['Authorization'] = `Bearer ${config.token}`;
+    if (config.token) {
+      if (config.headerName) {
+        headers[config.headerName] = config.token;
+      } else {
+        headers['Authorization'] = `Bearer ${config.token}`;
+      }
     }
 
     const client = await createVercelMCPClient({

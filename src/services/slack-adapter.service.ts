@@ -34,9 +34,7 @@ import {
   SlackBlock,
 } from '../utils/slack-formatter';
 import { trackEvent } from '../lib/telemetry';
-import { isBedrockConfigured } from '../lib/bedrock-provider';
-import { getClassificationModel } from '../lib/nexus-provider';
-import { agentWorkspaceService } from './agent-workspace.service';
+import { getClassificationModel } from '../lib/classification';
 import { slackMessageQueueService } from './slack-message-queue.service';
 import { slackHeartbeatTriggerService } from './slack-heartbeat-trigger.service';
 import { heartbeatService } from './heartbeat.service';
@@ -1266,16 +1264,6 @@ class SlackAdapterService implements ChannelAdapter {
     botUserId: string,
     agentId: string,
   ): Promise<ThreadAction> {
-    if (!isBedrockConfigured()) {
-      return { action: 'respond' };
-    }
-
-    const agentToken = await agentWorkspaceService.getNexusMcpAgentToken();
-    if (!agentToken) {
-      logger.warn({ agentId }, '[Slack:ThreadClassifier] No Nexus agent token — falling back to respond');
-      return { action: 'respond' };
-    }
-
     try {
       const recent = messages.slice(-10);
       const transcript = recent
@@ -1286,7 +1274,7 @@ class SlackAdapterService implements ChannelAdapter {
         .join('\n');
 
       const { object } = await generateObject({
-        model: getClassificationModel(agentToken),
+        model: getClassificationModel(),
         schema: threadClassificationSchema,
         temperature: 0,
         system: [

@@ -1,6 +1,6 @@
 /**
- * `claude_code` + `claude_code_status` tools — single-agent
- * in-process port of the upstream Nexus handlers.
+ * `claude_code` + `claude_code_status` tools — in-process port of
+ * the upstream Nexus handlers.
  *
  * The agent dispatches a task with `claude_code({ prompt, ... })`,
  * gets back a `taskId`, then polls `claude_code_status({ taskId })`
