@@ -17,10 +17,9 @@ type Phase = 'pick' | 'uploading' | 'restarting' | 'error';
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  agentId: string;
 }
 
-export function RestoreBackupDialog({ open, onOpenChange, agentId }: Props) {
+export function RestoreBackupDialog({ open, onOpenChange }: Props) {
   const [phase, setPhase] = useState<Phase>('pick');
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +58,7 @@ export function RestoreBackupDialog({ open, onOpenChange, agentId }: Props) {
     setPhase('uploading');
     setError(null);
     try {
-      await runtimeApi.importAgent(agentId, file);
+      await runtimeApi.importAgent(file);
       setPhase('restarting');
       startHealthPoll();
     } catch (e) {

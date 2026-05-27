@@ -19,6 +19,7 @@ export interface TestAgentWorkspace {
   visionMd: string;
   bootstrapMd: string;
   agentMd: string;
+  nexusMcpAgentToken: string | null;
   heartbeatIntervalMs: number;
   proactivity: number;
   verbosity: number;
@@ -46,6 +47,7 @@ export function createTestAgentWorkspace(overrides: Partial<TestAgentWorkspace> 
     visionMd: '',
     bootstrapMd: '',
     agentMd: '',
+    nexusMcpAgentToken: null,
     heartbeatIntervalMs: 28800000,
     proactivity: 3,
     verbosity: 3,

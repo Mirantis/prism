@@ -21,7 +21,7 @@ const { mockGetAgent, mockGetActiveThread, mockGetThreadContext } = vi.hoisted((
 
 vi.mock('./agent-workspace.service', () => ({
   agentWorkspaceService: {
-    getAgentById: mockGetAgent,
+    getAgent: mockGetAgent,
   },
 }));
 
@@ -97,7 +97,7 @@ describe('ContextService', () => {
       includeConversation: false,
     });
 
-    expect(mockGetAgent).toHaveBeenCalledWith('agent-1');
+    expect(mockGetAgent).toHaveBeenCalled();
     expect(context.soulMd).toBe('soul content');
     expect(context.userMd).toBe('user content');
     expect(context.memoryMd).toBe('memory content');

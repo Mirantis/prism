@@ -155,13 +155,13 @@ function SlackModeSections({
 
   const { data: linkStatus } = useQuery({
     queryKey: ['slack-link-status', agentId, connectionId],
-    queryFn: () => runtimeApi.slackLinkStatus(agentId, connectionId),
+    queryFn: () => runtimeApi.slackLinkStatus(connectionId),
     refetchInterval: verificationCode ? 3000 : false,
   });
 
   const { data: channelsResp } = useQuery({
     queryKey: ['slack-channels', agentId, connectionId],
-    queryFn: () => runtimeApi.slackChannelMappings(agentId, connectionId),
+    queryFn: () => runtimeApi.slackChannelMappings(connectionId),
     refetchInterval: channelLinkCode ? 3000 : false,
   });
 
@@ -193,7 +193,7 @@ function SlackModeSections({
   });
 
   const dmUnlinkMutation = useMutation({
-    mutationFn: () => runtimeApi.deleteDmMapping(agentId, connectionId),
+    mutationFn: () => runtimeApi.deleteDmMapping(connectionId),
     onSuccess: () => {
       setIsUnlinkDmOpen(false);
       queryClient.invalidateQueries({ queryKey: ['slack-link-status', agentId, connectionId] });
@@ -417,12 +417,12 @@ function HeartbeatTriggersCard({
 
   const { data: triggers = [], isLoading } = useQuery({
     queryKey: ['heartbeat-triggers', agentId],
-    queryFn: () => runtimeApi.listHeartbeatTriggers(agentId, userId),
+    queryFn: () => runtimeApi.listHeartbeatTriggers(userId),
   });
 
   const createMut = useMutation({
     mutationFn: () =>
-      runtimeApi.createHeartbeatTrigger(agentId, {
+      runtimeApi.createHeartbeatTrigger({
         connectionId,
         channelId: form.channelId.trim(),
         channelName: form.channelName.trim() || undefined,
@@ -437,7 +437,7 @@ function HeartbeatTriggersCard({
 
   const deleteMut = useMutation({
     mutationFn: (triggerId: string) =>
-      runtimeApi.deleteHeartbeatTrigger(agentId, triggerId, userId),
+      runtimeApi.deleteHeartbeatTrigger(triggerId, userId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['heartbeat-triggers', agentId] });
       setDeleteTarget(null);

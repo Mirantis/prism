@@ -8,7 +8,7 @@
  * all agent operations here via the management API.
  */
 
-import { AgentWorkspace, Prisma } from '@prisma/client';
+import { AgentWorkspace } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../lib/prisma';
 import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
@@ -61,16 +61,6 @@ export class ValidationError extends Error {
   }
 }
 
-/**
- * Thrown when the targeted agent does not exist. HTTP callers map to 404.
- */
-export class NotFoundError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'NotFoundError';
-  }
-}
-
 const AGENT_NAME_MAX = 64;
 
 // ============================================================================
@@ -112,26 +102,18 @@ class AgentWorkspaceService {
   // ============================================================================
 
   /**
-   * Delete an agent by ID with access check.
+   * Delete the agent this runtime owns, with an optional ownership check.
+   * Resolves the single agent via `getAgent()` (which throws if it's
+   * missing). Returns 'forbidden' when the ownership check fails,
+   * 'deleted' on success.
    */
   async deleteAgent(
-    agentId: string,
     options?: { userId?: string; allowedByTeam?: boolean },
-  ): Promise<'deleted' | 'not_found' | 'forbidden'> {
-    const agent = await prisma.agentWorkspace.findUnique({ where: { id: agentId } });
-    if (!agent) return 'not_found';
+  ): Promise<'deleted' | 'forbidden'> {
+    const agent = await this.getAgent();
     if (!options?.allowedByTeam && (!options?.userId || agent.userId !== options.userId)) return 'forbidden';
-    await prisma.agentWorkspace.delete({ where: { id: agentId } });
+    await prisma.agentWorkspace.delete({ where: { id: agent.id } });
     return 'deleted';
-  }
-
-  /**
-   * Validate that an agent exists and belongs to a user.
-   */
-  async validateOwnership(agentId: string, userId: string): Promise<{ valid: boolean; agent?: AgentWorkspace }> {
-    const agent = await prisma.agentWorkspace.findFirst({ where: { id: agentId, userId } });
-    if (!agent) return { valid: false };
-    return { valid: true, agent };
   }
 
   /**
@@ -202,11 +184,14 @@ class AgentWorkspaceService {
   }
 
   /**
-   * Get agent by ID (no access check).
+   * Get the one agent this runtime owns (resolved from config.agentId,
+   * pinned at boot by resolveOrBootstrapSingleAgent). Throws if AGENT_ID
+   * is unset or the row is missing.
    */
-  async getAgentById(agentId: string): Promise<AgentWorkspace> {
-    const agent = await prisma.agentWorkspace.findUnique({ where: { id: agentId } });
-    if (!agent) throw new Error(`Agent ${agentId} not found`);
+  async getAgent(): Promise<AgentWorkspace> {
+    if (!config.agentId) throw new Error('AGENT_ID not configured');
+    const agent = await prisma.agentWorkspace.findUnique({ where: { id: config.agentId } });
+    if (!agent) throw new Error(`Agent ${config.agentId} not found`);
     return agent;
   }
 
@@ -215,12 +200,12 @@ class AgentWorkspaceService {
   }
 
   /**
-   * Rename an agent. Shared by the management `PATCH /agents/:agentId/name`
+   * Rename the agent. Shared by the management `PATCH /agents/:agentId/name`
    * endpoint and the `rename_self` agent tool so trim/validate/persist live
-   * in one place. Throws `ValidationError` for bad input and `NotFoundError`
-   * when the agent doesn't exist.
+   * in one place. Resolves the single agent via `getAgent()` (which throws
+   * if it's missing). Throws `ValidationError` for bad input.
    */
-  async renameAgent(agentId: string, name: unknown): Promise<AgentWorkspace> {
+  async renameAgent(name: unknown): Promise<AgentWorkspace> {
     const trimmed = typeof name === 'string' ? name.trim() : '';
     if (!trimmed) {
       throw new ValidationError('name must be a non-empty string');
@@ -228,33 +213,21 @@ class AgentWorkspaceService {
     if (trimmed.length > AGENT_NAME_MAX) {
       throw new ValidationError(`name must be ≤ ${AGENT_NAME_MAX} chars`);
     }
-    try {
-      return await prisma.agentWorkspace.update({
-        where: { id: agentId },
-        data: { name: trimmed },
-      });
-    } catch (error: unknown) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-        throw new NotFoundError('Agent not found');
-      }
-      throw error;
-    }
+    const agent = await this.getAgent();
+    return prisma.agentWorkspace.update({
+      where: { id: agent.id },
+      data: { name: trimmed },
+    });
   }
 
   /**
    * Resolve the effective LLM model for an agent: the per-agent override if
    * set, otherwise the runtime's env-configured default. Callers that need
    * the raw override (e.g. to decide whether to display "unset") should use
-   * `getAgentById(agentId).model` instead.
+   * `getAgent().model` instead.
    */
-  async getEffectiveModel(agentId: string): Promise<string> {
-    const agent = await prisma.agentWorkspace.findUnique({
-      where: { id: agentId },
-      select: { model: true },
-    });
-    if (!agent) {
-      throw new NotFoundError('Agent not found');
-    }
+  async getEffectiveModel(): Promise<string> {
+    const agent = await this.getAgent();
     return resolveEffectiveModel(agent.model);
   }
 
@@ -267,7 +240,7 @@ class AgentWorkspaceService {
    * model after the write, so callers (e.g. the PATCH route) don't have to
    * reimplement the `?? config.bedrockModelId` fallback.
    */
-  async updateModel(agentId: string, model: unknown): Promise<string> {
+  async updateModel(model: unknown): Promise<string> {
     let normalized: string | null;
     if (model === null) {
       normalized = null;
@@ -286,18 +259,12 @@ class AgentWorkspaceService {
     } else {
       throw new ValidationError('model must be a string or null');
     }
-    try {
-      const updated = await prisma.agentWorkspace.update({
-        where: { id: agentId },
-        data: { model: normalized },
-      });
-      return resolveEffectiveModel(updated.model);
-    } catch (error: unknown) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-        throw new NotFoundError('Agent not found');
-      }
-      throw error;
-    }
+    const agent = await this.getAgent();
+    const updated = await prisma.agentWorkspace.update({
+      where: { id: agent.id },
+      data: { model: normalized },
+    });
+    return resolveEffectiveModel(updated.model);
   }
 }
 

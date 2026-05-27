@@ -47,8 +47,8 @@ describe('SlackHeartbeatThrottleQueue', () => {
 
     await vi.advanceTimersByTimeAsync(5 * 1000);
 
-    expect(mockTryClaim).toHaveBeenCalledExactlyOnceWith('agent-1');
-    expect(mockTrigger).toHaveBeenCalledExactlyOnceWith('agent-1');
+    expect(mockTryClaim).toHaveBeenCalledExactlyOnceWith();
+    expect(mockTrigger).toHaveBeenCalledExactlyOnceWith();
   });
 
   it('does not trigger the heartbeat when the claim is still throttled', async () => {
@@ -69,7 +69,7 @@ describe('SlackHeartbeatThrottleQueue', () => {
 
     // 2s should fire the new timer; the original 10s should never run.
     await vi.advanceTimersByTimeAsync(2 * 1000);
-    expect(mockTryClaim).toHaveBeenCalledExactlyOnceWith('agent-3');
+    expect(mockTryClaim).toHaveBeenCalledExactlyOnceWith();
 
     await vi.advanceTimersByTimeAsync(20 * 1000); // past the old 10s too
     expect(mockTryClaim).toHaveBeenCalledOnce(); // still just once

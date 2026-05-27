@@ -13,7 +13,6 @@ on:
       - 'package-lock.json'
       - '.github/workflows/e2e.yml'
   pull_request:
-    branches: [main]
     paths:
       - 'src/**'
       - 'prisma/**'

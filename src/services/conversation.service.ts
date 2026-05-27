@@ -245,10 +245,10 @@ class ConversationService {
    * Deactivate a thread by ID (set status to NON_ACTIVE)
    * Can be called with just threadId (for internal use) or with userId for ownership check
    */
-  async deactivateThread(threadId: string, agentId?: string, userId?: string): Promise<void> {
-    if (agentId) {
+  async deactivateThread(threadId: string, userId?: string): Promise<void> {
+    if (userId) {
       await prisma.conversationThread.updateMany({
-        where: { id: threadId, agentId, ...(userId && { userId }) },
+        where: { id: threadId, userId },
         data: { status: 'NON_ACTIVE' },
       });
     } else {

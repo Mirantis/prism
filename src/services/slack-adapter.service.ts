@@ -1478,12 +1478,12 @@ class SlackAdapterService implements ChannelAdapter {
    */
   private async throttledNotify(agentId: string): Promise<void> {
     // Direct local call to the trigger service (no HTTP)
-    const result = await slackHeartbeatTriggerService.tryClaimTrigger(agentId);
+    const result = await slackHeartbeatTriggerService.tryClaimTrigger();
 
     if (result.claimed) {
       try {
         // Direct local call to heartbeat service
-        heartbeatService.triggerFromSlack(agentId);
+        heartbeatService.triggerFromSlack();
       } catch (error) {
         logger.error('[ThrottledNotify] Failed to trigger heartbeat for agent %s: %s', agentId, error instanceof Error ? error.message : String(error));
       }

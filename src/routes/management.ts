@@ -10,36 +10,36 @@
  *
  * Agent identity:
  *   GET    /agents/me                              - Agent identity (Web UI bootstrap)
- *   PATCH  /agents/:agentId/name                   - Rename agent
- *   GET    /agents/:agentId/model                  - Effective model (override or env default)
- *   PATCH  /agents/:agentId/model                  - Set/clear per-agent LLM model override
- *   GET    /agents/:agentId/details                - Full agent record (markdown fields, etc.)
- *   DELETE /agents/:agentId                        - Delete agent
+ *   PATCH  /agents/name                            - Rename agent
+ *   GET    /agents/model                           - Effective model (override or env default)
+ *   PATCH  /agents/model                           - Set/clear per-agent LLM model override
+ *   GET    /agents/details                         - Full agent record (markdown fields, etc.)
+ *   DELETE /agents                                 - Delete agent
  *
  * Backup / restore:
- *   GET    /agents/:agentId/export                 - Gzipped snapshot of live SQLite
- *   POST   /agents/:agentId/import                 - Upload + restart-to-apply
+ *   GET    /agents/export                          - Gzipped snapshot of live SQLite
+ *   POST   /agents/import                          - Upload + restart-to-apply
  *
  * Heartbeat management:
- *   POST   /agents/:agentId/heartbeat/start        - Start/restart heartbeat timer (force-enables)
- *   POST   /agents/:agentId/heartbeat/stop         - Stop heartbeat timer
- *   POST   /agents/:agentId/heartbeat/trigger      - Execute heartbeat immediately
- *   POST   /agents/:agentId/heartbeat/slack-trigger - Trigger from Slack channel
- *   GET    /agents/:agentId/heartbeat/status       - Get heartbeat state (incl. intervalMs)
- *   PATCH  /agents/:agentId/heartbeat/interval     - Update interval + re-register timer
+ *   POST   /agents/heartbeat/start        - Start/restart heartbeat timer (force-enables)
+ *   POST   /agents/heartbeat/stop         - Stop heartbeat timer
+ *   POST   /agents/heartbeat/trigger      - Execute heartbeat immediately
+ *   POST   /agents/heartbeat/slack-trigger - Trigger from Slack channel
+ *   GET    /agents/heartbeat/status       - Get heartbeat state (incl. intervalMs)
+ *   PATCH  /agents/heartbeat/interval     - Update interval + re-register timer
  *
  * Cron management:
- *   GET    /agents/:agentId/cron-tasks             - List cron tasks
- *   POST   /agents/:agentId/cron-tasks             - Create + register
- *   DELETE /agents/:agentId/cron-tasks/:taskId     - Unschedule + delete
+ *   GET    /agents/cron-tasks             - List cron tasks
+ *   POST   /agents/cron-tasks             - Create + register
+ *   DELETE /agents/cron-tasks/:taskId     - Unschedule + delete
  *
  * Slack heartbeat trigger management:
  *   GET    /agents/slack-heartbeat-trigger/channel/:channelId - Check if channel is a trigger
- *   GET    /agents/:agentId/slack-heartbeat-trigger           - List active triggers
- *   POST   /agents/:agentId/slack-heartbeat-trigger           - Create trigger
- *   PATCH  /agents/:agentId/slack-heartbeat-trigger           - Update throttle
- *   DELETE /agents/:agentId/slack-heartbeat-trigger/:id       - Delete trigger
- *   POST   /agents/:agentId/slack-heartbeat-trigger/claim     - Try claim trigger
+ *   GET    /agents/slack-heartbeat-trigger                    - List active triggers
+ *   POST   /agents/slack-heartbeat-trigger                    - Create trigger
+ *   PATCH  /agents/slack-heartbeat-trigger                    - Update throttle
+ *   DELETE /agents/slack-heartbeat-trigger/:id                - Delete trigger
+ *   POST   /agents/slack-heartbeat-trigger/claim              - Try claim trigger
  *
  * Conversation threads:
  *   POST   /agents/threads/get-or-create-active               - Get or create active thread
@@ -55,12 +55,12 @@
  *   POST   /agents/slack/verify-link-code                     - Verify DM link code
  *   POST   /agents/slack/verify-channel-link-code             - Verify channel link code
  *   GET    /agents/slack/workspaces                            - List connected workspaces
- *   GET    /agents/:agentId/slack-link-status                  - DM/channel mapping existence
- *   GET    /agents/:agentId/slack-channel-mappings             - List channel mappings
+ *   GET    /agents/slack-link-status                           - DM/channel mapping existence
+ *   GET    /agents/slack-channel-mappings                      - List channel mappings
  *   GET    /agents/slack/channel-mapping/:channelId            - Find mapping by channel id
  *   DELETE /agents/slack/channel-mapping/:channelId            - Delete channel mapping
- *   DELETE /agents/:agentId/slack/dm-mapping                   - Delete DM mappings
- *   GET    /agents/:agentId/slack-connection-id                - Lookup connection id
+ *   DELETE /agents/slack/dm-mapping                            - Delete DM mappings
+ *   GET    /agents/slack-connection-id                         - Lookup connection id
  *
  * Subagents:
  *   GET    /agents/:agentId/subagents                          - List
@@ -68,7 +68,6 @@
  *   DELETE /agents/:agentId/subagents/:childAgentId            - Remove
  *
  * Misc:
- *   POST   /agents/:agentId/validate-ownership                 - Owner check
  *   POST   /agents/chat                                        - Synchronous chat invoke
  *   POST   /agents                                             - Bootstrap agent
  *   POST   /agents/slack/deliver                               - Deliver a message
@@ -83,7 +82,6 @@ import { Router, Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import multer from 'multer';
 import { AgentType, MessageRole, MessageTrigger, Prisma, ThreadStatus } from '@prisma/client';
-import { config } from '../config';
 import { logger } from '../logger';
 import { prisma } from '../lib/prisma';
 import { heartbeatService } from '../services/heartbeat.service';
@@ -94,7 +92,6 @@ import { conversationEngineService, type ChatInput } from '../services/conversat
 import { slackAdapterService } from '../services/slack-adapter.service';
 import {
   agentWorkspaceService,
-  NotFoundError,
   ValidationError,
 } from '../services/agent-workspace.service';
 import {
@@ -143,15 +140,7 @@ const router = Router();
  */
 router.get('/me', async (_req: Request, res: Response) => {
   try {
-    if (!config.agentId) {
-      res.status(500).json({ error: 'AGENT_ID not configured' });
-      return;
-    }
-    const agent = await agentWorkspaceService.getAgentById(config.agentId);
-    if (!agent) {
-      res.status(404).json({ error: 'Agent not found' });
-      return;
-    }
+    const agent = await agentWorkspaceService.getAgent();
     res.json({ agentId: agent.id, userId: agent.userId, name: agent.name });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -161,81 +150,69 @@ router.get('/me', async (_req: Request, res: Response) => {
 });
 
 /**
- * PATCH /agents/:agentId/name
+ * PATCH /agents/name
  * Rename the agent. Body: { name: string }.
  * Validates 1-64 chars (trimmed). The new name is read by
  * `contextService.buildContext()` on the next `invoke()` so the agent
  * picks up its new identity on the next chat turn.
  */
-router.patch('/:agentId/name', async (req: Request<{ agentId: string }>, res: Response) => {
+router.patch('/name', async (req: Request, res: Response) => {
   try {
-    const updated = await agentWorkspaceService.renameAgent(req.params.agentId, req.body?.name);
+    const updated = await agentWorkspaceService.renameAgent(req.body?.name);
     res.json({ agentId: updated.id, userId: updated.userId, name: updated.name });
   } catch (error: unknown) {
     if (error instanceof ValidationError) {
       res.status(400).json({ error: error.message });
       return;
     }
-    if (error instanceof NotFoundError) {
-      res.status(404).json({ error: error.message });
-      return;
-    }
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to rename agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to rename agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * GET /agents/:agentId/model
+ * GET /agents/model
  * Returns the **effective** model — the per-agent override when one is set,
  * otherwise the runtime's env-configured default (`BEDROCK_MODEL_ID`). The
  * caller doesn't need to know about the override/default distinction; the
  * server resolves it.
  */
-router.get('/:agentId/model', async (req: Request<{ agentId: string }>, res: Response) => {
+router.get('/model', async (_req: Request, res: Response) => {
   try {
-    const model = await agentWorkspaceService.getEffectiveModel(req.params.agentId);
+    const model = await agentWorkspaceService.getEffectiveModel();
     res.json({ model });
   } catch (error: unknown) {
-    if (error instanceof NotFoundError) {
-      res.status(404).json({ error: error.message });
-      return;
-    }
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to read model for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to read model for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * PATCH /agents/:agentId/model
+ * PATCH /agents/model
  * Set or clear the per-agent LLM model override. Body: `{ model: string | null }`.
  * `null` clears the override (falls back to the runtime default). Returns the
  * **resolved** effective model — same shape as the GET, so the UI can prime
  * its cache from the mutation response without a refetch. The model string is
  * validated for format only — see `agentWorkspaceService.updateModel`.
  */
-router.patch('/:agentId/model', async (req: Request<{ agentId: string }>, res: Response) => {
+router.patch('/model', async (req: Request, res: Response) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
     if (!('model' in body)) {
       res.status(400).json({ error: "missing required field 'model' (use null to clear)" });
       return;
     }
-    const model = await agentWorkspaceService.updateModel(req.params.agentId, body.model);
+    const model = await agentWorkspaceService.updateModel(body.model);
     res.json({ model });
   } catch (error: unknown) {
     if (error instanceof ValidationError) {
       res.status(400).json({ error: error.message });
       return;
     }
-    if (error instanceof NotFoundError) {
-      res.status(404).json({ error: error.message });
-      return;
-    }
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to update model for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to update model for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
@@ -245,25 +222,21 @@ router.patch('/:agentId/model', async (req: Request<{ agentId: string }>, res: R
 // ============================================================================
 
 /**
- * GET /agents/:agentId/export
+ * GET /agents/export
  * Stream a gzipped snapshot of the agent's SQLite DB as a `.prism` file.
  * The snapshot is taken with `VACUUM INTO` so heartbeat/cron writes in
  * flight don't tear the file. Single-agent only.
  */
-router.get('/:agentId/export', async (req: Request<{ agentId: string }>, res: Response) => {
+router.get('/export', async (_req: Request, res: Response) => {
   try {
-    const agent = await agentWorkspaceService.getAgentById(req.params.agentId);
-    if (!agent) {
-      res.status(404).json({ error: 'Agent not found' });
-      return;
-    }
+    const agent = await agentWorkspaceService.getAgent();
 
     const { stream, filename, cleanup } = await exportAgentArchive(agent.name);
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.on('close', cleanup);
     stream.on('error', (err) => {
-      logger.error({ err }, `[Management] export stream error for ${req.params.agentId}`);
+      logger.error({ err }, '[Management] export stream error');
       cleanup();
       if (!res.headersSent) res.status(500).end();
       else res.destroy(err);
@@ -271,27 +244,23 @@ router.get('/:agentId/export', async (req: Request<{ agentId: string }>, res: Re
     stream.pipe(res);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to export agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to export agent: ${msg}`);
     if (!res.headersSent) res.status(500).json({ error: msg });
   }
 });
 
 /**
- * POST /agents/:agentId/import
+ * POST /agents/import
  * Multipart upload of a `.prism` file. Validates the archive, stages it for
  * the next process restart, then exits the process — bootstrap pickup
  * swaps the file into place before Prisma opens the DB.
  */
 router.post(
-  '/:agentId/import',
+  '/import',
   uploadPrismFile,
-  async (req: Request<{ agentId: string }>, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
-      const agent = await agentWorkspaceService.getAgentById(req.params.agentId);
-      if (!agent) {
-        res.status(404).json({ error: 'Agent not found' });
-        return;
-      }
+      await agentWorkspaceService.getAgent();
       const file = (req as Request & { file?: { buffer: Buffer } }).file;
       if (!file?.buffer?.length) {
         res.status(400).json({ error: 'Missing `file` field in multipart body' });
@@ -314,7 +283,7 @@ router.post(
         return;
       }
       const msg = error instanceof Error ? error.message : 'Unknown error';
-      logger.error(`[Management] Failed to import agent ${req.params.agentId}: ${msg}`);
+      logger.error(`[Management] Failed to import agent: ${msg}`);
       res.status(500).json({ error: msg });
     }
   },
@@ -325,11 +294,11 @@ router.post(
 // ============================================================================
 
 /**
- * POST /agents/:agentId/heartbeat/start
+ * POST /agents/heartbeat/start
  * Start or restart the heartbeat timer for an agent.
  * Body: { agent } — the agent config object
  */
-router.post('/:agentId/heartbeat/start', async (req: Request<{ agentId: string }>, res: Response) => {
+router.post('/heartbeat/start', async (req: Request, res: Response) => {
   try {
     const { agent } = req.body;
     if (!agent) {
@@ -337,92 +306,87 @@ router.post('/:agentId/heartbeat/start', async (req: Request<{ agentId: string }
       return;
     }
 
-    if (agent.id && agent.id !== req.params.agentId) {
-      res.status(400).json({ error: 'agent.id does not match path param' });
-      return;
-    }
-
     // Force-enable: this endpoint's whole purpose is to turn the heartbeat on,
     // regardless of what status the body's agent object happens to carry. The
     // STOPPED short-circuit in startHeartbeat is for the boot-time loader.
     heartbeatService.startHeartbeat({ ...agent, heartbeatStatus: 'ENABLED' });
-    res.json({ success: true, message: `Heartbeat started for agent ${req.params.agentId}` });
+    res.json({ success: true, message: 'Heartbeat started' });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to start heartbeat for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to start heartbeat for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * POST /agents/:agentId/heartbeat/stop
+ * POST /agents/heartbeat/stop
  * Stop the heartbeat timer for an agent.
  */
-router.post('/:agentId/heartbeat/stop', async (req: Request<{ agentId: string }>, res: Response) => {
+router.post('/heartbeat/stop', async (_req: Request, res: Response) => {
   try {
-    heartbeatService.stopHeartbeat(req.params.agentId);
-    res.json({ success: true, message: `Heartbeat stopped for agent ${req.params.agentId}` });
+    heartbeatService.stopHeartbeat();
+    res.json({ success: true, message: 'Heartbeat stopped' });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to stop heartbeat for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to stop heartbeat for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * POST /agents/:agentId/heartbeat/trigger
+ * POST /agents/heartbeat/trigger
  * Execute a heartbeat immediately for an agent.
  */
-router.post('/:agentId/heartbeat/trigger', async (req: Request<{ agentId: string }>, res: Response) => {
+router.post('/heartbeat/trigger', async (_req: Request, res: Response) => {
   try {
-    const result = await heartbeatService.triggerHeartbeat(req.params.agentId);
+    const result = await heartbeatService.triggerHeartbeat();
     res.json({ success: true, result });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to trigger heartbeat for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to trigger heartbeat for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * GET /agents/:agentId/heartbeat/status
+ * GET /agents/heartbeat/status
  * Get the heartbeat state for an agent.
  */
-router.get('/:agentId/heartbeat/status', async (req: Request<{ agentId: string }>, res: Response) => {
+router.get('/heartbeat/status', async (_req: Request, res: Response) => {
   try {
-    const status = heartbeatService.getStatus(req.params.agentId);
+    const status = heartbeatService.getStatus();
     res.json(status || { isActive: false, lastRun: null, isRunning: false, consecutiveErrors: 0 });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to get heartbeat status for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to get heartbeat status for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * POST /agents/:agentId/heartbeat/slack-trigger
+ * POST /agents/heartbeat/slack-trigger
  * Notify agent-runtime that new Slack messages are queued in the DB.
  * No body required — agent-runtime drains messages from the backend.
  */
-router.post('/:agentId/heartbeat/slack-trigger', async (req: Request<{ agentId: string }>, res: Response) => {
+router.post('/heartbeat/slack-trigger', async (_req: Request, res: Response) => {
   try {
-    const status = heartbeatService.triggerFromSlack(req.params.agentId);
+    const status = heartbeatService.triggerFromSlack();
 
     if (status === 'ignored') {
-      res.status(404).json({ error: `No active heartbeat for agent ${req.params.agentId}` });
+      res.status(404).json({ error: 'No active heartbeat' });
       return;
     }
 
     res.json({ success: true, status });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to trigger heartbeat from Slack for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to trigger heartbeat from Slack for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * PATCH /agents/:agentId/heartbeat/interval
+ * PATCH /agents/heartbeat/interval
  * Update the heartbeat interval. Persists to AgentWorkspace and restarts
  * the in-process timer with the new interval.
  * Body: { intervalMs: number }
@@ -433,9 +397,8 @@ const MIN_INTERVAL_MS = 60_000;
 const MAX_INTERVAL = '1 week';
 const MAX_INTERVAL_MS = 7 * 24 * 60 * 60_000;
 
-router.patch('/:agentId/heartbeat/interval', async (req: Request<{ agentId: string }>, res: Response) => {
+router.patch('/heartbeat/interval', async (req: Request, res: Response) => {
   try {
-    const { agentId } = req.params;
     const { intervalMs } = req.body;
 
     if (typeof intervalMs !== 'number' || !Number.isFinite(intervalMs)) {
@@ -449,14 +412,10 @@ router.patch('/:agentId/heartbeat/interval', async (req: Request<{ agentId: stri
       return;
     }
 
-    const existing = await agentWorkspaceService.getAgentById(agentId);
-    if (!existing) {
-      res.status(404).json({ error: 'Agent not found' });
-      return;
-    }
+    const existing = await agentWorkspaceService.getAgent();
 
     const updated = await prisma.agentWorkspace.update({
-      where: { id: agentId },
+      where: { id: existing.id },
       data: { heartbeatIntervalMs: intervalMs },
     });
 
@@ -467,7 +426,7 @@ router.patch('/:agentId/heartbeat/interval', async (req: Request<{ agentId: stri
     heartbeatService.startHeartbeat(updated);
 
     res.json(
-      heartbeatService.getStatus(agentId) ?? {
+      heartbeatService.getStatus() ?? {
         isActive: false,
         lastRun: null,
         isRunning: false,
@@ -477,7 +436,7 @@ router.patch('/:agentId/heartbeat/interval', async (req: Request<{ agentId: stri
     );
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to update heartbeat interval for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to update heartbeat interval for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
@@ -487,44 +446,38 @@ router.patch('/:agentId/heartbeat/interval', async (req: Request<{ agentId: stri
 // ============================================================================
 
 /**
- * GET /agents/:agentId/cron-tasks
+ * GET /agents/cron-tasks
  * List cron tasks for an agent.
  */
-router.get('/:agentId/cron-tasks', async (req: Request<{ agentId: string }>, res: Response) => {
+router.get('/cron-tasks', async (_req: Request, res: Response) => {
   try {
     const tasks = await prisma.cronTask.findMany({
-      where: { agentId: req.params.agentId },
       orderBy: { createdAt: 'desc' },
     });
     res.json(tasks);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to list cron tasks for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to list cron tasks for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * POST /agents/:agentId/cron-tasks
+ * POST /agents/cron-tasks
  * Create + register a cron task. Mirrors the agent's own `schedule_task`
  * tool: persists to Prisma first, then registers in-memory via the
  * scheduler service.
  * Body: { name, schedule, instruction }
  */
-router.post('/:agentId/cron-tasks', async (req: Request<{ agentId: string }>, res: Response) => {
+router.post('/cron-tasks', async (req: Request, res: Response) => {
   try {
-    const { agentId } = req.params;
     const { name, schedule, instruction } = req.body;
     if (!name || !schedule) {
       res.status(400).json({ error: 'Missing required fields: name, schedule' });
       return;
     }
 
-    const agent = await agentWorkspaceService.getAgentById(agentId);
-    if (!agent) {
-      res.status(404).json({ error: 'Agent not found' });
-      return;
-    }
+    const agent = await agentWorkspaceService.getAgent();
 
     const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule);
     if (!isOneShot && !cron.validate(cronExpression)) {
@@ -534,7 +487,7 @@ router.post('/:agentId/cron-tasks', async (req: Request<{ agentId: string }>, re
 
     const task = await prisma.cronTask.create({
       data: {
-        agentId,
+        agentId: agent.id,
         userId: agent.userId,
         name,
         schedule: cronExpression,
@@ -545,7 +498,7 @@ router.post('/:agentId/cron-tasks', async (req: Request<{ agentId: string }>, re
 
     cronSchedulerService.scheduleTask({
       id: task.id,
-      agentId,
+      agentId: agent.id,
       userId: agent.userId,
       name: task.name,
       schedule: task.schedule,
@@ -560,16 +513,16 @@ router.post('/:agentId/cron-tasks', async (req: Request<{ agentId: string }>, re
     res.status(201).json(task);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to create cron task for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to create cron task for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * DELETE /agents/:agentId/cron-tasks/:taskId
+ * DELETE /agents/cron-tasks/:taskId
  * Unschedule + delete a cron task.
  */
-router.delete('/:agentId/cron-tasks/:taskId', async (req: Request<{ agentId: string; taskId: string }>, res: Response) => {
+router.delete('/cron-tasks/:taskId', async (req: Request<{ taskId: string }>, res: Response) => {
   try {
     const { taskId } = req.params;
     cronSchedulerService.unscheduleTask(taskId);
@@ -597,7 +550,6 @@ router.delete('/:agentId/cron-tasks/:taskId', async (req: Request<{ agentId: str
 /**
  * GET /agents/slack-heartbeat-trigger/channel/:channelId
  * Check if a Slack channel is a heartbeat trigger channel.
- * Mounted at a literal path that won't collide with :agentId routes.
  */
 router.get('/slack-heartbeat-trigger/channel/:channelId', async (req: Request<{ channelId: string }>, res: Response) => {
   try {
@@ -611,32 +563,32 @@ router.get('/slack-heartbeat-trigger/channel/:channelId', async (req: Request<{ 
 });
 
 /**
- * GET /agents/:agentId/slack-heartbeat-trigger
+ * GET /agents/slack-heartbeat-trigger
  * Get active heartbeat triggers for a specific agent.
  * Query: ?userId=...
  */
-router.get('/:agentId/slack-heartbeat-trigger', async (req: Request<{ agentId: string }>, res: Response) => {
+router.get('/slack-heartbeat-trigger', async (req: Request, res: Response) => {
   try {
     const userId = req.query.userId as string;
     if (!userId) {
       res.status(400).json({ error: 'Missing userId query parameter' });
       return;
     }
-    const triggers = await slackHeartbeatTriggerService.getActiveTriggers(userId, req.params.agentId);
+    const triggers = await slackHeartbeatTriggerService.getActiveTriggers(userId);
     res.json(triggers);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to get heartbeat triggers for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to get heartbeat triggers for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * POST /agents/:agentId/slack-heartbeat-trigger
+ * POST /agents/slack-heartbeat-trigger
  * Create a new heartbeat trigger.
  * Body: { connectionId, channelId, channelName, userId, throttleSeconds? }
  */
-router.post('/:agentId/slack-heartbeat-trigger', async (req: Request<{ agentId: string }>, res: Response) => {
+router.post('/slack-heartbeat-trigger', async (req: Request, res: Response) => {
   try {
     const { connectionId, channelId, channelName, userId, throttleSeconds } = req.body;
     if (!connectionId || !channelId || !userId) {
@@ -644,7 +596,7 @@ router.post('/:agentId/slack-heartbeat-trigger', async (req: Request<{ agentId: 
       return;
     }
     const trigger = await slackHeartbeatTriggerService.createTrigger(
-      connectionId, channelId, channelName ?? null, req.params.agentId, userId, throttleSeconds,
+      connectionId, channelId, channelName ?? null, userId, throttleSeconds,
     );
     res.status(201).json(trigger);
   } catch (error: unknown) {
@@ -654,17 +606,17 @@ router.post('/:agentId/slack-heartbeat-trigger', async (req: Request<{ agentId: 
       return;
     }
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to create heartbeat trigger for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to create heartbeat trigger for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * PATCH /agents/:agentId/slack-heartbeat-trigger
+ * PATCH /agents/slack-heartbeat-trigger
  * Update throttle settings for a trigger.
  * Body: { triggerId, userId, throttleSeconds }
  */
-router.patch('/:agentId/slack-heartbeat-trigger', async (req: Request<{ agentId: string }>, res: Response) => {
+router.patch('/slack-heartbeat-trigger', async (req: Request, res: Response) => {
   try {
     const { triggerId, userId, throttleSeconds } = req.body;
     if (!triggerId || !userId || throttleSeconds === undefined) {
@@ -679,17 +631,17 @@ router.patch('/:agentId/slack-heartbeat-trigger', async (req: Request<{ agentId:
     res.json(updated);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to update heartbeat trigger throttle for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to update heartbeat trigger throttle for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * DELETE /agents/:agentId/slack-heartbeat-trigger/:id
+ * DELETE /agents/slack-heartbeat-trigger/:id
  * Delete a heartbeat trigger.
  * Query: ?userId=...
  */
-router.delete('/:agentId/slack-heartbeat-trigger/:id', async (req: Request<{ agentId: string; id: string }>, res: Response) => {
+router.delete('/slack-heartbeat-trigger/:id', async (req: Request<{ id: string }>, res: Response) => {
   try {
     const userId = req.query.userId as string;
     if (!userId) {
@@ -706,16 +658,16 @@ router.delete('/:agentId/slack-heartbeat-trigger/:id', async (req: Request<{ age
 });
 
 /**
- * POST /agents/:agentId/slack-heartbeat-trigger/claim
+ * POST /agents/slack-heartbeat-trigger/claim
  * Atomically try to claim a trigger for firing.
  */
-router.post('/:agentId/slack-heartbeat-trigger/claim', async (req: Request<{ agentId: string }>, res: Response) => {
+router.post('/slack-heartbeat-trigger/claim', async (_req: Request, res: Response) => {
   try {
-    const result = await slackHeartbeatTriggerService.tryClaimTrigger(req.params.agentId);
+    const result = await slackHeartbeatTriggerService.tryClaimTrigger();
     res.json(result);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to claim heartbeat trigger for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to claim heartbeat trigger for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
@@ -889,13 +841,13 @@ router.post('/threads/:threadId/messages', async (req: Request<{ threadId: strin
 /**
  * POST /agents/threads/:threadId/archive
  * Deactivate a thread (sets status to NON_ACTIVE). Path kept as /archive for backwards compatibility.
- * Body: { agentId?, userId? } — optional ownership check params
+ * Body: { userId? } — optional ownership check param
  */
 router.post('/threads/:threadId/archive', async (req: Request<{ threadId: string }>, res: Response) => {
   try {
     const { threadId } = req.params;
-    const { agentId, userId } = req.body;
-    await conversationService.deactivateThread(threadId, agentId, userId);
+    const { userId } = req.body;
+    await conversationService.deactivateThread(threadId, userId);
     res.json({ success: true });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -1153,13 +1105,12 @@ router.get('/slack/workspaces', async (_req: Request, res: Response) => {
 });
 
 /**
- * GET /agents/:agentId/slack-link-status
- * Check whether an agent has DM and/or channel mappings for a connection.
+ * GET /agents/slack-link-status
+ * Check whether the agent has DM and/or channel mappings for a connection.
  * Query: connectionId (required)
  */
-router.get('/:agentId/slack-link-status', async (req: Request<{ agentId: string }>, res: Response) => {
+router.get('/slack-link-status', async (req: Request, res: Response) => {
   try {
-    const { agentId } = req.params;
     const connectionId = req.query.connectionId as string;
     if (!connectionId) {
       res.status(400).json({ error: 'Missing connectionId query parameter' });
@@ -1167,31 +1118,30 @@ router.get('/:agentId/slack-link-status', async (req: Request<{ agentId: string 
     }
 
     const dmMapping = await prisma.slackMapping.findFirst({
-      where: { connectionId, agentId, slackUserId: { not: null } },
+      where: { connectionId, slackUserId: { not: null } },
       select: { slackUserId: true },
     });
 
     const hasChannelMapping = await prisma.slackMapping.findFirst({
-      where: { agentId, slackChannelId: { not: null } },
+      where: { slackChannelId: { not: null } },
       select: { id: true },
     }) !== null;
 
     res.json({ hasDmMapping: dmMapping !== null, hasChannelMapping, slackUserId: dmMapping?.slackUserId ?? null });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to get slack link status for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to get slack link status for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * GET /agents/:agentId/slack-channel-mappings
- * List channel mappings for an agent, filtered by connection.
+ * GET /agents/slack-channel-mappings
+ * List channel mappings for the agent, filtered by connection.
  * Query: connectionId (required)
  */
-router.get('/:agentId/slack-channel-mappings', async (req: Request<{ agentId: string }>, res: Response) => {
+router.get('/slack-channel-mappings', async (req: Request, res: Response) => {
   try {
-    const { agentId } = req.params;
     const connectionId = req.query.connectionId as string;
     if (!connectionId) {
       res.status(400).json({ error: 'Missing connectionId query parameter' });
@@ -1200,7 +1150,6 @@ router.get('/:agentId/slack-channel-mappings', async (req: Request<{ agentId: st
 
     const mappings = await prisma.slackMapping.findMany({
       where: {
-        agentId,
         connectionId,
         slackChannelId: { not: null },
       },
@@ -1222,7 +1171,7 @@ router.get('/:agentId/slack-channel-mappings', async (req: Request<{ agentId: st
     res.json({ channels });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to get slack channel mappings for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to get slack channel mappings for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
@@ -1289,13 +1238,12 @@ router.delete('/slack/channel-mapping/:channelId', async (req: Request<{ channel
 });
 
 /**
- * DELETE /agents/:agentId/slack/dm-mapping
- * Delete DM mappings for an agent and connection.
+ * DELETE /agents/slack/dm-mapping
+ * Delete DM mappings for the agent and connection.
  * Query: connectionId (required)
  */
-router.delete('/:agentId/slack/dm-mapping', async (req: Request<{ agentId: string }>, res: Response) => {
+router.delete('/slack/dm-mapping', async (req: Request, res: Response) => {
   try {
-    const { agentId } = req.params;
     const connectionId = req.query.connectionId as string;
     if (!connectionId) {
       res.status(400).json({ error: 'Missing connectionId query parameter' });
@@ -1303,26 +1251,24 @@ router.delete('/:agentId/slack/dm-mapping', async (req: Request<{ agentId: strin
     }
 
     const result = await prisma.slackMapping.deleteMany({
-      where: { connectionId, agentId, slackUserId: { not: null } },
+      where: { connectionId, slackUserId: { not: null } },
     });
 
     res.json({ deleted: result.count });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to delete DM mapping for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to delete DM mapping for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * GET /agents/:agentId/slack-connection-id
- * Find the connectionId for an agent via SlackMapping.
+ * GET /agents/slack-connection-id
+ * Find the connectionId for the agent via SlackMapping.
  */
-router.get('/:agentId/slack-connection-id', async (req: Request<{ agentId: string }>, res: Response) => {
+router.get('/slack-connection-id', async (_req: Request, res: Response) => {
   try {
-    const { agentId } = req.params;
     const mapping = await prisma.slackMapping.findFirst({
-      where: { agentId },
       select: { connectionId: true },
     });
     if (!mapping) {
@@ -1332,7 +1278,7 @@ router.get('/:agentId/slack-connection-id', async (req: Request<{ agentId: strin
     res.json({ connectionId: mapping.connectionId });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to get connection ID for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to get connection ID for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
@@ -1557,54 +1503,33 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /agents/:agentId/details
- * Get a single agent by ID (no access check).
+ * GET /agents/details
+ * Get the agent record (no access check).
  */
-router.get('/:agentId/details', async (req: Request<{ agentId: string }>, res: Response) => {
+router.get('/details', async (_req: Request, res: Response) => {
   try {
-    const agent = await agentWorkspaceService.getAgentById(req.params.agentId);
+    const agent = await agentWorkspaceService.getAgent();
     res.json({ agent });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error({ err: error, agentId: req.params.agentId }, '[Management] Failed to get agent %s', req.params.agentId);
+    logger.error({ err: error }, '[Management] Failed to get agent');
     res.status(500).json({ error: msg });
   }
 });
 
 /**
- * DELETE /agents/:agentId
- * Delete an agent with optional ownership check.
+ * DELETE /agents
+ * Delete the agent with optional ownership check.
  * Body: { userId?, allowedByTeam? }
  */
-router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Response) => {
+router.delete('/', async (req: Request, res: Response) => {
   try {
     const { userId, allowedByTeam } = req.body || {};
-    const result = await agentWorkspaceService.deleteAgent(req.params.agentId, { userId, allowedByTeam });
+    const result = await agentWorkspaceService.deleteAgent({ userId, allowedByTeam });
     res.json({ result });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to delete agent ${req.params.agentId}: ${msg}`);
-    res.status(500).json({ error: msg });
-  }
-});
-
-/**
- * POST /agents/:agentId/validate-ownership
- * Check if an agent exists and belongs to a user.
- * Body: { userId }
- */
-router.post('/:agentId/validate-ownership', async (req: Request<{ agentId: string }>, res: Response) => {
-  try {
-    const { userId } = req.body;
-    if (!userId) {
-      res.status(400).json({ error: 'Missing required field: userId' });
-      return;
-    }
-    const result = await agentWorkspaceService.validateOwnership(req.params.agentId, userId);
-    res.json(result);
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to validate ownership for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to delete agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
@@ -1619,7 +1544,7 @@ router.get('/:agentId/subagents', async (req: Request<{ agentId: string }>, res:
     res.json({ subagents });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to get subagents for agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to get subagents for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
@@ -1645,7 +1570,7 @@ router.post('/:agentId/subagents', async (req: Request<{ agentId: string }>, res
     res.status(201).json({ agent: result });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to add subagent to agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to add subagent to agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
@@ -1668,7 +1593,7 @@ router.delete('/:agentId/subagents/:childAgentId', async (req: Request<{ agentId
     res.json({ result });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to remove subagent from agent ${req.params.agentId}: ${msg}`);
+    logger.error(`[Management] Failed to remove subagent from agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
