@@ -1,13 +1,16 @@
 name: Create Binary
 
 # Build the distributable `prism` (terminal UI) and `prism-server` (runtime)
-# Node SEA binaries for macOS, Linux and Windows on every push to main,
+# Node SEA binaries for macOS, Linux and Windows on every PR + push to main,
 # smoke-test them, and upload them as workflow artifacts (so they're
-# downloadable from the Actions run). `release-deploy.yml` runs the same
-# pipeline at release time and attaches archives to each GitHub Release.
+# downloadable from the Actions run). Running on PRs catches SEA/native-dep
+# breakage before merge. `release-deploy.yml` runs the same pipeline at
+# release time and attaches archives to each GitHub Release.
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_call:
     inputs:
