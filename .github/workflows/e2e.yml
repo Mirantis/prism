@@ -26,7 +26,6 @@ on:
 permissions:
   contents: read
   packages: read
-  id-token: write
 
 jobs:
   e2e:
@@ -50,12 +49,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
-        with:
-          role-to-assume: ${{ secrets.AWS_E2E_BEDROCK_ROLE_ARN }}
-          aws-region: us-east-1
-
       - name: Generate Prisma client
         run: npx prisma generate --schema prisma/sqlite/schema.prisma
 
@@ -67,10 +60,7 @@ jobs:
         run: npm run test --workspace=prism-agent-e2e
         env:
           CI: true
-          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
-          AWS_REGION: us-east-1
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
           # Slack E2E — @slack tests skip gracefully if these aren't set
           SLACK_CLIENT_ID: ${{ secrets.SLACK_E2E_CLIENT_ID }}
           SLACK_CLIENT_SECRET: ${{ secrets.SLACK_E2E_CLIENT_SECRET }}
@@ -85,10 +75,7 @@ jobs:
         run: npm run test:e2e:tui --workspace=prism-agent-e2e
         env:
           CI: true
-          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
-          AWS_REGION: us-east-1
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
 
       - name: Upload test report
         if: ${{ !cancelled() }}
