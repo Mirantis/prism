@@ -1,7 +1,13 @@
 import path from 'path';
+import sea from 'node:sea';
 import dotenv from 'dotenv';
 
-const dotenvPath = path.resolve(__dirname, '../.env');
+// In SEA (the packaged prism-server binary), the source tree is gone — the
+// sidecar `.env` lives next to the executable (e.g. ~/.prism/.env). In dev,
+// __dirname is `src/` and `.env` sits at the repo root.
+const dotenvPath = sea.isSea()
+  ? path.join(path.dirname(process.execPath), '.env')
+  : path.resolve(__dirname, '../.env');
 // `quiet: true` suppresses dotenv's stdout tip line — keeps stdout clean for
 // any consumer that redirects it (e.g. pino via LOG_FILE). The load summary is
 // re-emitted through pino in `index.ts`.
