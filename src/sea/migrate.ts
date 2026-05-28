@@ -42,7 +42,9 @@ export function applyMigrations(db: Database, migrations: Migration[]): string[]
 
   const applied = new Set(
     db
-      .prepare('SELECT migration_name FROM "_prisma_migrations"')
+      .prepare(
+        'SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL',
+      )
       .all()
       .map((row) => (row as { migration_name: string }).migration_name),
   );
