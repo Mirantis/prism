@@ -11,7 +11,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
-import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
+import * as pty from 'node-pty';
 import stripAnsi from 'strip-ansi';
 
 const AGENT_RUNTIME_DIR = path.resolve(import.meta.dirname, '../..');
