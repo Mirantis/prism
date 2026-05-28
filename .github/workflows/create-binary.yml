@@ -51,6 +51,12 @@ jobs:
           cache: 'npm'
           registry-url: 'https://npm.pkg.github.com'
 
+      # Node 22 ships npm 10, but the committed lockfile is npm-11 shape
+      # (regenerated locally with npm 11+) — npm 10's `ci` rejects it with
+      # "Missing: magicast@0.3.5 from lock file" because it surfaces the
+      # @prisma/config optional peer that npm 11 leaves out. Pin to 11 to
+      # match the lockfile-generating npm.
+      - run: npm install -g npm@11
       - run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
