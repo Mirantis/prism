@@ -3,6 +3,9 @@ node_modules
 dist
 dist-sea
 build
+# SEA archives produced by `npm run build:binaries` at the repo root.
+prism-*.tar.gz
+prism-*.zip
 .next
 .env
 .env.local
