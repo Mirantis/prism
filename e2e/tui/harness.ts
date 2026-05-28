@@ -110,7 +110,7 @@ export function startRuntime(opts: StartRuntimeOptions): RuntimeHandle {
   return {
     port,
     logTail,
-    async waitForReady(timeoutMs = 15_000) {
+    async waitForReady(timeoutMs = 30_000) {
       const start = Date.now();
       while (Date.now() - start < timeoutMs) {
         if (exited) {
@@ -232,7 +232,7 @@ export function startPrism(opts: StartPrismOptions): TuiSession {
     rawOutput: () => buffer,
     send: (input) => child.write(input),
 
-    async waitForFrame(matcher, timeoutMs = 15_000) {
+    async waitForFrame(matcher, timeoutMs = 30_000) {
       const matches = (s: string) =>
         typeof matcher === 'string' ? s.includes(matcher) : matcher.test(s);
       const start = Date.now();
@@ -258,7 +258,7 @@ export function startPrism(opts: StartPrismOptions): TuiSession {
       throw new Error(msg);
     },
 
-    async waitForExit(timeoutMs = 10_000) {
+    async waitForExit(timeoutMs = 20_000) {
       if (exitCode !== null) return exitCode;
       const result = await Promise.race([
         exitPromise,

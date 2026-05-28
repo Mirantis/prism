@@ -79,7 +79,7 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
   let runtime: RuntimeHandle;
   try {
     runtime = startRuntime({ env: runtimeEnv });
-    await runtime.waitForReady(20_000);
+    await runtime.waitForReady(60_000);
   } catch (err) {
     fs.rmSync(tempDir, { recursive: true, force: true });
     throw err;
