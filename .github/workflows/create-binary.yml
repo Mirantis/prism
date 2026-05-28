@@ -2,8 +2,10 @@ name: Create Binary
 
 # Build the distributable `prism` (terminal UI) and `prism-server` (runtime)
 # Node SEA binaries for macOS, Linux and Windows on every push to main, and
-# smoke-test them. Not uploaded anywhere yet — flip on the upload-artifact
-# step below when distribution is wanted.
+# smoke-test them. `release-deploy.yml` runs the same pipeline at release
+# time and attaches the archives to each GitHub Release; this workflow only
+# validates the build per push. Flip on the upload-artifact step below to
+# also grab them from an individual CI run.
 
 on:
   push:
