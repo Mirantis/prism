@@ -127,13 +127,32 @@ await build({
 });
 
 // 2. CJS stub: extract the ESM bundle (a SEA asset) and dynamic-import it.
-//    prism is self-contained (temp dir). prism-server must extract NEXT TO the
-//    executable so its external bare imports resolve from the sidecar
-//    node_modules/ that ships alongside it.
-const extractExpr =
+//    prism is self-contained (per-process temp dir). prism-server must extract
+//    NEXT TO the executable so its external bare imports resolve from the
+//    sidecar node_modules/ that ships alongside it; concurrent starts (service
+//    restart overlap, two processes) write to a per-PID/nonce tmp file first
+//    and atomically rename into place, so no caller ever observes a partial
+//    bundle.
+const extractBlock =
   target === 'prism-server'
-    ? "path.join(path.dirname(process.execPath), '.prism-server.runtime.mjs')"
-    : "path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prism-sea-')), 'main.mjs')";
+    ? `const dir = path.dirname(process.execPath);
+const finalFile = path.join(dir, '.prism-server.runtime.mjs');
+const tmpFile = path.join(
+  dir,
+  '.prism-server.runtime.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp',
+);
+fs.writeFileSync(tmpFile, Buffer.from(getAsset('main.mjs')));
+let file = finalFile;
+try {
+  fs.renameSync(tmpFile, finalFile);
+} catch {
+  // Windows can refuse to replace an in-use dest; our tmpFile is fully
+  // written and resolves externals from the same directory, so use it.
+  file = tmpFile;
+}`
+    : `const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prism-sea-')), 'main.mjs');
+fs.writeFileSync(file, Buffer.from(getAsset('main.mjs')));`;
+
 writeFileSync(
   stubPath,
   `'use strict';
@@ -142,8 +161,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const file = ${extractExpr};
-fs.writeFileSync(file, Buffer.from(getAsset('main.mjs')));
+${extractBlock}
 import(pathToFileURL(file).href).catch((err) => { console.error(err); process.exit(1); });
 `,
 );
