@@ -1,15 +1,25 @@
 name: Create Binary
 
 # Build the distributable `prism` (terminal UI) and `prism-server` (runtime)
-# Node SEA binaries for macOS, Linux and Windows on every push to main, and
-# smoke-test them. `release-deploy.yml` runs the same pipeline at release
-# time and attaches the archives to each GitHub Release; this workflow only
-# validates the build per push. Flip on the upload-artifact step below to
-# also grab them from an individual CI run.
+# Node SEA binaries for macOS, Linux and Windows on every push to main,
+# smoke-test them, and upload them as workflow artifacts (so they're
+# downloadable from the Actions run). `release-deploy.yml` runs the same
+# pipeline at release time and attaches archives to each GitHub Release.
 
 on:
   push:
     branches: [main]
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build at. Defaults to the event ref.
+        type: string
+        required: false
+      version:
+        description: Version string used in archive filenames (e.g. v2026.5.28…).
+        type: string
+        required: false
+        default: dev
 
 permissions:
   contents: read
@@ -24,13 +34,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref || '' }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          # SEA needs a released Node line; 22 ships SEA + matches the build
-          # target in scripts/build-sea.mjs. (The Dockerfile/CI pin 26 — when
-          # that line actually exists, bump this too.)
-          node-version: '22'
+          node-version: '26'
           cache: 'npm'
           registry-url: 'https://npm.pkg.github.com'
 
@@ -47,9 +56,29 @@ jobs:
 
       - run: node scripts/smoke-sea.mjs
 
-      # Retrieve the binaries from a run by enabling this:
-      # - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-      #   with:
-      #     name: prism-${{ matrix.os }}
-      #     path: dist-sea/
-      #     if-no-files-found: error
+      - name: Package archive
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version || 'dev' }}
+        run: |
+          set -euo pipefail
+          OS_ARCH=$(node -e 'process.stdout.write(`${process.platform}-${process.arch}`)')
+          # Ship install.sh inside the archive so users can run it directly.
+          cp install.sh "dist-sea/$OS_ARCH/install.sh"
+          cd dist-sea
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            NAME="prism-$VERSION-$OS_ARCH.zip"
+            7z a -tzip "../$NAME" "$OS_ARCH" >/dev/null
+          else
+            NAME="prism-$VERSION-$OS_ARCH.tar.gz"
+            tar -czf "../$NAME" "$OS_ARCH"
+          fi
+          echo "Built: $NAME"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: prism-${{ matrix.os }}
+          path: |
+            prism-*.tar.gz
+            prism-*.zip
+          if-no-files-found: error
