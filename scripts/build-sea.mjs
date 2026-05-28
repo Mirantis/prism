@@ -104,7 +104,9 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node26',
+  // Match the SEA runtime pin (Node 22 — see .github/workflows/create-binary.yml
+  // and the "SEA binaries" note in CLAUDE.md for why we can't go higher yet).
+  target: 'node22',
   outfile: bundlePath,
   external: cfg.external,
   define: { 'process.env.PRISM_VERSION': JSON.stringify(version) },
