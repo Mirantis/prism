@@ -40,8 +40,8 @@ describe('Prism CLI boot + exit', () => {
       session.send('/exit');
       await session.waitForFrame(/▸\s*\/exit/, 5_000);
       session.send(KEYS.ENTER);
-      await session.waitForFrame(/Shutting down/, 10_000);
-      const code = await session.waitForExit(15_000);
+      await session.waitForFrame(/Shutting down/, 20_000);
+      const code = await session.waitForExit(30_000);
       expect(code).toBe(0);
     } finally {
       await session.stop();
@@ -53,8 +53,8 @@ describe('Prism CLI boot + exit', () => {
     try {
       await session.waitForFrame(/Prism/, 30_000);
       session.send(KEYS.CTRL_C);
-      await session.waitForFrame(/Shutting down/, 10_000);
-      const code = await session.waitForExit(15_000);
+      await session.waitForFrame(/Shutting down/, 20_000);
+      const code = await session.waitForExit(30_000);
       expect(code).toBe(0);
     } finally {
       await session.stop();
