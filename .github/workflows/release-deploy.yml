@@ -76,65 +76,16 @@ jobs:
           docker push $GHCR_REPO:$IMAGE_TAG
           docker push $GHCR_REPO:latest
 
+  # Reuse the create-binary workflow so the build pipeline (matrix, smoke,
+  # archive packaging, upload) lives in one place. Builds at release_sha so
+  # the archives match the Docker image's commit.
   build-binaries:
     needs: [prepare, approve]
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          # Pin to the same commit the docker image ships, so the archives
-          # and the image are byte-equivalent.
-          ref: ${{ needs.prepare.outputs.release_sha }}
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          # SEA needs a released Node line; 22 matches scripts/build-sea.mjs.
-          node-version: '22'
-          cache: 'npm'
-          registry-url: 'https://npm.pkg.github.com'
-
-      - run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - run: npm run build:web
-
-      - run: node scripts/build-sea.mjs prism
-      - run: node scripts/build-sea.mjs prism-server
-      - run: node scripts/collect-natives.mjs
-
-      - run: node scripts/smoke-sea.mjs
-
-      - name: Package archive
-        shell: bash
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          set -euo pipefail
-          OS_ARCH=$(node -e 'process.stdout.write(`${process.platform}-${process.arch}`)')
-          # Ship the installer inside the archive so users can run it directly.
-          cp install.sh "dist-sea/$OS_ARCH/install.sh"
-          cd dist-sea
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            NAME="prism-$VERSION-$OS_ARCH.zip"
-            7z a -tzip "../$NAME" "$OS_ARCH" >/dev/null
-          else
-            NAME="prism-$VERSION-$OS_ARCH.tar.gz"
-            tar -czf "../$NAME" "$OS_ARCH"
-          fi
-          echo "Built: $NAME"
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: binaries-${{ matrix.os }}
-          path: |
-            prism-*.tar.gz
-            prism-*.zip
-          if-no-files-found: error
+    uses: ./.github/workflows/create-binary.yml
+    with:
+      ref: ${{ needs.prepare.outputs.release_sha }}
+      version: ${{ needs.prepare.outputs.version }}
+    secrets: inherit
 
   publish-release:
     needs: [prepare, build-and-push, build-binaries]
