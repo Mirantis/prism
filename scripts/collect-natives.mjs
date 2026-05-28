@@ -21,10 +21,27 @@ const ROOT_MODULES = path.join(ROOT, 'node_modules');
 
 const ROOTS = ['better-sqlite3', '@prisma/client', 'sqlite-vec'];
 
-/** Resolve a package's install dir via its package.json (handles hoisting). */
+/** Resolve a package's install dir (handles hoisting + restrictive `exports`). */
 function pkgDir(name) {
-  const pj = require.resolve(`${name}/package.json`, { paths: [ROOT] });
-  return path.dirname(pj);
+  // Try the well-known subpath first.
+  try {
+    return path.dirname(require.resolve(`${name}/package.json`, { paths: [ROOT] }));
+  } catch {}
+  // Fall back to resolving the main entry and walking up — needed when
+  // `exports` blocks `./package.json` (e.g. sqlite-vec).
+  try {
+    let dir = path.dirname(require.resolve(name, { paths: [ROOT] }));
+    while (dir !== path.dirname(dir)) {
+      if (existsSync(path.join(dir, 'package.json'))) return dir;
+      dir = path.dirname(dir);
+    }
+  } catch {}
+  // Last resort: the platform-specific sub-packages (e.g. sqlite-vec-darwin-arm64)
+  // expose neither a main entry nor `./package.json` via exports — look directly
+  // under the project's node_modules.
+  const direct = path.join(ROOT_MODULES, ...name.split('/'));
+  if (existsSync(path.join(direct, 'package.json'))) return direct;
+  throw new Error(`could not locate ${name}`);
 }
 
 /** Transitive dep closure (deps + optionalDeps), skipping anything missing. */
