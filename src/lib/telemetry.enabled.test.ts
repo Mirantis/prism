@@ -47,7 +47,7 @@ describe('telemetry (enabled path)', () => {
     expect(loggerProviderArgs).toHaveLength(1);
     const attrs = loggerProviderArgs[0]?.resource?.attributes ?? {};
     expect(attrs['deployment.environment.name']).toBe('staging');
-    expect(attrs['service.name']).toBe('lens-agents-runtime');
-    expect(attrs['service.namespace']).toBe('lens-agents');
+    expect(attrs['service.name']).toBe('prism-agent-runtime');
+    expect(attrs['service.namespace']).toBe('prism-agent');
   });
 });
