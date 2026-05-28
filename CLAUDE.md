@@ -13,6 +13,14 @@ This repo uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.
 Every commit subject must use the `<type>(<scope>): <description>` form —
 common types are `feat`, `fix`, `refactor`, `ci`, `docs`, `chore`, and `test`.
 
+## PR descriptions
+
+The Test plan section should describe behavior that was actually exercised
+(local smoke runs, manual UI walks, specific commands, etc.). Never list
+"`<workflow>.yml` green" as a Test plan item — every workflow that gates
+the PR is already a required check on the PR page, so it's self-evident
+and adds noise.
+
 ## Deployment shape
 
 One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
