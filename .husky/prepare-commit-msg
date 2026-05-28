@@ -1,0 +1,5 @@
+# Auto-append Signed-off-by (same effect as `git commit -s`). Idempotent —
+# git interpret-trailers skips when an identical trailer already exists.
+NAME=$(git config user.name)
+EMAIL=$(git config user.email)
+git interpret-trailers --if-exists doNothing --trailer "Signed-off-by: $NAME <$EMAIL>" --in-place "$1"
