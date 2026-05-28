@@ -47,33 +47,14 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # The runtime serves the bundled SPA, so prism-server needs web/dist.
-      - run: npm run build:web
-
-      - run: node scripts/build-sea.mjs prism
-      - run: node scripts/build-sea.mjs prism-server
-      - run: node scripts/collect-natives.mjs
-
-      - run: node scripts/smoke-sea.mjs
-
-      - name: Package archive
+      # Single source of truth for the build pipeline (bundle, SEA inject,
+      # collect-natives, smoke, archive) — same script the developer runs
+      # locally with `npm run build:binaries`.
+      - name: Build binaries
         shell: bash
         env:
           VERSION: ${{ inputs.version || 'dev' }}
-        run: |
-          set -euo pipefail
-          OS_ARCH=$(node -e 'process.stdout.write(`${process.platform}-${process.arch}`)')
-          # Ship install.sh inside the archive so users can run it directly.
-          cp install.sh "dist-sea/$OS_ARCH/install.sh"
-          cd dist-sea
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            NAME="prism-$VERSION-$OS_ARCH.zip"
-            7z a -tzip "../$NAME" "$OS_ARCH" >/dev/null
-          else
-            NAME="prism-$VERSION-$OS_ARCH.tar.gz"
-            tar -czf "../$NAME" "$OS_ARCH"
-          fi
-          echo "Built: $NAME"
+        run: npm run build:binaries
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
