@@ -118,8 +118,22 @@ if [ "$plat" = "darwin" ]; then
 </plist>
 EOF
   # WorkingDirectory=~/.prism lets the server's dotenv pick up ~/.prism/.env.
+  # Idempotent (re)install of the launchd agent. `launchctl load` returns
+  # "Load failed: 5: I/O error" on re-installs when the service is already
+  # loaded — that's a misleading error from launchd; the service usually
+  # *did* load. Tolerate it and use kickstart -k as the source of truth.
+  # If that says the service isn't loaded, bootout/bootstrap can race on
+  # modern macOS, so retry a few times before giving up.
+  DOMAIN="gui/$(id -u)"
+  SERVICE="$DOMAIN/com.prism.server"
   launchctl unload "$PLIST" 2>/dev/null || true
-  launchctl load "$PLIST"
+  launchctl load "$PLIST" 2>/dev/null || true
+  for _ in 1 2 3 4 5; do
+    if launchctl kickstart -k "$SERVICE" 2>/dev/null; then break; fi
+    launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null || true
+    sleep 1
+  done
+  launchctl kickstart -k "$SERVICE"  # final attempt — let it fail loudly if still stuck
   echo "Loaded launchd service com.prism.server"
 else
   UNIT="$HOME/.config/systemd/user/prism-server.service"
