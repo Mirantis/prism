@@ -1,5 +1,12 @@
 # Prism
 
+[![CI](https://github.com/lensapp/prism-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/ci.yml)
+[![E2E Tests](https://github.com/lensapp/prism-agent/actions/workflows/e2e.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/e2e.yml)
+[![Docker Build](https://github.com/lensapp/prism-agent/actions/workflows/docker-build.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/docker-build.yml)
+[![Create Binary](https://github.com/lensapp/prism-agent/actions/workflows/create-binary.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/create-binary.yml)
+[![Deploy](https://github.com/lensapp/prism-agent/actions/workflows/deploy.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/deploy.yml)
+[![Release Deploy](https://github.com/lensapp/prism-agent/actions/workflows/release-deploy.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/release-deploy.yml)
+
 > Standalone agent runtime: long-lived AI agent with persistent memory,
 > scheduled work, heartbeat checks, and Slack/WebSocket chat — running
 > in a single container.
