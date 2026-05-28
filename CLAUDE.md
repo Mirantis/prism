@@ -30,6 +30,28 @@ credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy. Bedrock via Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the
 SDK auto-selects Bearer over SigV4 when set.
 
+## SEA binaries — Node 22 pin
+
+The `prism` / `prism-server` SEA build (workflows: `create-binary.yml`,
+called from `release-deploy.yml`) is pinned to **Node 22**. Don't bump it
+to 23+ without refactoring the bundle loader.
+
+Why: `scripts/build-sea.mjs` generates a CJS stub that extracts the ESM
+bundle (which contains top-level await from ink + yoga + the AI/AWS SDKs,
+hence can't be CJS) to a temp file and dynamic-imports it. From Node 23+
+this throws `ERR_UNKNOWN_BUILTIN_MODULE` — the documented behaviour per
+the [Node SEA docs](https://nodejs.org/api/single-executable-applications.html):
+
+> Attempting to use `import()` to load modules from the file system will
+> throw an error.
+
+Node 22 falls through to the regular ESM loader for file URLs and
+happens to work; Node 23+ enforces the ban. `module.createRequire()`
+isn't a workaround for us because `require()` of an ESM bundle with
+top-level await fails `ERR_REQUIRE_ASYNC_MODULE`. Lifting the pin needs
+rewriting external imports as `createRequire(execPath)` calls (likely an
+esbuild plugin) and switching the SEA config to `mainFormat: "module"`.
+
 ## Local development
 
 The recommended local dev loop for **all** agent-runtime work — services,

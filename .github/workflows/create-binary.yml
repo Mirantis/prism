@@ -42,7 +42,12 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '26'
+          # SEA build is pinned to Node 22: Node 23+ enforces the documented
+          # ban on dynamic-importing file URLs from the injected main, which
+          # is exactly what our CJS stub does to load the ESM bundle (see
+          # scripts/build-sea.mjs and CLAUDE.md). Bumping requires a real
+          # refactor of how externals get into the bundle.
+          node-version: '22'
           cache: 'npm'
           registry-url: 'https://npm.pkg.github.com'
 
