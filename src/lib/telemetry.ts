@@ -37,8 +37,8 @@ export function initTelemetry(): void {
   }
 
   const resource = resourceFromAttributes({
-    [ATTR_SERVICE_NAME]: 'lens-agents-runtime',
-    [ATTR_SERVICE_NAMESPACE]: 'lens-agents',
+    [ATTR_SERVICE_NAME]: 'prism-agent-runtime',
+    [ATTR_SERVICE_NAMESPACE]: 'prism-agent',
     [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: config.deploymentEnvironment,
   });
 
