@@ -89,7 +89,9 @@ if (existsSync(prismaGen)) {
   cpSync(prismaGen, path.join(OUT_MODULES, '.prisma'), { recursive: true, dereference: true });
   console.log('[collect-natives] .prisma/client (generated + engine)');
 } else {
-  console.error('[collect-natives] WARNING: node_modules/.prisma not found — run `npm run prisma:generate`');
+  const message = '[collect-natives] ERROR: node_modules/.prisma not found — run `npm run prisma:generate`';
+  console.error(message);
+  throw new Error(message);
 }
 
 // 3. The built web UI.
