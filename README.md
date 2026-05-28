@@ -33,6 +33,30 @@ its own calendar, and can act over a shell.
 
 ## Quick Start
 
+### One-line install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lensapp/prism-agent/main/install.sh | bash
+```
+
+Installs the `prism` (terminal UI) and `prism-server` (runtime) binaries
+into `~/.prism`, puts `prism` on your `PATH`, and registers `prism-server`
+to run always via launchd (macOS) / systemd (Linux). macOS + Linux only.
+
+`AWS_BEARER_TOKEN_BEDROCK` is required for chat. If it's exported in your
+shell when you run the installer, it's baked into `~/.prism/.env`
+automatically and the service comes up working out of the box:
+
+```bash
+export AWS_BEARER_TOKEN_BEDROCK=<your-key>
+curl -fsSL https://raw.githubusercontent.com/lensapp/prism-agent/main/install.sh | bash
+```
+
+Otherwise the installer writes `~/.prism/.env` with empty placeholders —
+edit it and restart the service
+(`launchctl kickstart -k "gui/$(id -u)/com.prism.server"` on macOS,
+`systemctl --user restart prism-server` on Linux).
+
 ### Using Docker
 
 Start the agent and boot into terminal ui:

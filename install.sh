@@ -29,10 +29,36 @@ esac
 
 DIST="${PRISM_DIST:-$SCRIPT_DIR/dist-sea/${plat}-${a}}"
 if [ ! -x "$DIST/prism-server" ] || [ ! -x "$DIST/prism" ]; then
-  echo "Binaries not found in $DIST." >&2
-  echo "Build them first: node scripts/build-sea.mjs prism && node scripts/build-sea.mjs prism-server && npm run build:web && node scripts/collect-natives.mjs" >&2
-  echo "or set PRISM_DIST to a directory containing prism, prism-server, node_modules/ and web/." >&2
-  exit 1
+  # No local build present — fetch the latest release archive for this
+  # platform. Lets the installer also work via `curl … | bash` (no checkout
+  # required). Override locally by setting PRISM_DIST.
+  echo "No local build at $DIST; fetching the latest release from GitHub…"
+  TAG=$(curl -fsSL https://api.github.com/repos/lensapp/prism-agent/releases/latest \
+        | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+        | sed -E 's/.*"([^"]+)"$/\1/' \
+        | head -n1)
+  if [ -z "$TAG" ]; then
+    echo "Could not resolve the latest release. Set PRISM_DIST to a local build to install offline." >&2
+    exit 1
+  fi
+  OS_ARCH="${plat}-${a}"
+  ARCHIVE="prism-${TAG}-${OS_ARCH}.tar.gz"
+  URL="https://github.com/lensapp/prism-agent/releases/download/${TAG}/${ARCHIVE}"
+  TMP="$(mktemp -d)"
+  trap 'rm -rf "$TMP"' EXIT
+  echo "Downloading ${ARCHIVE} (${TAG})…"
+  if ! curl -fsSL -o "$TMP/$ARCHIVE" "$URL"; then
+    echo "Download failed: $URL" >&2
+    echo "Make sure the latest release publishes ${ARCHIVE} (your platform/arch)." >&2
+    exit 1
+  fi
+  echo "Extracting…"
+  tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
+  DIST="$TMP/$OS_ARCH"
+  if [ ! -x "$DIST/prism-server" ] || [ ! -x "$DIST/prism" ]; then
+    echo "Extracted archive doesn't contain expected layout at $OS_ARCH/" >&2
+    exit 1
+  fi
 fi
 
 echo "Installing Prism into $PRISM_HOME (from $DIST)"
@@ -46,15 +72,23 @@ cp -R "$DIST/web" "$PRISM_HOME/web"
 
 # Config template — never clobber an existing one.
 if [ ! -f "$PRISM_HOME/.env" ]; then
-  cat > "$PRISM_HOME/.env" <<'EOF'
+  # Bake AWS_BEARER_TOKEN_BEDROCK from the installer's environment when set —
+  # launchd/systemd run the service with an isolated env, so the user's shell
+  # exports otherwise wouldn't reach it. Heredoc isn't single-quoted so the
+  # var expands; `\$(id -u)` keeps the macOS restart hint literal.
+  cat > "$PRISM_HOME/.env" <<EOF
 # Prism server configuration. Restart the service after editing:
-#   macOS: launchctl kickstart -k "gui/$(id -u)/com.prism.server"
+#   macOS: launchctl kickstart -k "gui/\$(id -u)/com.prism.server"
 #   Linux: systemctl --user restart prism-server
-AWS_BEARER_TOKEN_BEDROCK=
+AWS_BEARER_TOKEN_BEDROCK=${AWS_BEARER_TOKEN_BEDROCK:-}
 # SLACK_BOT_TOKEN=
 # SLACK_APP_TOKEN=
 EOF
-  echo "Wrote $PRISM_HOME/.env — set AWS_BEARER_TOKEN_BEDROCK for chat."
+  if [ -n "${AWS_BEARER_TOKEN_BEDROCK:-}" ]; then
+    echo "Wrote $PRISM_HOME/.env with AWS_BEARER_TOKEN_BEDROCK from the installer environment."
+  else
+    echo "Wrote $PRISM_HOME/.env — set AWS_BEARER_TOKEN_BEDROCK for chat."
+  fi
 fi
 
 # Put `prism` on PATH.
