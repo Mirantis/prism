@@ -7,6 +7,12 @@ scheduling in-process, manages Slack connections via Bolt SDK with Socket Mode,
 runs the conversation engine and message delivery locally, and delivers results
 directly to users via local channel adapters (WebSocket, Slack).
 
+## Commit messages
+
+This repo uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
+Every commit subject must use the `<type>(<scope>): <description>` form —
+common types are `feat`, `fix`, `refactor`, `ci`, `docs`, `chore`, and `test`.
+
 ## Deployment shape
 
 One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
