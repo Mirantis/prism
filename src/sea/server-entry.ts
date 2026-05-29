@@ -49,7 +49,10 @@ process.env.SHELL_WORKSPACE_ROOT ??= path.join(dataDir, 'workspace');
 async function main(): Promise<void> {
   // 0. Ensure the shell/claude_code workspace root exists before the runtime
   //    boots — a missing cwd makes tool subprocess spawns fail with ENOENT.
-  await fs.promises.mkdir(process.env.SHELL_WORKSPACE_ROOT!, { recursive: true });
+  if (!process.env.SHELL_WORKSPACE_ROOT) {
+    process.env.SHELL_WORKSPACE_ROOT = path.join(dataDir, 'workspace');
+  }
+  await fs.promises.mkdir(process.env.SHELL_WORKSPACE_ROOT, { recursive: true });
 
   // 1. Promote any staged `.prism` restore before anything opens the DB.
   await import('../scripts/apply-pending-import.js');
