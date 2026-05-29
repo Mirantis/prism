@@ -101,6 +101,10 @@ BINDIR="/usr/local/bin"
 mkdir -p "$BINDIR"
 ln -sf "$PRISM_HOME/prism" "$BINDIR/prism"
 echo "Linked $BINDIR/prism -> $PRISM_HOME/prism"
+case ":$PATH:" in
+  *":$BINDIR:"*) ;;
+  *) echo "WARN: $BINDIR is not on \$PATH — add it to your shell rc to run 'prism' directly." ;;
+esac
 
 # Register prism-server to run always.
 if [ "$plat" = "darwin" ]; then
