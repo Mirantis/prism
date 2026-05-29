@@ -72,14 +72,15 @@ export const config = {
   langfusePublicKey: process.env.LANGFUSE_PUBLIC_KEY,
   langfuseBaseUrl: process.env.LANGFUSE_BASE_URL || 'http://localhost:3100',
 
-  // Nexus LLM proxy base URL. /{projectId}/llm/bedrock/{region} when
-  // PROJECT_ID is set; /bedrock/{region} when PROJECT_ID is unset; and
-  // null when NEXUS_API_URL itself is unset (callers route direct
-  // Bedrock instead of going through Nexus).
+  // Nexus LLM proxy base URL. Mirrors the Nexus route mounts:
+  //   /projects/{projectId}/llm/bedrock/{region}  (explicit project — PROJECT_ID set)
+  //   /llm/bedrock/{region}                        (auto-resolve project — PROJECT_ID unset)
+  // null when NEXUS_API_URL itself is unset (callers route direct Bedrock
+  // instead of going through Nexus).
   nexusLlmBaseUrl: nexusApiUrl
     ? (projectId
-        ? `${nexusApiUrl}/${projectId}/llm/bedrock/${awsRegion}`
-        : `${nexusApiUrl}/bedrock/${awsRegion}`)
+        ? `${nexusApiUrl}/projects/${projectId}/llm/bedrock/${awsRegion}`
+        : `${nexusApiUrl}/llm/bedrock/${awsRegion}`)
     : null,
 
   // OpenTelemetry (optional — disabled when not set)
