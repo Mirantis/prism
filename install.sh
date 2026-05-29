@@ -142,6 +142,7 @@ EOF
   # modern macOS, so retry a few times before giving up.
   DOMAIN="gui/$(id -u)"
   SERVICE="$DOMAIN/com.prism.server"
+  echo "Registering launchd service com.prism.server (this can take a moment)…"
   launchctl unload "$PLIST" 2>/dev/null || true
   launchctl load "$PLIST" 2>/dev/null || true
   for _ in 1 2 3 4 5; do
@@ -173,6 +174,7 @@ RestartSec=2
 [Install]
 WantedBy=default.target
 EOF
+  echo "Registering systemd user service prism-server (this can take a moment)…"
   systemctl --user daemon-reload
   systemctl --user enable --now prism-server.service
   echo "Enabled systemd user service prism-server"
