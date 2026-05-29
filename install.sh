@@ -63,6 +63,10 @@ fi
 
 echo "Installing Prism into $PRISM_HOME (from $DIST)"
 mkdir -p "$PRISM_HOME"
+# Workspace root for the shell / claude_code tools. The runtime's built-in
+# default (/home/node) is the Docker sandbox path and doesn't exist here; a
+# missing cwd makes tool subprocess spawns fail with a misleading ENOENT.
+mkdir -p "$PRISM_HOME/workspace"
 cp "$DIST/prism" "$PRISM_HOME/prism"
 cp "$DIST/prism-server" "$PRISM_HOME/prism-server"
 chmod +x "$PRISM_HOME/prism" "$PRISM_HOME/prism-server"
@@ -125,6 +129,7 @@ if [ "$plat" = "darwin" ]; then
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH</string>
+    <key>SHELL_WORKSPACE_ROOT</key><string>$PRISM_HOME/workspace</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -168,6 +173,9 @@ EnvironmentFile=-$PRISM_HOME/.env
 # systemd user units start with a minimal PATH, but the runtime spawns user
 # CLIs by bare name (e.g. claude). Bake a PATH with the common install dirs.
 Environment=PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH
+# Workspace root for the shell / claude_code tools (the built-in /home/node
+# default doesn't exist on a standalone install).
+Environment=SHELL_WORKSPACE_ROOT=$PRISM_HOME/workspace
 Restart=always
 RestartSec=2
 
