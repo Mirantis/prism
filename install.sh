@@ -70,13 +70,17 @@ rm -rf "$PRISM_HOME/node_modules" "$PRISM_HOME/web"
 cp -R "$DIST/node_modules" "$PRISM_HOME/node_modules"
 cp -R "$DIST/web" "$PRISM_HOME/web"
 
-# macOS: archives fetched over the network carry com.apple.quarantine, and our
-# binaries are only ad-hoc-signed (no Developer ID / notarization yet), so
-# Gatekeeper would refuse to launch them. Strip the attribute recursively to
-# also clear the native sidecar .dylibs (better-sqlite3, sqlite-vec). Tolerate
-# absence — a local build copied with cp won't have it.
+# macOS: archives fetched over the network (browser download + extract) carry
+# com.apple.quarantine, and our binaries are only ad-hoc-signed (no Developer
+# ID / notarization yet), so Gatekeeper would refuse to launch them. Strip the
+# attribute from both binaries and node_modules — the latter holds the native
+# libs prism-server dlopen()s (better-sqlite3, sqlite-vec, the prisma engine),
+# which Gatekeeper assesses too. Scoped to those paths so a reinstall doesn't
+# walk agent.db/logs; tolerant of absence — a local cp build won't carry it.
 if [ "$os" = "Darwin" ]; then
-  xattr -dr com.apple.quarantine "$PRISM_HOME" 2>/dev/null || true
+  xattr -dr com.apple.quarantine \
+    "$PRISM_HOME/prism" "$PRISM_HOME/prism-server" "$PRISM_HOME/node_modules" \
+    2>/dev/null || true
 fi
 
 # Config template — never clobber an existing one.
