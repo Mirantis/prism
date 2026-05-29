@@ -20,6 +20,7 @@
     "build:web": "npm --workspace=prism-agent-web run build",
     "build:binaries": "bash scripts/build-binaries.sh",
     "worktree": "bash scripts/create-worktree.sh",
+    "cleanup:local": "bash cleanup-local-prism.sh",
     "prestart": "npm run build",
     "start": "node dist/index.js",
     "docker:build": "printf '@lensapp:registry=https://npm.pkg.github.com/\\n//npm.pkg.github.com/:_authToken=%s\\n' \"$NODE_AUTH_TOKEN\" > .npmrc-secret && docker build --load --secret id=npmrc,src=.npmrc-secret -t prism-agent:local -f Dockerfile . ; rm -f .npmrc-secret",
