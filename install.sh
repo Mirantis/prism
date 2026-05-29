@@ -118,6 +118,14 @@ if [ "$plat" = "darwin" ]; then
   <key>Label</key><string>com.prism.server</string>
   <key>ProgramArguments</key><array><string>$PRISM_HOME/prism-server</string></array>
   <key>WorkingDirectory</key><string>$PRISM_HOME</string>
+  <!-- launchd starts the service with a minimal PATH (/usr/bin:/bin:...), but
+       the runtime spawns user CLIs by bare name (e.g. \`claude\`). Bake a PATH
+       that includes the common install dirs so those resolve. Unquoted heredoc
+       expands \$HOME/\$PATH to the installer's values. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>$PRISM_HOME/server.log</string>
@@ -156,6 +164,9 @@ Type=simple
 ExecStart=$PRISM_HOME/prism-server
 WorkingDirectory=$PRISM_HOME
 EnvironmentFile=-$PRISM_HOME/.env
+# systemd user units start with a minimal PATH, but the runtime spawns user
+# CLIs by bare name (e.g. claude). Bake a PATH with the common install dirs.
+Environment=PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH
 Restart=always
 RestartSec=2
 
