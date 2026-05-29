@@ -57,8 +57,12 @@ async function main(): Promise<void> {
     db.close();
   }
 
-  // 3. Embedding backfill — best-effort, never blocks startup.
-  void import('../scripts/backfill-embeddings.js').catch(() => {});
+  // 3. Embedding backfill — best-effort, never blocks startup. Surface
+  //    errors on stderr so a broken backfill (e.g. sidecar sqlite-vec
+  //    resolution failure) leaves a trail instead of silently dropping.
+  void import('../scripts/backfill-embeddings.js').catch((err) => {
+    process.stderr.write(`[prism-server] backfill failed: ${err}\n`);
+  });
 
   // 4. Boot the runtime.
   await import('../index.js');
