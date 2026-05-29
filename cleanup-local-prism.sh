@@ -9,7 +9,11 @@
 set -euo pipefail
 
 PRISM_HOME="${PRISM_HOME:-$HOME/.prism}"
-
+PRISM_HOME="${PRISM_HOME%/}"
+if [ -z "$PRISM_HOME" ] || [ "$PRISM_HOME" = "/" ] || [ "$PRISM_HOME" = "$HOME" ]; then
+  echo "Refusing to delete unsafe PRISM_HOME='$PRISM_HOME'" >&2
+  exit 1
+fi
 YES=0
 case "${1:-}" in
   -y|--yes) YES=1 ;;
