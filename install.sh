@@ -80,6 +80,10 @@ if [ ! -f "$PRISM_HOME/.env" ]; then
 # Prism server configuration. Restart the service after editing:
 #   macOS: launchctl kickstart -k "gui/\$(id -u)/com.prism.server"
 #   Linux: systemctl --user restart prism-server
+#
+# DATABASE_URL is hard-coded to file:\$PRISM_HOME/agent.db by the
+# prism-server binary before this file is read, so setting it here has no
+# effect — move \$PRISM_HOME if you need a different location.
 AWS_BEARER_TOKEN_BEDROCK=${AWS_BEARER_TOKEN_BEDROCK:-}
 # SLACK_BOT_TOKEN=
 # SLACK_APP_TOKEN=
