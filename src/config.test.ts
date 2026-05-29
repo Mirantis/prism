@@ -91,4 +91,28 @@ describe('config', () => {
     expect(cfg.agentName).toBe('Prism');
     expect(cfg.teamName).toBe('Local');
   });
+
+  it('nexusLlmBaseUrl is null when NEXUS_API_URL is unset', async () => {
+    delete process.env.NEXUS_API_URL;
+    const cfg = await loadConfig();
+    expect(cfg.nexusLlmBaseUrl).toBeNull();
+  });
+
+  it('builds the auto-resolve LLM URL (/llm/...) when PROJECT_ID is unset', async () => {
+    process.env.NEXUS_API_URL = 'https://nexus.example.com';
+    delete process.env.PROJECT_ID;
+    process.env.AWS_REGION = 'us-east-1';
+    const cfg = await loadConfig();
+    expect(cfg.nexusLlmBaseUrl).toBe('https://nexus.example.com/llm/bedrock/us-east-1');
+  });
+
+  it('builds the explicit-project LLM URL (/projects/...) when PROJECT_ID is set', async () => {
+    process.env.NEXUS_API_URL = 'https://nexus.example.com';
+    process.env.PROJECT_ID = 'proj-42';
+    process.env.AWS_REGION = 'eu-west-1';
+    const cfg = await loadConfig();
+    expect(cfg.nexusLlmBaseUrl).toBe(
+      'https://nexus.example.com/projects/proj-42/llm/bedrock/eu-west-1',
+    );
+  });
 });
