@@ -31,6 +31,16 @@ describe('applyMigrations', () => {
     db.close();
   });
 
+  it('throws when an already-applied migration has drifted on disk', () => {
+    const db = new Database(':memory:');
+    applyMigrations(db, [{ name: '001_init', sql: 'CREATE TABLE a (id INTEGER);' }]);
+    // Same name, different SQL → simulates an edit-after-deploy.
+    expect(() =>
+      applyMigrations(db, [{ name: '001_init', sql: 'CREATE TABLE a (id INTEGER, extra TEXT);' }]),
+    ).toThrow(/drifted/);
+    db.close();
+  });
+
   it('rolls back a failing migration and records nothing for it', () => {
     const db = new Database(':memory:');
     expect(() =>

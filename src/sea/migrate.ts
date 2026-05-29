@@ -40,13 +40,16 @@ CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
 export function applyMigrations(db: Database, migrations: Migration[]): string[] {
   db.exec(CREATE_MIGRATIONS_TABLE);
 
-  const applied = new Set(
+  const applied = new Map<string, string>(
     db
       .prepare(
-        'SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL',
+        'SELECT migration_name, checksum FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL',
       )
       .all()
-      .map((row) => (row as { migration_name: string }).migration_name),
+      .map((row) => {
+        const r = row as { migration_name: string; checksum: string };
+        return [r.migration_name, r.checksum];
+      }),
   );
 
   const ordered = [...migrations].sort((a, b) => a.name.localeCompare(b.name));
@@ -58,8 +61,20 @@ export function applyMigrations(db: Database, migrations: Migration[]): string[]
 
   const done: string[] = [];
   for (const migration of ordered) {
-    if (applied.has(migration.name)) continue;
     const checksum = crypto.createHash('sha256').update(migration.sql).digest('hex');
+    const recorded = applied.get(migration.name);
+    if (recorded !== undefined) {
+      // Drift detection: parity with `prisma migrate deploy` — the SQL of an
+      // already-applied migration must not have changed since it ran.
+      if (recorded !== checksum) {
+        throw new Error(
+          `Migration "${migration.name}" has drifted (bundled checksum ${checksum} ` +
+            `!= recorded ${recorded}). Roll the change forward as a new migration ` +
+            `instead of editing an applied one.`,
+        );
+      }
+      continue;
+    }
     const apply = db.transaction(() => {
       db.exec(migration.sql);
       record.run(crypto.randomUUID(), checksum, migration.name);
