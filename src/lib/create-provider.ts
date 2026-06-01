@@ -9,10 +9,14 @@
  */
 
 import { config } from '../config';
+import { logger } from '../logger';
 import { createBedrockProvider } from './bedrock-provider';
 import { createNexusProvider } from './nexus-provider';
 
 export function createProvider() {
+  logger.info(
+    `createProvider: using ${config.nexusLlmBaseUrl ? 'Nexus' : 'direct Bedrock'} provider (nexusLlmBaseUrl=${config.nexusLlmBaseUrl ?? 'null'})`,
+  );
   return config.nexusLlmBaseUrl
     ? createNexusProvider(config.nexusLlmBaseUrl)
     : createBedrockProvider();

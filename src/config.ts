@@ -57,6 +57,7 @@ export const config = {
   teamName: process.env.TEAM_NAME || 'Local',
 
   nexusApiUrl,
+  projectId,
 
   // Slack — bot token + optional app-id safety check.
   slackBotToken: process.env.SLACK_BOT_TOKEN,

@@ -56,6 +56,15 @@ webSocketGatewayService.initialize(httpServer);
 
 const initialize = async () => {
   try {
+    logger.info(
+      {
+        nexusApiUrl: config.nexusApiUrl ?? '<unset>',
+        projectId: config.projectId ?? '<unset>',
+        awsRegion: config.awsRegion,
+      },
+      '[Startup] configuration',
+    );
+
     // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
     // either picks up the existing row via findFirst() or creates a
     // fresh one with a generated UUID. Auth is handled by Nexus inbound
