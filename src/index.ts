@@ -35,6 +35,7 @@ import { webSocketGatewayService } from './services/websocket-gateway.service';
 import { messageDeliveryService } from './services/message-delivery.service';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
+import { getProviderType } from './lib/create-provider';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
 
 // Initialize Langfuse tracing before any LLM calls
@@ -58,7 +59,9 @@ const initialize = async () => {
   try {
     logger.info(
       {
+        provider: getProviderType(),
         nexusApiUrl: config.nexusApiUrl ?? '<unset>',
+        nexusLlmBaseUrl: config.nexusLlmBaseUrl ?? '<unset>',
         projectId: config.projectId ?? '<unset>',
         awsRegion: config.awsRegion,
       },

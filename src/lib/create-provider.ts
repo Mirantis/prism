@@ -9,15 +9,20 @@
  */
 
 import { config } from '../config';
-import { logger } from '../logger';
 import { createBedrockProvider } from './bedrock-provider';
 import { createNexusProvider } from './nexus-provider';
 
+/**
+ * Which provider `createProvider()` will pick: `'nexus'` when a Nexus LLM
+ * base URL is configured, otherwise `'direct'` Bedrock. Exposed so startup
+ * can log the selection once instead of on every (hot-path) invocation.
+ */
+export function getProviderType(): 'nexus' | 'direct' {
+  return config.nexusLlmBaseUrl ? 'nexus' : 'direct';
+}
+
 export function createProvider() {
-  logger.info(
-    `createProvider: using ${config.nexusLlmBaseUrl ? 'Nexus' : 'direct Bedrock'} provider (nexusLlmBaseUrl=${config.nexusLlmBaseUrl ?? 'null'})`,
-  );
-  return config.nexusLlmBaseUrl
-    ? createNexusProvider(config.nexusLlmBaseUrl)
+  return getProviderType() === 'nexus'
+    ? createNexusProvider(config.nexusLlmBaseUrl!)
     : createBedrockProvider();
 }
