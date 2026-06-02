@@ -43,9 +43,9 @@ Security-sensitive areas include:
   whether an unauthenticated or cross-tenant caller can drive heartbeat, cron,
   Slack, or thread operations.
 - **Prompt-driven actions** — whether untrusted content arriving over a channel
-  (Slack message, thread history) can steer the agent into unsafe tool use or
-  data exfiltration.
-
+- **Agent access control** — auth is terminated by Nexus inbound routing in front
+  of the container; the runtime pins WebSocket connections to `OWNER_USER_ID` and
+  rejects requests that target a different `AGENT_ID`.
 ## Security Boundaries
 
 The intended boundary is: each agent runs scoped to its own `AGENT_ID` and its
