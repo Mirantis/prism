@@ -43,6 +43,8 @@ Security-sensitive areas include:
   runtime trusts inbound connections, so any unintended network exposure can
   allow callers to drive heartbeat, cron, Slack, or thread operations.
 - **Prompt-driven actions** — whether untrusted content arriving over a channel
+  (a Slack message, thread history, a tool result) can steer the agent into
+  unsafe tool use or data exfiltration.
 - **Agent access control** — auth is terminated by Nexus inbound routing in front
   of the container; the runtime pins WebSocket connections to `OWNER_USER_ID` and
   rejects requests that target a different `AGENT_ID`.
