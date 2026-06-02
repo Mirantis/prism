@@ -1037,6 +1037,8 @@ router.post('/slack/verify-channel-link-code', async (req: Request, res: Respons
 const MAX_CODE_ATTEMPTS = 5;
 
 router.post('/slack/create-verification-code', async (req: Request, res: Response) => {
+  logger.info('[Management] Received request to create Slack verification code');
+
   // Cleanup expired codes opportunistically (fire-and-forget)
   prisma.slackVerificationCode.deleteMany({
     where: { expiresAt: { lt: new Date() } },
@@ -1045,6 +1047,7 @@ router.post('/slack/create-verification-code', async (req: Request, res: Respons
   try {
     const { type, lensUserId, connectionId, agentId, agentName, expiresAt } = req.body;
     if (!type || !lensUserId || !connectionId || !agentId || !expiresAt) {
+      logger.warn('[Management] Rejecting create verification code request: missing required fields');
       res.status(400).json({ error: 'Missing required fields: type, lensUserId, connectionId, agentId, expiresAt' });
       return;
     }
@@ -1060,12 +1063,15 @@ router.post('/slack/create-verification-code', async (req: Request, res: Respons
     };
 
     for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt++) {
+      logger.debug(`[Management] Generating verification code, attempt ${attempt + 1}/${MAX_CODE_ATTEMPTS}`);
       const code = randomBytes(3).toString('hex').toUpperCase();
       try {
         await prisma.slackVerificationCode.create({ data: { ...data, code } });
         res.json({ code });
         return;
       } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        logger.error(`[Management] Error creating verification code on attempt ${attempt + 1}/${MAX_CODE_ATTEMPTS}: ${msg}`);
         if (
           error instanceof Prisma.PrismaClientKnownRequestError &&
           error.code === 'P2002' &&
@@ -1077,6 +1083,7 @@ router.post('/slack/create-verification-code', async (req: Request, res: Respons
       }
     }
 
+    logger.error(`[Management] Failed to generate a unique verification code after ${MAX_CODE_ATTEMPTS} attempts`);
     res.status(500).json({ error: 'Failed to generate a unique verification code' });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
