@@ -39,9 +39,9 @@ Security-sensitive areas include:
 - **The WebSocket gateway** — the backend verifies the JWT and proxies the
   upgrade; the runtime only decodes it. Whether a forged or replayed token can
   reach `conversationEngineService.chat()`.
-- **The management and internal API surface** (`/agents/*`, `/internal/api/*`) —
-  whether an unauthenticated or cross-tenant caller can drive heartbeat, cron,
-  Slack, or thread operations.
+- **The HTTP API surface** (`/agents/*`, `/single-agent/*`, `/api/ws`) — the
+  runtime trusts inbound connections, so any unintended network exposure can
+  allow callers to drive heartbeat, cron, Slack, or thread operations.
 - **Prompt-driven actions** — whether untrusted content arriving over a channel
 - **Agent access control** — auth is terminated by Nexus inbound routing in front
   of the container; the runtime pins WebSocket connections to `OWNER_USER_ID` and
