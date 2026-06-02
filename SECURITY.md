@@ -46,6 +46,7 @@ Security-sensitive areas include:
 - **Agent access control** — auth is terminated by Nexus inbound routing in front
   of the container; the runtime pins WebSocket connections to `OWNER_USER_ID` and
   rejects requests that target a different `AGENT_ID`.
+
 ## Security Boundaries
 
 The intended boundary is: each agent runs scoped to its own `AGENT_ID` and its
