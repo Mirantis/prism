@@ -42,7 +42,7 @@
     "@opentelemetry/exporter-logs-otlp-http": "^0.213.0",
     "@opentelemetry/resources": "^2.6.0",
     "@opentelemetry/sdk-logs": "^0.213.0",
-    "@opentelemetry/sdk-node": "^0.213.0",
+    "@opentelemetry/sdk-node": "^0.218.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
     "@prisma/client": "^6.19.2",
     "@slack/bolt": "^4.6.0",
