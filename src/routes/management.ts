@@ -1044,8 +1044,11 @@ router.post('/slack/create-verification-code', async (req: Request, res: Respons
     where: { expiresAt: { lt: new Date() } },
   }).catch(() => {});
 
+  logger.debug('[Management] Triggered opportunistic cleanup of expired Slack verification codes');
+
   try {
     const { type, lensUserId, connectionId, agentId, agentName, expiresAt } = req.body;
+    logger.info({ type, lensUserId, connectionId, agentId, agentName, expiresAt }, '[Management] Create verification code request body');
     if (!type || !lensUserId || !connectionId || !agentId || !expiresAt) {
       logger.warn('[Management] Rejecting create verification code request: missing required fields');
       res.status(400).json({ error: 'Missing required fields: type, lensUserId, connectionId, agentId, expiresAt' });
