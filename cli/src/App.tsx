@@ -46,6 +46,12 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // Input + popup). Panel commands set this via openPanel; the panels call
   // closePanel (wired to onClose) to return to chat.
   const [activePanel, setActivePanel] = useState<PanelId | null>(null);
+  // Submitted-input history for Up/Down recall (oldest → newest). historyIndex
+  // is null when not browsing; otherwise it's the index of the entry currently
+  // shown in the input. Up enters history only from an empty input, then walks
+  // to older entries; editing the input exits browsing.
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   // Swallow the next onChange from <Input>. ink-text-input does not filter
   // Ctrl-modifier keys other than Ctrl+C, so Ctrl+O would otherwise append
   // 'o' to the input value via its own useInput → onChange path. We set the
@@ -208,21 +214,55 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       }
       return;
     }
-    if (!slashMode || filteredCommands.length === 0) return;
+    // While the slash popup is open, Up/Down move its selection and Tab
+    // autocompletes — that takes precedence over history recall.
+    if (slashMode && filteredCommands.length > 0) {
+      if (key.upArrow) {
+        setCommandIndex((i) => (i - 1 + filteredCommands.length) % filteredCommands.length);
+        return;
+      }
+      if (key.downArrow) {
+        setCommandIndex((i) => (i + 1) % filteredCommands.length);
+        return;
+      }
+      if (key.tab) {
+        const chosen = filteredCommands[safeIndex];
+        if (chosen) {
+          setInputValue(chosen.name + ' ');
+          setInputResetKey((k) => k + 1);
+        }
+      }
+      return;
+    }
+
+    // Command history recall (popup not showing). Up enters history from an
+    // empty input and walks to older entries; Down walks back toward the
+    // newest and clears the input past the end. Each recall remounts <Input>
+    // so ink-text-input's cursor lands at the end of the value.
     if (key.upArrow) {
-      setCommandIndex((i) => (i - 1 + filteredCommands.length) % filteredCommands.length);
+      if (history.length === 0) return;
+      // From an idle (non-browsing) state, only hijack Up when the input is
+      // empty so a half-typed draft is never clobbered.
+      if (historyIndex === null && inputValue.length > 0) return;
+      const nextIndex =
+        historyIndex === null ? history.length - 1 : Math.max(0, historyIndex - 1);
+      setHistoryIndex(nextIndex);
+      setInputValue(history[nextIndex] ?? '');
+      setInputResetKey((k) => k + 1);
       return;
     }
     if (key.downArrow) {
-      setCommandIndex((i) => (i + 1) % filteredCommands.length);
-      return;
-    }
-    if (key.tab) {
-      const chosen = filteredCommands[safeIndex];
-      if (chosen) {
-        setInputValue(chosen.name + ' ');
+      if (historyIndex === null) return;
+      const nextIndex = historyIndex + 1;
+      if (nextIndex >= history.length) {
+        setHistoryIndex(null);
+        setInputValue('');
         setInputResetKey((k) => k + 1);
+        return;
       }
+      setHistoryIndex(nextIndex);
+      setInputValue(history[nextIndex] ?? '');
+      setInputResetKey((k) => k + 1);
     }
   }, { isActive: activePanel === null });
 
@@ -230,6 +270,11 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+
+      // Record the submission for Up/Down recall (skip consecutive dupes) and
+      // reset the browse cursor.
+      setHistory((h) => (h[h.length - 1] === trimmed ? h : [...h, trimmed]));
+      setHistoryIndex(null);
 
       // Slash-command dispatch: if the head word is a registered command, run
       // it locally (with any arguments) instead of sending it to the agent.
@@ -276,6 +321,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       swallowNextChangeRef.current = false;
       return;
     }
+    // Real typing exits history browsing — programmatic recalls set the value
+    // directly and never route through onChange, so they keep the cursor.
+    setHistoryIndex(null);
     setInputValue(newValue);
   }, []);
 
