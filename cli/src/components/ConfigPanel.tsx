@@ -57,9 +57,11 @@ export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({
   // can window it manually — Ink has no native scrolling.
   const selectedField = DOCS[selected]!.field;
   const rawContent = details ? String(details[selectedField] ?? '') : '';
+  // Left pane is 24 cols + 2 cols marginRight; outer paddingX={1} consumes 2 cols.
+  const contentWidth = Math.max(40, (process.stdout.columns ?? 100) - 24 - 2 - 2);
   const lines = useMemo(
-    () => (rawContent.trim().length === 0 ? [] : renderMarkdown(rawContent).split('\n')),
-    [rawContent],
+    () => (rawContent.trim().length === 0 ? [] : renderMarkdown(rawContent, contentWidth).split('\n')),
+    [rawContent, contentWidth],
   );
 
   // Reset the scroll position whenever the selected doc changes so a new doc
