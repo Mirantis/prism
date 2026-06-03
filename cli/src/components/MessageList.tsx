@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { marked } from 'marked';
-import { markedTerminal } from 'marked-terminal';
+import { renderMarkdown } from '../markdown.js';
 import { TuiMessage } from '../tui-adapter.js';
 
 export type ChatEntry = { kind: 'message'; message: TuiMessage };
@@ -40,28 +39,6 @@ interface Props {
   expandedMessageId: string | null;
 }
 
-let rendererInstalled = false;
-function ensureMarkedConfigured(): void {
-  if (rendererInstalled) return;
-  marked.use(
-    markedTerminal({
-      reflowText: true,
-      width: Math.max(40, (process.stdout.columns || 100) - 6),
-    }) as Parameters<typeof marked.use>[0],
-  );
-  rendererInstalled = true;
-}
-
-function renderAgentMarkdown(content: string): string {
-  ensureMarkedConfigured();
-  try {
-    const out = marked(content) as unknown as string;
-    return typeof out === 'string' ? out.trimEnd() : content;
-  } catch {
-    return content;
-  }
-}
-
 function toolCallSummary(toolCalls: unknown): string | null {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) return null;
   const names = toolCalls
@@ -83,7 +60,7 @@ const MessageRow: React.FC<MessageRowProps> = ({ agentName, message, expanded })
   const prefixColor = isUser ? 'cyan' : isAgent ? 'magenta' : 'yellow';
   const prefixLabel = isUser ? 'You' : isAgent ? agentName : message.role;
   const summary = isAgent ? toolCallSummary(message.toolCalls) : null;
-  const body = isAgent ? renderAgentMarkdown(message.content) : message.content;
+  const body = isAgent ? renderMarkdown(message.content) : message.content;
   const calls = isAgent && isToolCallArray(message.toolCalls) ? message.toolCalls : [];
   const hasCalls = calls.length > 0;
 
