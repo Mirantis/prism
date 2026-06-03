@@ -90,9 +90,11 @@ describe('Prism CLI panels', () => {
     expect(tasks).toEqual([]);
   });
 
-  test('/config shows identity and the config docs', async () => {
+  test('/config shows identity, the focused file list, and the config docs', async () => {
     await dispatch(session, '/config');
     await session.waitForFrame(/Model/, 10_000);
+    // The file list is focused on open (its header reads "Files").
+    await session.waitForFrame(/Files/, 5_000);
     // The first doc labels are above the fold regardless of terminal height.
     for (const label of ['Soul', 'User', 'Memory', 'Heartbeat']) {
       await session.waitForFrame(new RegExp(label), 5_000);

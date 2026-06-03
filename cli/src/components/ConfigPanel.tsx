@@ -70,14 +70,16 @@ export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({
     setScrollOffset(0);
   }, [selected]);
 
-  const windowSize = Math.max(8, (process.stdout.rows ?? 24) - 8);
+  // Leave headroom for the outer header, the per-pane headers, and the footer.
+  const windowSize = Math.max(8, (process.stdout.rows ?? 24) - 10);
   const maxOffset = Math.max(0, lines.length - windowSize);
   const offset = Math.min(scrollOffset, maxOffset);
   const visibleLines = lines.slice(offset, offset + windowSize);
 
-  // Single useInput for the whole panel. Tab / left / right swap panes; the
-  // arrow keys then act on whichever pane is focused. 'r' retries on error,
-  // escape always closes.
+  // Single useInput for the whole panel. The focused pane (shown by the ▌ bar
+  // in the headers) decides what ↑/↓ act on. Tab toggles panes; → moves into
+  // the content, ← back to the file list — directional so they match the
+  // on-screen focus marker. 'r' retries on error, escape always closes.
   useInput((input, key) => {
     if (key.escape) {
       onClose();
@@ -87,8 +89,16 @@ export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({
       if (input === 'r') setReloadKey((k) => k + 1);
       return;
     }
-    if (key.tab || key.leftArrow || key.rightArrow) {
+    if (key.tab) {
       setPane((p) => (p === 'list' ? 'content' : 'list'));
+      return;
+    }
+    if (key.rightArrow) {
+      setPane('content');
+      return;
+    }
+    if (key.leftArrow) {
+      setPane('list');
       return;
     }
     if (pane === 'list') {
@@ -130,6 +140,13 @@ export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({
   }
 
   const heartbeatEvery = `every ${Math.round(details.heartbeatIntervalMs / 60000)}m`;
+  const listFocused = pane === 'list';
+  // Show the scroll window in the content header when the doc overflows, e.g.
+  // "1–24 / 120", so it's obvious there's more below the fold.
+  const scrollInfo =
+    lines.length > windowSize
+      ? `  ${offset + 1}–${Math.min(offset + windowSize, lines.length)} / ${lines.length}`
+      : '';
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -142,10 +159,19 @@ export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({
           <Text dimColor>Timezone {details.timezone}</Text>
           <Text dimColor>{`Heartbeat ${details.heartbeatStatus} ${heartbeatEvery}`}</Text>
           <Box marginTop={1} flexDirection="column">
+            {/* The ▌ bar marks the focused pane; the list dims when it isn't. */}
+            <Text bold color={listFocused ? 'cyan' : undefined} dimColor={!listFocused}>
+              {listFocused ? '▌ ' : '  '}Files
+            </Text>
             {DOCS.map((doc, i) => {
               const isSelected = i === selected;
               return (
-                <Text key={doc.field} color={isSelected ? 'cyan' : undefined}>
+                <Text
+                  key={doc.field}
+                  color={isSelected && listFocused ? 'cyan' : undefined}
+                  bold={isSelected && listFocused}
+                  dimColor={!listFocused}
+                >
                   {isSelected ? '▸ ' : '  '}
                   {doc.label}
                 </Text>
@@ -154,6 +180,11 @@ export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({
           </Box>
         </Box>
         <Box flexGrow={1} flexDirection="column">
+          <Text bold color={listFocused ? undefined : 'cyan'} dimColor={listFocused}>
+            {listFocused ? '  ' : '▌ '}
+            {DOCS[selected]!.label}
+            {scrollInfo}
+          </Text>
           {lines.length === 0 ? (
             <Text dimColor>(empty)</Text>
           ) : (
@@ -161,7 +192,11 @@ export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({
           )}
         </Box>
       </Box>
-      <Text dimColor>tab switch pane · ↑↓ scroll · esc close</Text>
+      <Text dimColor>
+        {listFocused
+          ? '↑↓ select · →/tab content · esc close'
+          : '↑↓ scroll · ←/tab files · esc close'}
+      </Text>
     </Box>
   );
 };
