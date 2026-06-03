@@ -120,4 +120,85 @@ describe('App', () => {
     expect(apiStub.listCronTasks).toHaveBeenCalled();
     unmount();
   });
+
+  // Command-history recall. /copy is a clean probe: it isn't echoed as a user
+  // message, and its result ("No message to copy yet.") doesn't contain the
+  // command text — so "/copy" in a frame means it's sitting in the input.
+  const submitCopy = async (
+    stdin: { write: (data: string) => void },
+    flush: () => Promise<unknown>,
+  ) => {
+    stdin.write('/copy');
+    await flush();
+    stdin.write('\r');
+    await flush();
+    await flush();
+  };
+
+  it('recalls the last submission when Up is pressed on an empty input', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    const flush = () => new Promise((r) => setImmediate(r));
+    await submitCopy(stdin, flush);
+    expect(lastFrame() ?? '').not.toContain('/copy');
+
+    stdin.write('\x1B[A'); // Up
+    await flush();
+    expect(lastFrame() ?? '').toContain('/copy');
+    unmount();
+  });
+
+  it('leaves a half-typed draft untouched when Up is pressed', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    const flush = () => new Promise((r) => setImmediate(r));
+    await submitCopy(stdin, flush);
+
+    stdin.write('draft'); // non-empty input, not browsing history
+    await flush();
+    stdin.write('\x1B[A'); // Up — must be ignored so the draft survives
+    await flush();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('draft');
+    expect(frame).not.toContain('/copy');
+    unmount();
+  });
+
+  it('clears the input when Down goes past the newest entry', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    const flush = () => new Promise((r) => setImmediate(r));
+    const count = (s: string, sub: string) => s.split(sub).length - 1;
+    // A plain chat message (not a slash command) so recall doesn't open the
+    // command popup, which would otherwise capture the Down key.
+    stdin.write('gamma-msg');
+    await flush();
+    stdin.write('\r');
+    await flush();
+
+    stdin.write('\x1B[A'); // Up → recall into the input
+    await flush();
+    expect(count(lastFrame() ?? '', 'gamma-msg')).toBe(2); // message list + input
+
+    stdin.write('\x1B[B'); // Down → past the newest, clears the input
+    await flush();
+    expect(count(lastFrame() ?? '', 'gamma-msg')).toBe(1); // message list only
+    unmount();
+  });
+
+  it('walks back through multiple entries with repeated Up', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    const flush = () => new Promise((r) => setImmediate(r));
+    const count = (s: string, sub: string) => s.split(sub).length - 1;
+    for (const msg of ['alpha-msg', 'beta-msg']) {
+      stdin.write(msg);
+      await flush();
+      stdin.write('\r');
+      await flush();
+    }
+    stdin.write('\x1B[A'); // Up → newest (beta-msg)
+    await flush();
+    stdin.write('\x1B[A'); // Up → older (alpha-msg)
+    await flush();
+    // alpha-msg now appears twice: once in the message list, once in the input.
+    expect(count(lastFrame() ?? '', 'alpha-msg')).toBeGreaterThanOrEqual(2);
+    unmount();
+  });
 });
