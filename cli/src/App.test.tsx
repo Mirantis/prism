@@ -6,7 +6,7 @@ import { render } from 'ink-testing-library';
 // the top of the file, so the stub has to be declared via `vi.hoisted()` —
 // which itself runs before module imports, so we require EventEmitter
 // inline rather than importing it at the top of this file.
-const { adapterStub } = vi.hoisted(() => {
+const { adapterStub, apiStub } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { EventEmitter } = require('events');
   return {
@@ -17,11 +17,24 @@ const { adapterStub } = vi.hoisted(() => {
       loadHistory: vi.fn().mockResolvedValue([]),
       submitUserMessage: vi.fn().mockResolvedValue(undefined),
     },
+    // Panels reach for the apiClient singleton on mount (SchedulesPanel calls
+    // listCronTasks, ConfigPanel calls getDetails), so stub it to keep the
+    // smoke tests hermetic — no real fetch leaves the process.
+    apiStub: {
+      listCronTasks: vi.fn().mockResolvedValue([]),
+      getDetails: vi.fn().mockResolvedValue({}),
+    },
   };
 });
 
 vi.mock('./tui-adapter.js', () => ({
   tuiAdapterService: adapterStub,
+}));
+
+vi.mock('./api-client.js', () => ({
+  apiClient: apiStub,
+  // Re-export ApiError so the panels' `instanceof ApiError` checks compile.
+  ApiError: class ApiError extends Error {},
 }));
 
 import { App } from './App.js';
@@ -39,6 +52,8 @@ describe('App', () => {
     adapterStub.markDisconnected.mockClear();
     adapterStub.loadHistory.mockClear();
     adapterStub.submitUserMessage.mockClear();
+    apiStub.listCronTasks.mockClear();
+    apiStub.getDetails.mockClear();
   });
 
   it('renders the header, input box, and status bar on mount', () => {
@@ -82,6 +97,27 @@ describe('App', () => {
   it('hides the status bar when hideStatusBar is true', () => {
     const { lastFrame, unmount } = render(<App {...baseProps} hideStatusBar />);
     expect(lastFrame() ?? '').not.toContain('Opus 4.7');
+    unmount();
+  });
+
+  it('opens the schedules panel when /schedules is submitted', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    const flush = () => new Promise((r) => setImmediate(r));
+    // Type the command, let ink-text-input commit the value into App state,
+    // then submit with a carriage return. Splitting the writes (with a flush
+    // between) mirrors real typing and ensures onSubmit sees the full value.
+    stdin.write('/schedules');
+    await flush();
+    stdin.write('\r');
+    // Let the command's async run() resolve and React flush, then let the
+    // panel's mount fetch (listCronTasks) settle into the ready frame.
+    await flush();
+    await flush();
+    await flush();
+    const frame = lastFrame() ?? '';
+    // Panel header replaces the chat surface.
+    expect(frame).toContain('Schedules');
+    expect(apiStub.listCronTasks).toHaveBeenCalled();
     unmount();
   });
 });
