@@ -135,6 +135,43 @@ export function resetThread(dbPath: string): void {
 }
 
 /**
+ * Minimal JSON HTTP client for the runtime's management API. Specs use it to
+ * seed state (e.g. a cron task) and to assert side effects authoritatively —
+ * the on-screen frame shows the SYSTEM reply; this confirms the runtime row.
+ * Throws on non-2xx so a broken endpoint fails the test loudly.
+ */
+export async function runtimeRequest<T = unknown>(
+  port: number,
+  method: string,
+  reqPath: string,
+  body?: unknown,
+): Promise<T> {
+  const res = await fetch(`http://127.0.0.1:${port}${reqPath}`, {
+    method,
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`runtimeRequest ${method} ${reqPath} → ${res.status}: ${detail}`);
+  }
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+/**
+ * Delete every cron task via the REST API — which also unschedules it in the
+ * runtime's in-memory scheduler (a raw SQLite wipe would leave stale jobs).
+ * Call in `beforeEach` so panel specs are order-independent.
+ */
+export async function clearCronTasks(port: number): Promise<void> {
+  const tasks = await runtimeRequest<Array<{ id: string }>>(port, 'GET', '/agents/cron-tasks');
+  for (const task of tasks) {
+    await runtimeRequest(port, 'DELETE', `/agents/cron-tasks/${task.id}`);
+  }
+}
+
+/**
  * Bind a server to port 0 (kernel-assigned ephemeral), read the port, then
  * close. There's a small race window between close and the test consumer
  * re-binding, but it's good enough for one-shot allocation.
