@@ -7,15 +7,21 @@ interface Props {
   selectedIndex: number;
 }
 
-const MAX_VISIBLE = 6;
+const MAX_VISIBLE = 8;
 
 export const CommandPopup: React.FC<Props> = ({ commands, selectedIndex }) => {
   if (commands.length === 0) return null;
-  const visible = commands.slice(0, MAX_VISIBLE);
+  // Window the list around the selection so the highlighted command is always
+  // on screen, even when there are more commands than MAX_VISIBLE.
+  const start = Math.min(
+    Math.max(0, selectedIndex - Math.floor(MAX_VISIBLE / 2)),
+    Math.max(0, commands.length - MAX_VISIBLE),
+  );
+  const visible = commands.slice(start, start + MAX_VISIBLE);
   return (
     <Box flexDirection="column" paddingX={2}>
       {visible.map((c, i) => {
-        const selected = i === selectedIndex;
+        const selected = start + i === selectedIndex;
         return (
           <Box key={c.name}>
             <Text color={selected ? 'cyan' : undefined} bold={selected}>

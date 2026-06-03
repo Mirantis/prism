@@ -33,16 +33,19 @@ describe('CommandPopup', () => {
     expect(frame).toMatch(/▸ \/exit/);
   });
 
-  it('caps the visible list at MAX_VISIBLE (6) entries', () => {
-    const many: SlashCommand[] = Array.from({ length: 10 }, (_, i) => ({
+  it('windows the visible list around the selection at MAX_VISIBLE (8) entries', () => {
+    const many: SlashCommand[] = Array.from({ length: 12 }, (_, i) => ({
       name: `/cmd${i}`,
       description: `desc ${i}`,
       run: noop,
     }));
-    const { lastFrame } = render(<CommandPopup commands={many} selectedIndex={0} />);
+    // Selection near the end: the window scrolls so the highlighted row stays
+    // visible and the earliest commands fall off the top.
+    const { lastFrame } = render(<CommandPopup commands={many} selectedIndex={11} />);
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('/cmd0');
-    expect(frame).toContain('/cmd5');
-    expect(frame).not.toContain('/cmd6');
+    expect(frame).toMatch(/▸ \/cmd11/); // selected row is visible
+    expect(frame).not.toContain('/cmd0'); // earliest scrolled out of the window
+    // Exactly MAX_VISIBLE command rows render.
+    expect((frame.match(/\/cmd\d+/g) ?? []).length).toBe(8);
   });
 });

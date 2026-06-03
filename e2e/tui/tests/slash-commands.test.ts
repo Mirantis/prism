@@ -35,10 +35,12 @@ describe('Prism CLI slash commands', () => {
     await session.stop();
   });
 
-  test('typing / shows the command popup with /copy and /exit', async () => {
+  test('typing / shows the command popup with the available commands', async () => {
     session.send('/');
+    // Assert on the top of the list (stable as commands are added) plus the
+    // initial highlight, rather than a command that may scroll past the window.
     await session.waitForFrame(/\/copy/, 5_000);
-    await session.waitForFrame(/\/exit/, 5_000);
+    await session.waitForFrame(/\/schedules/, 5_000);
     await session.waitForFrame(/▸\s*\/copy/, 2_000);
   });
 
