@@ -132,12 +132,18 @@ AWS_BEARER_TOKEN_BEDROCK=$bearer
     $env:Path = if ([string]::IsNullOrEmpty($env:Path)) { $PrismHome } else { $env:Path.TrimEnd(';') + ';' + $PrismHome }
   }
 
-  # Register prism-server to run always. AtLogOn start + restart-on-failure +
-  # no execution time limit mirror launchd KeepAlive / systemd Restart=always.
-  # The default principal runs as the current user only while logged on (like
-  # the launchd gui agent / systemd --user service), so no admin is required.
+  # Register prism-server to run always, in the background. The S4U principal
+  # ("run whether the user is logged on or not", no stored password) runs the
+  # task non-interactively, so there's no console window -- the Windows
+  # equivalent of a launchd/systemd daemon. AtLogOn start + restart-on-failure +
+  # no execution time limit mirror launchd KeepAlive / systemd Restart=always,
+  # and no admin is required. (An S4U token carries no Windows network
+  # credentials, which is fine here: prism-server only binds localhost and
+  # reaches Bedrock/Slack over HTTPS with app tokens, not Windows-authenticated
+  # resources.)
   $action = New-ScheduledTaskAction -Execute (Join-Path $PrismHome 'prism-server.exe') -WorkingDirectory $PrismHome
   $trigger = New-ScheduledTaskTrigger -AtLogOn
+  $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U -RunLevel Limited
   $settingsArgs = @{
     AllowStartIfOnBatteries    = $true
     DontStopIfGoingOnBatteries = $true
@@ -151,6 +157,7 @@ AWS_BEARER_TOKEN_BEDROCK=$bearer
     TaskName    = 'PrismServer'
     Action      = $action
     Trigger     = $trigger
+    Principal   = $principal
     Settings    = $settings
     Description = 'Prism agent runtime'
     Force       = $true
