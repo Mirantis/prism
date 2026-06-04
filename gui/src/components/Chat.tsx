@@ -14,7 +14,7 @@ export function Chat() {
   return (
     <div className="chat">
       <header className="chat-header">
-        <h1>Prism Agent</h1>
+        <h1>Chat</h1>
         <span className={`connection connection-${connection}`}>
           {CONNECTION_LABEL[connection]}
         </span>
