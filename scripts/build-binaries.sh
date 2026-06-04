@@ -12,7 +12,8 @@
 #
 # Output:
 #   dist-sea/<plat>-<arch>/                prism, prism-server, node_modules/,
-#                                          web/, install.sh
+#                                          web/, install.sh (macOS/Linux) or
+#                                          install.ps1 (Windows)
 #   prism-<version>-<plat>-<arch>.tar.gz   (macOS/Linux)
 #   prism-<version>-<plat>-<arch>.zip      (Windows, via 7z)
 #
@@ -40,8 +41,13 @@ fi
 OS_ARCH=$(node -e 'process.stdout.write(`${process.platform}-${process.arch}`)')
 PLATFORM=$(node -e 'process.stdout.write(process.platform)')
 
-# Ship install.sh inside the archive so users can run it directly.
-cp install.sh "dist-sea/$OS_ARCH/install.sh"
+# Ship the platform-appropriate installer inside the archive so users can run
+# it directly: install.ps1 on Windows, install.sh on macOS/Linux.
+if [ "$PLATFORM" = "win32" ]; then
+  cp install.ps1 "dist-sea/$OS_ARCH/install.ps1"
+else
+  cp install.sh "dist-sea/$OS_ARCH/install.sh"
+fi
 
 cd dist-sea
 if [ "$PLATFORM" = "win32" ]; then
