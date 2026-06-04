@@ -3,10 +3,12 @@
 Desktop GUI for Prism Agent, built with [Tauri](https://tauri.app/)
 (Rust shell) + React + TypeScript + Vite.
 
-This is currently an empty starter — a single window with no features yet.
-It lives alongside the existing clients (`cli/` TUI, `web/` SPA) and is a
-standalone app with its own toolchain; it is **not** part of the root npm
-workspaces.
+It provides a chat window that talks to the agent-runtime over WebSocket,
+exactly like the `cli/` TUI and `web/` SPA: no auth, the runtime substitutes
+the agent/user/thread server-side, recent history loads from
+`/single-agent/messages`, and replies stream in as `chat` events. It lives
+alongside the existing clients and is a standalone app with its own toolchain;
+it is **not** part of the root npm workspaces.
 
 ## Prerequisites
 
@@ -18,14 +20,29 @@ workspaces.
 
 ## Develop
 
+Run the agent-runtime first (from the repo root) so the GUI has something to
+talk to:
+
+```bash
+npm run dev          # agent-runtime on :3003 (needs Bedrock creds in .env for replies)
+```
+
+Then, in another terminal:
+
 ```bash
 cd gui
 npm install
-npm run tauri dev
+npm run tauri dev    # or: npm run dev:gui  from the repo root
 ```
 
-`tauri dev` starts Vite (frontend, port 1420) and launches the native
-window, rebuilding on changes.
+`tauri dev` starts Vite (frontend, port 1420) and launches the native window,
+rebuilding on changes. Vite proxies `/single-agent`, `/agents`, and `/api/ws`
+to the runtime on `:3003` (see `vite.config.ts`), so the webview stays
+same-origin — no CORS. This mirrors the web app's dev setup.
+
+To point a packaged build at a runtime directly, set `VITE_RUNTIME_URL`
+(e.g. `http://localhost:3003`) at build time; without it the app uses
+same-origin URLs (the dev proxy).
 
 ## Build
 

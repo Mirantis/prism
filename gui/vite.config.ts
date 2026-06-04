@@ -28,5 +28,12 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    // Forward chat traffic to the agent-runtime so the webview stays
+    // same-origin (no CORS). Mirrors web/vite.config.ts.
+    proxy: {
+      "/single-agent": { target: "http://localhost:3003", changeOrigin: true },
+      "/agents": { target: "http://localhost:3003", changeOrigin: true },
+      "/api/ws": { target: "ws://localhost:3003", ws: true },
+    },
   },
 }));

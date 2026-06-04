@@ -1,11 +1,8 @@
 import "./App.css";
+import { Chat } from "./components/Chat";
 
 function App() {
-  return (
-    <main className="container">
-      <h1>Prism Agent</h1>
-    </main>
-  );
+  return <Chat />;
 }
 
 export default App;
