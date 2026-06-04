@@ -110,7 +110,7 @@ AWS_BEARER_TOKEN_BEDROCK=$bearer
 # SLACK_BOT_TOKEN=
 # SLACK_APP_TOKEN=
 "@
-    Set-Content -Path $envPath -Value $envContent -Encoding ascii
+    Set-Content -Path $envPath -Value $envContent -Encoding utf8
     if ($bearer) {
       Write-Host "Wrote $envPath with AWS_BEARER_TOKEN_BEDROCK from the installer environment."
     } else {
