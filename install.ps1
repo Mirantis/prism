@@ -94,8 +94,8 @@ try {
   # Config template -- never clobber an existing one. Bake
   # AWS_BEARER_TOKEN_BEDROCK from the installer's environment when set; the
   # scheduled task runs with an isolated env, so a shell export otherwise
-  # wouldn't reach the server. prism-server's dotenv reads this file because the
-  # task's working directory is $PrismHome (see Register-ScheduledTask below).
+  # wouldn't reach the server. In SEA, prism-server loads `.env` from the
+  # directory containing the executable (e.g. $PrismHome\.env).
   $envPath = Join-Path $PrismHome '.env'
   if (-not (Test-Path $envPath)) {
     $bearer = if ($env:AWS_BEARER_TOKEN_BEDROCK) { $env:AWS_BEARER_TOKEN_BEDROCK } else { '' }
