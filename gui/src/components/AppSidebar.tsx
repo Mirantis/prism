@@ -1,7 +1,10 @@
-import { MessageSquare, type LucideIcon } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, type LucideIcon } from 'lucide-react';
 
-/** Left-nav items. Mirrors the web app's AppSidebar — just Chat for now. */
-const NAV_ITEMS = [{ id: 'chat', label: 'Chat', icon: MessageSquare }] as const;
+/** Left-nav items. Mirrors the web app's AppSidebar order. */
+const NAV_ITEMS = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'chat', label: 'Chat', icon: MessageSquare },
+] as const;
 
 export type ViewId = (typeof NAV_ITEMS)[number]['id'];
 
