@@ -60,7 +60,9 @@ try {
     $zipPath = Join-Path $tmp $archive
     Write-Host "Downloading $archive ($tag)..."
     try {
-      Invoke-WebRequest -Uri $url -OutFile $zipPath -Headers $headers -UseBasicParsing
+      $iwParams = @{ Uri = $url; OutFile = $zipPath; Headers = $headers }
+      if ($PSVersionTable.PSEdition -eq 'Desktop') { $iwParams.UseBasicParsing = $true }
+      Invoke-WebRequest @iwParams
     } catch {
       throw "Download failed: $url`nMake sure the latest release publishes $archive."
     }
