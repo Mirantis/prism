@@ -127,8 +127,9 @@ AWS_BEARER_TOKEN_BEDROCK=$bearer
     [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
     Write-Host "Added $PrismHome to your user PATH."
   }
-  if (($env:Path -split ';') -notcontains $PrismHome) {
-    $env:Path = $env:Path.TrimEnd(';') + ';' + $PrismHome
+  $sessionParts = if ($env:Path) { $env:Path -split ';' } else { @() }
+  if ($sessionParts -notcontains $PrismHome) {
+    $env:Path = if ([string]::IsNullOrEmpty($env:Path)) { $PrismHome } else { $env:Path.TrimEnd(';') + ';' + $PrismHome }
   }
 
   # Register prism-server to run always. AtLogOn start + restart-on-failure +
