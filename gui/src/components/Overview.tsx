@@ -60,9 +60,9 @@ export function Overview({ onNavigate }: { onNavigate: (view: ViewId) => void })
       </div>
 
       <div className="ov-grid">
-        <HeartbeatCard />
-        <ChannelsCard />
-        <ScheduledTasksCard />
+        <HeartbeatCard onClick={() => onNavigate('profile')} />
+        <ChannelsCard onClick={() => onNavigate('channels')} />
+        <ScheduledTasksCard onClick={() => onNavigate('cron')} />
         <CreatedCard details={agent} />
       </div>
 
@@ -83,11 +83,12 @@ interface StatCardProps {
   loading?: boolean;
   value: React.ReactNode;
   sub?: React.ReactNode;
+  onClick?: () => void;
 }
 
-function StatCard({ label, icon: Icon, loading, value, sub }: StatCardProps) {
+function StatCard({ label, icon: Icon, loading, value, sub, onClick }: StatCardProps) {
   return (
-    <div className="card">
+    <div className={`card${onClick ? ' card-clickable' : ''}`} onClick={onClick}>
       <div className="card-head">
         <span className="card-label">{label}</span>
         <Icon size={16} className="card-icon" />
@@ -104,7 +105,7 @@ function StatCard({ label, icon: Icon, loading, value, sub }: StatCardProps) {
   );
 }
 
-function HeartbeatCard() {
+function HeartbeatCard({ onClick }: { onClick: () => void }) {
   const { data, loading } = useApi<HeartbeatStatus>('/agents/heartbeat/status', {
     refetchInterval: 30_000,
   });
@@ -112,6 +113,7 @@ function HeartbeatCard() {
     <StatCard
       label="Heartbeat"
       icon={Activity}
+      onClick={onClick}
       loading={loading && !data}
       value={data?.isActive ? 'Active' : 'Stopped'}
       sub={
@@ -124,7 +126,7 @@ function HeartbeatCard() {
   );
 }
 
-function ChannelsCard() {
+function ChannelsCard({ onClick }: { onClick: () => void }) {
   const { data: ws, loading } = useApi<{ workspaces: SlackWorkspace[] }>('/agents/slack/workspaces');
   const workspace = ws?.workspaces[0];
   const teamId = workspace?.teamId ?? null;
@@ -145,6 +147,7 @@ function ChannelsCard() {
     <StatCard
       label="Channels"
       icon={MessagesSquare}
+      onClick={onClick}
       loading={loading && !ws}
       value={count}
       sub={subtitle}
@@ -152,7 +155,7 @@ function ChannelsCard() {
   );
 }
 
-function ScheduledTasksCard() {
+function ScheduledTasksCard({ onClick }: { onClick: () => void }) {
   const { data: tasks, loading } = useApi<CronTask[]>('/agents/cron-tasks');
   const activeTasks = tasks?.filter((t) => t.isActive) ?? [];
   const nextRun = nextRunAt(activeTasks);
@@ -167,6 +170,7 @@ function ScheduledTasksCard() {
     <StatCard
       label="Scheduled Tasks"
       icon={Clock}
+      onClick={onClick}
       loading={loading && !tasks}
       value={tasks?.length ?? 0}
       sub={subtitle}
@@ -216,16 +220,19 @@ function WelcomeCard({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
           icon={MessagesSquare}
           title="Link it to Slack"
           description="DM your agent or wire it up to watch a channel."
+          onClick={() => onNavigate('channels')}
         />
         <ActionTile
           icon={Clock}
           title="Schedule recurring tasks"
           description="Run cron-driven checks and reports on your schedule."
+          onClick={() => onNavigate('cron')}
         />
         <ActionTile
           icon={Bot}
           title="Customize its personality"
           description="Edit identity, heartbeat, memory and vision in plain markdown."
+          onClick={() => onNavigate('profile')}
         />
       </div>
     </div>

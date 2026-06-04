@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiGet } from '../lib/api';
 
 interface Options {
@@ -12,11 +12,13 @@ interface Result<T> {
   data: T | null;
   loading: boolean;
   error: Error | null;
+  refetch: () => void;
 }
 
 /**
  * Minimal data-fetching hook for the runtime's read-only GET endpoints.
  * Pass `path: null` (or `enabled: false`) to defer a dependent fetch.
+ * `refetch()` re-runs the GET (e.g. after a mutation).
  */
 export function useApi<T>(path: string | null, opts: Options = {}): Result<T> {
   const { enabled = true, refetchInterval } = opts;
@@ -25,6 +27,9 @@ export function useApi<T>(path: string | null, opts: Options = {}): Result<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState<boolean>(active);
   const [error, setError] = useState<Error | null>(null);
+  const [nonce, setNonce] = useState(0);
+
+  const refetch = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
     if (!active || path == null) {
@@ -52,7 +57,7 @@ export function useApi<T>(path: string | null, opts: Options = {}): Result<T> {
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [path, active, refetchInterval]);
+  }, [path, active, refetchInterval, nonce]);
 
-  return { data, loading, error };
+  return { data, loading, error, refetch };
 }
