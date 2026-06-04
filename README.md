@@ -35,13 +35,15 @@ its own calendar, and can act over a shell.
 
 ### One-line install
 
+#### macOS / Linux
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lensapp/prism-agent/main/install.sh | bash
 ```
 
 Installs the `prism` (terminal UI) and `prism-server` (runtime) binaries
 into `~/.prism`, puts `prism` on your `PATH`, and registers `prism-server`
-to run always via launchd (macOS) / systemd (Linux). macOS + Linux only.
+to run always via launchd (macOS) / systemd (Linux).
 
 `AWS_BEARER_TOKEN_BEDROCK` is required for chat. If it's exported in your
 shell when you run the installer, it's baked into `~/.prism/.env`
@@ -56,6 +58,29 @@ Otherwise the installer writes `~/.prism/.env` with empty placeholders —
 edit it and restart the service
 (`launchctl kickstart -k "gui/$(id -u)/com.prism.server"` on macOS,
 `systemctl --user restart prism-server` on Linux).
+
+#### Windows
+
+```powershell
+irm https://raw.githubusercontent.com/lensapp/prism-agent/main/install.ps1 | iex
+```
+
+Installs `prism.exe` and `prism-server.exe` into `%USERPROFILE%\.prism`, adds
+that directory to your user `PATH`, and registers a `PrismServer` scheduled
+task that starts `prism-server` at logon and restarts it on failure. Needs no
+admin elevation, and pulls in no dependencies — Windows already ships
+everything the installer uses.
+
+As on macOS/Linux, export `AWS_BEARER_TOKEN_BEDROCK` before running to bake it
+into `%USERPROFILE%\.prism\.env` so the service comes up working:
+
+```powershell
+$env:AWS_BEARER_TOKEN_BEDROCK="<your-key>"
+irm https://raw.githubusercontent.com/lensapp/prism-agent/main/install.ps1 | iex
+```
+
+Otherwise edit `%USERPROFILE%\.prism\.env` and restart the service
+(`Restart-ScheduledTask -TaskName PrismServer`).
 
 ### Using Docker
 
