@@ -22,7 +22,16 @@ function ok(body: unknown): Response {
   return {
     ok: true,
     status: 200,
-    json: async () => body,
+    text: async () => JSON.stringify(body),
+  } as unknown as Response;
+}
+
+/** Build a fetch Response-ish stub for a 204 No Content / empty-body reply. */
+function noContent(status = 204): Response {
+  return {
+    ok: true,
+    status,
+    text: async () => '',
   } as unknown as Response;
 }
 
@@ -132,6 +141,16 @@ describe('HttpApiClient', () => {
     const { url, init } = lastCall(fetchMock);
     expect(url).toBe(`${BASE}/agents/cron-tasks/task-42`);
     expect(init?.method).toBe('DELETE');
+  });
+
+  it('resolves (not rejects) when a successful mutation replies 204 No Content', async () => {
+    fetchMock.mockResolvedValue(noContent());
+    await expect(client.deleteCronTask('task-42')).resolves.toBeUndefined();
+  });
+
+  it('resolves when a successful mutation replies an empty body with status 200', async () => {
+    fetchMock.mockResolvedValue(noContent(200));
+    await expect(client.stopHeartbeat()).resolves.toBeUndefined();
   });
 
   it('getDetails unwraps the { agent } envelope', async () => {
