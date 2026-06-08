@@ -114,7 +114,14 @@ export class HttpApiClient implements ApiClient {
       );
     }
 
-    return (await res.json()) as T;
+    // A successful mutation may reply 204 No Content (or an empty body) —
+    // common for DELETE and plausible for the heartbeat stop/trigger routes —
+    // in which case res.json() would throw and surface a succeeded call as an
+    // error. Read the text first and only parse when there's something to parse
+    // (mirrors the e2e runtimeRequest helper in setup.ts).
+    if (res.status === 204) return undefined as T;
+    const text = await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
   }
 
   getMe(): Promise<{ agentId: string; userId: string; name: string }> {
