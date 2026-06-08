@@ -403,8 +403,7 @@ export function withToolsCacheControl(tools: Record<string, Tool>): Record<strin
  * Filter backend MCP tools by invocation mode.
  *
  * - chat: All tools
- * - heartbeat: All tools except cron tools
- * - cron: Memory tools + Nexus MCP (subset of backend MCP)
+ * - heartbeat/cron: All tools except cron-management tools
  */
 function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<string, Tool> {
   if (mode === 'chat') {
@@ -412,24 +411,13 @@ function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<st
   }
 
   const cronToolNames = new Set(['schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task']);
-  const memoryToolNames = new Set(['memory_search', 'memory_write', 'memory_delete']);
 
-  if (mode === 'heartbeat') {
-    // All tools except cron tools
+  // heartbeat and cron are autonomous runs: full tool access, minus the
+  // cron-management tools so autonomous runs don't reshape the schedule.
+  if (mode === 'heartbeat' || mode === 'cron') {
     const filtered: Record<string, Tool> = {};
     for (const [name, tool] of Object.entries(tools)) {
       if (!cronToolNames.has(name)) {
-        filtered[name] = tool;
-      }
-    }
-    return filtered;
-  }
-
-  if (mode === 'cron') {
-    // Memory tools only (no config, no cron)
-    const filtered: Record<string, Tool> = {};
-    for (const [name, tool] of Object.entries(tools)) {
-      if (memoryToolNames.has(name)) {
         filtered[name] = tool;
       }
     }
