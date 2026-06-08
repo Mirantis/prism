@@ -43,6 +43,8 @@ import { conversationEngineService } from './conversation-engine.service';
 import { getSlackHeartbeatThrottleQueue } from '../queues/slack-heartbeat-throttle-queue';
 import { channelLearningQueue } from '../queues/channel-learning.queue';
 import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
+import { attachmentService, detectMediaType, classifyMediaType } from './attachment.service';
+import { MAX_FILE_SIZE_BYTES } from '../constants';
 import { stripBodyToken } from '../lib/slack-web-client';
 import { config } from '../config';
 
@@ -77,6 +79,45 @@ export interface SlackApp {
   teamName: string;
   isSocketMode: boolean;
   botUserId: string;
+}
+
+/** Subset of a Slack file object on a message event. */
+interface SlackFileMeta {
+  id: string;
+  name?: string;
+  mimetype?: string;
+  size?: number;
+  url_private?: string;
+  url_private_download?: string;
+}
+
+const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
+
+// Lazily-built proxy dispatcher for Slack file downloads. The Bolt WebClient's
+// outbound calls already traverse the Nexus sandbox network (transparent MITM
+// that rewrites the `__nexus_cred:…__` bot-token sentinel on the wire), so a
+// plain `fetch` with the Bearer header matches that path. When an EXPLICIT
+// `HTTPS_PROXY` is configured we route through it via undici's ProxyAgent so
+// the header rewrite still applies.
+let proxyDispatcherPromise: Promise<unknown> | undefined;
+async function getProxyDispatcher(): Promise<unknown> {
+  if (!proxyDispatcherPromise) {
+    proxyDispatcherPromise = (async () => {
+      const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+      if (!proxy) return null;
+      try {
+        const { ProxyAgent } = await import('undici');
+        return new ProxyAgent(proxy);
+      } catch (err) {
+        logger.warn(
+          '[SlackAdapter] HTTPS_PROXY set but undici ProxyAgent unavailable: %s',
+          err instanceof Error ? err.message : String(err),
+        );
+        return null;
+      }
+    })();
+  }
+  return proxyDispatcherPromise;
 }
 
 // ============================================================================
@@ -456,15 +497,20 @@ class SlackAdapterService implements ChannelAdapter {
         bot_id?: string;
         thread_ts?: string;
         ts: string;
+        files?: SlackFileMeta[];
       };
 
-      // Skip bot messages and message subtypes (edits, deletes, etc.)
-      if (msg.subtype) {
+      const hasFiles = Array.isArray(msg.files) && msg.files.length > 0;
+
+      // Skip message subtypes (edits, deletes, etc.) — except `file_share`,
+      // which is how a user-uploaded attachment arrives (often with empty text).
+      if (msg.subtype && msg.subtype !== 'file_share') {
         logger.info('Skipping message with subtype: %s', msg.subtype);
         return;
       }
-      if (!msg.user || !msg.text) {
-        logger.info('Skipping message without user or text');
+      // Require a user; allow empty text when the message carries files.
+      if (!msg.user || (!msg.text && !hasFiles)) {
+        logger.info('Skipping message without user or content');
         return;
       }
       // In e2e tests, user tokens from Slack apps attach bot_id to every message.
@@ -482,12 +528,13 @@ class SlackAdapterService implements ChannelAdapter {
       }
 
       const slackUserId: string = msg.user;
-      const messageText: string = msg.text.trim();
+      const messageText: string = (msg.text || '').trim();
       const channelId: string = msg.channel;
+      const files: SlackFileMeta[] = hasFiles ? msg.files! : [];
 
-      logger.info('Processing message: channel=%s, channel_type=%s', channelId, msg.channel_type);
+      logger.info('Processing message: channel=%s, channel_type=%s, files=%d', channelId, msg.channel_type, files.length);
 
-      if (!messageText) {
+      if (!messageText && files.length === 0) {
         logger.info('Skipping empty message');
         return;
       }
@@ -496,7 +543,7 @@ class SlackAdapterService implements ChannelAdapter {
       if (msg.channel_type === 'im') {
         logger.info('Routing to DM handler');
         // DM message - existing logic
-        await this.handleDmMessage(connectionId, slackUserId, messageText, channelId, say, teamId, msg.ts);
+        await this.handleDmMessage(connectionId, slackUserId, messageText, channelId, say, teamId, msg.ts, files);
       } else {
         logger.info('Routing to channel handler');
         // Channel message - route to channel handler
@@ -509,7 +556,8 @@ class SlackAdapterService implements ChannelAdapter {
           msg.ts,
           say,
           botUserId,
-          teamId
+          teamId,
+          files
         );
       }
       } catch (error) {
@@ -541,7 +589,8 @@ class SlackAdapterService implements ChannelAdapter {
     dmChannelId: string,
     say: SayFn,
     teamId: string,
-    eventTs?: string
+    eventTs?: string,
+    files: SlackFileMeta[] = []
   ): Promise<void> {
     logger.info('Slack DM from %s', slackUserId);
 
@@ -583,6 +632,11 @@ class SlackAdapterService implements ChannelAdapter {
       // Resolve user mentions to display names
       const resolvedText = await this.resolveMentions(messageText, teamId);
 
+      // Download any uploaded attachments into our DB (linked to the user
+      // message inside chat()). A file-only message gets a placeholder body.
+      const attachmentIds = await this.downloadSlackFiles(files, { externalTs: eventTs, say });
+      const effectiveText = resolvedText || (attachmentIds.length ? '(shared a file)' : resolvedText);
+
       // Look up the sender's Slack identity and tag the message with the
       // sender's <@USERID:Name> marker so the agent can emit a real
       // mention back to them on reply.
@@ -590,7 +644,7 @@ class SlackAdapterService implements ChannelAdapter {
       const taggedText = this.buildSenderTaggedContent(
         slackUserId,
         senderInfo?.real_name || senderInfo?.name,
-        resolvedText,
+        effectiveText,
       );
 
       // Route through local conversation engine (direct call).
@@ -601,6 +655,7 @@ class SlackAdapterService implements ChannelAdapter {
         userId: mapping.lensUserId!,
         agentId: mapping.agentId,
         message: taggedText,
+        attachmentIds,
         metadata: { channel: 'slack' },
       });
     } catch (error: unknown) {
@@ -635,7 +690,8 @@ class SlackAdapterService implements ChannelAdapter {
     messageTs: string,
     say: SayFn,
     botUserId: string,
-    teamId: string
+    teamId: string,
+    files: SlackFileMeta[] = []
   ): Promise<void> {
     // Check if this looks like a verification code FIRST (before channel link check)
     // This allows linking an unlinked channel
@@ -785,8 +841,18 @@ class SlackAdapterService implements ChannelAdapter {
       // Strip bot mention only, then resolve remaining user mentions to display names
       const withoutBot = messageText.replace(new RegExp(`<@${botUserId}>`, 'g'), '').trim();
       const text = await this.resolveMentions(withoutBot, mapping.connection.teamId);
+
+      // Download any uploaded attachments. `externalTs` is the carrying
+      // message's ts so the live-read SlackThreadProvider can re-associate
+      // them on later turns; `threadId` scopes that lookup.
+      const attachmentIds = await this.downloadSlackFiles(files, {
+        externalTs: messageTs,
+        threadId: thread.id,
+        say,
+      });
+      const effectiveText = text || (attachmentIds.length ? '(shared a file)' : text);
       const senderName = userInfo?.real_name || userInfo?.name;
-      const taggedText = this.buildSenderTaggedContent(slackUserId, senderName, text);
+      const taggedText = this.buildSenderTaggedContent(slackUserId, senderName, effectiveText);
 
       // Route through local conversation engine (direct call)
       await conversationEngineService.chat({
@@ -794,6 +860,7 @@ class SlackAdapterService implements ChannelAdapter {
         agentId: mapping.agentId,
         threadId: thread.id,
         message: taggedText,
+        attachmentIds,
         metadata: {
           channel: 'slack',
           channelId,
@@ -1339,6 +1406,109 @@ class SlackAdapterService implements ChannelAdapter {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Download user-uploaded Slack files into our DB and return the new
+   * attachment ids (to link to the user message via `chat({ attachmentIds })`).
+   *
+   * Enforces the 10 MB cap (from Slack's reported size, then again after
+   * download), dedups on Slack file id (events are at-least-once), and skips
+   * anything that fails to download. `externalTs` records the carrying
+   * message's ts so the live-read Slack channel provider can re-associate the
+   * file on later turns; `threadId` scopes that lookup.
+   */
+  private async downloadSlackFiles(
+    files: SlackFileMeta[],
+    ctx: { externalTs?: string; threadId?: string; say?: SayFn },
+  ): Promise<string[]> {
+    if (files.length === 0) return [];
+
+    const connection = await getSlackConnection();
+    const botToken = connection?.botToken;
+    if (!botToken) {
+      logger.warn('[SlackAdapter] no bot token available; cannot download %d file(s)', files.length);
+      return [];
+    }
+
+    const attachmentIds: string[] = [];
+    for (const file of files) {
+      try {
+        if (typeof file.size === 'number' && file.size > MAX_FILE_SIZE_BYTES) {
+          logger.warn('[SlackAdapter] skipping oversized file %s (%d bytes)', file.name, file.size);
+          if (ctx.say) {
+            await ctx
+              .say(`⚠️ Skipped *${file.name ?? 'file'}* — over the ${MAX_FILE_SIZE_MB} MB limit.`)
+              .catch(() => {});
+          }
+          continue;
+        }
+
+        if (await attachmentService.existsBySlackFileId(file.id)) {
+          logger.info('[SlackAdapter] file %s already stored; skipping', file.id);
+          continue;
+        }
+
+        const url = file.url_private_download || file.url_private;
+        if (!url) {
+          logger.warn('[SlackAdapter] file %s has no download URL', file.id);
+          continue;
+        }
+
+        const buffer = await this.fetchSlackFile(url, botToken);
+        if (buffer.byteLength === 0) {
+          logger.warn('[SlackAdapter] file %s downloaded empty; skipping', file.id);
+          continue;
+        }
+        if (buffer.byteLength > MAX_FILE_SIZE_BYTES) {
+          logger.warn('[SlackAdapter] file %s exceeds cap after download; skipping', file.id);
+          continue;
+        }
+
+        const filename = file.name || 'file';
+        const mediaType = detectMediaType(buffer, filename, file.mimetype);
+        const row = await attachmentService.create({
+          filename,
+          mediaType,
+          sizeBytes: buffer.byteLength,
+          data: buffer,
+          category: classifyMediaType(mediaType),
+          source: 'slack',
+          slackFileId: file.id,
+          externalTs: ctx.externalTs,
+          threadId: ctx.threadId,
+        });
+        attachmentIds.push(row.id);
+      } catch (err) {
+        logger.error({ err, fileId: file.id }, '[SlackAdapter] failed to download Slack file');
+      }
+    }
+    return attachmentIds;
+  }
+
+  /**
+   * Fetch a single Slack file's bytes using bot-token Bearer auth. Slack
+   * returns an HTML login page (HTTP 200) — not a 401 — when the token can't
+   * read the file, so a non-binary content type is treated as an auth failure.
+   */
+  private async fetchSlackFile(url: string, botToken: string): Promise<Buffer> {
+    // Loose shape: `dispatcher` is an undici extension to fetch's init that the
+    // two bundled Dispatcher type copies (undici vs undici-types) disagree on.
+    const init: Record<string, unknown> = {
+      headers: { Authorization: `Bearer ${botToken}` },
+    };
+    const dispatcher = await getProxyDispatcher();
+    if (dispatcher) init.dispatcher = dispatcher;
+
+    const res = await fetch(url, init as RequestInit);
+    if (!res.ok) {
+      throw new Error(`Slack file download failed: HTTP ${res.status}`);
+    }
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('text/html')) {
+      throw new Error('Slack file download returned an HTML page (auth failure)');
+    }
+    return Buffer.from(await res.arrayBuffer());
   }
 
   /**

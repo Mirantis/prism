@@ -32,6 +32,8 @@ interface WebSocketMessage {
   threadId?: string;
   // Optional: the runtime substitutes `config.agentId` when omitted.
   agentId?: string;
+  // Ids of files already uploaded via POST /agents/attachments.
+  attachmentIds?: string[];
 }
 
 interface WebSocketResponse {
@@ -186,6 +188,11 @@ class WebSocketGatewayService {
     // `agentId` from the wire (the prism-cli does). Substitute here before
     // validation so downstream code sees a fully-populated message.
     const agentId = payload.agentId || message.agentId || config.agentId;
+    const attachmentIds: string[] = Array.isArray(payload.attachmentIds)
+      ? payload.attachmentIds
+      : Array.isArray(message.attachmentIds)
+        ? message.attachmentIds
+        : [];
     if (!agentId) {
       ws.send(JSON.stringify({
         type: 'error',
@@ -196,7 +203,9 @@ class WebSocketGatewayService {
 
     logger.info('Chat message from %s: mode=%s', userId, mode);
 
-    if (!content.trim()) {
+    // Allow a file-only message (attachments but no text); reject only when
+    // there's neither text nor any attachment.
+    if (!content.trim() && attachmentIds.length === 0) {
       logger.warn('Empty message from %s', userId);
       ws.send(JSON.stringify({ type: 'error', payload: { error: 'Empty message' } }));
       return;
@@ -207,6 +216,7 @@ class WebSocketGatewayService {
     message.content = content;
     message.threadId = threadId;
     message.agentId = agentId;
+    message.attachmentIds = attachmentIds;
 
     switch (mode) {
       case 'steer':
@@ -302,6 +312,7 @@ class WebSocketGatewayService {
         agentId,
         message: message.content || '',
         threadId: message.threadId,
+        attachmentIds: message.attachmentIds,
         metadata: { channel: 'websocket' },
       });
 

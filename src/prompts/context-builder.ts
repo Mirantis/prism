@@ -8,6 +8,12 @@
 import { AssistantModelMessage, ModelMessage, ToolModelMessage } from 'ai';
 import { config } from '../config';
 import { memoryManagerService } from '../services/memory-manager.service';
+import {
+  AttachmentForLLM,
+  humanFileSize,
+  isBedrockImageType,
+} from '../services/attachment.service';
+import { MAX_INLINE_TEXT_CHARS } from '../constants';
 import { SlackTriggerMessage } from '../types';
 
 // Minimal type for conversation messages (matches Prisma's shape).
@@ -17,7 +23,16 @@ export interface ConversationMessage {
   role: 'USER' | 'AGENT' | 'SYSTEM';
   content: string;
   toolCalls?: unknown;
+  // Files shared by the user (web upload or Slack attachment). Loaded with
+  // bytes by the context service so they can be turned into LLM content parts.
+  attachments?: AttachmentForLLM[];
 }
+
+/** AI SDK user-message content parts we emit (subset that works on Bedrock). */
+type UserContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; image: Buffer; mediaType: string }
+  | { type: 'file'; data: Buffer; mediaType: string; filename: string };
 
 export interface AgentContext {
   soulMd: string;
@@ -190,8 +205,16 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
   // Add recent messages (only user and assistant, skip system and empty messages)
   for (const msg of context.recentMessages) {
     if (msg.role === 'USER') {
-      if (!msg.content?.trim()) continue;
-      messages.push({ role: 'user', content: msg.content });
+      const parts = buildUserContentParts(msg);
+      // Skip only when there's neither text nor any attachment.
+      if (parts.length === 0) continue;
+      // Keep the plain-string form when there's just text — better prompt-cache
+      // behavior and avoids needlessly wrapping every turn in a content array.
+      if (parts.length === 1 && parts[0].type === 'text') {
+        messages.push({ role: 'user', content: parts[0].text });
+      } else {
+        messages.push({ role: 'user', content: parts });
+      }
     } else if (msg.role === 'AGENT') {
       const toolCalls = parseToolCalls(msg);
 
@@ -227,6 +250,46 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
   }
 
   return messages;
+}
+
+/**
+ * Turn a USER message + its attachments into AI SDK content parts.
+ *
+ * Allowlist-driven on purpose: the Bedrock converter throws on an unknown
+ * mediaType in an image/file part (killing the whole generateText call), so
+ * only confidently-readable images and PDFs become image/file parts. Text/code
+ * is inlined (truncated). Everything else becomes a plain "unreadable" note.
+ */
+function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
+  const parts: UserContentPart[] = [];
+
+  if (msg.content?.trim()) {
+    parts.push({ type: 'text', text: msg.content });
+  }
+
+  for (const att of msg.attachments ?? []) {
+    if (att.category === 'image' && isBedrockImageType(att.mediaType)) {
+      parts.push({ type: 'image', image: att.data, mediaType: att.mediaType });
+    } else if (att.category === 'pdf' && att.mediaType === 'application/pdf') {
+      parts.push({ type: 'file', data: att.data, mediaType: 'application/pdf', filename: att.filename });
+    } else if (att.category === 'text') {
+      const raw = att.data.toString('utf8');
+      const truncated = raw.length > MAX_INLINE_TEXT_CHARS;
+      const body = truncated ? raw.slice(0, MAX_INLINE_TEXT_CHARS) : raw;
+      const suffix = truncated
+        ? `\n…[truncated — showing first ${MAX_INLINE_TEXT_CHARS} of ${raw.length} chars]`
+        : '';
+      parts.push({ type: 'text', text: `\n\n[File: ${att.filename}]\n\`\`\`\n${body}${suffix}\n\`\`\`` });
+    } else {
+      // Unreadable binary (or an image/pdf whose type isn't Bedrock-safe).
+      parts.push({
+        type: 'text',
+        text: `[Attached file: ${att.filename} (${att.mediaType}, ${humanFileSize(att.sizeBytes)}) — not readable by the agent; stored and downloadable.]`,
+      });
+    }
+  }
+
+  return parts;
 }
 
 /**

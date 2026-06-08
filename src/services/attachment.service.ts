@@ -1,0 +1,362 @@
+/**
+ * Attachment Service
+ *
+ * Owns all `MessageAttachment` DB access plus the media-type detection and
+ * classification used by both the upload route (web) and the Slack ingest
+ * path. Files are persisted as BLOBs in the runtime SQLite DB — never on
+ * disk — and surfaced to the LLM by the context builder.
+ *
+ * Detection is allowlist-based on purpose: the Bedrock message converter
+ * THROWS on an unknown mediaType in an image/file content part, which would
+ * kill the whole `generateText` call. So anything we can't confidently read
+ * is classified `unreadable` and shown to the model as a plain text note
+ * (see `prompts/context-builder.ts`).
+ */
+
+import { MessageAttachment } from '@prisma/client';
+import prisma from '../lib/prisma';
+
+export type AttachmentCategory = 'image' | 'pdf' | 'text' | 'unreadable';
+
+/** Metadata-only view (no bytes) — safe to serialize into JSON responses. */
+export interface AttachmentMeta {
+  id: string;
+  filename: string;
+  mediaType: string;
+  sizeBytes: number;
+  category: AttachmentCategory;
+}
+
+/** Full attachment with bytes loaded, for building LLM content parts. */
+export interface AttachmentForLLM extends AttachmentMeta {
+  data: Buffer;
+}
+
+export interface CreateAttachmentInput {
+  filename: string;
+  mediaType: string;
+  sizeBytes: number;
+  data: Buffer;
+  category: AttachmentCategory;
+  source: 'web' | 'slack';
+  threadId?: string;
+  messageId?: string;
+  slackFileId?: string;
+  externalTs?: string;
+}
+
+// Bedrock natively understands exactly these image formats; emit image parts
+// only for these (see getBedrockImageFormat in @ai-sdk/amazon-bedrock).
+const IMAGE_MEDIA_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]);
+
+// `application/*` media types we still treat as inline-able text/code.
+const TEXT_APPLICATION_TYPES = new Set([
+  'application/json',
+  'application/xml',
+  'application/javascript',
+  'application/typescript',
+  'application/x-yaml',
+  'application/x-sh',
+]);
+
+// Extension → media type, used when magic-byte sniffing doesn't match.
+// Code files map to a text/* type so they classify as `text` and get inlined.
+const EXT_MEDIA_TYPES: Record<string, string> = {
+  txt: 'text/plain',
+  text: 'text/plain',
+  log: 'text/plain',
+  md: 'text/markdown',
+  markdown: 'text/markdown',
+  csv: 'text/csv',
+  tsv: 'text/tab-separated-values',
+  json: 'application/json',
+  xml: 'application/xml',
+  html: 'text/html',
+  htm: 'text/html',
+  css: 'text/css',
+  js: 'application/javascript',
+  mjs: 'application/javascript',
+  cjs: 'application/javascript',
+  jsx: 'text/plain',
+  ts: 'application/typescript',
+  tsx: 'text/plain',
+  py: 'text/x-python',
+  rb: 'text/x-ruby',
+  go: 'text/x-go',
+  rs: 'text/x-rust',
+  java: 'text/x-java',
+  kt: 'text/x-kotlin',
+  c: 'text/x-c',
+  h: 'text/x-c',
+  cpp: 'text/x-c++',
+  hpp: 'text/x-c++',
+  cc: 'text/x-c++',
+  sh: 'application/x-sh',
+  bash: 'application/x-sh',
+  zsh: 'application/x-sh',
+  yml: 'application/x-yaml',
+  yaml: 'application/x-yaml',
+  toml: 'text/plain',
+  ini: 'text/plain',
+  cfg: 'text/plain',
+  conf: 'text/plain',
+  env: 'text/plain',
+  sql: 'text/plain',
+  // images / pdf — fidelity fallback when magic bytes are absent/truncated
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  pdf: 'application/pdf',
+};
+
+/** Sniff well-known binary headers. Returns null when nothing matches. */
+function sniffMagicBytes(buf: Buffer): string | null {
+  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return 'image/png';
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (buf.length >= 4 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) {
+    return 'image/gif';
+  }
+  if (
+    buf.length >= 12 &&
+    buf.toString('ascii', 0, 4) === 'RIFF' &&
+    buf.toString('ascii', 8, 12) === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+  if (buf.length >= 5 && buf.toString('ascii', 0, 5) === '%PDF-') {
+    return 'application/pdf';
+  }
+  return null;
+}
+
+/** True when the bytes are clean UTF-8 text (no NUL, valid encoding). */
+function looksLikeUtf8Text(buf: Buffer): boolean {
+  if (buf.length === 0) return false;
+  if (buf.includes(0)) return false;
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Best-effort media type for an uploaded file. Magic bytes win (clients lie
+ * about `Content-Type`), then the extension map, then a UTF-8 text heuristic
+ * so arbitrary code files still inline, else `application/octet-stream`.
+ */
+export function detectMediaType(buffer: Buffer, filename: string, declaredMime?: string): string {
+  const magic = sniffMagicBytes(buffer);
+  if (magic) return magic;
+
+  const ext = filename.includes('.') ? filename.split('.').pop()!.toLowerCase() : '';
+  if (ext && EXT_MEDIA_TYPES[ext]) return EXT_MEDIA_TYPES[ext];
+
+  if (declaredMime && (declaredMime.startsWith('text/') || declaredMime === 'application/json')) {
+    return declaredMime;
+  }
+
+  if (looksLikeUtf8Text(buffer)) return 'text/plain';
+
+  return declaredMime || 'application/octet-stream';
+}
+
+/** True for image media types Bedrock natively accepts as image content parts. */
+export function isBedrockImageType(mediaType: string): boolean {
+  return IMAGE_MEDIA_TYPES.has(mediaType);
+}
+
+/** Map a media type to the four categories the context builder understands. */
+export function classifyMediaType(mediaType: string): AttachmentCategory {
+  if (IMAGE_MEDIA_TYPES.has(mediaType)) return 'image';
+  if (mediaType === 'application/pdf') return 'pdf';
+  if (mediaType.startsWith('text/') || TEXT_APPLICATION_TYPES.has(mediaType)) return 'text';
+  return 'unreadable';
+}
+
+/** Human-readable byte size, e.g. "1.2 MB". */
+export function humanFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i++;
+  }
+  return `${value.toFixed(1)} ${units[i]}`;
+}
+
+function toMeta(row: Pick<MessageAttachment, 'id' | 'filename' | 'mediaType' | 'sizeBytes' | 'category'>): AttachmentMeta {
+  return {
+    id: row.id,
+    filename: row.filename,
+    mediaType: row.mediaType,
+    sizeBytes: row.sizeBytes,
+    category: row.category as AttachmentCategory,
+  };
+}
+
+function toForLLM(row: MessageAttachment): AttachmentForLLM {
+  return {
+    ...toMeta(row),
+    data: Buffer.from(row.data),
+  };
+}
+
+const META_SELECT = {
+  id: true,
+  filename: true,
+  mediaType: true,
+  sizeBytes: true,
+  category: true,
+} as const;
+
+class AttachmentService {
+  /** Persist an uploaded/downloaded file. */
+  async create(input: CreateAttachmentInput): Promise<MessageAttachment> {
+    return prisma.messageAttachment.create({
+      data: {
+        filename: input.filename,
+        mediaType: input.mediaType,
+        sizeBytes: input.sizeBytes,
+        category: input.category,
+        // Copy into a plain ArrayBuffer-backed view: Prisma's Bytes input is
+        // `Uint8Array<ArrayBuffer>`, but `Buffer` is now `Buffer<ArrayBufferLike>`.
+        data: Uint8Array.from(input.data),
+        source: input.source,
+        threadId: input.threadId,
+        messageId: input.messageId,
+        slackFileId: input.slackFileId,
+        externalTs: input.externalTs,
+      },
+    });
+  }
+
+  /** Full row including bytes — used by the download route. */
+  async getById(id: string): Promise<MessageAttachment | null> {
+    return prisma.messageAttachment.findUnique({ where: { id } });
+  }
+
+  /** Metadata only (no bytes) for the given message ids — for thread reads. */
+  async getMetaByMessageIds(messageIds: string[]): Promise<Map<string, AttachmentMeta[]>> {
+    const map = new Map<string, AttachmentMeta[]>();
+    if (messageIds.length === 0) return map;
+    const rows = await prisma.messageAttachment.findMany({
+      where: { messageId: { in: messageIds } },
+      select: { ...META_SELECT, messageId: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    for (const row of rows) {
+      if (!row.messageId) continue;
+      const list = map.get(row.messageId) ?? [];
+      list.push(toMeta(row));
+      map.set(row.messageId, list);
+    }
+    return map;
+  }
+
+  /** Metadata only (no bytes) keyed by Slack message ts — for live Slack reads. */
+  async getMetaByExternalTs(threadId: string, tsList: string[]): Promise<Map<string, AttachmentMeta[]>> {
+    const map = new Map<string, AttachmentMeta[]>();
+    if (tsList.length === 0) return map;
+    const rows = await prisma.messageAttachment.findMany({
+      where: { threadId, externalTs: { in: tsList } },
+      select: { ...META_SELECT, externalTs: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    for (const row of rows) {
+      if (!row.externalTs) continue;
+      const list = map.get(row.externalTs) ?? [];
+      list.push(toMeta(row));
+      map.set(row.externalTs, list);
+    }
+    return map;
+  }
+
+  /** Bytes-loaded attachments keyed by messageId — for LLM context. */
+  async loadForMessages(messageIds: string[]): Promise<Map<string, AttachmentForLLM[]>> {
+    const map = new Map<string, AttachmentForLLM[]>();
+    if (messageIds.length === 0) return map;
+    const rows = await prisma.messageAttachment.findMany({
+      where: { messageId: { in: messageIds } },
+      orderBy: { createdAt: 'asc' },
+    });
+    for (const row of rows) {
+      if (!row.messageId) continue;
+      const list = map.get(row.messageId) ?? [];
+      list.push(toForLLM(row));
+      map.set(row.messageId, list);
+    }
+    return map;
+  }
+
+  /**
+   * Bytes-loaded attachments keyed by Slack message ts — for the live-read
+   * Slack channel provider, which never sees our message rows.
+   */
+  async loadByExternalTs(threadId: string, tsList: string[]): Promise<Map<string, AttachmentForLLM[]>> {
+    const map = new Map<string, AttachmentForLLM[]>();
+    if (tsList.length === 0) return map;
+    const rows = await prisma.messageAttachment.findMany({
+      where: { threadId, externalTs: { in: tsList } },
+      orderBy: { createdAt: 'asc' },
+    });
+    for (const row of rows) {
+      if (!row.externalTs) continue;
+      const list = map.get(row.externalTs) ?? [];
+      list.push(toForLLM(row));
+      map.set(row.externalTs, list);
+    }
+    return map;
+  }
+
+  /** Link pre-uploaded (web) attachments to the message that carries them. */
+  async linkToMessage(attachmentIds: string[], messageId: string, threadId: string): Promise<void> {
+    if (attachmentIds.length === 0) return;
+    await prisma.messageAttachment.updateMany({
+      where: { id: { in: attachmentIds } },
+      data: { messageId, threadId },
+    });
+  }
+
+  /** True when a Slack file id was already stored (at-least-once redelivery). */
+  async existsBySlackFileId(slackFileId: string): Promise<boolean> {
+    const row = await prisma.messageAttachment.findFirst({
+      where: { slackFileId },
+      select: { id: true },
+    });
+    return row !== null;
+  }
+
+  /** Delete an unlinked (pre-send) attachment — used by chip removal. Returns deleted count. */
+  async deleteUnlinked(id: string): Promise<number> {
+    const result = await prisma.messageAttachment.deleteMany({
+      where: { id, messageId: null },
+    });
+    return result.count;
+  }
+
+  /** Reap abandoned pre-send uploads that never got linked to a message. */
+  async deleteOrphans(olderThanMs: number): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanMs);
+    const result = await prisma.messageAttachment.deleteMany({
+      where: { messageId: null, createdAt: { lt: cutoff } },
+    });
+    return result.count;
+  }
+}
+
+export const attachmentService = new AttachmentService();

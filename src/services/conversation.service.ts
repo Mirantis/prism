@@ -19,6 +19,7 @@ import { logger } from '../logger';
 import { ThreadMessageProvider } from './thread-provider.interface';
 import { DatabaseThreadProvider } from './providers/database-thread.provider';
 import { SlackThreadProvider } from './providers/slack-thread.provider';
+import { attachmentService, type AttachmentMeta } from './attachment.service';
 
 // ============================================================================
 // Types
@@ -36,8 +37,12 @@ export interface MessageInput {
   senderName?: string; // Human-readable display name
 }
 
+export interface MessageWithAttachments extends ConversationMessage {
+  attachments?: AttachmentMeta[];
+}
+
 export interface ThreadWithMessages extends ConversationThread {
-  messages: ConversationMessage[];
+  messages: MessageWithAttachments[];
 }
 
 // ============================================================================
@@ -150,7 +155,14 @@ class ConversationService {
 
     const messages = await provider.getMessages(threadId);
 
-    return { ...thread, messages };
+    // Attach file metadata (no bytes) so the web UI renders chips on history.
+    const metaMap = await attachmentService.getMetaByMessageIds(messages.map(m => m.id));
+    const withAttachments: MessageWithAttachments[] = messages.map(m => {
+      const attachments = metaMap.get(m.id);
+      return attachments && attachments.length > 0 ? { ...m, attachments } : m;
+    });
+
+    return { ...thread, messages: withAttachments };
   }
 
   /**
@@ -323,6 +335,7 @@ class ConversationService {
    */
   async getThreadContext(threadId: string): Promise<{
     compactionSummary: string | null;
+    threadSource: ThreadSource;
     messages: ConversationMessage[];
   }> {
     const thread = await prisma.conversationThread.findUnique({
@@ -333,7 +346,8 @@ class ConversationService {
       },
     });
 
-    const provider = thread?.threadSource === ThreadSource.SLACK
+    const threadSource = thread?.threadSource ?? ThreadSource.DATABASE;
+    const provider = threadSource === ThreadSource.SLACK
       ? this.slackProvider
       : this.databaseProvider;
 
@@ -341,6 +355,7 @@ class ConversationService {
 
     return {
       compactionSummary: thread?.compactionSummary ?? null,
+      threadSource,
       messages,
     };
   }

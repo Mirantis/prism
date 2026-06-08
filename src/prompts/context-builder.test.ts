@@ -16,6 +16,20 @@ vi.mock('../services/memory-manager.service', () => ({
 
 import { buildSystemPrompt, buildSystemPromptParts, buildConversationMessages } from './context-builder';
 import { createTestAgentContext } from '../test-utils/factories';
+import { MAX_INLINE_TEXT_CHARS } from '../constants';
+import type { AttachmentForLLM } from '../services/attachment.service';
+
+function makeAttachment(overrides: Partial<AttachmentForLLM> = {}): AttachmentForLLM {
+  return {
+    id: 'att-1',
+    filename: 'file.bin',
+    mediaType: 'application/octet-stream',
+    category: 'unreadable',
+    sizeBytes: 10,
+    data: Buffer.from('data'),
+    ...overrides,
+  };
+}
 
 describe('buildSystemPrompt', () => {
   beforeEach(() => {
@@ -574,5 +588,151 @@ describe('buildConversationMessages', () => {
     });
     const messages = buildConversationMessages(context);
     expect(messages).toHaveLength(0);
+  });
+});
+
+describe('buildConversationMessages with attachments', () => {
+  it('keeps plain-string form for a text-only USER message (no attachments)', () => {
+    const context = createTestAgentContext({
+      recentMessages: [{ id: '1', role: 'USER', content: 'hi' }],
+    });
+    const messages = buildConversationMessages(context);
+    expect(messages[0]).toEqual({ role: 'user', content: 'hi' });
+  });
+
+  it('emits an image content part for an image attachment', () => {
+    const data = Buffer.from([1, 2, 3]);
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: '1',
+          role: 'USER',
+          content: 'what is this?',
+          attachments: [makeAttachment({ id: 'a', filename: 'pic.png', mediaType: 'image/png', category: 'image', data })],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+    const content = messages[0].content as unknown[];
+    expect(content[0]).toEqual({ type: 'text', text: 'what is this?' });
+    expect(content[1]).toEqual({ type: 'image', image: data, mediaType: 'image/png' });
+  });
+
+  it('emits a file content part for a PDF attachment', () => {
+    const data = Buffer.from('%PDF-1.7');
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: '1',
+          role: 'USER',
+          content: '',
+          attachments: [makeAttachment({ id: 'a', filename: 'doc.pdf', mediaType: 'application/pdf', category: 'pdf', data })],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+    const content = messages[0].content as unknown[];
+    // File-only message: just the file part, no leading text.
+    expect(content).toHaveLength(1);
+    expect(content[0]).toEqual({ type: 'file', data, mediaType: 'application/pdf', filename: 'doc.pdf' });
+  });
+
+  // A message whose only part is text (an inlined text file or an unreadable
+  // note, with no typed message text) collapses to a plain string by design.
+  const textOf = (content: unknown): string =>
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content.map((p) => (p as { text?: string }).text ?? `[${(p as { type: string }).type}]`).join('')
+        : '';
+  const hasPartType = (content: unknown, type: string): boolean =>
+    Array.isArray(content) && content.some((p) => (p as { type: string }).type === type);
+
+  it('inlines a text attachment in a fenced block with its filename', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: '1',
+          role: 'USER',
+          content: '',
+          attachments: [makeAttachment({ id: 'a', filename: 'notes.txt', mediaType: 'text/plain', category: 'text', data: Buffer.from('line one\nline two') })],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+    const text = textOf(messages[0].content);
+    expect(text).toContain('[File: notes.txt]');
+    expect(text).toContain('line one');
+    expect(text).not.toContain('truncated');
+  });
+
+  it('truncates a text attachment longer than MAX_INLINE_TEXT_CHARS', () => {
+    const big = 'x'.repeat(MAX_INLINE_TEXT_CHARS + 100);
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: '1',
+          role: 'USER',
+          content: '',
+          attachments: [makeAttachment({ id: 'a', filename: 'big.txt', mediaType: 'text/plain', category: 'text', data: Buffer.from(big) })],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+    const text = textOf(messages[0].content);
+    expect(text).toContain('truncated');
+    // The inlined body is capped to the limit (plus markers), not the full size.
+    expect(text).not.toContain('x'.repeat(MAX_INLINE_TEXT_CHARS + 1));
+  });
+
+  it('renders an unreadable note (never a file part) for unsupported binaries', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: '1',
+          role: 'USER',
+          content: '',
+          attachments: [makeAttachment({ id: 'a', filename: 'archive.zip', mediaType: 'application/zip', category: 'unreadable', sizeBytes: 2048 })],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+    expect(hasPartType(messages[0].content, 'file')).toBe(false);
+    const text = textOf(messages[0].content);
+    expect(text).toContain('archive.zip');
+    expect(text).toContain('not readable');
+  });
+
+  it('downgrades an image-category attachment with a non-Bedrock media type to a note', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: '1',
+          role: 'USER',
+          content: '',
+          // category says image but tiff is not in the Bedrock-safe set — must not become an image part.
+          attachments: [makeAttachment({ id: 'a', filename: 'scan.tiff', mediaType: 'image/tiff', category: 'image' })],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+    expect(hasPartType(messages[0].content, 'image')).toBe(false);
+    expect(textOf(messages[0].content)).toContain('not readable');
+  });
+
+  it('does not skip a file-only USER message (empty content + attachment)', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: '1',
+          role: 'USER',
+          content: '',
+          attachments: [makeAttachment({ id: 'a', filename: 'pic.png', mediaType: 'image/png', category: 'image' })],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+    expect(messages).toHaveLength(1);
+    expect(Array.isArray(messages[0].content)).toBe(true);
   });
 });

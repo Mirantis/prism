@@ -125,6 +125,29 @@ const { mockExportAgent, mockImportAgent } = vi.hoisted(() => ({
   mockImportAgent: vi.fn(),
 }));
 
+const { mockAttachmentCreate, mockAttachmentGetById, mockAttachmentDeleteUnlinked } = vi.hoisted(() => ({
+  mockAttachmentCreate: vi.fn(),
+  mockAttachmentGetById: vi.fn(),
+  mockAttachmentDeleteUnlinked: vi.fn(),
+}));
+
+// Keep the real detection/classification helpers; only stub the DB-backed
+// service instance (the test's prisma mock has no messageAttachment delegate).
+vi.mock('../services/attachment.service', async () => {
+  const actual = await vi.importActual<typeof import('../services/attachment.service')>(
+    '../services/attachment.service',
+  );
+  return {
+    ...actual,
+    attachmentService: {
+      ...actual.attachmentService,
+      create: mockAttachmentCreate,
+      getById: mockAttachmentGetById,
+      deleteUnlinked: mockAttachmentDeleteUnlinked,
+    },
+  };
+});
+
 vi.mock('../services/agent-archive.service', async () => {
   const actual = await vi.importActual<typeof import('../services/agent-archive.service')>(
     '../services/agent-archive.service',
@@ -1746,5 +1769,82 @@ describe('Management Routes', () => {
         expect(res.body.error).toContain('Missing');
         expect(mockImportAgent).not.toHaveBeenCalled();
       });
+  });
+
+  // ==========================================================================
+  // Attachments (shared files)
+  // ==========================================================================
+
+  describe('Attachments', () => {
+    it('POST /agents/attachments stores a file and returns metadata (no bytes)', async () => {
+      mockAttachmentCreate.mockResolvedValue({
+        id: 'att-1',
+        filename: 'notes.txt',
+        mediaType: 'text/plain',
+        sizeBytes: 5,
+        category: 'text',
+      });
+
+      const res = await authedRequest(app)
+        .post('/agents/attachments')
+        .attach('file', Buffer.from('hello'), 'notes.txt');
+
+      expect(res.status).toBe(201);
+      expect(res.body).toEqual({
+        id: 'att-1',
+        filename: 'notes.txt',
+        mediaType: 'text/plain',
+        sizeBytes: 5,
+        category: 'text',
+      });
+      expect(res.body.data).toBeUndefined();
+      // Route ran real detection/classification before persisting.
+      expect(mockAttachmentCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ filename: 'notes.txt', mediaType: 'text/plain', category: 'text', source: 'web' }),
+      );
+    });
+
+    it('POST /agents/attachments returns 400 when no file is provided', async () => {
+      const res = await authedRequest(app).post('/agents/attachments');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Missing');
+      expect(mockAttachmentCreate).not.toHaveBeenCalled();
+    });
+
+    it('GET /agents/attachments/:id streams bytes with content-type and disposition', async () => {
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      mockAttachmentGetById.mockResolvedValue({
+        id: 'att-1',
+        filename: 'pic.png',
+        mediaType: 'image/png',
+        data: bytes,
+      });
+
+      const res = await authedRequest(app).get('/agents/attachments/att-1');
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toContain('image/png');
+      expect(res.headers['content-disposition']).toContain('pic.png');
+      expect(Buffer.from(res.body)).toEqual(bytes);
+    });
+
+    it('GET /agents/attachments/:id returns 404 when not found', async () => {
+      mockAttachmentGetById.mockResolvedValue(null);
+      const res = await authedRequest(app).get('/agents/attachments/missing');
+      expect(res.status).toBe(404);
+    });
+
+    it('DELETE /agents/attachments/:id removes an unlinked attachment', async () => {
+      mockAttachmentDeleteUnlinked.mockResolvedValue(1);
+      const res = await authedRequest(app).delete('/agents/attachments/att-1');
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('DELETE /agents/attachments/:id returns 404 when nothing was deleted (linked/missing)', async () => {
+      mockAttachmentDeleteUnlinked.mockResolvedValue(0);
+      const res = await authedRequest(app).delete('/agents/attachments/att-1');
+      expect(res.status).toBe(404);
+    });
   });
 });

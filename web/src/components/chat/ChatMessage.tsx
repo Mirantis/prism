@@ -3,7 +3,19 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Bot } from 'lucide-react';
 import ChatMarkdown from './ChatMarkdown';
 import ChatToolCalls from './ChatToolCalls';
+import { MessageAttachmentChip } from './ChatAttachmentChip';
 import type { ConversationMessage } from '@/types';
+
+function AttachmentChips({ message }: { message: ConversationMessage }) {
+  if (!message.attachments || message.attachments.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {message.attachments.map((a) => (
+        <MessageAttachmentChip key={a.id} attachment={a} />
+      ))}
+    </div>
+  );
+}
 
 interface ChatMessageProps {
   message: ConversationMessage;
@@ -34,12 +46,16 @@ const ChatMessage = memo(function ChatMessage({ message, agentName }: ChatMessag
   }
 
   if (message.role === 'USER') {
+    const hasText = message.content.trim().length > 0;
     return (
       <div className="group flex justify-end gap-3">
         <div className="flex max-w-[85%] flex-col items-end gap-1">
-          <div className="rounded-2xl bg-primary px-4 py-3 text-sm text-primary-foreground">
-            <ChatMarkdown content={message.content} />
-          </div>
+          <AttachmentChips message={message} />
+          {hasText && (
+            <div className="rounded-2xl bg-primary px-4 py-3 text-sm text-primary-foreground">
+              <ChatMarkdown content={message.content} />
+            </div>
+          )}
           <span className="px-1 text-[10px] text-muted-foreground">{time}</span>
         </div>
       </div>
@@ -61,6 +77,7 @@ const ChatMessage = memo(function ChatMessage({ message, agentName }: ChatMessag
         <div className="text-sm text-foreground break-words overflow-hidden">
           <ChatMarkdown content={message.content} />
         </div>
+        <AttachmentChips message={message} />
         {message.toolCalls && message.toolCalls.length > 0 && <ChatToolCalls toolCalls={message.toolCalls} />}
       </div>
     </div>

@@ -9,6 +9,16 @@ export interface ToolCallRecord {
   success: boolean;
 }
 
+export type AttachmentCategory = 'image' | 'pdf' | 'text' | 'unreadable';
+
+export interface Attachment {
+  id: string;
+  filename: string;
+  mediaType: string;
+  sizeBytes: number;
+  category: AttachmentCategory;
+}
+
 export interface ConversationMessage {
   id: string;
   threadId: string;
@@ -20,6 +30,7 @@ export interface ConversationMessage {
   tokenCount: number | null;
   isCompacted: boolean;
   createdAt: string;
+  attachments?: Attachment[] | null;
 }
 
 export interface ConversationThread {

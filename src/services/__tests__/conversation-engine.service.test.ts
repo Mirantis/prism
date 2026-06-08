@@ -19,6 +19,7 @@ const {
   mockCountAgentMessages,
   mockGenerateText,
   mockIsTelemetryEnabled,
+  mockLinkToMessage,
 } = vi.hoisted(() => ({
   mockGetOrCreateActiveThread: vi.fn(),
   mockAddMessage: vi.fn(),
@@ -27,6 +28,7 @@ const {
   mockCountAgentMessages: vi.fn(),
   mockGenerateText: vi.fn(),
   mockIsTelemetryEnabled: vi.fn(),
+  mockLinkToMessage: vi.fn(),
 }));
 
 /**
@@ -52,6 +54,12 @@ vi.mock('../conversation.service', () => ({
 vi.mock('../message-delivery.service', () => ({
   messageDeliveryService: {
     publish: mockPublish,
+  },
+}));
+
+vi.mock('../attachment.service', () => ({
+  attachmentService: {
+    linkToMessage: mockLinkToMessage,
   },
 }));
 
@@ -179,6 +187,44 @@ describe('Requirement: Conversation Engine', () => {
       });
 
       expect(mockGetOrCreateActiveThread).toHaveBeenCalledWith('agent-123', userId);
+    });
+  });
+
+  describe('Scenario: Attachments', () => {
+    it('links provided attachmentIds to the stored user message', async () => {
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'check this file',
+        attachmentIds: ['att-1', 'att-2'],
+      });
+
+      expect(mockLinkToMessage).toHaveBeenCalledWith(['att-1', 'att-2'], 'msg-123', 'thread-123');
+    });
+
+    it('does not link when no attachmentIds are provided', async () => {
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'no files',
+      });
+
+      expect(mockLinkToMessage).not.toHaveBeenCalled();
+    });
+
+    it('processes a file-only message (empty text) and still links attachments', async () => {
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: '',
+        attachmentIds: ['att-9'],
+      });
+
+      // The engine never rejects empty text (the gateway guards that); it stores
+      // the user message and links the file.
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-123', expect.objectContaining({ role: 'USER' }));
+      expect(mockLinkToMessage).toHaveBeenCalledWith(['att-9'], 'msg-123', 'thread-123');
+      expect(mockInvokeStream).toHaveBeenCalled();
     });
   });
 

@@ -33,6 +33,7 @@ import { slackAdapterService } from './services/slack-adapter.service';
 import { webSocketAdapterService } from './services/websocket-adapter.service';
 import { webSocketGatewayService } from './services/websocket-gateway.service';
 import { messageDeliveryService } from './services/message-delivery.service';
+import { attachmentService } from './services/attachment.service';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
@@ -45,6 +46,8 @@ initTelemetry();
 
 const app = createApp();
 const httpServer = createServer(app);
+
+let orphanCleanupTimer: NodeJS.Timeout | undefined;
 
 // Register channel adapters for unified message delivery
 // Note: Must be registered BEFORE server starts accepting connections
@@ -88,6 +91,21 @@ const initialize = async () => {
     await messageDeliveryService.initializeAll();
 
     await getSlackHeartbeatThrottleQueue().start();
+
+    // Reap abandoned pre-send file uploads (chip added but never sent).
+    // Linked attachments are untouched. Run on boot, then hourly.
+    const ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
+    const reapOrphanAttachments = async () => {
+      try {
+        const deleted = await attachmentService.deleteOrphans(ORPHAN_TTL_MS);
+        if (deleted > 0) logger.info(`[Attachments] reaped ${deleted} orphaned upload(s)`);
+      } catch (err) {
+        logger.error({ err }, '[Attachments] orphan cleanup failed');
+      }
+    };
+    await reapOrphanAttachments();
+    orphanCleanupTimer = setInterval(reapOrphanAttachments, 60 * 60 * 1000);
+    orphanCleanupTimer.unref?.();
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`Failed to initialize services: ${msg}`);
@@ -113,6 +131,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   heartbeatService.stopAll();
   cronSchedulerService.stopAll();
   sessionManagerService.stopAll();
+  if (orphanCleanupTimer) clearInterval(orphanCleanupTimer);
   webSocketGatewayService.closeAll();
   await messageDeliveryService.shutdownAll();
   await getSlackHeartbeatThrottleQueue().stop();

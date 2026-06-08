@@ -197,6 +197,63 @@ describe('Requirement: WebSocket Gateway', () => {
       expect(mockChat).not.toHaveBeenCalled();
     });
 
+    it('accepts a file-only message (empty text but attachments present) and forwards ids', async () => {
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+      ws.readyState = 1;
+      service.connections.set(userId, [ws]);
+
+      await service.handleChatMessage(ws, userId, {
+        type: 'chat',
+        content: '',
+        attachmentIds: ['att-1'],
+        agentId: 'agent-123',
+      });
+
+      expect(mockChat).toHaveBeenCalledWith(
+        expect.objectContaining({ message: '', attachmentIds: ['att-1'], agentId: 'agent-123' }),
+      );
+    });
+
+    it('forwards attachmentIds alongside text content', async () => {
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+      ws.readyState = 1;
+      service.connections.set(userId, [ws]);
+
+      await service.handleChatMessage(ws, userId, {
+        type: 'chat',
+        content: 'see attached',
+        attachmentIds: ['att-1', 'att-2'],
+        agentId: 'agent-123',
+      });
+
+      expect(mockChat).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'see attached', attachmentIds: ['att-1', 'att-2'] }),
+      );
+    });
+
+    it('still rejects when there is neither text nor attachments', async () => {
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+
+      await service.handleChatMessage(ws, userId, {
+        type: 'chat',
+        content: '',
+        attachmentIds: [],
+        agentId: 'agent-123',
+      });
+
+      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({
+        type: 'error',
+        payload: { error: 'Empty message' },
+      }));
+      expect(mockChat).not.toHaveBeenCalled();
+    });
+
     it('should handle unknown message type', async () => {
       const userId = 'user-123';
       const ws = createMockWebSocket();

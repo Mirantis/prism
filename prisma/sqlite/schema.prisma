@@ -158,9 +158,41 @@ model ConversationMessage {
 
   createdAt DateTime @default(now())
 
-  thread ConversationThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  thread      ConversationThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  attachments MessageAttachment[]
 
   @@map("conversation_messages")
+}
+
+// Shared files uploaded by users (web drag-and-drop or Slack attachments).
+// Bytes are stored as a BLOB in this DB (safer than disk; survives restarts).
+// `messageId` is nullable: web uploads land before the message is sent, then
+// get linked at send time. `externalTs` re-associates Slack channel files with
+// the live-read history (the SlackThreadProvider keys messages by Slack ts and
+// never reads our message rows). `category` is denormalized so the context
+// loader doesn't re-sniff the mediaType on every turn.
+model MessageAttachment {
+  id          String  @id @default(uuid())
+  messageId   String?
+  threadId    String?
+  filename    String
+  mediaType   String
+  sizeBytes   Int
+  category    String
+  data        Bytes
+  source      String
+  slackFileId String?
+  externalTs  String?
+
+  createdAt DateTime @default(now())
+
+  message ConversationMessage? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([threadId])
+  @@index([externalTs])
+  @@index([slackFileId])
+  @@map("message_attachments")
 }
 
 model ConversationParticipant {
