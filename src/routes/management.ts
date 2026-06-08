@@ -90,6 +90,8 @@ import { slackHeartbeatTriggerService } from '../services/slack-heartbeat-trigge
 import { conversationService, type MessageInput } from '../services/conversation.service';
 import { conversationEngineService, type ChatInput } from '../services/conversation-engine.service';
 import { slackAdapterService } from '../services/slack-adapter.service';
+import { attachmentService, detectMediaType, classifyMediaType } from '../services/attachment.service';
+import { MAX_FILE_SIZE_BYTES } from '../constants';
 import {
   agentWorkspaceService,
   ValidationError,
@@ -288,6 +290,135 @@ router.post(
     }
   },
 );
+
+// ============================================================================
+// Attachments (shared files)
+// ============================================================================
+
+// 10 MB cap (MAX_FILE_SIZE_BYTES) — bounds storage and the token cost of
+// re-exposing files to the LLM every turn. Same memory-storage + JSON-400
+// wrapper shape as the archive upload above, just a smaller limit.
+const attachmentUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_SIZE_BYTES } });
+
+const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
+
+function uploadAttachmentFile(req: Request, res: Response, next: (err?: unknown) => void): void {
+  attachmentUpload.single('file')(req, res, (err: unknown) => {
+    if (err instanceof multer.MulterError) {
+      const message =
+        err.code === 'LIMIT_FILE_SIZE' ? `File too large (max ${MAX_FILE_SIZE_MB} MB)` : err.message;
+      res.status(400).json({ error: `Upload rejected: ${message}` });
+      return;
+    }
+    if (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Upload failed' });
+      return;
+    }
+    next();
+  });
+}
+
+/** Strip CR/LF, quotes, backslashes and control chars from a header value. */
+function sanitizeFilename(name: string): string {
+  const noQuotes = name.replace(/[\r\n"\\]/g, '_');
+  let out = '';
+  for (let i = 0; i < noQuotes.length; i++) {
+    if (noQuotes.charCodeAt(i) >= 0x20) out += noQuotes[i];
+  }
+  return out.trim().slice(0, 255) || 'file';
+}
+
+/**
+ * POST /agents/attachments
+ * Multipart upload of one shared file (web drag-and-drop). Stores the bytes as
+ * a BLOB and returns metadata only (never the bytes). The attachment is created
+ * unlinked; the chat send links it to the user message via `attachmentIds`.
+ */
+router.post('/attachments', uploadAttachmentFile, async (req: Request, res: Response) => {
+  try {
+    const file = (req as Request & {
+      file?: { buffer: Buffer; originalname: string; mimetype?: string; size: number };
+    }).file;
+    if (!file?.buffer?.length) {
+      res.status(400).json({ error: 'Missing or empty `file` field in multipart body' });
+      return;
+    }
+    // Defense-in-depth: multer already enforces the limit, but re-check.
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      res.status(400).json({ error: `File too large (max ${MAX_FILE_SIZE_MB} MB)` });
+      return;
+    }
+
+    const threadId =
+      typeof req.body?.threadId === 'string' && req.body.threadId ? req.body.threadId : undefined;
+    const mediaType = detectMediaType(file.buffer, file.originalname, file.mimetype);
+    const category = classifyMediaType(mediaType);
+
+    const row = await attachmentService.create({
+      filename: file.originalname || 'file',
+      mediaType,
+      sizeBytes: file.size,
+      data: file.buffer,
+      category,
+      source: 'web',
+      threadId,
+    });
+
+    res.status(201).json({
+      id: row.id,
+      filename: row.filename,
+      mediaType: row.mediaType,
+      sizeBytes: row.sizeBytes,
+      category: row.category,
+    });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to store attachment: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * GET /agents/attachments/:id
+ * Stream a stored file's bytes back for download/preview. `inline` lets the
+ * browser preview images/PDFs; the web UI's `<a download>` still forces a save.
+ */
+router.get('/attachments/:id', async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const att = await attachmentService.getById(req.params.id);
+    if (!att) {
+      res.status(404).json({ error: 'Attachment not found' });
+      return;
+    }
+    res.setHeader('Content-Type', att.mediaType);
+    res.setHeader('Content-Disposition', `inline; filename="${sanitizeFilename(att.filename)}"`);
+    res.send(Buffer.from(att.data));
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to fetch attachment ${req.params.id}: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * DELETE /agents/attachments/:id
+ * Remove a pre-send (unlinked) attachment — used when the user removes a chip
+ * before sending. Linked attachments are immutable here (cascade with messages).
+ */
+router.delete('/attachments/:id', async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const deleted = await attachmentService.deleteUnlinked(req.params.id);
+    if (deleted === 0) {
+      res.status(404).json({ error: 'Attachment not found or already linked to a message' });
+      return;
+    }
+    res.json({ success: true });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to delete attachment ${req.params.id}: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
 
 // ============================================================================
 // Heartbeat Management
@@ -1461,13 +1592,13 @@ router.get('/slack/channel-name', async (req: Request, res: Response) => {
  */
 router.post('/chat', async (req: Request, res: Response) => {
   try {
-    const { userId, agentId, message, threadId, metadata } = req.body as ChatInput;
+    const { userId, agentId, message, threadId, metadata, attachmentIds } = req.body as ChatInput;
     if (!userId || !agentId || !message) {
       res.status(400).json({ error: 'userId, agentId, and message are required' });
       return;
     }
 
-    const response = await conversationEngineService.chat({ userId, agentId, message, threadId, metadata });
+    const response = await conversationEngineService.chat({ userId, agentId, message, threadId, metadata, attachmentIds });
     res.json(response);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';

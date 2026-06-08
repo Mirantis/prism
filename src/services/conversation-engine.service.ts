@@ -9,6 +9,7 @@
 import { generateText } from 'ai';
 import { messageDeliveryService } from './message-delivery.service';
 import { conversationService } from './conversation.service';
+import { attachmentService } from './attachment.service';
 import { invokeStream } from '../invoke';
 import { ToolCallRecord, InvokeStep, UIBlock } from '../types';
 import { logger } from '../logger';
@@ -37,6 +38,8 @@ export interface ChatInput {
   agentId: string;
   message: string;
   threadId?: string;
+  /** Ids of already-stored attachments to link to this user message. */
+  attachmentIds?: string[];
   metadata?: {
     channel?: 'websocket' | 'slack';
     channelId?: string;
@@ -178,13 +181,19 @@ Respond with exactly one word: WORTHY or SKIP`;
     // already prefixed with the sender's mention marker when the caller
     // (e.g. the Slack adapter) wants the agent to see it in conversation
     // history — see `slackAdapterService.buildSenderTaggedContent`.
-    await conversationService.addMessage(threadId, {
+    const userMessage = await conversationService.addMessage(threadId, {
       content: message,
       role: 'USER',
       triggeredBy: 'USER_INPUT',
       senderExternalId: metadata?.senderSlackUserId,
       senderName: metadata?.senderName,
     });
+
+    // Link any uploaded files (web pre-send uploads / Slack downloads) to the
+    // message that carries them so the context builder can expose them.
+    if (input.attachmentIds?.length) {
+      await attachmentService.linkToMessage(input.attachmentIds, userMessage.id, threadId);
+    }
 
     // Determine if this is a channel message
     const isChannelMessage = metadata?.channel === 'slack' && !!metadata?.channelId;

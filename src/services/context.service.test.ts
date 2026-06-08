@@ -13,10 +13,22 @@ import type { ConversationMessage } from '../prompts/context-builder';
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockGetAgent, mockGetActiveThread, mockGetThreadContext } = vi.hoisted(() => ({
+const {
+  mockGetAgent,
+  mockGetActiveThread,
+  mockGetThreadContext,
+  mockGetMetaByMessageIds,
+  mockGetMetaByExternalTs,
+  mockLoadForMessages,
+  mockLoadByExternalTs,
+} = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockGetActiveThread: vi.fn(),
   mockGetThreadContext: vi.fn(),
+  mockGetMetaByMessageIds: vi.fn(),
+  mockGetMetaByExternalTs: vi.fn(),
+  mockLoadForMessages: vi.fn(),
+  mockLoadByExternalTs: vi.fn(),
 }));
 
 vi.mock('./agent-workspace.service', () => ({
@@ -29,6 +41,15 @@ vi.mock('./conversation.service', () => ({
   conversationService: {
     getActiveThread: mockGetActiveThread,
     getThreadContext: mockGetThreadContext,
+  },
+}));
+
+vi.mock('./attachment.service', () => ({
+  attachmentService: {
+    getMetaByMessageIds: mockGetMetaByMessageIds,
+    getMetaByExternalTs: mockGetMetaByExternalTs,
+    loadForMessages: mockLoadForMessages,
+    loadByExternalTs: mockLoadByExternalTs,
   },
 }));
 
@@ -82,6 +103,11 @@ describe('ContextService', () => {
     mockGetAgent.mockReset();
     mockGetActiveThread.mockReset();
     mockGetThreadContext.mockReset();
+    // Default: no attachments anywhere (empty maps).
+    mockGetMetaByMessageIds.mockReset().mockResolvedValue(new Map());
+    mockGetMetaByExternalTs.mockReset().mockResolvedValue(new Map());
+    mockLoadForMessages.mockReset().mockResolvedValue(new Map());
+    mockLoadByExternalTs.mockReset().mockResolvedValue(new Map());
   });
 
   // ==========================================================================
@@ -291,6 +317,60 @@ describe('ContextService', () => {
 
     expect(context.recentMessages).toHaveLength(3);
     expect(context.recentMessages[1].id).toBe('msg-2');
+  });
+
+  it('loads attachment bytes onto messages and keeps a file-only message in the window', async () => {
+    mockGetAgent.mockResolvedValue(createTestAgentWorkspace());
+    mockGetThreadContext.mockResolvedValue({
+      compactionSummary: null,
+      threadSource: 'DATABASE',
+      messages: [
+        createTestMessage({ id: 'msg-1', role: 'USER', content: 'here is a file' }),
+        // File-only: empty content, no toolCalls — kept only because it has an attachment.
+        createTestMessage({ id: 'msg-2', role: 'USER', content: '' }),
+      ],
+    });
+    const att = { id: 'a1', filename: 'pic.png', mediaType: 'image/png', category: 'image', sizeBytes: 3, data: Buffer.from([1, 2, 3]) };
+    // Both passes (metadata existence, then bytes) report msg-2's attachment.
+    mockGetMetaByMessageIds.mockResolvedValue(new Map([['msg-2', [att]]]));
+    mockLoadForMessages.mockResolvedValue(new Map([['msg-2', [att]]]));
+
+    const context = await contextService.getAgentContext('user-1', {
+      agentId: 'agent-1',
+      threadId: 'thread-1',
+    });
+
+    // msg-2 survives the empty-content filter because it carries an attachment.
+    expect(context.recentMessages).toHaveLength(2);
+    const fileOnly = context.recentMessages.find((m) => m.id === 'msg-2')!;
+    expect(fileOnly.attachments).toEqual([att]);
+    // DB threads key by messageId, not external ts.
+    expect(mockLoadForMessages).toHaveBeenCalledWith(['msg-1', 'msg-2']);
+    expect(mockLoadByExternalTs).not.toHaveBeenCalled();
+  });
+
+  it('re-associates Slack channel attachments by external ts (not messageId)', async () => {
+    mockGetAgent.mockResolvedValue(createTestAgentWorkspace());
+    mockGetThreadContext.mockResolvedValue({
+      compactionSummary: null,
+      threadSource: 'SLACK',
+      messages: [
+        // SlackThreadProvider synthesizes ids and sets externalMessageId = ts.
+        createTestMessage({ id: 'synthetic-1', role: 'USER', content: 'see file', externalMessageId: '1700.0001' } as any),
+      ],
+    });
+    const att = { id: 'a1', filename: 'doc.pdf', mediaType: 'application/pdf', category: 'pdf', sizeBytes: 9, data: Buffer.from('%PDF') };
+    mockGetMetaByExternalTs.mockResolvedValue(new Map([['1700.0001', [att]]]));
+    mockLoadByExternalTs.mockResolvedValue(new Map([['1700.0001', [att]]]));
+
+    const context = await contextService.getAgentContext('user-1', {
+      agentId: 'agent-1',
+      threadId: 'thread-slack',
+    });
+
+    expect(mockLoadByExternalTs).toHaveBeenCalledWith('thread-slack', ['1700.0001']);
+    expect(mockLoadForMessages).not.toHaveBeenCalled();
+    expect(context.recentMessages[0].attachments).toEqual([att]);
   });
 
   it('keeps only the last 20 messages', async () => {

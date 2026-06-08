@@ -2,6 +2,7 @@ import { ApiError } from './errors';
 import type {
   AgentDetails,
   AgentSummary,
+  Attachment,
   ConversationMessage,
   ConversationThread,
   CronTask,
@@ -204,7 +205,22 @@ export const runtimeApi = {
       body: fd,
     });
   },
+
+  // Shared files
+  uploadAttachment: (file: File, threadId?: string) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (threadId) fd.append('threadId', threadId);
+    return request<Attachment>('/agents/attachments', { method: 'POST', body: fd });
+  },
+  deleteAttachment: (id: string) =>
+    request<{ success: true }>(`/agents/attachments/${id}`, { method: 'DELETE' }),
 };
+
+/** URL to download/preview a stored attachment by id. */
+export function attachmentUrl(id: string): string {
+  return `/agents/attachments/${id}`;
+}
 
 export function webSocketUrl(): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';

@@ -10,6 +10,7 @@ interface ChatMessage {
   content: string;
   agentId: string;
   threadId?: string;
+  attachmentIds?: string[];
 }
 
 interface WebSocketMessage {
@@ -130,8 +131,8 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   }, []);
 
   const sendFollowup = useCallback(
-    (content: string, agentId: string, threadId?: string) => {
-      sendMessage({ mode: 'followup', content, agentId, threadId });
+    (content: string, agentId: string, threadId?: string, attachmentIds?: string[]) => {
+      sendMessage({ mode: 'followup', content, agentId, threadId, attachmentIds });
     },
     [sendMessage],
   );
