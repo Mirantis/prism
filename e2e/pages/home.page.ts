@@ -5,17 +5,20 @@
  * in the URL. Selectors mirror web/src/components/chat/*.
  */
 
-import { Page, Locator } from '@playwright/test';
+import { Page, Locator, Download } from '@playwright/test';
 import { BasePage } from './base.page';
 
 export class HomePage extends BasePage {
   readonly chatInput: Locator;
   readonly sendButton: Locator;
+  readonly fileInput: Locator;
 
   constructor(page: Page) {
     super(page);
     this.chatInput = page.getByPlaceholder('Message your agent...');
     this.sendButton = page.locator('button[type="submit"]');
+    // Hidden file input behind the paperclip button in ChatInput.
+    this.fileInput = page.locator('input[type="file"]');
   }
 
   async navigate() {
@@ -70,5 +73,44 @@ export class HomePage extends BasePage {
     await this.page
       .getByTestId('chat-typing-indicator')
       .waitFor({ state: 'detached', timeout });
+  }
+
+  // ---- File sharing ----
+
+  /**
+   * Attach a file via the hidden <input type="file"> (setInputFiles works on
+   * hidden inputs and mirrors a real drag-drop/picker selection).
+   */
+  async attachFile(file: { name: string; mimeType: string; content: string }) {
+    await this.fileInput.setInputFiles({
+      name: file.name,
+      mimeType: file.mimeType,
+      buffer: Buffer.from(file.content),
+    });
+  }
+
+  /** Composer chips (pending/ready uploads above the textarea). */
+  composerAttachment(filename: string) {
+    return this.page.getByTestId('composer-attachment').filter({ hasText: filename });
+  }
+
+  /** Chips rendered on sent/historical messages (clickable download links). */
+  messageAttachment(filename: string) {
+    return this.page.getByTestId('message-attachment').filter({ hasText: filename });
+  }
+
+  async removeComposerAttachment(filename: string) {
+    await this.composerAttachment(filename)
+      .getByRole('button', { name: /remove/i })
+      .click();
+  }
+
+  /** Click a message's attachment chip and capture the resulting download. */
+  async downloadAttachment(filename: string): Promise<Download> {
+    const [download] = await Promise.all([
+      this.page.waitForEvent('download'),
+      this.messageAttachment(filename).first().click(),
+    ]);
+    return download;
   }
 }

@@ -69,6 +69,7 @@ export function MessageAttachmentChip({ attachment }: { attachment: Attachment }
       download={attachment.filename}
       target="_blank"
       rel="noopener noreferrer"
+      data-testid="message-attachment"
       className={`${CHIP_CLASS} transition-colors hover:bg-muted`}
       title={`Download ${attachment.filename}`}
     >
@@ -91,6 +92,7 @@ export function PendingAttachmentChip({
 }) {
   return (
     <div
+      data-testid="composer-attachment"
       className={`${CHIP_CLASS} ${attachment.status === 'error' ? 'border-destructive/50' : ''}`}
     >
       <ChipBody
