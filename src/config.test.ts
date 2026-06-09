@@ -92,6 +92,25 @@ describe('config', () => {
     expect(cfg.teamName).toBe('Local');
   });
 
+  it('reads NEXUS_MCP_URL directly from env', async () => {
+    process.env.NEXUS_MCP_URL = 'https://nexus.example.com/projects/proj-42/mcp';
+    const cfg = await loadConfig();
+    expect(cfg.nexusMcpUrl).toBe('https://nexus.example.com/projects/proj-42/mcp');
+  });
+
+  it('nexusMcpUrl is null when NEXUS_MCP_URL is unset', async () => {
+    delete process.env.NEXUS_MCP_URL;
+    const cfg = await loadConfig();
+    expect(cfg.nexusMcpUrl).toBeNull();
+  });
+
+  it('nexusMcpUrl does not fall back to NEXUS_API_URL', async () => {
+    delete process.env.NEXUS_MCP_URL;
+    process.env.NEXUS_API_URL = 'https://nexus.example.com';
+    const cfg = await loadConfig();
+    expect(cfg.nexusMcpUrl).toBeNull();
+  });
+
   it('nexusLlmBaseUrl is null when NEXUS_API_URL is unset', async () => {
     delete process.env.NEXUS_API_URL;
     const cfg = await loadConfig();
