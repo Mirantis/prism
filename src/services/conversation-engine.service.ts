@@ -40,6 +40,8 @@ export interface ChatInput {
   threadId?: string;
   /** Ids of already-stored attachments to link to this user message. */
   attachmentIds?: string[];
+  /** Per-turn runtime notices injected into the system prompt (see InvokeRequest). */
+  runtimeNotices?: string[];
   metadata?: {
     channel?: 'websocket' | 'slack';
     channelId?: string;
@@ -231,6 +233,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       prompt: message,
       threadId,
       isChannelMessage,
+      runtimeNotices: input.runtimeNotices,
     })) {
       allToolCalls.push(...step.toolCalls);
       if (step.blocks) allBlocks.push(...step.blocks);

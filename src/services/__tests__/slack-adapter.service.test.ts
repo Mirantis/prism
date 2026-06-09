@@ -285,20 +285,15 @@ describe('Requirement: Slack file download failures are surfaced to the agent', 
     }
   });
 
-  it('appendAttachmentFailures injects an actionable note telling the agent to inform the user', () => {
-    const note = adapter.appendAttachmentFailures('(shared a file)', [
+  it('buildAttachmentFailureNote produces an actionable runtime notice for the system prompt', () => {
+    const note = adapter.buildAttachmentFailureNote([
       { filename: 'secret.png', reason: 'Slack denied access' },
     ]);
-    expect(note).toContain('(shared a file)');
     expect(note).toContain('secret.png');
-    expect(note).toMatch(/tell.*the user/i);
+    expect(note).toMatch(/tell the user/i);
     expect(note).toContain('files:read');
-    // Counters the observed failure modes: denying the file, and shell-hunting.
-    expect(note).toMatch(/no\s+file\s+was\s+attached/i);
-    expect(note).toMatch(/shell/i);
-  });
-
-  it('leaves the text untouched when there are no failures', () => {
-    expect(adapter.appendAttachmentFailures('hi', [])).toBe('hi');
+    // Counters the observed failure modes: denying the file, and asking for a path.
+    expect(note).toMatch(/no file was attached/i);
+    expect(note).toMatch(/file path|on disk/i);
   });
 });

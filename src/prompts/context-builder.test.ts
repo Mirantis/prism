@@ -309,6 +309,25 @@ describe('buildSystemPromptParts', () => {
 
     expect(mockBuildMemoryContext).not.toHaveBeenCalled();
   });
+
+  it('injects runtime notices as a non-cacheable system part', async () => {
+    const context = createTestAgentContext({
+      runtimeNotices: ['A file could not be downloaded — the Slack app likely needs the files:read scope.'],
+    });
+    const parts = await buildSystemPromptParts(context, 'chat');
+
+    const noticePart = parts.find((p) => p.text.includes('# Runtime Notices'));
+    expect(noticePart).toBeDefined();
+    expect(noticePart!.cacheable).toBe(false);
+    expect(noticePart!.text).toContain('authoritative');
+    expect(noticePart!.text).toContain('files:read');
+  });
+
+  it('omits the runtime notices section when there are none', async () => {
+    const context = createTestAgentContext();
+    const parts = await buildSystemPromptParts(context, 'chat');
+    expect(parts.some((p) => p.text.includes('# Runtime Notices'))).toBe(false);
+  });
 });
 
 describe('buildConversationMessages', () => {

@@ -53,6 +53,8 @@ export interface AgentContext {
   recentMessages: ConversationMessage[];
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
+  /** Per-turn runtime events to surface authoritatively (see InvokeRequest). */
+  runtimeNotices?: string[];
 }
 
 export interface SystemPromptPart {
@@ -164,6 +166,20 @@ export async function buildSystemPromptParts(
     // both memories and timestamp are constant within a multi-step generateText() call.
     const hasRecalledMemories = dynamicSections.some((s) => s.startsWith('# Recalled Memories'));
     parts.push({ text: dynamicSections.join('\n\n---\n\n'), cacheable: hasRecalledMemories });
+  }
+  // Per-turn runtime notices (e.g. an attachment that failed to download).
+  // Authoritative system context — the model acts on these far more reliably
+  // than the same text embedded in the user message. Never cacheable (changes
+  // every turn) and kept as its own part so it doesn't consume a cache slot.
+  if (context.runtimeNotices && context.runtimeNotices.length > 0) {
+    const notice = [
+      `# Runtime Notices`,
+      ``,
+      `These events occurred while preparing the current message. Treat them as authoritative facts and act on them in your reply:`,
+      ``,
+      ...context.runtimeNotices.map((n) => `- ${n}`),
+    ].join('\n');
+    parts.push({ text: notice, cacheable: false });
   }
   return parts;
 }

@@ -87,6 +87,10 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       context.lastHeartbeatAlertAt = request.lastHeartbeatAlertAt;
     }
 
+    // Per-turn runtime notices → surfaced as an authoritative system-prompt
+    // section (e.g. a Slack attachment that failed to download).
+    context.runtimeNotices = request.runtimeNotices;
+
     const modelId = resolveEffectiveModel(context.model);
     logger.info(`Invoking in ${request.mode} mode with model ${modelId} for agent ${context.agentName}`);
 
