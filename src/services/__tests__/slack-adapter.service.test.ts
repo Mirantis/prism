@@ -64,6 +64,7 @@ vi.mock('../../logger', () => ({
 vi.mock('../../config', () => ({ config: {} }));
 
 import { slackAdapterService } from '../slack-adapter.service';
+import { attachmentService } from '../attachment.service';
 
 describe('Requirement: disconnectAndDeactivate cleans up connection rows', () => {
   beforeEach(() => {
@@ -232,5 +233,69 @@ describe('Requirement: buildSenderTaggedContent prepares inbound text for the ag
       expect(helper.buildSenderTaggedContent('U123', undefined, 'hello'))
         .toBe('hello');
     });
+  });
+});
+
+describe('Requirement: Slack file download failures are surfaced to the agent', () => {
+  // Previously a failed download was logged and silently dropped, so the agent
+  // never knew a file was shared and couldn't tell the user. downloadSlackFiles
+  // now returns per-file failures, and the handlers append them to the message.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adapter = slackAdapterService as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSlackConnection.mockResolvedValue({ botToken: 'xoxb-test', isActive: true });
+  });
+
+  it('reports an access/permission failure instead of dropping the file', async () => {
+    vi.spyOn(attachmentService, 'existsBySlackFileId').mockResolvedValue(false);
+    const createSpy = vi.spyOn(attachmentService, 'createSlackAttachment');
+    // Slack serves an HTML login page (HTTP 200) when the bot can't read the file.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('<html>login</html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+    );
+    try {
+      const result = await adapter.downloadSlackFiles(
+        [{ id: 'F1', name: 'secret.png', url_private_download: 'https://files.slack.com/x' }],
+        { externalTs: '1700.0001' },
+      );
+      expect(result.attachmentIds).toEqual([]);
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0].filename).toBe('secret.png');
+      expect(result.failures[0].reason).toMatch(/files:read|denied access/i);
+      expect(createSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('reports an oversized file as a failure before downloading', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      const result = await adapter.downloadSlackFiles(
+        [{ id: 'F2', name: 'huge.zip', size: 999_999_999, url_private: 'https://files.slack.com/x' }],
+        {},
+      );
+      expect(result.attachmentIds).toEqual([]);
+      expect(result.failures[0].reason).toMatch(/exceeds/i);
+      expect(fetchSpy).not.toHaveBeenCalled(); // size known up front; no download attempted
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('appendAttachmentFailures injects an actionable note telling the agent to inform the user', () => {
+    const note = adapter.appendAttachmentFailures('(shared a file)', [
+      { filename: 'secret.png', reason: 'Slack denied access' },
+    ]);
+    expect(note).toContain('(shared a file)');
+    expect(note).toContain('secret.png');
+    expect(note).toMatch(/let the user know/i);
+    expect(note).toContain('files:read');
+  });
+
+  it('leaves the text untouched when there are no failures', () => {
+    expect(adapter.appendAttachmentFailures('hi', [])).toBe('hi');
   });
 });
