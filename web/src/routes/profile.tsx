@@ -126,6 +126,7 @@ function ProfilePage() {
         <CardContent className="space-y-4">
           <AgentNameField />
           <ModelField />
+          <VerboseField />
           {details ? (
             <Tabs defaultValue="agentMd">
               <TabsList variant="line">
@@ -343,6 +344,50 @@ function ModelField() {
           </Button>
         </span>
       )}
+    </div>
+  );
+}
+
+function VerboseField() {
+  const agent = useAgent();
+  const queryClient = useQueryClient();
+
+  const { data: details } = useQuery({
+    queryKey: ['agent-details', agent.agentId],
+    queryFn: () => runtimeApi.details(),
+  });
+
+  const verbose = details?.verbose ?? false;
+
+  const updateMut = useMutation({
+    mutationFn: (next: boolean) => runtimeApi.updateSettings({ verbose: next }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(
+        ['agent-details', agent.agentId],
+        (prev: AgentDetails | undefined) => (prev ? { ...prev, verbose: data.verbose } : prev),
+      );
+    },
+  });
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-xs text-muted-foreground">Responses</span>
+      <span className="inline-flex flex-wrap items-center gap-2 text-sm">
+        <Button
+          size="sm"
+          variant={verbose ? 'default' : 'outline'}
+          onClick={() => updateMut.mutate(!verbose)}
+          disabled={updateMut.isPending || !details}
+          aria-pressed={verbose}
+        >
+          {verbose ? 'Streaming step-by-step' : 'Final result only'}
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          {verbose
+            ? 'Posts each step of the agent’s working as it happens.'
+            : 'Posts only the final result of each turn.'}
+        </span>
+      </span>
     </div>
   );
 }

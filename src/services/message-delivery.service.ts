@@ -133,6 +133,37 @@ export class MessageDeliveryService {
   }
 
   /**
+   * Show or clear a progress/typing indicator for the originating channel
+   * while the agent works on a turn. Scoped exactly like message delivery:
+   * when `channelContext` is set we route only to that channel; when absent
+   * (autonomous heartbeat/cron) we no-op, since there's no interactive turn.
+   *
+   * Purely cosmetic — every adapter call is wrapped so a failure (or an
+   * adapter without `setTyping`) can never break the turn.
+   */
+  async setTyping(
+    userId: string,
+    active: boolean,
+    channelContext?: PublishOptions['channelContext']
+  ): Promise<void> {
+    if (!channelContext) return;
+
+    await Promise.allSettled(
+      this.adapters.map(async (adapter) => {
+        if (channelContext.channel !== adapter.name || !adapter.setTyping) return;
+        try {
+          await adapter.setTyping(userId, active, channelContext);
+        } catch (error: unknown) {
+          logger.warn(
+            'setTyping(%s) via %s failed: %s',
+            active, adapter.name, error instanceof Error ? error.message : String(error)
+          );
+        }
+      })
+    );
+  }
+
+  /**
    * Internal: Deliver to all connected channels
    */
   private async deliverToAll(

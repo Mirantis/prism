@@ -33,7 +33,7 @@ class ContextService {
       agentId: agent.id,
       userId,
       proactivity: agent.proactivity,
-      verbosity: agent.verbosity,
+      verbose: agent.verbose,
       model: agent.model ?? null,
       isBootstrapPhase,
       conversationSummary: null,

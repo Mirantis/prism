@@ -88,6 +88,13 @@ export const runtimeApi = {
       body: JSON.stringify({ model }),
     }),
 
+  // Behavioral settings
+  updateSettings: (body: { verbose: boolean }) =>
+    request<{ verbose: boolean }>('/agents/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
   // Threads
   getOrCreateActiveThread: (agentId: string, userId: string) =>
     request<ConversationThread>('/agents/threads/get-or-create-active', {

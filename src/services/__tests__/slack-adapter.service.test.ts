@@ -18,12 +18,19 @@ const {
     slackVerificationCode: {
       deleteMany: vi.fn(),
     },
+    conversationThread: {
+      findUnique: vi.fn(),
+    },
+    slackMapping: {
+      findMany: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
   mockGetSlackConnection: vi.fn(),
   mockSlackMappingService: {
     deleteByConnectionId: vi.fn(),
     getActiveUserMappingsWithDmChannel: vi.fn(),
+    findByChannelId: vi.fn(),
   },
   mockSlackHeartbeatTriggerService: {
     deleteByConnectionId: vi.fn(),
@@ -231,6 +238,105 @@ describe('Requirement: buildSenderTaggedContent prepares inbound text for the ag
       // skip the tag entirely rather than emit `<@U123:>: …`.
       expect(helper.buildSenderTaggedContent('U123', undefined, 'hello'))
         .toBe('hello');
+    });
+  });
+});
+
+describe('Requirement: setTyping posts/deletes a transient placeholder', () => {
+  const mockPostMessage = vi.fn();
+  const mockChatDelete = vi.fn();
+
+  /** Install a fake Bolt app for T001 whose WebClient we can observe. */
+  function installApp() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (slackAdapterService as any).apps.set('T001', {
+      app: { client: { chat: { postMessage: mockPostMessage, delete: mockChatDelete } } },
+      teamId: 'T001',
+      teamName: 'Test Workspace',
+      isSocketMode: true,
+      botUserId: 'U_BOT',
+    });
+  }
+
+  const channelCtx = { channel: 'slack', channelId: 'C123', threadTs: '1000.2000', threadId: 'thread-1' };
+  const dmCtx = { channel: 'slack', threadId: 'thread-1' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (slackAdapterService as any).apps = new Map();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (slackAdapterService as any).typingPlaceholders = new Map();
+    installApp();
+    mockPostMessage.mockResolvedValue({ ts: '111.222' });
+    mockChatDelete.mockResolvedValue({ ok: true });
+    mockSlackMappingService.findByChannelId.mockResolvedValue({
+      connection: { teamId: 'T001' },
+    });
+  });
+
+  describe('Scenario: channel-thread context', () => {
+    it('posts the placeholder in the originating channel/thread, then deletes it', async () => {
+      await slackAdapterService.setTyping('user-1', true, channelCtx);
+
+      expect(mockPostMessage).toHaveBeenCalledTimes(1);
+      expect(mockPostMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: 'C123', thread_ts: '1000.2000' }),
+      );
+
+      await slackAdapterService.setTyping('user-1', false, channelCtx);
+
+      expect(mockChatDelete).toHaveBeenCalledTimes(1);
+      expect(mockChatDelete).toHaveBeenCalledWith({ channel: 'C123', ts: '111.222' });
+    });
+
+    it('is idempotent per key: re-asserting typing does not stack a second placeholder', async () => {
+      // The engine re-asserts setTyping(true) after each intermediate publish
+      // in verbose mode; only the first call may post.
+      await slackAdapterService.setTyping('user-1', true, channelCtx);
+      await slackAdapterService.setTyping('user-1', true, channelCtx);
+
+      expect(mockPostMessage).toHaveBeenCalledTimes(1);
+
+      // One delete clears the single placeholder; a second clear is a no-op.
+      await slackAdapterService.setTyping('user-1', false, channelCtx);
+      await slackAdapterService.setTyping('user-1', false, channelCtx);
+      expect(mockChatDelete).toHaveBeenCalledTimes(1);
+    });
+
+    it('never throws when the Slack API fails (typing is cosmetic)', async () => {
+      mockPostMessage.mockRejectedValue(new Error('rate limited'));
+      await expect(slackAdapterService.setTyping('user-1', true, channelCtx)).resolves.toBeUndefined();
+
+      // Nothing was posted, so the clear has nothing to delete and must not throw.
+      mockChatDelete.mockRejectedValue(new Error('message_not_found'));
+      await expect(slackAdapterService.setTyping('user-1', false, channelCtx)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('Scenario: DM context (no channelId)', () => {
+    it('resolves the DM channel via SlackMapping and posts top-level (no thread_ts)', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({ agentId: 'agent-1' });
+      mockPrisma.slackMapping.findMany.mockResolvedValue([
+        { dmChannelId: 'D777', slackChannelId: null },
+      ]);
+      mockGetSlackConnection.mockResolvedValue({ teamId: 'T001', isActive: true });
+
+      await slackAdapterService.setTyping('user-1', true, dmCtx);
+
+      expect(mockPostMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: 'D777', thread_ts: undefined }),
+      );
+
+      await slackAdapterService.setTyping('user-1', false, dmCtx);
+      expect(mockChatDelete).toHaveBeenCalledWith({ channel: 'D777', ts: '111.222' });
+    });
+  });
+
+  describe('Scenario: non-Slack context', () => {
+    it('no-ops for websocket-scoped turns', async () => {
+      await slackAdapterService.setTyping('user-1', true, { channel: 'websocket', threadId: 'thread-1' });
+      expect(mockPostMessage).not.toHaveBeenCalled();
     });
   });
 });

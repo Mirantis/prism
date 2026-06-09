@@ -57,7 +57,7 @@ function createTestAgentWorkspace(overrides?: Partial<AgentWorkspace>): Partial<
     heartbeatIntervalMs: 28800000,
     heartbeatStatus: 'ENABLED',
     proactivity: 3,
-    verbosity: 3,
+    verbose: false,
     timezone: 'UTC',
     status: 'IDLE',
     ...overrides,
@@ -109,7 +109,7 @@ describe('ContextService', () => {
     expect(context.agentId).toBe('agent-1');
     expect(context.userId).toBe('user-1');
     expect(context.proactivity).toBe(3);
-    expect(context.verbosity).toBe(3);
+    expect(context.verbose).toBe(false);
   });
 
   // ==========================================================================

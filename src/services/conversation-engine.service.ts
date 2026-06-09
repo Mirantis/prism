@@ -167,6 +167,15 @@ Respond with exactly one word: WORTHY or SKIP`;
     const startTime = Date.now();
     const { agentId, userId, message, metadata } = input;
 
+    // Concise vs. streaming. When `verbose` is false (the default) we publish
+    // only the final result of the turn; when true we stream each
+    // intermediate text step as its own message. Read once up front.
+    const { verbose = false } =
+      (await prisma.agentWorkspace.findUnique({
+        where: { id: agentId },
+        select: { verbose: true },
+      })) ?? {};
+
     // Get or create thread
     let threadId = input.threadId;
     if (!threadId) {
@@ -214,80 +223,99 @@ Respond with exactly one word: WORTHY or SKIP`;
     const responseTexts: string[] = [];
     const allBlocks: UIBlock[] = [];
     const allToolCalls: ToolCallRecord[] = [];
+    let response = '';
 
-    for await (const step of invokeStream({
-      userId,
-      agentId,
-      mode: 'chat',
-      prompt: message,
-      threadId,
-      isChannelMessage,
-    })) {
-      allToolCalls.push(...step.toolCalls);
-      if (step.blocks) allBlocks.push(...step.blocks);
-      pendingToolCalls.push(...step.toolCalls);
+    // Show a progress indicator on the originating channel while we work,
+    // cleared in the finally regardless of outcome. Cosmetic — setTyping
+    // never throws, so it can't break the turn.
+    await messageDeliveryService.setTyping(userId, true, channelContext);
+    try {
+      for await (const step of invokeStream({
+        userId,
+        agentId,
+        mode: 'chat',
+        prompt: message,
+        threadId,
+        isChannelMessage,
+      })) {
+        allToolCalls.push(...step.toolCalls);
+        if (step.blocks) allBlocks.push(...step.blocks);
+        pendingToolCalls.push(...step.toolCalls);
 
-      if (step.text) {
-        responseTexts.push(step.text);
+        if (step.text) {
+          responseTexts.push(step.text);
 
-        // Flush previously-buffered step now that we know it wasn't last:
-        // no blocks, no feedback gate.
-        if (bufferedStep) {
-          agentMessage = await messageDeliveryService.publish(
-            userId,
-            threadId,
-            bufferedStep.text,
-            'USER_INPUT',
-            {
-              toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
-              channelContext: channelContext
-                ? { ...channelContext, includeFeedback: false }
-                : undefined,
-            }
-          );
+          // Flush previously-buffered step now that we know it wasn't last:
+          // no blocks, no feedback gate. Skipped when concise (verbose=false)
+          // — intermediate steps aren't published, only the final result is.
+          // We still advance the buffer below so the final publish carries the
+          // last step's text; the dropped steps' tool calls survive via
+          // `allToolCalls` (see finalToolCalls).
+          if (bufferedStep && verbose) {
+            agentMessage = await messageDeliveryService.publish(
+              userId,
+              threadId,
+              bufferedStep.text,
+              'USER_INPUT',
+              {
+                toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
+                channelContext: channelContext
+                  ? { ...channelContext, includeFeedback: false }
+                  : undefined,
+              }
+            );
+            // Re-assert the indicator: the WS client clears it on every
+            // delivered 'chat' message, but the agent is still working.
+            await messageDeliveryService.setTyping(userId, true, channelContext);
+          }
+
+          bufferedStep = step;
+          bufferedToolCalls = pendingToolCalls;
+          pendingToolCalls = [];
         }
-
-        bufferedStep = step;
-        bufferedToolCalls = pendingToolCalls;
-        pendingToolCalls = [];
       }
-    }
 
-    // Stream is done. The buffered step (if any) is the LAST text step:
-    // attach the accumulated blocks and the feedback decision here.
-    if (bufferedStep) {
-      const includeFeedback = await this.shouldShowFeedback(
-        threadId, message, bufferedStep.text, userId, agentId,
-      );
-      agentMessage = await messageDeliveryService.publish(
-        userId,
-        threadId,
-        bufferedStep.text,
-        'USER_INPUT',
-        {
-          toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
-          blocks: allBlocks.length > 0 ? allBlocks : undefined,
-          channelContext: channelContext ? { ...channelContext, includeFeedback } : undefined,
-        }
-      );
-    }
+      // Stream is done. The buffered step (if any) is the LAST text step:
+      // attach the accumulated blocks and the feedback decision here. When
+      // concise, fold every step's tool calls into this one final message so
+      // the suppressed intermediates' tool calls aren't lost.
+      if (bufferedStep) {
+        const finalToolCalls = verbose ? bufferedToolCalls : allToolCalls;
+        const includeFeedback = await this.shouldShowFeedback(
+          threadId, message, bufferedStep.text, userId, agentId,
+        );
+        agentMessage = await messageDeliveryService.publish(
+          userId,
+          threadId,
+          bufferedStep.text,
+          'USER_INPUT',
+          {
+            toolCalls: finalToolCalls.length > 0 ? finalToolCalls : undefined,
+            blocks: allBlocks.length > 0 ? allBlocks : undefined,
+            channelContext: channelContext ? { ...channelContext, includeFeedback } : undefined,
+          }
+        );
+      }
 
-    const response = responseTexts.join('\n\n');
+      response = responseTexts.join('\n\n');
 
-    // Fallback: if no step had text, publish the (possibly empty) response
-    // as a safety net so the caller still gets a messageId back.
-    if (!agentMessage) {
-      agentMessage = await messageDeliveryService.publish(
-        userId,
-        threadId,
-        response,
-        'USER_INPUT',
-        {
-          toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
-          blocks: allBlocks.length > 0 ? allBlocks : undefined,
-          channelContext,
-        }
-      );
+      // Fallback: if no step had text, publish the (possibly empty) response
+      // as a safety net so the caller still gets a messageId back.
+      if (!agentMessage) {
+        agentMessage = await messageDeliveryService.publish(
+          userId,
+          threadId,
+          response,
+          'USER_INPUT',
+          {
+            toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
+            blocks: allBlocks.length > 0 ? allBlocks : undefined,
+            channelContext,
+          }
+        );
+      }
+    } finally {
+      await messageDeliveryService.setTyping(userId, false, channelContext);
     }
 
     return {

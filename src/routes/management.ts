@@ -217,6 +217,33 @@ router.patch('/model', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * PATCH /agents/settings
+ * Update agent behavioral settings. Currently exposes `verbose` (boolean):
+ * when true the agent streams each intermediate step of a turn to chat; when
+ * false (default) it posts only the final result. Returns the saved value so
+ * the UI can prime its cache from the mutation response.
+ */
+router.patch('/settings', async (req: Request, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (!('verbose' in body) || typeof body.verbose !== 'boolean') {
+      res.status(400).json({ error: "missing or invalid boolean field 'verbose'" });
+      return;
+    }
+    const agent = await agentWorkspaceService.getAgent();
+    const updated = await prisma.agentWorkspace.update({
+      where: { id: agent.id },
+      data: { verbose: body.verbose },
+    });
+    res.json({ verbose: updated.verbose });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to update settings for agent: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
 // ============================================================================
 // Backup / restore
 // ============================================================================

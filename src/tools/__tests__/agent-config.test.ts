@@ -38,7 +38,7 @@ function createTestAgentWorkspace(overrides: Record<string, unknown> = {}) {
     nexusMcpAgentToken: null,
     heartbeatIntervalMs: 28800000,
     proactivity: 3,
-    verbosity: 3,
+    verbose: false,
     timezone: 'UTC',
     ...overrides,
   };
@@ -212,12 +212,6 @@ describe('getAgentConfigTools', () => {
       ).rejects.toThrow('Proactivity must be 1-5');
     });
 
-    it('validates verbosity bounds', async () => {
-      await expect(
-        tools.update_settings.execute({ setting: 'verbosity', value: 0 }),
-      ).rejects.toThrow('Verbosity must be 1-5');
-    });
-
     it('validates heartbeatIntervalMs minimum', async () => {
       await expect(
         tools.update_settings.execute({ setting: 'heartbeatIntervalMs', value: 1000 }),
@@ -253,12 +247,33 @@ describe('getAgentConfigTools', () => {
       });
     });
 
-    it('accepts string-typed verbosity and coerces to number', async () => {
-      await tools.update_settings.execute({ setting: 'verbosity', value: '3' });
+    it('updates verbose with a boolean', async () => {
+      await tools.update_settings.execute({ setting: 'verbose', value: true });
       expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
         where: { id: agentId },
-        data: { verbosity: 3 },
+        data: { verbose: true },
       });
+    });
+
+    it('accepts string-typed verbose ("true"/"false") and coerces to boolean', async () => {
+      await tools.update_settings.execute({ setting: 'verbose', value: 'true' });
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: agentId },
+        data: { verbose: true },
+      });
+
+      mockPrisma.agentWorkspace.update.mockClear();
+      await tools.update_settings.execute({ setting: 'verbose', value: 'false' });
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: agentId },
+        data: { verbose: false },
+      });
+    });
+
+    it('rejects non-boolean verbose', async () => {
+      await expect(
+        tools.update_settings.execute({ setting: 'verbose', value: 5 }),
+      ).rejects.toThrow('verbose must be a boolean');
     });
 
     it('success message uses coerced numeric value, not original string', async () => {
@@ -287,8 +302,8 @@ describe('getAgentConfigTools', () => {
         tools.update_settings.execute({ setting: 'proactivity', value: '3.5' }),
       ).rejects.toThrow('Proactivity must be a finite integer');
       await expect(
-        tools.update_settings.execute({ setting: 'verbosity', value: Infinity }),
-      ).rejects.toThrow('Verbosity must be a finite integer');
+        tools.update_settings.execute({ setting: 'heartbeatIntervalMs', value: Infinity }),
+      ).rejects.toThrow('Heartbeat interval must be a finite integer');
     });
   });
 

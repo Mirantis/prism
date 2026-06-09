@@ -57,6 +57,14 @@ import { config } from '../config';
  */
 export const FEEDBACK_ACK_LINGER_MS = 3000;
 
+/**
+ * Transient placeholder posted while the agent works a turn, then deleted
+ * once the real reply lands. Slack bots can't trigger the native "is
+ * typing…" indicator (RTM-only, deprecated), so a short-lived message is
+ * the portable progress signal in DMs and channel threads.
+ */
+export const TYPING_PLACEHOLDER_TEXT = ':hourglass_flowing_sand: Working on it…';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -111,6 +119,13 @@ class SlackAdapterService implements ChannelAdapter {
 
   /** Cache of user connections for quick lookup */
   private userConnectionCache: Map<string, Set<string>> = new Map(); // lensUserId -> teamIds
+
+  /**
+   * Live typing placeholders, keyed by turn (thread + channel). Each entry
+   * is the set of `{teamId, channel, ts}` messages posted on setTyping(true)
+   * so they can be deleted on setTyping(false).
+   */
+  private typingPlaceholders: Map<string, Array<{ teamId: string; channel: string; ts: string }>> = new Map();
 
   /**
    * Deliver a message to the user via Slack DM or channel
@@ -285,6 +300,99 @@ class SlackAdapterService implements ChannelAdapter {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('Slack channel delivery failed for %s: %s', channelId, message);
     }
+  }
+
+  /**
+   * Show/clear a progress indicator while the agent works a turn. Posts a
+   * transient placeholder on `active=true` and deletes it on `active=false`.
+   * Resolves target channel(s) exactly like `deliver()`: an explicit
+   * `channelContext.channelId` (channel thread) or the user's DM mapping(s).
+   * Best-effort throughout — never throws (the caller treats typing as
+   * cosmetic).
+   */
+  async setTyping(
+    userId: string,
+    active: boolean,
+    channelContext?: { channel: string; channelId?: string; threadTs?: string; threadId: string }
+  ): Promise<void> {
+    if (channelContext?.channel !== 'slack') return;
+    const key = `${channelContext.threadId}:${channelContext.channelId ?? 'dm'}`;
+
+    if (!active) {
+      const placeholders = this.typingPlaceholders.get(key);
+      this.typingPlaceholders.delete(key);
+      for (const p of placeholders ?? []) {
+        const slackApp = this.apps.get(p.teamId);
+        if (!slackApp) continue;
+        try {
+          await slackApp.app.client.chat.delete({ channel: p.channel, ts: p.ts });
+        } catch (error: unknown) {
+          logger.warn('Failed to delete Slack typing placeholder: %s', error instanceof Error ? error.message : String(error));
+        }
+      }
+      return;
+    }
+
+    // active=true — resolve targets and post a placeholder to each.
+    // Idempotent per key: a placeholder already showing (engine re-asserts
+    // typing after each intermediate publish; overlapping turns share a key)
+    // must not stack a second one. Claim the key synchronously BEFORE any
+    // await so concurrent calls can't both pass the check and double-post.
+    if (this.typingPlaceholders.has(key)) return;
+    const posted: Array<{ teamId: string; channel: string; ts: string }> = [];
+    this.typingPlaceholders.set(key, posted);
+
+    const targets = await this.resolveTypingTargets(userId, channelContext);
+    for (const t of targets) {
+      const slackApp = this.apps.get(t.teamId);
+      if (!slackApp) continue;
+      try {
+        const res = await slackApp.app.client.chat.postMessage({
+          channel: t.channel,
+          thread_ts: t.threadTs,
+          text: TYPING_PLACEHOLDER_TEXT,
+        });
+        if (res.ts) posted.push({ teamId: t.teamId, channel: t.channel, ts: res.ts });
+      } catch (error: unknown) {
+        logger.warn('Failed to post Slack typing placeholder: %s', error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+
+  /**
+   * Resolve the Slack channel(s) + thread a typing placeholder should target,
+   * mirroring `deliver()`'s routing: an explicit channel id (channel thread)
+   * or the user's DM/channel mapping(s) for this agent.
+   */
+  private async resolveTypingTargets(
+    userId: string,
+    channelContext: { channelId?: string; threadTs?: string; threadId: string }
+  ): Promise<Array<{ teamId: string; channel: string; threadTs?: string }>> {
+    if (channelContext.channelId) {
+      const mapping = await slackMappingService.findByChannelId(channelContext.channelId);
+      if (!mapping) return [];
+      return [{ teamId: mapping.connection.teamId, channel: channelContext.channelId, threadTs: channelContext.threadTs }];
+    }
+
+    const thread = await prisma.conversationThread.findUnique({
+      where: { id: channelContext.threadId },
+      select: { agentId: true },
+    });
+    const mappings = await prisma.slackMapping.findMany({
+      where: {
+        lensUserId: userId,
+        ...(thread?.agentId && { agentId: thread.agentId }),
+      },
+    });
+
+    const targets: Array<{ teamId: string; channel: string; threadTs?: string }> = [];
+    for (const mapping of mappings) {
+      const connection = await getSlackConnection();
+      if (!connection?.isActive) continue;
+      const channel = mapping.dmChannelId ?? mapping.slackChannelId;
+      if (channel) targets.push({ teamId: connection.teamId, channel });
+    }
+    return targets;
   }
 
   /**

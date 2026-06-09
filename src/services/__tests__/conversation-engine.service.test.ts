@@ -15,16 +15,20 @@ const {
   mockGetOrCreateActiveThread,
   mockAddMessage,
   mockPublish,
+  mockSetTyping,
   mockInvokeStream,
   mockCountAgentMessages,
+  mockFindUniqueAgent,
   mockGenerateText,
   mockIsTelemetryEnabled,
 } = vi.hoisted(() => ({
   mockGetOrCreateActiveThread: vi.fn(),
   mockAddMessage: vi.fn(),
   mockPublish: vi.fn(),
+  mockSetTyping: vi.fn(),
   mockInvokeStream: vi.fn(),
   mockCountAgentMessages: vi.fn(),
+  mockFindUniqueAgent: vi.fn(),
   mockGenerateText: vi.fn(),
   mockIsTelemetryEnabled: vi.fn(),
 }));
@@ -52,6 +56,7 @@ vi.mock('../conversation.service', () => ({
 vi.mock('../message-delivery.service', () => ({
   messageDeliveryService: {
     publish: mockPublish,
+    setTyping: mockSetTyping,
   },
 }));
 
@@ -63,6 +68,9 @@ vi.mock('../../lib/prisma', () => ({
   default: {
     conversationMessage: {
       count: mockCountAgentMessages,
+    },
+    agentWorkspace: {
+      findUnique: mockFindUniqueAgent,
     },
   },
 }));
@@ -112,6 +120,10 @@ describe('Requirement: Conversation Engine', () => {
       { text: 'I am a helpful AI assistant.', toolCalls: [] },
     ]));
     mockCountAgentMessages.mockResolvedValue(0);
+    mockSetTyping.mockResolvedValue(undefined);
+    // Default: concise (verbose=false) — only the final result is published.
+    // Tests asserting per-step streaming opt into verbose=true explicitly.
+    mockFindUniqueAgent.mockResolvedValue({ verbose: false });
     // Default: telemetry off so unrelated scenarios don't exercise the classifier.
     mockIsTelemetryEnabled.mockReturnValue(false);
     mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
@@ -183,7 +195,8 @@ describe('Requirement: Conversation Engine', () => {
   });
 
   describe('Scenario: Multi-step response delivery', () => {
-    it('should publish one message per text-producing step', async () => {
+    it('verbose=true publishes one message per text-producing step', async () => {
+      mockFindUniqueAgent.mockResolvedValue({ verbose: true });
       mockInvokeStream.mockReturnValue(streamFromSteps([
         {
           text: 'Let me check...',
@@ -231,6 +244,93 @@ describe('Requirement: Conversation Engine', () => {
           toolCalls: undefined,
         }),
       );
+    });
+
+    it('verbose=false (default) suppresses intermediate steps and publishes only the final result, folding every step\'s tool calls into it', async () => {
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: 'Let me check...',
+          toolCalls: [
+            { tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+        {
+          text: 'Here are the results.',
+          toolCalls: [
+            { tool: 'logs', input: '{}', output: 'ok', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Show me pods',
+      });
+
+      // Only the final step is published.
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-123',
+        'thread-123',
+        'Here are the results.',
+        'USER_INPUT',
+        expect.objectContaining({
+          // The suppressed intermediate step's tool calls survive on the final message.
+          toolCalls: expect.arrayContaining([
+            expect.objectContaining({ tool: 'kubectl' }),
+            expect.objectContaining({ tool: 'logs' }),
+          ]),
+        }),
+      );
+    });
+
+    it('brackets the turn with a typing indicator (true before, false after), scoped to the channel', async () => {
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'hello',
+        metadata: { channel: 'websocket' },
+      });
+
+      expect(mockSetTyping).toHaveBeenCalledTimes(2);
+      expect(mockSetTyping).toHaveBeenNthCalledWith(1, 'user-123', true, expect.objectContaining({ channel: 'websocket', threadId: 'thread-123' }));
+      expect(mockSetTyping).toHaveBeenNthCalledWith(2, 'user-123', false, expect.objectContaining({ channel: 'websocket', threadId: 'thread-123' }));
+    });
+
+    it('re-asserts typing after each intermediate publish in verbose mode (WS clients clear it on every chat message)', async () => {
+      mockFindUniqueAgent.mockResolvedValue({ verbose: true });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'Step one...', toolCalls: [] },
+        { text: 'Step two...', toolCalls: [] },
+        { text: 'Done.', toolCalls: [] },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'hello',
+        metadata: { channel: 'websocket' },
+      });
+
+      // true (start), true ×2 (after each of the two intermediate publishes), false (end)
+      const calls = mockSetTyping.mock.calls.map((c) => c[1]);
+      expect(calls).toEqual([true, true, true, false]);
+    });
+
+    it('clears the typing indicator even when a step yields a friendly error', async () => {
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'I encountered an error: boom', toolCalls: [] },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'hello',
+        metadata: { channel: 'websocket' },
+      });
+
+      expect(mockSetTyping).toHaveBeenNthCalledWith(2, 'user-123', false, expect.anything());
     });
 
     it('should accumulate tool calls from tool-only steps onto the next text message', async () => {
@@ -601,6 +701,7 @@ describe('Requirement: Conversation Engine', () => {
       mockIsTelemetryEnabled.mockReturnValue(true);
       mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
       mockCountAgentMessages.mockResolvedValue(1);
+      mockFindUniqueAgent.mockResolvedValue({ verbose: true });
       mockInvokeStream.mockReturnValue(streamFromSteps([
         { text: AGENT_TEXT, toolCalls: [] },
         { text: AGENT_TEXT, toolCalls: [] },

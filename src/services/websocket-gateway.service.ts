@@ -35,7 +35,7 @@ interface WebSocketMessage {
 }
 
 interface WebSocketResponse {
-  type: 'chat' | 'pong' | 'error' | 'status';
+  type: 'chat' | 'pong' | 'error' | 'status' | 'typing';
   threadId?: string;
   messageId?: string;
   content?: string;
@@ -286,14 +286,9 @@ class WebSocketGatewayService {
     this.processingUsers.add(userId);
 
     try {
-      // Send processing indicator
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'status',
-          payload: { processing: true },
-        }));
-      }
-
+      // The progress/typing indicator is driven by the conversation engine
+      // (messageDeliveryService.setTyping -> websocket adapter 'typing'), so
+      // the gateway no longer emits its own processing status here.
       logger.info('Calling conversation engine for %s', userId);
 
       // Process through local conversation engine (direct call, no HTTP)

@@ -46,6 +46,7 @@ export interface AgentDetails {
   agentMd: string | null;
   bootstrapMd: string | null;
   model: string | null;
+  verbose: boolean;
   status: 'RUNNING' | 'IDLE' | 'ERROR';
   lastHeartbeat: string | null;
   createdAt: string;

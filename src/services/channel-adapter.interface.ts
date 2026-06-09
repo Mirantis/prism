@@ -52,6 +52,18 @@ export interface ChannelAdapter {
   deliver(userId: string, message: ConversationMessage, channelContext?: ChannelContext): Promise<void>;
 
   /**
+   * Show or clear a progress/typing indicator for a user while the agent
+   * works on a turn. Optional — adapters that can't represent typing simply
+   * omit it. Implementations must be cosmetic and fail-open: never throw
+   * (the caller treats a rejection as a no-op so it can't break the turn).
+   *
+   * @param userId - The Lens Platform user ID
+   * @param active - true when work starts, false when it ends
+   * @param channelContext - Routing context for the originating channel/thread
+   */
+  setTyping?(userId: string, active: boolean, channelContext?: ChannelContext): Promise<void>;
+
+  /**
    * Check if user has an active connection on this channel
    *
    * @param userId - The Lens Platform user ID

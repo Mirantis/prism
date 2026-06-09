@@ -407,4 +407,54 @@ describe('MessageDeliveryService', () => {
       expect(result).toBe(true);
     });
   });
+
+  describe('setTyping', () => {
+    const wsContext = { channel: 'websocket' as const, threadId: 'thread-456' };
+
+    function createTypingAdapter(name: string) {
+      const adapter = createMockAdapter(name) as ReturnType<typeof createMockAdapter> & {
+        setTyping: ReturnType<typeof vi.fn>;
+      };
+      adapter.setTyping = vi.fn().mockResolvedValue(undefined);
+      return adapter;
+    }
+
+    it('routes only to the originating channel adapter', async () => {
+      const ws = createTypingAdapter('websocket');
+      const slack = createTypingAdapter('slack');
+      service.register(ws);
+      service.register(slack);
+
+      await service.setTyping('user-123', true, wsContext);
+
+      expect(ws.setTyping).toHaveBeenCalledWith('user-123', true, wsContext);
+      expect(slack.setTyping).not.toHaveBeenCalled();
+    });
+
+    it('no-ops without a channelContext (autonomous heartbeat/cron runs)', async () => {
+      const ws = createTypingAdapter('websocket');
+      service.register(ws);
+
+      await service.setTyping('user-123', true, undefined);
+
+      expect(ws.setTyping).not.toHaveBeenCalled();
+    });
+
+    it('skips adapters that do not implement setTyping', async () => {
+      // Plain adapter without the optional method — must not throw.
+      const bare = createMockAdapter('websocket');
+      service.register(bare);
+
+      await expect(service.setTyping('user-123', true, wsContext)).resolves.toBeUndefined();
+    });
+
+    it('is fail-open: an adapter setTyping rejection never propagates', async () => {
+      const ws = createTypingAdapter('websocket');
+      ws.setTyping.mockRejectedValue(new Error('socket closed'));
+      service.register(ws);
+
+      await expect(service.setTyping('user-123', true, wsContext)).resolves.toBeUndefined();
+      expect(mockLoggerWarn).toHaveBeenCalled();
+    });
+  });
 });

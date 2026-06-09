@@ -310,28 +310,6 @@ describe('Requirement: WebSocket Gateway', () => {
     });
   });
 
-  describe('Scenario: Processing indicator', () => {
-    it('should send processing indicator', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-
-      service.connections.set(userId, [ws]);
-
-      await service.processMessage(ws, userId, {
-        type: 'chat',
-        content: 'Test',
-        agentId: 'agent-123',
-      });
-
-      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({
-        type: 'status',
-        payload: { processing: true },
-      }));
-    });
-  });
-
   describe('Scenario: Access control', () => {
     beforeEach(() => {
       mockConfig.agentId = 'agent-bobby';

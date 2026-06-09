@@ -112,7 +112,7 @@ Vite-proxy-shaped that would mask a real bug.
 ## Principles
 
 - **Self-sufficient** - Builds its own context locally: reads agent data and conversation history directly from its own embedded SQLite database.
-- **Owns conversation engine** - Runs `ConversationEngineService` locally: manages chat flow, thread management, and iterates `invokeStream()` directly (no HTTP, no queue) so each step is delivered as it arrives.
+- **Owns conversation engine** - Runs `ConversationEngineService` locally: manages chat flow, thread management, and iterates `invokeStream()` directly (no HTTP, no queue). Per-agent `verbose` setting decides whether each step is delivered as it arrives (`true`) or only the final result is published (`false`, default).
 - **Owns message delivery** - Runs `MessageDeliveryService` locally: stores messages via `conversationService` and delivers via local adapters. User-initiated messages deliver only to the originating channel; autonomous messages (heartbeat/cron) broadcast to all connected channels.
 - **Owns channel adapters** - WebSocket and Slack adapters run locally, registered with `messageDeliveryService` in `index.ts`.
 - **Owns scheduling** - Heartbeat timers and cron jobs run in-process (not in the backend).
@@ -182,7 +182,7 @@ The runtime hosts one MCP server and connects to another externally:
 |---------|------|---------|
 | **invokeStream** | `invoke.ts` | Streaming primitive: builds context, collects tools, calls `generateText()` with step limit and early stopping, yields each `InvokeStep` as `onStepFinish` fires. Errors are yielded as friendly steps (via `buildErrorStep`) rather than thrown. Bridges the SDK's push-based callback into async iteration via `utils/async-channel.ts`. |
 | **invoke** | `invoke.ts` | Thin aggregating wrapper around `invokeStream()`: drains the step stream into a single `InvokeResponse`. Used by callers that need the full result before acting (heartbeat, cron, subagent/task tool). |
-| **ConversationEngineService** | `services/conversation-engine.service.ts` | Chat flow orchestration: thread management, iterates `invokeStream()` directly and publishes each text-bearing step the moment it arrives, delivers via local `messageDeliveryService` |
+| **ConversationEngineService** | `services/conversation-engine.service.ts` | Chat flow orchestration: thread management, iterates `invokeStream()` directly and publishes per-step (`verbose: true`) or final-result-only (`verbose: false`, default), brackets each turn with a typing indicator, delivers via local `messageDeliveryService` |
 | **MessageDeliveryService** | `services/message-delivery.service.ts` | Unified message publish: stores via `conversationService`, delivers via channel adapters (channel-scoped for user messages, broadcast for autonomous) |
 | **ContextService** | `services/context.service.ts` | Builds agent context from local database: agent data via `agentWorkspaceService.getAgentById()` and conversation history via Prisma |
 | **ConversationService** | `services/conversation.service.ts` | Thread and message CRUD via Prisma, pluggable thread providers (database + Slack) |
@@ -302,9 +302,23 @@ There are two entry points for chat, both handled locally by the agent-runtime:
 1. **WebSocket**: Client -> Backend (JWT verify + proxy) -> Agent-runtime WS gateway -> `conversationEngineService.chat()` (local, no HTTP)
 2. **Slack**: Bolt Socket Mode message -> `conversationEngineService.chat()` (local, no HTTP)
 
-In both cases, `conversationEngineService.chat()` manages the thread, **iterates `invokeStream()` directly** (no queue, no HTTP), and `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
+In both cases, `conversationEngineService.chat()` manages the thread and **iterates `invokeStream()` directly** (no queue, no HTTP). What gets published depends on the per-agent **`verbose`** setting (`AgentWorkspace.verbose`, boolean, default `false`):
 
-The engine keeps a **one-step buffer**: it can't know a step is the last text step until the next step (or stream end) arrives, so the last publish is the one that carries the accumulated UI `blocks` and the `shouldShowFeedback` decision. Earlier steps publish with `includeFeedback: false` and no blocks.
+- **`verbose: false` (default, concise)** — only the **final** text step of the turn is published. Intermediate steps are neither delivered nor stored; their tool calls are folded into the final message so the tool-call trail survives. Intermediate *text* is intentionally not persisted in this mode.
+- **`verbose: true` (streaming)** — `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires, so users see intermediate text from multi-step responses in real time.
+
+Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack).
+
+The engine keeps a **one-step buffer**: it can't know a step is the last text step until the next step (or stream end) arrives, so the last publish is the one that carries the accumulated UI `blocks` and the `shouldShowFeedback` decision. Earlier steps (verbose mode only) publish with `includeFeedback: false` and no blocks.
+
+`verbose` is user-configurable three ways: the agent's own `update_settings` tool, `PATCH /agents/settings`, and the Profile-page toggle in the Web UI.
+
+### Typing / progress indicator
+
+The engine brackets every chat turn with `messageDeliveryService.setTyping(userId, true/false, channelContext)` (the `false` fires in a `finally`, so it clears even on error). `setTyping` routes to the originating channel's adapter via the optional `ChannelAdapter.setTyping?()` method and is fail-open — typing is cosmetic and can never break a turn. In verbose mode the engine re-asserts `setTyping(true)` after each intermediate publish (the WS client clears its indicator on every delivered message).
+
+- **WebSocket**: broadcasts `{ type: 'typing', payload: { isTyping } }`; the web client renders `ChatTypingIndicator`.
+- **Slack**: bots cannot trigger Slack's native "is typing…" indicator (RTM-only, deprecated), so the adapter posts a transient `:hourglass_flowing_sand: Working on it…` placeholder on start and `chat.delete`s it when the turn ends. Placeholder posting is idempotent per thread+channel key, so re-asserts and overlapping turns never stack placeholders.
 
 The management `POST /agents/chat` endpoint remains available for internal/debug use.
 

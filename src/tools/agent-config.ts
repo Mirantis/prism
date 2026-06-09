@@ -143,16 +143,21 @@ export function getAgentConfigTools(): Record<string, Tool> {
     }),
 
     update_settings: tool({
-      description: 'Update agent behavioral settings (proactivity, verbosity, timezone, heartbeatIntervalMs).',
+      description:
+        'Update agent behavioral settings. `verbose` (boolean) controls chat ' +
+        'output: when true you stream each step of your working as it happens; ' +
+        'when false (default) you post only the final result of a turn. Map ' +
+        '"stop narrating your steps"/"be concise" to verbose=false and "show ' +
+        'me your working"/"narrate your steps" to verbose=true. Other settings: ' +
+        'proactivity (1-5), timezone, heartbeatIntervalMs.',
       inputSchema: z.object({
-        setting: z.enum(['proactivity', 'verbosity', 'heartbeatIntervalMs', 'timezone']).describe('Which setting'),
-        value: z.union([z.number(), z.string()]).describe('The new value'),
+        setting: z.enum(['proactivity', 'verbose', 'heartbeatIntervalMs', 'timezone']).describe('Which setting'),
+        value: z.union([z.number(), z.string(), z.boolean()]).describe('The new value'),
       }),
       execute: async ({ setting, value }) => {
-        const numericSettings = ['proactivity', 'verbosity', 'heartbeatIntervalMs'] as const;
+        const numericSettings = ['proactivity', 'heartbeatIntervalMs'] as const;
         const settingLabels: Record<string, string> = {
           proactivity: 'Proactivity',
-          verbosity: 'Verbosity',
           heartbeatIntervalMs: 'Heartbeat interval',
         };
         let coerced: unknown = value;
@@ -176,10 +181,15 @@ export function getAgentConfigTools(): Record<string, Tool> {
             if (typeof coerced !== 'number' || coerced < 1 || coerced > 5) throw new Error('Proactivity must be 1-5');
             updateData.proactivity = coerced;
             break;
-          case 'verbosity':
-            if (typeof coerced !== 'number' || coerced < 1 || coerced > 5) throw new Error('Verbosity must be 1-5');
-            updateData.verbosity = coerced;
+          case 'verbose': {
+            const b = typeof value === 'boolean' ? value
+              : typeof value === 'string' ? value === 'true'
+              : undefined;
+            if (b === undefined) throw new Error('verbose must be a boolean');
+            updateData.verbose = b;
+            coerced = b;
             break;
+          }
           case 'heartbeatIntervalMs':
             if (typeof coerced !== 'number' || coerced < 60000) throw new Error('Heartbeat interval must be >= 60000ms');
             updateData.heartbeatIntervalMs = coerced;

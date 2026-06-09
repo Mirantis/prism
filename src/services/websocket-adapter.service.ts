@@ -45,6 +45,15 @@ class WebSocketAdapterService implements ChannelAdapter {
     }
   }
 
+  async setTyping(userId: string, active: boolean, _channelContext?: ChannelContext): Promise<void> {
+    // The frontend (`use-websocket.ts`) toggles its ChatTypingIndicator on
+    // this message and also clears it when a 'chat' message arrives.
+    webSocketGatewayService.broadcast(userId, {
+      type: 'typing',
+      payload: { isTyping: active },
+    });
+  }
+
   async isUserConnected(userId: string): Promise<boolean> {
     return webSocketGatewayService.isConnected(userId);
   }

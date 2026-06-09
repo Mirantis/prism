@@ -101,7 +101,7 @@ function createAgent(overrides: Record<string, unknown> = {}): AgentWorkspace {
     heartbeatIntervalMs: 28_800_000,
     heartbeatStatus: 'ENABLED' as const,
     proactivity: 3,
-    verbosity: 3,
+    verbose: false,
     timezone: 'UTC',
     model: null,
     dailyResetHour: 4,

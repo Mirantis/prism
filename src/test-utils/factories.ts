@@ -22,7 +22,7 @@ export interface TestAgentWorkspace {
   nexusMcpAgentToken: string | null;
   heartbeatIntervalMs: number;
   proactivity: number;
-  verbosity: number;
+  verbose: boolean;
   timezone: string;
   dailyResetHour: number;
   idleTimeoutMins: number | null;
@@ -50,7 +50,7 @@ export function createTestAgentWorkspace(overrides: Partial<TestAgentWorkspace> 
     nexusMcpAgentToken: null,
     heartbeatIntervalMs: 28800000,
     proactivity: 3,
-    verbosity: 3,
+    verbose: false,
     timezone: 'UTC',
     dailyResetHour: 4,
     idleTimeoutMins: null,
@@ -76,7 +76,7 @@ export function createTestAgentContext(overrides?: Partial<AgentContext>): Agent
     agentId: 'agent-test-123',
     userId: 'user-test-456',
     proactivity: 3,
-    verbosity: 3,
+    verbose: false,
     model: null,
     isBootstrapPhase: false,
     conversationSummary: null,
