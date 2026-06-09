@@ -108,7 +108,24 @@ RUN npm install -g @anthropic-ai/claude-code
 # the wire (no creds on disk).
 USER node
 ARG MISE_VERSION=v2026.2.16
-RUN curl -fsSL https://mise.jdx.dev/install.sh | MISE_VERSION=${MISE_VERSION} sh \
+# mise's aqua backend resolves each tool's release through the GitHub API.
+# Unauthenticated that's ~60 req/hr/IP — CI runners share IPs and trip a
+# 403 "rate limit exceeded" (e.g. resolving yq's release tag). Mitigated two
+# complementary ways:
+#   1. Authenticate when a token is supplied via the `github_token` build
+#      secret (never persisted in a layer). Raises the API limit by orders of
+#      magnitude. Optional (required=false) so a token-less local
+#      `docker:build` still works — it just falls back to the cache below.
+#   2. Cache mise's download/metadata dir across builds with a BuildKit cache
+#      mount, so a cold layer-cache rebuild reuses already-resolved versions
+#      and downloaded archives instead of re-hitting the API. The install dir
+#      (~/.local/share/mise) stays in the image layer, so the tools still ship.
+RUN --mount=type=secret,id=github_token,uid=1000,required=false \
+    --mount=type=cache,target=/home/node/.cache/mise,uid=1000,gid=1000 \
+    export MISE_CACHE_DIR=/home/node/.cache/mise; \
+    GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
+    export GITHUB_TOKEN MISE_GITHUB_TOKEN="$GITHUB_TOKEN" AQUA_GITHUB_TOKEN="$GITHUB_TOKEN"; \
+    curl -fsSL https://mise.jdx.dev/install.sh | MISE_VERSION=${MISE_VERSION} sh \
  && ~/.local/bin/mise use -g \
         awscli@latest \
         kubectl@latest \

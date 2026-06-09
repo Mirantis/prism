@@ -27,8 +27,12 @@ jobs:
       - name: Build Docker image
         run: |
           printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > .npmrc-secret
+          # Authenticate mise/aqua's GitHub API calls so tool installs don't
+          # hit the unauthenticated 403 rate limit (see Dockerfile mise step).
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" > .gh-token-secret
           docker build \
             --secret id=npmrc,src=.npmrc-secret \
+            --secret id=github_token,src=.gh-token-secret \
             -f Dockerfile \
             .
-          rm -f .npmrc-secret
+          rm -f .npmrc-secret .gh-token-secret

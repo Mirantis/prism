@@ -64,14 +64,17 @@ jobs:
         run: |
           set -euo pipefail
           printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > .npmrc-secret
+          # Authenticate mise/aqua's GitHub API calls (avoids the 403 rate limit).
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" > .gh-token-secret
           docker build \
             --secret id=npmrc,src=.npmrc-secret \
+            --secret id=github_token,src=.gh-token-secret \
             -t $GHCR_REPO:$VERSION \
             -t $GHCR_REPO:$IMAGE_TAG \
             -t $GHCR_REPO:latest \
             -f Dockerfile \
             .
-          rm -f .npmrc-secret
+          rm -f .npmrc-secret .gh-token-secret
           docker push $GHCR_REPO:$VERSION
           docker push $GHCR_REPO:$IMAGE_TAG
           docker push $GHCR_REPO:latest
