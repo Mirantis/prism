@@ -312,28 +312,16 @@ describe('invoke', () => {
     expect(callArgs.tools).toHaveProperty('kubectl');
   });
 
-  it('passes x-mcp-tools header when calling Nexus MCP', async () => {
+  it('calls Nexus MCP with the configured URL and no tool allowlist', async () => {
     mockGetMCPTools.mockResolvedValue({});
 
     await invoke(createTestInvokeRequest());
 
+    // The endpoint serves the full tool surface it chooses to expose, so the
+    // runtime sends no x-mcp-tools allowlist — just the URL.
     const nexusCall = mockGetMCPTools.mock.calls[0][0];
-    expect(nexusCall).toMatchObject({
-      url: 'http://localhost:3002/mcp',
-      extraHeaders: {
-        'x-mcp-tools': expect.stringContaining('shell_exec'),
-      },
-    });
-    expect(nexusCall.extraHeaders['x-mcp-tools'].split(',')).toEqual(
-      expect.arrayContaining([
-        'shell_exec', 'shell_write_file', 'shell_read_file', 'shell_edit_file',
-        'shell_spawn', 'shell_stdin', 'shell_stdout', 'shell_kill',
-        'list_clusters', 'get_cluster',
-        'list_github_connections', 'get_github_connection',
-        'list_aws_connections', 'get_aws_connection',
-        'query_audit_trail',
-      ])
-    );
+    expect(nexusCall).toEqual({ url: 'http://localhost:3002/mcp' });
+    expect(nexusCall.extraHeaders).toBeUndefined();
   });
 
   it('does not add Nexus MCP tools when nexusMcpUrl is unset', async () => {

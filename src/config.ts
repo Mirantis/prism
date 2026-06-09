@@ -62,10 +62,11 @@ export const config = {
   slackBotToken: process.env.SLACK_BOT_TOKEN,
   slackExpectedAppId: process.env.SLACK_EXPECTED_APP_ID,
 
-  // External MCP server URL — Nexus hosts kubectl / GitHub / AWS
-  // tools as a real cross-process MCP server. null when NEXUS_API_URL
-  // is unset so call sites can skip Nexus entirely.
-  nexusMcpUrl: nexusApiUrl ? `${nexusApiUrl}/mcp` : null,
+  // External MCP server URL — injected directly as NEXUS_MCP_URL by the Nexus
+  // sandbox (project-scoped /projects/:id/mcp; the MITM proxy injects the
+  // Authorization header for that path). Already a complete URL — do NOT append
+  // /mcp. null when unset so call sites can skip Nexus entirely.
+  nexusMcpUrl: process.env.NEXUS_MCP_URL ?? null,
 
   // Langfuse observability (optional — disabled when keys not set)
   langfuseSecretKey: process.env.LANGFUSE_SECRET_KEY,
