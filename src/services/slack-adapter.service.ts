@@ -1517,11 +1517,22 @@ class SlackAdapterService implements ChannelAdapter {
    */
   private buildAttachmentFailureNote(failures: SlackFileFailure[]): string {
     const list = failures.map((f) => `- "${f.filename}": ${f.reason}`).join('\n');
-    const plural = failures.length > 1 ? 'these files' : 'this file';
+    const many = failures.length > 1;
+    const noun = many ? 'files' : 'a file';
+    const them = many ? 'them' : 'it';
+    const theirs = many ? 'their attached files' : 'their attached file';
+    const were = many ? 'they were chat attachments' : 'it was a chat attachment';
+    // Framed as a runtime notice (not "[System:]", which inside a user turn
+    // reads like a prompt-injection attempt and gets discounted) and worded to
+    // counter the two failure modes seen in testing: the agent claiming no file
+    // was attached, and hunting for the file via shell.
     return (
-      `[System: ${failures.length} attached file(s) could not be read:\n${list}\n` +
-      `Let the user know you couldn't access ${plural} and why. If it's an access/permission ` +
-      `error, the Slack app likely needs the \`files:read\` scope (or the file isn't shared with the bot).]`
+      `(Runtime notice, not written by the user: the user attached ${noun} to this message, but the ` +
+      `runtime could not download ${them} from Slack, so the contents are NOT available to you:\n${list}\n` +
+      `Reply by telling the user you couldn't read ${theirs} and give the reason above. Do NOT claim no ` +
+      `file was attached — one was; the download failed. Do NOT try to open ${them} with shell or other ` +
+      `tools — ${were} that failed to download, not a file on disk. If the reason is an access/permission ` +
+      `error, mention the Slack app likely needs the \`files:read\` scope.)`
     );
   }
 
