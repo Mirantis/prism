@@ -8,7 +8,7 @@
 import { AssistantModelMessage, ModelMessage, ToolModelMessage } from 'ai';
 import { config } from '../config';
 import { memoryManagerService } from '../services/memory-manager.service';
-import { SlackTriggerMessage } from '../types';
+import { ChannelTriggerMessage } from '../types';
 
 // Minimal type for conversation messages (matches Prisma's shape).
 // toolCalls uses Prisma's Json? type (any JSON value); parseToolCalls() validates at runtime.
@@ -59,7 +59,7 @@ export interface SystemPromptPart {
 export async function buildSystemPromptParts(
   context: AgentContext,
   mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' = 'chat',
-  slackMessages?: SlackTriggerMessage[],
+  triggerMessages?: ChannelTriggerMessage[],
   query?: string,
 ): Promise<SystemPromptPart[]> {
   const stableSections: string[] = [];
@@ -109,7 +109,7 @@ export async function buildSystemPromptParts(
   // Mode-specific instructions
   if (mode === 'heartbeat') {
     stableSections.push(getHeartbeatBaseInstructions(context.heartbeatMd));
-    const heartbeatContext = getHeartbeatContextInstructions(context, slackMessages);
+    const heartbeatContext = getHeartbeatContextInstructions(context, triggerMessages);
     if (heartbeatContext) {
       stableSections.push(heartbeatContext);
     }
@@ -159,10 +159,10 @@ export async function buildSystemPromptParts(
 export async function buildSystemPrompt(
   context: AgentContext,
   mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' = 'chat',
-  slackMessages?: SlackTriggerMessage[],
+  triggerMessages?: ChannelTriggerMessage[],
   query?: string,
 ): Promise<string> {
-  const parts = await buildSystemPromptParts(context, mode, slackMessages, query);
+  const parts = await buildSystemPromptParts(context, mode, triggerMessages, query);
   return parts.map((p) => p.text).join('\n\n---\n\n');
 }
 
@@ -311,12 +311,12 @@ function getHeartbeatBaseInstructions(heartbeatMd?: string): string {
 
 /**
  * Heartbeat dynamic instructions — changes per invocation.
- * Contains last alert context and Slack trigger messages.
+ * Contains last alert context and channel (Slack/Teams) trigger messages.
  * Returns null when there's no dynamic content.
  */
 function getHeartbeatContextInstructions(
   context: AgentContext,
-  slackMessages?: SlackTriggerMessage[],
+  triggerMessages?: ChannelTriggerMessage[],
 ): string | null {
   const sections: string[] = [];
 
@@ -332,11 +332,11 @@ function getHeartbeatContextInstructions(
     );
   }
 
-  if (slackMessages && slackMessages.length > 0) {
-    sections.push(`### Recent Slack Messages (triggering this heartbeat)`);
-    sections.push('The following messages were posted in the monitored Slack channel since your last heartbeat:');
+  if (triggerMessages && triggerMessages.length > 0) {
+    sections.push(`### Recent Channel Messages (triggering this heartbeat)`);
+    sections.push('The following messages were posted in the monitored channel since your last heartbeat:');
     sections.push('');
-    for (const msg of slackMessages) {
+    for (const msg of triggerMessages) {
       const ago = formatTimeAgo(new Date(msg.timestamp).getTime());
       sections.push(`- **${msg.sender}** (${ago}): "${msg.text}"`);
     }

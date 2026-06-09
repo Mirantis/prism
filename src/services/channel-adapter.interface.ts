@@ -12,14 +12,20 @@ import { ConversationMessage } from '@prisma/client';
  * Channel context for routing responses back to the originating channel
  */
 export interface ChannelContext {
-  channel: 'slack' | 'websocket';
+  channel: 'slack' | 'websocket' | 'teams';
   channelId?: string;
+  /**
+   * External thread identifier on the originating channel — Slack thread
+   * timestamp, or Teams conversation id (which encodes the thread via
+   * `;messageid=`).
+   */
   threadTs?: string;
   /** Internal database thread ID */
   threadId: string;
   /**
-   * When true, adapters that support interactive feedback (Slack) render
-   * 👍/👎 buttons alongside this message. Caller gates (terminal/length/cadence).
+   * When true, adapters that support interactive feedback (Slack, Teams)
+   * render 👍/👎 buttons alongside this message. Caller gates
+   * (terminal/length/cadence).
    */
   includeFeedback?: boolean;
 }

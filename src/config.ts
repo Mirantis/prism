@@ -62,6 +62,13 @@ export const config = {
   slackBotToken: process.env.SLACK_BOT_TOKEN,
   slackExpectedAppId: process.env.SLACK_EXPECTED_APP_ID,
 
+  // Microsoft Teams — Bot Framework app credentials. Both id + password must
+  // be set to enable the Teams adapter. Tenant id is optional: set for
+  // single-tenant app registrations, unset for multi-tenant.
+  teamsAppId: process.env.TEAMS_APP_ID,
+  teamsAppPassword: process.env.TEAMS_APP_PASSWORD,
+  teamsAppTenantId: process.env.TEAMS_APP_TENANT_ID,
+
   // External MCP server URL — injected directly as NEXUS_MCP_URL by the Nexus
   // sandbox (project-scoped /projects/:id/mcp; the MITM proxy injects the
   // Authorization header for that path). Already a complete URL — do NOT append

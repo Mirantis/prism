@@ -63,7 +63,7 @@ export class SlackHeartbeatThrottleQueue {
     try {
       const result = await slackHeartbeatTriggerService.tryClaimTrigger();
       if (result.claimed) {
-        heartbeatService.triggerFromSlack();
+        heartbeatService.triggerFromChannel();
         logger.info({ agentId }, '[ThrottleQueue] Triggered heartbeat for agent %s', agentId);
       } else {
         logger.info(

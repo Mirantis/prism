@@ -15,7 +15,7 @@ vi.mock('../services/slack-heartbeat-trigger.service', () => ({
   slackHeartbeatTriggerService: { tryClaimTrigger: mockTryClaim },
 }));
 vi.mock('../services/heartbeat.service', () => ({
-  heartbeatService: { triggerFromSlack: mockTrigger },
+  heartbeatService: { triggerFromChannel: mockTrigger },
 }));
 
 import {

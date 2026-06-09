@@ -38,10 +38,14 @@ export interface ChatInput {
   message: string;
   threadId?: string;
   metadata?: {
-    channel?: 'websocket' | 'slack';
+    channel?: 'websocket' | 'slack' | 'teams';
     channelId?: string;
     slackThreadTs?: string;
+    /** Teams conversation id of the originating thread (encodes `;messageid=`) */
+    teamsConversationId?: string;
     senderSlackUserId?: string;
+    /** Teams sender id (`29:…`) for participant tracking */
+    senderTeamsUserId?: string;
     senderName?: string;
   };
 }
@@ -182,16 +186,17 @@ Respond with exactly one word: WORTHY or SKIP`;
       content: message,
       role: 'USER',
       triggeredBy: 'USER_INPUT',
-      senderExternalId: metadata?.senderSlackUserId,
+      senderExternalId: metadata?.senderSlackUserId ?? metadata?.senderTeamsUserId,
       senderName: metadata?.senderName,
     });
 
     // Determine if this is a channel message
-    const isChannelMessage = metadata?.channel === 'slack' && !!metadata?.channelId;
+    const isChannelMessage =
+      (metadata?.channel === 'slack' || metadata?.channel === 'teams') && !!metadata?.channelId;
 
     // Build channel context for delivery — scopes response to the originating channel.
-    // For Slack, channelId/threadTs may be undefined (DM case — routing falls back
-    // to SlackMapping.dmChannelId lookup in the adapter).
+    // For Slack/Teams, channelId/threadTs may be undefined (DM / personal-chat
+    // case — routing falls back to the adapter's mapping lookup).
     const channelContext = metadata?.channel === 'slack'
       ? {
           channel: 'slack' as const,
@@ -199,9 +204,16 @@ Respond with exactly one word: WORTHY or SKIP`;
           threadTs: metadata.slackThreadTs,
           threadId,
         }
-      : metadata?.channel === 'websocket'
-        ? { channel: 'websocket' as const, threadId }
-        : undefined;
+      : metadata?.channel === 'teams'
+        ? {
+            channel: 'teams' as const,
+            channelId: metadata.channelId,
+            threadTs: metadata.teamsConversationId,
+            threadId,
+          }
+        : metadata?.channel === 'websocket'
+          ? { channel: 'websocket' as const, threadId }
+          : undefined;
 
     // Stream steps from invokeStream and publish each text-bearing step as
     // it arrives. A one-step buffer lets us tag the LAST text step with the

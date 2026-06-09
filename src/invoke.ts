@@ -137,7 +137,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     const cachedTools = withToolsCacheControl(limitedTools);
 
     // 6. Build system prompt parts (stable vs dynamic for granular caching)
-    const systemParts = await buildSystemPromptParts(context, request.mode, request.slackMessages, request.prompt);
+    const systemParts = await buildSystemPromptParts(context, request.mode, request.triggerMessages, request.prompt);
 
     // Append channel/task instructions to the stable (cacheable) part
     const stablePart = systemParts.find((p) => p.cacheable);

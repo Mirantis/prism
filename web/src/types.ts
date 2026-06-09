@@ -105,6 +105,40 @@ export interface SlackHeartbeatTrigger {
   updatedAt: string;
 }
 
+export interface TeamsLinkStatus {
+  hasDmMapping: boolean;
+  hasChannelMapping: boolean;
+  teamsUserId: string | null;
+}
+
+export interface TeamsConnection {
+  appId: string;
+  tenantId: string | null;
+  botId: string;
+}
+
+export interface TeamsChannelMapping {
+  id: string;
+  channelId: string;
+  channelName: string | null;
+  agentName: string;
+  linkedAt: string;
+}
+
+export interface TeamsHeartbeatTrigger {
+  id: string;
+  agentId: string;
+  userId: string;
+  connectionId: string;
+  teamsChannelId: string;
+  teamsChannelName: string | null;
+  isActive: boolean;
+  throttleSeconds: number;
+  lastTriggeredAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CronTask {
   id: string;
   userId: string;

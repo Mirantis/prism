@@ -98,14 +98,19 @@ class ConversationService {
 
   /**
    * Get or create a conversation thread bound to a specific external thread ID.
-   * Used for Slack channel threads where each Slack thread maps to its own conversation.
+   * Used for Slack/Teams channel threads where each external thread maps to
+   * its own conversation. `options.source` selects the thread provider
+   * (defaults to SLACK for backwards compatibility with existing callers);
+   * TEAMS threads read from the database since Teams bots can't fetch
+   * channel history.
    */
   async getOrCreateThreadByExternalId(
     userId: string,
     agentId: string,
     externalThreadId: string,
-    options?: { channelId?: string },
+    options?: { channelId?: string; source?: 'SLACK' | 'TEAMS' },
   ): Promise<ConversationThread> {
+    const source = (options?.source ?? 'SLACK') as ThreadSource;
     return prisma.conversationThread.upsert({
       where: {
         agentId_userId_externalThreadId: { agentId, userId, externalThreadId },
@@ -116,14 +121,14 @@ class ConversationService {
         externalThreadId,
         status: 'NON_ACTIVE',
         ...(options?.channelId && {
-          threadSource: 'SLACK' as ThreadSource,
+          threadSource: source,
           externalChannelId: options.channelId,
         }),
       },
       update: {
         // Update channelId if provided (in case it was missing before)
         ...(options?.channelId && {
-          threadSource: 'SLACK' as ThreadSource,
+          threadSource: source,
           externalChannelId: options.channelId,
         }),
       },

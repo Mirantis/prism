@@ -8,10 +8,10 @@
 
 import prisma from '../lib/prisma';
 import { logger } from '../logger';
-import { SlackTriggerMessage } from '../types';
+import { ChannelTriggerMessage } from '../types';
 
 class SlackMessageQueueService {
-  async enqueue(agentId: string, message: SlackTriggerMessage): Promise<void> {
+  async enqueue(agentId: string, message: ChannelTriggerMessage): Promise<void> {
     logger.info(`[SlackMessageQueue] Enqueuing message for agent ${agentId.substring(0, 8)} from sender ${message.sender}`);
     await prisma.pendingSlackMessage.create({
       data: {
@@ -23,7 +23,7 @@ class SlackMessageQueueService {
     });
   }
 
-  async drain(agentId: string): Promise<SlackTriggerMessage[]> {
+  async drain(agentId: string): Promise<ChannelTriggerMessage[]> {
     logger.info(`[SlackMessageQueue] Draining messages for agent ${agentId.substring(0, 8)}`);
     return prisma.$transaction(async (tx) => {
       const rows = await tx.pendingSlackMessage.findMany({

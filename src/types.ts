@@ -41,7 +41,11 @@ export interface AgentContext {
 // Invoke Request (used by queue worker, heartbeat, cron, subagent)
 // ============================================================================
 
-export interface SlackTriggerMessage {
+/**
+ * A message drained from a heartbeat-trigger channel (Slack or Teams) that
+ * is fed into the heartbeat prompt as context.
+ */
+export interface ChannelTriggerMessage {
   sender: string;
   text: string;
   timestamp: string;
@@ -56,7 +60,7 @@ export interface InvokeRequest {
   isChannelMessage?: boolean;
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
-  slackMessages?: SlackTriggerMessage[];
+  triggerMessages?: ChannelTriggerMessage[];
 }
 
 // ============================================================================

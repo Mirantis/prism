@@ -1483,7 +1483,7 @@ class SlackAdapterService implements ChannelAdapter {
     if (result.claimed) {
       try {
         // Direct local call to heartbeat service
-        heartbeatService.triggerFromSlack();
+        heartbeatService.triggerFromChannel();
       } catch (error) {
         logger.error('[ThrottledNotify] Failed to trigger heartbeat for agent %s: %s', agentId, error instanceof Error ? error.message : String(error));
       }

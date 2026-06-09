@@ -15,6 +15,8 @@ import path from 'path';
 import fs from 'fs';
 import { managementRouter } from './routes/management';
 import { singleAgentRouter } from './routes/single-agent';
+import { teamsAdapterService } from './services/teams-adapter.service';
+import { logger } from './logger';
 
 export function createApp() {
   const app = express();
@@ -24,6 +26,18 @@ export function createApp() {
   // Health check
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', service: 'agent-runtime', timestamp: new Date().toISOString() });
+  });
+
+  // Microsoft Teams bot messaging endpoint. The Bot Framework connector
+  // POSTs activities here; the CloudAdapter validates the JWT and routes
+  // them into the Teams adapter. (No Socket Mode equivalent exists for
+  // Teams — the Azure Bot registration's messaging endpoint must point at
+  // this path.)
+  app.post('/api/teams/messages', (req, res) => {
+    teamsAdapterService.processIncoming(req, res).catch((error) => {
+      logger.error('Teams messaging endpoint error: %s', error instanceof Error ? error.message : String(error));
+      if (!res.headersSent) res.status(500).json({ error: 'Internal error' });
+    });
   });
 
   // Management routes (heartbeat, cron lifecycle)

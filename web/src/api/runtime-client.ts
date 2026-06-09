@@ -10,6 +10,10 @@ import type {
   SlackHeartbeatTrigger,
   SlackLinkStatus,
   SlackWorkspace,
+  TeamsChannelMapping,
+  TeamsConnection,
+  TeamsHeartbeatTrigger,
+  TeamsLinkStatus,
   ModelInfo,
   ThreadStatus,
 } from '@/types';
@@ -180,6 +184,76 @@ export const runtimeApi = {
     const params = new URLSearchParams({ userId });
     return request<{ success: true }>(
       `/agents/slack-heartbeat-trigger/${triggerId}?${params.toString()}`,
+      { method: 'DELETE' },
+    );
+  },
+
+  // Teams mappings
+  teamsConnections: () => request<{ connections: TeamsConnection[] }>('/agents/teams/connections'),
+  teamsLinkStatus: (connectionId: string) => {
+    const params = new URLSearchParams({ connectionId });
+    return request<TeamsLinkStatus>(`/agents/teams-link-status?${params.toString()}`);
+  },
+  teamsChannelMappings: (connectionId: string) => {
+    const params = new URLSearchParams({ connectionId });
+    return request<{ channels: TeamsChannelMapping[] }>(
+      `/agents/teams-channel-mappings?${params.toString()}`,
+    );
+  },
+  createTeamsVerificationCode: (body: {
+    type: 'DM' | 'CHANNEL';
+    lensUserId: string;
+    connectionId: string;
+    agentId: string;
+    agentName?: string;
+    expiresAt: string;
+  }) =>
+    request<{ code: string }>('/agents/teams/create-verification-code', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deleteTeamsDmMapping: (connectionId: string) => {
+    const params = new URLSearchParams({ connectionId });
+    return request<{ deleted: number }>(
+      `/agents/teams/dm-mapping?${params.toString()}`,
+      { method: 'DELETE' },
+    );
+  },
+  deleteTeamsChannelMapping: (channelId: string, connectionId?: string) => {
+    const params = new URLSearchParams();
+    if (connectionId) params.set('connectionId', connectionId);
+    const q = params.toString();
+    return request<{ deleted: number }>(
+      `/agents/teams/channel-mapping/${encodeURIComponent(channelId)}${q ? `?${q}` : ''}`,
+      { method: 'DELETE' },
+    );
+  },
+
+  // Teams heartbeat triggers
+  listTeamsHeartbeatTriggers: (userId: string) => {
+    const params = new URLSearchParams({ userId });
+    return request<TeamsHeartbeatTrigger[]>(
+      `/agents/teams-heartbeat-trigger?${params.toString()}`,
+    );
+  },
+  createTeamsHeartbeatTrigger: (
+    body: { connectionId: string; channelId: string; channelName?: string; userId: string; throttleSeconds?: number },
+  ) =>
+    request<TeamsHeartbeatTrigger>('/agents/teams-heartbeat-trigger', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateTeamsHeartbeatTriggerThrottle: (
+    body: { triggerId: string; userId: string; throttleSeconds: number },
+  ) =>
+    request<TeamsHeartbeatTrigger>('/agents/teams-heartbeat-trigger', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteTeamsHeartbeatTrigger: (triggerId: string, userId: string) => {
+    const params = new URLSearchParams({ userId });
+    return request<{ success: true }>(
+      `/agents/teams-heartbeat-trigger/${triggerId}?${params.toString()}`,
       { method: 'DELETE' },
     );
   },

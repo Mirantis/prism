@@ -46,7 +46,7 @@ export interface PublishOptions {
    * this object — `publish` just forwards it.
    */
   channelContext?: {
-    channel: 'slack' | 'websocket';
+    channel: 'slack' | 'websocket' | 'teams';
     channelId?: string;
     threadTs?: string;
     /** Internal database thread ID */

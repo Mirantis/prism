@@ -49,6 +49,7 @@ enum MessageTrigger {
 enum ThreadSource {
   DATABASE
   SLACK
+  TEAMS
 }
 
 enum AgentType {
@@ -99,6 +100,10 @@ model AgentWorkspace {
   slackVerificationCodes SlackVerificationCode[]
   slackHeartbeatTriggers SlackHeartbeatTrigger[]
   pendingSlackMessages   PendingSlackMessage[]
+  teamsMappings          TeamsMapping[]
+  teamsVerificationCodes TeamsVerificationCode[]
+  teamsHeartbeatTriggers TeamsHeartbeatTrigger[]
+  pendingTeamsMessages   PendingTeamsMessage[]
   subagentLinks          AgentSubagent[]         @relation("ParentAgent")
   parentAgentLinks       AgentSubagent[]         @relation("ChildAgent")
 
@@ -331,4 +336,103 @@ model PendingSlackMessage {
 
   @@index([agentId, createdAt])
   @@map("pending_slack_messages")
+}
+
+// ============================================================================
+// Microsoft Teams mappings, verification codes, heartbeat triggers, pending
+// messages — mirrors the Slack tables. `conversationReference` holds the
+// serialized Bot Framework ConversationReference needed for proactive
+// (heartbeat/cron) delivery; Teams has no Socket Mode equivalent, so the
+// reference captured from inbound activities is the only route back.
+// ============================================================================
+
+model TeamsMapping {
+  id           String @id @default(uuid())
+  connectionId String
+  agentId      String
+
+  teamsUserId String?
+  lensUserId  String?
+  // Personal (1:1) chat conversation id — the Teams analogue of a Slack DM channel
+  personalConversationId String?
+  // Serialized ConversationReference (JSON) for proactive personal-chat delivery
+  conversationReference Json?
+
+  teamsChannelId   String? @unique
+  teamsChannelName String?
+  // serviceUrl + tenantId captured from channel activities; required to build
+  // a ConversationReference for proactive channel posts
+  serviceUrl String?
+  tenantId   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, teamsUserId])
+  @@index([connectionId])
+  @@index([lensUserId])
+  @@index([agentId])
+  @@map("teams_mappings")
+}
+
+enum TeamsVerificationType {
+  DM
+  CHANNEL
+}
+
+model TeamsVerificationCode {
+  id           String                @id @default(uuid())
+  code         String
+  type         TeamsVerificationType
+  lensUserId   String
+  connectionId String
+  agentId      String
+  agentName    String?
+  expiresAt    DateTime
+
+  agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([code, type])
+  @@index([expiresAt])
+  @@index([connectionId])
+  @@index([agentId])
+  @@map("teams_verification_codes")
+}
+
+model TeamsHeartbeatTrigger {
+  id               String    @id @default(uuid())
+  connectionId     String
+  teamsChannelId   String    @unique
+  teamsChannelName String?
+  agentId          String    @unique
+  userId           String
+  isActive         Boolean   @default(true)
+  throttleSeconds  Int       @default(60) @map("throttle_seconds")
+  lastTriggeredAt  DateTime? @map("last_triggered_at")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId])
+  @@index([userId])
+  @@map("teams_heartbeat_triggers")
+}
+
+model PendingTeamsMessage {
+  id        String   @id @default(uuid())
+  agentId   String
+  sender    String
+  text      String
+  timestamp String
+  createdAt DateTime @default(now())
+
+  agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, createdAt])
+  @@map("pending_teams_messages")
 }

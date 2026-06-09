@@ -109,30 +109,30 @@ describe('buildSystemPrompt', () => {
     expect(prompt).not.toContain('### Last Alert');
   });
 
-  it('heartbeat mode includes Slack messages section when slackMessages provided', async () => {
+  it('heartbeat mode includes channel messages section when triggerMessages provided', async () => {
     const context = createTestAgentContext();
     const slackMessages = [
       { sender: 'Alice', text: 'deploy failed with OOM', timestamp: new Date().toISOString() },
       { sender: 'Bob', text: 'seeing increased error rates', timestamp: new Date().toISOString() },
     ];
     const prompt = await buildSystemPrompt(context, 'heartbeat', slackMessages);
-    expect(prompt).toContain('### Recent Slack Messages (triggering this heartbeat)');
+    expect(prompt).toContain('### Recent Channel Messages (triggering this heartbeat)');
     expect(prompt).toContain('**Alice**');
     expect(prompt).toContain('deploy failed with OOM');
     expect(prompt).toContain('**Bob**');
     expect(prompt).toContain('seeing increased error rates');
   });
 
-  it('heartbeat mode omits Slack messages section when slackMessages is empty', async () => {
+  it('heartbeat mode omits channel messages section when triggerMessages is empty', async () => {
     const context = createTestAgentContext();
     const prompt = await buildSystemPrompt(context, 'heartbeat', []);
-    expect(prompt).not.toContain('Recent Slack Messages');
+    expect(prompt).not.toContain('Recent Channel Messages');
   });
 
-  it('heartbeat mode omits Slack messages section when slackMessages is undefined', async () => {
+  it('heartbeat mode omits channel messages section when triggerMessages is undefined', async () => {
     const context = createTestAgentContext();
     const prompt = await buildSystemPrompt(context, 'heartbeat', undefined);
-    expect(prompt).not.toContain('Recent Slack Messages');
+    expect(prompt).not.toContain('Recent Channel Messages');
   });
 
   it('cron mode includes cron instructions', async () => {
@@ -236,7 +236,7 @@ describe('buildSystemPromptParts', () => {
     expect(stable.text).toContain('Pod crashed');
   });
 
-  it('heartbeat mode puts Slack messages in stable part', async () => {
+  it('heartbeat mode puts channel messages in stable part', async () => {
     const context = createTestAgentContext();
     const slackMessages = [
       { sender: 'Alice', text: 'deploy failed', timestamp: new Date().toISOString() },
@@ -244,7 +244,7 @@ describe('buildSystemPromptParts', () => {
     const parts = await buildSystemPromptParts(context, 'heartbeat', slackMessages);
     const stable = parts.find((p) => p.cacheable)!;
 
-    expect(stable.text).toContain('### Recent Slack Messages');
+    expect(stable.text).toContain('### Recent Channel Messages');
     expect(stable.text).toContain('Alice');
   });
 

@@ -3,9 +3,10 @@
 Self-sufficient LLM invocation service that owns the full agent execution lifecycle.
 Builds agent context locally (agent data and conversation history from
 its own database), connects to MCP servers for tools, runs heartbeat and cron
-scheduling in-process, manages Slack connections via Bolt SDK with Socket Mode,
+scheduling in-process, manages Slack connections via Bolt SDK with Socket Mode
+and Microsoft Teams connections via the Bot Framework SDK (CloudAdapter),
 runs the conversation engine and message delivery locally, and delivers results
-directly to users via local channel adapters (WebSocket, Slack).
+directly to users via local channel adapters (WebSocket, Slack, Teams).
 
 ## Commit messages
 
@@ -27,8 +28,13 @@ One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
 `file:/data/agent.db`. Slack creds come from env (`SLACK_BOT_TOKEN`,
 `SLACK_APP_TOKEN`), validated via `auth.test` on boot; may be Nexus
 credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
-proxy. Bedrock via Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the
-SDK auto-selects Bearer over SigV4 when set.
+proxy. Microsoft Teams creds come from env (`TEAMS_APP_ID`,
+`TEAMS_APP_PASSWORD`, optional `TEAMS_APP_TENANT_ID`), validated via an
+Entra ID client-credentials token request on first use; the Azure Bot
+registration's messaging endpoint must point at
+`<runtime>/api/teams/messages`. Bedrock via Bearer API key
+(`AWS_BEARER_TOKEN_BEDROCK`) — the SDK auto-selects Bearer over SigV4
+when set.
 
 ## SEA binaries — Node 22 pin
 
@@ -114,9 +120,10 @@ Vite-proxy-shaped that would mask a real bug.
 - **Self-sufficient** - Builds its own context locally: reads agent data and conversation history directly from its own embedded SQLite database.
 - **Owns conversation engine** - Runs `ConversationEngineService` locally: manages chat flow, thread management, and iterates `invokeStream()` directly (no HTTP, no queue) so each step is delivered as it arrives.
 - **Owns message delivery** - Runs `MessageDeliveryService` locally: stores messages via `conversationService` and delivers via local adapters. User-initiated messages deliver only to the originating channel; autonomous messages (heartbeat/cron) broadcast to all connected channels.
-- **Owns channel adapters** - WebSocket and Slack adapters run locally, registered with `messageDeliveryService` in `index.ts`.
+- **Owns channel adapters** - WebSocket, Slack, and Teams adapters run locally, registered with `messageDeliveryService` in `index.ts`.
 - **Owns scheduling** - Heartbeat timers and cron jobs run in-process (not in the backend).
 - **Owns Slack connections** - Runs Bolt apps with Socket Mode, receives and routes messages, handles verification codes, calls Slack APIs directly. The one connection is synthesized from `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars (validated via `auth.test` on boot; see `lib/slack-config.ts`). Bot token in env may be a Nexus credential sentinel that the MITM proxy rewrites on the wire; a `SlackWebClient` subclass (`lib/slack-web-client.ts`) strips the body `token` field so auth flows only via the `Authorization` header.
+- **Owns Teams connections** - Runs a Bot Framework `CloudAdapter`, receives activities at `POST /api/teams/messages`, handles verification codes, and sends proactively via stored conversation references. The one connection is synthesized from `TEAMS_APP_ID` + `TEAMS_APP_PASSWORD` env vars (validated via an Entra ID token request; see `lib/teams-config.ts`).
 - **Owns agent data** - Agent CRUD, ownership validation, nexus token management, and subagent relationships via `agentWorkspaceService` (direct Prisma access). `CreateAgentInput` requires a pre-generated `id` field -- the backend generates the UUID and passes it when creating the `AgentWorkspace`. Note: `orgId` and `teamId` are NOT in `AgentWorkspace` -- they live exclusively in the backend-only `Agent` table.
 - **Direct database access** - Has its own Prisma client (SQLite) for agent data (CRUD, ownership, subagents), conversation data (threads, messages, active thread resolution), agent field updates (heartbeat timestamp, heartbeat status), cron task state (list, update run timestamps, delete one-shot tasks), Slack message queue drain (pending heartbeat trigger messages), and Slack mapping CRUD. Vector search over `memory_entries.embedding` goes through a sibling `better-sqlite3` handle that loads the `sqlite-vec` extension (see `lib/sqlite-bootstrap.ts`).
 - **No direct imports from backend** - Communicates via HTTP and MCP only.
@@ -194,6 +201,10 @@ The runtime hosts one MCP server and connects to another externally:
 | **SlackMappingService** | `services/slack-mapping.service.ts` | SlackMapping CRUD for user and channel mappings via Prisma |
 | **SlackMessageQueueService** | `services/slack-message-queue.service.ts` | Direct Prisma drain of pending Slack messages for heartbeat triggers |
 | **SlackHeartbeatTriggerService** | `services/slack-heartbeat-trigger.service.ts` | CRUD for per-agent Slack heartbeat trigger config, atomic claim logic |
+| **TeamsAdapterService** | `services/teams-adapter.service.ts` | Full Microsoft Teams implementation: Bot Framework CloudAdapter, activity handling, verification codes, proactive delivery via conversation references |
+| **TeamsMappingService** | `services/teams-mapping.service.ts` | TeamsMapping CRUD for user and channel mappings via Prisma |
+| **TeamsMessageQueueService** | `services/teams-message-queue.service.ts` | Direct Prisma drain of pending Teams messages for heartbeat triggers |
+| **TeamsHeartbeatTriggerService** | `services/teams-heartbeat-trigger.service.ts` | CRUD for per-agent Teams heartbeat trigger config, atomic claim logic |
 | **SessionManagerService** | `services/session-manager.service.ts` | Daily session resets, idle timeout management |
 | **MemoryManagerService** | `services/memory-manager.service.ts` | Two-layer memory: daily append-only logs + curated long-term key-value store |
 | **MCP Server** | `mcp/server.ts` | Internal MCP server at `/internal/mcp` providing memory, config, and cron tools |
@@ -227,6 +238,10 @@ src/
 │   ├── slack-mapping.service.ts   # SlackMapping CRUD for user & channel mappings via Prisma
 │   ├── slack-message-queue.service.ts # Direct Prisma drain of pending Slack messages
 │   ├── slack-heartbeat-trigger.service.ts # CRUD for per-agent Slack heartbeat trigger config, atomic claim logic
+│   ├── teams-adapter.service.ts   # Full Teams implementation: Bot Framework CloudAdapter, activity handling, proactive sends
+│   ├── teams-mapping.service.ts   # TeamsMapping CRUD for user & channel mappings via Prisma
+│   ├── teams-message-queue.service.ts # Direct Prisma drain of pending Teams messages
+│   ├── teams-heartbeat-trigger.service.ts # CRUD for per-agent Teams heartbeat trigger config, atomic claim logic
 │   ├── session-manager.service.ts # Daily session resets, idle timeout management
 │   ├── memory-manager.service.ts  # Two-layer memory system (daily logs + curated key-value store)
 │   ├── thread-provider.interface.ts # ThreadMessageProvider abstraction
@@ -241,15 +256,18 @@ src/
 │       ├── cron.mcp.ts         # Cron task tools (schedule, list, delete)
 │       └── memory.mcp.ts       # Memory tools (search, write, delete)
 ├── routes/
-│   └── management.ts           # Management API for backend to push heartbeat/cron/slack-heartbeat-trigger events
+│   ├── management.ts           # Management API for backend to push heartbeat/cron/slack-heartbeat-trigger events
+│   └── teams-management.ts     # Teams management routes (verification, mappings, triggers, adapter lifecycle)
 ├── utils/
 │   ├── async-channel.ts        # Bridges SDK push-based onStepFinish into async iteration (used by invokeStream)
-│   └── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
+│   ├── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
+│   └── teams-formatter.ts      # Teams message formatting (markdown chunks, Adaptive Card feedback)
 ├── lib/
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
 │   ├── bedrock-provider.ts     # AWS Bedrock provider factory
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
+│   ├── teams-config.ts         # Env-sourced Teams connection (Entra ID credential validation)
 │   └── prisma.ts               # Prisma client singleton (runtime database)
 ├── prisma/
 │   └── schema.prisma           # Prisma schema for runtime PostgreSQL database
@@ -266,7 +284,7 @@ src/
 3. Start listening on port 3003
 4. Assert `AGENT_ID` is set (or auto-bootstrap one on first boot).
 5. Load the one agent identified by `AGENT_ID`.
-6. Initialize Slack adapter — `lib/slack-config.ts` synthesizes one connection from env (`SLACK_BOT_TOKEN`) via `auth.test`.
+6. Initialize Slack adapter — `lib/slack-config.ts` synthesizes one connection from env (`SLACK_BOT_TOKEN`) via `auth.test` — and Teams adapter — `lib/teams-config.ts` synthesizes one connection from env (`TEAMS_APP_ID` + `TEAMS_APP_PASSWORD`) via an Entra ID token request.
 7. Start heartbeat timers for each agent
 8. Fetch all active cron tasks directly from the database via `cronSchedulerService.listActiveCronTasks()`
 9. Schedule all cron jobs
@@ -285,6 +303,9 @@ What the operator sets on `docker run`:
 | `NEXUS_API_URL` | Nexus server URL (LLM proxy + MCP tools) | — |
 | `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
 | `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
+| `TEAMS_APP_ID` | Bot Framework app (client) id; enables the Teams adapter with `TEAMS_APP_PASSWORD` | — (Teams disabled) |
+| `TEAMS_APP_PASSWORD` | Bot Framework client secret | — |
+| `TEAMS_APP_TENANT_ID` | Entra tenant id (single-tenant registrations only) | — (multi-tenant) |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock Bearer API key; selected over SigV4 when set | — |
 | `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
 | `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
@@ -297,10 +318,11 @@ What the operator sets on `docker run`:
 
 ## Chat Flow
 
-There are two entry points for chat, both handled locally by the agent-runtime:
+There are three entry points for chat, all handled locally by the agent-runtime:
 
 1. **WebSocket**: Client -> Backend (JWT verify + proxy) -> Agent-runtime WS gateway -> `conversationEngineService.chat()` (local, no HTTP)
 2. **Slack**: Bolt Socket Mode message -> `conversationEngineService.chat()` (local, no HTTP)
+3. **Teams**: Bot Framework activity at `POST /api/teams/messages` -> detached processing -> `conversationEngineService.chat()` (local; replies are sent proactively via `continueConversationAsync` because the inbound HTTP turn must ack within ~15s)
 
 In both cases, `conversationEngineService.chat()` manages the thread, **iterates `invokeStream()` directly** (no queue, no HTTP), and `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
 
@@ -368,22 +390,21 @@ interface HeartbeatState {
 
 An alert is considered a duplicate if the trimmed text exactly matches `lastAlertText` and was delivered within the last 24 hours. This replaced the earlier hash-based `recentAlerts: Map` approach for simplicity.
 
-### Slack-Triggered Heartbeats
+### Channel-Triggered Heartbeats (Slack / Teams)
 
-When a Slack message arrives in a heartbeat trigger channel, the agent-runtime's Slack adapter enqueues it in the `PendingSlackMessage` DB table and calls `triggerFromSlack(agentId)` directly (in-process). The agent-runtime then:
+When a message arrives in a heartbeat trigger channel, the originating adapter (Slack or Teams) enqueues it in its pending-message DB table (`PendingSlackMessage` / `PendingTeamsMessage`) and calls `heartbeatService.triggerFromChannel()` directly (in-process, throttle-gated by the per-channel trigger claim). The agent-runtime then:
 
-1. Sets `slackTriggerPending = true` on the heartbeat state
-2. If not already running, calls `executeSlackTriggeredHeartbeat(agentId)`
-3. Drains messages atomically from DB via `slackMessageQueueService.drain(agentId)` (direct Prisma access)
-4. Processes messages in a loop: drain -> invoke LLM -> check for more messages
-5. After completion, if `slackTriggerPending` was set again during execution, re-triggers
+1. If not already running, calls `executeChannelTriggeredHeartbeat()`
+2. Drains messages atomically from BOTH queues via `slackMessageQueueService.drain(agentId)` + `teamsMessageQueueService.drain(agentId)` (direct Prisma access), merged chronologically
+3. Invokes the LLM with the drained messages as heartbeat context
+4. New messages arriving during execution are handled by the throttle queue scheduling another trigger after the cooldown
 
-**Timer-based heartbeats also drain**: Regular timer heartbeats call `slackMessageQueueService.drain()` before invoking the LLM, so pending Slack messages are never orphaned even without an explicit Slack trigger.
+**Timer-based heartbeats also drain**: Regular timer heartbeats drain both queues before invoking the LLM, so pending channel messages are never orphaned even without an explicit trigger.
 
 **Key methods**:
 
-- `triggerFromSlack(agentId)` — returns `'queued'` (fired immediately), `'buffered'` (will re-trigger after current run), or `'ignored'` (no heartbeat state)
-- `executeSlackTriggeredHeartbeat(agentId)` — drain-and-execute loop with re-trigger on pending flag
+- `triggerFromChannel()` — returns `'queued'` (fired immediately) or `'ignored'` (no heartbeat state / already running)
+- `executeChannelTriggeredHeartbeat()` — drain-and-execute
 
 ### Classification Gate
 
@@ -449,6 +470,71 @@ The agent-runtime owns the full Slack adapter implementation. It manages Bolt ap
 ### Dependencies
 
 - `@slack/bolt` - Bolt SDK for Slack app framework and Socket Mode
+
+## Teams Adapter
+
+The agent-runtime owns the full Microsoft Teams adapter implementation —
+the Teams analogue of the Slack adapter, built on the Bot Framework SDK
+(`botbuilder`). Feature parity with Slack: personal-chat + channel modes,
+verification-code linking, mention resolve/rewrite, 👍/👎 feedback,
+heartbeat trigger channels with throttle, passive channel learning, and
+LLM thread classification.
+
+### Teams Architecture
+
+- **Inbound**: No Socket Mode equivalent exists. The Bot Framework connector
+  POSTs activities to `POST /api/teams/messages` (mounted in `server.ts`);
+  the `CloudAdapter` validates the JWT. The endpoint must ack within ~15s,
+  so message processing is **detached from the HTTP turn** and all replies
+  are sent proactively via `continueConversationAsync`.
+- **Connection data**: one synthetic connection built by `lib/teams-config.ts`
+  from `TEAMS_APP_ID` + `TEAMS_APP_PASSWORD` (+ optional
+  `TEAMS_APP_TENANT_ID`), validated via an Entra ID client-credentials
+  token request on first use.
+- **Proactive delivery**: personal chats use the serialized
+  `ConversationReference` stored on `TeamsMapping.conversationReference`
+  (refreshed on every inbound personal message); channels use the stored
+  `serviceUrl` + channel/conversation id. Heartbeat/cron broadcasts post
+  new top-level channel messages.
+- **Threading**: Teams encodes the thread root in the conversation id
+  (`…;messageid=<rootId>`). That conversation id is the
+  `externalThreadId`, and threads use `ThreadSource.TEAMS` backed by the
+  **database provider** — Teams bots cannot fetch channel history, so the
+  adapter stores incoming thread messages locally (including ones it
+  decides not to answer) to keep the transcript complete.
+- **RSC requirement**: receiving non-mentioned channel messages (passive
+  learning, heartbeat trigger channels, thread following) requires the
+  Teams app manifest to grant the RSC permission
+  `ChannelMessage.Read.Group`. Without it, Teams only delivers @mentions.
+- **Reactions**: Teams bots cannot add reactions, so a "react"
+  classification degrades to learn-only (no visible acknowledgement).
+- **Feedback**: 👍/👎 rendered as an Adaptive Card (`Action.Submit`)
+  appended to the final message chunk; clicks arrive as message activities
+  with `value` set, and the card is swapped for a transient "Thanks" card
+  via `updateActivity` (same linger pattern as Slack).
+- **Mentions**: inbound `<at>Name</at>` tokens are rewritten to
+  `<@TEAMSID|Name>` markers (Teams ids contain `:`, so `|` is the
+  delimiter, unlike Slack's `<@ID:Name>`); outbound markers become real
+  mention entities, with a strip-and-retry fallback if Teams rejects them.
+
+### Management API Endpoints (for Teams)
+
+Mirrors the Slack surface — see `routes/teams-management.ts` for the full
+list (`/agents/teams/*`, `/agents/teams-link-status`,
+`/agents/teams-channel-mappings`, `/agents/teams-heartbeat-trigger`,
+`/agents/heartbeat/teams-trigger`, …).
+
+### Teams Key Files
+
+- `services/teams-adapter.service.ts` - Full implementation: CloudAdapter, activity handling, verification codes, proactive sends
+- `services/teams-mapping.service.ts` - TeamsMapping CRUD for user and channel mappings
+- `utils/teams-formatter.ts` - Teams message formatting (markdown chunks, Adaptive Card feedback)
+- `lib/teams-config.ts` - Env-sourced connection record + credential validation
+- `routes/teams-management.ts` - Teams management routes
+
+### Teams Dependencies
+
+- `botbuilder` - Bot Framework SDK (CloudAdapter, activity schema, proactive messaging)
 
 ## WebSocket Gateway
 

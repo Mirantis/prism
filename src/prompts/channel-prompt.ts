@@ -2,7 +2,8 @@
  * Channel-specific behavioral instructions for the AI agent
  *
  * These instructions are added to the system prompt when the agent is
- * participating in a Slack channel (team mode) vs. a DM (personal mode).
+ * participating in a team channel (Slack or Microsoft Teams) vs. a DM /
+ * personal chat (personal mode).
  */
 
 /**
@@ -12,7 +13,7 @@ export function getChannelBehaviorInstructions(): string {
   return `
 ## Channel Participation Guidelines
 
-You are participating in a team Slack channel. Multiple team members may interact with you.
+You are participating in a team chat channel (Slack or Microsoft Teams). Multiple team members may interact with you.
 Follow these guidelines for effective team communication:
 
 ### Communication Style

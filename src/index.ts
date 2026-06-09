@@ -30,10 +30,12 @@ import { heartbeatService } from './services/heartbeat.service';
 import { cronSchedulerService } from './services/cron-scheduler.service';
 import { sessionManagerService } from './services/session-manager.service';
 import { slackAdapterService } from './services/slack-adapter.service';
+import { teamsAdapterService } from './services/teams-adapter.service';
 import { webSocketAdapterService } from './services/websocket-adapter.service';
 import { webSocketGatewayService } from './services/websocket-gateway.service';
 import { messageDeliveryService } from './services/message-delivery.service';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
+import { getTeamsHeartbeatThrottleQueue } from './queues/teams-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
 
@@ -50,6 +52,7 @@ const httpServer = createServer(app);
 // Note: Must be registered BEFORE server starts accepting connections
 messageDeliveryService.register(webSocketAdapterService);
 messageDeliveryService.register(slackAdapterService);
+messageDeliveryService.register(teamsAdapterService);
 
 // Initialize WebSocket gateway before listening
 webSocketGatewayService.initialize(httpServer);
@@ -88,6 +91,7 @@ const initialize = async () => {
     await messageDeliveryService.initializeAll();
 
     await getSlackHeartbeatThrottleQueue().start();
+    await getTeamsHeartbeatThrottleQueue().start();
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`Failed to initialize services: ${msg}`);
@@ -116,6 +120,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   webSocketGatewayService.closeAll();
   await messageDeliveryService.shutdownAll();
   await getSlackHeartbeatThrottleQueue().stop();
+  await getTeamsHeartbeatThrottleQueue().stop();
   await shutdownLangfuse();
   await shutdownTelemetry().catch(() => {});
 

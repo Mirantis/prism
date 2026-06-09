@@ -101,6 +101,7 @@ import {
 } from '../services/agent-archive.service';
 import { parseSchedule } from '../tools/cron';
 import cron from 'node-cron';
+import { teamsManagementRouter } from './teams-management';
 
 // 100 MiB cap — agent DBs are tens of MB in practice; this keeps a
 // malformed / oversized upload from filling memory before validation runs.
@@ -127,6 +128,11 @@ function uploadPrismFile(req: Request, res: Response, next: (err?: unknown) => v
 }
 
 const router = Router();
+
+// Microsoft Teams routes (verification, mappings, heartbeat triggers,
+// adapter lifecycle) — mirrors the Slack surface below. See
+// `routes/teams-management.ts` for the full route list.
+router.use(teamsManagementRouter);
 
 // ============================================================================
 // Agent identity
@@ -370,7 +376,7 @@ router.get('/heartbeat/status', async (_req: Request, res: Response) => {
  */
 router.post('/heartbeat/slack-trigger', async (_req: Request, res: Response) => {
   try {
-    const status = heartbeatService.triggerFromSlack();
+    const status = heartbeatService.triggerFromChannel();
 
     if (status === 'ignored') {
       res.status(404).json({ error: 'No active heartbeat' });
