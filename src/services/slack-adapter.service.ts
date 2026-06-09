@@ -644,12 +644,13 @@ class SlackAdapterService implements ChannelAdapter {
       const resolvedText = await this.resolveMentions(messageText, teamId);
 
       // Download any uploaded attachments into our DB (linked to the user
-      // message inside chat()). A file-only message gets a placeholder body.
-      // Failed downloads are appended as a system note so the agent can tell
-      // the user instead of the file silently vanishing.
+      // message inside chat()). A message with only files gets a placeholder
+      // body. Failed downloads are surfaced to the agent via runtimeNotices
+      // (system prompt) so it reliably tells the user instead of the file
+      // silently vanishing.
       const { attachmentIds, failures } = await this.downloadSlackFiles(files, { externalTs: eventTs });
-      const baseText = resolvedText || (attachmentIds.length ? '(shared a file)' : resolvedText);
-      const effectiveText = this.appendAttachmentFailures(baseText, failures);
+      const sharedSomething = attachmentIds.length > 0 || failures.length > 0;
+      const effectiveText = resolvedText || (sharedSomething ? '(shared a file)' : resolvedText);
 
       // Look up the sender's Slack identity and tag the message with the
       // sender's <@USERID:Name> marker so the agent can emit a real
@@ -670,6 +671,7 @@ class SlackAdapterService implements ChannelAdapter {
         agentId: mapping.agentId,
         message: taggedText,
         attachmentIds,
+        runtimeNotices: failures.length ? [this.buildAttachmentFailureNote(failures)] : undefined,
         metadata: { channel: 'slack' },
       });
     } catch (error: unknown) {
@@ -863,8 +865,8 @@ class SlackAdapterService implements ChannelAdapter {
         externalTs: messageTs,
         threadId: thread.id,
       });
-      const baseText = text || (attachmentIds.length ? '(shared a file)' : text);
-      const effectiveText = this.appendAttachmentFailures(baseText, failures);
+      const sharedSomething = attachmentIds.length > 0 || failures.length > 0;
+      const effectiveText = text || (sharedSomething ? '(shared a file)' : text);
       const senderName = userInfo?.real_name || userInfo?.name;
       const taggedText = this.buildSenderTaggedContent(slackUserId, senderName, effectiveText);
 
@@ -875,6 +877,7 @@ class SlackAdapterService implements ChannelAdapter {
         threadId: thread.id,
         message: taggedText,
         attachmentIds,
+        runtimeNotices: failures.length ? [this.buildAttachmentFailureNote(failures)] : undefined,
         metadata: {
           channel: 'slack',
           channelId,
@@ -1511,36 +1514,24 @@ class SlackAdapterService implements ChannelAdapter {
   }
 
   /**
-   * Render download failures as a system note appended to the inbound message
-   * so the AGENT sees them (and can tell the user) instead of the file being
-   * silently dropped. Reaching the user otherwise depends on the agent's reply.
+   * Render download failures as a single runtime notice, delivered via the
+   * system prompt (InvokeRequest.runtimeNotices). Worded to counter the failure
+   * modes seen in testing — the agent claiming no file was attached, and asking
+   * for a file path / hunting on disk — since user-embedded notes were ignored.
    */
   private buildAttachmentFailureNote(failures: SlackFileFailure[]): string {
-    const list = failures.map((f) => `- "${f.filename}": ${f.reason}`).join('\n');
+    const list = failures.map((f) => `"${f.filename}": ${f.reason}`).join('; ');
     const many = failures.length > 1;
-    const noun = many ? 'files' : 'a file';
-    const them = many ? 'them' : 'it';
+    const their = many ? 'their' : 'its';
     const theirs = many ? 'their attached files' : 'their attached file';
     const were = many ? 'they were chat attachments' : 'it was a chat attachment';
-    // Framed as a runtime notice (not "[System:]", which inside a user turn
-    // reads like a prompt-injection attempt and gets discounted) and worded to
-    // counter the two failure modes seen in testing: the agent claiming no file
-    // was attached, and hunting for the file via shell.
     return (
-      `(Runtime notice, not written by the user: the user attached ${noun} to this message, but the ` +
-      `runtime could not download ${them} from Slack, so the contents are NOT available to you:\n${list}\n` +
-      `Reply by telling the user you couldn't read ${theirs} and give the reason above. Do NOT claim no ` +
-      `file was attached — one was; the download failed. Do NOT try to open ${them} with shell or other ` +
-      `tools — ${were} that failed to download, not a file on disk. If the reason is an access/permission ` +
-      `error, mention the Slack app likely needs the \`files:read\` scope.)`
+      `The user attached ${many ? 'files' : 'a file'} to this message that could not be downloaded from ` +
+      `Slack, so you do NOT have ${their} contents: ${list}. In your reply, tell the user you couldn't ` +
+      `read ${theirs} and give the reason; if it's an access/permission error, mention the Slack app ` +
+      `likely needs the \`files:read\` scope. Do not say no file was attached, and do not ask for a file ` +
+      `path or look on disk — ${were} that failed to download, not a local file.`
     );
-  }
-
-  /** Append a failure note to the message text when any download failed. */
-  private appendAttachmentFailures(text: string, failures: SlackFileFailure[]): string {
-    if (failures.length === 0) return text;
-    const note = this.buildAttachmentFailureNote(failures);
-    return text ? `${text}\n\n${note}` : note;
   }
 
   /**

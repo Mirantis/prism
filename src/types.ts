@@ -35,6 +35,8 @@ export interface AgentContext {
   recentMessages: ConversationMessage[];
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
+  /** Per-turn runtime events surfaced authoritatively in the system prompt. */
+  runtimeNotices?: string[];
 }
 
 // ============================================================================
@@ -57,6 +59,13 @@ export interface InvokeRequest {
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
   slackMessages?: SlackTriggerMessage[];
+  /**
+   * Transient, authoritative notices about events that occurred while
+   * preparing this turn (e.g. an attachment that failed to download). Injected
+   * into the system prompt — the model follows these far more reliably than
+   * text embedded in the user message.
+   */
+  runtimeNotices?: string[];
 }
 
 // ============================================================================
