@@ -390,8 +390,11 @@ router.get('/attachments/:id', async (req: Request<{ id: string }>, res: Respons
       res.status(404).json({ error: 'Attachment not found' });
       return;
     }
-    res.setHeader('Content-Type', att.mediaType);
-    res.setHeader('Content-Disposition', `inline; filename="${sanitizeFilename(att.filename)}"`);
+    const isPreviewable = att.mediaType.startsWith('image/') || att.mediaType === 'application/pdf';
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', isPreviewable ? att.mediaType : 'application/octet-stream');
+    const disposition = isPreviewable ? 'inline' : 'attachment';
+    res.setHeader('Content-Disposition', `${disposition}; filename="${sanitizeFilename(att.filename)}"`);
     res.send(Buffer.from(att.data));
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
