@@ -91,6 +91,17 @@ interface SlackFileMeta {
   url_private_download?: string;
 }
 
+/** A file we couldn't ingest, surfaced to the agent so it can tell the user. */
+interface SlackFileFailure {
+  filename: string;
+  reason: string;
+}
+
+interface SlackFileDownloadResult {
+  attachmentIds: string[];
+  failures: SlackFileFailure[];
+}
+
 const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
 
 // Lazily-built proxy dispatcher for Slack file downloads. The Bolt WebClient's
@@ -634,8 +645,11 @@ class SlackAdapterService implements ChannelAdapter {
 
       // Download any uploaded attachments into our DB (linked to the user
       // message inside chat()). A file-only message gets a placeholder body.
-      const attachmentIds = await this.downloadSlackFiles(files, { externalTs: eventTs, say });
-      const effectiveText = resolvedText || (attachmentIds.length ? '(shared a file)' : resolvedText);
+      // Failed downloads are appended as a system note so the agent can tell
+      // the user instead of the file silently vanishing.
+      const { attachmentIds, failures } = await this.downloadSlackFiles(files, { externalTs: eventTs });
+      const baseText = resolvedText || (attachmentIds.length ? '(shared a file)' : resolvedText);
+      const effectiveText = this.appendAttachmentFailures(baseText, failures);
 
       // Look up the sender's Slack identity and tag the message with the
       // sender's <@USERID:Name> marker so the agent can emit a real
@@ -845,12 +859,12 @@ class SlackAdapterService implements ChannelAdapter {
       // Download any uploaded attachments. `externalTs` is the carrying
       // message's ts so the live-read SlackThreadProvider can re-associate
       // them on later turns; `threadId` scopes that lookup.
-      const attachmentIds = await this.downloadSlackFiles(files, {
+      const { attachmentIds, failures } = await this.downloadSlackFiles(files, {
         externalTs: messageTs,
         threadId: thread.id,
-        say,
       });
-      const effectiveText = text || (attachmentIds.length ? '(shared a file)' : text);
+      const baseText = text || (attachmentIds.length ? '(shared a file)' : text);
+      const effectiveText = this.appendAttachmentFailures(baseText, failures);
       const senderName = userInfo?.real_name || userInfo?.name;
       const taggedText = this.buildSenderTaggedContent(slackUserId, senderName, effectiveText);
 
@@ -1420,27 +1434,28 @@ class SlackAdapterService implements ChannelAdapter {
    */
   private async downloadSlackFiles(
     files: SlackFileMeta[],
-    ctx: { externalTs?: string; threadId?: string; say?: SayFn },
-  ): Promise<string[]> {
-    if (files.length === 0) return [];
+    ctx: { externalTs?: string; threadId?: string },
+  ): Promise<SlackFileDownloadResult> {
+    const attachmentIds: string[] = [];
+    const failures: SlackFileFailure[] = [];
+    if (files.length === 0) return { attachmentIds, failures };
 
     const connection = await getSlackConnection();
     const botToken = connection?.botToken;
     if (!botToken) {
       logger.warn('[SlackAdapter] no bot token available; cannot download %d file(s)', files.length);
-      return [];
+      for (const file of files) {
+        failures.push({ filename: file.name || 'file', reason: 'no Slack bot token is available to download it' });
+      }
+      return { attachmentIds, failures };
     }
 
-    const attachmentIds: string[] = [];
     for (const file of files) {
+      const filename = file.name || 'file';
       try {
         if (typeof file.size === 'number' && file.size > MAX_FILE_SIZE_BYTES) {
-          logger.warn('[SlackAdapter] skipping oversized file %s (%d bytes)', file.name, file.size);
-          if (ctx.say) {
-            await ctx
-              .say(`⚠️ Skipped *${file.name ?? 'file'}* — over the ${MAX_FILE_SIZE_MB} MB limit.`)
-              .catch(() => {});
-          }
+          logger.warn('[SlackAdapter] skipping oversized file %s (%d bytes)', filename, file.size);
+          failures.push({ filename, reason: `it exceeds the ${MAX_FILE_SIZE_MB} MB limit` });
           continue;
         }
 
@@ -1452,20 +1467,22 @@ class SlackAdapterService implements ChannelAdapter {
         const url = file.url_private_download || file.url_private;
         if (!url) {
           logger.warn('[SlackAdapter] file %s has no download URL', file.id);
+          failures.push({ filename, reason: 'Slack returned no download URL for it' });
           continue;
         }
 
         const buffer = await this.fetchSlackFile(url, botToken);
         if (buffer.byteLength === 0) {
           logger.warn('[SlackAdapter] file %s downloaded empty; skipping', file.id);
+          failures.push({ filename, reason: 'it downloaded as an empty file' });
           continue;
         }
         if (buffer.byteLength > MAX_FILE_SIZE_BYTES) {
           logger.warn('[SlackAdapter] file %s exceeds cap after download; skipping', file.id);
+          failures.push({ filename, reason: `it exceeds the ${MAX_FILE_SIZE_MB} MB limit` });
           continue;
         }
 
-        const filename = file.name || 'file';
         const mediaType = detectMediaType(buffer, filename, file.mimetype);
         const row = await attachmentService.createSlackAttachment({
           filename,
@@ -1485,10 +1502,34 @@ class SlackAdapterService implements ChannelAdapter {
           logger.info('[SlackAdapter] file %s already stored (concurrent delivery); skipping', file.id);
         }
       } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
         logger.error({ err, fileId: file.id }, '[SlackAdapter] failed to download Slack file');
+        failures.push({ filename, reason });
       }
     }
-    return attachmentIds;
+    return { attachmentIds, failures };
+  }
+
+  /**
+   * Render download failures as a system note appended to the inbound message
+   * so the AGENT sees them (and can tell the user) instead of the file being
+   * silently dropped. Reaching the user otherwise depends on the agent's reply.
+   */
+  private buildAttachmentFailureNote(failures: SlackFileFailure[]): string {
+    const list = failures.map((f) => `- "${f.filename}": ${f.reason}`).join('\n');
+    const plural = failures.length > 1 ? 'these files' : 'this file';
+    return (
+      `[System: ${failures.length} attached file(s) could not be read:\n${list}\n` +
+      `Let the user know you couldn't access ${plural} and why. If it's an access/permission ` +
+      `error, the Slack app likely needs the \`files:read\` scope (or the file isn't shared with the bot).]`
+    );
+  }
+
+  /** Append a failure note to the message text when any download failed. */
+  private appendAttachmentFailures(text: string, failures: SlackFileFailure[]): string {
+    if (failures.length === 0) return text;
+    const note = this.buildAttachmentFailureNote(failures);
+    return text ? `${text}\n\n${note}` : note;
   }
 
   /**
@@ -1507,11 +1548,13 @@ class SlackAdapterService implements ChannelAdapter {
 
     const res = await fetch(url, init as RequestInit);
     if (!res.ok) {
-      throw new Error(`Slack file download failed: HTTP ${res.status}`);
+      throw new Error(`Slack returned HTTP ${res.status} for the file download`);
     }
     const contentType = res.headers.get('content-type') || '';
     if (contentType.includes('text/html')) {
-      throw new Error('Slack file download returned an HTML page (auth failure)');
+      // Slack serves an HTML login/redirect page (HTTP 200) — not a 401 — when
+      // the token can't read the file. Almost always a missing scope.
+      throw new Error('Slack denied access to the file (the bot likely lacks the files:read scope, or the file is not shared with it)');
     }
     return Buffer.from(await res.arrayBuffer());
   }
