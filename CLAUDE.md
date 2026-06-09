@@ -14,6 +14,13 @@ This repo uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.
 Every commit subject must use the `<type>(<scope>): <description>` form —
 common types are `feat`, `fix`, `refactor`, `ci`, `docs`, `chore`, and `test`.
 
+Every commit must also carry a DCO `Signed-off-by:` trailer — commitlint
+enforces it in CI (`signed-off-by` rule), so a commit without it fails the
+lint check even if the husky hook was bypassed. Always commit with
+`git commit -s` (the `.husky/prepare-commit-msg` hook appends the trailer
+locally, but don't rely on it — it's a no-op when hooks are skipped, e.g.
+`--no-verify` or a fresh clone before `npm install`).
+
 ## PR descriptions
 
 The Test plan section should describe behavior that was actually exercised

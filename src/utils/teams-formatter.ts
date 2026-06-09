@@ -238,22 +238,28 @@ function splitContent(text: string, maxLength: number): string[] {
 }
 
 /**
- * Split very long text by sentences or words
+ * Split very long text by sentences or words.
+ *
+ * The chunk includes the character AT the split point (`splitPoint + 1`),
+ * so delimiters are searched up to `maxLength - 1` — searching at
+ * `maxLength` would emit a `maxLength + 1` chunk and break the invariant
+ * that every chunk fits in a single Teams message.
  */
 function splitLongText(text: string, maxLength: number): string[] {
   const chunks: string[] = [];
   let remaining = text;
 
   while (remaining.length > maxLength) {
-    let splitPoint = remaining.lastIndexOf('. ', maxLength);
+    let splitPoint = remaining.lastIndexOf('. ', maxLength - 1);
     if (splitPoint === -1 || splitPoint < maxLength / 2) {
-      splitPoint = remaining.lastIndexOf('\n', maxLength);
+      splitPoint = remaining.lastIndexOf('\n', maxLength - 1);
     }
     if (splitPoint === -1 || splitPoint < maxLength / 2) {
-      splitPoint = remaining.lastIndexOf(' ', maxLength);
+      splitPoint = remaining.lastIndexOf(' ', maxLength - 1);
     }
     if (splitPoint === -1) {
-      splitPoint = maxLength;
+      // No delimiter at all (one unbroken run) — hard split at the limit.
+      splitPoint = maxLength - 1;
     }
 
     chunks.push(remaining.substring(0, splitPoint + 1).trim());

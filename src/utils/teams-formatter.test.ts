@@ -65,6 +65,17 @@ describe('formatTeamsMessage', () => {
     }
   });
 
+  it('keeps every chunk within the limit even for unbroken strings with no delimiters', () => {
+    const content = 'x'.repeat(TEAMS_TEXT_LIMIT * 2 + 5);
+    const { chunks } = formatTeamsMessage(content);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.text.length).toBeLessThanOrEqual(TEAMS_TEXT_LIMIT);
+    }
+    // No content lost in the split
+    expect(chunks.map((c) => c.text).join('')).toBe(content);
+  });
+
   it('attaches the feedback card to the last chunk only', () => {
     const para = 'word '.repeat(2000).trim();
     const content = [para, para, para, para].join('\n\n');

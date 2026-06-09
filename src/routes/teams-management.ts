@@ -407,8 +407,11 @@ router.get('/teams-link-status', async (req: Request, res: Response) => {
       select: { teamsUserId: true },
     });
 
+    // Scoped to the requested connectionId, like the DM check above and the
+    // channel-mappings list the UI renders — otherwise a mapping left behind
+    // by a rotated TEAMS_APP_ID would report linked with an empty list.
     const hasChannelMapping = await prisma.teamsMapping.findFirst({
-      where: { teamsChannelId: { not: null } },
+      where: { connectionId, teamsChannelId: { not: null } },
       select: { id: true },
     }) !== null;
 

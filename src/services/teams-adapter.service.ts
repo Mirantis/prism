@@ -796,15 +796,22 @@ class TeamsAdapterService implements ChannelAdapter {
     if (!this.adapter || !this.connection) return;
 
     // Re-derive the text that rode with the card: the card is attached to
-    // the LAST chunk of the formatted message.
+    // the LAST chunk of the formatted message. Route through
+    // prepareOutboundMessage (not formatTeamsMessage directly) so mention
+    // markers are rewritten and their entities restored — otherwise the
+    // update would resurface raw `<@id|name>` tokens.
     let lastChunkText = '';
+    let lastChunkEntities: MentionEntity[] = [];
     if (conversationMessage) {
-      const { chunks } = formatTeamsMessage(
+      const chunks = this.prepareOutboundMessage(
         conversationMessage.content,
         conversationMessage.triggeredBy || undefined,
         (conversationMessage.toolCalls as Array<{ tool: string }>) ?? undefined,
+        undefined,
       );
-      lastChunkText = chunks[chunks.length - 1]?.text ?? '';
+      const lastChunk = chunks[chunks.length - 1];
+      lastChunkText = lastChunk?.text ?? '';
+      lastChunkEntities = lastChunk?.entities ?? [];
     }
 
     const reference = this.referenceFromActivity(activity);
@@ -817,6 +824,7 @@ class TeamsAdapterService implements ChannelAdapter {
           type: ActivityTypes.Message,
           text: lastChunkText,
           textFormat: 'markdown',
+          ...(lastChunkEntities.length > 0 && { entities: lastChunkEntities }),
           attachments,
         } as Partial<Activity> as Activity);
       });
