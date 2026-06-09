@@ -1596,8 +1596,9 @@ router.get('/slack/channel-name', async (req: Request, res: Response) => {
 router.post('/chat', async (req: Request, res: Response) => {
   try {
     const { userId, agentId, message, threadId, metadata, attachmentIds } = req.body as ChatInput;
-    if (!userId || !agentId || !message) {
-      res.status(400).json({ error: 'userId, agentId, and message are required' });
+    const hasAttachments = Array.isArray(attachmentIds) && attachmentIds.length > 0;
+    if (!userId || !agentId || typeof message !== 'string' || (!message.trim() && !hasAttachments)) {
+      res.status(400).json({ error: 'userId, agentId, and either message text or attachmentIds are required' });
       return;
     }
 
