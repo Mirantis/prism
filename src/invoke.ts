@@ -31,17 +31,6 @@ import { buildErrorStep } from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
 import { AsyncChannel } from './utils/async-channel';
 
-// Nexus MCP tools available to agents
-const NEXUS_MCP_TOOLS = [
-  'shell_exec', 'shell_write_file', 'shell_read_file', 'shell_edit_file',
-  'shell_spawn', 'shell_stdin', 'shell_stdout', 'shell_kill', 'claude_code', 'claude_code_status',
-  'list_clusters', 'get_cluster',
-  'list_github_connections', 'get_github_connection',
-  'list_aws_connections', 'get_aws_connection',
-  'get_spending_limit_status', 'get_usage_cost_summary', 'get_usage_cost_timeseries',
-  'query_audit_trail',
-].join(',');
-
 /**
  * Stream agent execution as a sequence of InvokeSteps.
  *
@@ -118,11 +107,12 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       request.mode,
     );
 
+    // Register every tool the Nexus MCP endpoint exposes. In the sandbox this
+    // is the project-scoped endpoint, which already excludes first-party shell
+    // tools by design (those are local built-ins above), so no tool allowlist
+    // is sent — we want the full surface it serves.
     const nexusTools: Record<string, Tool> = config.nexusMcpUrl
-      ? await getMCPTools({
-          url: config.nexusMcpUrl,
-          extraHeaders: { 'x-mcp-tools': NEXUS_MCP_TOOLS },
-        })
+      ? await getMCPTools({ url: config.nexusMcpUrl })
       : {};
 
     const tools: Record<string, Tool> = { ...builtInTools, ...nexusTools };
