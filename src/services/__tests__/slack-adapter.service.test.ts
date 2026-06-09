@@ -291,8 +291,11 @@ describe('Requirement: Slack file download failures are surfaced to the agent', 
     ]);
     expect(note).toContain('(shared a file)');
     expect(note).toContain('secret.png');
-    expect(note).toMatch(/let the user know/i);
+    expect(note).toMatch(/tell.*the user/i);
     expect(note).toContain('files:read');
+    // Counters the observed failure modes: denying the file, and shell-hunting.
+    expect(note).toMatch(/no\s+file\s+was\s+attached/i);
+    expect(note).toMatch(/shell/i);
   });
 
   it('leaves the text untouched when there are no failures', () => {
