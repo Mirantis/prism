@@ -13,6 +13,9 @@ This repo uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.
 Every commit subject must use the `<type>(<scope>): <description>` form —
 common types are `feat`, `fix`, `refactor`, `ci`, `docs`, `chore`, and `test`.
 
+Every commit must be signed off (DCO): commit with `git commit -s` so a
+`Signed-off-by: Name <email>` trailer is added.
+
 ## PR descriptions
 
 The Test plan section should describe behavior that was actually exercised
