@@ -245,6 +245,26 @@ class AttachmentService {
     });
   }
 
+  /**
+   * Like `create()`, but idempotent on `slackFileId`: returns `null` when the
+   * file is already stored. The unique index on `slackFileId` is the real
+   * de-dupe guarantee — this swallows the unique-violation (P2002) that a
+   * concurrent at-least-once Slack redelivery races into past the
+   * `existsBySlackFileId` pre-check.
+   */
+  async createSlackAttachment(input: CreateAttachmentInput): Promise<MessageAttachment | null> {
+    try {
+      return await this.create(input);
+    } catch (err) {
+      // P2002 = unique-constraint violation. Duck-type on the code (robust
+      // across module/mock boundaries); the unique index is the real guarantee.
+      if (err && typeof err === 'object' && (err as { code?: unknown }).code === 'P2002') {
+        return null;
+      }
+      throw err;
+    }
+  }
+
   /** Full row including bytes — used by the download route. */
   async getById(id: string): Promise<MessageAttachment | null> {
     return prisma.messageAttachment.findUnique({ where: { id } });

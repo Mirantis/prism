@@ -1467,7 +1467,7 @@ class SlackAdapterService implements ChannelAdapter {
 
         const filename = file.name || 'file';
         const mediaType = detectMediaType(buffer, filename, file.mimetype);
-        const row = await attachmentService.create({
+        const row = await attachmentService.createSlackAttachment({
           filename,
           mediaType,
           sizeBytes: buffer.byteLength,
@@ -1478,7 +1478,12 @@ class SlackAdapterService implements ChannelAdapter {
           externalTs: ctx.externalTs,
           threadId: ctx.threadId,
         });
-        attachmentIds.push(row.id);
+        // null = a concurrent redelivery already stored this file id.
+        if (row) {
+          attachmentIds.push(row.id);
+        } else {
+          logger.info('[SlackAdapter] file %s already stored (concurrent delivery); skipping', file.id);
+        }
       } catch (err) {
         logger.error({ err, fileId: file.id }, '[SlackAdapter] failed to download Slack file');
       }

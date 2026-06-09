@@ -181,7 +181,12 @@ model MessageAttachment {
   category    String
   data        Bytes
   source      String
-  slackFileId String?
+  // Unique so concurrent Slack event redeliveries (at-least-once) can't insert
+  // the same file twice — the existsBySlackFileId() pre-check is a TOCTOU
+  // fast-path, not the guarantee. Nullable web uploads are unconstrained
+  // (SQLite treats NULLs as distinct). One Slack workspace per container, so a
+  // single-column unique is sufficient (no per-connection scoping needed).
+  slackFileId String? @unique
   externalTs  String?
 
   createdAt DateTime @default(now())
@@ -191,7 +196,6 @@ model MessageAttachment {
   @@index([messageId])
   @@index([threadId])
   @@index([externalTs])
-  @@index([slackFileId])
   @@map("message_attachments")
 }
 
