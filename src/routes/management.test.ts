@@ -1834,6 +1834,26 @@ describe('Management Routes', () => {
       expect(res.status).toBe(404);
     });
 
+    it('GET /agents/attachments/:id survives non-latin1 filenames (RFC 5987)', async () => {
+      // Node's setHeader throws ERR_INVALID_CHAR for header values outside
+      // latin-1, so a raw unicode filename= would 500 the download.
+      mockAttachmentGetById.mockResolvedValue({
+        id: 'att-1',
+        filename: '日本語 (1).pdf',
+        mediaType: 'application/pdf',
+        data: Buffer.from('%PDF'),
+      });
+
+      const res = await authedRequest(app).get('/agents/attachments/att-1');
+
+      expect(res.status).toBe(200);
+      const disposition = res.headers['content-disposition'];
+      // ASCII fallback in filename= (unicode replaced), real name in filename*
+      // (parens percent-encoded — not RFC 5987 attr-chars).
+      expect(disposition).toContain('filename="___ (1).pdf"');
+      expect(disposition).toContain("filename*=UTF-8''%E6%97%A5%E6%9C%AC%E8%AA%9E%20%281%29.pdf");
+    });
+
     it('DELETE /agents/attachments/:id removes an unlinked attachment', async () => {
       mockAttachmentDeleteUnlinked.mockResolvedValue(1);
       const res = await authedRequest(app).delete('/agents/attachments/att-1');

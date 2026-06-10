@@ -44,7 +44,7 @@ import { getSlackHeartbeatThrottleQueue } from '../queues/slack-heartbeat-thrott
 import { channelLearningQueue } from '../queues/channel-learning.queue';
 import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
 import { attachmentService, detectMediaType, classifyMediaType } from './attachment.service';
-import { MAX_FILE_SIZE_BYTES } from '../constants';
+import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '../constants';
 import { stripBodyToken } from '../lib/slack-web-client';
 import { config } from '../config';
 
@@ -102,7 +102,16 @@ interface SlackFileDownloadResult {
   failures: SlackFileFailure[];
 }
 
-const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
+/**
+ * Placeholder body for a Slack message whose only content is its file(s).
+ * Used for the stored chat message AND the heartbeat-trigger/channel-learning
+ * queues, so a file event never becomes an empty-text entry that silently
+ * drops the fact that a file was shared.
+ */
+function describeSharedFiles(files: SlackFileMeta[]): string {
+  const names = files.map((f) => f.name || 'file').join(', ');
+  return files.length > 1 ? `(shared files: ${names})` : `(shared a file: ${names})`;
+}
 
 // Lazily-built proxy dispatcher for Slack file downloads. The Bolt WebClient's
 // outbound calls already traverse the Nexus sandbox network (transparent MITM
@@ -650,7 +659,7 @@ class SlackAdapterService implements ChannelAdapter {
       // silently vanishing.
       const { attachmentIds, failures } = await this.downloadSlackFiles(files, { externalTs: eventTs });
       const sharedSomething = attachmentIds.length > 0 || failures.length > 0;
-      const effectiveText = resolvedText || (sharedSomething ? '(shared a file)' : resolvedText);
+      const effectiveText = resolvedText || (sharedSomething ? describeSharedFiles(files) : resolvedText);
 
       // Look up the sender's Slack identity and tag the message with the
       // sender's <@USERID:Name> marker so the agent can emit a real
@@ -725,6 +734,12 @@ class SlackAdapterService implements ChannelAdapter {
       return;
     }
 
+    // File-only messages reach the queue paths below with empty text — those
+    // paths never download files, so describe them instead of enqueueing ''
+    // (which would render as an empty heartbeat/learning entry while the file
+    // silently vanishes).
+    const queueText = messageText || (files.length > 0 ? describeSharedFiles(files) : messageText);
+
     // Check if this channel is a heartbeat trigger channel (direct local call)
     const triggerCheck = await slackHeartbeatTriggerService.isHeartbeatTriggerChannel(channelId);
 
@@ -735,7 +750,7 @@ class SlackAdapterService implements ChannelAdapter {
 
       await slackMessageQueueService.enqueue(triggerCheck.agentId!, {
         sender: senderName,
-        text: messageText,
+        text: queueText,
         timestamp: new Date().toISOString(),
       });
       // Fire-and-forget: throttle errors shouldn't surface to the user
@@ -788,7 +803,7 @@ class SlackAdapterService implements ChannelAdapter {
         mapping.agentId,
         mapping.slackChannelName || channelId
       );
-      await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, messageText, mapping.connection.teamId);
+      await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, queueText, mapping.connection.teamId);
       return;
     }
 
@@ -802,7 +817,7 @@ class SlackAdapterService implements ChannelAdapter {
           mapping.agentId,
           mapping.slackChannelName || channelId
         );
-        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, messageText, mapping.connection.teamId);
+        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, queueText, mapping.connection.teamId);
         return;
       }
 
@@ -813,7 +828,7 @@ class SlackAdapterService implements ChannelAdapter {
           mapping.agentId,
           mapping.slackChannelName || channelId
         );
-        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, messageText, mapping.connection.teamId);
+        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, queueText, mapping.connection.teamId);
         return;
       }
 
@@ -826,7 +841,7 @@ class SlackAdapterService implements ChannelAdapter {
           mapping.agentId,
           mapping.slackChannelName || channelId
         );
-        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, messageText, mapping.connection.teamId);
+        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, queueText, mapping.connection.teamId);
         return;
       }
 
@@ -837,7 +852,7 @@ class SlackAdapterService implements ChannelAdapter {
           mapping.agentId,
           mapping.slackChannelName || channelId
         );
-        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, messageText, mapping.connection.teamId);
+        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, queueText, mapping.connection.teamId);
         return;
       }
     }
@@ -866,7 +881,7 @@ class SlackAdapterService implements ChannelAdapter {
         threadId: thread.id,
       });
       const sharedSomething = attachmentIds.length > 0 || failures.length > 0;
-      const effectiveText = text || (sharedSomething ? '(shared a file)' : text);
+      const effectiveText = text || (sharedSomething ? describeSharedFiles(files) : text);
       const senderName = userInfo?.real_name || userInfo?.name;
       const taggedText = this.buildSenderTaggedContent(slackUserId, senderName, effectiveText);
 

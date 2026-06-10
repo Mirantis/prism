@@ -91,6 +91,11 @@ class ContextService {
       )
       .slice(-20);
 
+    // This runs on every chat/heartbeat turn; the meta pass covered every
+    // candidate message, so an empty map means the BLOB query would return
+    // nothing — skip it (the common, attachment-free case).
+    if (metaMap.size === 0) return windowed;
+
     const windowKeys = windowed.map(keyOf).filter((k): k is string => !!k);
     if (windowKeys.length === 0) return windowed;
 

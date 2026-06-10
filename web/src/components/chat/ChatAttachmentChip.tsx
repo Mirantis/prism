@@ -14,6 +14,13 @@ export interface PendingAttachment {
   error?: string;
 }
 
+/**
+ * Human-readable byte size, e.g. "1.2 MB".
+ *
+ * Kept in sync with the runtime's `attachment.service.ts#humanFileSize` and
+ * the CLI's `attachments.ts#formatFileSize` — separate workspaces, so the
+ * formatter is mirrored rather than imported.
+ */
 function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB'];

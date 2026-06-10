@@ -10,6 +10,7 @@ import { SchedulesPanel } from './components/SchedulesPanel.js';
 import { ConfigPanel } from './components/ConfigPanel.js';
 import { apiClient } from './api-client.js';
 import {
+  ATTACH_COMMAND,
   filterByPrefix,
   findExact,
   parseCommandLine,
@@ -28,7 +29,7 @@ export interface AppProps {
 }
 
 /** Input prefix that switches the popup from commands to path suggestions. */
-const ATTACH_PREFIX = '/attach ';
+const ATTACH_PREFIX = `${ATTACH_COMMAND} `;
 
 export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar }) => {
   const { exit } = useApp();

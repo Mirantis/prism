@@ -156,11 +156,8 @@ class ConversationService {
     const messages = await provider.getMessages(threadId);
 
     // Attach file metadata (no bytes) so the web UI renders chips on history.
-    const metaMap = await attachmentService.getMetaByMessageIds(messages.map(m => m.id));
-    const withAttachments: MessageWithAttachments[] = messages.map(m => {
-      const attachments = metaMap.get(m.id);
-      return attachments && attachments.length > 0 ? { ...m, attachments } : m;
-    });
+    const withAttachments: MessageWithAttachments[] =
+      await attachmentService.attachMetaToMessages(messages);
 
     return { ...thread, messages: withAttachments };
   }
