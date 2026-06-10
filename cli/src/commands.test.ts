@@ -425,6 +425,16 @@ describe('/attach', () => {
     );
     expect(out).toContain('File too large');
   });
+
+  it('refuses to stage past the 100-file per-message limit without uploading', async () => {
+    const api = stubApi();
+    const staged = Array.from({ length: 100 }, (_, i) => ({ ...meta, id: `a${i}` }));
+    const out = await cmd('/attach').run(
+      makeCtx({ api: api as unknown as ApiClient, rawArgs: '/tmp/one-too-many.txt', stagedAttachments: staged }),
+    );
+    expect(out).toContain('100-file limit');
+    expect(api.uploadAttachment).not.toHaveBeenCalled();
+  });
 });
 
 describe('/detach', () => {

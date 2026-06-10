@@ -44,7 +44,7 @@ import { getSlackHeartbeatThrottleQueue } from '../queues/slack-heartbeat-thrott
 import { channelLearningQueue } from '../queues/channel-learning.queue';
 import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
 import { attachmentService, detectMediaType, classifyMediaType } from './attachment.service';
-import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '../constants';
+import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
 import { stripBodyToken } from '../lib/slack-web-client';
 import { config } from '../config';
 
@@ -1458,17 +1458,28 @@ class SlackAdapterService implements ChannelAdapter {
     const failures: SlackFileFailure[] = [];
     if (files.length === 0) return { attachmentIds, failures };
 
+    // Cap before downloading so we never pull bytes for files that would be
+    // dropped at link time (linkToMessage enforces the same per-message cap).
+    let toProcess = files;
+    if (files.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+      toProcess = files.slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
+      failures.push({
+        filename: `${files.length - MAX_ATTACHMENTS_PER_MESSAGE} more file(s)`,
+        reason: `only the first ${MAX_ATTACHMENTS_PER_MESSAGE} attachments per message are kept`,
+      });
+    }
+
     const connection = await getSlackConnection();
     const botToken = connection?.botToken;
     if (!botToken) {
-      logger.warn('[SlackAdapter] no bot token available; cannot download %d file(s)', files.length);
-      for (const file of files) {
+      logger.warn('[SlackAdapter] no bot token available; cannot download %d file(s)', toProcess.length);
+      for (const file of toProcess) {
         failures.push({ filename: file.name || 'file', reason: 'no Slack bot token is available to download it' });
       }
       return { attachmentIds, failures };
     }
 
-    for (const file of files) {
+    for (const file of toProcess) {
       const filename = file.name || 'file';
       try {
         if (typeof file.size === 'number' && file.size > MAX_FILE_SIZE_BYTES) {

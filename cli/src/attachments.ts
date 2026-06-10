@@ -31,6 +31,13 @@ export interface AttachmentMeta {
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
 
 /**
+ * Max files staged on one message — mirrors the runtime's
+ * MAX_ATTACHMENTS_PER_MESSAGE (separate workspace, not importable). UX guard
+ * only; the server re-enforces it at link time.
+ */
+export const MAX_ATTACHMENTS_PER_MESSAGE = 100;
+
+/**
  * Human-readable byte size, e.g. "1.2 MB".
  *
  * Kept in sync with the runtime's `src/services/attachment.service.ts#humanFileSize`

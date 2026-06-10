@@ -15,6 +15,8 @@
 
 import { MessageAttachment } from '@prisma/client';
 import prisma from '../lib/prisma';
+import { logger } from '../logger';
+import { MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
 
 export type AttachmentCategory = 'image' | 'pdf' | 'text' | 'unreadable';
 
@@ -107,14 +109,17 @@ const EXT_MEDIA_TYPES: Record<string, string> = {
   conf: 'text/plain',
   env: 'text/plain',
   sql: 'text/plain',
-  // images / pdf — fidelity fallback when magic bytes are absent/truncated
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  pdf: 'application/pdf',
+  // NOTE: image/pdf extensions are deliberately absent. Those types are only
+  // ever assigned from magic bytes (sniffMagicBytes) — a valid image/PDF always
+  // carries its header, so an extension- or mime-based guess would only fire on
+  // a corrupt/mislabeled file, which would then be emitted as an image/file
+  // content part and fail the entire Bedrock turn. See detectMediaType's gate.
 };
+
+/** True for the media types that become Bedrock image/file content parts. */
+function isImageOrPdfType(mediaType: string): boolean {
+  return IMAGE_MEDIA_TYPES.has(mediaType) || mediaType === 'application/pdf';
+}
 
 /** Sniff well-known binary headers. Returns null when nothing matches. */
 function sniffMagicBytes(buf: Buffer): string | null {
@@ -158,19 +163,28 @@ function looksLikeUtf8Text(buf: Buffer): boolean {
  * so arbitrary code files still inline, else `application/octet-stream`.
  */
 export function detectMediaType(buffer: Buffer, filename: string, declaredMime?: string): string {
+  // Magic bytes are the ONLY source that may yield an image/pdf type — a valid
+  // image/PDF always carries its header in a complete upload.
   const magic = sniffMagicBytes(buffer);
   if (magic) return magic;
 
+  let resolved: string;
   const ext = filename.includes('.') ? filename.split('.').pop()!.toLowerCase() : '';
-  if (ext && EXT_MEDIA_TYPES[ext]) return EXT_MEDIA_TYPES[ext];
-
-  if (declaredMime && (declaredMime.startsWith('text/') || declaredMime === 'application/json')) {
-    return declaredMime;
+  if (ext && EXT_MEDIA_TYPES[ext]) {
+    resolved = EXT_MEDIA_TYPES[ext];
+  } else if (declaredMime && (declaredMime.startsWith('text/') || declaredMime === 'application/json')) {
+    resolved = declaredMime;
+  } else if (looksLikeUtf8Text(buffer)) {
+    resolved = 'text/plain';
+  } else {
+    resolved = declaredMime || 'application/octet-stream';
   }
 
-  if (looksLikeUtf8Text(buffer)) return 'text/plain';
-
-  return declaredMime || 'application/octet-stream';
+  // Invariant: image/pdf parts are only emitted for magic-confirmed files.
+  // A `.png`/image-mime guess on bytes without the matching header (corrupt or
+  // mislabeled) would be sent to Bedrock as an image/file part and fail the
+  // whole turn — downgrade it to an unreadable binary instead.
+  return isImageOrPdfType(resolved) ? 'application/octet-stream' : resolved;
 }
 
 /** True for image media types Bedrock natively accepts as image content parts. */
@@ -369,11 +383,30 @@ class AttachmentService {
   /** Link pre-uploaded (web) attachments to the message that carries them. */
   async linkToMessage(attachmentIds: string[], messageId: string, threadId: string): Promise<void> {
     if (attachmentIds.length === 0) return;
+    // Authoritative count cap (both web and Slack funnel through here). Bounds
+    // context-build memory — every windowed attachment is loaded and
+    // base64-expanded for the model each turn — so an unbounded id list can't
+    // OOM the container. Excess ids stay unlinked and the orphan janitor reaps
+    // them. attachmentIds is client-controlled, so this can't be trusted to the
+    // UI caps alone.
+    const capped =
+      attachmentIds.length > MAX_ATTACHMENTS_PER_MESSAGE
+        ? attachmentIds.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+        : attachmentIds;
+    if (capped.length < attachmentIds.length) {
+      logger.warn(
+        '[Attachments] message %s exceeded the %d-attachment cap (%d requested); linking first %d',
+        messageId,
+        MAX_ATTACHMENTS_PER_MESSAGE,
+        attachmentIds.length,
+        capped.length,
+      );
+    }
     await prisma.messageAttachment.updateMany({
       // Only pre-send (unlinked) uploads may be claimed — attachmentIds is a
       // client-controlled field, and a replayed/forged id must not steal an
       // attachment from the message it already belongs to.
-      where: { id: { in: attachmentIds }, messageId: null },
+      where: { id: { in: capped }, messageId: null },
       data: { messageId, threadId },
     });
   }
