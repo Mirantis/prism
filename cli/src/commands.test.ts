@@ -30,6 +30,8 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     listCronTasks: vi.fn(),
     createCronTask: vi.fn(),
     deleteCronTask: vi.fn(),
+    uploadAttachment: vi.fn(),
+    deleteAttachment: vi.fn(),
   };
 }
 
@@ -42,6 +44,9 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
     rawArgs: '',
     openPanel: vi.fn(),
     api: stubApi() as unknown as ApiClient,
+    stagedAttachments: [],
+    stageAttachment: vi.fn(),
+    clearStagedAttachments: vi.fn(),
     ...overrides,
   };
 }
@@ -334,5 +339,137 @@ describe('command lookup helpers', () => {
     expect(names).toContain('/heartbeat');
     expect(names).toContain('/help');
     expect(filterByPrefix('he')).toEqual([]);
+  });
+});
+
+describe('/attach', () => {
+  const meta = {
+    id: 'att-1',
+    filename: 'notes.txt',
+    mediaType: 'text/plain',
+    sizeBytes: 2048,
+    category: 'text',
+  };
+
+  it('with no args and nothing staged shows usage', async () => {
+    const out = await cmd('/attach').run(makeCtx());
+    expect(out).toContain('Usage: /attach <path>');
+  });
+
+  it('with no args lists staged files', async () => {
+    const out = await cmd('/attach').run(makeCtx({ stagedAttachments: [meta] }));
+    expect(out).toContain('notes.txt');
+    expect(out).toContain('2.0 KB');
+  });
+
+  it('uploads, stages, and confirms', async () => {
+    const api = stubApi();
+    api.uploadAttachment.mockResolvedValue(meta);
+    const stageAttachment = vi.fn();
+    const out = await cmd('/attach').run(
+      makeCtx({
+        api: api as unknown as ApiClient,
+        rawArgs: '/tmp/notes.txt',
+        stageAttachment,
+      }),
+    );
+    expect(api.uploadAttachment).toHaveBeenCalledWith('/tmp/notes.txt');
+    expect(stageAttachment).toHaveBeenCalledWith(meta);
+    expect(out).toContain('Staged');
+    expect(out).toContain('notes.txt');
+  });
+
+  it('resolves relative paths against cwd and expands ~', async () => {
+    const api = stubApi();
+    api.uploadAttachment.mockResolvedValue(meta);
+    await cmd('/attach').run(
+      makeCtx({ api: api as unknown as ApiClient, rawArgs: 'sub/notes.txt' }),
+    );
+    const arg = api.uploadAttachment.mock.calls[0][0] as string;
+    expect(arg).toBe(`${process.cwd()}/sub/notes.txt`);
+
+    api.uploadAttachment.mockClear();
+    await cmd('/attach').run(
+      makeCtx({ api: api as unknown as ApiClient, rawArgs: '~/notes.txt' }),
+    );
+    const homeArg = api.uploadAttachment.mock.calls[0][0] as string;
+    expect(homeArg.startsWith('/')).toBe(true);
+    expect(homeArg).not.toContain('~');
+  });
+
+  it('preserves inner spaces in the path (rawArgs)', async () => {
+    const api = stubApi();
+    api.uploadAttachment.mockResolvedValue(meta);
+    await cmd('/attach').run(
+      makeCtx({ api: api as unknown as ApiClient, rawArgs: 'My Notes/todo.txt' }),
+    );
+    expect(api.uploadAttachment).toHaveBeenCalledWith(`${process.cwd()}/My Notes/todo.txt`);
+  });
+
+  it('surfaces upload errors as the returned message', async () => {
+    const api = stubApi();
+    api.uploadAttachment.mockRejectedValue(new Error('File not found: /tmp/missing'));
+    const out = await cmd('/attach').run(
+      makeCtx({ api: api as unknown as ApiClient, rawArgs: '/tmp/missing' }),
+    );
+    expect(out).toContain('File not found');
+  });
+
+  it('surfaces server ApiError messages (e.g. too large)', async () => {
+    const api = stubApi();
+    api.uploadAttachment.mockRejectedValue(
+      new ApiError('Upload rejected: File too large (max 10 MB)', 400),
+    );
+    const out = await cmd('/attach').run(
+      makeCtx({ api: api as unknown as ApiClient, rawArgs: '/tmp/big.bin' }),
+    );
+    expect(out).toContain('File too large');
+  });
+});
+
+describe('/detach', () => {
+  const meta = (id: string) => ({
+    id,
+    filename: `${id}.txt`,
+    mediaType: 'text/plain',
+    sizeBytes: 10,
+    category: 'text',
+  });
+
+  it('reports when nothing is staged', async () => {
+    const out = await cmd('/detach').run(makeCtx());
+    expect(out).toBe('No files staged.');
+  });
+
+  it('deletes each staged file server-side and clears staging', async () => {
+    const api = stubApi();
+    api.deleteAttachment.mockResolvedValue({ success: true });
+    const clearStagedAttachments = vi.fn();
+    const out = await cmd('/detach').run(
+      makeCtx({
+        api: api as unknown as ApiClient,
+        stagedAttachments: [meta('a'), meta('b')],
+        clearStagedAttachments,
+      }),
+    );
+    expect(api.deleteAttachment).toHaveBeenCalledWith('a');
+    expect(api.deleteAttachment).toHaveBeenCalledWith('b');
+    expect(clearStagedAttachments).toHaveBeenCalledTimes(1);
+    expect(out).toContain('Removed 2');
+  });
+
+  it('still clears staging when a server delete fails (janitor covers it)', async () => {
+    const api = stubApi();
+    api.deleteAttachment.mockRejectedValue(new ApiError('boom', 500));
+    const clearStagedAttachments = vi.fn();
+    const out = await cmd('/detach').run(
+      makeCtx({
+        api: api as unknown as ApiClient,
+        stagedAttachments: [meta('a')],
+        clearStagedAttachments,
+      }),
+    );
+    expect(clearStagedAttachments).toHaveBeenCalledTimes(1);
+    expect(out).toContain('Removed 1');
   });
 });

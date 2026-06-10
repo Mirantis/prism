@@ -13,12 +13,12 @@ const commands: SlashCommand[] = [
 
 describe('CommandPopup', () => {
   it('renders nothing when the command list is empty', () => {
-    const { lastFrame } = render(<CommandPopup commands={[]} selectedIndex={0} />);
+    const { lastFrame } = render(<CommandPopup items={[]} selectedIndex={0} />);
     expect(lastFrame() ?? '').toBe('');
   });
 
   it('renders each command name and description', () => {
-    const { lastFrame } = render(<CommandPopup commands={commands} selectedIndex={0} />);
+    const { lastFrame } = render(<CommandPopup items={commands} selectedIndex={0} />);
     const frame = lastFrame() ?? '';
     expect(frame).toContain('/copy');
     expect(frame).toContain('Copy last message');
@@ -27,7 +27,7 @@ describe('CommandPopup', () => {
   });
 
   it('marks the selected command with a ▸ pointer', () => {
-    const { lastFrame } = render(<CommandPopup commands={commands} selectedIndex={1} />);
+    const { lastFrame } = render(<CommandPopup items={commands} selectedIndex={1} />);
     const frame = lastFrame() ?? '';
     // The selected row has '▸ /exit'; the other has two leading spaces.
     expect(frame).toMatch(/▸ \/exit/);
@@ -41,7 +41,7 @@ describe('CommandPopup', () => {
     }));
     // Selection near the end: the window scrolls so the highlighted row stays
     // visible and the earliest commands fall off the top.
-    const { lastFrame } = render(<CommandPopup commands={many} selectedIndex={11} />);
+    const { lastFrame } = render(<CommandPopup items={many} selectedIndex={11} />);
     const frame = lastFrame() ?? '';
     expect(frame).toMatch(/▸ \/cmd11/); // selected row is visible
     expect(frame).not.toContain('/cmd0'); // earliest scrolled out of the window

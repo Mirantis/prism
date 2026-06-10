@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 // loadConfig() is read once at HttpApiClient construction time to derive the
 // base URL, so stub it to a fixed httpUrl (with a trailing slash to prove the
@@ -194,5 +197,85 @@ describe('HttpApiClient', () => {
     expect(err.status).toBe(500);
     expect(err.message).toBe('Request failed with status 500');
     expect(err.detail).toBeUndefined();
+  });
+
+  describe('uploadAttachment', () => {
+    let dir: string;
+    let filePath: string;
+
+    beforeAll(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-upload-test-'));
+      filePath = path.join(dir, 'notes.txt');
+      fs.writeFileSync(filePath, 'hello attachment');
+      fs.writeFileSync(path.join(dir, 'empty.txt'), '');
+    });
+
+    afterAll(() => {
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('POSTs multipart FormData with the basename and no manual Content-Type', async () => {
+      const meta = { id: 'att-1', filename: 'notes.txt', mediaType: 'text/plain', sizeBytes: 16, category: 'text' };
+      fetchMock.mockResolvedValue(ok(meta));
+
+      const result = await client.uploadAttachment(filePath);
+
+      const { url, init } = lastCall(fetchMock);
+      expect(url).toBe(`${BASE}/agents/attachments`);
+      expect(init?.method).toBe('POST');
+      // Content-Type must be unset so fetch writes the multipart boundary.
+      expect(init?.headers).toBeUndefined();
+      expect(init?.body).toBeInstanceOf(FormData);
+      const entry = (init?.body as FormData).get('file') as File;
+      expect(entry.name).toBe('notes.txt');
+      expect(result).toEqual(meta);
+    });
+
+    it('rejects a missing file without calling fetch', async () => {
+      await expect(client.uploadAttachment(path.join(dir, 'nope.txt'))).rejects.toThrow(
+        /File not found/,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a directory without calling fetch', async () => {
+      await expect(client.uploadAttachment(dir)).rejects.toThrow(/is a directory/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects an empty file without calling fetch', async () => {
+      await expect(client.uploadAttachment(path.join(dir, 'empty.txt'))).rejects.toThrow(
+        /File is empty/,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects an oversized file without calling fetch', async () => {
+      const statSpy = vi.spyOn(fs.promises, 'stat').mockResolvedValue({
+        isDirectory: () => false,
+        size: 11 * 1024 * 1024,
+      } as unknown as fs.Stats);
+      try {
+        await expect(client.uploadAttachment(filePath)).rejects.toThrow(/File too large/);
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        statSpy.mockRestore();
+      }
+    });
+
+    it('surfaces the server 400 as an ApiError (server stays authoritative)', async () => {
+      fetchMock.mockResolvedValue(fail(400, { error: 'Upload rejected: File too large (max 10 MB)' }));
+      const err = await client.uploadAttachment(filePath).catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.message).toContain('File too large');
+    });
+  });
+
+  it('deleteAttachment DELETEs the attachment-scoped URL', async () => {
+    fetchMock.mockResolvedValue(ok({ success: true }));
+    await client.deleteAttachment('att-9');
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(`${BASE}/agents/attachments/att-9`);
+    expect(init?.method).toBe('DELETE');
   });
 });

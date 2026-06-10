@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { renderMarkdown } from '../markdown.js';
 import { TuiMessage } from '../tui-adapter.js';
+import { formatFileSize } from '../attachments.js';
 
 export type ChatEntry = { kind: 'message'; message: TuiMessage };
 
@@ -73,6 +74,13 @@ const MessageRow: React.FC<MessageRowProps> = ({ agentName, message, expanded })
       </Box>
       <Box paddingLeft={2} flexDirection="column">
         <Text>{body}</Text>
+        {Array.isArray(message.attachments) && message.attachments.length > 0 && (
+          <Text dimColor>
+            {message.attachments
+              .map((a) => `· 📎 ${a.filename} (${formatFileSize(a.sizeBytes)})`)
+              .join(' ')}
+          </Text>
+        )}
         {summary && (
           <Text dimColor>
             {summary}

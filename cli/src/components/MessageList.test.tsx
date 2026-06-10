@@ -37,6 +37,35 @@ describe('MessageList', () => {
     expect(frame).toContain('hi there');
   });
 
+  it('renders a 📎 suffix line for messages with attachments', () => {
+    const entries = [
+      entry(
+        makeMsg({
+          id: 'u2',
+          role: 'USER',
+          content: 'see attached',
+          attachments: [
+            { id: 'att-1', filename: 'report.pdf', mediaType: 'application/pdf', sizeBytes: 1258291, category: 'pdf' },
+          ],
+        }),
+      ),
+    ];
+    const { lastFrame } = render(
+      <MessageList agentName="Prism" entries={entries} expandedMessageId={null} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('see attached');
+    expect(frame).toContain('· 📎 report.pdf (1.2 MB)');
+  });
+
+  it('renders no attachment line when attachments is null', () => {
+    const entries = [entry(makeMsg({ id: 'u3', role: 'USER', content: 'plain', attachments: null }))];
+    const { lastFrame } = render(
+      <MessageList agentName="Prism" entries={entries} expandedMessageId={null} />,
+    );
+    expect(lastFrame() ?? '').not.toContain('📎');
+  });
+
   it('labels agent messages with the agent name and renders markdown content', () => {
     const entries = [entry(makeMsg({ id: 'a1', role: 'AGENT', content: 'reply text' }))];
     const { lastFrame } = render(

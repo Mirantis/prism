@@ -23,6 +23,14 @@ const { adapterStub, apiStub } = vi.hoisted(() => {
     apiStub: {
       listCronTasks: vi.fn().mockResolvedValue([]),
       getDetails: vi.fn().mockResolvedValue({}),
+      uploadAttachment: vi.fn().mockResolvedValue({
+        id: 'att-1',
+        filename: 'report.txt',
+        mediaType: 'text/plain',
+        sizeBytes: 2048,
+        category: 'text',
+      }),
+      deleteAttachment: vi.fn().mockResolvedValue({ success: true }),
     },
   };
 });
@@ -54,6 +62,8 @@ describe('App', () => {
     adapterStub.submitUserMessage.mockClear();
     apiStub.listCronTasks.mockClear();
     apiStub.getDetails.mockClear();
+    apiStub.uploadAttachment.mockClear();
+    apiStub.deleteAttachment.mockClear();
   });
 
   it('renders the header, input box, and status bar on mount', () => {
@@ -199,6 +209,76 @@ describe('App', () => {
     await flush();
     // alpha-msg now appears twice: once in the message list, once in the input.
     expect(count(lastFrame() ?? '', 'alpha-msg')).toBeGreaterThanOrEqual(2);
+    unmount();
+  });
+
+  // ---- /attach staging flow ----
+
+  const flushAll = async (n = 4) => {
+    for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r));
+  };
+
+  const attachFile = async (stdin: { write: (data: string) => void }) => {
+    stdin.write('/attach /tmp/report.txt');
+    await flushAll();
+    stdin.write('\r');
+    await flushAll();
+  };
+
+  it('/attach uploads the file and renders the staged chip line', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    await attachFile(stdin);
+
+    expect(apiStub.uploadAttachment).toHaveBeenCalledWith('/tmp/report.txt');
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('📎 report.txt (2.0 KB)');
+    expect(frame).toContain('/detach to remove');
+    unmount();
+  });
+
+  it('the next message carries the staged attachmentIds and clears the chips', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    await attachFile(stdin);
+
+    stdin.write('summarize this');
+    await flushAll();
+    stdin.write('\r');
+    await flushAll();
+
+    expect(adapterStub.submitUserMessage).toHaveBeenCalledWith({
+      userId: 'local',
+      agentId: 'remote',
+      text: 'summarize this',
+      attachmentIds: ['att-1'],
+    });
+    // Chips line is gone; the optimistic user row shows the 📎 suffix instead.
+    const frame = lastFrame() ?? '';
+    expect(frame).not.toContain('/detach to remove');
+    expect(frame).toContain('· 📎 report.txt (2.0 KB)');
+    unmount();
+  });
+
+  it('a bare Enter with staged files sends a file-only message', async () => {
+    const { stdin, unmount } = render(<App {...baseProps} />);
+    await attachFile(stdin);
+
+    stdin.write('\r'); // empty input, staged file present
+    await flushAll();
+
+    expect(adapterStub.submitUserMessage).toHaveBeenCalledWith({
+      userId: 'local',
+      agentId: 'remote',
+      text: '',
+      attachmentIds: ['att-1'],
+    });
+    unmount();
+  });
+
+  it('a bare Enter with nothing staged sends nothing', async () => {
+    const { stdin, unmount } = render(<App {...baseProps} />);
+    stdin.write('\r');
+    await flushAll();
+    expect(adapterStub.submitUserMessage).not.toHaveBeenCalled();
     unmount();
   });
 });
