@@ -17,6 +17,9 @@ COPY cli/package.json ./cli/
 # Skip husky install in Docker
 ENV HUSKY=0
 
+# Opt out of Prisma CLI telemetry (checkpoint pings on generate/migrate).
+ENV CHECKPOINT_DISABLE=1
+
 # openssl is needed by Prisma's query engine on Debian slim (not shipped by default).
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 
@@ -51,6 +54,10 @@ WORKDIR /app
 
 # Skip husky install in Docker
 ENV HUSKY=0
+
+# Opt out of Prisma CLI telemetry (checkpoint pings on generate/migrate).
+# ENV (not build-only ARG) so it also covers the runtime migrate in start.sh.
+ENV CHECKPOINT_DISABLE=1
 
 # openssl for Prisma; wget for the healthcheck probe.
 # git/ca-certificates/curl/libatomic1/gcc/libc-dev/make/zstd are baked
