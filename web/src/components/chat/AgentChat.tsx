@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { useWebSocket } from '@/hooks/use-websocket';
-import type { Attachment, ConversationMessage } from '@/types';
+import { MAX_ATTACHMENTS_PER_MESSAGE, type Attachment, type ConversationMessage } from '@/types';
 import ChatMessageList from './ChatMessageList';
 import ChatInput from './ChatInput';
 import type { PendingAttachment } from './ChatAttachmentChip';
@@ -52,7 +52,27 @@ export default function AgentChat() {
 
   const handleFilesSelected = useCallback(
     (files: File[]) => {
-      for (const file of files) {
+      // Cap staged files per message (the runtime re-enforces this at link
+      // time; this is the UX guard so the user isn't surprised by silently
+      // dropped files server-side).
+      const remaining = Math.max(0, MAX_ATTACHMENTS_PER_MESSAGE - attachments.length);
+      const accepted = files.slice(0, remaining);
+      const rejectedCount = files.length - accepted.length;
+      if (rejectedCount > 0) {
+        setAttachments((prev) => [
+          ...prev,
+          {
+            localId: `att-limit-${Date.now()}-${attachmentSeq++}`,
+            filename: `${rejectedCount} file(s) not added`,
+            mediaType: '',
+            sizeBytes: 0,
+            category: 'unreadable',
+            status: 'error',
+            error: `Max ${MAX_ATTACHMENTS_PER_MESSAGE} files per message`,
+          },
+        ]);
+      }
+      for (const file of accepted) {
         const localId = `att-${Date.now()}-${attachmentSeq++}`;
         setAttachments((prev) => [
           ...prev,
@@ -96,7 +116,7 @@ export default function AgentChat() {
           });
       }
     },
-    [activeThreadId],
+    [activeThreadId, attachments.length],
   );
 
   const handleRemoveAttachment = useCallback((localId: string) => {

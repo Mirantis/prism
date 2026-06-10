@@ -11,6 +11,13 @@ export interface ToolCallRecord {
 
 export type AttachmentCategory = 'image' | 'pdf' | 'text' | 'unreadable';
 
+/**
+ * Max files staged on one message — a UX guard mirroring the runtime's
+ * authoritative cap (`MAX_ATTACHMENTS_PER_MESSAGE` in src/constants.ts;
+ * separate workspace, not importable). The server re-enforces it at link time.
+ */
+export const MAX_ATTACHMENTS_PER_MESSAGE = 100;
+
 export interface Attachment {
   id: string;
   filename: string;

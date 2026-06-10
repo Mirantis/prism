@@ -18,3 +18,13 @@ export const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
  * is still stored in full and downloadable. ~25k tokens at 4 chars/token.
  */
 export const MAX_INLINE_TEXT_CHARS = 100_000;
+
+/**
+ * Max attachments linked to a single message. Bounds aggregate memory at
+ * context-build time — every windowed attachment's bytes are loaded and
+ * base64-expanded for the model on each turn, before the budget gate runs —
+ * so an unbounded count could OOM the container. Enforced server-side in
+ * `attachmentService.linkToMessage` (the chokepoint for web + Slack) and
+ * mirrored as a UX guard in the web composer and CLI.
+ */
+export const MAX_ATTACHMENTS_PER_MESSAGE = 100;

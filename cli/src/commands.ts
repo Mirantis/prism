@@ -9,7 +9,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import { ApiClient, ApiError } from './api-client.js';
-import { AttachmentMeta, expandPath, formatFileSize } from './attachments.js';
+import { AttachmentMeta, expandPath, formatFileSize, MAX_ATTACHMENTS_PER_MESSAGE } from './attachments.js';
 
 /** Panels that a command can ask the UI to open. */
 export type PanelId = 'schedules' | 'config';
@@ -253,6 +253,11 @@ export const COMMANDS: SlashCommand[] = [
         return ctx.stagedAttachments
           .map((a) => `📎 ${a.filename} (${formatFileSize(a.sizeBytes)})`)
           .join('\n');
+      }
+      // Cap staged files per message (the runtime re-enforces this at link
+      // time; this is the friendly client-side guard).
+      if (ctx.stagedAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
+        return `Already at the ${MAX_ATTACHMENTS_PER_MESSAGE}-file limit for one message. Send or /detach first.`;
       }
       // rawArgs preserves inner spaces, so unquoted paths like
       // "My Notes/todo.txt" work without escaping.
