@@ -5,7 +5,7 @@ import { Header } from './components/Header.js';
 import { MessageList, ChatEntry } from './components/MessageList.js';
 import { Input } from './components/Input.js';
 import { StatusBar } from './components/StatusBar.js';
-import { CommandPopup } from './components/CommandPopup.js';
+import { CommandPopup, PopupItem } from './components/CommandPopup.js';
 import { SchedulesPanel } from './components/SchedulesPanel.js';
 import { ConfigPanel } from './components/ConfigPanel.js';
 import { apiClient } from './api-client.js';
@@ -17,6 +17,7 @@ import {
   PanelId,
   SlashCommand,
 } from './commands.js';
+import { AttachmentMeta, formatFileSize, listPathSuggestions } from './attachments.js';
 
 export interface AppProps {
   userId: string;
@@ -25,6 +26,9 @@ export interface AppProps {
   hideCursor?: boolean;
   hideStatusBar?: boolean;
 }
+
+/** Input prefix that switches the popup from commands to path suggestions. */
+const ATTACH_PREFIX = '/attach ';
 
 export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar }) => {
   const { exit } = useApp();
@@ -46,6 +50,8 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // Input + popup). Panel commands set this via openPanel; the panels call
   // closePanel (wired to onClose) to return to chat.
   const [activePanel, setActivePanel] = useState<PanelId | null>(null);
+  // Files staged by /attach, sent with (and cleared by) the next chat message.
+  const [staged, setStaged] = useState<AttachmentMeta[]>([]);
   // Submitted-input history for Up/Down recall (oldest → newest). historyIndex
   // is null when not browsing; otherwise it's the index of the entry currently
   // shown in the input. Up enters history only from an empty input, then walks
@@ -110,16 +116,37 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     [slashMode, inputValue],
   );
 
-  // Keep commandIndex within bounds as the filtered list shrinks/grows.
+  // Path-completion popup: once '/attach ' has been typed (slashMode is then
+  // false — a space is present), suggest local filesystem paths for the
+  // partial argument. Mutually exclusive with slashMode by construction.
+  const attachMode = inputValue.startsWith(ATTACH_PREFIX);
+  const pathSuggestions = useMemo(
+    () => (attachMode ? listPathSuggestions(inputValue.slice(ATTACH_PREFIX.length)) : []),
+    [attachMode, inputValue],
+  );
+
+  // The popup renders whichever item set is active.
+  const popupItems = useMemo<PopupItem[]>(
+    () =>
+      slashMode
+        ? filteredCommands
+        : pathSuggestions.map((s) => ({
+            name: s.display,
+            description: s.isDirectory ? 'dir' : '',
+          })),
+    [slashMode, filteredCommands, pathSuggestions],
+  );
+
+  // Keep commandIndex within bounds as the visible list shrinks/grows.
   useEffect(() => {
-    if (commandIndex >= filteredCommands.length) {
+    if (commandIndex >= popupItems.length) {
       setCommandIndex(0);
     }
-  }, [filteredCommands.length, commandIndex]);
+  }, [popupItems.length, commandIndex]);
 
-  const safeIndex = filteredCommands.length === 0
+  const safeIndex = popupItems.length === 0
     ? 0
-    : Math.min(commandIndex, filteredCommands.length - 1);
+    : Math.min(commandIndex, popupItems.length - 1);
 
   const appendSystemMessage = useCallback((text: string) => {
     setEntries((prev) => [
@@ -153,6 +180,11 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   }, [shuttingDown, exit]);
 
   const openPanel = useCallback((id: PanelId) => setActivePanel(id), []);
+  const stageAttachment = useCallback(
+    (att: AttachmentMeta) => setStaged((prev) => [...prev, att]),
+    [],
+  );
+  const clearStagedAttachments = useCallback(() => setStaged([]), []);
   // Closing a panel remounts <Input> (via inputResetKey) so its internal
   // cursor offset starts fresh on the empty value left from the slash command.
   const closePanel = useCallback(() => {
@@ -170,13 +202,16 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         rawArgs,
         openPanel,
         api: apiClient,
+        stagedAttachments: staged,
+        stageAttachment,
+        clearStagedAttachments,
       };
       const result = await cmd.run(ctx);
       // Panel commands return '' (the panel is their output); only surface a
       // synthetic SYSTEM message when there's actual text to show.
       if (result) appendSystemMessage(result);
     },
-    [entries, appendSystemMessage, triggerShutdown, openPanel],
+    [entries, appendSystemMessage, triggerShutdown, openPanel, staged, stageAttachment, clearStagedAttachments],
   );
 
   // Ctrl+C must work everywhere, including while a panel owns the screen, so
@@ -214,22 +249,34 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       }
       return;
     }
-    // While the slash popup is open, Up/Down move its selection and Tab
-    // autocompletes — that takes precedence over history recall.
-    if (slashMode && filteredCommands.length > 0) {
+    // While a popup is open (slash commands or /attach path suggestions),
+    // Up/Down move its selection and Tab autocompletes — that takes
+    // precedence over history recall.
+    if ((slashMode || attachMode) && popupItems.length > 0) {
       if (key.upArrow) {
-        setCommandIndex((i) => (i - 1 + filteredCommands.length) % filteredCommands.length);
+        setCommandIndex((i) => (i - 1 + popupItems.length) % popupItems.length);
         return;
       }
       if (key.downArrow) {
-        setCommandIndex((i) => (i + 1) % filteredCommands.length);
+        setCommandIndex((i) => (i + 1) % popupItems.length);
         return;
       }
       if (key.tab) {
-        const chosen = filteredCommands[safeIndex];
-        if (chosen) {
-          setInputValue(chosen.name + ' ');
-          setInputResetKey((k) => k + 1);
+        if (slashMode) {
+          const chosen = filteredCommands[safeIndex];
+          if (chosen) {
+            setInputValue(chosen.name + ' ');
+            setInputResetKey((k) => k + 1);
+          }
+        } else {
+          const s = pathSuggestions[safeIndex];
+          if (s) {
+            // Directory: keep completing inside it (no trailing space, popup
+            // stays open listing its contents). File: append a space so the
+            // popup hides and the path is ready to submit.
+            setInputValue(ATTACH_PREFIX + s.insert + (s.isDirectory ? '' : ' '));
+            setInputResetKey((k) => k + 1);
+          }
         }
       }
       return;
@@ -269,15 +316,20 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   const onSubmit = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      // Empty text is still a valid send when files are staged — the runtime
+      // accepts file-only messages (gateway allows empty content + ids).
+      if (!trimmed && staged.length === 0) return;
 
-      // Record the submission for Up/Down recall (skip consecutive dupes) and
-      // reset the browse cursor.
-      setHistory((h) => (h[h.length - 1] === trimmed ? h : [...h, trimmed]));
+      // Record the submission for Up/Down recall (skip consecutive dupes and
+      // empty file-only sends) and reset the browse cursor.
+      if (trimmed) {
+        setHistory((h) => (h[h.length - 1] === trimmed ? h : [...h, trimmed]));
+      }
       setHistoryIndex(null);
 
       // Slash-command dispatch: if the head word is a registered command, run
       // it locally (with any arguments) instead of sending it to the agent.
+      // Staged files survive slash commands — only a chat send consumes them.
       if (trimmed.startsWith('/')) {
         const { headWord, args, rawArgs } = parseCommandLine(trimmed);
         const cmd = findExact(headWord);
@@ -289,6 +341,12 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       }
 
       setInputValue('');
+      // Consume staging synchronously before the awaited send so a rapid
+      // second Enter can't double-send the same attachments. If the WS isn't
+      // connected the send is dropped (same as text today) and the staged
+      // files are lost client-side — the server janitor reaps the uploads.
+      const toSend = staged;
+      setStaged([]);
       // Optimistically render the user line — the adapter only sees AGENT
       // messages back through deliver(), and we want immediate feedback.
       setEntries((prev) => [
@@ -304,6 +362,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
             toolCalls: null,
             blocks: null,
             createdAt: new Date().toISOString(),
+            attachments: toSend.length > 0 ? toSend : null,
           },
         },
       ]);
@@ -311,9 +370,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         userId,
         agentId: agent.id,
         text: trimmed,
+        attachmentIds: toSend.map((a) => a.id),
       });
     },
-    [agent.id, userId, runCommand],
+    [agent.id, userId, runCommand, staged],
   );
 
   const handleInputChange = useCallback((newValue: string) => {
@@ -351,6 +411,16 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
             entries={entries}
             expandedMessageId={expandedMessageId}
           />
+          {staged.length > 0 && (
+            <Box paddingX={2}>
+              <Text dimColor>
+                {staged
+                  .map((a) => `📎 ${a.filename} (${formatFileSize(a.sizeBytes)})`)
+                  .join('  ')}
+                {'  ·  /detach to remove'}
+              </Text>
+            </Box>
+          )}
           <Input
             key={inputResetKey}
             value={inputValue}
@@ -359,8 +429,8 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
             disabled={inputDisabled}
             hideCursor={hideCursor}
           />
-          {slashMode && filteredCommands.length > 0 && (
-            <CommandPopup commands={filteredCommands} selectedIndex={safeIndex} />
+          {(slashMode || attachMode) && popupItems.length > 0 && (
+            <CommandPopup items={popupItems} selectedIndex={safeIndex} />
           )}
         </>
       )}

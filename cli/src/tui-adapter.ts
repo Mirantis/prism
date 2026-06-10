@@ -12,6 +12,7 @@
 import { EventEmitter } from 'events';
 import { WsClient, WsEnvelope } from './ws-client.js';
 import { loadConfig, wsUrlFromHttpUrl } from './config.js';
+import { AttachmentMeta } from './attachments.js';
 
 export type TuiStatus = 'idle' | 'thinking' | 'error';
 
@@ -24,6 +25,8 @@ export interface TuiMessage {
   toolCalls: unknown;
   blocks: unknown;
   createdAt: string;
+  /** Shared-file metadata (no bytes) — set on user messages with uploads. */
+  attachments?: AttachmentMeta[] | null;
 }
 
 export interface TuiAdapterEvents {
@@ -40,6 +43,21 @@ interface RawMessage {
   toolCalls?: unknown;
   blocks?: unknown;
   createdAt?: unknown;
+  attachments?: unknown;
+}
+
+/** Keep only well-formed attachment metadata entries; null when none survive. */
+function coerceAttachments(raw: unknown): AttachmentMeta[] | null {
+  if (!Array.isArray(raw)) return null;
+  const valid = raw.filter(
+    (a): a is AttachmentMeta =>
+      a !== null &&
+      typeof a === 'object' &&
+      typeof (a as AttachmentMeta).id === 'string' &&
+      typeof (a as AttachmentMeta).filename === 'string' &&
+      typeof (a as AttachmentMeta).sizeBytes === 'number',
+  );
+  return valid.length > 0 ? valid : null;
 }
 
 function coerceMessage(raw: unknown): TuiMessage | null {
@@ -58,6 +76,7 @@ function coerceMessage(raw: unknown): TuiMessage | null {
     toolCalls: m.toolCalls ?? null,
     blocks: m.blocks ?? null,
     createdAt: typeof m.createdAt === 'string' ? m.createdAt : new Date().toISOString(),
+    attachments: coerceAttachments(m.attachments),
   };
 }
 
@@ -124,6 +143,8 @@ class TuiAdapter {
     agentId: string;
     text: string;
     threadId?: string;
+    /** Ids of files staged via /attach, linked to this message server-side. */
+    attachmentIds?: string[];
   }): Promise<void> {
     this.events.emit('status', 'thinking');
     if (!this.client) {
@@ -135,7 +156,13 @@ class TuiAdapter {
     }
     this.client.send({
       type: 'chat',
-      payload: { mode: 'followup', content: _args.text },
+      payload: {
+        mode: 'followup',
+        content: _args.text,
+        ...(_args.attachmentIds && _args.attachmentIds.length > 0
+          ? { attachmentIds: _args.attachmentIds }
+          : {}),
+      },
     });
   }
 

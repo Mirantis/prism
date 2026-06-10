@@ -13,6 +13,7 @@ import { Router, Request, Response } from 'express';
 import { config } from '../config';
 import { logger } from '../logger';
 import { conversationService } from '../services/conversation.service';
+import { attachmentService } from '../services/attachment.service';
 
 const router = Router();
 
@@ -50,7 +51,15 @@ router.get('/messages', async (req: Request, res: Response) => {
     const sorted = [...messages].sort(
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
-    res.json(sorted);
+    // Attach shared-file metadata (no bytes) so the TUI renders 📎 chips on
+    // history — same enrichment as conversationService.getThread.
+    const metaMap = await attachmentService.getMetaByMessageIds(sorted.map((m) => m.id));
+    res.json(
+      sorted.map((m) => {
+        const attachments = metaMap.get(m.id);
+        return attachments && attachments.length > 0 ? { ...m, attachments } : m;
+      }),
+    );
   } catch (err) {
     logger.error({ err }, '[SingleAgent] /messages failed');
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });

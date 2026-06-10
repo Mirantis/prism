@@ -7,7 +7,9 @@
  */
 
 import { spawn } from 'child_process';
+import path from 'path';
 import { ApiClient, ApiError } from './api-client.js';
+import { AttachmentMeta, expandPath, formatFileSize } from './attachments.js';
 
 /** Panels that a command can ask the UI to open. */
 export type PanelId = 'schedules' | 'config';
@@ -25,6 +27,12 @@ export interface CommandContext {
   openPanel: (id: PanelId) => void;
   /** Typed HTTP client for the agent-runtime management API. */
   api: ApiClient;
+  /** Files staged to send with the next message (oldest first). */
+  stagedAttachments: AttachmentMeta[];
+  /** Adds an uploaded file to the staging area. */
+  stageAttachment: (att: AttachmentMeta) => void;
+  /** Empties the staging area (UI state only — server deletes are the command's job). */
+  clearStagedAttachments: () => void;
 }
 
 export interface SlashCommand {
@@ -224,6 +232,56 @@ export const COMMANDS: SlashCommand[] = [
         if (err instanceof ApiError) return err.message;
         throw err;
       }
+    },
+  },
+  {
+    name: '/attach',
+    description: 'Attach a file to your next message (/attach <path>)',
+    run: async (ctx) => {
+      // No args: show what's staged (or usage).
+      if (ctx.rawArgs.length === 0) {
+        if (ctx.stagedAttachments.length === 0) {
+          return 'No files staged. Usage: /attach <path>.';
+        }
+        return ctx.stagedAttachments
+          .map((a) => `📎 ${a.filename} (${formatFileSize(a.sizeBytes)})`)
+          .join('\n');
+      }
+      // rawArgs preserves inner spaces, so unquoted paths like
+      // "My Notes/todo.txt" work without escaping.
+      const abs = path.resolve(process.cwd(), expandPath(ctx.rawArgs));
+      try {
+        const att = await ctx.api.uploadAttachment(abs);
+        ctx.stageAttachment(att);
+        const count = ctx.stagedAttachments.length + 1;
+        return (
+          `Staged 📎 ${att.filename} (${formatFileSize(att.sizeBytes)}) — ` +
+          `sends with your next message. ${count} file(s) staged.`
+        );
+      } catch (err) {
+        if (err instanceof ApiError || err instanceof Error) return err.message;
+        throw err;
+      }
+    },
+  },
+  {
+    name: '/detach',
+    description: 'Remove all staged attachments',
+    run: async (ctx) => {
+      const staged = ctx.stagedAttachments;
+      if (staged.length === 0) return 'No files staged.';
+      // Best-effort server cleanup: unlinked uploads are also reaped by the
+      // runtime's hourly orphan janitor (24h TTL), so per-file failures are
+      // safe to swallow.
+      for (const att of staged) {
+        try {
+          await ctx.api.deleteAttachment(att.id);
+        } catch {
+          // Janitor covers it.
+        }
+      }
+      ctx.clearStagedAttachments();
+      return `Removed ${staged.length} staged file(s).`;
     },
   },
   {
