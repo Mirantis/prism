@@ -186,7 +186,13 @@ export function classifyMediaType(mediaType: string): AttachmentCategory {
   return 'unreadable';
 }
 
-/** Human-readable byte size, e.g. "1.2 MB". */
+/**
+ * Human-readable byte size, e.g. "1.2 MB".
+ *
+ * Kept in sync with `cli/src/attachments.ts#formatFileSize` and
+ * `web/src/components/chat/ChatAttachmentChip.tsx#humanSize` — the three
+ * workspaces can't import each other, so the formatter is mirrored.
+ */
 export function humanFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB'];
@@ -288,6 +294,23 @@ class AttachmentService {
     return map;
   }
 
+  /**
+   * Join attachment metadata (no bytes) onto messages by message id — the
+   * shared enrichment for thread-read endpoints, so the join shape lives in
+   * one place. Returns the input array untouched when nothing matches.
+   */
+  async attachMetaToMessages<T extends { id: string }>(
+    messages: T[],
+  ): Promise<(T & { attachments?: AttachmentMeta[] })[]> {
+    if (messages.length === 0) return messages;
+    const metaMap = await this.getMetaByMessageIds(messages.map((m) => m.id));
+    if (metaMap.size === 0) return messages;
+    return messages.map((m) => {
+      const attachments = metaMap.get(m.id);
+      return attachments && attachments.length > 0 ? { ...m, attachments } : m;
+    });
+  }
+
   /** Metadata only (no bytes) keyed by Slack message ts — for live Slack reads. */
   async getMetaByExternalTs(threadId: string, tsList: string[]): Promise<Map<string, AttachmentMeta[]>> {
     const map = new Map<string, AttachmentMeta[]>();
@@ -347,7 +370,10 @@ class AttachmentService {
   async linkToMessage(attachmentIds: string[], messageId: string, threadId: string): Promise<void> {
     if (attachmentIds.length === 0) return;
     await prisma.messageAttachment.updateMany({
-      where: { id: { in: attachmentIds } },
+      // Only pre-send (unlinked) uploads may be claimed — attachmentIds is a
+      // client-controlled field, and a replayed/forged id must not steal an
+      // attachment from the message it already belongs to.
+      where: { id: { in: attachmentIds }, messageId: null },
       data: { messageId, threadId },
     });
   }

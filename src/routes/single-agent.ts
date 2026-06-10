@@ -53,13 +53,7 @@ router.get('/messages', async (req: Request, res: Response) => {
     );
     // Attach shared-file metadata (no bytes) so the TUI renders 📎 chips on
     // history — same enrichment as conversationService.getThread.
-    const metaMap = await attachmentService.getMetaByMessageIds(sorted.map((m) => m.id));
-    res.json(
-      sorted.map((m) => {
-        const attachments = metaMap.get(m.id);
-        return attachments && attachments.length > 0 ? { ...m, attachments } : m;
-      }),
-    );
+    res.json(await attachmentService.attachMetaToMessages(sorted));
   } catch (err) {
     logger.error({ err }, '[SingleAgent] /messages failed');
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });

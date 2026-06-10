@@ -91,7 +91,7 @@ import { conversationService, type MessageInput } from '../services/conversation
 import { conversationEngineService, type ChatInput } from '../services/conversation-engine.service';
 import { slackAdapterService } from '../services/slack-adapter.service';
 import { attachmentService, detectMediaType, classifyMediaType } from '../services/attachment.service';
-import { MAX_FILE_SIZE_BYTES } from '../constants';
+import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '../constants';
 import {
   agentWorkspaceService,
   ValidationError,
@@ -300,8 +300,6 @@ router.post(
 // wrapper shape as the archive upload above, just a smaller limit.
 const attachmentUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_SIZE_BYTES } });
 
-const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
-
 function uploadAttachmentFile(req: Request, res: Response, next: (err?: unknown) => void): void {
   attachmentUpload.single('file')(req, res, (err: unknown) => {
     if (err instanceof multer.MulterError) {
@@ -326,6 +324,24 @@ function sanitizeFilename(name: string): string {
     if (noQuotes.charCodeAt(i) >= 0x20) out += noQuotes[i];
   }
   return out.trim().slice(0, 255) || 'file';
+}
+
+/**
+ * Build a Content-Disposition value that survives non-latin1 filenames.
+ * Node rejects header values outside latin-1 outright (ERR_INVALID_CHAR),
+ * so `filename=` carries an ASCII-only fallback while the real name travels
+ * RFC 5987-encoded in `filename*` (which modern clients prefer).
+ */
+function contentDisposition(disposition: 'inline' | 'attachment', filename: string): string {
+  const sanitized = sanitizeFilename(filename);
+  const ascii = sanitized.replace(/[^\x20-\x7e]/g, '_');
+  // RFC 5987 percent-encoding: encodeURIComponent, plus the characters it
+  // leaves bare that aren't attr-chars.
+  const rfc5987 = encodeURIComponent(sanitized).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `${disposition}; filename="${ascii}"; filename*=UTF-8''${rfc5987}`;
 }
 
 /**
@@ -393,8 +409,7 @@ router.get('/attachments/:id', async (req: Request<{ id: string }>, res: Respons
     const isPreviewable = att.mediaType.startsWith('image/') || att.mediaType === 'application/pdf';
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', isPreviewable ? att.mediaType : 'application/octet-stream');
-    const disposition = isPreviewable ? 'inline' : 'attachment';
-    res.setHeader('Content-Disposition', `${disposition}; filename="${sanitizeFilename(att.filename)}"`);
+    res.setHeader('Content-Disposition', contentDisposition(isPreviewable ? 'inline' : 'attachment', att.filename));
     res.send(Buffer.from(att.data));
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';

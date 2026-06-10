@@ -14,6 +14,13 @@ import { AttachmentMeta, expandPath, formatFileSize } from './attachments.js';
 /** Panels that a command can ask the UI to open. */
 export type PanelId = 'schedules' | 'config';
 
+/**
+ * Canonical name of the /attach command — single source of truth shared by
+ * the command registration below and App.tsx's path-completion trigger, so a
+ * rename can't silently strand the completion logic.
+ */
+export const ATTACH_COMMAND = '/attach';
+
 export interface CommandContext {
   /** Content of the most recent message in the chat (any role), or null. */
   lastMessageContent: string | null;
@@ -235,7 +242,7 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
-    name: '/attach',
+    name: ATTACH_COMMAND,
     description: 'Attach a file to your next message (/attach <path>)',
     run: async (ctx) => {
       // No args: show what's staged (or usage).

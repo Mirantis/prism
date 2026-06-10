@@ -9,6 +9,9 @@ export const MAX_OUTPUT_TOKENS = 16000;
  */
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
+/** Display form of MAX_FILE_SIZE_BYTES for user-facing messages. */
+export const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
+
 /**
  * Max characters of a text/code attachment inlined into the LLM context.
  * Bounds token cost when a large text file is re-exposed every turn; the file

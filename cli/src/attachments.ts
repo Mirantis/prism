@@ -30,7 +30,13 @@ export interface AttachmentMeta {
  */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
 
-/** Human-readable byte size, e.g. "1.2 MB" (port of the runtime's humanFileSize). */
+/**
+ * Human-readable byte size, e.g. "1.2 MB".
+ *
+ * Kept in sync with the runtime's `src/services/attachment.service.ts#humanFileSize`
+ * and the web's `ChatAttachmentChip.tsx#humanSize` — separate workspaces, so the
+ * formatter is mirrored rather than imported.
+ */
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB'];
@@ -43,10 +49,12 @@ export function formatFileSize(bytes: number): string {
   return `${value.toFixed(1)} ${units[i]}`;
 }
 
-/** Expand a leading `~` (alone or `~/…`) to the user's home directory. */
+/** Expand a leading `~` (alone, `~/…`, or `~\…` on Windows) to the home directory. */
 export function expandPath(p: string): string {
   if (p === '~') return os.homedir();
-  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
+  if (p.startsWith('~/') || p.startsWith(`~${path.sep}`)) {
+    return path.join(os.homedir(), p.slice(2));
+  }
   return p;
 }
 
@@ -67,7 +75,9 @@ const MAX_SUGGESTIONS = 24;
  * Synchronous readdir per keystroke is fine: it's one local dir listing.
  */
 export function listPathSuggestions(partial: string, cwd = process.cwd()): PathSuggestion[] {
-  const lastSlash = partial.lastIndexOf('/');
+  // Split on the platform separator too (Windows backslash paths) — but only
+  // via path.sep, since on POSIX a backslash is a legal filename character.
+  const lastSlash = Math.max(partial.lastIndexOf('/'), partial.lastIndexOf(path.sep));
   const dirPart = lastSlash === -1 ? '' : partial.slice(0, lastSlash + 1);
   const base = lastSlash === -1 ? partial : partial.slice(lastSlash + 1);
 
