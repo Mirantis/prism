@@ -16,6 +16,10 @@ common types are `feat`, `fix`, `refactor`, `ci`, `docs`, `chore`, and `test`.
 Every commit must be signed off (DCO): commit with `git commit -s` so a
 `Signed-off-by: Name <email>` trailer is added.
 
+When a PR branch conflicts with `main`, resolve by rebasing the branch
+onto `main` (`git rebase origin/main`, then force-push) — never with a
+merge commit. PR branches stay merge-commit-free.
+
 ## PR descriptions
 
 The Test plan section should describe behavior that was actually exercised
@@ -297,6 +301,9 @@ What the operator sets on `docker run`:
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP collector for product telemetry (unset/empty = disabled) | baked into published images via `vars.OTEL_EXPORTER_OTLP_ENDPOINT`; empty otherwise |
+| `OTEL_EXPORTER_OTLP_API_KEY` | Collector auth, sent as `x-api-key` header | baked into published images as a file (`/app/.otel-api-key`, exported by `start.sh`) from `secrets.OTEL_EXPORTER_OTLP_API_KEY`; empty otherwise |
+| `DEPLOYMENT_ENVIRONMENT` | Tags OTel records (production \| staging \| development) | `production` in published images, `development` otherwise |
 
 ## Chat Flow
 

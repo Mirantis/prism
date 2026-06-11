@@ -30,6 +30,12 @@ PRISMA=/app/node_modules/.bin/prisma
 
 : "${DATABASE_URL:=file:/data/agent.db}"
 export DATABASE_URL
+
+# An operator-provided env var — even an empty one — takes precedence.
+if [ -z "${OTEL_EXPORTER_OTLP_API_KEY+x}" ] && [ -s /app/.otel-api-key ]; then
+  OTEL_EXPORTER_OTLP_API_KEY=$(cat /app/.otel-api-key)
+  export OTEL_EXPORTER_OTLP_API_KEY
+fi
 node dist/scripts/apply-pending-import.js
 "$PRISMA" migrate deploy --schema=prisma/sqlite/schema.prisma
 

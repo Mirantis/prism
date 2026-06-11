@@ -171,6 +171,21 @@ RUN chmod +x ./start.sh
 ENV NODE_ENV=production
 ENV PORT=3003
 
+# OTEL product telemetry — baked at publish time by deploy.yml /
+# release-deploy.yml. Empty defaults keep PR-validation and local builds
+# telemetry-off (config.ts treats '' as disabled). Operators can override
+# or disable with `docker run -e OTEL_EXPORTER_OTLP_ENDPOINT=`.
+ARG OTEL_EXPORTER_OTLP_ENDPOINT=""
+ARG DEPLOYMENT_ENVIRONMENT=development
+ENV OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
+ENV DEPLOYMENT_ENVIRONMENT=${DEPLOYMENT_ENVIRONMENT}
+
+# Absent or empty secret (PR validation, local builds) bakes nothing.
+RUN --mount=type=secret,id=otel_api_key \
+    if [ -s /run/secrets/otel_api_key ]; then \
+      install -m 0444 /run/secrets/otel_api_key /app/.otel-api-key; \
+    fi
+
 EXPOSE 3003
 
 # Per-agent SQLite DB lives here. Owned by node so the runtime user can
