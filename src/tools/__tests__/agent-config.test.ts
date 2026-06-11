@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockPrisma, mockHeartbeatService } = vi.hoisted(() => ({
+const { mockPrisma, mockHeartbeatService, mockTrackEvent } = vi.hoisted(() => ({
   mockPrisma: {
     agentWorkspace: {
       findUnique: vi.fn(),
@@ -10,6 +10,7 @@ const { mockPrisma, mockHeartbeatService } = vi.hoisted(() => ({
   mockHeartbeatService: {
     startHeartbeat: vi.fn(),
   },
+  mockTrackEvent: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({
@@ -19,6 +20,10 @@ vi.mock('../../lib/prisma', () => ({
 
 vi.mock('../../services/heartbeat.service', () => ({
   heartbeatService: mockHeartbeatService,
+}));
+
+vi.mock('../../lib/telemetry', () => ({
+  trackEvent: mockTrackEvent,
 }));
 
 import { getAgentConfigTools } from '../agent-config';
@@ -311,6 +316,78 @@ describe('getAgentConfigTools', () => {
       expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
         where: { id: agentId },
         data: { bootstrapMd: '' },
+      });
+    });
+  });
+
+  describe('telemetry', () => {
+    it('emits "agent config updated" with the field and method on workspace-file replace', async () => {
+      await tools.update_soul.execute({
+        newContent: '# New Soul',
+        changeDescription: 'reset soul',
+      });
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('agent config updated', null, {
+        'agent.id': agentId,
+        'config.field': 'soulMd',
+        'config.method': 'replace',
+      });
+    });
+
+    it('emits "agent config updated" with method=edit on targeted edits', async () => {
+      await tools.update_soul.execute({
+        edits: [{ oldText: 'helpful assistant', newText: 'friendly companion' }],
+        changeDescription: 'changed personality',
+      });
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('agent config updated', null, {
+        'agent.id': agentId,
+        'config.field': 'soulMd',
+        'config.method': 'edit',
+      });
+    });
+
+    it('does not emit when the update fails', async () => {
+      await tools.update_memory.execute({
+        edits: [{ oldText: 'NONEXISTENT TEXT', newText: 'replacement' }],
+        changeDescription: 'attempted edit',
+      });
+
+      expect(mockTrackEvent).not.toHaveBeenCalled();
+    });
+
+    it('emits "agent config updated" for settings changes without the value (could be private)', async () => {
+      await tools.update_settings.execute({ setting: 'heartbeatIntervalMs', value: '600000' });
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('agent config updated', null, {
+        'agent.id': agentId,
+        'config.field': 'heartbeatIntervalMs',
+        'config.method': 'set',
+      });
+    });
+
+    it('emits "agent renamed" with the new name', async () => {
+      mockPrisma.agentWorkspace.update.mockResolvedValue({
+        id: agentId,
+        userId: 'user-1',
+        name: 'NewName',
+      });
+
+      await tools.rename_self.execute({ name: 'NewName' });
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('agent renamed', null, {
+        'agent.id': agentId,
+        'agent.name': 'NewName',
+      });
+    });
+
+    it('emits "agent config updated" with method=clear on clear_bootstrap', async () => {
+      await tools.clear_bootstrap.execute({ confirmationMessage: 'done' });
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('agent config updated', null, {
+        'agent.id': agentId,
+        'config.field': 'bootstrapMd',
+        'config.method': 'clear',
       });
     });
   });

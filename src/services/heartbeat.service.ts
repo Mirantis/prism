@@ -19,6 +19,7 @@ import { getClassificationModel } from '../lib/classification';
 import { agentStatusService } from './agent-status.service';
 import { slackMessageQueueService } from './slack-message-queue.service';
 import { isLangfuseEnabled } from '../lib/langfuse';
+import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { formatTimeAgo } from '../prompts/context-builder';
 import { InvokeStep, SlackTriggerMessage } from '../types';
@@ -90,12 +91,25 @@ class HeartbeatService {
     });
 
     logger.info(`[Heartbeat] Started (interval: ${intervalMs / 60000}min)`);
+    trackEvent('heartbeat started', agent.userId, {
+      'agent.id': agent.id,
+      'heartbeat.interval_ms': String(intervalMs),
+    });
   }
 
   stopHeartbeat(): void {
     agentStatusService.updateAgentHeartbeatStatus('STOPPED').catch((err) => {
       logger.warn(`[Heartbeat] Failed to persist STOPPED status: ${err instanceof Error ? err.message : String(err)}`);
     });
+
+    // Emit only when a heartbeat was actually running — a no-op stop is not
+    // a real event and would lack agent.id.
+    const state = this.heartbeatState;
+    if (state) {
+      trackEvent('heartbeat stopped', state.userId, {
+        'agent.id': state.agentId,
+      });
+    }
 
     this.clearHeartbeatTimer();
   }
@@ -151,6 +165,7 @@ class HeartbeatService {
       if (invokeResult.error?.type === 'budget_exceeded') {
         state.consecutiveErrors = 0;
         logger.info(`[Heartbeat] Skipping — budget exceeded`);
+        this.trackHeartbeat(state, 'timer', 'budget_exceeded', startTime);
         return { shouldSkip: true, text: 'Budget exceeded' };
       }
 
@@ -202,11 +217,13 @@ class HeartbeatService {
       };
 
       logger.info(`[Heartbeat] Completed in ${Date.now() - startTime}ms: ${result.shouldSkip ? 'suppressed' : 'alert'}`);
+      this.trackHeartbeat(state, 'timer', shouldDeliver ? 'delivered' : 'suppressed', startTime);
       return result;
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[Heartbeat] Failed: ${errMsg}`);
 
+      this.trackHeartbeat(state, 'timer', 'error', startTime);
       state.consecutiveErrors++;
       if (state.consecutiveErrors >= 5) {
         logger.error(`[Heartbeat] Stopping: too many consecutive errors`);
@@ -259,6 +276,7 @@ class HeartbeatService {
    */
   private async executeSlackTriggeredHeartbeat(): Promise<void> {
     logger.info(`[Heartbeat] Starting Slack-triggered heartbeat`);
+    const startedAt = Date.now();
     const state = this.heartbeatState;
 
     if (!state || state.isRunning) {
@@ -295,6 +313,7 @@ class HeartbeatService {
       if (invokeResult.error?.type === 'budget_exceeded') {
         state.consecutiveErrors = 0;
         logger.info(`[Heartbeat] Slack-triggered heartbeat skipped — budget exceeded`);
+        this.trackHeartbeat(state, 'slack', 'budget_exceeded', startedAt);
         return;
       }
 
@@ -340,11 +359,13 @@ class HeartbeatService {
       state.consecutiveErrors = 0;
 
       logger.info(`[Heartbeat] Slack-triggered heartbeat completed in ${Date.now() - startTime}ms`);
+      this.trackHeartbeat(state, 'slack', shouldDeliver ? 'delivered' : 'suppressed', startedAt);
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[Heartbeat] Slack-triggered heartbeat failed: ${errMsg}`);
 
       if (state) {
+        this.trackHeartbeat(state, 'slack', 'error', startedAt);
         state.consecutiveErrors++;
       }
     } finally {
@@ -357,6 +378,21 @@ class HeartbeatService {
   // ============================================================================
   // Helper Methods
   // ============================================================================
+
+  /** Emit a product-telemetry event for a finished heartbeat run. */
+  private trackHeartbeat(
+    state: HeartbeatState,
+    trigger: 'timer' | 'slack',
+    result: 'delivered' | 'suppressed' | 'budget_exceeded' | 'error',
+    startTime: number,
+  ): void {
+    trackEvent('heartbeat completed', state.userId, {
+      'agent.id': state.agentId,
+      'heartbeat.trigger': trigger,
+      'heartbeat.result': result,
+      'heartbeat.duration_ms': String(Date.now() - startTime),
+    });
+  }
 
   private logSteps(responseText: string, steps: InvokeStep[], label?: string): void {
     const prefix = label ? `${label} ` : '';

@@ -40,6 +40,12 @@ vi.mock('../lib/prisma', () => ({
   default: mockPrisma,
 }));
 
+const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
+
+vi.mock('../lib/telemetry', () => ({
+  trackEvent: mockTrackEvent,
+}));
+
 // ---------------------------------------------------------------------------
 // Import under test
 // ---------------------------------------------------------------------------
@@ -287,6 +293,107 @@ describe('ConversationService', () => {
         where: { threadId: 'thread-123', isCompacted: false },
         _sum: { tokenCount: true },
       });
+    });
+  });
+
+  // ==========================================================================
+  // Telemetry
+  // ==========================================================================
+
+  describe('telemetry', () => {
+    it('emits "thread created" when getOrCreateActiveThread creates a thread', async () => {
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
+      mockPrisma.conversationThread.create.mockResolvedValue(
+        createTestThread({ id: 'thread-new' }),
+      );
+
+      await conversationService.getOrCreateActiveThread('agent-123', 'user-123');
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('thread created', 'user-123', {
+        'agent.id': 'agent-123',
+        'thread.id': 'thread-new',
+        'thread.source': 'database',
+      });
+    });
+
+    it('does not emit "thread created" when an active thread already exists', async () => {
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(createTestThread());
+
+      await conversationService.getOrCreateActiveThread('agent-123', 'user-123');
+
+      expect(mockTrackEvent).not.toHaveBeenCalled();
+    });
+
+    it('emits "thread created" when the external-id upsert creates a thread', async () => {
+      const now = new Date('2025-01-15T12:00:00Z');
+      mockPrisma.conversationThread.upsert.mockResolvedValue(
+        createTestThread({ id: 'thread-slack', createdAt: now, updatedAt: now }),
+      );
+
+      await conversationService.getOrCreateThreadByExternalId(
+        'user-123', 'agent-123', '1234.5678', { channelId: 'C123' },
+      );
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('thread created', 'user-123', {
+        'agent.id': 'agent-123',
+        'thread.id': 'thread-slack',
+        'thread.source': 'slack',
+      });
+    });
+
+    it('does not emit "thread created" when the external-id upsert hits an existing thread', async () => {
+      mockPrisma.conversationThread.upsert.mockResolvedValue(
+        createTestThread({
+          createdAt: new Date('2025-01-15T12:00:00Z'),
+          updatedAt: new Date('2025-01-15T13:00:00Z'),
+        }),
+      );
+
+      await conversationService.getOrCreateThreadByExternalId('user-123', 'agent-123', '1234.5678');
+
+      expect(mockTrackEvent).not.toHaveBeenCalled();
+    });
+
+    it('emits "message added" with role and trigger on addMessage', async () => {
+      mockPrisma.conversationMessage.create.mockResolvedValue({ id: 'msg-1' });
+      mockPrisma.conversationThread.update.mockResolvedValue(createTestThread());
+
+      await conversationService.addMessage('thread-123', {
+        content: 'hi',
+        role: 'USER',
+        triggeredBy: 'USER_INPUT',
+      });
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('message added', null, {
+        'agent.id': 'agent-123',
+        'thread.id': 'thread-123',
+        'message.role': 'USER',
+        'message.triggered_by': 'USER_INPUT',
+      });
+    });
+
+    it('emits "thread archived" on deactivateThread', async () => {
+      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 1 });
+
+      await conversationService.deactivateThread('thread-123', 'user-123');
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'thread archived',
+        'user-123',
+        expect.objectContaining({ 'thread.id': 'thread-123' }),
+      );
+    });
+
+    it('emits "thread external id set" on setExternalId', async () => {
+      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 1 });
+
+      await conversationService.setExternalId('thread-123', '1234.5678');
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'thread external id set',
+        null,
+        expect.objectContaining({ 'thread.id': 'thread-123' }),
+      );
     });
   });
 });

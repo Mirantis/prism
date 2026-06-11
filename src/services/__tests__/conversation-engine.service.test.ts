@@ -19,6 +19,7 @@ const {
   mockCountAgentMessages,
   mockGenerateText,
   mockIsTelemetryEnabled,
+  mockTrackEvent,
   mockLinkToMessage,
 } = vi.hoisted(() => ({
   mockGetOrCreateActiveThread: vi.fn(),
@@ -28,6 +29,7 @@ const {
   mockCountAgentMessages: vi.fn(),
   mockGenerateText: vi.fn(),
   mockIsTelemetryEnabled: vi.fn(),
+  mockTrackEvent: vi.fn(),
   mockLinkToMessage: vi.fn(),
 }));
 
@@ -89,6 +91,7 @@ vi.mock('../../lib/langfuse', () => ({
 
 vi.mock('../../lib/telemetry', () => ({
   isTelemetryEnabled: mockIsTelemetryEnabled,
+  trackEvent: mockTrackEvent,
 }));
 
 // Import after mocking
@@ -159,6 +162,25 @@ describe('Requirement: Conversation Engine', () => {
           mode: 'chat',
           prompt: message,
         })
+      );
+    });
+
+    it('emits a "chat message handled" telemetry event tagged with agent and thread ids', async () => {
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'What pods are running?',
+        metadata: { channel: 'websocket' },
+      });
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'chat message handled',
+        'user-123',
+        expect.objectContaining({
+          'agent.id': 'agent-123',
+          'thread.id': 'thread-123',
+          'channel.type': 'websocket',
+        }),
       );
     });
 

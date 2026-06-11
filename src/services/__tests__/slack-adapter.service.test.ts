@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   mockPrisma,
   mockGetSlackConnection,
+  mockGetActiveSlackConnections,
   mockSlackMappingService,
   mockSlackHeartbeatTriggerService,
 } = vi.hoisted(() => ({
@@ -18,12 +19,20 @@ const {
     slackVerificationCode: {
       deleteMany: vi.fn(),
     },
+    conversationThread: {
+      findUnique: vi.fn(),
+    },
+    slackMapping: {
+      findMany: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
   mockGetSlackConnection: vi.fn(),
+  mockGetActiveSlackConnections: vi.fn(),
   mockSlackMappingService: {
     deleteByConnectionId: vi.fn(),
     getActiveUserMappingsWithDmChannel: vi.fn(),
+    upsertUserMapping: vi.fn(),
   },
   mockSlackHeartbeatTriggerService: {
     deleteByConnectionId: vi.fn(),
@@ -35,7 +44,7 @@ const {
 vi.mock('../../lib/prisma', () => ({ default: mockPrisma }));
 vi.mock('../../lib/slack-source', () => ({
   getSlackConnection: mockGetSlackConnection,
-  getActiveSlackConnections: vi.fn(),
+  getActiveSlackConnections: mockGetActiveSlackConnections,
 }));
 vi.mock('../slack-mapping.service', () => ({ slackMappingService: mockSlackMappingService }));
 vi.mock('../slack-heartbeat-trigger.service', () => ({
@@ -53,10 +62,26 @@ vi.mock('../../lib/bedrock-provider', () => ({
   isBedrockConfigured: () => false,
   getClassificationModel: vi.fn(),
 }));
-vi.mock('../../utils/slack-formatter', () => ({ formatSlackMessage: (s: string) => s }));
+vi.mock('../../utils/slack-formatter', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../utils/slack-formatter')>()),
+  formatSlackMessage: (s: string) => s,
+}));
 vi.mock('@slack/bolt', () => ({
-  App: class {},
-  LogLevel: { INFO: 'info' },
+  App: class {
+    error = vi.fn();
+    start = vi.fn().mockResolvedValue(undefined);
+    message = vi.fn();
+    action = vi.fn();
+    event = vi.fn();
+  },
+  LogLevel: { INFO: 'info', WARN: 'warn' },
+}));
+
+const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
+
+vi.mock('../../lib/telemetry', () => ({
+  trackEvent: mockTrackEvent,
+  isTelemetryEnabled: () => false,
 }));
 vi.mock('../../logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -295,5 +320,171 @@ describe('Requirement: Slack file download failures are surfaced to the agent', 
     // Counters the observed failure modes: denying the file, and asking for a path.
     expect(note).toMatch(/no file was attached/i);
     expect(note).toMatch(/file path|on disk/i);
+  });
+});
+
+describe('Requirement: Adapter telemetry', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adapter = slackAdapterService as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    adapter.apps = new Map();
+    mockSlackMappingService.getActiveUserMappingsWithDmChannel.mockResolvedValue([]);
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
+    );
+  });
+
+  it('emits "slack adapter initialized" with the workspace count', async () => {
+    mockGetActiveSlackConnections.mockResolvedValue([{ id: 'conn-001' }]);
+    const initSpy = vi
+      .spyOn(slackAdapterService, 'initializeConnection')
+      .mockResolvedValue(undefined);
+
+    await slackAdapterService.initialize();
+    initSpy.mockRestore();
+
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'slack adapter initialized',
+      null,
+      expect.objectContaining({ 'slack.workspaces': '0' }),
+    );
+  });
+
+  it('does not emit "slack adapter initialized" when no connections are configured', async () => {
+    mockGetActiveSlackConnections.mockResolvedValue([]);
+
+    await slackAdapterService.initialize();
+
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+
+  it('emits "slack adapter shutdown" after stopping all apps', async () => {
+    adapter.apps.set('T001', {
+      app: { stop: vi.fn().mockResolvedValue(undefined) },
+      teamId: 'T001',
+      teamName: 'Test Workspace',
+      isSocketMode: true,
+      botUserId: 'U_BOT',
+    });
+
+    await slackAdapterService.shutdown();
+
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'slack adapter shutdown',
+      null,
+      expect.objectContaining({ 'slack.workspaces': '1' }),
+    );
+  });
+
+  it('emits "slack connection added" when initializeConnection registers an app', async () => {
+    mockGetSlackConnection.mockResolvedValue({
+      id: 'conn-001',
+      teamId: 'T001',
+      teamName: 'Test Workspace',
+      isActive: true,
+      botToken: 'xoxb-test',
+      botUserId: 'U_BOT',
+    });
+    delete process.env.SLACK_APP_TOKEN; // no socket mode — skips app.start()
+
+    await slackAdapterService.initializeConnection('conn-001');
+
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'slack connection added',
+      null,
+      expect.objectContaining({
+        'slack.connection.id': 'conn-001',
+        'slack.socket_mode': 'false',
+      }),
+    );
+  });
+
+  it('emits "slack connection removed" with cleanup counts on disconnect', async () => {
+    mockGetSlackConnection.mockResolvedValue({
+      id: 'conn-001',
+      teamId: 'T001',
+      teamName: 'Test Workspace',
+      isActive: true,
+    });
+    mockSlackMappingService.deleteByConnectionId.mockResolvedValue(3);
+    mockPrisma.slackVerificationCode.deleteMany.mockResolvedValue({ count: 2 });
+    mockSlackHeartbeatTriggerService.deleteByConnectionId.mockResolvedValue(1);
+
+    await slackAdapterService.disconnectAndDeactivate('conn-001');
+
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'slack connection removed',
+      null,
+      expect.objectContaining({
+        'slack.connection.id': 'conn-001',
+        'slack.mappings_removed': '3',
+      }),
+    );
+  });
+
+  it('emits "slack user linked" on linkSlackUser', async () => {
+    mockSlackMappingService.upsertUserMapping.mockResolvedValue(undefined);
+
+    await slackAdapterService.linkSlackUser('conn-001', 'U123', 'lens-user-1', 'agent-1', 'D123');
+
+    expect(mockTrackEvent).toHaveBeenCalledWith('slack user linked', 'lens-user-1', {
+      'agent.id': 'agent-1',
+      'slack.user.id': 'U123',
+    });
+  });
+
+  it('emits "slack message delivered" with delivery=channel for channel-context delivery', async () => {
+    const deliverSpy = vi
+      .spyOn(slackAdapterService, 'deliverToChannel')
+      .mockResolvedValue(undefined);
+
+    await slackAdapterService.deliver(
+      'lens-user-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { id: 'msg-1', threadId: 'thr-1', content: 'hi', toolCalls: null } as any,
+      { channel: 'slack', channelId: 'C123', threadId: 'thr-1' },
+    );
+    deliverSpy.mockRestore();
+
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'slack message delivered',
+      'lens-user-1',
+      expect.objectContaining({ 'slack.delivery': 'channel' }),
+    );
+  });
+
+  it('emits "slack message delivered" with delivery=mapping after mapping fan-out', async () => {
+    mockPrisma.conversationThread.findUnique.mockResolvedValue({ agentId: 'agent-1' });
+    mockPrisma.slackMapping.findMany.mockResolvedValue([
+      { id: 'map-1', connectionId: 'conn-001', dmChannelId: null, slackChannelId: 'C123' },
+    ]);
+    mockGetSlackConnection.mockResolvedValue({
+      id: 'conn-001',
+      teamId: 'T001',
+      teamName: 'Test Workspace',
+      isActive: true,
+    });
+    const deliverSpy = vi
+      .spyOn(slackAdapterService, 'deliverToChannel')
+      .mockResolvedValue(undefined);
+
+    await slackAdapterService.deliver(
+      'lens-user-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { id: 'msg-1', threadId: 'thr-1', content: 'hi', toolCalls: null } as any,
+    );
+    deliverSpy.mockRestore();
+
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'slack message delivered',
+      'lens-user-1',
+      expect.objectContaining({
+        'agent.id': 'agent-1',
+        'slack.delivery': 'mapping',
+        'slack.mappings': '1',
+      }),
+    );
   });
 });

@@ -30,6 +30,7 @@ import zlib from 'zlib';
 import { pipeline } from 'stream/promises';
 import { Readable } from 'stream';
 import { config } from '../config';
+import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { resolvePrismaSqlitePath } from '../lib/sqlite-path';
 import { loadSqliteVec, EMBEDDING_DIMENSION } from '../lib/sqlite-bootstrap';
@@ -200,6 +201,12 @@ export async function importAgent(buffer: Buffer): Promise<void> {
   // directory by construction.
   fs.renameSync(stagingPath, dst);
   logger.info({ next: dst }, '[AgentArchive] staged import — restart will apply');
+
+  // Best-effort: the process restarts shortly after staging, so this may not
+  // flush — losing it never affects the import itself.
+  trackEvent('agent imported', null, {
+    ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+  });
 }
 
 function safeUnlink(p: string): void {

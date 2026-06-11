@@ -74,7 +74,9 @@ export function trackEvent(
 ): void {
   if (!otelLogger) return;
 
-  logger.info(`[Telemetry] Tracking event: ${event} (user: ${userId || 'unknown'})`);
+  // debug, not info — some events fire per message/invocation and would
+  // otherwise dominate the application log.
+  logger.debug(`[Telemetry] Tracking event: ${event} (user: ${userId || 'unknown'})`);
 
   const attributes: Record<string, string> = {
     ...properties,

@@ -178,14 +178,18 @@ export function getCronTools(
         taskId: z.string().describe('The task ID to delete'),
       }),
       execute: async ({ taskId }) => {
-        await prisma.cronTask.deleteMany({
+        const result = await prisma.cronTask.deleteMany({
           where: { id: taskId, userId, agentId },
         });
 
-        try {
-          cronSchedulerService.unscheduleTask(taskId);
-        } catch (err) {
-          logger.error({ err }, '[CronTool] Failed to unschedule task in-process');
+        // Only unschedule (which emits 'cron task deleted') when a row was
+        // actually removed — deleting a nonexistent task is not an event.
+        if (result.count > 0) {
+          try {
+            cronSchedulerService.unscheduleTask(taskId, userId);
+          } catch (err) {
+            logger.error({ err }, '[CronTool] Failed to unschedule task in-process');
+          }
         }
 
         return { success: true, message: `Deleted task ${taskId}` };

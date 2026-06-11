@@ -65,6 +65,12 @@ vi.mock('../lib/classification', () => ({
   getClassificationModel: mockGetClassificationModel,
 }));
 
+const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
+
+vi.mock('../lib/telemetry', () => ({
+  trackEvent: mockTrackEvent,
+}));
+
 vi.mock('../logger', () => ({
   logger: {
     info: mockLoggerInfo,
@@ -950,6 +956,138 @@ describe('HeartbeatService', () => {
       await vi.advanceTimersByTimeAsync(0);
 
       expect(heartbeatService.getStatus()?.isRunning).toBe(false);
+    });
+  });
+
+  // ==========================================================================
+  // Telemetry
+  // ==========================================================================
+
+  describe('telemetry', () => {
+    beforeEach(() => {
+      vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+    });
+
+    it('emits "heartbeat started" with the interval on start', () => {
+      heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 60_000 }));
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('heartbeat started', 'user-abc-123', {
+        'agent.id': 'agent-1',
+        'heartbeat.interval_ms': '60000',
+      });
+    });
+
+    it('does not emit "heartbeat started" when status is STOPPED', () => {
+      heartbeatService.startHeartbeat(createAgent({ heartbeatStatus: 'STOPPED' }));
+
+      expect(mockTrackEvent).not.toHaveBeenCalled();
+    });
+
+    it('emits "heartbeat stopped" on stop', () => {
+      heartbeatService.startHeartbeat(createAgent());
+      mockTrackEvent.mockClear();
+
+      heartbeatService.stopHeartbeat();
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('heartbeat stopped', 'user-abc-123', {
+        'agent.id': 'agent-1',
+      });
+    });
+
+    it('does not emit "heartbeat stopped" when no heartbeat was running', () => {
+      heartbeatService.stopHeartbeat();
+
+      expect(mockTrackEvent).not.toHaveBeenCalled();
+    });
+
+    it('emits "heartbeat completed" with result=delivered when the gate delivers', async () => {
+      mockInvoke.mockResolvedValue({
+        response: 'Alert!',
+        toolCalls: [],
+        steps: [{ text: 'Alert!', toolCalls: [] }],
+      });
+      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+
+      heartbeatService.startHeartbeat(createAgent());
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('heartbeat completed', 'user-abc-123', {
+        'agent.id': 'agent-1',
+        'heartbeat.trigger': 'timer',
+        'heartbeat.result': 'delivered',
+        'heartbeat.duration_ms': expect.any(String),
+      });
+    });
+
+    it('emits "heartbeat completed" with result=suppressed when the gate suppresses', async () => {
+      mockInvoke.mockResolvedValue({
+        response: 'All clear.',
+        toolCalls: [],
+        steps: [{ text: 'All clear.', toolCalls: [] }],
+      });
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+
+      heartbeatService.startHeartbeat(createAgent());
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'heartbeat completed',
+        'user-abc-123',
+        expect.objectContaining({ 'heartbeat.result': 'suppressed' }),
+      );
+    });
+
+    it('emits "heartbeat completed" with result=budget_exceeded', async () => {
+      mockInvoke.mockResolvedValue({
+        response: '',
+        toolCalls: [],
+        steps: [],
+        error: { type: 'budget_exceeded', detail: null },
+      });
+
+      heartbeatService.startHeartbeat(createAgent());
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'heartbeat completed',
+        'user-abc-123',
+        expect.objectContaining({ 'heartbeat.result': 'budget_exceeded' }),
+      );
+    });
+
+    it('emits "heartbeat completed" with result=error when invoke throws', async () => {
+      mockInvoke.mockRejectedValue(new Error('Network failure'));
+
+      heartbeatService.startHeartbeat(createAgent());
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'heartbeat completed',
+        'user-abc-123',
+        expect.objectContaining({ 'heartbeat.trigger': 'timer', 'heartbeat.result': 'error' }),
+      );
+    });
+
+    it('tags Slack-triggered runs with trigger=slack', async () => {
+      mockDrainSlackMessages.mockResolvedValueOnce([
+        { sender: 'Alice', text: 'deploy failed', timestamp: '2025-01-15T12:00:00Z' },
+      ]);
+      mockInvoke.mockResolvedValue({
+        response: 'Incident!',
+        toolCalls: [],
+        steps: [{ text: 'Incident!', toolCalls: [] }],
+      });
+      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+
+      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.triggerFromSlack();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'heartbeat completed',
+        'user-abc-123',
+        expect.objectContaining({ 'heartbeat.trigger': 'slack', 'heartbeat.result': 'delivered' }),
+      );
     });
   });
 

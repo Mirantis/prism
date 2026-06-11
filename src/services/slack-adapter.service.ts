@@ -197,6 +197,10 @@ class SlackAdapterService implements ChannelAdapter {
         message.id,
         includeFeedback,
       );
+      trackEvent('slack message delivered', userId, {
+        ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+        'slack.delivery': 'channel',
+      });
       return;
     }
 
@@ -280,6 +284,14 @@ class SlackAdapterService implements ChannelAdapter {
           includeFeedback,
         );
       }
+    }
+
+    if (mappings.length > 0) {
+      trackEvent('slack message delivered', userId, {
+        ...(thread?.agentId ? { 'agent.id': thread.agentId } : {}),
+        'slack.delivery': 'mapping',
+        'slack.mappings': String(mappings.length),
+      });
     }
   }
 
@@ -394,6 +406,10 @@ class SlackAdapterService implements ChannelAdapter {
       await this.rebuildUserCache();
 
       logger.info('Slack adapter initialized: %d workspace(s)', this.apps.size);
+      trackEvent('slack adapter initialized', null, {
+        ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+        'slack.workspaces': String(this.apps.size),
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('Failed to initialize Slack adapter: %s', message);
@@ -420,8 +436,14 @@ class SlackAdapterService implements ChannelAdapter {
       }
     }
 
+    const workspaces = this.apps.size;
     this.apps.clear();
     this.userConnectionCache.clear();
+
+    trackEvent('slack adapter shutdown', null, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'slack.workspaces': String(workspaces),
+    });
   }
 
   /**
@@ -493,6 +515,12 @@ class SlackAdapterService implements ChannelAdapter {
       teamName: connection.teamName,
       isSocketMode,
       botUserId: connection.botUserId,
+    });
+
+    trackEvent('slack connection added', null, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'slack.connection.id': connectionId,
+      'slack.socket_mode': String(isSocketMode),
     });
   }
 
@@ -1863,6 +1891,12 @@ class SlackAdapterService implements ChannelAdapter {
       { teamName: connection.teamName, mappings, codes, triggers },
       'Disconnected Slack connection and removed mappings',
     );
+
+    trackEvent('slack connection removed', null, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'slack.connection.id': connectionId,
+      'slack.mappings_removed': String(mappings),
+    });
   }
 
   /**
@@ -1883,6 +1917,10 @@ class SlackAdapterService implements ChannelAdapter {
     await this.rebuildUserCache();
 
     logger.info('Linked Slack user %s to Lens user %s', slackUserId, lensUserId);
+    trackEvent('slack user linked', lensUserId, {
+      'agent.id': agentId,
+      'slack.user.id': slackUserId,
+    });
   }
 
   /**

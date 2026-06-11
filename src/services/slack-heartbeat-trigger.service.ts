@@ -12,6 +12,7 @@
 import prisma from '../lib/prisma';
 import { Prisma, SlackHeartbeatTrigger } from '@prisma/client';
 import { config } from '../config';
+import { trackEvent } from '../lib/telemetry';
 
 export interface ClaimResult {
   claimed: boolean;
@@ -42,7 +43,7 @@ class SlackHeartbeatTriggerService {
     throttleSeconds?: number,
   ): Promise<SlackHeartbeatTrigger> {
     if (!config.agentId) throw new Error('AGENT_ID not configured');
-    return prisma.slackHeartbeatTrigger.create({
+    const trigger = await prisma.slackHeartbeatTrigger.create({
       data: {
         connectionId,
         slackChannelId: channelId,
@@ -53,15 +54,28 @@ class SlackHeartbeatTriggerService {
         ...(throttleSeconds !== undefined && { throttleSeconds }),
       },
     });
+    trackEvent('slack heartbeat trigger created', userId, {
+      'agent.id': trigger.agentId,
+      'trigger.id': trigger.id,
+      'slack.channel.id': trigger.slackChannelId,
+      'trigger.throttle_seconds': String(trigger.throttleSeconds),
+    });
+    return trigger;
   }
 
   /**
    * Remove a specific trigger by ID, scoped to the user.
    */
   async deleteTrigger(triggerId: string, userId: string): Promise<void> {
-    await prisma.slackHeartbeatTrigger.deleteMany({
+    const result = await prisma.slackHeartbeatTrigger.deleteMany({
       where: { id: triggerId, userId },
     });
+    if (result.count > 0) {
+      trackEvent('slack heartbeat trigger deleted', userId, {
+        ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+        'trigger.id': triggerId,
+      });
+    }
   }
 
   /**
@@ -96,6 +110,11 @@ class SlackHeartbeatTriggerService {
       data: { throttleSeconds },
     });
     if (result.count === 0) return null;
+    trackEvent('slack heartbeat trigger updated', userId, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'trigger.id': triggerId,
+      'trigger.throttle_seconds': String(throttleSeconds),
+    });
     return prisma.slackHeartbeatTrigger.findUnique({ where: { id: triggerId } });
   }
 
@@ -144,6 +163,12 @@ class SlackHeartbeatTriggerService {
     });
 
     if (result.count > 0) {
+      // Only successful claims are tracked — failed attempts are throttle
+      // noise proportional to channel traffic.
+      trackEvent('slack heartbeat trigger claimed', null, {
+        ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+        'trigger.id': trigger.id,
+      });
       return { claimed: true };
     }
 

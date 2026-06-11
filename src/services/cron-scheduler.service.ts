@@ -15,6 +15,8 @@ import * as cron from 'node-cron';
 import { invoke } from '../invoke';
 import { messageDeliveryService } from './message-delivery.service';
 import { prisma } from '../lib/prisma';
+import { config } from '../config';
+import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 
 // ============================================================================
@@ -70,21 +72,36 @@ class CronSchedulerService {
 
   /**
    * Schedule a task from a BackendCronTask record.
-   * Called during startup or when backend pushes a new task.
+   * Called on fresh creations (agent tool, management route) and during
+   * startup re-registration (`source: 'boot'`).
+   *
+   * Single owner of the 'cron task scheduled' telemetry event — callers must
+   * not emit it themselves. Boot re-registrations are not new schedules, so
+   * they don't emit.
    */
-  scheduleTask(task: BackendCronTask): void {
+  scheduleTask(task: BackendCronTask, opts: { source?: 'create' | 'boot' } = {}): void {
     if (!task.userId) {
       logger.error(`[CronScheduler] Refusing to schedule "${task.name}" — missing userId`);
       return;
     }
 
-    this.unscheduleTask(task.id);
+    this.stopJob(task.id);
 
     if (!task.isActive) {
       return;
     }
 
     const isOneShot = !!(task.nextRunAt && !cron.validate(task.schedule));
+
+    if (opts.source !== 'boot') {
+      trackEvent('cron task scheduled', task.userId, {
+        'agent.id': task.agentId,
+        'cron.task.id': task.id,
+        'cron.task.name': task.name,
+        'cron.schedule': task.schedule,
+        'cron.one_shot': String(isOneShot),
+      });
+    }
 
     if (isOneShot) {
       const nextRunAt = task.nextRunAt ? new Date(task.nextRunAt).getTime() : 0;
@@ -140,7 +157,23 @@ class CronSchedulerService {
     }
   }
 
-  unscheduleTask(taskId: string): void {
+  /**
+   * Remove a task on user deletion (agent tool, management route).
+   *
+   * Single owner of the 'cron task deleted' telemetry event — callers must
+   * not emit it themselves. Internal re-registration uses `stopJob` directly
+   * so it never emits.
+   */
+  unscheduleTask(taskId: string, userId?: string): void {
+    this.stopJob(taskId);
+    trackEvent('cron task deleted', userId ?? null, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'cron.task.id': taskId,
+    });
+  }
+
+  /** Stop and drop the in-memory job, with no telemetry side effects. */
+  private stopJob(taskId: string): void {
     const scheduled = this.scheduledJobs.get(taskId);
     if (scheduled) {
       scheduled.job.stop();
@@ -164,6 +197,15 @@ class CronSchedulerService {
 
     logger.info(`[CronScheduler] Executing "${task.name}" for user ${task.userId}`);
 
+    const trackRun = (result: 'completed' | 'budget_exceeded' | 'error') =>
+      trackEvent('cron task executed', task.userId, {
+        'agent.id': task.agentId,
+        'cron.task.id': task.id,
+        'cron.task.name': task.name,
+        'cron.result': result,
+        'cron.duration_ms': String(Date.now() - startTime),
+      });
+
     try {
       // Invoke LLM directly (in-process)
       const result = await invoke({
@@ -182,6 +224,7 @@ class CronSchedulerService {
           `**Scheduled Task: ${task.name}**\n\nThis task could not run — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`,
           'CRON_TASK',
         );
+        trackRun('budget_exceeded');
         return;
       }
 
@@ -204,9 +247,11 @@ class CronSchedulerService {
       );
 
       logger.info(`[CronScheduler] "${task.name}" completed in ${Date.now() - startTime}ms`);
+      trackRun('completed');
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[CronScheduler] "${task.name}" failed: ${errMsg}`);
+      trackRun('error');
     }
   }
 

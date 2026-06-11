@@ -56,6 +56,12 @@ vi.mock('node-cron', () => ({
   validate: mockCronValidate,
 }));
 
+const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
+
+vi.mock('../lib/telemetry', () => ({
+  trackEvent: mockTrackEvent,
+}));
+
 vi.mock('../logger', () => ({
   logger: {
     info: vi.fn(),
@@ -392,6 +398,111 @@ describe('CronSchedulerService', () => {
 
       expect(mockInvoke).toHaveBeenCalled();
       expect(mockCronTaskDelete).toHaveBeenCalledWith({ where: { id: 'oneshot-del-fail' } });
+    });
+  });
+
+  // ==========================================================================
+  // Telemetry
+  // ==========================================================================
+
+  describe('telemetry', () => {
+    /** Schedule a recurring task and return the captured cron callback. */
+    function scheduleAndCapture(): () => Promise<void> {
+      let cronCallback: (() => Promise<void>) | undefined;
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
+        cronCallback = cb;
+        return { stop: vi.fn() };
+      });
+      cronSchedulerService.scheduleTask(createCronTask());
+      return cronCallback!;
+    }
+
+    it('emits "cron task executed" with result=completed on success', async () => {
+      const run = scheduleAndCapture();
+      await run();
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('cron task executed', 'user-abc-123', {
+        'agent.id': 'agent-1',
+        'cron.task.id': 'task-1',
+        'cron.task.name': 'Daily Report',
+        'cron.result': 'completed',
+        'cron.duration_ms': expect.any(String),
+      });
+    });
+
+    it('emits "cron task executed" with result=budget_exceeded', async () => {
+      mockInvoke.mockResolvedValue({
+        response: '',
+        toolCalls: [],
+        steps: [],
+        error: { type: 'budget_exceeded', detail: null },
+      });
+
+      const run = scheduleAndCapture();
+      await run();
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.result': 'budget_exceeded' }),
+      );
+    });
+
+    it('emits "cron task executed" with result=error on invoke failure', async () => {
+      mockInvoke.mockRejectedValue(new Error('LLM timeout'));
+
+      const run = scheduleAndCapture();
+      await run();
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.result': 'error' }),
+      );
+    });
+
+    it('emits "cron task scheduled" when a task is scheduled (single owner of the event)', () => {
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn() });
+
+      cronSchedulerService.scheduleTask(createCronTask());
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('cron task scheduled', 'user-abc-123', {
+        'agent.id': 'agent-1',
+        'cron.task.id': 'task-1',
+        'cron.task.name': 'Daily Report',
+        'cron.schedule': '0 9 * * *',
+        'cron.one_shot': 'false',
+      });
+    });
+
+    it('does not emit "cron task scheduled" for boot re-registrations', () => {
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn() });
+
+      cronSchedulerService.scheduleTask(createCronTask(), { source: 'boot' });
+
+      expect(mockTrackEvent).not.toHaveBeenCalled();
+    });
+
+    it('emits "cron task deleted" on unscheduleTask, but not on internal re-registration', () => {
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn() });
+
+      // Re-registering the same task replaces the job via the private
+      // stopJob path — no delete event.
+      cronSchedulerService.scheduleTask(createCronTask(), { source: 'boot' });
+      cronSchedulerService.scheduleTask(createCronTask(), { source: 'boot' });
+      expect(mockTrackEvent).not.toHaveBeenCalled();
+
+      cronSchedulerService.unscheduleTask('task-1', 'user-abc-123');
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task deleted',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.task.id': 'task-1' }),
+      );
     });
   });
 

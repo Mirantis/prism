@@ -15,6 +15,8 @@
 
 import { MessageAttachment } from '@prisma/client';
 import prisma from '../lib/prisma';
+import { config } from '../config';
+import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
 
@@ -247,7 +249,7 @@ const META_SELECT = {
 class AttachmentService {
   /** Persist an uploaded/downloaded file. */
   async create(input: CreateAttachmentInput): Promise<MessageAttachment> {
-    return prisma.messageAttachment.create({
+    const row = await prisma.messageAttachment.create({
       data: {
         filename: input.filename,
         mediaType: input.mediaType,
@@ -263,6 +265,16 @@ class AttachmentService {
         externalTs: input.externalTs,
       },
     });
+    // No filename in telemetry — it can reveal private information.
+    trackEvent('attachment uploaded', null, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'attachment.id': row.id,
+      'attachment.category': input.category,
+      'attachment.media_type': input.mediaType,
+      'attachment.size_bytes': String(input.sizeBytes),
+      'attachment.source': input.source,
+    });
+    return row;
   }
 
   /**
@@ -425,6 +437,12 @@ class AttachmentService {
     const result = await prisma.messageAttachment.deleteMany({
       where: { id, messageId: null },
     });
+    if (result.count > 0) {
+      trackEvent('attachment deleted', null, {
+        ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+        'attachment.id': id,
+      });
+    }
     return result.count;
   }
 
