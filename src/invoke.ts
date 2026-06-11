@@ -29,6 +29,7 @@ import { STEP_LIMIT, MAX_OUTPUT_TOKENS } from './constants';
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
 import { buildErrorStep } from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
+import { trackEvent } from './lib/telemetry';
 import { AsyncChannel } from './utils/async-channel';
 
 /**
@@ -46,6 +47,8 @@ import { AsyncChannel } from './utils/async-channel';
  * 6. On step-limit, make a follow-up summary call and yield its result
  */
 export async function* invokeStream(request: InvokeRequest): AsyncGenerator<InvokeStep> {
+  const startTime = Date.now();
+
   // Preflight: short-circuit before any DB call.
   if (!isBedrockConfigured()) {
     logger.error('Bedrock not configured, returning placeholder response');
@@ -64,6 +67,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     };
     return;
   }
+  const agentId = request.agentId;
 
   // Fetch context. Failures become friendly error steps.
   let context;
@@ -284,6 +288,12 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // final friendly step (with optional structured `error` metadata) via
     // buildErrorStep above — no exception is thrown.
     yield* channel;
+
+    trackEvent('invocation completed', request.userId, {
+      'agent.id': agentId,
+      'invoke.mode': request.mode,
+      'invocation.duration_ms': String(Date.now() - startTime),
+    });
   } finally {
     await agentStatusService.setDoneProcessing(request.agentId);
   }

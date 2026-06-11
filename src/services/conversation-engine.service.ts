@@ -16,7 +16,7 @@ import { logger } from '../logger';
 import prisma from '../lib/prisma';
 import { getClassificationModel } from '../lib/classification';
 import { isLangfuseEnabled } from '../lib/langfuse';
-import { isTelemetryEnabled } from '../lib/telemetry';
+import { isTelemetryEnabled, trackEvent } from '../lib/telemetry';
 
 // ============================================================================
 // Feedback gate tuning (channel-agnostic)
@@ -301,6 +301,15 @@ Respond with exactly one word: WORTHY or SKIP`;
         }
       );
     }
+
+    trackEvent('chat message handled', userId, {
+      'agent.id': agentId,
+      'thread.id': threadId,
+      'channel.type': metadata?.channel ?? 'api',
+      'chat.duration_ms': String(Date.now() - startTime),
+      'chat.tool_calls': String(allToolCalls.length),
+      'chat.response_chars': String(response.length),
+    });
 
     return {
       threadId,

@@ -65,6 +65,7 @@ const {
       findUnique: vi.fn(),
       findFirst: vi.fn(),
       create: vi.fn(),
+      deleteMany: vi.fn(),
     },
     cronTask: {
       create: vi.fn(),
@@ -167,6 +168,13 @@ vi.mock('../lib/prisma', () => ({
 // Must mock invoke so the createApp import chain does not pull in real dependencies
 vi.mock('../invoke', () => ({
   invoke: vi.fn(),
+}));
+
+const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
+
+vi.mock('../lib/telemetry', () => ({
+  trackEvent: mockTrackEvent,
+  isTelemetryEnabled: () => false,
 }));
 
 // ---------------------------------------------------------------------------
@@ -642,6 +650,9 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('Cron task not found');
+      // No unschedule (and therefore no 'cron task deleted' event) for a
+      // task that never existed.
+      expect(mockUnscheduleTask).not.toHaveBeenCalled();
     });
 
     it('returns 500 when Prisma delete throws an unexpected error', async () => {
@@ -1865,6 +1876,133 @@ describe('Management Routes', () => {
       mockAttachmentDeleteUnlinked.mockResolvedValue(0);
       const res = await authedRequest(app).delete('/agents/attachments/att-1');
       expect(res.status).toBe(404);
+    });
+  });
+
+  // ==========================================================================
+  // Route-level telemetry (handlers that own their prisma writes directly)
+  // ==========================================================================
+
+  describe('route telemetry', () => {
+    // 'cron task scheduled' / 'cron task deleted' are owned by
+    // cronSchedulerService (mocked here) — see cron-scheduler.service.test.ts.
+
+    it('POST /slack/verify-link-code emits "slack dm linked" on success', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValueOnce({
+        id: 'vc-1',
+        code: 'AAAAAA',
+        type: 'DM',
+        lensUserId: 'user-001',
+        connectionId: 'conn-001',
+        agentId: 'agent-001',
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        createdAt: new Date(),
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.slackMapping.create.mockResolvedValueOnce({});
+      mockPrisma.slackVerificationCode.delete.mockResolvedValueOnce({});
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-link-code')
+        .send({ code: 'AAAAAA', slackUserId: 'U123', dmChannelId: 'D456' });
+
+      expect(res.body.success).toBe(true);
+      expect(mockTrackEvent).toHaveBeenCalledWith('slack dm linked', 'user-001', {
+        'agent.id': 'agent-001',
+        'slack.user.id': 'U123',
+      });
+    });
+
+    it('POST /slack/verify-link-code emits nothing for an invalid code', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValueOnce(null);
+
+      await authedRequest(app)
+        .post('/agents/slack/verify-link-code')
+        .send({ code: 'ZZZZZZ', slackUserId: 'U123', dmChannelId: 'D456' });
+
+      expect(mockTrackEvent).not.toHaveBeenCalled();
+    });
+
+    it('POST /slack/verify-channel-link-code emits "slack channel linked" on success', async () => {
+      mockPrisma.slackVerificationCode.findUnique.mockResolvedValueOnce({
+        id: 'vc-2',
+        code: 'BBBBBB',
+        type: 'CHANNEL',
+        lensUserId: 'user-001',
+        connectionId: 'conn-001',
+        agentId: 'agent-001',
+        agentName: 'Agent',
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        createdAt: new Date(),
+      });
+      mockPrisma.slackMapping.findUnique.mockResolvedValueOnce(null);
+      mockPrisma.slackMapping.create.mockResolvedValueOnce({});
+      mockPrisma.slackVerificationCode.delete.mockResolvedValueOnce({});
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/verify-channel-link-code')
+        .send({ code: 'BBBBBB', channelId: 'C123', channelName: '#general' });
+
+      expect(res.body.success).toBe(true);
+      expect(mockTrackEvent).toHaveBeenCalledWith('slack channel linked', 'user-001', {
+        'agent.id': 'agent-001',
+        'slack.channel.id': 'C123',
+      });
+    });
+
+    it('POST /slack/create-verification-code emits "slack verification code created" without the code', async () => {
+      mockPrisma.slackVerificationCode.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.slackVerificationCode.create.mockResolvedValueOnce({ id: 'vc-new' });
+
+      const res = await authedRequest(app)
+        .post('/agents/slack/create-verification-code')
+        .send({
+          type: 'DM',
+          lensUserId: 'user-001',
+          connectionId: 'conn-001',
+          agentId: 'agent-001',
+          expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        });
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('slack verification code created', 'user-001', {
+        'agent.id': 'agent-001',
+        'verification.type': 'DM',
+      });
+      // The generated code must never appear in event attributes.
+      const attrs = mockTrackEvent.mock.calls[0][2] as Record<string, string>;
+      expect(Object.values(attrs)).not.toContain(res.body.code);
+    });
+
+    it('DELETE /slack/channel-mapping/:channelId emits "slack channel mapping deleted"', async () => {
+      mockPrisma.slackMapping.deleteMany.mockResolvedValue({ count: 1 });
+
+      await authedRequest(app).delete('/agents/slack/channel-mapping/C123');
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'slack channel mapping deleted',
+        null,
+        expect.objectContaining({ 'slack.channel.id': 'C123' }),
+      );
+    });
+
+    it('DELETE /slack/dm-mapping emits "slack dm mapping deleted" with the count', async () => {
+      mockPrisma.slackMapping.deleteMany.mockResolvedValue({ count: 2 });
+
+      await authedRequest(app).delete('/agents/slack/dm-mapping?connectionId=conn-001');
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'slack dm mapping deleted',
+        null,
+        expect.objectContaining({ 'slack.mappings_removed': '2' }),
+      );
+    });
+
+    it('DELETE /slack/dm-mapping emits nothing when no mappings were removed', async () => {
+      mockPrisma.slackMapping.deleteMany.mockResolvedValue({ count: 0 });
+
+      await authedRequest(app).delete('/agents/slack/dm-mapping?connectionId=conn-001');
+
+      expect(mockTrackEvent).not.toHaveBeenCalled();
     });
   });
 });

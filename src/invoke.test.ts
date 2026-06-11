@@ -134,6 +134,12 @@ vi.mock('./services/agent-status.service', () => ({
   },
 }));
 
+const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
+
+vi.mock('./lib/telemetry', () => ({
+  trackEvent: mockTrackEvent,
+}));
+
 
 import { invoke, withToolsCacheControl } from './invoke';
 import { config } from './config';
@@ -820,6 +826,26 @@ describe('invoke', () => {
 
       expect(mockSetProcessing).not.toHaveBeenCalled();
       expect(mockSetDoneProcessing).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('telemetry', () => {
+    it('emits "invocation completed" with agent, mode, and duration', async () => {
+      await invoke(createTestInvokeRequest({ mode: 'chat' }));
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('invocation completed', 'user-test-456', {
+        'agent.id': 'agent-test-123',
+        'invoke.mode': 'chat',
+        'invocation.duration_ms': expect.any(String),
+      });
+    });
+
+    it('emits nothing when preflight short-circuits (Bedrock unconfigured)', async () => {
+      mockIsBedrockConfigured.mockReturnValue(false);
+
+      await invoke(createTestInvokeRequest());
+
+      expect(mockTrackEvent).not.toHaveBeenCalled();
     });
   });
 

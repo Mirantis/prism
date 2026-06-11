@@ -15,6 +15,8 @@ import {
   Prisma,
 } from '@prisma/client';
 import prisma from '../lib/prisma';
+import { config } from '../config';
+import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { ThreadMessageProvider } from './thread-provider.interface';
 import { DatabaseThreadProvider } from './providers/database-thread.provider';
@@ -96,6 +98,11 @@ class ConversationService {
         },
       });
       logger.info('Created new conversation thread for user %s (threadId: %s)', userId, thread.id);
+      trackEvent('thread created', userId, {
+        'agent.id': agentId,
+        'thread.id': thread.id,
+        'thread.source': 'database',
+      });
     }
 
     return thread;
@@ -111,7 +118,7 @@ class ConversationService {
     externalThreadId: string,
     options?: { channelId?: string },
   ): Promise<ConversationThread> {
-    return prisma.conversationThread.upsert({
+    const thread = await prisma.conversationThread.upsert({
       where: {
         agentId_userId_externalThreadId: { agentId, userId, externalThreadId },
       },
@@ -133,6 +140,22 @@ class ConversationService {
         }),
       },
     });
+
+    // Upsert can't report create-vs-update; on create both timestamps carry
+    // the same initial value, while the update path bumps @updatedAt.
+    if (
+      thread?.createdAt instanceof Date &&
+      thread.updatedAt instanceof Date &&
+      thread.createdAt.getTime() === thread.updatedAt.getTime()
+    ) {
+      trackEvent('thread created', userId, {
+        'agent.id': agentId,
+        'thread.id': thread.id,
+        'thread.source': 'slack',
+      });
+    }
+
+    return thread;
   }
 
   /**
@@ -203,9 +226,16 @@ class ConversationService {
     });
 
     // Update thread's updatedAt
-    await prisma.conversationThread.update({
+    const thread = await prisma.conversationThread.update({
       where: { id: threadId },
       data: { updatedAt: new Date() },
+    });
+
+    trackEvent('message added', null, {
+      ...(thread?.agentId ? { 'agent.id': thread.agentId } : {}),
+      'thread.id': threadId,
+      'message.role': input.role,
+      'message.triggered_by': input.triggeredBy,
     });
 
     return message;
@@ -267,6 +297,10 @@ class ConversationService {
         data: { status: 'NON_ACTIVE' },
       });
     }
+    trackEvent('thread archived', userId ?? null, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'thread.id': threadId,
+    });
   }
 
   /**
@@ -366,6 +400,10 @@ class ConversationService {
     await prisma.conversationThread.updateMany({
       where: { id: threadId },
       data: { externalThreadId },
+    });
+    trackEvent('thread external id set', null, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'thread.id': threadId,
     });
   }
 

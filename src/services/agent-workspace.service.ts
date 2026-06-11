@@ -12,6 +12,7 @@ import { AgentWorkspace } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../lib/prisma';
 import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
+import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { config } from '../config';
 
@@ -79,7 +80,7 @@ class AgentWorkspaceService {
       .replace(/\{\{agentName\}\}/g, () => input.name)
       .replace(/\{\{teamName\}\}/g, () => input.teamName);
 
-    return prisma.agentWorkspace.create({
+    const agent = await prisma.agentWorkspace.create({
       data: {
         id: input.id,
         userId: input.userId,
@@ -95,6 +96,11 @@ class AgentWorkspaceService {
         currentSessionId: uuidv4(),
       },
     });
+    trackEvent('agent created', input.userId, {
+      'agent.id': agent.id,
+      'agent.type': agent.agentType,
+    });
+    return agent;
   }
 
   // ============================================================================
@@ -113,6 +119,9 @@ class AgentWorkspaceService {
     const agent = await this.getAgent();
     if (!options?.allowedByTeam && (!options?.userId || agent.userId !== options.userId)) return 'forbidden';
     await prisma.agentWorkspace.delete({ where: { id: agent.id } });
+    trackEvent('agent deleted', options?.userId ?? agent.userId, {
+      'agent.id': agent.id,
+    });
     return 'deleted';
   }
 
@@ -161,6 +170,11 @@ class AgentWorkspaceService {
       },
     });
 
+    trackEvent('subagent added', null, {
+      'agent.id': parentAgentId,
+      'subagent.id': childAgentId,
+    });
+
     return child;
   }
 
@@ -180,6 +194,10 @@ class AgentWorkspaceService {
     if (!link) return 'link_not_found';
 
     await prisma.agentSubagent.delete({ where: { id: link.id } });
+    trackEvent('subagent removed', null, {
+      'agent.id': parentAgentId,
+      'subagent.id': childAgentId,
+    });
     return 'deleted';
   }
 
@@ -214,10 +232,15 @@ class AgentWorkspaceService {
       throw new ValidationError(`name must be ≤ ${AGENT_NAME_MAX} chars`);
     }
     const agent = await this.getAgent();
-    return prisma.agentWorkspace.update({
+    const updated = await prisma.agentWorkspace.update({
       where: { id: agent.id },
       data: { name: trimmed },
     });
+    trackEvent('agent renamed', null, {
+      'agent.id': updated.id,
+      'agent.name': updated.name,
+    });
+    return updated;
   }
 
   /**
@@ -264,7 +287,12 @@ class AgentWorkspaceService {
       where: { id: agent.id },
       data: { model: normalized },
     });
-    return resolveEffectiveModel(updated.model);
+    const effective = resolveEffectiveModel(updated.model);
+    trackEvent('agent model updated', null, {
+      'agent.id': updated.id,
+      'agent.model': effective,
+    });
+    return effective;
   }
 }
 

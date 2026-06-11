@@ -83,6 +83,8 @@ import { randomBytes } from 'crypto';
 import multer from 'multer';
 import { AgentType, MessageRole, MessageTrigger, Prisma, ThreadStatus } from '@prisma/client';
 import { logger } from '../logger';
+import { config } from '../config';
+import { trackEvent } from '../lib/telemetry';
 import { prisma } from '../lib/prisma';
 import { heartbeatService } from '../services/heartbeat.service';
 import { cronSchedulerService } from '../services/cron-scheduler.service';
@@ -674,7 +676,6 @@ router.post('/cron-tasks', async (req: Request, res: Response) => {
 router.delete('/cron-tasks/:taskId', async (req: Request<{ taskId: string }>, res: Response) => {
   try {
     const { taskId } = req.params;
-    cronSchedulerService.unscheduleTask(taskId);
     try {
       await prisma.cronTask.delete({ where: { id: taskId } });
     } catch (err) {
@@ -684,6 +685,9 @@ router.delete('/cron-tasks/:taskId', async (req: Request<{ taskId: string }>, re
       }
       throw err;
     }
+    // After the confirmed delete so the 'cron task deleted' event (owned by
+    // unscheduleTask) never fires for nonexistent tasks.
+    cronSchedulerService.unscheduleTask(taskId);
     res.json({ success: true });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -1097,6 +1101,11 @@ router.post('/slack/verify-link-code', async (req: Request, res: Response) => {
 
     logger.info({ slackUserId, lensUserId: verification.lensUserId }, 'Slack account linked via code: %s -> %s', slackUserId, verification.lensUserId);
 
+    trackEvent('slack dm linked', verification.lensUserId, {
+      'agent.id': verification.agentId,
+      'slack.user.id': slackUserId,
+    });
+
     res.json({ success: true, message: 'Your Slack account is now linked to Lens Platform! You can now chat with your agent here.' });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -1166,6 +1175,11 @@ router.post('/slack/verify-channel-link-code', async (req: Request, res: Respons
 
     logger.info({ channelId, lensUserId: verification.lensUserId }, 'Slack channel linked via code: %s -> %s\'s agent', channelId, verification.lensUserId);
 
+    trackEvent('slack channel linked', verification.lensUserId, {
+      'agent.id': verification.agentId,
+      'slack.channel.id': channelId,
+    });
+
     res.json({
       success: true,
       message: `Channel linked to ${verification.agentName}!`,
@@ -1216,6 +1230,11 @@ router.post('/slack/create-verification-code', async (req: Request, res: Respons
       const code = randomBytes(3).toString('hex').toUpperCase();
       try {
         await prisma.slackVerificationCode.create({ data: { ...data, code } });
+        // The code itself stays out of telemetry.
+        trackEvent('slack verification code created', lensUserId, {
+          'agent.id': agentId,
+          'verification.type': String(type),
+        });
         res.json({ code });
         return;
       } catch (error) {
@@ -1385,6 +1404,11 @@ router.delete('/slack/channel-mapping/:channelId', async (req: Request<{ channel
       return;
     }
 
+    trackEvent('slack channel mapping deleted', null, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'slack.channel.id': channelId,
+    });
+
     res.json({ deleted: result.count });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -1409,6 +1433,13 @@ router.delete('/slack/dm-mapping', async (req: Request, res: Response) => {
     const result = await prisma.slackMapping.deleteMany({
       where: { connectionId, slackUserId: { not: null } },
     });
+
+    if (result.count > 0) {
+      trackEvent('slack dm mapping deleted', null, {
+        ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+        'slack.mappings_removed': String(result.count),
+      });
+    }
 
     res.json({ deleted: result.count });
   } catch (error: unknown) {

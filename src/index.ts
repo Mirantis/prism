@@ -81,7 +81,9 @@ const initialize = async () => {
 
     const cronTasks = await cronSchedulerService.listActiveCronTasks(agent.id);
     for (const task of cronTasks) {
-      cronSchedulerService.scheduleTask(task);
+      // Boot re-registration of existing tasks — not a new schedule, so
+      // scheduleTask skips its 'cron task scheduled' telemetry.
+      cronSchedulerService.scheduleTask(task, { source: 'boot' });
     }
     logger.info(`Cron tasks scheduled: ${cronTasks.length}`);
 

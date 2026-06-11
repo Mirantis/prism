@@ -12,6 +12,7 @@ import prisma from '../lib/prisma';
 import { heartbeatService } from '../services/heartbeat.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { applyEdits } from '../lib/apply-edit';
+import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { config } from '../config';
 
@@ -74,6 +75,11 @@ async function resolveWorkspaceFileUpdate(
   }
 
   await prisma.agentWorkspace.update({ where: { id: agentId }, data: { [field]: finalContent } });
+  trackEvent('agent config updated', null, {
+    'agent.id': agentId,
+    'config.field': field,
+    'config.method': newContent !== undefined ? 'replace' : 'edit',
+  });
   return { success: true, message: `${label} updated: ${changeDescription}` };
 }
 
@@ -89,6 +95,8 @@ export function getAgentConfigTools(): Record<string, Tool> {
       }),
       execute: async ({ name }) => {
         try {
+          // 'agent renamed' telemetry is emitted by renameAgent itself, so the
+          // management PATCH /agents/name endpoint is covered by the same event.
           const updated = await agentWorkspaceService.renameAgent(name);
           return {
             success: true,
@@ -200,6 +208,12 @@ export function getAgentConfigTools(): Record<string, Tool> {
           }
         }
 
+        trackEvent('agent config updated', null, {
+          'agent.id': agentId,
+          'config.field': setting,
+          'config.method': 'set',
+        });
+
         return { success: true, message: `Updated ${setting} to ${coerced}` };
       },
     }),
@@ -217,6 +231,11 @@ export function getAgentConfigTools(): Record<string, Tool> {
       }),
       execute: async ({ confirmationMessage }) => {
         await prisma.agentWorkspace.update({ where: { id: agentId }, data: { bootstrapMd: '' } });
+        trackEvent('agent config updated', null, {
+          'agent.id': agentId,
+          'config.field': 'bootstrapMd',
+          'config.method': 'clear',
+        });
         return { success: true, message: 'Bootstrap phase complete.', confirmationMessage };
       },
     }),
