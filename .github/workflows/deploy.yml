@@ -36,18 +36,24 @@ jobs:
         env:
           GHCR_REPO: ghcr.io/lensapp/prism-agent
           IMAGE_TAG: ${{ github.sha }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_API_KEY }}
         run: |
           set -euo pipefail
           printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > .npmrc-secret
           # Authenticate mise/aqua's GitHub API calls (avoids the 403 rate limit).
           printf '%s' "${{ secrets.GITHUB_TOKEN }}" > .gh-token-secret
+          printf '%s' "$OTEL_EXPORTER_OTLP_API_KEY" > .otel-api-key-secret
           docker build \
             --secret id=npmrc,src=.npmrc-secret \
             --secret id=github_token,src=.gh-token-secret \
+            --secret id=otel_api_key,src=.otel-api-key-secret \
+            --build-arg OTEL_EXPORTER_OTLP_ENDPOINT="$OTEL_EXPORTER_OTLP_ENDPOINT" \
+            --build-arg DEPLOYMENT_ENVIRONMENT=production \
             -t $GHCR_REPO:canary \
             -t $GHCR_REPO:$IMAGE_TAG \
             -f Dockerfile \
             .
-          rm -f .npmrc-secret .gh-token-secret
+          rm -f .npmrc-secret .gh-token-secret .otel-api-key-secret
           docker push $GHCR_REPO:canary
           docker push $GHCR_REPO:$IMAGE_TAG
