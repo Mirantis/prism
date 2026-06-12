@@ -20,19 +20,36 @@ permissions:
 
 jobs:
   build-prism:
-    runs-on: ubuntu-latest
+    # Native runner per platform — published images are multi-arch
+    # (linux/amd64 + linux/arm64), so PRs validate both to catch
+    # arch-specific breakage (native module rebuilds, mise tool installs)
+    # before merge.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Build Docker image
+      - name: Prepare build secrets
         run: |
-          printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > .npmrc-secret
+          printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.npmrc-secret"
           # Authenticate mise/aqua's GitHub API calls so tool installs don't
           # hit the unauthenticated 403 rate limit (see Dockerfile mise step).
-          printf '%s' "${{ secrets.GITHUB_TOKEN }}" > .gh-token-secret
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.gh-token-secret"
+
+      - name: Build Docker image
+        run: |
           docker build \
-            --secret id=npmrc,src=.npmrc-secret \
-            --secret id=github_token,src=.gh-token-secret \
+            --secret id=npmrc,src="$RUNNER_TEMP/.npmrc-secret" \
+            --secret id=github_token,src="$RUNNER_TEMP/.gh-token-secret" \
             -f Dockerfile \
             .
-          rm -f .npmrc-secret .gh-token-secret
+
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/.npmrc-secret" "$RUNNER_TEMP/.gh-token-secret"
