@@ -473,6 +473,25 @@ describe('HeartbeatService', () => {
         }),
       );
     });
+
+    it('gate prompt instructs suppression of heartbeat meta-commentary', async () => {
+      mockInvoke.mockResolvedValue({
+        response: 'Heartbeat config is empty — no checks configured. Staying quiet.',
+        toolCalls: [],
+        steps: [{ text: 'Heartbeat config is empty — no checks configured. Staying quiet.', toolCalls: [] }],
+      });
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+
+      heartbeatService.startHeartbeat(createAgent());
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockGenerateText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          system: expect.stringContaining('meta-commentary about the heartbeat itself'),
+        }),
+      );
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+    });
   });
 
   // ==========================================================================

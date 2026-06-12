@@ -441,6 +441,7 @@ SUPPRESS if it:
 - Repeats the same information from the last alert with no meaningful change
 - Only shows minor variations with no new insight
 - Is a generic "all clear" or "nothing to report" message
+- Is meta-commentary about the heartbeat itself (e.g. "no checks configured", "heartbeat config is empty", "nothing to check", "staying quiet") rather than a real finding
 
 Respond with exactly one word: DELIVER or SUPPRESS`;
 

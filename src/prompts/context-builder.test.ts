@@ -105,6 +105,12 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('Check for new items every 5 minutes.');
   });
 
+  it('heartbeat mode forbids commenting on the heartbeat configuration itself', async () => {
+    const context = createTestAgentContext();
+    const prompt = await buildSystemPrompt(context, 'heartbeat');
+    expect(prompt).toContain('Never comment on the heartbeat configuration itself');
+  });
+
   it('heartbeat mode injects last alert when present', async () => {
     const context = createTestAgentContext({
       lastHeartbeatAlert: 'Pod nginx-abc is CrashLoopBackOff',
