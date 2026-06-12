@@ -33,8 +33,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        # `name` feeds the artifact name; the first three match the old
+        # `matrix.os` values so existing artifact consumers see no change.
+        # linux-arm64 runs on GitHub's arm64 hosted runner — the build
+        # scripts key off process.platform/process.arch and produce the
+        # prism-*-linux-arm64 archive natively.
+        include:
+          - name: macos-latest
+            runner: macos-latest
+          - name: ubuntu-latest
+            runner: ubuntu-latest
+          - name: windows-latest
+            runner: windows-latest
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -72,7 +85,7 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: prism-${{ matrix.os }}
+          name: prism-${{ matrix.name }}
           path: |
             prism-*.tar.gz
             prism-*.zip

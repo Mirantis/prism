@@ -43,9 +43,20 @@ jobs:
     steps:
       - run: echo "Approved release ${{ needs.prepare.outputs.version }}"
 
-  build-and-push:
+  # Build per-platform images on native runners (no QEMU emulation) and
+  # push each by digest; the merge job below stitches them into one
+  # multi-arch manifest. Pattern mirrors nexus-monorepo's deploy.yml.
+  build:
     needs: [prepare, approve]
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -56,34 +67,93 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Prepare build secrets
+        env:
+          OTEL_EXPORTER_OTLP_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_API_KEY }}
+        run: |
+          set -euo pipefail
+          printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.npmrc-secret"
+          # Authenticate mise/aqua's GitHub API calls (avoids the 403 rate limit).
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.gh-token-secret"
+          printf '%s' "$OTEL_EXPORTER_OTLP_API_KEY" > "$RUNNER_TEMP/.otel-api-key-secret"
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=ghcr.io/lensapp/prism-agent,push-by-digest=true,name-canonical=true,push=true
+          secret-files: |
+            npmrc=${{ runner.temp }}/.npmrc-secret
+            github_token=${{ runner.temp }}/.gh-token-secret
+            otel_api_key=${{ runner.temp }}/.otel-api-key-secret
+          build-args: |
+            OTEL_EXPORTER_OTLP_ENDPOINT=${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
+            DEPLOYMENT_ENVIRONMENT=production
+          cache-from: type=gha,scope=deploy-prism-${{ matrix.platform }}
+          cache-to: type=gha,scope=deploy-prism-${{ matrix.platform }},mode=max
+
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/.npmrc-secret" "$RUNNER_TEMP/.gh-token-secret" "$RUNNER_TEMP/.otel-api-key-secret"
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Prepare platform pair
+        run: echo "PLATFORM_PAIR=${PLATFORM//\//-}" >> "$GITHUB_ENV"
+        env:
+          PLATFORM: ${{ matrix.platform }}
+
+      - name: Upload digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-prism-digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Merge the per-platform images into one multi-arch manifest list and
+  # apply the version + commit-SHA + latest tags.
+  merge:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: /tmp/digests
+          pattern: release-prism-digests-*
+          merge-multiple: true
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Create and push manifest
         env:
           GHCR_REPO: ghcr.io/lensapp/prism-agent
           VERSION: ${{ needs.prepare.outputs.version }}
           IMAGE_TAG: ${{ github.sha }}
-          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
-          OTEL_EXPORTER_OTLP_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_API_KEY }}
         run: |
           set -euo pipefail
-          printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > .npmrc-secret
-          # Authenticate mise/aqua's GitHub API calls (avoids the 403 rate limit).
-          printf '%s' "${{ secrets.GITHUB_TOKEN }}" > .gh-token-secret
-          printf '%s' "$OTEL_EXPORTER_OTLP_API_KEY" > .otel-api-key-secret
-          docker build \
-            --secret id=npmrc,src=.npmrc-secret \
-            --secret id=github_token,src=.gh-token-secret \
-            --secret id=otel_api_key,src=.otel-api-key-secret \
-            --build-arg OTEL_EXPORTER_OTLP_ENDPOINT="$OTEL_EXPORTER_OTLP_ENDPOINT" \
-            --build-arg DEPLOYMENT_ENVIRONMENT=production \
-            -t $GHCR_REPO:$VERSION \
-            -t $GHCR_REPO:$IMAGE_TAG \
-            -t $GHCR_REPO:latest \
-            -f Dockerfile \
-            .
-          rm -f .npmrc-secret .gh-token-secret .otel-api-key-secret
-          docker push $GHCR_REPO:$VERSION
-          docker push $GHCR_REPO:$IMAGE_TAG
-          docker push $GHCR_REPO:latest
+          cd /tmp/digests
+          docker buildx imagetools create \
+            -t "$GHCR_REPO:$VERSION" \
+            -t "$GHCR_REPO:$IMAGE_TAG" \
+            -t "$GHCR_REPO:latest" \
+            $(printf "$GHCR_REPO@sha256:%s " *)
 
   # Reuse the create-binary workflow so the build pipeline (matrix, smoke,
   # archive packaging, upload) lives in one place. Builds at release_sha so
@@ -97,12 +167,15 @@ jobs:
     secrets: inherit
 
   publish-release:
-    needs: [prepare, build-and-push, build-binaries]
+    needs: [prepare, merge, build-binaries]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          # Flattens the three per-OS artifacts into one dir for the gh release glob.
+          # Flattens the per-platform binary artifacts into one dir for the
+          # gh release glob. The pattern excludes the Docker digest
+          # artifacts the build job uploads for the manifest merge.
+          pattern: prism-*
           path: artifacts
           merge-multiple: true
 
