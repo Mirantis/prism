@@ -378,6 +378,7 @@ function getHeartbeatBaseInstructions(heartbeatMd?: string): string {
     `- Be productive. Use the heartbeat to advance the user's vision.`,
     `- Focus on NEW issues, CHANGES in status, and ACTIONABLE information.`,
     `- If everything looks normal, say so briefly (e.g. "All systems healthy").`,
+    `- If no checks are configured, reply with a brief all-clear (e.g. "All systems healthy"). Never comment on the heartbeat configuration itself (e.g. "no checks configured") — that is not a finding.`,
     `- Do NOT repeat details the user has already seen unless the situation has changed.`,
   ];
 

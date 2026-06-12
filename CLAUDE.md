@@ -402,12 +402,13 @@ After the main LLM call produces a heartbeat response, a second cheap LLM call a
 - **Model**: Haiku via `getClassificationModel()` (from `lib/bedrock-provider.ts`), configured by `BEDROCK_CLASSIFICATION_MODEL_ID`.
 - **Input**: The heartbeat response text and the last alert context (text + how long ago it was sent, formatted via `formatTimeAgo`).
 - **Output**: A single word -- `DELIVER` or `SUPPRESS`. Uses `maxOutputTokens: 10` and `temperature: 0` to keep the call fast and deterministic.
+- **Meta-commentary**: The gate prompt explicitly suppresses reports that are meta-commentary about the heartbeat itself (e.g. "no checks configured", "heartbeat config is empty") rather than real findings.
 - **Fail-open**: If the gate call throws an error, the message is delivered (safe default).
 - **Ordering**: Programmatic checks (empty response, exact-match 24h duplicate suppression) run first. The gate LLM call is only made when those checks pass.
 
 ### Default Heartbeat Template
 
-The default `heartbeatMd` contains only headers and comments (no active checks). The agent always runs the LLM call, but when no checks are configured it produces a generic "all clear" message which the classification gate suppresses via `SUPPRESS`.
+The default `heartbeatMd` contains only headers and comments (no active checks). The agent always runs the LLM call, but when no checks are configured the heartbeat system prompt steers it to produce a plain brief "all clear" (never commentary about the config being empty), which the classification gate suppresses via `SUPPRESS`.
 
 ## Empty Message Filtering
 
