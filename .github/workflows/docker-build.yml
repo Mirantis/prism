@@ -3,6 +3,9 @@ name: Docker Build
 on:
   pull_request:
     paths:
+      # The workflow itself: changes to the build matrix/steps must
+      # re-validate the image build on both platforms.
+      - '.github/workflows/docker-build.yml'
       - 'Dockerfile'
       - 'src/**'
       - 'web/**'
