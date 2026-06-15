@@ -54,6 +54,92 @@ export async function waitForBotReply(
   return null;
 }
 
+/** A file as it appears on a Slack message (subset we assert against). */
+export interface SlackSharedFile {
+  id?: string;
+  name?: string;
+  title?: string;
+  user?: string;
+  url_private?: string;
+  url_private_download?: string;
+}
+
+/**
+ * Upload a file to a channel as a user (simulates a human sharing an
+ * attachment). `initialComment` becomes the file-share message text — include
+ * a `<@bot>` mention there to make the bot process it. Returns the ts of the
+ * resulting file-share message so callers can poll its thread for the reply.
+ */
+export async function uploadFileToChannel(
+  client: WebClient,
+  channel: string,
+  opts: { filename: string; content: string; initialComment?: string },
+  timeoutMs = 30_000,
+): Promise<string> {
+  // Slack ts are unix-seconds with microseconds; use a `oldest` floor so the
+  // history scan only sees messages from this upload onward.
+  const oldest = (Date.now() / 1000 - 5).toFixed(6);
+  await client.files.uploadV2({
+    channel_id: channel,
+    filename: opts.filename,
+    file: Buffer.from(opts.content),
+    ...(opts.initialComment ? { initial_comment: opts.initialComment } : {}),
+  });
+
+  // The upload posts a file_share message; find its ts (uploadV2's response
+  // doesn't reliably carry the share ts, so poll channel history).
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const hist = await client.conversations.history({ channel, oldest, limit: 20 });
+    const msg = hist.messages?.find(
+      (m) =>
+        Array.isArray(m.files) &&
+        (m.files as SlackSharedFile[]).some(
+          (f) => f.name === opts.filename || f.title === opts.filename,
+        ),
+    );
+    if (msg?.ts) return msg.ts;
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+  throw new Error(`file_share message for ${opts.filename} not found in channel ${channel}`);
+}
+
+/**
+ * Poll a thread for a file the BOT shared (uploader === botUserId) whose name
+ * or title matches `filename`. Returns the file object (for download) or null.
+ */
+export async function waitForBotFileInThread(
+  client: WebClient,
+  channel: string,
+  threadTs: string,
+  filename: string,
+  botUserId: string,
+  timeoutMs = 120_000,
+  intervalMs = 2_000,
+): Promise<SlackSharedFile | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await client.conversations.replies({ channel, ts: threadTs, limit: 50 });
+    for (const m of result.messages ?? []) {
+      const file = (m.files as SlackSharedFile[] | undefined)?.find(
+        (f) => (f.name === filename || f.title === filename) && (!f.user || f.user === botUserId),
+      );
+      if (file) return file;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return null;
+}
+
+/** Download a Slack file's bytes as text using a token authorized to see it. */
+export async function downloadSlackFileText(file: SlackSharedFile, token: string): Promise<string> {
+  const url = file.url_private_download ?? file.url_private;
+  if (!url) throw new Error('shared file has no download URL');
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`download failed: ${res.status} ${res.statusText}`);
+  return res.text();
+}
+
 /**
  * Poll for a bot message posted to a channel after a given timestamp.
  * Used for heartbeat-triggered replies, which post to the channel rather
