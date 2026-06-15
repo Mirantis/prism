@@ -403,9 +403,12 @@ class SlackAdapterService implements ChannelAdapter {
           logger.warn('[Slack] shared attachment %s not found; skipping upload', meta.id);
           continue;
         }
+        // Prisma's Bytes already comes back as a Buffer — reuse it rather than
+        // copying the (up to 10 MB) payload; only convert if it isn't one.
+        const fileBytes = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
         const uploadBase = {
           channel_id: channelId,
-          file: Buffer.from(row.data),
+          file: fileBytes,
           filename: row.filename,
         };
         // Concrete branches: the uploadV2 args union requires thread_ts to be a
