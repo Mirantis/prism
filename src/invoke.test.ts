@@ -514,6 +514,9 @@ describe('invoke', () => {
     });
 
     it('swallows the abort error — no friendly error step — when the signal is aborted', async () => {
+      // Mocks aren't auto-cleared between tests in this file, so scope the
+      // telemetry assertions below to this test's invoke() call only.
+      mockTrackEvent.mockClear();
       const controller = new AbortController();
       controller.abort();
       // Mirrors the SDK: an aborted signal makes generateText reject with an
@@ -529,6 +532,17 @@ describe('invoke', () => {
       expect(result.response).not.toMatch(/encountered an error/i);
       // Status must still reset so the agent doesn't get stuck RUNNING.
       expect(mockSetDoneProcessing).toHaveBeenCalled();
+      // A cancel emits a distinct telemetry event, not "invocation completed".
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'invocation canceled',
+        expect.any(String),
+        expect.objectContaining({ 'invoke.mode': 'chat' }),
+      );
+      expect(mockTrackEvent).not.toHaveBeenCalledWith(
+        'invocation completed',
+        expect.anything(),
+        expect.anything(),
+      );
     });
 
     it('preserves already-completed steps when aborted mid-stream', async () => {

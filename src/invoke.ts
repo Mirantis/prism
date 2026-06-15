@@ -206,6 +206,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         : {};
 
     // 8. Call generateText and yield steps as they complete
+    let wasCanceled = false;
     const channel = new AsyncChannel<InvokeStep>();
 
     generateText({
@@ -293,6 +294,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       // don't want a "I encountered an error…" bubble. We own the signal, so
       // `aborted` is the robust discriminator (no error-shape sniffing).
       if (request.abortSignal?.aborted) {
+        wasCanceled = true;
         channel.close();
         return;
       }
@@ -308,7 +310,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // buildErrorStep above — no exception is thrown.
     yield* channel;
 
-    trackEvent('invocation completed', request.userId, {
+    // A user-aborted turn is reported as a distinct event (not "completed") so
+    // cancellations are measurable. invokeStream is the single convergence
+    // point for every cancel path (WS cancel message + HTTP disconnect), so
+    // it owns this event — callers don't emit their own.
+    trackEvent(wasCanceled ? 'invocation canceled' : 'invocation completed', request.userId, {
       'agent.id': agentId,
       'invoke.mode': request.mode,
       'invocation.duration_ms': String(Date.now() - startTime),
