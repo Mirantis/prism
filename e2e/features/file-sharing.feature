@@ -1,6 +1,7 @@
 Feature: Share files with the agent
   As a user I want to share files with my personal agent
-  so that it can read attachments I send in chat
+  so that it can read attachments I send in chat,
+  and receive files the agent creates and shares back
 
   Background:
     Given I am logged in
@@ -31,3 +32,22 @@ Feature: Share files with the agent
     When I download the attachment "report.txt"
     Then the downloaded file should be named "report.txt"
     And the downloaded file should contain "downloaded payload PRISMDL"
+
+  Scenario: The agent creates a file and shares it back as a download
+    When I navigate to the agent chat page
+    And I type "Create a file named greeting.txt whose exact contents are PRISMSHARE99, then share that file with me so I can download it." in the chat input
+    And I send the message
+    Then I should see "greeting.txt" as an attachment on the agent's message
+    When I download the attachment "greeting.txt"
+    Then the downloaded file should be named "greeting.txt"
+    And the downloaded file should contain "PRISMSHARE99"
+
+  Scenario: An agent-shared file persists across reload
+    When I navigate to the agent chat page
+    And I type "Create a file named export.txt whose exact contents are PRISMRELOAD7 and share it with me as a downloadable file." in the chat input
+    And I send the message
+    Then I should see "export.txt" as an attachment on the agent's message
+    When I reload the chat page
+    And I download the attachment "export.txt"
+    Then the downloaded file should be named "export.txt"
+    And the downloaded file should contain "PRISMRELOAD7"

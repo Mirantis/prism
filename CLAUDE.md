@@ -28,6 +28,24 @@ The Test plan section should describe behavior that was actually exercised
 the PR is already a required check on the PR page, so it's self-evident
 and adds noise.
 
+## Testing
+
+Every new **user-facing feature must ship with comprehensive end-to-end
+tests** covering each surface it touches — exercise the real flow, not just
+unit-level mocks. The e2e suites live in `e2e/`:
+
+- **Web**: Playwright BDD — a `.feature` in `e2e/features/` with step
+  definitions in `e2e/steps/` driving the SPA against a real agent-runtime
+  and real Bedrock. Run via `npm run test --workspace=prism-agent-e2e`.
+- **CLI/TUI**: vitest + `node-pty` specs in `e2e/tui/tests/` driving
+  `prism-cli` under a PTY against a real runtime. Run via
+  `npm run test:e2e:tui --workspace=prism-agent-e2e`.
+
+A feature that spans both web and CLI needs e2e coverage on both. Assert on
+authoritative state where possible (downloaded file bytes, DB rows via the
+management API) rather than only on-screen text. Both suites need Node 24+
+and AWS/Bedrock credentials in the shell (see `e2e/README.md`).
+
 ## Deployment shape
 
 One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
