@@ -53,6 +53,16 @@ while IFS= read -r -d '' nm_dir; do
   echo "Linked $rel"
 done < <(find "$REPO_ROOT" -name "node_modules" -maxdepth 4 -type d -not -path "*/node_modules/*/node_modules*" -not -path "*/.claude/*" -print0)
 
+# Regenerate the Prisma client against THIS worktree's schema. node_modules
+# (and so the single generated client) is shared via the symlinks above, so a
+# different worktree's last `prisma generate` may leave the client expecting
+# columns this branch doesn't have ("column ... does not exist" at runtime).
+# Re-baking it here aligns the client with the worktree we just created.
+echo "Generating Prisma client for this worktree's schema..."
+if ! ( cd "$WORKTREE_DIR" && npx prisma generate --schema=prisma/sqlite/schema.prisma ); then
+  echo "Warning: prisma generate failed — run it manually in the worktree before \`npm run dev\`."
+fi
+
 echo ""
 echo "Worktree ready at $WORKTREE_DIR"
 echo "Starting Claude Code..."
