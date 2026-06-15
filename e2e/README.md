@@ -47,6 +47,29 @@ After a test run, open the HTML report:
 npm run test:report
 ```
 
+## TUI (CLI) tests
+
+The `prism-cli` end-to-end tests live in `tui/` and are **separate** from the
+Playwright web suite. They drive the CLI under a real `node-pty` PTY against a
+live agent-runtime, and are written in Gherkin via
+[`@amiceli/vitest-cucumber`](https://www.npmjs.com/package/@amiceli/vitest-cucumber)
+(which runs on vitest, so the `node-pty` harness and config are preserved):
+
+- `tui/features/*.feature` — the Gherkin scenarios.
+- `tui/tests/*.test.ts` — step bindings + the runtime/PTY lifecycle, wired
+  through the `BeforeAllScenarios` / `BeforeEachScenario` / `AfterEachScenario`
+  / `AfterAllScenarios` hooks (`setupRuntime` → `startPrism` → `stop` →
+  `cleanup`). Steps reused across scenarios are registered once via
+  `defineSteps`.
+
+```bash
+npm run test:e2e:tui --workspace=prism-agent-e2e
+```
+
+These need Node 24+ and (for the chat/tool-call/file scenarios) AWS/Bedrock
+credentials in the shell. Boot, slash-command, panel, and management-command
+scenarios don't call the LLM.
+
 ## Slack E2E Setup
 
 The `@slack` tagged tests require a real Slack workspace and app. Without credentials, these tests are skipped automatically.

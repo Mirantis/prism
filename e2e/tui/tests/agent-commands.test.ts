@@ -5,134 +5,136 @@
  * on-screen SYSTEM reply is asserted in the PTY frame, and the persistent
  * side effect is confirmed with a direct REST query against the runtime.
  *
+ * Written with @amiceli/vitest-cucumber (features/agent-commands.feature). The
+ * shared "I run …" / "I see …" steps are registered once via defineSteps;
+ * scenario-specific REST assertions are bound inline.
+ *
  * /heartbeat trigger is intentionally omitted: it awaits a full heartbeat run
  * (LLM) and is covered by the cli/ unit tests instead.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { expect } from 'vitest';
+import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
 import { startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, resetThread, runtimeRequest, type RuntimeTestEnv } from '../setup';
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
+const feature = loadFeatureFromText(
+  readFileSync(join(import.meta.dirname, '../features/agent-commands.feature'), 'utf8'),
+);
+
+let env: RuntimeTestEnv;
+let session: TuiSession;
+// Captured in the /model scenario's Given so the reset assertions can compare.
+let defaultModel = '';
 
 /**
  * Type a full command line (including any arguments) and submit it. We avoid
- * waiting on the slash popup — it hides as soon as a space is typed — and
- * instead give Ink a beat to commit the value into App state before Enter,
- * mirroring the real typing cadence (same approach as tool-calls.test.ts).
+ * waiting on the slash popup — it hides as soon as a space is typed — and give
+ * Ink a beat to commit the value into App state before Enter.
  */
-async function dispatch(session: TuiSession, line: string): Promise<void> {
+async function dispatch(line: string): Promise<void> {
   session.send(line);
-  await sleep(300);
+  await new Promise((r) => setTimeout(r, 300));
   session.send(KEYS.ENTER);
 }
 
-describe('Prism CLI management commands', () => {
-  let env: RuntimeTestEnv;
-  let session: TuiSession;
-
-  beforeAll(async () => {
+describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachScenario, AfterEachScenario, Scenario, defineSteps }) => {
+  BeforeAllScenarios(async () => {
     env = await setupRuntime();
   });
-
-  afterAll(async () => {
+  AfterAllScenarios(async () => {
     await env.cleanup();
   });
-
-  beforeEach(async () => {
+  BeforeEachScenario(async () => {
     resetThread(env.dbPath);
     session = startPrism({ env: env.prismEnv, runtime: env.runtime });
     await session.waitForFrame(/Prism/, 30_000);
   });
-
-  afterEach(async () => {
+  AfterEachScenario(async () => {
     await session.stop();
   });
 
-  test('/help lists the management commands with descriptions', async () => {
-    await dispatch(session, '/help');
-    // These descriptions live only in the help body — the popup was filtered to
-    // the /help prefix, so matching them proves we rendered the command output.
-    await session.waitForFrame(/Manage scheduled cron tasks/, 10_000);
-    await session.waitForFrame(/Control the heartbeat/, 5_000);
+  // Shared steps — matched by text across any keyword (Given/When/Then/And).
+  defineSteps(({ Step }) => {
+    Step('I run {string}', async (_ctx, line: string) => {
+      await dispatch(line);
+    });
+    Step('I see {string}', async (_ctx, text: string) => {
+      // waitForFrame accepts a plain string (substring match), so on-screen
+      // text with regex-special characters needs no escaping.
+      await session.waitForFrame(text, 10_000);
+    });
   });
 
-  test('/rename updates the agent name (preserving spaces)', async () => {
-    await dispatch(session, '/rename E2E Renamed Bot');
-    await session.waitForFrame(/Renamed to "E2E Renamed Bot"/, 10_000);
-
-    const me = await runtimeRequest<{ name: string }>(env.port, 'GET', '/agents/me');
-    expect(me.name).toBe('E2E Renamed Bot');
+  Scenario('/help lists the management commands with descriptions', () => {
+    // Covered entirely by the shared "I run" / "I see" steps.
   });
 
-  test('/model sets then resets the model override', async () => {
-    // Pristine effective model (no override on a freshly bootstrapped agent).
-    // The runtime always resolves a default, so PATCH /agents/model with null
-    // returns this same string — the command echoes it as `Model set to …`,
-    // never the empty-model branch.
-    const { model: defaultModel } = await runtimeRequest<{ model: string | null }>(
-      env.port,
-      'GET',
-      '/agents/model',
-    );
-    expect((defaultModel ?? '').length).toBeGreaterThan(0);
-
-    await dispatch(session, '/model my-test-model');
-    await session.waitForFrame(/Model set to "my-test-model"/, 10_000);
-    let model = await runtimeRequest<{ model: string | null }>(env.port, 'GET', '/agents/model');
-    expect(model.model).toBe('my-test-model');
-
-    await dispatch(session, '/model reset');
-    // Reset clears the override; the effective model returns to the default,
-    // which the command echoes. Waiting on this frame also avoids racing the
-    // REST read below against the in-flight PATCH.
-    await session.waitForFrame(`Model set to "${defaultModel}"`, 10_000);
-    model = await runtimeRequest<{ model: string | null }>(env.port, 'GET', '/agents/model');
-    expect(model.model).toBe(defaultModel);
+  Scenario('/rename updates the agent name preserving spaces', ({ Then, And }) => {
+    Then('the rename to {string} is confirmed', async (_ctx, name: string) => {
+      await session.waitForFrame(`Renamed to "${name}"`, 10_000);
+    });
+    And('the stored agent name is {string}', async (_ctx, name: string) => {
+      const me = await runtimeRequest<{ name: string }>(env.port, 'GET', '/agents/me');
+      expect(me.name).toBe(name);
+    });
   });
 
-  test('/heartbeat status reports the current state', async () => {
-    await dispatch(session, '/heartbeat status');
-    await session.waitForFrame(/active:/, 10_000);
-    await session.waitForFrame(/interval:/, 5_000);
+  Scenario('/model sets then resets the model override', ({ Given, Then, And, When }) => {
+    Given('the agent starts on its default model', async () => {
+      const res = await runtimeRequest<{ model: string | null }>(env.port, 'GET', '/agents/model');
+      defaultModel = res.model ?? '';
+      expect(defaultModel.length).toBeGreaterThan(0);
+    });
+    Then('the model is set to {string}', async (_ctx, model: string) => {
+      await session.waitForFrame(`Model set to "${model}"`, 10_000);
+      const res = await runtimeRequest<{ model: string | null }>(env.port, 'GET', '/agents/model');
+      expect(res.model).toBe(model);
+    });
+    And('the stored model is {string}', async (_ctx, model: string) => {
+      const res = await runtimeRequest<{ model: string | null }>(env.port, 'GET', '/agents/model');
+      expect(res.model).toBe(model);
+    });
+    When('I reset the model to its default', async () => {
+      await dispatch('/model reset');
+    });
+    Then('the model is set back to the default', async () => {
+      // Reset clears the override; the effective model returns to the default,
+      // which the command echoes. Waiting on this frame also avoids racing the
+      // REST read against the in-flight PATCH.
+      await session.waitForFrame(`Model set to "${defaultModel}"`, 10_000);
+    });
+    And('the stored model is the default', async () => {
+      const res = await runtimeRequest<{ model: string | null }>(env.port, 'GET', '/agents/model');
+      expect(res.model).toBe(defaultModel);
+    });
   });
 
-  test('/heartbeat stop then start toggles isActive', async () => {
-    await dispatch(session, '/heartbeat stop');
-    await session.waitForFrame(/Heartbeat stopped/, 10_000);
-    let status = await runtimeRequest<{ isActive: boolean }>(
-      env.port,
-      'GET',
-      '/agents/heartbeat/status',
-    );
-    expect(status.isActive).toBe(false);
-
-    await dispatch(session, '/heartbeat start');
-    await session.waitForFrame(/Heartbeat started/, 10_000);
-    status = await runtimeRequest<{ isActive: boolean }>(
-      env.port,
-      'GET',
-      '/agents/heartbeat/status',
-    );
-    expect(status.isActive).toBe(true);
+  Scenario('/heartbeat status reports the current state', () => {
+    // Covered by the shared steps.
   });
 
-  test('/heartbeat every 5m updates the interval', async () => {
-    await dispatch(session, '/heartbeat every 5m');
-    await session.waitForFrame(/Heartbeat interval set to 300000ms\./, 10_000);
-
-    const status = await runtimeRequest<{ intervalMs?: number }>(
-      env.port,
-      'GET',
-      '/agents/heartbeat/status',
-    );
-    expect(status.intervalMs).toBe(300_000);
+  Scenario('/heartbeat stop then start toggles isActive', ({ And }) => {
+    And('the heartbeat is inactive', async () => {
+      const status = await runtimeRequest<{ isActive: boolean }>(env.port, 'GET', '/agents/heartbeat/status');
+      expect(status.isActive).toBe(false);
+    });
+    And('the heartbeat is active', async () => {
+      const status = await runtimeRequest<{ isActive: boolean }>(env.port, 'GET', '/agents/heartbeat/status');
+      expect(status.isActive).toBe(true);
+    });
   });
 
-  test('/heartbeat with an unknown subcommand shows usage', async () => {
-    await dispatch(session, '/heartbeat wat');
-    await session.waitForFrame(/Usage: \/heartbeat/, 10_000);
+  Scenario('/heartbeat every 5m updates the interval', ({ And }) => {
+    And('the heartbeat interval is {int} ms', async (_ctx, ms: number) => {
+      const status = await runtimeRequest<{ intervalMs?: number }>(env.port, 'GET', '/agents/heartbeat/status');
+      expect(status.intervalMs).toBe(ms);
+    });
+  });
+
+  Scenario('/heartbeat with an unknown subcommand shows usage', () => {
+    // Covered by the shared steps.
   });
 });

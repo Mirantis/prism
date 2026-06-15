@@ -1,54 +1,57 @@
 /**
  * End-to-end chat round-trip against real Bedrock via prism-cli → WS →
- * agent-runtime. The prompt is written to constrain the agent's reply so we
- * can assert on a deterministic substring without snapshotting free-form
- * generation.
+ * agent-runtime. The prompt constrains the agent's reply so we can assert on a
+ * deterministic substring without snapshotting free-form generation.
+ *
+ * Written with @amiceli/vitest-cucumber (features/chat.feature).
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, test } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
 import { startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, resetThread, type RuntimeTestEnv } from '../setup';
 
-describe('Prism CLI chat round-trip', () => {
-  let env: RuntimeTestEnv;
-  let session: TuiSession;
+const feature = loadFeatureFromText(
+  readFileSync(join(import.meta.dirname, '../features/chat.feature'), 'utf8'),
+);
 
-  beforeAll(async () => {
+let env: RuntimeTestEnv;
+let session: TuiSession;
+
+describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachScenario, AfterEachScenario, Scenario }) => {
+  BeforeAllScenarios(async () => {
     env = await setupRuntime();
   });
-
-  afterAll(async () => {
+  AfterAllScenarios(async () => {
     await env.cleanup();
   });
-
-  beforeEach(async () => {
+  BeforeEachScenario(async () => {
     resetThread(env.dbPath);
     session = startPrism({ env: env.prismEnv, runtime: env.runtime });
     await session.waitForFrame(/Prism/, 30_000);
   });
-
-  afterEach(async () => {
+  AfterEachScenario(async () => {
     await session.stop();
   });
 
-  test('sends a prompt and renders the agent reply', async () => {
-    // The reply sentinel is a made-up word so we can tell it apart from
-    // the user's own echoed prompt in the chronological buffer.
-    const prompt = 'Reply with exactly one word: PRISMACK7. No other text.';
-    session.send(prompt);
-    // Let ink-text-input commit the appended chars before we send Enter —
-    // without this, the keystrokes can race and Enter submits with stale value.
-    await sleep(200);
-    session.send(KEYS.ENTER);
-
-    // User line renders optimistically in App.tsx.
-    await session.waitForFrame(/▌ You/, 5_000);
-
-    // Wait for the agent prefix to render — that's evidence the round-trip
-    // through real Bedrock completed and the reply landed in the chat.
-    await session.waitForFrame(/▌\s+Prism\b/, 120_000);
-    // And that the agent's reply contains the sentinel word.
-    await session.waitForFrame(/PRISMACK7/, 5_000);
+  Scenario('Sends a prompt and renders the agent reply', ({ When, Then, And }) => {
+    When('I send the prompt {string}', async (_ctx, prompt: string) => {
+      session.send(prompt);
+      // Let ink-text-input commit the appended chars before Enter — without
+      // this the keystrokes can race and Enter submits with a stale value.
+      await sleep(200);
+      session.send(KEYS.ENTER);
+    });
+    Then('my message appears in the chat', async () => {
+      // User line renders optimistically in App.tsx.
+      await session.waitForFrame(/▌ You/, 5_000);
+    });
+    And('the agent reply contains {string}', async (_ctx, sentinel: string) => {
+      // The agent prefix proves the round-trip through real Bedrock completed.
+      await session.waitForFrame(/▌\s+Prism\b/, 120_000);
+      await session.waitForFrame(new RegExp(sentinel), 5_000);
+    });
   });
 });
 

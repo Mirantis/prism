@@ -1,63 +1,74 @@
 /**
  * Boot + shutdown lifecycle for prism-cli. No Bedrock interaction required —
- * these tests exercise the Ink render path, the /exit slash command, and the
- * Ctrl+C → SIGINT shutdown bridge against a running agent-runtime.
+ * these scenarios exercise the Ink render path, the /exit slash command, and
+ * the Ctrl+C → SIGINT shutdown bridge against a running agent-runtime.
+ *
+ * Written with @amiceli/vitest-cucumber: the Gherkin scenarios live in
+ * features/boot-and-exit.feature; the runtime + PTY lifecycle is wired through
+ * the BeforeAll/BeforeEach/AfterEach/AfterAll scenario hooks.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { startPrism, KEYS } from '../harness';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { expect } from 'vitest';
+import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
+import { startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, type RuntimeTestEnv } from '../setup';
 
-describe('Prism CLI boot + exit', () => {
-  let env: RuntimeTestEnv;
+const feature = loadFeatureFromText(
+  readFileSync(join(import.meta.dirname, '../features/boot-and-exit.feature'), 'utf8'),
+);
 
-  beforeAll(async () => {
+let env: RuntimeTestEnv;
+let session: TuiSession;
+
+describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachScenario, AfterEachScenario, Scenario }) => {
+  BeforeAllScenarios(async () => {
     env = await setupRuntime();
   });
-
-  afterAll(async () => {
+  AfterAllScenarios(async () => {
     await env.cleanup();
   });
-
-  test('boots and renders the header', async () => {
-    const session = startPrism({ env: env.prismEnv, runtime: env.runtime });
-    try {
-      // The block-element prism logo always renders on mount; the rounded
-      // input border (╭…╮) is part of the input box.
-      await session.waitForFrame(/Prism/, 30_000);
-      await session.waitForFrame(/╭/, 5_000);
-    } finally {
-      await session.stop();
-    }
+  BeforeEachScenario(async () => {
+    session = startPrism({ env: env.prismEnv, runtime: env.runtime });
+    await session.waitForFrame(/Prism/, 30_000);
+  });
+  AfterEachScenario(async () => {
+    await session.stop();
   });
 
-  test('/exit shuts down cleanly', async () => {
-    const session = startPrism({ env: env.prismEnv, runtime: env.runtime });
-    try {
-      await session.waitForFrame(/Prism/, 30_000);
+  Scenario('Boots and renders the header', ({ Then }) => {
+    Then('the chat header and input box are visible', async () => {
+      // The block-element prism logo always renders on mount; the rounded
+      // input border (╭…╮) is part of the input box.
+      await session.waitForFrame(/Prism/, 5_000);
+      await session.waitForFrame(/╭/, 5_000);
+    });
+  });
+
+  Scenario('The /exit command shuts down cleanly', ({ When, Then }) => {
+    When('I submit the /exit command', async () => {
       // Type the command, wait for the popup to settle, then send Enter so
       // Ink processes the keystrokes as separate events.
       session.send('/exit');
       await session.waitForFrame(/▸\s*\/exit/, 5_000);
       session.send(KEYS.ENTER);
+    });
+    Then('the CLI shuts down with exit code 0', async () => {
       await session.waitForFrame(/Shutting down/, 20_000);
       const code = await session.waitForExit(30_000);
       expect(code).toBe(0);
-    } finally {
-      await session.stop();
-    }
+    });
   });
 
-  test('Ctrl+C shuts down cleanly', async () => {
-    const session = startPrism({ env: env.prismEnv, runtime: env.runtime });
-    try {
-      await session.waitForFrame(/Prism/, 30_000);
+  Scenario('Ctrl+C shuts down cleanly', ({ When, Then }) => {
+    When('I press Ctrl+C', () => {
       session.send(KEYS.CTRL_C);
+    });
+    Then('the CLI shuts down with exit code 0', async () => {
       await session.waitForFrame(/Shutting down/, 20_000);
       const code = await session.waitForExit(30_000);
       expect(code).toBe(0);
-    } finally {
-      await session.stop();
-    }
+    });
   });
 });
