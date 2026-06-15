@@ -37,6 +37,7 @@ import { attachmentService } from './services/attachment.service';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
+import { ensureWorkspaceRoot } from './tools/shell/config';
 
 // Initialize Langfuse tracing before any LLM calls
 initLangfuse();
@@ -59,6 +60,21 @@ webSocketGatewayService.initialize(httpServer);
 
 const initialize = async () => {
   try {
+    // Ensure the shell tools' workspace dir exists before any invocation can
+    // spawn a command there — a missing cwd surfaces as `spawn /bin/bash
+    // ENOENT`, which masquerades as a missing shell (e.g. `npm run dev` on
+    // macOS, where the default /home/node can't be created).
+    const ws = ensureWorkspaceRoot();
+    if (ws.fellBackFrom) {
+      logger.warn(
+        '[Startup] shell workspace %s is not usable; falling back to %s. Set SHELL_WORKSPACE_ROOT to choose another.',
+        ws.fellBackFrom,
+        ws.root,
+      );
+    } else {
+      logger.info('[Startup] shell workspace: %s', ws.root);
+    }
+
     // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
     // either picks up the existing row via findFirst() or creates a
     // fresh one with a generated UUID. Auth is handled by Nexus inbound
