@@ -320,20 +320,27 @@ export const COMMANDS: SlashCommand[] = [
         targetDir = cwd;
       } else {
         const resolved = path.resolve(cwd, expandPath(destArg));
-        // Treat a trailing separator or an existing directory as a dir target.
-        let isDir = /[\\/]$/.test(destArg);
+        const endsWithSep = /[\\/]$/.test(destArg);
+        let existsAsDir = false;
+        let existsAsFile = false;
         try {
-          isDir = isDir || fs.statSync(resolved).isDirectory();
+          const st = await fs.promises.stat(resolved);
+          existsAsDir = st.isDirectory();
+          existsAsFile = st.isFile();
         } catch {
-          // Path doesn't exist yet — fall through to the file/dir heuristic.
+          // Path doesn't exist yet.
         }
-        if (isDir) {
+        // Treat as a directory when it already is one, ends with a separator,
+        // or doesn't exist yet but several files are pending (so `/save out`
+        // can create `out/` and drop them all in). A single pending file with
+        // a non-existent path is written verbatim to that path.
+        if (existsAsDir || endsWithSep || (!existsAsFile && files.length > 1)) {
           targetDir = resolved;
         } else if (files.length === 1) {
           singleFilePath = resolved;
           targetDir = path.dirname(resolved);
         } else {
-          return `"${destArg}" looks like a single file but ${files.length} files are pending — give a directory instead.`;
+          return `"${destArg}" is an existing file but ${files.length} files are pending — give a directory instead.`;
         }
       }
 

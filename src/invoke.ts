@@ -461,11 +461,12 @@ export function extractAttachmentIds(
   toolCalls: Array<{ toolName: string; toolCallId: string }>,
   toolResults: Array<{ toolCallId: string; output: unknown }>,
 ): string[] {
+  // Index results once (O(n)) rather than scanning per share_file call.
+  const outputById = new Map(toolResults.map((r) => [r.toolCallId, r.output]));
   const ids: string[] = [];
   for (const tc of toolCalls) {
     if (tc.toolName !== SHARE_FILE_TOOL_NAME) continue;
-    const tr = toolResults.find((r) => r.toolCallId === tc.toolCallId);
-    const out = tr?.output;
+    const out = outputById.get(tc.toolCallId);
     if (
       out &&
       typeof out === 'object' &&

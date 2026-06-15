@@ -546,17 +546,36 @@ describe('/save', () => {
     expect(out).toContain('Saved 1 file(s)');
   });
 
-  it('refuses a single-file destination when multiple files are pending', async () => {
+  it('creates a new directory for multiple files named by a non-existent path', async () => {
     const dir = tmpDir();
+    const newDir = path.join(dir, 'exports');
+    const api = stubApi();
+    api.downloadAttachment.mockResolvedValue(Buffer.from('x'));
+    const out = await cmd('/save').run(
+      makeCtx({
+        api: api as unknown as ApiClient,
+        recentAttachments: [meta('a', 'one.csv'), meta('b', 'two.csv')],
+        rawArgs: newDir,
+      }),
+    );
+    expect(fs.readFileSync(path.join(newDir, 'one.csv'), 'utf8')).toBe('x');
+    expect(fs.readFileSync(path.join(newDir, 'two.csv'), 'utf8')).toBe('x');
+    expect(out).toContain('Saved 2 file(s)');
+  });
+
+  it('refuses an existing-file destination when multiple files are pending', async () => {
+    const dir = tmpDir();
+    const dest = path.join(dir, 'one.txt');
+    fs.writeFileSync(dest, 'already here');
     const api = stubApi();
     const out = await cmd('/save').run(
       makeCtx({
         api: api as unknown as ApiClient,
         recentAttachments: [meta('a'), meta('b')],
-        rawArgs: path.join(dir, 'one.txt'),
+        rawArgs: dest,
       }),
     );
-    expect(out).toMatch(/single file/i);
+    expect(out).toMatch(/existing file/i);
     expect(api.downloadAttachment).not.toHaveBeenCalled();
   });
 
