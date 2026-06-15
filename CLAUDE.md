@@ -37,9 +37,12 @@ unit-level mocks. The e2e suites live in `e2e/`:
 - **Web**: Playwright BDD — a `.feature` in `e2e/features/` with step
   definitions in `e2e/steps/` driving the SPA against a real agent-runtime
   and real Bedrock. Run via `npm run test --workspace=prism-agent-e2e`.
-- **CLI/TUI**: vitest + `node-pty` specs in `e2e/tui/tests/` driving
-  `prism-cli` under a PTY against a real runtime. Run via
-  `npm run test:e2e:tui --workspace=prism-agent-e2e`.
+- **CLI/TUI**: Gherkin `.feature` files in `e2e/tui/features/` bound with
+  `@amiceli/vitest-cucumber` (runs on vitest) in `e2e/tui/tests/`, driving
+  `prism-cli` under a `node-pty` PTY against a real runtime. The runtime + PTY
+  lifecycle is wired through the `BeforeAllScenarios`/`BeforeEachScenario`/
+  `AfterEachScenario`/`AfterAllScenarios` hooks; shared steps go through
+  `defineSteps`. Run via `npm run test:e2e:tui --workspace=prism-agent-e2e`.
 
 A feature that spans both web and CLI needs e2e coverage on both. Assert on
 authoritative state where possible (downloaded file bytes, DB rows via the
