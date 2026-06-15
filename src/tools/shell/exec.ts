@@ -51,6 +51,8 @@ export interface ExecResult {
   stderr: string;
   exitCode: number;
   timedOut?: boolean;
+  /** Set when the run was killed because the turn was canceled mid-command. */
+  aborted?: boolean;
 }
 
 /**
@@ -89,6 +91,7 @@ export function appendCappedChunk(
 export async function runShellExec(
   input: z.infer<typeof shellExecInput>,
   workspace: string = resolveWorkspaceRoot(),
+  abortSignal?: AbortSignal,
 ): Promise<ExecResult> {
   const cwd = input.workdir ? resolvePath(workspace, input.workdir) : workspace;
   const timeoutMs = Math.min(input.timeout ?? DEFAULT_EXEC_TIMEOUT_MS, MAX_EXEC_TIMEOUT_MS);
@@ -126,19 +129,38 @@ export async function runShellExec(
     child.stdout?.on('data', (chunk: Buffer) => collect(chunk, stdoutChunks, outState, outTrunc));
     child.stderr?.on('data', (chunk: Buffer) => collect(chunk, stderrChunks, errState, errTrunc));
 
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    // SIGTERM, then escalate to SIGKILL if the child hasn't exited shortly
+    // after. Shared by the timeout and the cancel (abort) paths.
+    const terminate = () => {
       child.kill('SIGTERM');
-      // Escalate to SIGKILL if it hasn't exited shortly after.
       setTimeout(() => {
         if (child.exitCode === null) child.kill('SIGKILL');
       }, 2000).unref();
+    };
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      terminate();
     }, timeoutMs);
     timer.unref();
 
+    // Cancel propagation: when the turn is aborted mid-command, kill the child
+    // so it doesn't run on to its own timeout in the background. The signal is
+    // the per-turn AbortSignal threaded from generateText's tool execution.
+    let aborted = false;
+    const onAbort = () => {
+      aborted = true;
+      terminate();
+    };
+    if (abortSignal) {
+      if (abortSignal.aborted) onAbort();
+      else abortSignal.addEventListener('abort', onAbort, { once: true });
+    }
+
     const done = (exitCode: number) => {
       clearTimeout(timer);
+      abortSignal?.removeEventListener('abort', onAbort);
       stdoutBytes = outState.n;
       stderrBytes = errState.n;
       stdoutTruncated = outTrunc.t;
@@ -150,11 +172,13 @@ export async function runShellExec(
       if (stderrTruncated) stderr += marker;
       const result: ExecResult = { stdout, stderr, exitCode };
       if (timedOut) result.timedOut = true;
+      if (aborted) result.aborted = true;
       resolve(result);
     };
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      abortSignal?.removeEventListener('abort', onAbort);
       resolve({
         stdout: '',
         stderr: err instanceof Error ? err.message : String(err),

@@ -63,6 +63,28 @@ describe('shell_exec (runShellExec)', () => {
     expect(result.exitCode).not.toBe(0);
   });
 
+  it('kills the child and sets aborted when the turn is canceled mid-command', async () => {
+    const controller = new AbortController();
+    const start = Date.now();
+    const p = runShellExec({ command: 'sleep 5' }, workspace, controller.signal);
+    // Let the child start, then cancel the turn.
+    setTimeout(() => controller.abort(), 150);
+    const result = await p;
+    expect(result.aborted).toBe(true);
+    expect(result.exitCode).not.toBe(0);
+    // Killed promptly — nowhere near the 5s the command would have taken.
+    expect(Date.now() - start).toBeLessThan(3000);
+  });
+
+  it('does not run a command when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const start = Date.now();
+    const result = await runShellExec({ command: 'sleep 5' }, workspace, controller.signal);
+    expect(result.aborted).toBe(true);
+    expect(Date.now() - start).toBeLessThan(3000);
+  });
+
   it('truncates stdout at the default 10000-byte limit and appends a marker', async () => {
     const result = await runShellExec(
       { command: "head -c 20000 /dev/zero | tr '\\0' 'x'" },
