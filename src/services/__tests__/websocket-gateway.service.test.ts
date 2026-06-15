@@ -73,6 +73,7 @@ describe('Requirement: WebSocket Gateway', () => {
     service.connections = new Map();
     service.messageQueues = new Map();
     service.processingUsers = new Set();
+    service.activeRequests = new Map();
 
     // Default mock responses
     mockChat.mockResolvedValue(undefined);
@@ -265,6 +266,95 @@ describe('Requirement: WebSocket Gateway', () => {
         type: 'error',
         payload: { error: 'Unknown message type' },
       }));
+    });
+  });
+
+  describe('Scenario: Cancellation', () => {
+    /** Start a chat turn that blocks on a controllable chat promise. */
+    function startBlockingTurn(userId: string) {
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+      ws.readyState = 1;
+      service.connections.set(userId, [ws]);
+
+      let capturedSignal: AbortSignal | undefined;
+      let settle!: (action: 'resolve' | 'reject', value?: unknown) => void;
+      mockChat.mockImplementation((input: { abortSignal?: AbortSignal }) => {
+        capturedSignal = input.abortSignal;
+        return new Promise<void>((resolve, reject) => {
+          settle = (action, value) =>
+            action === 'resolve' ? resolve(undefined) : reject(value);
+        });
+      });
+
+      // Kick off processing; it stays pending on the blocking chat promise.
+      const processing = service.handleChatMessage(ws, userId, {
+        type: 'chat', mode: 'followup', content: 'Hello', agentId: 'agent-123',
+      });
+
+      return { ws, processing, getSignal: () => capturedSignal, settle: (...a: ['resolve' | 'reject', unknown?]) => settle(...a) };
+    }
+
+    it('aborts the in-flight request when a cancel message arrives', async () => {
+      const userId = 'user-123';
+      const turn = startBlockingTurn(userId);
+      await Promise.resolve();
+
+      expect(turn.getSignal()?.aborted).toBe(false);
+
+      await service.handleMessage(turn.ws, userId, { type: 'cancel' });
+
+      expect(turn.getSignal()?.aborted).toBe(true);
+
+      turn.settle('resolve');
+      await turn.processing;
+    });
+
+    it('broadcasts a terminal { processing: false } status when the turn ends', async () => {
+      const userId = 'user-123';
+      const turn = startBlockingTurn(userId);
+      await Promise.resolve();
+
+      turn.settle('resolve');
+      await turn.processing;
+
+      expect(turn.ws.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: 'status', payload: { processing: false } }),
+      );
+    });
+
+    it('does not surface an error envelope when the turn was cancelled', async () => {
+      const userId = 'user-123';
+      const turn = startBlockingTurn(userId);
+      await Promise.resolve();
+
+      await service.handleMessage(turn.ws, userId, { type: 'cancel' });
+      // The aborted generation rejects (as the SDK would); the gateway must
+      // swallow it rather than show an error bubble.
+      turn.settle('reject', Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      await turn.processing;
+
+      const sentTypes = turn.ws.send.mock.calls.map((c: [string]) => JSON.parse(c[0]).type);
+      expect(sentTypes).not.toContain('error');
+    });
+
+    it('clears any queued followups on cancel so none auto-start', () => {
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+      service.messageQueues.set(userId, [{ message: { type: 'chat' }, resolve: () => {} }]);
+      service.activeRequests.set(userId, new AbortController());
+
+      service.handleMessage(ws, userId, { type: 'cancel' });
+
+      expect(service.messageQueues.has(userId)).toBe(false);
+    });
+
+    it('cancel is a no-op when nothing is in flight', () => {
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+      expect(() => service.handleMessage(ws, userId, { type: 'cancel' })).not.toThrow();
     });
   });
 

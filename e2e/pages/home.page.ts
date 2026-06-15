@@ -11,12 +11,15 @@ import { BasePage } from './base.page';
 export class HomePage extends BasePage {
   readonly chatInput: Locator;
   readonly sendButton: Locator;
+  readonly stopButton: Locator;
   readonly fileInput: Locator;
 
   constructor(page: Page) {
     super(page);
     this.chatInput = page.getByPlaceholder('Message your agent...');
     this.sendButton = page.locator('button[type="submit"]');
+    // STOP button shown in place of send while the agent is responding.
+    this.stopButton = page.getByTestId('chat-stop-button');
     // Hidden file input behind the paperclip button in ChatInput.
     this.fileInput = page.locator('input[type="file"]');
   }
@@ -32,6 +35,15 @@ export class HomePage extends BasePage {
 
   async sendMessage() {
     await this.sendButton.click();
+  }
+
+  /**
+   * Cancel the in-flight response: wait for the STOP button to replace send
+   * (the agent is working), then click it.
+   */
+  async stopResponse(timeout = 10_000) {
+    await this.stopButton.waitFor({ state: 'visible', timeout });
+    await this.stopButton.click();
   }
 
   /**

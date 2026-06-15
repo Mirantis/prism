@@ -239,6 +239,14 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // early for these keys so they don't conflict with the textbox. Disabled
   // while a panel is open so the panel's own useInput owns the keyboard.
   useInput((input, key) => {
+    // Escape while the agent is working cancels the in-flight turn: tells the
+    // runtime to abort the LLM generation and drops a client-only marker so
+    // the user gets explicit confirmation (the in-flight text is discarded).
+    if (key.escape && status === 'thinking') {
+      tuiAdapterService.cancel();
+      appendSystemMessage('⏹ Response stopped');
+      return;
+    }
     // Ctrl+O — toggle expansion of the latest agent message that has tool
     // calls. If a different message is currently expanded, this implicitly
     // collapses it by switching the id.

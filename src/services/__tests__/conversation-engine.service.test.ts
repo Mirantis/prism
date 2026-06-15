@@ -165,6 +165,21 @@ describe('Requirement: Conversation Engine', () => {
       );
     });
 
+    it('forwards the abortSignal into invokeStream so a cancel stops generation', async () => {
+      const controller = new AbortController();
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'What pods are running?',
+        abortSignal: controller.signal,
+      });
+
+      expect(mockInvokeStream).toHaveBeenCalledWith(
+        expect.objectContaining({ abortSignal: controller.signal }),
+      );
+    });
+
     it('emits a "chat message handled" telemetry event tagged with agent and thread ids', async () => {
       await conversationEngineService.chat({
         userId: 'user-123',

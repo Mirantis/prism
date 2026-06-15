@@ -16,6 +16,7 @@ const { adapterStub, apiStub } = vi.hoisted(() => {
       markDisconnected: vi.fn(),
       loadHistory: vi.fn().mockResolvedValue([]),
       submitUserMessage: vi.fn().mockResolvedValue(undefined),
+      cancel: vi.fn(),
     },
     // Panels reach for the apiClient singleton on mount (SchedulesPanel calls
     // listCronTasks, ConfigPanel calls getDetails), so stub it to keep the
@@ -64,6 +65,7 @@ describe('App', () => {
     apiStub.getDetails.mockClear();
     apiStub.uploadAttachment.mockClear();
     apiStub.deleteAttachment.mockClear();
+    adapterStub.cancel.mockClear();
   });
 
   it('renders the header, input box, and status bar on mount', () => {
@@ -102,6 +104,41 @@ describe('App', () => {
     await new Promise((r) => setImmediate(r));
     expect(lastFrame() ?? '').toContain('thinking');
     unmount();
+  });
+
+  // ink holds a lone trailing ESC for ~20ms (pendingInputFlushDelayMilliseconds)
+  // to disambiguate it from a multi-byte escape sequence before emitting it as
+  // a standalone Escape keypress. Wait past that window, then let React commit.
+  const pressEscape = async (stdin: { write: (data: string) => void }) => {
+    stdin.write('\x1b');
+    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setImmediate(r));
+  };
+
+  it('cancels the in-flight turn and shows a marker when Escape is pressed while thinking', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    try {
+      adapterStub.events.emit('status', 'thinking');
+      await new Promise((r) => setImmediate(r));
+      expect(lastFrame() ?? '').toContain('thinking');
+
+      await pressEscape(stdin);
+
+      expect(adapterStub.cancel).toHaveBeenCalled();
+      expect(lastFrame() ?? '').toContain('Response stopped');
+    } finally {
+      unmount();
+    }
+  });
+
+  it('ignores Escape when the agent is idle (nothing to cancel)', async () => {
+    const { stdin, unmount } = render(<App {...baseProps} />);
+    try {
+      await pressEscape(stdin); // Escape while idle
+      expect(adapterStub.cancel).not.toHaveBeenCalled();
+    } finally {
+      unmount();
+    }
   });
 
   it('hides the status bar when hideStatusBar is true', () => {

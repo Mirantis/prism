@@ -14,7 +14,7 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from '@/components/ui/input-group';
-import { ArrowUp, Loader2, Paperclip } from 'lucide-react';
+import { ArrowUp, Paperclip, Square } from 'lucide-react';
 import type { ConnectionStatus } from '@/hooks/use-websocket';
 import { PendingAttachmentChip, type PendingAttachment } from './ChatAttachmentChip';
 
@@ -23,6 +23,8 @@ interface ChatInputProps {
   onChange: (value: string) => void;
   onSend: (e: FormEvent) => void;
   isPending: boolean;
+  /** Stop the in-flight turn — fired by the STOP button shown while pending. */
+  onCancel: () => void;
   connectionStatus: ConnectionStatus;
   attachments: PendingAttachment[];
   onFilesSelected: (files: File[]) => void;
@@ -41,6 +43,7 @@ export default function ChatInput({
   onChange,
   onSend,
   isPending,
+  onCancel,
   connectionStatus,
   attachments,
   onFilesSelected,
@@ -150,15 +153,30 @@ export default function ChatInput({
               className="max-h-40 min-h-[36px]"
             />
             <InputGroupAddon align="inline-end">
-              <InputGroupButton
-                type="submit"
-                size="icon-xs"
-                variant={isDisabled ? 'ghost' : 'default'}
-                disabled={isDisabled}
-                className="rounded-full"
-              >
-                {isPending ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowUp className="size-3.5" />}
-              </InputGroupButton>
+              {isPending ? (
+                <InputGroupButton
+                  type="button"
+                  size="icon-xs"
+                  variant="default"
+                  onClick={onCancel}
+                  title="Stop response"
+                  aria-label="Stop response"
+                  data-testid="chat-stop-button"
+                  className="rounded-full"
+                >
+                  <Square className="size-3 fill-current" />
+                </InputGroupButton>
+              ) : (
+                <InputGroupButton
+                  type="submit"
+                  size="icon-xs"
+                  variant={isDisabled ? 'ghost' : 'default'}
+                  disabled={isDisabled}
+                  className="rounded-full"
+                >
+                  <ArrowUp className="size-3.5" />
+                </InputGroupButton>
+              )}
             </InputGroupAddon>
           </InputGroup>
           <input

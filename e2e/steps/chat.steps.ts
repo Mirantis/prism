@@ -18,6 +18,19 @@ When('I send the message', async ({ page }) => {
   await homePage.sendMessage();
 });
 
+When('I stop the in-progress response', async ({ page }) => {
+  const homePage = new HomePage(page);
+  await homePage.stopResponse();
+});
+
+Then('the chat composer should be ready for input again', async ({ page }) => {
+  const homePage = new HomePage(page);
+  // Typing indicator clears (runtime broadcast processing:false) and the
+  // STOP button reverts to the send button.
+  await homePage.waitForStreamComplete();
+  await expect(homePage.sendButton).toBeVisible();
+});
+
 Then('I should see my message {string} in the conversation', async ({ page }, text: string) => {
   const homePage = new HomePage(page);
   await expect(homePage.getMessageByText(text)).toBeVisible({ timeout: 10_000 });

@@ -166,6 +166,16 @@ class TuiAdapter {
     });
   }
 
+  /**
+   * Cancel the in-flight turn: tell the runtime to abort the LLM generation
+   * and optimistically flip back to idle so the spinner clears immediately
+   * (the runtime also broadcasts a terminal `processing: false` status).
+   */
+  cancel(): void {
+    this.client?.send({ type: 'cancel' });
+    this.events.emit('status', 'idle');
+  }
+
   private onEnvelope(env: WsEnvelope): void {
     switch (env.type) {
       case 'chat': {
@@ -183,7 +193,9 @@ class TuiAdapter {
         const payload = env.payload as { connected?: boolean; processing?: boolean } | undefined;
         if (payload?.processing) {
           this.events.emit('status', 'thinking');
-        } else if (payload?.connected) {
+        } else if (payload?.processing === false || payload?.connected) {
+          // processing:false is broadcast when a turn ends (completion or
+          // cancel) so the spinner clears even when no AGENT message lands.
           this.events.emit('status', 'idle');
         }
         break;

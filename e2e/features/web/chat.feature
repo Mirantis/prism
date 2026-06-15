@@ -21,3 +21,11 @@ Feature: Agent Chat
     When I navigate to the agent chat page
     Then I should see the message "What is Kubernetes?" in the conversation
     And I should see the message "Kubernetes is..." in the conversation
+
+  Scenario: Cancel an in-progress response
+    When I navigate to the agent chat page
+    And I type "Write a long, detailed essay about the full history of computing." in the chat input
+    And I send the message
+    And I stop the in-progress response
+    Then I should see the message "Response stopped" in the conversation
+    And the chat composer should be ready for input again

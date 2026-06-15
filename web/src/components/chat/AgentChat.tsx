@@ -18,7 +18,7 @@ export default function AgentChat() {
   const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 
-  const { status, isTyping, sendFollowup } = useWebSocket({
+  const { status, isTyping, sendFollowup, cancel } = useWebSocket({
     onMessage: (msg) => {
       setLocalMessages((prev) => [...prev, msg]);
       if (activeThreadId) {
@@ -26,6 +26,29 @@ export default function AgentChat() {
       }
     },
   });
+
+  // Cancel the in-flight turn and drop an ephemeral marker so the user gets
+  // explicit confirmation. The marker is client-only (never stored), so it
+  // doesn't pollute the conversation history fed back to the model.
+  const handleCancel = useCallback(() => {
+    if (!isTyping) return;
+    cancel();
+    setLocalMessages((prev) => [
+      ...prev,
+      {
+        id: `stopped-${Date.now()}`,
+        threadId: activeThreadId ?? '',
+        role: 'SYSTEM',
+        content: 'Response stopped',
+        triggeredBy: 'USER_INPUT',
+        toolCalls: null,
+        blocks: null,
+        tokenCount: null,
+        isCompacted: false,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  }, [cancel, isTyping, activeThreadId]);
 
   const { data: activeThread } = useQuery({
     queryKey: ['threads', agent.agentId, 'active'],
@@ -181,6 +204,7 @@ export default function AgentChat() {
         onChange={setMessage}
         onSend={handleSend}
         isPending={isTyping}
+        onCancel={handleCancel}
         connectionStatus={status}
         attachments={attachments}
         onFilesSelected={handleFilesSelected}

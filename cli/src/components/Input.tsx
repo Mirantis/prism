@@ -22,7 +22,7 @@ export const Input: React.FC<Props> = ({ value, onChange, onSubmit, disabled, hi
       {disabled ? (
         <Box>
           <Spinner />
-          <Text dimColor italic> thinking…</Text>
+          <Text dimColor italic> thinking… (esc to stop)</Text>
         </Box>
       ) : (
         <TextInput
