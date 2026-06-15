@@ -384,6 +384,23 @@ describe('Requirement: Conversation Engine', () => {
         expect.objectContaining({}),
       );
     });
+
+    it('publishes nothing when the stream yields no steps (canceled before output)', async () => {
+      // Cancel-before-any-step: the stream closes with zero steps, so there's
+      // no text, no tool calls, and no blocks. We must NOT publish an empty
+      // agent message (which would render an empty bubble in the UI).
+      mockInvokeStream.mockReturnValue(streamFromSteps([]));
+
+      const response = await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Hello',
+      });
+
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(response.messageId).toBe('');
+      expect(response.content).toBe('');
+    });
   });
 
   describe('Scenario: Channel context includes threadId', () => {
