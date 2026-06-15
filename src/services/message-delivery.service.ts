@@ -12,8 +12,9 @@
  */
 
 import { ConversationMessage } from '@prisma/client';
-import { ChannelAdapter } from './channel-adapter.interface';
+import { ChannelAdapter, DeliverableMessage } from './channel-adapter.interface';
 import { conversationService } from './conversation.service';
+import { attachmentService } from './attachment.service';
 import { logger } from '../logger';
 
 // ============================================================================
@@ -39,6 +40,13 @@ export interface PublishOptions {
   }>;
   /** UI blocks for rich rendering */
   blocks?: unknown[];
+  /**
+   * Ids of files the agent shared (via share_file) to deliver with this
+   * message. They're linked to the stored message and rendered/uploaded by
+   * each channel adapter. Already-linked or forged ids are ignored at link
+   * time (attachmentService caps and only claims unlinked rows).
+   */
+  attachmentIds?: string[];
   /**
    * Per-message context: routing (channel/channelId/threadTs) + rendering
    * hints (e.g. `includeFeedback`). The caller (conversation engine for
@@ -105,10 +113,21 @@ export class MessageDeliveryService {
       blocks: options?.blocks,
     });
 
-    // 2. Deliver to all connected channels.
+    // 2. Link any agent-shared files to this message and load their metadata
+    // (no bytes) so adapters can render/upload them. linkToMessage only claims
+    // unlinked rows and caps the count, so forged/duplicate ids are safe.
+    const deliverable: DeliverableMessage = message;
+    if (options?.attachmentIds?.length) {
+      await attachmentService.linkToMessage(options.attachmentIds, message.id, threadId);
+      const metaMap = await attachmentService.getMetaByMessageIds([message.id]);
+      const attachments = metaMap.get(message.id);
+      if (attachments?.length) deliverable.attachments = attachments;
+    }
+
+    // 3. Deliver to all connected channels.
     // channelContext is the single source of routing + rendering hints; we
     // forward it as-is and let the adapter decide what to do with it.
-    await this.deliverToAll(userId, message, options?.channelContext);
+    await this.deliverToAll(userId, deliverable, options?.channelContext);
 
     return message;
   }
@@ -137,7 +156,7 @@ export class MessageDeliveryService {
    */
   private async deliverToAll(
     userId: string,
-    message: ConversationMessage,
+    message: DeliverableMessage,
     channelContext?: PublishOptions['channelContext']
   ): Promise<void> {
     if (this.adapters.length === 0) {

@@ -14,11 +14,11 @@
 
 import { App, LogLevel, SayFn } from '@slack/bolt';
 import { logger } from '../logger';
-import { ConversationMessage } from '@prisma/client';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { ChannelAdapter } from './channel-adapter.interface';
+import { ChannelAdapter, DeliverableMessage } from './channel-adapter.interface';
+import { AttachmentMeta } from './attachment.service';
 import { slackMappingService } from './slack-mapping.service';
 import {
   formatSlackMessage,
@@ -181,10 +181,11 @@ class SlackAdapterService implements ChannelAdapter {
    */
   async deliver(
     userId: string,
-    message: ConversationMessage,
+    message: DeliverableMessage,
     channelContext?: { channel: string; channelId?: string; threadTs?: string; threadId: string; includeFeedback?: boolean }
   ): Promise<void> {
     const includeFeedback = channelContext?.includeFeedback === true;
+    const attachments = message.attachments ?? [];
 
     // If channelContext is provided and it's for Slack, deliver to that channel
     if (channelContext?.channel === 'slack' && channelContext.channelId) {
@@ -196,6 +197,7 @@ class SlackAdapterService implements ChannelAdapter {
         (message.toolCalls as Array<{ tool: string }>) ?? undefined,
         message.id,
         includeFeedback,
+        attachments,
       );
       trackEvent('slack message delivered', userId, {
         ...(config.agentId ? { 'agent.id': config.agentId } : {}),
@@ -265,6 +267,14 @@ class SlackAdapterService implements ChannelAdapter {
             await conversationService.setExternalMessageId(message.id, dmResponse.ts);
           }
 
+          // Upload any shared files, threaded under the message just posted.
+          await this.uploadAttachmentsToSlack(
+            slackApp.app.client,
+            mapping.dmChannelId,
+            typeof dmResponse.ts === 'string' ? dmResponse.ts : undefined,
+            attachments,
+          );
+
           logger.info('Delivered message to Slack DM %s for user %s', connection.teamName, userId);
         } catch (error: unknown) {
           const errMsg = error instanceof Error ? error.message : String(error);
@@ -282,6 +292,7 @@ class SlackAdapterService implements ChannelAdapter {
           (message.toolCalls as Array<{ tool: string }>) ?? undefined,
           message.id,
           includeFeedback,
+          attachments,
         );
       }
     }
@@ -308,6 +319,7 @@ class SlackAdapterService implements ChannelAdapter {
     toolCalls?: Array<{ tool: string }>,
     messageId?: string,
     includeFeedback: boolean = false,
+    attachments: AttachmentMeta[] = [],
   ): Promise<void> {
     // Find the mapping for this channel
     const mapping = await slackMappingService.findByChannelId(channelId);
@@ -353,10 +365,59 @@ class SlackAdapterService implements ChannelAdapter {
         await conversationService.setExternalMessageId(messageId, response.ts);
       }
 
+      // Upload any shared files. Thread them under the message we just posted
+      // (its ts) when present, else under the reply thread (threadTs).
+      await this.uploadAttachmentsToSlack(
+        slackApp.app.client,
+        channelId,
+        typeof response.ts === 'string' ? response.ts : threadTs,
+        attachments,
+      );
+
       logger.info('Delivered message to Slack channel %s', mapping.slackChannelName || channelId);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('Slack channel delivery failed for %s: %s', channelId, message);
+    }
+  }
+
+  /**
+   * Upload agent-shared files to Slack via `files.uploadV2`, threaded under
+   * `threadTs` when provided so they sit with the message that referenced them.
+   *
+   * Best-effort: per-file failures are logged, never thrown — the text reply is
+   * already delivered and the file stays downloadable on web/CLI. Requires the
+   * bot `files:write` scope (add it to the Slack app manifest / OAuth scopes).
+   */
+  private async uploadAttachmentsToSlack(
+    client: App['client'],
+    channelId: string,
+    threadTs: string | undefined,
+    attachments: AttachmentMeta[],
+  ): Promise<void> {
+    if (attachments.length === 0) return;
+    for (const meta of attachments) {
+      try {
+        const row = await attachmentService.getById(meta.id);
+        if (!row) {
+          logger.warn('[Slack] shared attachment %s not found; skipping upload', meta.id);
+          continue;
+        }
+        const uploadBase = {
+          channel_id: channelId,
+          file: Buffer.from(row.data),
+          filename: row.filename,
+        };
+        // Concrete branches: the uploadV2 args union requires thread_ts to be a
+        // string when present (not an optional), so don't spread it as optional.
+        await client.files.uploadV2(
+          threadTs ? { ...uploadBase, thread_ts: threadTs } : uploadBase,
+        );
+        logger.info('[Slack] uploaded shared file %s to %s', meta.filename, channelId);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error('[Slack] failed to upload shared file %s to %s: %s', meta.filename, channelId, msg);
+      }
     }
   }
 

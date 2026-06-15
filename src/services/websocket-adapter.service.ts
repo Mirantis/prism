@@ -5,8 +5,7 @@
  * Calls the local WebSocket gateway directly (no HTTP round-trip).
  */
 
-import { ConversationMessage } from '@prisma/client';
-import { ChannelAdapter, ChannelContext } from './channel-adapter.interface';
+import { ChannelAdapter, ChannelContext, DeliverableMessage } from './channel-adapter.interface';
 import { webSocketGatewayService } from './websocket-gateway.service';
 import { logger } from '../logger';
 
@@ -17,7 +16,7 @@ import { logger } from '../logger';
 class WebSocketAdapterService implements ChannelAdapter {
   readonly name = 'websocket';
 
-  async deliver(userId: string, message: ConversationMessage, _channelContext?: ChannelContext): Promise<void> {
+  async deliver(userId: string, message: DeliverableMessage, _channelContext?: ChannelContext): Promise<void> {
     try {
       // Handle createdAt as both Date and string since it crosses HTTP boundary
       const createdAt = message.createdAt instanceof Date
@@ -37,6 +36,9 @@ class WebSocketAdapterService implements ChannelAdapter {
           tokenCount: message.tokenCount,
           isCompacted: message.isCompacted,
           createdAt,
+          // Shared-file metadata (no bytes); the SPA renders download chips and
+          // fetches bytes from GET /agents/attachments/:id.
+          attachments: message.attachments ?? null,
         },
       });
     } catch (error: unknown) {

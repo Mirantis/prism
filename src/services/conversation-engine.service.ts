@@ -225,6 +225,9 @@ Respond with exactly one word: WORTHY or SKIP`;
     const responseTexts: string[] = [];
     const allBlocks: UIBlock[] = [];
     const allToolCalls: ToolCallRecord[] = [];
+    // Files the agent shared (share_file) accrue across steps and ride out on
+    // the final delivered message, so they appear alongside the answer.
+    const allAttachmentIds: string[] = [];
 
     for await (const step of invokeStream({
       userId,
@@ -237,6 +240,7 @@ Respond with exactly one word: WORTHY or SKIP`;
     })) {
       allToolCalls.push(...step.toolCalls);
       if (step.blocks) allBlocks.push(...step.blocks);
+      if (step.attachmentIds) allAttachmentIds.push(...step.attachmentIds);
       pendingToolCalls.push(...step.toolCalls);
 
       if (step.text) {
@@ -279,6 +283,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         {
           toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
           blocks: allBlocks.length > 0 ? allBlocks : undefined,
+          attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
           channelContext: channelContext ? { ...channelContext, includeFeedback } : undefined,
         }
       );
@@ -297,6 +302,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         {
           toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
           blocks: allBlocks.length > 0 ? allBlocks : undefined,
+          attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
           channelContext,
         }
       );

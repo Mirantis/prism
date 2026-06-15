@@ -96,6 +96,7 @@ export interface ApiClient {
   deleteCronTask(taskId: string): Promise<{ success: boolean }>;
   uploadAttachment(filePath: string): Promise<AttachmentMeta>;
   deleteAttachment(id: string): Promise<{ success: boolean }>;
+  downloadAttachment(id: string): Promise<Buffer>;
 }
 
 export class HttpApiClient implements ApiClient {
@@ -234,6 +235,23 @@ export class HttpApiClient implements ApiClient {
 
   deleteAttachment(id: string): Promise<{ success: boolean }> {
     return this.request('DELETE', `/agents/attachments/${id}`);
+  }
+
+  /**
+   * Download a stored attachment's raw bytes (GET streams the BLOB). Used by
+   * `/save` to write a file the agent shared to local disk. Non-2xx → ApiError.
+   */
+  async downloadAttachment(id: string): Promise<Buffer> {
+    const res = await fetch(`${this.baseUrl}/agents/attachments/${id}`);
+    if (!res.ok) {
+      const detail = await extractErrorDetail(res);
+      throw new ApiError(
+        detail ?? `Request failed with status ${res.status}`,
+        res.status,
+        detail,
+      );
+    }
+    return Buffer.from(await res.arrayBuffer());
   }
 }
 

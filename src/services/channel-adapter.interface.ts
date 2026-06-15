@@ -7,6 +7,16 @@
  */
 
 import { ConversationMessage } from '@prisma/client';
+import { AttachmentMeta } from './attachment.service';
+
+/**
+ * A persisted message plus the (no-bytes) metadata of any files the agent
+ * shared with it. Adapters render these: web/CLI as download chips (fetched
+ * from `GET /agents/attachments/:id`), Slack via native `files.uploadV2`.
+ */
+export type DeliverableMessage = ConversationMessage & {
+  attachments?: AttachmentMeta[];
+};
 
 /**
  * Channel context for routing responses back to the originating channel
@@ -46,10 +56,11 @@ export interface ChannelAdapter {
    * log the error but not throw (the message is already persisted in DB).
    *
    * @param userId - The Lens Platform user ID
-   * @param message - The message to deliver (already persisted in DB)
+   * @param message - The message to deliver (already persisted in DB), with
+   *   optional shared-file metadata in `attachments`
    * @param channelContext - Optional context for routing to specific channel/thread
    */
-  deliver(userId: string, message: ConversationMessage, channelContext?: ChannelContext): Promise<void>;
+  deliver(userId: string, message: DeliverableMessage, channelContext?: ChannelContext): Promise<void>;
 
   /**
    * Check if user has an active connection on this channel

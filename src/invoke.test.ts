@@ -25,6 +25,7 @@ const {
   mockGetCronTools,
   mockGetAgentConfigTools,
   mockGetShellTools,
+  mockGetShareFileTools,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
   mockIsBedrockConfigured: vi.fn(),
@@ -43,6 +44,7 @@ const {
   mockGetCronTools: vi.fn(),
   mockGetAgentConfigTools: vi.fn(),
   mockGetShellTools: vi.fn(),
+  mockGetShareFileTools: vi.fn(),
 }));
 
 /**
@@ -96,6 +98,11 @@ vi.mock('./tools/shell', () => ({
   getShellTools: mockGetShellTools,
 }));
 
+vi.mock('./tools/share-file', () => ({
+  getShareFileTools: mockGetShareFileTools,
+  SHARE_FILE_TOOL_NAME: 'share_file',
+}));
+
 vi.mock('./prompts/context-builder', () => ({
   buildSystemPromptParts: mockBuildSystemPromptParts,
   buildConversationMessages: mockBuildConversationMessages,
@@ -141,7 +148,7 @@ vi.mock('./lib/telemetry', () => ({
 }));
 
 
-import { invoke, withToolsCacheControl } from './invoke';
+import { invoke, withToolsCacheControl, extractAttachmentIds } from './invoke';
 import { config } from './config';
 import { Tool } from 'ai';
 
@@ -157,6 +164,7 @@ describe('invoke', () => {
     mockGetCronTools.mockReturnValue({});
     mockGetAgentConfigTools.mockReturnValue({});
     mockGetShellTools.mockReturnValue({});
+    mockGetShareFileTools.mockReturnValue({});
 
     mockIsBedrockConfigured.mockReturnValue(true);
     mockCreateBedrockProvider.mockReturnValue(() => 'model-instance');
@@ -268,13 +276,27 @@ describe('invoke', () => {
       mockGetShellTools.mockReturnValue({
         shell_exec: { description: 'exec' },
       });
+      mockGetShareFileTools.mockReturnValue({
+        share_file: { description: 'share' },
+      });
     });
 
     it('chat mode gets all tools', async () => {
       await invoke(createTestInvokeRequest({ mode: 'chat' }));
 
       const callArgs = mockGenerateText.mock.calls[0][0];
-      expect(Object.keys(callArgs.tools)).toHaveLength(8);
+      // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file
+      expect(Object.keys(callArgs.tools)).toHaveLength(9);
+      expect(Object.keys(callArgs.tools)).toContain('share_file');
+    });
+
+    it('subagent mode excludes share_file (no channel to the user)', async () => {
+      await invoke(createTestInvokeRequest({ mode: 'subagent' }));
+
+      const callArgs = mockGenerateText.mock.calls[0][0];
+      const toolNames = Object.keys(callArgs.tools);
+      expect(toolNames).not.toContain('share_file');
+      expect(toolNames).toContain('shell_exec');
     });
 
     it('heartbeat mode excludes cron tools', async () => {
@@ -959,5 +981,37 @@ describe('withToolsCacheControl', () => {
     expect((tools.a as Record<string, unknown>).providerOptions).toBeUndefined();
     expect((tools.b as Record<string, unknown>).providerOptions).toBeUndefined();
     expect(result).not.toBe(tools);
+  });
+});
+
+describe('extractAttachmentIds', () => {
+  it('collects attachmentIds from successful share_file results', () => {
+    const toolCalls = [
+      { toolName: 'share_file', toolCallId: 'c1' },
+      { toolName: 'shell_exec', toolCallId: 'c2' },
+      { toolName: 'share_file', toolCallId: 'c3' },
+    ];
+    const toolResults = [
+      { toolCallId: 'c1', output: { success: true, attachmentId: 'att-1' } },
+      { toolCallId: 'c2', output: { stdout: 'ok' } },
+      { toolCallId: 'c3', output: { success: true, attachmentId: 'att-2' } },
+    ];
+    expect(extractAttachmentIds(toolCalls, toolResults)).toEqual(['att-1', 'att-2']);
+  });
+
+  it('ignores failed shares and non-share tools', () => {
+    const toolCalls = [
+      { toolName: 'share_file', toolCallId: 'c1' },
+      { toolName: 'share_file', toolCallId: 'c2' },
+    ];
+    const toolResults = [
+      { toolCallId: 'c1', output: { success: false, error: 'Path outside workspace' } },
+      { toolCallId: 'c2', output: { stdout: 'no id here' } },
+    ];
+    expect(extractAttachmentIds(toolCalls, toolResults)).toEqual([]);
+  });
+
+  it('returns an empty array when there are no share_file calls', () => {
+    expect(extractAttachmentIds([{ toolName: 'memory_write', toolCallId: 'x' }], [])).toEqual([]);
   });
 });

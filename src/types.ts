@@ -94,6 +94,10 @@ export interface InvokeStep {
   text: string;
   toolCalls: ToolCallRecord[];
   blocks?: UIBlock[];
+  // Ids of MessageAttachment rows the agent shared during this step (via the
+  // share_file tool). The delivery layer links these to the published message
+  // and each channel adapter renders/uploads them.
+  attachmentIds?: string[];
   // Set when this step represents a friendly error message produced by
   // invokeStream's error path (so invoke() can surface structured metadata
   // in InvokeResponse.error without needing its own try/catch).
@@ -104,6 +108,8 @@ export interface InvokeResponse {
   response: string;
   toolCalls: ToolCallRecord[];
   blocks?: UIBlock[];
+  // Aggregated across all steps — files the agent shared this invocation.
+  attachmentIds?: string[];
   steps: InvokeStep[];
   error?: InvokeError;
 }
