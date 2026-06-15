@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 import { defineBddConfig } from 'playwright-bdd';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { execSync } from 'child_process';
 import { config } from 'dotenv';
 import { DEFAULT_AGENT_ID, TEST_USER } from './fixtures/test-data';
@@ -21,6 +22,13 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const SQLITE_SCHEMA_DIR = path.join(REPO_ROOT, 'prisma', 'sqlite');
 const E2E_DB_FILE = path.join(SQLITE_SCHEMA_DIR, 'e2e.db');
 const E2E_DATABASE_URL = 'file:./e2e.db';
+
+// Writable workspace for the agent's shell/share_file tools — the `/home/node`
+// default isn't writable on CI, so outbound file-sharing (create-then-share)
+// would fail without this. Created at config load so it exists before the
+// runtime webServer boots.
+const E2E_WORKSPACE = path.join(os.tmpdir(), 'prism-e2e-workspace');
+fs.mkdirSync(E2E_WORKSPACE, { recursive: true });
 
 // Provision the SQLite e2e DB *at config load* so it exists before
 // Playwright spawns the runtime webServer (the WebServerPlugin runs in
@@ -119,6 +127,8 @@ export default defineConfig({
         PORT: String(RUNTIME_PORT),
         DATABASE_URL: E2E_DATABASE_URL,
         AGENT_ID: DEFAULT_AGENT_ID,
+        // Writable workspace for the agent's shell/share_file tools (see above).
+        SHELL_WORKSPACE_ROOT: E2E_WORKSPACE,
         // Heartbeat-driven broadcasts publish under config.ownerUserId, and
         // the slack adapter delivers via SlackMapping rows scoped by
         // lensUserId. db-helper.seed() uses TEST_USER.id, so the SPA's

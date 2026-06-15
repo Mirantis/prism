@@ -99,6 +99,12 @@ export class HomePage extends BasePage {
     return this.page.getByTestId('message-attachment').filter({ hasText: filename });
   }
 
+  /** Attachment chips that live on an agent (non-user) message — i.e. files
+   *  the agent shared, not files the user uploaded. */
+  agentMessageAttachment(filename: string) {
+    return this.getAgentMessages().getByTestId('message-attachment').filter({ hasText: filename });
+  }
+
   async removeComposerAttachment(filename: string) {
     await this.composerAttachment(filename)
       .getByRole('button', { name: /remove/i })

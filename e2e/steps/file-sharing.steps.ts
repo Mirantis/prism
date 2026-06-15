@@ -44,6 +44,18 @@ Then('I should see {string} as an attachment on my message', async ({ page }, na
   await expect(homePage.messageAttachment(name).first()).toBeVisible({ timeout: 10_000 });
 });
 
+Then(
+  "I should see {string} as an attachment on the agent's message",
+  async ({ page }, name: string) => {
+    const homePage = new HomePage(page);
+    // The file rides out on the final delivered message, so wait for the
+    // stream to finish before asserting the chip is present.
+    await homePage.waitForAgentResponse();
+    await homePage.waitForStreamComplete();
+    await expect(homePage.agentMessageAttachment(name).first()).toBeVisible({ timeout: 60_000 });
+  },
+);
+
 Then('the agent response should contain {string}', async ({ page }, expected: string) => {
   const homePage = new HomePage(page);
   await homePage.waitForAgentResponse();

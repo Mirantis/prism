@@ -41,6 +41,13 @@ export interface RuntimeTestEnv {
 export interface SetupOptions {
   /** Extra env to layer onto the prism env (useful for per-test overrides). */
   prismEnvOverrides?: Record<string, string | undefined>;
+  /**
+   * Extra env to layer onto the agent-runtime process (e.g.
+   * SHELL_WORKSPACE_ROOT so the agent can create files in a writable temp dir
+   * instead of the `/home/node` default). Undefined values are dropped by the
+   * harness's env sanitizer.
+   */
+  runtimeEnvOverrides?: Record<string, string | undefined>;
 }
 
 export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTestEnv> {
@@ -74,6 +81,7 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
     // AWS creds + region inherited from the surrounding shell / CI.
     // NEXUS_API_URL deliberately not set — createProvider falls back to
     // direct Bedrock when it's unset, which is what the TUI suite wants.
+    ...(opts.runtimeEnvOverrides ?? {}),
   };
 
   let runtime: RuntimeHandle;
