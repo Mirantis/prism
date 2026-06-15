@@ -7,6 +7,7 @@
  */
 
 import { spawn } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import { ApiClient, ApiError } from './api-client.js';
 import { AttachmentMeta, expandPath, formatFileSize, MAX_ATTACHMENTS_PER_MESSAGE } from './attachments.js';
@@ -34,6 +35,11 @@ export interface CommandContext {
   openPanel: (id: PanelId) => void;
   /** Typed HTTP client for the agent-runtime management API. */
   api: ApiClient;
+  /**
+   * Files the agent shared on the most recent message that carried any
+   * (oldest first) — the candidates for `/save`. Empty when none.
+   */
+  recentAttachments: AttachmentMeta[];
   /** Files staged to send with the next message (oldest first). */
   stagedAttachments: AttachmentMeta[];
   /** Adds an uploaded file to the staging area. */
@@ -294,6 +300,65 @@ export const COMMANDS: SlashCommand[] = [
       }
       ctx.clearStagedAttachments();
       return `Removed ${staged.length} staged file(s).`;
+    },
+  },
+  {
+    name: '/save',
+    description: 'Save the agent’s shared file(s) to disk (/save [dir|file])',
+    run: async (ctx) => {
+      const files = ctx.recentAttachments;
+      if (files.length === 0) return 'No files from the agent to save.';
+
+      const destArg = ctx.rawArgs.trim();
+      const cwd = process.cwd();
+      let targetDir: string;
+      // When the user names a concrete file path (single file only), write
+      // there verbatim; otherwise we write into a directory keeping names.
+      let singleFilePath: string | null = null;
+
+      if (destArg.length === 0) {
+        targetDir = cwd;
+      } else {
+        const resolved = path.resolve(cwd, expandPath(destArg));
+        // Treat a trailing separator or an existing directory as a dir target.
+        let isDir = /[\\/]$/.test(destArg);
+        try {
+          isDir = isDir || fs.statSync(resolved).isDirectory();
+        } catch {
+          // Path doesn't exist yet — fall through to the file/dir heuristic.
+        }
+        if (isDir) {
+          targetDir = resolved;
+        } else if (files.length === 1) {
+          singleFilePath = resolved;
+          targetDir = path.dirname(resolved);
+        } else {
+          return `"${destArg}" looks like a single file but ${files.length} files are pending — give a directory instead.`;
+        }
+      }
+
+      try {
+        await fs.promises.mkdir(targetDir, { recursive: true });
+      } catch (err) {
+        return `Could not create ${targetDir}: ${err instanceof Error ? err.message : String(err)}`;
+      }
+
+      const saved: string[] = [];
+      for (const att of files) {
+        // basename() guards against a server-supplied filename with path parts.
+        const outPath = singleFilePath ?? path.join(targetDir, path.basename(att.filename));
+        try {
+          const bytes = await ctx.api.downloadAttachment(att.id);
+          await fs.promises.writeFile(outPath, bytes);
+          saved.push(outPath);
+        } catch (err) {
+          if (err instanceof ApiError || err instanceof Error) {
+            return `Failed to save ${att.filename}: ${err.message}`;
+          }
+          throw err;
+        }
+      }
+      return `Saved ${saved.length} file(s):\n${saved.map((p) => `  ${p}`).join('\n')}`;
     },
   },
   {

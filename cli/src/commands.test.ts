@@ -1,4 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import {
   COMMANDS,
@@ -32,6 +35,7 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     deleteCronTask: vi.fn(),
     uploadAttachment: vi.fn(),
     deleteAttachment: vi.fn(),
+    downloadAttachment: vi.fn(),
   };
 }
 
@@ -44,6 +48,7 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
     rawArgs: '',
     openPanel: vi.fn(),
     api: stubApi() as unknown as ApiClient,
+    recentAttachments: [],
     stagedAttachments: [],
     stageAttachment: vi.fn(),
     clearStagedAttachments: vi.fn(),
@@ -481,5 +486,91 @@ describe('/detach', () => {
     );
     expect(clearStagedAttachments).toHaveBeenCalledTimes(1);
     expect(out).toContain('Removed 1');
+  });
+});
+
+describe('/save', () => {
+  const meta = (id: string, filename = `${id}.txt`) => ({
+    id,
+    filename,
+    mediaType: 'text/plain',
+    sizeBytes: 10,
+    category: 'text',
+  });
+
+  const tmpDirs: string[] = [];
+  function tmpDir(): string {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'save-cmd-test-'));
+    tmpDirs.push(d);
+    return d;
+  }
+  afterEach(() => {
+    for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  it('reports when the agent has shared no files', async () => {
+    const out = await cmd('/save').run(makeCtx({ recentAttachments: [] }));
+    expect(out).toContain('No files');
+  });
+
+  it('saves all recent attachments into a directory, preserving names', async () => {
+    const dir = tmpDir();
+    const api = stubApi();
+    api.downloadAttachment.mockResolvedValue(Buffer.from('hello'));
+    const out = await cmd('/save').run(
+      makeCtx({
+        api: api as unknown as ApiClient,
+        recentAttachments: [meta('a', 'report.csv'), meta('b', 'chart.png')],
+        rawArgs: dir,
+      }),
+    );
+    expect(api.downloadAttachment).toHaveBeenCalledTimes(2);
+    expect(fs.readFileSync(path.join(dir, 'report.csv'), 'utf8')).toBe('hello');
+    expect(fs.readFileSync(path.join(dir, 'chart.png'), 'utf8')).toBe('hello');
+    expect(out).toContain('Saved 2 file(s)');
+  });
+
+  it('writes a single file to an explicit destination path', async () => {
+    const dir = tmpDir();
+    const dest = path.join(dir, 'renamed.csv');
+    const api = stubApi();
+    api.downloadAttachment.mockResolvedValue(Buffer.from('data'));
+    const out = await cmd('/save').run(
+      makeCtx({
+        api: api as unknown as ApiClient,
+        recentAttachments: [meta('a', 'report.csv')],
+        rawArgs: dest,
+      }),
+    );
+    expect(fs.readFileSync(dest, 'utf8')).toBe('data');
+    expect(out).toContain('Saved 1 file(s)');
+  });
+
+  it('refuses a single-file destination when multiple files are pending', async () => {
+    const dir = tmpDir();
+    const api = stubApi();
+    const out = await cmd('/save').run(
+      makeCtx({
+        api: api as unknown as ApiClient,
+        recentAttachments: [meta('a'), meta('b')],
+        rawArgs: path.join(dir, 'one.txt'),
+      }),
+    );
+    expect(out).toMatch(/single file/i);
+    expect(api.downloadAttachment).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a download failure', async () => {
+    const dir = tmpDir();
+    const api = stubApi();
+    api.downloadAttachment.mockRejectedValue(new ApiError('not found', 404));
+    const out = await cmd('/save').run(
+      makeCtx({
+        api: api as unknown as ApiClient,
+        recentAttachments: [meta('a')],
+        rawArgs: dir,
+      }),
+    );
+    expect(out).toMatch(/failed to save/i);
   });
 });

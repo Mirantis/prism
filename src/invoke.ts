@@ -16,6 +16,7 @@ import { getMemoryTools } from './tools/memory';
 import { getCronTools } from './tools/cron';
 import { getAgentConfigTools } from './tools/agent-config';
 import { getShellTools } from './tools/shell/index';
+import { getShareFileTools, SHARE_FILE_TOOL_NAME } from './tools/share-file';
 import { contextService } from './services/context.service';
 import { agentWorkspaceService, resolveEffectiveModel } from './services/agent-workspace.service';
 import { isLangfuseEnabled } from './lib/langfuse';
@@ -111,6 +112,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         ...getCronTools(request.userId, request.agentId),
         ...getAgentConfigTools(),
         ...getShellTools(),
+        ...getShareFileTools(),
       },
       request.mode,
     );
@@ -251,7 +253,13 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         }
 
         const blocks = extractBlocks(step.text);
-        channel.push({ text: step.text, toolCalls: stepToolCalls, blocks });
+        const attachmentIds = extractAttachmentIds(step.toolCalls, step.toolResults);
+        channel.push({
+          text: step.text,
+          toolCalls: stepToolCalls,
+          blocks,
+          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+        });
       },
    }).then(async (result) => {
       // 9. If the step limit was reached, make a follow-up call to get a final summary
@@ -334,6 +342,7 @@ export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
   const allToolCalls = steps.flatMap((s) => s.toolCalls);
   const response = joinStepTexts(steps) || '';
   const allBlocks = steps.flatMap((s) => s.blocks ?? []);
+  const allAttachmentIds = steps.flatMap((s) => s.attachmentIds ?? []);
 
   logger.info(
     `${agentName} responded: ${response.length} chars, ${allToolCalls.length} tool call(s)`
@@ -343,6 +352,7 @@ export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
     response,
     toolCalls: allToolCalls,
     ...(allBlocks.length > 0 ? { blocks: allBlocks } : {}),
+    ...(allAttachmentIds.length > 0 ? { attachmentIds: allAttachmentIds } : {}),
     steps,
     ...(errorMeta ? { error: errorMeta } : {}),
   };
@@ -414,6 +424,14 @@ function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<st
     return tools;
   }
 
+  // Subagents return their result as text to the parent invocation (via the
+  // Task tool) — they have no direct channel to the user, so a file they
+  // "shared" would never be delivered. Drop share_file to avoid silent loss.
+  if (mode === 'subagent') {
+    const { [SHARE_FILE_TOOL_NAME]: _omit, ...rest } = tools;
+    return rest;
+  }
+
   const cronToolNames = new Set(['schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task']);
 
   // heartbeat and cron are autonomous runs: full tool access, minus the
@@ -429,6 +447,35 @@ function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<st
   }
 
   return tools;
+}
+
+/**
+ * Collect attachment ids produced by `share_file` tool calls in a step.
+ *
+ * Reads the structured `execute()` return value (preserved on `toolResults`
+ * even though the model-facing view is truncated by the output limiter), so
+ * there's no fragile string parsing. Matches results to calls by toolCallId
+ * and keeps only successful shares that returned an `attachmentId`.
+ */
+export function extractAttachmentIds(
+  toolCalls: Array<{ toolName: string; toolCallId: string }>,
+  toolResults: Array<{ toolCallId: string; output: unknown }>,
+): string[] {
+  const ids: string[] = [];
+  for (const tc of toolCalls) {
+    if (tc.toolName !== SHARE_FILE_TOOL_NAME) continue;
+    const tr = toolResults.find((r) => r.toolCallId === tc.toolCallId);
+    const out = tr?.output;
+    if (
+      out &&
+      typeof out === 'object' &&
+      (out as { success?: unknown }).success !== false &&
+      typeof (out as { attachmentId?: unknown }).attachmentId === 'string'
+    ) {
+      ids.push((out as { attachmentId: string }).attachmentId);
+    }
+  }
+  return ids;
 }
 
 /**

@@ -201,7 +201,10 @@ class HeartbeatService {
           userId,
           responseText,
           'HEARTBEAT',
-          { toolCalls: invokeResult.toolCalls.length > 0 ? invokeResult.toolCalls : undefined },
+          {
+            toolCalls: invokeResult.toolCalls.length > 0 ? invokeResult.toolCalls : undefined,
+            attachmentIds: invokeResult.attachmentIds,
+          },
         );
 
         this.recordAlert(state, responseText);
@@ -348,7 +351,10 @@ class HeartbeatService {
           state.userId,
           responseText,
           'HEARTBEAT',
-          { toolCalls: invokeResult.toolCalls.length > 0 ? invokeResult.toolCalls : undefined },
+          {
+            toolCalls: invokeResult.toolCalls.length > 0 ? invokeResult.toolCalls : undefined,
+            attachmentIds: invokeResult.attachmentIds,
+          },
         );
 
         this.recordAlert(state, responseText);

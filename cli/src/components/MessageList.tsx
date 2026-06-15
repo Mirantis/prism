@@ -79,6 +79,7 @@ const MessageRow: React.FC<MessageRowProps> = ({ agentName, message, expanded })
             {message.attachments
               .map((a) => `· 📎 ${a.filename} (${formatFileSize(a.sizeBytes)})`)
               .join(' ')}
+            {isAgent ? '  · /save to download' : ''}
           </Text>
         )}
         {summary && (

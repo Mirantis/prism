@@ -243,7 +243,10 @@ class CronSchedulerService {
         task.userId,
         `**Scheduled Task: ${task.name}**\n\n${responseText || result.response}`,
         'CRON_TASK',
-        { toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined },
+        {
+          toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+          attachmentIds: result.attachmentIds,
+        },
       );
 
       logger.info(`[CronScheduler] "${task.name}" completed in ${Date.now() - startTime}ms`);

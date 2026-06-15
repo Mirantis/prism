@@ -14,6 +14,10 @@ import { MessageDeliveryService } from '../message-delivery.service';
 const mockAddMessage = vi.fn();
 const mockGetOrCreateActiveThread = vi.fn();
 
+// Mock attachment service (publish links + loads shared-file metadata)
+const mockLinkToMessage = vi.fn();
+const mockGetMetaByMessageIds = vi.fn();
+
 const { mockLoggerWarn, mockLoggerError } = vi.hoisted(() => ({
   mockLoggerWarn: vi.fn(),
   mockLoggerError: vi.fn(),
@@ -31,6 +35,13 @@ vi.mock('../conversation.service', () => ({
   conversationService: {
     addMessage: (...args: unknown[]) => mockAddMessage(...args),
     getOrCreateActiveThread: (...args: unknown[]) => mockGetOrCreateActiveThread(...args),
+  },
+}));
+
+vi.mock('../attachment.service', () => ({
+  attachmentService: {
+    linkToMessage: (...args: unknown[]) => mockLinkToMessage(...args),
+    getMetaByMessageIds: (...args: unknown[]) => mockGetMetaByMessageIds(...args),
   },
 }));
 
@@ -75,6 +86,8 @@ describe('MessageDeliveryService', () => {
     service = new MessageDeliveryService();
     mockAddMessage.mockResolvedValue(sampleMessage);
     mockGetOrCreateActiveThread.mockResolvedValue({ id: 'thread-456' });
+    mockLinkToMessage.mockResolvedValue(undefined);
+    mockGetMetaByMessageIds.mockResolvedValue(new Map());
   });
 
   afterEach(() => {
@@ -249,6 +262,41 @@ describe('MessageDeliveryService', () => {
         expect.any(String),
         expect.any(String),
       );
+    });
+
+    it('links agent-shared files and delivers them with metadata', async () => {
+      const websocket = createMockAdapter('websocket');
+      websocket.isUserConnected.mockResolvedValue(true);
+      service.register(websocket);
+
+      const attachments = [
+        { id: 'a1', filename: 'report.csv', mediaType: 'text/csv', sizeBytes: 12, category: 'text' as const },
+      ];
+      mockGetMetaByMessageIds.mockResolvedValue(new Map([['msg-123', attachments]]));
+
+      await service.publish('user-123', 'thread-456', 'Here is your report', 'USER_INPUT', {
+        attachmentIds: ['a1'],
+        channelContext: { channel: 'websocket', threadId: 'thread-456' },
+      });
+
+      expect(mockLinkToMessage).toHaveBeenCalledWith(['a1'], 'msg-123', 'thread-456');
+      expect(websocket.deliver).toHaveBeenCalledWith(
+        'user-123',
+        expect.objectContaining({ id: 'msg-123', attachments }),
+        expect.objectContaining({ channel: 'websocket' }),
+      );
+    });
+
+    it('does not touch the attachment service when no files are shared', async () => {
+      const adapter = createMockAdapter('test');
+      service.register(adapter);
+
+      await service.publish('user-123', 'thread-456', 'Hello', 'USER_INPUT', {
+        channelContext: { channel: 'test', threadId: 'thread-456' } as never,
+      });
+
+      expect(mockLinkToMessage).not.toHaveBeenCalled();
+      expect(mockGetMetaByMessageIds).not.toHaveBeenCalled();
     });
 
     it('should return the persisted message', async () => {

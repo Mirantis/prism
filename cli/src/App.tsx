@@ -196,6 +196,16 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   const runCommand = useCallback(
     async (cmd: SlashCommand, args: string[], rawArgs: string) => {
       const lastEntry = entries[entries.length - 1];
+      // Files from the most recent agent message that shared any — the /save
+      // candidates. Walk newest→oldest so /save targets the latest delivery.
+      let recentAttachments: AttachmentMeta[] = [];
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const m = entries[i]!.message;
+        if (m.role === 'AGENT' && Array.isArray(m.attachments) && m.attachments.length > 0) {
+          recentAttachments = m.attachments;
+          break;
+        }
+      }
       const ctx: CommandContext = {
         lastMessageContent: lastEntry?.message.content ?? null,
         requestShutdown: triggerShutdown,
@@ -203,6 +213,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         rawArgs,
         openPanel,
         api: apiClient,
+        recentAttachments,
         stagedAttachments: staged,
         stageAttachment,
         clearStagedAttachments,
