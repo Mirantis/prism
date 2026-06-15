@@ -297,9 +297,12 @@ Respond with exactly one word: WORTHY or SKIP`;
 
     const response = responseTexts.join('\n\n');
 
-    // Fallback: if no step had text, publish the (possibly empty) response
-    // as a safety net so the caller still gets a messageId back.
-    if (!agentMessage) {
+    // Fallback: the stream produced no text step. Publish only if there's still
+    // something to show (tool calls or UI blocks) — e.g. a tool-only turn. When
+    // a turn is canceled before producing anything, skip it rather than render
+    // an empty agent bubble. (In this branch `response` is always '' because any
+    // text step would have set `agentMessage` via the buffered-step publish.)
+    if (!agentMessage && (allToolCalls.length > 0 || allBlocks.length > 0)) {
       agentMessage = await messageDeliveryService.publish(
         userId,
         threadId,
@@ -325,7 +328,10 @@ Respond with exactly one word: WORTHY or SKIP`;
 
     return {
       threadId,
-      messageId: agentMessage.id,
+      // Empty when the turn was canceled before producing anything (no message
+      // was published). The WS gateway ignores this; the HTTP caller on the
+      // cancel path has already disconnected.
+      messageId: agentMessage?.id ?? '',
       content: response,
       toolCalls: allToolCalls,
       blocks: allBlocks.length > 0 ? allBlocks : undefined,
