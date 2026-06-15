@@ -51,6 +51,14 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             setIsTyping(p?.isTyping ?? false);
             break;
           }
+          case 'status': {
+            // The runtime broadcasts { processing: false } when a turn ends
+            // (normal completion or cancel), so the STOP button reliably
+            // reverts even when a cancel produced no new message to deliver.
+            const p = data.payload as { processing?: boolean } | undefined;
+            if (p?.processing === false) setIsTyping(false);
+            break;
+          }
           case 'heartbeat':
             if (wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({ type: 'pong' }));
@@ -137,6 +145,16 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     [sendMessage],
   );
 
+  // Cancel the in-flight turn: tell the runtime to abort the LLM generation
+  // and optimistically clear the typing state so the STOP button reverts
+  // immediately (the runtime also broadcasts a terminal { processing: false }).
+  const cancel = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'cancel' }));
+    }
+    setIsTyping(false);
+  }, []);
+
   useEffect(() => {
     isMountedRef.current = true;
     const timer = setTimeout(() => {
@@ -158,5 +176,6 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     isConnected: status === 'connected',
     isTyping,
     sendFollowup,
+    cancel,
   };
 }

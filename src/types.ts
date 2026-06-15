@@ -66,6 +66,13 @@ export interface InvokeRequest {
    * text embedded in the user message.
    */
   runtimeNotices?: string[];
+  /**
+   * When provided, aborting this signal stops the in-flight LLM generation
+   * (the underlying Bedrock request is cancelled). Threaded into both
+   * generateText() calls. On abort, invokeStream closes the step stream
+   * without surfacing an error step — already-completed steps are preserved.
+   */
+  abortSignal?: AbortSignal;
 }
 
 // ============================================================================

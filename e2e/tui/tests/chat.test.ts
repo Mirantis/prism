@@ -53,6 +53,22 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       await session.waitForFrame(new RegExp(sentinel), 5_000);
     });
   });
+
+  test('cancels an in-flight turn when Escape is pressed', async () => {
+    // A shell `sleep` keeps the agent busy for a wide cancellation window, so
+    // the turn is reliably still in flight when we press Escape.
+    session.send('Use your shell to run `sleep 15`, then reply DONE.');
+    await sleep(200);
+    session.send(KEYS.ENTER);
+
+    // The turn is now in flight — the input shows the "thinking…" spinner.
+    await session.waitForFrame(/thinking/, 15_000);
+
+    // Escape cancels: the runtime aborts the LLM generation and the CLI drops
+    // a client-side "Response stopped" marker for confirmation.
+    session.send(KEYS.ESC);
+    await session.waitForFrame(/Response stopped/, 15_000);
+  });
 });
 
 function sleep(ms: number): Promise<void> {

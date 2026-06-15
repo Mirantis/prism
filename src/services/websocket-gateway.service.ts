@@ -26,7 +26,7 @@ interface AuthenticatedWebSocket extends WebSocket {
 }
 
 interface WebSocketMessage {
-  type: 'chat' | 'ping' | 'pong' | 'subscribe';
+  type: 'chat' | 'ping' | 'pong' | 'subscribe' | 'cancel';
   mode?: 'steer' | 'followup' | 'collect';
   content?: string;
   threadId?: string;
@@ -55,6 +55,10 @@ class WebSocketGatewayService {
   private connections: Map<string, AuthenticatedWebSocket[]> = new Map();
   private messageQueues: Map<string, Array<{ message: WebSocketMessage; resolve: (response: WebSocketResponse) => void }>> = new Map();
   private processingUsers: Set<string> = new Set();
+  // The AbortController for the user's in-flight chat turn. A `cancel` message
+  // aborts it, which stops the LLM generation mid-turn (see invokeStream).
+  // Single-flight per user, so one controller per userId is sufficient.
+  private activeRequests: Map<string, AbortController> = new Map();
 
   /**
    * Initialize WebSocket server
@@ -161,6 +165,10 @@ class WebSocketGatewayService {
         await this.handleChatMessage(ws, userId, message);
         break;
 
+      case 'cancel':
+        this.handleCancelMessage(userId);
+        break;
+
       case 'subscribe':
         // User is subscribing to notifications (already connected)
         break;
@@ -169,6 +177,21 @@ class WebSocketGatewayService {
         logger.warn('Unknown WebSocket message type: %s', message.type);
         ws.send(JSON.stringify({ type: 'error', payload: { error: 'Unknown message type' } }));
     }
+  }
+
+  /**
+   * Cancel the user's in-flight chat turn. Aborts the active controller —
+   * which stops the LLM generation mid-turn — and clears any queued followups
+   * so a cancel doesn't immediately auto-start the next message. The terminal
+   * `{ processing: false }` status is broadcast by processMessage's finally.
+   */
+  private handleCancelMessage(userId: string): void {
+    const controller = this.activeRequests.get(userId);
+    if (controller) {
+      logger.info('Cancel requested by %s', userId);
+      controller.abort();
+    }
+    this.messageQueues.delete(userId);
   }
 
   /**
@@ -295,6 +318,11 @@ class WebSocketGatewayService {
     logger.info('Processing message for %s', userId);
     this.processingUsers.add(userId);
 
+    // A `cancel` message aborts this controller, which stops the LLM
+    // generation mid-turn (signal threaded into generateText).
+    const controller = new AbortController();
+    this.activeRequests.set(userId, controller);
+
     try {
       // Send processing indicator
       if (ws.readyState === WebSocket.OPEN) {
@@ -314,6 +342,7 @@ class WebSocketGatewayService {
         threadId: message.threadId,
         attachmentIds: message.attachmentIds,
         metadata: { channel: 'websocket' },
+        abortSignal: controller.signal,
       });
 
       logger.info('Conversation engine completed for %s', userId);
@@ -321,13 +350,24 @@ class WebSocketGatewayService {
       // Note: Response delivery is handled by messageDeliveryService.publish()
       // which is called by conversationEngineService.chat() - no manual sending needed
     } catch (error: unknown) {
-      logger.error('Error processing message: %s', error instanceof Error ? error.message : String(error));
-      ws.send(JSON.stringify({
-        type: 'error',
-        payload: { error: error instanceof Error ? error.message : String(error) },
-      }));
+      // A cancel aborts the turn; invokeStream swallows the AbortError, so this
+      // catch shouldn't see it — but guard anyway so a cancel never surfaces a
+      // scary error bubble in the UI.
+      if (!controller.signal.aborted) {
+        logger.error('Error processing message: %s', error instanceof Error ? error.message : String(error));
+        ws.send(JSON.stringify({
+          type: 'error',
+          payload: { error: error instanceof Error ? error.message : String(error) },
+        }));
+      }
     } finally {
       this.processingUsers.delete(userId);
+      this.activeRequests.delete(userId);
+
+      // Tell every one of the user's connections the turn is done so the
+      // STOP button / spinner resets even when a cancel produced no new
+      // message to deliver.
+      this.broadcast(userId, { type: 'status', payload: { processing: false } });
 
       // Process queued messages
       await this.processQueue(userId);

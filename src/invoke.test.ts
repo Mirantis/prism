@@ -502,6 +502,59 @@ describe('invoke', () => {
     ]);
   });
 
+  describe('cancellation (abortSignal)', () => {
+    it('threads the abortSignal into generateText', async () => {
+      const controller = new AbortController();
+
+      await invoke(createTestInvokeRequest({ abortSignal: controller.signal }));
+
+      expect(mockGenerateText).toHaveBeenCalledWith(
+        expect.objectContaining({ abortSignal: controller.signal }),
+      );
+    });
+
+    it('swallows the abort error — no friendly error step — when the signal is aborted', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      // Mirrors the SDK: an aborted signal makes generateText reject with an
+      // AbortError (a native DOMException-shaped error).
+      mockGenerateText.mockRejectedValue(
+        Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }),
+      );
+
+      const result = await invoke(createTestInvokeRequest({ abortSignal: controller.signal }));
+
+      expect(result.steps).toEqual([]);
+      expect(result.response).toBe('');
+      expect(result.response).not.toMatch(/encountered an error/i);
+      // Status must still reset so the agent doesn't get stuck RUNNING.
+      expect(mockSetDoneProcessing).toHaveBeenCalled();
+    });
+
+    it('preserves already-completed steps when aborted mid-stream', async () => {
+      const controller = new AbortController();
+      // One step lands via onStepFinish, then the user aborts and the SDK
+      // rejects with an AbortError.
+      mockGenerateText.mockImplementationOnce((opts: Record<string, unknown>) => {
+        (opts.onStepFinish as (s: unknown) => void)({
+          text: 'partial answer so far',
+          toolCalls: [],
+          toolResults: [],
+        });
+        controller.abort();
+        return Promise.reject(
+          Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }),
+        );
+      });
+
+      const result = await invoke(createTestInvokeRequest({ abortSignal: controller.signal }));
+
+      expect(result.steps.map((s) => s.text)).toEqual(['partial answer so far']);
+      expect(result.response).toBe('partial answer so far');
+      expect(result.response).not.toMatch(/encountered an error/i);
+    });
+  });
+
   describe('budget exceeded errors', () => {
     it('returns user-friendly message with detail on budget-exceeded 429', async () => {
       const budgetError = Object.assign(new Error('429'), {

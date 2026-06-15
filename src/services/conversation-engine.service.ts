@@ -42,6 +42,8 @@ export interface ChatInput {
   attachmentIds?: string[];
   /** Per-turn runtime notices injected into the system prompt (see InvokeRequest). */
   runtimeNotices?: string[];
+  /** Aborting this signal stops the in-flight LLM generation mid-turn. */
+  abortSignal?: AbortSignal;
   metadata?: {
     channel?: 'websocket' | 'slack';
     channelId?: string;
@@ -92,6 +94,7 @@ class ConversationEngineService {
     terminalText: string | undefined,
     userId: string,
     agentId: string,
+    abortSignal?: AbortSignal,
   ): Promise<boolean> {
     if (!isTelemetryEnabled()) return false;
     if (!terminalText) return false;
@@ -107,7 +110,7 @@ class ConversationEngineService {
       return false;
     }
 
-    return this.isResponseWorthyOfFeedback(userMessage, terminalText, userId, agentId);
+    return this.isResponseWorthyOfFeedback(userMessage, terminalText, userId, agentId, abortSignal);
   }
 
   /**
@@ -123,6 +126,7 @@ class ConversationEngineService {
     agentResponse: string,
     userId: string,
     agentId: string,
+    abortSignal?: AbortSignal,
   ): Promise<boolean> {
     const systemPrompt = `You are a gate deciding whether to ask a user to rate an agent's reply with thumbs-up/down.
 
@@ -151,6 +155,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         ],
         maxOutputTokens: 5,
         temperature: 0,
+        abortSignal,
         ...(isLangfuseEnabled() && {
           experimental_telemetry: {
             isEnabled: true,
@@ -237,6 +242,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       threadId,
       isChannelMessage,
       runtimeNotices: input.runtimeNotices,
+      abortSignal: input.abortSignal,
     })) {
       allToolCalls.push(...step.toolCalls);
       if (step.blocks) allBlocks.push(...step.blocks);
@@ -273,7 +279,7 @@ Respond with exactly one word: WORTHY or SKIP`;
     // attach the accumulated blocks and the feedback decision here.
     if (bufferedStep) {
       const includeFeedback = await this.shouldShowFeedback(
-        threadId, message, bufferedStep.text, userId, agentId,
+        threadId, message, bufferedStep.text, userId, agentId, input.abortSignal,
       );
       agentMessage = await messageDeliveryService.publish(
         userId,

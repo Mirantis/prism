@@ -1648,7 +1648,16 @@ router.post('/chat', async (req: Request, res: Response) => {
       return;
     }
 
-    const response = await conversationEngineService.chat({ userId, agentId, message, threadId, metadata, attachmentIds });
+    // Cancellation for the synchronous API: if the HTTP client disconnects
+    // before the turn finishes, abort the in-flight LLM generation. Aborting
+    // an already-settled signal after a normal response is a harmless no-op.
+    const controller = new AbortController();
+    req.on('close', () => controller.abort());
+
+    const response = await conversationEngineService.chat({
+      userId, agentId, message, threadId, metadata, attachmentIds,
+      abortSignal: controller.signal,
+    });
     res.json(response);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';

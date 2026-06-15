@@ -216,6 +216,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       toolChoice: 'auto',
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       stopWhen: stepCountIs(STEP_LIMIT),
+      abortSignal: request.abortSignal,
       ...langfuseTelemetry(`invoke-${request.mode}`),
       // Re-apply cache breakpoint on the latest last message each step so the
       // growing conversation prefix is cached between steps (Bedrock doesn't
@@ -276,6 +277,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
             { role: 'user' as const, content: EARLY_STOPPING_PROMPT },
           ],
           maxOutputTokens: MAX_OUTPUT_TOKENS,
+          abortSignal: request.abortSignal,
           ...langfuseTelemetry('invoke-early-stopping'),
         });
 
@@ -285,6 +287,15 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
        channel.close();
     }).catch((error) => {
+      // User-initiated cancellation: the caller aborted our signal, so
+      // generateText rejected with an AbortError. Close the stream quietly —
+      // already-completed steps were already pushed and stay delivered; we
+      // don't want a "I encountered an error…" bubble. We own the signal, so
+      // `aborted` is the robust discriminator (no error-shape sniffing).
+      if (request.abortSignal?.aborted) {
+        channel.close();
+        return;
+      }
       // Surface the error as a friendly step so consumers don't need a
       // separate error-handling path. buildErrorStep is the single
       // formatter for LLM/runtime errors (budget-aware).
