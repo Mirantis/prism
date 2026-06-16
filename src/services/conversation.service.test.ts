@@ -327,6 +327,50 @@ describe('ConversationService', () => {
         }),
       });
     });
+
+    it('names the thread after the first user message (first 3 words, capped)', async () => {
+      mockPrisma.conversationMessage.create.mockResolvedValue({ id: 'm1' });
+      mockPrisma.conversationThread.update.mockResolvedValue(createTestThread());
+
+      await conversationService.addMessage('thread-1', {
+        content: 'keuruun saha translations now please',
+        role: 'USER',
+        triggeredBy: 'USER_INPUT',
+      });
+
+      // `title: null` in the where clause makes this fire only for the first
+      // user message — later messages are a no-op (title already set).
+      expect(mockPrisma.conversationThread.updateMany).toHaveBeenCalledWith({
+        where: { id: 'thread-1', title: null },
+        data: { title: 'keuruun saha translat...' },
+      });
+    });
+
+    it('does not set a title for an AGENT message', async () => {
+      mockPrisma.conversationMessage.create.mockResolvedValue({ id: 'm1' });
+      mockPrisma.conversationThread.update.mockResolvedValue(createTestThread());
+
+      await conversationService.addMessage('thread-1', {
+        content: 'here is the answer',
+        role: 'AGENT',
+        triggeredBy: 'USER_INPUT',
+      });
+
+      expect(mockPrisma.conversationThread.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('does not set a title for a file-only (empty content) user message', async () => {
+      mockPrisma.conversationMessage.create.mockResolvedValue({ id: 'm1' });
+      mockPrisma.conversationThread.update.mockResolvedValue(createTestThread());
+
+      await conversationService.addMessage('thread-1', {
+        content: '   ',
+        role: 'USER',
+        triggeredBy: 'USER_INPUT',
+      });
+
+      expect(mockPrisma.conversationThread.updateMany).not.toHaveBeenCalled();
+    });
   });
 
   // ==========================================================================
