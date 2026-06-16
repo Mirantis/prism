@@ -159,7 +159,7 @@ class TuiAdapter {
 
   /**
    * Send a user message. The runtime fills in `agentId` (and resolves
-   * the active thread), so we only send the content + mode.
+   * the latest thread), so we only send the content + mode.
    */
   async submitUserMessage(_args: {
     userId: string;

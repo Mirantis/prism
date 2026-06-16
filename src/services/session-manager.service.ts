@@ -157,8 +157,15 @@ class SessionManagerService {
     const agent = await this.getAgentByUserId(userId);
 
     // Start a fresh thread so the next message opens a clean conversation.
+    // Carry the current thread's workspaceRoot forward — daily/idle resets can
+    // fire while a CLI session is connected, and the CLI only sends its cwd
+    // once per launch; without this the agent would silently fall back to the
+    // global SHELL_WORKSPACE_ROOT after a reset.
     try {
-      await conversationService.startNewThread(agent.id, userId);
+      const latest = await conversationService.getLatestThread(userId);
+      await conversationService.startNewThread(agent.id, userId, {
+        workspaceRoot: latest?.workspaceRoot ?? undefined,
+      });
     } catch {
       logger.warn('Failed to start a new thread on session reset for user %s', userId);
     }

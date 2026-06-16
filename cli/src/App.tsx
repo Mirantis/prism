@@ -72,10 +72,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     return () => tuiAdapterService.markDisconnected();
   }, [userId]);
 
-  // Start a fresh conversation thread on every CLI open. The runtime archives
-  // the previous active thread and creates a new one, so the TUI opens to a
-  // clean slate instead of resuming the last conversation. Fires once per
-  // launch (not on WebSocket reconnect, which is handled separately).
+  // Start a fresh conversation thread on every CLI open. The runtime creates a
+  // new thread (which becomes the latest), so the TUI opens to a clean slate
+  // instead of resuming the last conversation. Fires once per launch (not on
+  // WebSocket reconnect, which is handled separately).
   useEffect(() => {
     void tuiAdapterService.startNewSession();
   }, [userId, agent.id]);
