@@ -125,6 +125,12 @@ model ConversationThread {
   threadSource      ThreadSource @default(DATABASE)
   externalChannelId String?
 
+  // Optional working directory this conversation is rooted in, set once at
+  // creation (e.g. the CLI's launch cwd). Shell tools use it as their cwd when
+  // present, else fall back to the global SHELL_WORKSPACE_ROOT. Never changed
+  // after create.
+  workspaceRoot String?
+
   compactionSummary String?
   compactedAt       DateTime?
 

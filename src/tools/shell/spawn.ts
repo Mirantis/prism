@@ -12,7 +12,6 @@
  */
 import { z } from 'zod';
 import { resolvePath } from './workspace';
-import { resolveWorkspaceRoot } from './config';
 import { getProcessManager } from './process-manager';
 
 export const shellSpawnInput = z.object({
@@ -48,7 +47,7 @@ export const shellKillInput = z.object({
 
 export async function runShellSpawn(
   input: z.infer<typeof shellSpawnInput>,
-  workspace: string = resolveWorkspaceRoot(),
+  workspace: string,
 ): Promise<{ processId: string }> {
   const cwd = input.workdir ? resolvePath(workspace, input.workdir) : workspace;
   const processId = getProcessManager().spawn({ command: input.command, workdir: cwd });

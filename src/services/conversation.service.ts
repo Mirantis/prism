@@ -109,6 +109,68 @@ class ConversationService {
   }
 
   /**
+   * Start a brand-new active conversation thread, archiving any prior active
+   * database thread for this agent+user. Used when the CLI opens so each
+   * session begins fresh instead of resuming the previous conversation.
+   *
+   * External (Slack) threads are left untouched — only DATABASE threads with
+   * externalThreadId === null are archived, keeping the "one active database
+   * thread per user" invariant so getOrCreateActiveThread (and heartbeat/cron
+   * delivery) resolve deterministically to the new thread.
+   *
+   * `options.workspaceRoot` optionally records the working directory this
+   * conversation is rooted in (e.g. the CLI's launch cwd). It's persisted once
+   * here and never changed; shell tools later use it as their cwd. Empty /
+   * whitespace-only values are ignored.
+   */
+  async startNewActiveThread(
+    agentId: string,
+    userId: string,
+    options?: { workspaceRoot?: string },
+  ): Promise<ConversationThread> {
+    await prisma.conversationThread.updateMany({
+      where: {
+        agentId,
+        userId,
+        status: 'ACTIVE',
+        externalThreadId: null,
+      },
+      data: { status: 'NON_ACTIVE' },
+    });
+
+    const workspaceRoot = options?.workspaceRoot?.trim();
+    const thread = await prisma.conversationThread.create({
+      data: {
+        agentId,
+        userId,
+        status: 'ACTIVE',
+        ...(workspaceRoot ? { workspaceRoot } : {}),
+      },
+    });
+    logger.info('Started new conversation thread for user %s (threadId: %s)', userId, thread.id);
+    trackEvent('thread created', userId, {
+      'agent.id': agentId,
+      'thread.id': thread.id,
+      'thread.source': 'database',
+    });
+
+    return thread;
+  }
+
+  /**
+   * Read a thread's persisted workspace root (the directory it's rooted in),
+   * or null if unset. Used by the conversation engine to scope shell tools to
+   * the thread's workspace when one was recorded at creation.
+   */
+  async getThreadWorkspaceRoot(threadId: string): Promise<string | null> {
+    const thread = await prisma.conversationThread.findUnique({
+      where: { id: threadId },
+      select: { workspaceRoot: true },
+    });
+    return thread?.workspaceRoot ?? null;
+  }
+
+  /**
    * Get or create a conversation thread bound to a specific external thread ID.
    * Used for Slack channel threads where each Slack thread maps to its own conversation.
    */

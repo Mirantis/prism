@@ -15,7 +15,7 @@ import * as pty from 'node-pty';
 import stripAnsi from 'strip-ansi';
 
 const AGENT_RUNTIME_DIR = path.resolve(import.meta.dirname, '../..');
-const PRISM_CLI_DIR = path.resolve(import.meta.dirname, '../../cli');
+export const PRISM_CLI_DIR = path.resolve(import.meta.dirname, '../../cli');
 const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '../..');
 // Spawn `node <tsx-cli.mjs> <entry>` instead of the .bin/tsx shim.
 // macOS's posix_spawnp doesn't follow `#!/usr/bin/env node` reliably from

@@ -55,6 +55,11 @@ export interface InvokeRequest {
   mode: 'chat' | 'heartbeat' | 'cron' | 'subagent';
   prompt: string;
   threadId?: string;
+  /**
+   * Optional per-thread workspace root for shell tools' cwd. When unset, shell
+   * tools fall back to the global SHELL_WORKSPACE_ROOT (see `resolveWorkspace`).
+   */
+  workspaceRoot?: string;
   isChannelMessage?: boolean;
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;

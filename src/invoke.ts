@@ -111,7 +111,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         ...getMemoryTools(request.userId, request.agentId),
         ...getCronTools(request.userId, request.agentId),
         ...getAgentConfigTools(),
-        ...getShellTools(),
+        ...getShellTools(request.workspaceRoot),
         ...getShareFileTools(),
       },
       request.mode,

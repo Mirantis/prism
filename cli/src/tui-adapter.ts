@@ -135,6 +135,29 @@ class TuiAdapter {
   }
 
   /**
+   * Start a fresh conversation thread for this CLI session. Calls the
+   * runtime's `POST /single-agent/threads`, which archives the previous
+   * active thread and creates a new one — so opening the CLI begins a clean
+   * conversation instead of resuming the last one. The CLI's launch directory
+   * (`process.cwd()`) is sent as the thread's workspaceRoot so the agent's
+   * shell tools operate from where the user opened the CLI. Errors are
+   * swallowed (we fall back to whatever thread the runtime resolves) rather
+   * than blocking the UI.
+   */
+  async startNewSession(): Promise<void> {
+    try {
+      await fetch(`${this.httpUrl}/single-agent/threads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceRoot: process.cwd() }),
+      });
+    } catch {
+      // Runtime down / unreachable — render anyway; first message will still
+      // route through the runtime's thread resolution.
+    }
+  }
+
+  /**
    * Send a user message. The runtime fills in `agentId` (and resolves
    * the active thread), so we only send the content + mode.
    */

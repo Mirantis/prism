@@ -49,3 +49,15 @@ export function ensureWorkspaceRoot(): { root: string; fellBackFrom: string | nu
     return { root: fallback, fellBackFrom: desired };
   }
 }
+
+/**
+ * The single owner of the per-thread-vs-global fallback: returns the given
+ * thread workspace root when it's a non-empty path, otherwise the global
+ * `resolveWorkspaceRoot()`. Every shell-tool invocation resolves its cwd
+ * through here (via `getShellTools`), so the fallback lives in exactly one
+ * place.
+ */
+export function resolveWorkspace(workspaceRoot?: string | null): string {
+  const trimmed = workspaceRoot?.trim();
+  return trimmed ? path.resolve(trimmed) : resolveWorkspaceRoot();
+}
