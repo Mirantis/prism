@@ -15,7 +15,7 @@ import type { ConversationMessage } from '../prompts/context-builder';
 
 const {
   mockGetAgent,
-  mockGetActiveThread,
+  mockGetLatestThread,
   mockGetThreadContext,
   mockGetMetaByMessageIds,
   mockGetMetaByExternalTs,
@@ -23,7 +23,7 @@ const {
   mockLoadByExternalTs,
 } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
-  mockGetActiveThread: vi.fn(),
+  mockGetLatestThread: vi.fn(),
   mockGetThreadContext: vi.fn(),
   mockGetMetaByMessageIds: vi.fn(),
   mockGetMetaByExternalTs: vi.fn(),
@@ -39,7 +39,7 @@ vi.mock('./agent-workspace.service', () => ({
 
 vi.mock('./conversation.service', () => ({
   conversationService: {
-    getLatestThread: mockGetActiveThread,
+    getLatestThread: mockGetLatestThread,
     getThreadContext: mockGetThreadContext,
   },
 }));
@@ -101,7 +101,7 @@ function createTestMessage(overrides?: Partial<ConversationMessage>): Conversati
 describe('ContextService', () => {
   beforeEach(() => {
     mockGetAgent.mockReset();
-    mockGetActiveThread.mockReset();
+    mockGetLatestThread.mockReset();
     mockGetThreadContext.mockReset();
     // Default: no attachments anywhere (empty maps).
     mockGetMetaByMessageIds.mockReset().mockResolvedValue(new Map());
@@ -187,7 +187,7 @@ describe('ContextService', () => {
       includeConversation: false,
     });
 
-    expect(mockGetActiveThread).not.toHaveBeenCalled();
+    expect(mockGetLatestThread).not.toHaveBeenCalled();
     expect(mockGetThreadContext).not.toHaveBeenCalled();
     expect(context.conversationSummary).toBeNull();
     expect(context.recentMessages).toEqual([]);
@@ -206,7 +206,7 @@ describe('ContextService', () => {
       includeConversation: true,
     });
 
-    expect(mockGetActiveThread).not.toHaveBeenCalled();
+    expect(mockGetLatestThread).not.toHaveBeenCalled();
     expect(mockGetThreadContext).toHaveBeenCalledWith('thread-1');
     expect(context.conversationSummary).toBe('Previous discussion about pods');
     expect(context.recentMessages).toHaveLength(1);
@@ -218,7 +218,7 @@ describe('ContextService', () => {
 
   it('auto-resolves active thread when includeConversation is true but no threadId', async () => {
     mockGetAgent.mockResolvedValue(createTestAgentWorkspace());
-    mockGetActiveThread.mockResolvedValue({ id: 'active-thread-1' });
+    mockGetLatestThread.mockResolvedValue({ id: 'active-thread-1' });
     mockGetThreadContext.mockResolvedValue({
       compactionSummary: null,
       messages: [createTestMessage()],
@@ -229,21 +229,21 @@ describe('ContextService', () => {
       includeConversation: true,
     });
 
-    expect(mockGetActiveThread).toHaveBeenCalledWith('user-1');
+    expect(mockGetLatestThread).toHaveBeenCalledWith('user-1');
     expect(mockGetThreadContext).toHaveBeenCalledWith('active-thread-1');
     expect(context.recentMessages).toHaveLength(1);
   });
 
   it('returns empty conversation when no active thread exists', async () => {
     mockGetAgent.mockResolvedValue(createTestAgentWorkspace());
-    mockGetActiveThread.mockResolvedValue(null);
+    mockGetLatestThread.mockResolvedValue(null);
 
     const context = await contextService.getAgentContext('user-1', {
       agentId: 'agent-1',
       includeConversation: true,
     });
 
-    expect(mockGetActiveThread).toHaveBeenCalledWith('user-1');
+    expect(mockGetLatestThread).toHaveBeenCalledWith('user-1');
     expect(mockGetThreadContext).not.toHaveBeenCalled();
     expect(context.conversationSummary).toBeNull();
     expect(context.recentMessages).toEqual([]);
@@ -255,7 +255,7 @@ describe('ContextService', () => {
 
   it('defaults includeConversation to true', async () => {
     mockGetAgent.mockResolvedValue(createTestAgentWorkspace());
-    mockGetActiveThread.mockResolvedValue({ id: 'thread-1' });
+    mockGetLatestThread.mockResolvedValue({ id: 'thread-1' });
     mockGetThreadContext.mockResolvedValue({
       compactionSummary: null,
       messages: [createTestMessage()],
@@ -263,7 +263,7 @@ describe('ContextService', () => {
 
     await contextService.getAgentContext('user-1', { agentId: 'agent-1' });
 
-    expect(mockGetActiveThread).toHaveBeenCalled();
+    expect(mockGetLatestThread).toHaveBeenCalled();
     expect(mockGetThreadContext).toHaveBeenCalled();
   });
 
