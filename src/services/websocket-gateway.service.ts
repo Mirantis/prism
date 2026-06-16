@@ -182,14 +182,20 @@ class WebSocketGatewayService {
   /**
    * Cancel the user's in-flight chat turn. Aborts the active controller —
    * which stops the LLM generation mid-turn — and clears any queued followups
-   * so a cancel doesn't immediately auto-start the next message. The terminal
-   * `{ processing: false }` status is broadcast by processMessage's finally.
+   * so a cancel doesn't immediately auto-start the next message.
+   *
+   * Broadcasts the terminal `{ processing: false }` status immediately so
+   * every one of the user's connections/tabs resets promptly — if the abort
+   * is slow to land (e.g. a tool is mid-flight), waiting for processMessage's
+   * `finally` would leave the other UIs stuck in "pending". The `finally`
+   * broadcast remains as an idempotent safety net.
    */
   private handleCancelMessage(userId: string): void {
     const controller = this.activeRequests.get(userId);
     if (controller) {
       logger.info('Cancel requested by %s', userId);
       controller.abort();
+      this.broadcast(userId, { type: 'status', payload: { processing: false } });
     }
     this.messageQueues.delete(userId);
   }
