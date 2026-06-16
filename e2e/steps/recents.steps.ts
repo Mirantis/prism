@@ -48,6 +48,16 @@ Then('the Recents list shows {string}', async ({ page }, name: string) => {
   await expect(home.recentThreads.filter({ hasText: name })).toBeVisible();
 });
 
+Then('the {string} conversation is highlighted as current', async ({ page }, name: string) => {
+  const home = new HomePage(page);
+  await expect(home.recentThreads.filter({ hasText: name })).toHaveAttribute('data-active', 'true');
+});
+
+Then('the {string} conversation is not highlighted', async ({ page }, name: string) => {
+  const home = new HomePage(page);
+  await expect(home.recentThreads.filter({ hasText: name })).not.toHaveAttribute('data-active', 'true');
+});
+
 Then('the Recents list has {int} conversation', async ({ page }, count: number) => {
   const home = new HomePage(page);
   await expect(home.recentThreads).toHaveCount(count);

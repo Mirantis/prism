@@ -26,18 +26,25 @@ export function RecentsNav() {
       }),
   });
 
+  // The chat view always shows the latest (newest) database thread, which is
+  // the first row here (server returns createdAt desc). Highlight it as the
+  // current conversation, ChatGPT-style.
+  const selectedThreadId = threads?.[0]?.id;
+
   return (
     <SidebarGroup data-testid="recents">
       <SidebarGroupLabel>Recents</SidebarGroupLabel>
       <SidebarMenu>
         {threads?.map((thread) => {
           const name = threadDisplayName(thread);
+          const selected = thread.id === selectedThreadId;
           return (
             <SidebarMenuItem key={thread.id}>
               <span
                 data-testid="recent-thread"
+                data-active={selected ? 'true' : undefined}
                 title={name}
-                className="block truncate rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80"
+                className="block truncate rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80 data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground"
               >
                 {name}
               </span>

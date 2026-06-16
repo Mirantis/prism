@@ -6,11 +6,13 @@ Feature: Recents conversation list
     Given I am logged in
     And I have a personal agent
 
-  Scenario: Recents lists conversations newest-first by folder name
+  Scenario: Recents lists conversations newest-first and highlights the current one
     Given an older conversation thread rooted at "/work/project-one"
     And a conversation thread rooted at "/work/project-two"
     When I navigate to the agent chat page
     Then the Recents list shows "project-two" above "project-one"
+    And the "project-two" conversation is highlighted as current
+    And the "project-one" conversation is not highlighted
 
   Scenario: Recents excludes Slack-sourced threads
     Given a conversation thread rooted at "/work/project-db"
