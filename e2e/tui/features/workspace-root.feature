@@ -3,4 +3,4 @@ Feature: CLI workspace root
   launched the CLI in, so a conversation is rooted in my current project.
 
   Scenario: The new thread's workspace root is the CLI's working directory
-    Then the active thread's workspace root equals the CLI working directory
+    Then the latest thread's workspace root equals the CLI working directory

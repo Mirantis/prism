@@ -6,7 +6,7 @@ Feature: Thread Lifecycle
     Given I am logged in
     And I have a personal agent
 
-  Scenario: Chat uses the active thread for message history
+  Scenario: Chat uses the latest thread for message history
     Given I have a conversation with the following messages:
       | role  | content        |
       | USER  | first message  |
@@ -15,24 +15,17 @@ Feature: Thread Lifecycle
     Then I should see the message "first message" in the conversation
     And I should see the message "first response" in the conversation
 
-  Scenario: Deactivated thread is not shown in chat
-    Given I have a deactivated conversation with the following messages:
+  Scenario: Only the latest thread is shown in chat
+    Given I have an older conversation with the following messages:
       | role  | content      |
       | USER  | old message  |
       | AGENT | old response |
+    And I have a conversation with the following messages:
+      | role  | content         |
+      | USER  | latest message  |
+      | AGENT | latest response |
     When I navigate to the agent chat page
-    Then I should not see the message "old message" in the conversation
-    And I should not see the message "old response" in the conversation
-
-  Scenario: New messages go to a new thread after deactivation
-    Given I have a deactivated conversation with the following messages:
-      | role  | content      |
-      | USER  | old message  |
-      | AGENT | old response |
-    When I navigate to the agent chat page
-    And I type "hello after reset" in the chat input
-    And I send the message
-    Then I should see my message "hello after reset" in the conversation
+    Then I should see the message "latest message" in the conversation
     And I should not see the message "old message" in the conversation
 
   Scenario: Slack-sourced threads are not shown in webchat

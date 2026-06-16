@@ -218,7 +218,7 @@ class CronSchedulerService {
       // Budget exceeded — notify user and record the attempt
       if (result.error?.type === 'budget_exceeded') {
         await this.updateCronTaskRun(task.id, new Date().toISOString());
-        await messageDeliveryService.publishToActiveThread(
+        await messageDeliveryService.publishToLatestThread(
           task.agentId,
           task.userId,
           `**Scheduled Task: ${task.name}**\n\nThis task could not run — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`,
@@ -238,7 +238,7 @@ class CronSchedulerService {
       const lastStep = result.steps[result.steps.length - 1];
       const responseText = (lastStep?.text ?? '').trim();
 
-      await messageDeliveryService.publishToActiveThread(
+      await messageDeliveryService.publishToLatestThread(
         task.agentId,
         task.userId,
         `**Scheduled Task: ${task.name}**\n\n${responseText || result.response}`,

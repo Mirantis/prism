@@ -42,11 +42,10 @@
  *   POST   /agents/slack-heartbeat-trigger/claim              - Try claim trigger
  *
  * Conversation threads:
- *   POST   /agents/threads/get-or-create-active               - Get or create active thread
+ *   POST   /agents/threads/get-or-create-latest               - Get or create latest thread
  *   GET    /agents/threads                                    - List threads
  *   GET    /agents/threads/:threadId                          - Fetch thread + messages
  *   POST   /agents/threads/:threadId/messages                 - Add message
- *   POST   /agents/threads/:threadId/archive                  - Archive thread
  *   POST   /agents/threads/get-or-create-by-external-id       - Get/create by external id
  *   POST   /agents/threads/:threadId/set-external-id          - Set external id
  *
@@ -81,7 +80,7 @@
 import { Router, Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import multer from 'multer';
-import { AgentType, MessageRole, MessageTrigger, Prisma, ThreadStatus } from '@prisma/client';
+import { AgentType, MessageRole, MessageTrigger, Prisma } from '@prisma/client';
 import { logger } from '../logger';
 import { config } from '../config';
 import { trackEvent } from '../lib/telemetry';
@@ -830,41 +829,36 @@ router.post('/slack-heartbeat-trigger/claim', async (_req: Request, res: Respons
 // ============================================================================
 
 /**
- * POST /agents/threads/get-or-create-active
- * Get or create the active thread for a user+agent pair.
+ * POST /agents/threads/get-or-create-latest
+ * Get or create the latest thread for a user+agent pair.
  * Body: { agentId, userId }
  */
-router.post('/threads/get-or-create-active', async (req: Request, res: Response) => {
+router.post('/threads/get-or-create-latest', async (req: Request, res: Response) => {
   try {
     const { agentId, userId } = req.body;
     if (!agentId || !userId) {
       res.status(400).json({ error: 'Missing required fields: agentId, userId' });
       return;
     }
-    const thread = await conversationService.getOrCreateActiveThread(agentId, userId);
+    const thread = await conversationService.getOrCreateLatestThread(agentId, userId);
     res.json(thread);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to get or create active thread: ${msg}`);
+    logger.error(`[Management] Failed to get or create latest thread: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
 
 /**
  * GET /agents/threads
- * List threads for a user+agent with optional status filter and limit.
- * Query: { userId (required), agentId (required), status?, limit? }
+ * List threads for a user+agent (newest first), with optional limit.
+ * Query: { userId (required), agentId (required), limit? }
  */
 router.get('/threads', async (req: Request, res: Response) => {
   try {
-    const { userId, agentId, status, limit } = req.query;
+    const { userId, agentId, limit } = req.query;
     if (!userId || !agentId) {
       res.status(400).json({ error: 'Missing required query params: userId, agentId' });
-      return;
-    }
-
-    if (status !== undefined && !Object.values(ThreadStatus).includes(status as ThreadStatus)) {
-      res.status(400).json({ error: `Invalid status: ${status}. Must be one of: ${Object.values(ThreadStatus).join(', ')}` });
       return;
     }
 
@@ -880,10 +874,7 @@ router.get('/threads', async (req: Request, res: Response) => {
     const threads = await conversationService.listThreads(
       userId as string,
       agentId as string,
-      {
-        status: status as ThreadStatus | undefined,
-        limit: parsedLimit,
-      }
+      { limit: parsedLimit },
     );
 
     res.json(threads);
@@ -987,24 +978,6 @@ router.post('/threads/:threadId/messages', async (req: Request<{ threadId: strin
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to add message to thread ${req.params.threadId}: ${msg}`);
-    res.status(500).json({ error: msg });
-  }
-});
-
-/**
- * POST /agents/threads/:threadId/archive
- * Deactivate a thread (sets status to NON_ACTIVE). Path kept as /archive for backwards compatibility.
- * Body: { userId? } — optional ownership check param
- */
-router.post('/threads/:threadId/archive', async (req: Request<{ threadId: string }>, res: Response) => {
-  try {
-    const { threadId } = req.params;
-    const { userId } = req.body;
-    await conversationService.deactivateThread(threadId, userId);
-    res.json({ success: true });
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to deactivate thread ${req.params.threadId}: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });

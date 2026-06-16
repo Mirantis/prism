@@ -10,13 +10,13 @@ import { getCurrentAgentId } from './common.steps';
 
 const { Given, Then } = createBdd();
 
-Given('I have a deactivated conversation with the following messages:', async ({}, dataTable: DataTable) => {
+Given('I have an older conversation with the following messages:', async ({}, dataTable: DataTable) => {
   const rows = dataTable.rows();
   const messages = rows.map(([role, content]) => ({
     role: role as 'USER' | 'AGENT',
     content,
   }));
-  await dbHelper.createDeactivatedConversation(getCurrentAgentId(), messages);
+  await dbHelper.createOlderConversation(getCurrentAgentId(), messages);
 });
 
 Given('I have a Slack-sourced conversation with the following messages:', async ({}, dataTable: DataTable) => {

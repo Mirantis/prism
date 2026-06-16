@@ -28,11 +28,6 @@ enum AgentHeartbeatStatus {
   STOPPED
 }
 
-enum ThreadStatus {
-  ACTIVE
-  NON_ACTIVE
-}
-
 enum MessageRole {
   USER
   AGENT
@@ -114,11 +109,10 @@ model AgentWorkspace {
 // ============================================================================
 
 model ConversationThread {
-  id      String       @id @default(uuid())
+  id      String  @id @default(uuid())
   agentId String
   userId  String
   title   String?
-  status  ThreadStatus @default(ACTIVE)
 
   externalThreadId String?
 

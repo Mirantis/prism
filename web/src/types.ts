@@ -1,6 +1,5 @@
 export type MessageRole = 'USER' | 'AGENT' | 'SYSTEM';
 export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'SYSTEM';
-export type ThreadStatus = 'ACTIVE' | 'NON_ACTIVE';
 
 export interface ToolCallRecord {
   tool: string;
@@ -44,7 +43,6 @@ export interface ConversationThread {
   id: string;
   agentId: string;
   userId: string;
-  status: ThreadStatus;
   externalThreadId: string | null;
   createdAt: string;
   updatedAt: string;

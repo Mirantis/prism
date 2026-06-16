@@ -24,7 +24,6 @@ const {
   mockGetThread,
   mockListThreads,
   mockAddMessage,
-  mockDeactivateThread,
   mockGetOrCreateActiveThread,
   mockSetExternalId,
   mockGetOrCreateThreadByExternalId,
@@ -41,7 +40,6 @@ const {
   mockGetThread: vi.fn(),
   mockListThreads: vi.fn(),
   mockAddMessage: vi.fn(),
-  mockDeactivateThread: vi.fn(),
   mockGetOrCreateActiveThread: vi.fn(),
   mockSetExternalId: vi.fn(),
   mockGetOrCreateThreadByExternalId: vi.fn(),
@@ -110,8 +108,7 @@ vi.mock('../services/conversation.service', () => ({
     getThread: mockGetThread,
     listThreads: mockListThreads,
     addMessage: mockAddMessage,
-    deactivateThread: mockDeactivateThread,
-    getOrCreateActiveThread: mockGetOrCreateActiveThread,
+    getOrCreateLatestThread: mockGetOrCreateActiveThread,
     setExternalId: mockSetExternalId,
     getOrCreateThreadByExternalId: mockGetOrCreateThreadByExternalId,
   },
@@ -1064,16 +1061,16 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
-  // POST /threads/get-or-create-active
+  // POST /threads/get-or-create-latest
   // ==========================================================================
 
-  describe('POST /threads/get-or-create-active', () => {
+  describe('POST /threads/get-or-create-latest', () => {
     it('returns the thread on success', async () => {
-      const thread = { id: 'thread-1', agentId: 'agent-1', userId: 'user-1', status: 'ACTIVE' };
+      const thread = { id: 'thread-1', agentId: 'agent-1', userId: 'user-1' };
       mockGetOrCreateActiveThread.mockResolvedValue(thread);
 
       const res = await authedRequest(app)
-        .post('/agents/threads/get-or-create-active')
+        .post('/agents/threads/get-or-create-latest')
         .send({ agentId: 'agent-1', userId: 'user-1' });
 
       expect(res.status).toBe(200);
@@ -1083,7 +1080,7 @@ describe('Management Routes', () => {
 
     it('returns 400 when agentId is missing', async () => {
       const res = await authedRequest(app)
-        .post('/agents/threads/get-or-create-active')
+        .post('/agents/threads/get-or-create-latest')
         .send({ userId: 'user-1' });
 
       expect(res.status).toBe(400);
@@ -1092,18 +1089,18 @@ describe('Management Routes', () => {
 
     it('returns 400 when userId is missing', async () => {
       const res = await authedRequest(app)
-        .post('/agents/threads/get-or-create-active')
+        .post('/agents/threads/get-or-create-latest')
         .send({ agentId: 'agent-1' });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('userId');
     });
 
-    it('returns 500 when getOrCreateActiveThread throws', async () => {
+    it('returns 500 when getOrCreateLatestThread throws', async () => {
       mockGetOrCreateActiveThread.mockRejectedValue(new Error('DB error'));
 
       const res = await authedRequest(app)
-        .post('/agents/threads/get-or-create-active')
+        .post('/agents/threads/get-or-create-latest')
         .send({ agentId: 'agent-1', userId: 'user-1' });
 
       expect(res.status).toBe(500);
@@ -1146,20 +1143,18 @@ describe('Management Routes', () => {
       expect(res.body).toHaveLength(2);
       expect(res.body[0].id).toBe('thread-1');
       expect(mockListThreads).toHaveBeenCalledWith('user-1', 'agent-1', {
-        status: undefined,
         limit: undefined,
       });
     });
 
-    it('passes status and limit query params', async () => {
+    it('passes the limit query param', async () => {
       mockListThreads.mockResolvedValue([]);
 
       const res = await authedRequest(app)
-        .get('/agents/threads?userId=user-1&agentId=agent-1&status=ACTIVE&limit=5');
+        .get('/agents/threads?userId=user-1&agentId=agent-1&limit=5');
 
       expect(res.status).toBe(200);
       expect(mockListThreads).toHaveBeenCalledWith('user-1', 'agent-1', {
-        status: 'ACTIVE',
         limit: 5,
       });
     });
@@ -1290,47 +1285,6 @@ describe('Management Routes', () => {
       const res = await authedRequest(app)
         .post('/agents/threads/thread-1/messages')
         .send({ content: 'Hello', role: 'USER', triggeredBy: 'USER_INPUT' });
-
-      expect(res.status).toBe(500);
-      expect(res.body.error).toBe('DB error');
-    });
-  });
-
-  // ==========================================================================
-  // POST /threads/:threadId/archive
-  // ==========================================================================
-
-  describe('POST /threads/:threadId/archive', () => {
-    it('deactivates thread and returns success', async () => {
-      mockDeactivateThread.mockResolvedValue(undefined);
-
-      const res = await authedRequest(app)
-        .post('/agents/threads/thread-1/archive')
-        .send({});
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(mockDeactivateThread).toHaveBeenCalledWith('thread-1', undefined);
-    });
-
-    it('passes userId when provided', async () => {
-      mockDeactivateThread.mockResolvedValue(undefined);
-
-      const res = await authedRequest(app)
-        .post('/agents/threads/thread-1/archive')
-        .send({ userId: 'user-1' });
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(mockDeactivateThread).toHaveBeenCalledWith('thread-1', 'user-1');
-    });
-
-    it('returns 500 when deactivateThread throws', async () => {
-      mockDeactivateThread.mockRejectedValue(new Error('DB error'));
-
-      const res = await authedRequest(app)
-        .post('/agents/threads/thread-1/archive')
-        .send({});
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('DB error');

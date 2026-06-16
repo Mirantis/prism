@@ -12,7 +12,6 @@ import type {
   SlackLinkStatus,
   SlackWorkspace,
   ModelInfo,
-  ThreadStatus,
 } from '@/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -90,18 +89,17 @@ export const runtimeApi = {
     }),
 
   // Threads
-  getOrCreateActiveThread: (agentId: string, userId: string) =>
-    request<ConversationThread>('/agents/threads/get-or-create-active', {
+  getOrCreateLatestThread: (agentId: string, userId: string) =>
+    request<ConversationThread>('/agents/threads/get-or-create-latest', {
       method: 'POST',
       body: JSON.stringify({ agentId, userId }),
     }),
   listThreads: (
     agentId: string,
     userId: string,
-    opts?: { status?: ThreadStatus; limit?: number },
+    opts?: { limit?: number },
   ) => {
     const params = new URLSearchParams({ agentId, userId });
-    if (opts?.status) params.set('status', opts.status);
     if (opts?.limit) params.set('limit', String(opts.limit));
     return request<ConversationThread[]>(`/agents/threads?${params.toString()}`);
   },

@@ -19,8 +19,8 @@ const { mockStartNewActiveThread } = vi.hoisted(() => ({
 
 vi.mock('../services/conversation.service', () => ({
   conversationService: {
-    startNewActiveThread: mockStartNewActiveThread,
-    getOrCreateActiveThread: vi.fn(),
+    startNewThread: mockStartNewActiveThread,
+    getOrCreateLatestThread: vi.fn(),
     getRecentMessages: vi.fn(),
   },
 }));

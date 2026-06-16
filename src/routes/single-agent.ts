@@ -3,10 +3,10 @@
  *
  * No-auth endpoints. The runtime owns exactly one agent and has no
  * backend in front of it, so a local client (prism-cli) can fetch the
- * active thread and recent messages — and start a fresh session — without
+ * latest thread and recent messages — and start a fresh session — without
  * a token.
  *
- *   GET  /single-agent/active-thread       — { threadId }
+ *   GET  /single-agent/latest-thread       — { threadId }
  *   GET  /single-agent/messages?limit=N    — ConversationMessage[]
  *   POST /single-agent/threads             — { threadId } (starts a new thread)
  */
@@ -19,19 +19,19 @@ import { attachmentService } from '../services/attachment.service';
 
 const router = Router();
 
-router.get('/active-thread', async (_req: Request, res: Response) => {
+router.get('/latest-thread', async (_req: Request, res: Response) => {
   try {
     if (!config.agentId) {
       res.status(503).json({ error: 'Single-agent mode not initialized (agentId unset)' });
       return;
     }
-    const thread = await conversationService.getOrCreateActiveThread(
+    const thread = await conversationService.getOrCreateLatestThread(
       config.agentId,
       config.ownerUserId,
     );
     res.json({ threadId: thread.id });
   } catch (err) {
-    logger.error({ err }, '[SingleAgent] /active-thread failed');
+    logger.error({ err }, '[SingleAgent] /latest-thread failed');
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -45,7 +45,7 @@ router.get('/messages', async (req: Request, res: Response) => {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isFinite(raw) && raw > 0 ? Math.min(raw, 200) : 50;
 
-    const thread = await conversationService.getOrCreateActiveThread(
+    const thread = await conversationService.getOrCreateLatestThread(
       config.agentId,
       config.ownerUserId,
     );
@@ -73,7 +73,7 @@ router.post('/threads', async (req: Request, res: Response) => {
     // non-empty string.
     const raw: unknown = req.body?.workspaceRoot;
     const workspaceRoot = typeof raw === 'string' && raw.trim() ? raw : undefined;
-    const thread = await conversationService.startNewActiveThread(
+    const thread = await conversationService.startNewThread(
       config.agentId,
       config.ownerUserId,
       workspaceRoot ? { workspaceRoot } : undefined,
