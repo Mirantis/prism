@@ -136,9 +136,9 @@ class TuiAdapter {
 
   /**
    * Start a fresh conversation thread for this CLI session. Calls the
-   * runtime's `POST /single-agent/threads`, which archives the previous
-   * active thread and creates a new one — so opening the CLI begins a clean
-   * conversation instead of resuming the last one. The CLI's launch directory
+   * runtime's `POST /single-agent/threads`, which creates a new thread — and
+   * since the runtime always uses the latest thread, opening the CLI begins a
+   * clean conversation instead of resuming the last one. The CLI's launch directory
    * (`process.cwd()`) is sent as the thread's workspaceRoot so the agent's
    * shell tools operate from where the user opened the CLI. Errors are
    * swallowed (we fall back to whatever thread the runtime resolves) rather

@@ -183,7 +183,7 @@ Respond with exactly one word: WORTHY or SKIP`;
     let threadId = input.threadId;
     let workspaceRoot: string | undefined;
     if (!threadId) {
-      const thread = await conversationService.getOrCreateActiveThread(agentId, userId);
+      const thread = await conversationService.getOrCreateLatestThread(agentId, userId);
       threadId = thread.id;
       workspaceRoot = thread.workspaceRoot ?? undefined;
     } else {

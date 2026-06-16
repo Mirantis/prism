@@ -50,7 +50,7 @@ function streamFromSteps(steps: Array<{ text: string; toolCalls: unknown[]; bloc
 
 vi.mock('../conversation.service', () => ({
   conversationService: {
-    getOrCreateActiveThread: mockGetOrCreateActiveThread,
+    getOrCreateLatestThread: mockGetOrCreateActiveThread,
     getThreadWorkspaceRoot: mockGetThreadWorkspaceRoot,
     addMessage: mockAddMessage,
   },

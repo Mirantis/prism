@@ -37,7 +37,7 @@ vi.mock('../invoke', () => ({
 
 vi.mock('./message-delivery.service', () => ({
   messageDeliveryService: {
-    publishToActiveThread: mockDeliverMessage,
+    publishToLatestThread: mockDeliverMessage,
   },
 }));
 

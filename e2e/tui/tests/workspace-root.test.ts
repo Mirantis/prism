@@ -23,16 +23,16 @@ const feature = loadFeatureFromText(
   readFileSync(join(import.meta.dirname, '../features/workspace-root.feature'), 'utf8'),
 );
 
-/** Most-recently-updated active database thread's persisted workspace root. */
-function activeThreadWorkspaceRoot(dbPath: string): string | null {
+/** Latest (non-Slack) database thread's persisted workspace root. */
+function latestThreadWorkspaceRoot(dbPath: string): string | null {
   const db = new Database(dbPath, { readonly: true });
   db.pragma('busy_timeout = 2000');
   try {
     const row = db
       .prepare(
         "SELECT workspaceRoot FROM conversation_threads " +
-          "WHERE status = 'ACTIVE' AND externalThreadId IS NULL " +
-          'ORDER BY updatedAt DESC LIMIT 1',
+          'WHERE externalThreadId IS NULL ' +
+          'ORDER BY createdAt DESC LIMIT 1',
       )
       .get() as { workspaceRoot: string | null } | undefined;
     return row?.workspaceRoot ?? null;
@@ -66,14 +66,14 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
   });
 
   Scenario("The new thread's workspace root is the CLI's working directory", ({ Then }) => {
-    Then("the active thread's workspace root equals the CLI working directory", async () => {
+    Then("the latest thread's workspace root equals the CLI working directory", async () => {
       const expected = realpathSync(PRISM_CLI_DIR);
 
       // startNewSession() POSTs /single-agent/threads on mount asynchronously;
       // poll the DB until the new thread (carrying its workspaceRoot) lands.
       let root: string | null = null;
       for (let i = 0; i < 60 && root !== expected; i++) {
-        root = activeThreadWorkspaceRoot(env.dbPath);
+        root = latestThreadWorkspaceRoot(env.dbPath);
         if (root !== expected) await sleep(250);
       }
 

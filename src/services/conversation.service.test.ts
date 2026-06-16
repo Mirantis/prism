@@ -61,7 +61,6 @@ function createTestThread(overrides?: Record<string, unknown>) {
     id: `thread-${Math.random().toString(36).slice(2, 8)}`,
     userId: 'user-123',
     agentId: 'agent-123',
-    status: 'ACTIVE',
     title: null,
     externalThreadId: null,
     externalChannelId: null,
@@ -96,21 +95,7 @@ describe('ConversationService', () => {
       expect(result).toHaveLength(2);
       expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
         where: { agentId: 'agent-123', userId: 'user-123' },
-        orderBy: { updatedAt: 'desc' },
-        take: 20,
-      });
-    });
-
-    it('should filter threads by status', async () => {
-      mockPrisma.conversationThread.findMany.mockResolvedValue([
-        createTestThread({ status: 'ACTIVE' }),
-      ]);
-
-      await conversationService.listThreads('user-123', 'agent-123', { status: 'ACTIVE' });
-
-      expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
-        where: { agentId: 'agent-123', userId: 'user-123', status: 'ACTIVE' },
-        orderBy: { updatedAt: 'desc' },
+        orderBy: { createdAt: 'desc' },
         take: 20,
       });
     });
@@ -122,7 +107,7 @@ describe('ConversationService', () => {
 
       expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
         where: { agentId: 'agent-123', userId: 'user-123' },
-        orderBy: { updatedAt: 'desc' },
+        orderBy: { createdAt: 'desc' },
         take: 5,
       });
     });
@@ -134,24 +119,28 @@ describe('ConversationService', () => {
 
       expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
         where: { agentId: 'agent-123', userId: 'user-123' },
-        orderBy: { updatedAt: 'desc' },
+        orderBy: { createdAt: 'desc' },
         take: 20,
       });
     });
   });
 
   // ==========================================================================
-  // Get or create active thread
+  // Get or create latest thread
   // ==========================================================================
 
-  describe('getOrCreateActiveThread', () => {
-    it('should return existing active thread', async () => {
-      const existingThread = createTestThread({ status: 'ACTIVE' });
+  describe('getOrCreateLatestThread', () => {
+    it('should return the existing latest (non-Slack) thread', async () => {
+      const existingThread = createTestThread();
       mockPrisma.conversationThread.findFirst.mockResolvedValue(existingThread);
 
-      const result = await conversationService.getOrCreateActiveThread('agent-123', 'user-123');
+      const result = await conversationService.getOrCreateLatestThread('agent-123', 'user-123');
 
       expect(result.id).toBe(existingThread.id);
+      expect(mockPrisma.conversationThread.findFirst).toHaveBeenCalledWith({
+        where: { agentId: 'agent-123', userId: 'user-123', externalThreadId: null },
+        orderBy: { createdAt: 'desc' },
+      });
       expect(mockPrisma.conversationThread.create).not.toHaveBeenCalled();
     });
 
@@ -160,58 +149,40 @@ describe('ConversationService', () => {
       mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
       mockPrisma.conversationThread.create.mockResolvedValue(newThread);
 
-      await conversationService.getOrCreateActiveThread('agent-123', 'user-123');
+      await conversationService.getOrCreateLatestThread('agent-123', 'user-123');
 
-      expect(mockPrisma.conversationThread.create).toHaveBeenCalled();
+      expect(mockPrisma.conversationThread.create).toHaveBeenCalledWith({
+        data: { agentId: 'agent-123', userId: 'user-123' },
+      });
     });
   });
 
   // ==========================================================================
-  // Start a new active thread (CLI open)
+  // Start a new thread (CLI open / session reset)
   // ==========================================================================
 
-  describe('startNewActiveThread', () => {
-    it('archives prior active database threads then creates a fresh ACTIVE thread', async () => {
+  describe('startNewThread', () => {
+    it('creates a fresh thread without archiving or reusing', async () => {
       const newThread = createTestThread({ id: 'thread-new' });
-      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.conversationThread.create.mockResolvedValue(newThread);
 
-      const result = await conversationService.startNewActiveThread('agent-123', 'user-123');
+      const result = await conversationService.startNewThread('agent-123', 'user-123');
 
-      // Archives only this agent+user's active DATABASE threads (Slack/external untouched).
-      expect(mockPrisma.conversationThread.updateMany).toHaveBeenCalledWith({
-        where: {
-          agentId: 'agent-123',
-          userId: 'user-123',
-          status: 'ACTIVE',
-          externalThreadId: null,
-        },
-        data: { status: 'NON_ACTIVE' },
-      });
+      // No status to flip, no lookup — just create. The newest thread is the latest.
+      expect(mockPrisma.conversationThread.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.conversationThread.findFirst).not.toHaveBeenCalled();
       expect(mockPrisma.conversationThread.create).toHaveBeenCalledWith({
-        data: { agentId: 'agent-123', userId: 'user-123', status: 'ACTIVE' },
+        data: { agentId: 'agent-123', userId: 'user-123' },
       });
       expect(result.id).toBe('thread-new');
     });
 
-    it('archives before creating (does not resume an existing active thread)', async () => {
-      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.conversationThread.create.mockResolvedValue(createTestThread());
-
-      await conversationService.startNewActiveThread('agent-123', 'user-123');
-
-      // findFirst is the get-or-create lookup; startNew never reuses a thread.
-      expect(mockPrisma.conversationThread.findFirst).not.toHaveBeenCalled();
-      expect(mockPrisma.conversationThread.create).toHaveBeenCalled();
-    });
-
     it('emits "thread created" telemetry for the new thread', async () => {
-      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.conversationThread.create.mockResolvedValue(
         createTestThread({ id: 'thread-fresh' }),
       );
 
-      await conversationService.startNewActiveThread('agent-123', 'user-123');
+      await conversationService.startNewThread('agent-123', 'user-123');
 
       expect(mockTrackEvent).toHaveBeenCalledWith('thread created', 'user-123', {
         'agent.id': 'agent-123',
@@ -221,10 +192,9 @@ describe('ConversationService', () => {
     });
 
     it('persists workspaceRoot when provided', async () => {
-      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 0 });
       mockPrisma.conversationThread.create.mockResolvedValue(createTestThread());
 
-      await conversationService.startNewActiveThread('agent-123', 'user-123', {
+      await conversationService.startNewThread('agent-123', 'user-123', {
         workspaceRoot: '/home/me/project',
       });
 
@@ -232,22 +202,20 @@ describe('ConversationService', () => {
         data: {
           agentId: 'agent-123',
           userId: 'user-123',
-          status: 'ACTIVE',
           workspaceRoot: '/home/me/project',
         },
       });
     });
 
     it('omits workspaceRoot when empty / whitespace-only', async () => {
-      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 0 });
       mockPrisma.conversationThread.create.mockResolvedValue(createTestThread());
 
-      await conversationService.startNewActiveThread('agent-123', 'user-123', {
+      await conversationService.startNewThread('agent-123', 'user-123', {
         workspaceRoot: '   ',
       });
 
       expect(mockPrisma.conversationThread.create).toHaveBeenCalledWith({
-        data: { agentId: 'agent-123', userId: 'user-123', status: 'ACTIVE' },
+        data: { agentId: 'agent-123', userId: 'user-123' },
       });
     });
   });
@@ -349,25 +317,25 @@ describe('ConversationService', () => {
   // Get active thread
   // ==========================================================================
 
-  describe('getActiveThread', () => {
-    it('should return the active thread for a user', async () => {
-      const activeThread = createTestThread({ status: 'ACTIVE' });
-      mockPrisma.conversationThread.findFirst.mockResolvedValue(activeThread);
+  describe('getLatestThread', () => {
+    it('should return the latest (non-Slack) thread for a user', async () => {
+      const latestThread = createTestThread();
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(latestThread);
 
-      const result = await conversationService.getActiveThread('user-123');
+      const result = await conversationService.getLatestThread('user-123');
 
       expect(result).not.toBeNull();
-      expect(result!.status).toBe('ACTIVE');
+      expect(result!.id).toBe(latestThread.id);
       expect(mockPrisma.conversationThread.findFirst).toHaveBeenCalledWith({
-        where: { userId: 'user-123', status: 'ACTIVE', externalThreadId: null },
-        orderBy: { updatedAt: 'desc' },
+        where: { userId: 'user-123', externalThreadId: null },
+        orderBy: { createdAt: 'desc' },
       });
     });
 
-    it('should return null when no active thread exists', async () => {
+    it('should return null when no thread exists', async () => {
       mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
 
-      const result = await conversationService.getActiveThread('user-no-thread');
+      const result = await conversationService.getLatestThread('user-no-thread');
 
       expect(result).toBeNull();
     });
@@ -415,13 +383,13 @@ describe('ConversationService', () => {
   // ==========================================================================
 
   describe('telemetry', () => {
-    it('emits "thread created" when getOrCreateActiveThread creates a thread', async () => {
+    it('emits "thread created" when getOrCreateLatestThread creates a thread', async () => {
       mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
       mockPrisma.conversationThread.create.mockResolvedValue(
         createTestThread({ id: 'thread-new' }),
       );
 
-      await conversationService.getOrCreateActiveThread('agent-123', 'user-123');
+      await conversationService.getOrCreateLatestThread('agent-123', 'user-123');
 
       expect(mockTrackEvent).toHaveBeenCalledWith('thread created', 'user-123', {
         'agent.id': 'agent-123',
@@ -433,7 +401,7 @@ describe('ConversationService', () => {
     it('does not emit "thread created" when an active thread already exists', async () => {
       mockPrisma.conversationThread.findFirst.mockResolvedValue(createTestThread());
 
-      await conversationService.getOrCreateActiveThread('agent-123', 'user-123');
+      await conversationService.getOrCreateLatestThread('agent-123', 'user-123');
 
       expect(mockTrackEvent).not.toHaveBeenCalled();
     });
@@ -484,18 +452,6 @@ describe('ConversationService', () => {
         'message.role': 'USER',
         'message.triggered_by': 'USER_INPUT',
       });
-    });
-
-    it('emits "thread archived" on deactivateThread', async () => {
-      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 1 });
-
-      await conversationService.deactivateThread('thread-123', 'user-123');
-
-      expect(mockTrackEvent).toHaveBeenCalledWith(
-        'thread archived',
-        'user-123',
-        expect.objectContaining({ 'thread.id': 'thread-123' }),
-      );
     });
 
     it('emits "thread external id set" on setExternalId', async () => {

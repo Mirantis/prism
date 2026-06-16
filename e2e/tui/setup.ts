@@ -131,7 +131,7 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
 /**
  * Wipe conversation rows so subsequent tests in the same file see a clean
  * thread without rebooting the runtime. The thread row itself is preserved
- * so `getOrCreateActiveThread()` keeps the same id.
+ * so `getOrCreateLatestThread()` keeps the same id.
  */
 export function resetThread(dbPath: string): void {
   const db = new Database(dbPath);

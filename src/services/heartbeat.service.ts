@@ -196,7 +196,7 @@ class HeartbeatService {
       await agentStatusService.updateHeartbeatTimestamp();
 
       if (shouldDeliver) {
-        await messageDeliveryService.publishToActiveThread(
+        await messageDeliveryService.publishToLatestThread(
           state.agentId,
           userId,
           responseText,
@@ -346,7 +346,7 @@ class HeartbeatService {
       logger.info(`[Heartbeat] Slack-triggered heartbeat shouldDeliver=${shouldDeliver}`);
 
       if (shouldDeliver) {
-        await messageDeliveryService.publishToActiveThread(
+        await messageDeliveryService.publishToLatestThread(
           state.agentId,
           state.userId,
           responseText,

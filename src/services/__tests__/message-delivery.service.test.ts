@@ -34,7 +34,7 @@ vi.mock('../../logger', () => ({
 vi.mock('../conversation.service', () => ({
   conversationService: {
     addMessage: (...args: unknown[]) => mockAddMessage(...args),
-    getOrCreateActiveThread: (...args: unknown[]) => mockGetOrCreateActiveThread(...args),
+    getOrCreateLatestThread: (...args: unknown[]) => mockGetOrCreateActiveThread(...args),
   },
 }));
 
@@ -319,12 +319,12 @@ describe('MessageDeliveryService', () => {
     });
   });
 
-  describe('publishToActiveThread', () => {
+  describe('publishToLatestThread', () => {
     it('should get or create active thread and publish', async () => {
       const adapter = createMockAdapter('test');
       service.register(adapter);
 
-      await service.publishToActiveThread('agent-123', 'user-123', 'Heartbeat message', 'HEARTBEAT');
+      await service.publishToLatestThread('agent-123', 'user-123', 'Heartbeat message', 'HEARTBEAT');
 
       expect(mockGetOrCreateActiveThread).toHaveBeenCalledWith('agent-123', 'user-123');
       expect(mockAddMessage).toHaveBeenCalledWith('thread-456', expect.objectContaining({
@@ -337,7 +337,7 @@ describe('MessageDeliveryService', () => {
       const adapter = createMockAdapter('test');
       service.register(adapter);
 
-      await service.publishToActiveThread('agent-123', 'user-123', 'Cron result', 'CRON_TASK');
+      await service.publishToLatestThread('agent-123', 'user-123', 'Cron result', 'CRON_TASK');
 
       expect(mockAddMessage).toHaveBeenCalledWith('thread-456', expect.objectContaining({
         triggeredBy: 'CRON_TASK',

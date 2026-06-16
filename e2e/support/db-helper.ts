@@ -147,7 +147,8 @@ export async function createSubagent(parentAgentId: string, name: string): Promi
 }
 
 /**
- * Create a conversation with messages for a given agent.
+ * Create a conversation with messages for a given agent. Created "now", so it
+ * is the latest database thread unless a newer one is created afterward.
  */
 export async function createConversation(
   agentId: string,
@@ -159,7 +160,6 @@ export async function createConversation(
     data: {
       agentId,
       userId: TEST_USER.id,
-      status: 'ACTIVE',
     },
   });
 
@@ -178,9 +178,11 @@ export async function createConversation(
 }
 
 /**
- * Create a deactivated (NON_ACTIVE) conversation with messages.
+ * Create an older database conversation with messages — backdated so that a
+ * conversation created afterward (via createConversation) is the latest and
+ * supersedes it. Used to verify the runtime uses the latest thread, not this.
  */
-export async function createDeactivatedConversation(
+export async function createOlderConversation(
   agentId: string,
   messages: Array<{ role: 'USER' | 'AGENT'; content: string }>
 ): Promise<string> {
@@ -190,7 +192,8 @@ export async function createDeactivatedConversation(
     data: {
       agentId,
       userId: TEST_USER.id,
-      status: 'NON_ACTIVE',
+      // Backdate so getOrCreateLatestThread (createdAt desc) never picks this.
+      createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
     },
   });
 
@@ -210,7 +213,8 @@ export async function createDeactivatedConversation(
 
 /**
  * Create a Slack-sourced conversation thread with messages.
- * Slack threads are always NON_ACTIVE with externalThreadId set.
+ * Slack threads carry an externalThreadId and are excluded from the web/CLI
+ * "latest thread" resolution.
  */
 export async function createSlackConversation(
   agentId: string,
@@ -222,7 +226,6 @@ export async function createSlackConversation(
     data: {
       agentId,
       userId: TEST_USER.id,
-      status: 'NON_ACTIVE',
       threadSource: 'SLACK',
       externalThreadId: `mock-slack-ts-${Date.now()}`,
       externalChannelId: 'C_MOCK_E2E',

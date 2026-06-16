@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createTestAgentWorkspace } from '../test-utils/factories';
 
 // Use vi.hoisted to create mocks that are available before vi.mock hoisting
-const { mockPrisma, mockGetOrCreateActiveThread, mockDeactivateThread } = vi.hoisted(() => ({
+const { mockPrisma, mockStartNewThread } = vi.hoisted(() => ({
   mockPrisma: {
     agentWorkspace: {
       findFirst: vi.fn(),
@@ -20,8 +20,7 @@ const { mockPrisma, mockGetOrCreateActiveThread, mockDeactivateThread } = vi.hoi
       update: vi.fn(),
     },
   },
-  mockGetOrCreateActiveThread: vi.fn(),
-  mockDeactivateThread: vi.fn(),
+  mockStartNewThread: vi.fn(),
 }));
 
 vi.mock('../lib/prisma', () => ({
@@ -30,8 +29,7 @@ vi.mock('../lib/prisma', () => ({
 
 vi.mock('./conversation.service', () => ({
   conversationService: {
-    getOrCreateActiveThread: mockGetOrCreateActiveThread,
-    deactivateThread: mockDeactivateThread,
+    startNewThread: mockStartNewThread,
   },
 }));
 
@@ -127,10 +125,9 @@ describe('Requirement: Session Management', () => {
   });
 
   describe('Scenario: Session reset', () => {
-    it('should reset session manually', async () => {
+    it('should reset session manually by starting a new thread', async () => {
       const userId = 'user-123';
       const oldSessionId = 'sess_old123';
-      const activeThread = { id: 'thread-123' };
       const agent = createTestAgentWorkspace({ userId });
 
       service.sessions.set(userId, {
@@ -140,15 +137,14 @@ describe('Requirement: Session Management', () => {
       });
 
       mockPrisma.agentWorkspace.findFirst.mockResolvedValue(agent);
-      mockGetOrCreateActiveThread.mockResolvedValue(activeThread);
-      mockDeactivateThread.mockResolvedValue(undefined);
+      mockStartNewThread.mockResolvedValue({ id: 'thread-new' });
       mockPrisma.agentWorkspace.update.mockResolvedValue({});
 
       const newSessionId = await service.resetSession(userId, 'manual');
 
       expect(newSessionId).toMatch(/^sess_/);
       expect(newSessionId).not.toBe(oldSessionId);
-      expect(mockDeactivateThread).toHaveBeenCalledWith('thread-123');
+      expect(mockStartNewThread).toHaveBeenCalledWith(agent.id, userId);
     });
 
     it('should reset session on daily trigger', async () => {
@@ -162,8 +158,7 @@ describe('Requirement: Session Management', () => {
       });
 
       mockPrisma.agentWorkspace.findFirst.mockResolvedValue(agent);
-      mockGetOrCreateActiveThread.mockResolvedValue({ id: 'thread-123' });
-      mockDeactivateThread.mockResolvedValue(undefined);
+      mockStartNewThread.mockResolvedValue({ id: 'thread-new' });
       mockPrisma.agentWorkspace.update.mockResolvedValue({});
 
       const newSessionId = await service.resetSession(userId, 'daily');
@@ -182,8 +177,7 @@ describe('Requirement: Session Management', () => {
       });
 
       mockPrisma.agentWorkspace.findFirst.mockResolvedValue(agent);
-      mockGetOrCreateActiveThread.mockResolvedValue({ id: 'thread-123' });
-      mockDeactivateThread.mockResolvedValue(undefined);
+      mockStartNewThread.mockResolvedValue({ id: 'thread-new' });
       mockPrisma.agentWorkspace.update.mockResolvedValue({});
 
       const newSessionId = await service.resetSession(userId, 'idle');
@@ -191,7 +185,7 @@ describe('Requirement: Session Management', () => {
       expect(newSessionId).toMatch(/^sess_/);
     });
 
-    it('should handle case where no active thread exists', async () => {
+    it('should still rotate the session id when starting a new thread fails', async () => {
       const userId = 'user-123';
       const agent = createTestAgentWorkspace({ userId });
 
@@ -202,7 +196,7 @@ describe('Requirement: Session Management', () => {
       });
 
       mockPrisma.agentWorkspace.findFirst.mockResolvedValue(agent);
-      mockGetOrCreateActiveThread.mockRejectedValue(new Error('No thread'));
+      mockStartNewThread.mockRejectedValue(new Error('db error'));
       mockPrisma.agentWorkspace.update.mockResolvedValue({});
 
       // Should not throw

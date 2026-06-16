@@ -137,17 +137,17 @@ export class MessageDeliveryService {
   /**
    * Publish a message for autonomous background services (heartbeat, cron)
    *
-   * Gets or creates the active thread for the user before publishing.
+   * Gets or creates the latest thread for the user before publishing.
    */
-  async publishToActiveThread(
+  async publishToLatestThread(
     agentId: string,
     userId: string,
     content: string,
     triggeredBy: 'HEARTBEAT' | 'CRON_TASK',
     options?: PublishOptions
   ): Promise<ConversationMessage> {
-    // Get or create active thread for this user
-    const thread = await conversationService.getOrCreateActiveThread(agentId, userId);
+    // Resolve (or create) the latest thread for this user
+    const thread = await conversationService.getOrCreateLatestThread(agentId, userId);
 
     // Use the standard publish method
     return this.publish(userId, thread.id, content, triggeredBy, options);

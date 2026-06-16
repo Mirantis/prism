@@ -50,16 +50,16 @@ export default function AgentChat() {
     ]);
   }, [cancel, isTyping, activeThreadId]);
 
-  const { data: activeThread } = useQuery({
-    queryKey: ['threads', agent.agentId, 'active'],
-    queryFn: () => runtimeApi.getOrCreateActiveThread(agent.agentId, agent.userId),
+  const { data: latestThread } = useQuery({
+    queryKey: ['threads', agent.agentId, 'latest'],
+    queryFn: () => runtimeApi.getOrCreateLatestThread(agent.agentId, agent.userId),
   });
 
   useEffect(() => {
-    if (activeThread?.id && !activeThreadId) {
-      setActiveThreadId(activeThread.id);
+    if (latestThread?.id && !activeThreadId) {
+      setActiveThreadId(latestThread.id);
     }
-  }, [activeThread, activeThreadId]);
+  }, [latestThread, activeThreadId]);
 
   const { data: thread, isLoading: isLoadingThread } = useQuery({
     queryKey: ['thread', agent.agentId, activeThreadId],

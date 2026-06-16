@@ -39,7 +39,7 @@ vi.mock('./agent-workspace.service', () => ({
 
 vi.mock('./conversation.service', () => ({
   conversationService: {
-    getActiveThread: mockGetActiveThread,
+    getLatestThread: mockGetActiveThread,
     getThreadContext: mockGetThreadContext,
   },
 }));

@@ -10,7 +10,6 @@ import {
   ConversationMessage,
   MessageRole,
   MessageTrigger,
-  ThreadStatus,
   ThreadSource,
   Prisma,
 } from '@prisma/client';
@@ -72,30 +71,26 @@ class ConversationService {
   }
 
   /**
-   * Get or create the active conversation thread for a user.
-   * If no active thread exists, creates a new one.
+   * Get or create the latest database conversation thread for a user.
+   *
+   * There is no "active" flag — the runtime uses the most recently created
+   * non-Slack thread. Slack channel threads (externalThreadId set) are excluded;
+   * those are resolved via getOrCreateThreadByExternalId. Creates a fresh thread
+   * when the user has none yet.
    */
-  async getOrCreateActiveThread(agentId: string, userId: string): Promise<ConversationThread> {
-    // Find existing active thread (exclude threads bound to external conversations
-    // like Slack channel threads — those use getOrCreateThreadByExternalId)
+  async getOrCreateLatestThread(agentId: string, userId: string): Promise<ConversationThread> {
     let thread = await prisma.conversationThread.findFirst({
       where: {
-        agentId: agentId,
+        agentId,
         userId,
-        status: 'ACTIVE',
         externalThreadId: null,
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
     });
 
-    // Create new thread if none exists
     if (!thread) {
       thread = await prisma.conversationThread.create({
-        data: {
-          agentId: agentId,
-          userId,
-          status: 'ACTIVE',
-        },
+        data: { agentId, userId },
       });
       logger.info('Created new conversation thread for user %s (threadId: %s)', userId, thread.id);
       trackEvent('thread created', userId, {
@@ -109,41 +104,25 @@ class ConversationService {
   }
 
   /**
-   * Start a brand-new active conversation thread, archiving any prior active
-   * database thread for this agent+user. Used when the CLI opens so each
-   * session begins fresh instead of resuming the previous conversation.
-   *
-   * External (Slack) threads are left untouched — only DATABASE threads with
-   * externalThreadId === null are archived, keeping the "one active database
-   * thread per user" invariant so getOrCreateActiveThread (and heartbeat/cron
-   * delivery) resolve deterministically to the new thread.
+   * Create a brand-new database conversation thread. Used when the CLI opens or
+   * a session resets so the conversation starts fresh — the newly created thread
+   * becomes the latest (see getOrCreateLatestThread), so no archiving is needed.
    *
    * `options.workspaceRoot` optionally records the working directory this
    * conversation is rooted in (e.g. the CLI's launch cwd). It's persisted once
    * here and never changed; shell tools later use it as their cwd. Empty /
    * whitespace-only values are ignored.
    */
-  async startNewActiveThread(
+  async startNewThread(
     agentId: string,
     userId: string,
     options?: { workspaceRoot?: string },
   ): Promise<ConversationThread> {
-    await prisma.conversationThread.updateMany({
-      where: {
-        agentId,
-        userId,
-        status: 'ACTIVE',
-        externalThreadId: null,
-      },
-      data: { status: 'NON_ACTIVE' },
-    });
-
     const workspaceRoot = options?.workspaceRoot?.trim();
     const thread = await prisma.conversationThread.create({
       data: {
         agentId,
         userId,
-        status: 'ACTIVE',
         ...(workspaceRoot ? { workspaceRoot } : {}),
       },
     });
@@ -188,7 +167,6 @@ class ConversationService {
         agentId,
         userId,
         externalThreadId,
-        status: 'NON_ACTIVE',
         ...(options?.channelId && {
           threadSource: 'SLACK' as ThreadSource,
           externalChannelId: options.channelId,
@@ -253,15 +231,14 @@ class ConversationService {
   async listThreads(
     userId: string,
     agentId: string,
-    options?: { status?: ThreadStatus; limit?: number }
+    options?: { limit?: number }
   ): Promise<ConversationThread[]> {
     return prisma.conversationThread.findMany({
       where: {
         agentId,
         userId,
-        ...(options?.status && { status: options.status }),
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
       take: options?.limit ?? 20,
     });
   }
@@ -340,29 +317,6 @@ class ConversationService {
     });
 
     return result._sum.tokenCount ?? 0;
-  }
-
-  /**
-   * Deactivate a thread by ID (set status to NON_ACTIVE)
-   * Can be called with just threadId (for internal use) or with userId for ownership check
-   */
-  async deactivateThread(threadId: string, userId?: string): Promise<void> {
-    if (userId) {
-      await prisma.conversationThread.updateMany({
-        where: { id: threadId, userId },
-        data: { status: 'NON_ACTIVE' },
-      });
-    } else {
-      // Internal use - just deactivate by ID
-      await prisma.conversationThread.update({
-        where: { id: threadId },
-        data: { status: 'NON_ACTIVE' },
-      });
-    }
-    trackEvent('thread archived', userId ?? null, {
-      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
-      'thread.id': threadId,
-    });
   }
 
   /**
@@ -470,18 +424,20 @@ class ConversationService {
   }
 
   /**
-   * Get the active thread for a user without creating one.
-   * Used by heartbeat to include conversation context.
+   * Get the latest database thread for a user without creating one.
+   * Used by heartbeat to include conversation context. Slack threads
+   * (externalThreadId set) are excluded.
    */
-  async getActiveThread(userId: string): Promise<ConversationThread | null> {
+  async getLatestThread(userId: string): Promise<ConversationThread | null> {
     return prisma.conversationThread.findFirst({
-      where: { userId, status: 'ACTIVE', externalThreadId: null },
-      orderBy: { updatedAt: 'desc' },
+      where: { userId, externalThreadId: null },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
   /**
-   * Delete old threads (cleanup)
+   * Delete old threads (cleanup). Removes database threads older than `daysOld`
+   * except the user's latest one, so the current conversation is never deleted.
    */
   async cleanupOldThreads(
     agentId: string,
@@ -490,12 +446,19 @@ class ConversationService {
   ): Promise<number> {
     const cutoff = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000);
 
+    const latest = await prisma.conversationThread.findFirst({
+      where: { agentId, userId, externalThreadId: null },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+
     const result = await prisma.conversationThread.deleteMany({
       where: {
         agentId,
         userId,
-        status: 'NON_ACTIVE',
+        externalThreadId: null,
         updatedAt: { lt: cutoff },
+        ...(latest ? { id: { not: latest.id } } : {}),
       },
     });
 

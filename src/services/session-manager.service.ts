@@ -149,19 +149,18 @@ class SessionManagerService {
 
   /**
    * Reset session (manual or automatic)
-   * Archives current conversation thread and starts fresh
+   * Starts a fresh conversation thread (which becomes the latest).
    */
   async resetSession(userId: string, reason: 'daily' | 'idle' | 'manual' = 'manual'): Promise<string> {
     logger.info('Resetting session for user %s (reason: %s)', userId, reason);
 
     const agent = await this.getAgentByUserId(userId);
 
-    // Deactivate current active thread
+    // Start a fresh thread so the next message opens a clean conversation.
     try {
-      const activeThread = await conversationService.getOrCreateActiveThread(agent.id, userId);
-      await conversationService.deactivateThread(activeThread.id);
+      await conversationService.startNewThread(agent.id, userId);
     } catch {
-      logger.warn('No active thread to deactivate for user %s', userId);
+      logger.warn('Failed to start a new thread on session reset for user %s', userId);
     }
 
     // Generate new session ID
