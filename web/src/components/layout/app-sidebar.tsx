@@ -11,6 +11,7 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { useAgent } from '@/lib/agent-context';
+import { RecentsNav } from './recents-nav';
 
 const NAV_ITEMS = [
   { to: '/' as const, label: 'Overview', icon: LayoutDashboard },
@@ -59,6 +60,9 @@ export function AppSidebar() {
             })}
           </SidebarMenu>
         </SidebarGroup>
+
+        {/* Conversation threads — only on the Chat page, ChatGPT-style. */}
+        {pathname.startsWith('/chat') && <RecentsNav />}
       </SidebarContent>
 
     </Sidebar>

@@ -80,7 +80,7 @@
 import { Router, Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import multer from 'multer';
-import { AgentType, MessageRole, MessageTrigger, Prisma } from '@prisma/client';
+import { AgentType, MessageRole, MessageTrigger, Prisma, ThreadSource } from '@prisma/client';
 import { logger } from '../logger';
 import { config } from '../config';
 import { trackEvent } from '../lib/telemetry';
@@ -851,12 +851,13 @@ router.post('/threads/get-or-create-latest', async (req: Request, res: Response)
 
 /**
  * GET /agents/threads
- * List threads for a user+agent (newest first), with optional limit.
- * Query: { userId (required), agentId (required), limit? }
+ * List threads for a user+agent (newest first), with optional limit and
+ * threadSource filter.
+ * Query: { userId (required), agentId (required), limit?, threadSource? }
  */
 router.get('/threads', async (req: Request, res: Response) => {
   try {
-    const { userId, agentId, limit } = req.query;
+    const { userId, agentId, limit, threadSource } = req.query;
     if (!userId || !agentId) {
       res.status(400).json({ error: 'Missing required query params: userId, agentId' });
       return;
@@ -871,10 +872,20 @@ router.get('/threads', async (req: Request, res: Response) => {
       }
     }
 
+    if (
+      threadSource !== undefined &&
+      !Object.values(ThreadSource).includes(threadSource as ThreadSource)
+    ) {
+      res.status(400).json({
+        error: `Invalid threadSource: ${threadSource}. Must be one of: ${Object.values(ThreadSource).join(', ')}`,
+      });
+      return;
+    }
+
     const threads = await conversationService.listThreads(
       userId as string,
       agentId as string,
-      { limit: parsedLimit },
+      { limit: parsedLimit, threadSource: threadSource as ThreadSource | undefined },
     );
 
     res.json(threads);
