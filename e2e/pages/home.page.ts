@@ -13,6 +13,10 @@ export class HomePage extends BasePage {
   readonly sendButton: Locator;
   readonly stopButton: Locator;
   readonly fileInput: Locator;
+  /** "Recents" sidebar section — only present on the Chat page. */
+  readonly recentsSection: Locator;
+  /** Each conversation row in the Recents list. */
+  readonly recentThreads: Locator;
 
   constructor(page: Page) {
     super(page);
@@ -22,6 +26,14 @@ export class HomePage extends BasePage {
     this.stopButton = page.getByTestId('chat-stop-button');
     // Hidden file input behind the paperclip button in ChatInput.
     this.fileInput = page.locator('input[type="file"]');
+    this.recentsSection = page.getByTestId('recents');
+    this.recentThreads = page.getByTestId('recent-thread');
+  }
+
+  /** Visible Recents row labels, in document (top-to-bottom) order. */
+  async recentThreadNames(): Promise<string[]> {
+    const texts = await this.recentThreads.allInnerTexts();
+    return texts.map((t) => t.trim()).filter(Boolean);
   }
 
   async navigate() {

@@ -39,11 +39,16 @@ export interface ConversationMessage {
   attachments?: Attachment[] | null;
 }
 
+export type ThreadSource = 'DATABASE' | 'SLACK';
+
 export interface ConversationThread {
   id: string;
   agentId: string;
   userId: string;
   externalThreadId: string | null;
+  threadSource?: ThreadSource;
+  /** The directory this conversation is rooted in (the CLI's launch cwd); null for web threads. */
+  workspaceRoot?: string | null;
   createdAt: string;
   updatedAt: string;
   messages?: ConversationMessage[];

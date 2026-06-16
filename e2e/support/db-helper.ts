@@ -247,6 +247,37 @@ export async function createSlackConversation(
 }
 
 /**
+ * Create a bare conversation thread with explicit attributes (no messages
+ * required) — for tests that list threads (e.g. the Recents sidebar) where the
+ * row is identified by its workspaceRoot basename, not message content.
+ * Returns the thread id.
+ */
+export async function createThread(
+  agentId: string,
+  opts?: {
+    workspaceRoot?: string | null;
+    threadSource?: 'DATABASE' | 'SLACK';
+    externalThreadId?: string;
+    externalChannelId?: string;
+    createdAt?: Date;
+  },
+): Promise<string> {
+  const db = getPrisma();
+  const thread = await db.conversationThread.create({
+    data: {
+      agentId,
+      userId: TEST_USER.id,
+      ...(opts?.workspaceRoot != null ? { workspaceRoot: opts.workspaceRoot } : {}),
+      ...(opts?.threadSource ? { threadSource: opts.threadSource } : {}),
+      ...(opts?.externalThreadId ? { externalThreadId: opts.externalThreadId } : {}),
+      ...(opts?.externalChannelId ? { externalChannelId: opts.externalChannelId } : {}),
+      ...(opts?.createdAt ? { createdAt: opts.createdAt } : {}),
+    },
+  });
+  return thread.id;
+}
+
+/**
  * Disconnect the Prisma client. Call in global teardown.
  */
 export async function disconnect(): Promise<void> {
