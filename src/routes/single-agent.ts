@@ -6,16 +6,20 @@
  * latest thread and recent messages — and start a fresh session — without
  * a token.
  *
- *   GET  /single-agent/latest-thread       — { threadId }
- *   GET  /single-agent/messages?limit=N    — ConversationMessage[]
- *   POST /single-agent/threads             — { threadId } (starts a new thread)
+ *   GET  /single-agent/latest-thread          — { threadId }
+ *   GET  /single-agent/messages?limit=N       — ConversationMessage[]
+ *   GET  /single-agent/threads                — ThreadSummary[] (resume picker)
+ *   POST /single-agent/threads                — { threadId } (starts a new thread)
+ *   POST /single-agent/threads/:id/resume     — { threadId } (resumes a thread)
  */
 
 import { Router, Request, Response } from 'express';
+import { ThreadSource } from '@prisma/client';
 import { config } from '../config';
 import { logger } from '../logger';
 import { conversationService } from '../services/conversation.service';
 import { attachmentService } from '../services/attachment.service';
+import { getGitBranch } from '../utils/git-branch';
 
 const router = Router();
 
@@ -62,6 +66,36 @@ router.get('/messages', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/threads', async (_req: Request, res: Response) => {
+  try {
+    if (!config.agentId) {
+      res.status(503).json({ error: 'Single-agent mode not initialized (agentId unset)' });
+      return;
+    }
+    // Database threads only (newest first) — Slack threads aren't resumable
+    // from the CLI. 50 leaves the scrollable picker plenty beyond its 5
+    // visible rows. Each row is labelled with the git branch of its workspace
+    // root when one is set.
+    const threads = await conversationService.listThreads(
+      config.ownerUserId,
+      config.agentId,
+      { threadSource: ThreadSource.DATABASE, limit: 50 },
+    );
+    const summaries = await Promise.all(
+      threads.map(async (t) => ({
+        id: t.id,
+        updatedAt: t.updatedAt,
+        workspaceRoot: t.workspaceRoot,
+        branch: t.workspaceRoot ? await getGitBranch(t.workspaceRoot) : null,
+      })),
+    );
+    res.json(summaries);
+  } catch (err) {
+    logger.error({ err }, '[SingleAgent] GET /threads failed');
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 router.post('/threads', async (req: Request, res: Response) => {
   try {
     if (!config.agentId) {
@@ -81,6 +115,31 @@ router.post('/threads', async (req: Request, res: Response) => {
     res.json({ threadId: thread.id });
   } catch (err) {
     logger.error({ err }, '[SingleAgent] POST /threads failed');
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.post('/threads/:threadId/resume', async (req: Request, res: Response) => {
+  try {
+    if (!config.agentId) {
+      res.status(503).json({ error: 'Single-agent mode not initialized (agentId unset)' });
+      return;
+    }
+    // Make the selected thread the latest (bumping its createdAt) so the
+    // subsequent chat + history replay resolve to it. 404 when no database
+    // (non-Slack) thread with that id belongs to this agent.
+    const thread = await conversationService.resumeThread(
+      config.agentId,
+      config.ownerUserId,
+      String(req.params.threadId),
+    );
+    if (!thread) {
+      res.status(404).json({ error: 'Thread not found' });
+      return;
+    }
+    res.json({ threadId: thread.id });
+  } catch (err) {
+    logger.error({ err }, '[SingleAgent] POST /threads/:threadId/resume failed');
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });

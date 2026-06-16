@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
-import { tuiAdapterService, TuiMessage, TuiStatus } from './tui-adapter.js';
+import { tuiAdapterService, ThreadSummary, TuiMessage, TuiStatus } from './tui-adapter.js';
 import { Header } from './components/Header.js';
 import { MessageList, ChatEntry } from './components/MessageList.js';
 import { Input } from './components/Input.js';
@@ -8,6 +8,7 @@ import { StatusBar } from './components/StatusBar.js';
 import { CommandPopup, PopupItem } from './components/CommandPopup.js';
 import { SchedulesPanel } from './components/SchedulesPanel.js';
 import { ConfigPanel } from './components/ConfigPanel.js';
+import { ResumeList } from './components/ResumeList.js';
 import { apiClient } from './api-client.js';
 import {
   ATTACH_COMMAND,
@@ -26,14 +27,23 @@ export interface AppProps {
   modelId: string;
   hideCursor?: boolean;
   hideStatusBar?: boolean;
+  /**
+   * When set (the `--resume` flag), the CLI first shows a picker of these
+   * prior threads instead of starting a fresh session. Selecting one resumes
+   * it; `cwd` is the launch directory, shown for context.
+   */
+  resume?: { sessions: ThreadSummary[]; cwd: string };
 }
 
 /** Input prefix that switches the popup from commands to path suggestions. */
 const ATTACH_PREFIX = `${ATTACH_COMMAND} `;
 
-export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar }) => {
+export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar, resume }) => {
   const { exit } = useApp();
   const [entries, setEntries] = useState<ChatEntry[]>([]);
+  // In resume mode, the thread picker owns the screen until the user selects a
+  // thread (→ 'chat') or cancels (→ exit). Without `resume` we go straight to chat.
+  const [resumePhase, setResumePhase] = useState<'select' | 'chat'>(resume ? 'select' : 'chat');
   const [status, setStatus] = useState<TuiStatus>('idle');
   const [statusDetail, setStatusDetail] = useState<string | undefined>(undefined);
   const [shuttingDown, setShuttingDown] = useState(false);
@@ -76,9 +86,12 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // new thread (which becomes the latest), so the TUI opens to a clean slate
   // instead of resuming the last conversation. Fires once per launch (not on
   // WebSocket reconnect, which is handled separately).
+  // Skipped in resume mode — there we make the picked thread the latest on
+  // selection instead of creating a new one.
   useEffect(() => {
+    if (resume) return;
     void tuiAdapterService.startNewSession();
-  }, [userId, agent.id]);
+  }, [userId, agent.id, resume]);
 
   // Subscribe to adapter event bus.
   useEffect(() => {
@@ -164,6 +177,25 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   const triggerShutdown = useCallback(() => {
     setShuttingDown(true);
   }, []);
+
+  // Resume picker → chat: make the chosen thread the latest server-side, replay
+  // its history into the chat surface, then hand over to the normal chat UI. The
+  // subsequent chat + delivery resolve to this thread via the runtime's
+  // latest-thread resolution (no threadId is sent on the wire).
+  const handleResumeSelect = useCallback(
+    async (threadId: string) => {
+      await tuiAdapterService.resumeSession(threadId);
+      const messages = await tuiAdapterService.loadHistory({ userId, agentId: agent.id });
+      setEntries(messages.map((message) => ({ kind: 'message' as const, message })));
+      setResumePhase('chat');
+    },
+    [userId, agent.id],
+  );
+
+  // Escape in the picker exits the CLI (clean shutdown → exit code 0).
+  const handleResumeCancel = useCallback(() => {
+    triggerShutdown();
+  }, [triggerShutdown]);
 
   useEffect(() => {
     if (shuttingDown) exit();
@@ -320,7 +352,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       setInputValue(history[nextIndex] ?? '');
       setInputResetKey((k) => k + 1);
     }
-  }, { isActive: activePanel === null });
+  }, { isActive: activePanel === null && resumePhase === 'chat' });
 
   const onSubmit = useCallback(
     async (text: string) => {
@@ -403,6 +435,17 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       <Box paddingX={1} paddingY={1}>
         <Text color="yellow">Shutting down…</Text>
       </Box>
+    );
+  }
+
+  if (resume && resumePhase === 'select') {
+    return (
+      <ResumeList
+        sessions={resume.sessions}
+        cwd={resume.cwd}
+        onSelect={handleResumeSelect}
+        onCancel={handleResumeCancel}
+      />
     );
   }
 

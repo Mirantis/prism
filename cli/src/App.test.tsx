@@ -16,6 +16,8 @@ const { adapterStub, apiStub } = vi.hoisted(() => {
       markDisconnected: vi.fn(),
       loadHistory: vi.fn().mockResolvedValue([]),
       startNewSession: vi.fn().mockResolvedValue(undefined),
+      listSessions: vi.fn().mockResolvedValue([]),
+      resumeSession: vi.fn().mockResolvedValue(undefined),
       submitUserMessage: vi.fn().mockResolvedValue(undefined),
       cancel: vi.fn(),
     },
@@ -61,7 +63,10 @@ describe('App', () => {
     adapterStub.markConnected.mockClear();
     adapterStub.markDisconnected.mockClear();
     adapterStub.loadHistory.mockClear();
+    adapterStub.loadHistory.mockResolvedValue([]);
     adapterStub.startNewSession.mockClear();
+    adapterStub.listSessions.mockClear();
+    adapterStub.resumeSession.mockClear();
     adapterStub.submitUserMessage.mockClear();
     apiStub.listCronTasks.mockClear();
     apiStub.getDetails.mockClear();
@@ -316,6 +321,73 @@ describe('App', () => {
     stdin.write('\r');
     await flushAll();
     expect(adapterStub.submitUserMessage).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  // ---- --resume flow ----
+
+  const resumeSessions = [
+    {
+      id: 'thread-alpha',
+      updatedAt: new Date(Date.now() - 60_000).toISOString(),
+      workspaceRoot: '/home/me/.claude/worktrees/ability-to-cancel',
+      branch: 'worktree/ability-to-cancel',
+    },
+    {
+      id: 'thread-beta',
+      updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      workspaceRoot: null,
+      branch: null,
+    },
+  ];
+  const resumeProps = { ...baseProps, resume: { sessions: resumeSessions, cwd: '/home/me/cwd' } };
+
+  it('shows the resume picker first and does NOT start a fresh session', () => {
+    const { lastFrame, unmount } = render(<App {...resumeProps} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Resume session (1 of 2)');
+    expect(frame).toContain('/home/me/cwd');
+    expect(frame).toContain('ability-to-cancel (worktree/ability-to-cancel)');
+    // Picker owns the screen — the chat surface isn't rendered yet.
+    expect(frame).not.toContain('chat with Prism');
+    expect(adapterStub.startNewSession).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('resumes the highlighted thread on Enter and opens the chat with its history', async () => {
+    adapterStub.loadHistory.mockResolvedValueOnce([
+      {
+        id: 'm1',
+        threadId: 'thread-alpha',
+        role: 'AGENT',
+        content: 'earlier reply',
+        triggeredBy: 'USER_INPUT',
+        toolCalls: null,
+        blocks: null,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+    const { lastFrame, stdin, unmount } = render(<App {...resumeProps} />);
+    const flush = () => new Promise((r) => setImmediate(r));
+    stdin.write('\r'); // Enter selects the first (highlighted) session
+    await flush();
+    await flush();
+
+    expect(adapterStub.resumeSession).toHaveBeenCalledWith('thread-alpha');
+    expect(adapterStub.loadHistory).toHaveBeenCalledWith({ userId: 'local', agentId: 'remote' });
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('chat with Prism'); // chat surface now showing
+    expect(frame).toContain('earlier reply'); // replayed history
+    unmount();
+  });
+
+  it('dismisses the picker without resuming anything when Escape is pressed', async () => {
+    // Escape triggers a clean shutdown (the e2e asserts the actual exit code 0);
+    // here we verify the picker is dismissed and no thread was resumed.
+    const { lastFrame, stdin, unmount } = render(<App {...resumeProps} />);
+    await pressEscape(stdin);
+    expect(adapterStub.resumeSession).not.toHaveBeenCalled();
+    expect(lastFrame() ?? '').not.toContain('Resume session');
     unmount();
   });
 });

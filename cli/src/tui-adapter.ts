@@ -34,6 +34,14 @@ export interface TuiAdapterEvents {
   status: (status: TuiStatus, detail?: string) => void;
 }
 
+/** A resumable conversation thread, as listed by the `--resume` picker. */
+export interface ThreadSummary {
+  id: string;
+  updatedAt: string;
+  workspaceRoot: string | null;
+  branch: string | null;
+}
+
 interface RawMessage {
   id?: unknown;
   threadId?: unknown;
@@ -58,6 +66,23 @@ function coerceAttachments(raw: unknown): AttachmentMeta[] | null {
       typeof (a as AttachmentMeta).sizeBytes === 'number',
   );
   return valid.length > 0 ? valid : null;
+}
+
+function coerceThreadSummary(raw: unknown): ThreadSummary | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const t = raw as {
+    id?: unknown;
+    updatedAt?: unknown;
+    workspaceRoot?: unknown;
+    branch?: unknown;
+  };
+  if (typeof t.id !== 'string') return null;
+  return {
+    id: t.id,
+    updatedAt: typeof t.updatedAt === 'string' ? t.updatedAt : new Date().toISOString(),
+    workspaceRoot: typeof t.workspaceRoot === 'string' ? t.workspaceRoot : null,
+    branch: typeof t.branch === 'string' ? t.branch : null,
+  };
 }
 
 function coerceMessage(raw: unknown): TuiMessage | null {
@@ -154,6 +179,43 @@ class TuiAdapter {
     } catch {
       // Runtime down / unreachable — render anyway; first message will still
       // route through the runtime's thread resolution.
+    }
+  }
+
+  /**
+   * List resumable conversation threads (most-recent first) for the
+   * `--resume` picker. Calls `GET /single-agent/threads`; returns an empty
+   * list on any error so the CLI degrades to "no sessions to resume" instead
+   * of crashing.
+   */
+  async listSessions(): Promise<ThreadSummary[]> {
+    try {
+      const res = await fetch(`${this.httpUrl}/single-agent/threads`);
+      if (!res.ok) return [];
+      const body = (await res.json()) as unknown;
+      if (!Array.isArray(body)) return [];
+      return body
+        .map(coerceThreadSummary)
+        .filter((t): t is ThreadSummary => t !== null);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Resume an existing thread: ask the runtime to make it the latest thread so
+   * the subsequent chat + history replay route to it. Errors are swallowed —
+   * the UI renders regardless, and the first message falls back to the
+   * runtime's thread resolution.
+   */
+  async resumeSession(threadId: string): Promise<void> {
+    try {
+      await fetch(
+        `${this.httpUrl}/single-agent/threads/${encodeURIComponent(threadId)}/resume`,
+        { method: 'POST' },
+      );
+    } catch {
+      // Runtime down / unreachable — render anyway.
     }
   }
 

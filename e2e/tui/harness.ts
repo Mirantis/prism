@@ -177,6 +177,8 @@ export interface StartPrismOptions {
   rows?: number;
   /** Optional: agent-runtime handle whose log tail is included in error messages. */
   runtime?: RuntimeHandle;
+  /** Extra CLI argv appended after the entry (e.g. ['--resume']). */
+  args?: string[];
 }
 
 export interface TuiSession {
@@ -198,7 +200,7 @@ export interface TuiSession {
 export function startPrism(opts: StartPrismOptions): TuiSession {
   const child = pty.spawn(
     process.execPath,
-    [TSX_CLI, 'src/index.tsx'],
+    [TSX_CLI, 'src/index.tsx', ...(opts.args ?? [])],
     {
       name: 'xterm-256color',
       cols: opts.cols ?? 120,
