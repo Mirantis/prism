@@ -305,6 +305,12 @@ describe('Requirement: WebSocket Gateway', () => {
       await service.handleMessage(turn.ws, userId, { type: 'cancel' });
 
       expect(turn.getSignal()?.aborted).toBe(true);
+      // The terminal status is broadcast immediately on cancel (not only in
+      // processMessage's finally) so other tabs reset promptly — assert it
+      // before the blocking chat settles.
+      expect(turn.ws.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: 'status', payload: { processing: false } }),
+      );
 
       turn.settle('resolve');
       await turn.processing;
