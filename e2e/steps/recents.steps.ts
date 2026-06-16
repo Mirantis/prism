@@ -12,6 +12,13 @@ Given('a conversation thread rooted at {string}', async ({}, workspaceRoot: stri
   await dbHelper.createThread(getCurrentAgentId(), { workspaceRoot });
 });
 
+Given(
+  'a conversation thread titled {string} rooted at {string}',
+  async ({}, title: string, workspaceRoot: string) => {
+    await dbHelper.createThread(getCurrentAgentId(), { title, workspaceRoot });
+  },
+);
+
 Given('an older conversation thread rooted at {string}', async ({}, workspaceRoot: string) => {
   // Backdated so a thread created afterward sorts above it (createdAt desc).
   await dbHelper.createThread(getCurrentAgentId(), {
@@ -46,6 +53,11 @@ Then('the Recents list shows {string} above {string}', async ({ page }, first: s
 Then('the Recents list shows {string}', async ({ page }, name: string) => {
   const home = new HomePage(page);
   await expect(home.recentThreads.filter({ hasText: name })).toBeVisible();
+});
+
+Then('the Recents list does not show {string}', async ({ page }, name: string) => {
+  const home = new HomePage(page);
+  await expect(home.recentThreads.filter({ hasText: name })).toHaveCount(0);
 });
 
 Then('the {string} conversation is highlighted as current', async ({ page }, name: string) => {

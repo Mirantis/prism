@@ -255,6 +255,7 @@ export async function createSlackConversation(
 export async function createThread(
   agentId: string,
   opts?: {
+    title?: string;
     workspaceRoot?: string | null;
     threadSource?: 'DATABASE' | 'SLACK';
     externalThreadId?: string;
@@ -267,6 +268,7 @@ export async function createThread(
     data: {
       agentId,
       userId: TEST_USER.id,
+      ...(opts?.title ? { title: opts.title } : {}),
       ...(opts?.workspaceRoot != null ? { workspaceRoot: opts.workspaceRoot } : {}),
       ...(opts?.threadSource ? { threadSource: opts.threadSource } : {}),
       ...(opts?.externalThreadId ? { externalThreadId: opts.externalThreadId } : {}),
