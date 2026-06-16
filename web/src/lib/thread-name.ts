@@ -3,13 +3,14 @@ import type { ConversationThread } from '@/types';
 /**
  * Display name for a conversation thread in the Recents list.
  *
- * Threads launched from the CLI carry a `workspaceRoot` (the launch folder) —
- * we show that folder's basename. Web-created threads have no folder, so we
- * fall back to the thread's creation date/time.
+ * Prefers the thread's `title` (auto-generated from the first user message).
+ * Falls back to the basename of the `workspaceRoot` (the CLI launch folder)
+ * when there's no title, and finally to the thread's creation date/time.
  */
 export function threadDisplayName(
-  thread: Pick<ConversationThread, 'workspaceRoot' | 'createdAt'>,
+  thread: Pick<ConversationThread, 'title' | 'workspaceRoot' | 'createdAt'>,
 ): string {
+  if (thread.title) return thread.title;
   const base = workspaceBasename(thread.workspaceRoot);
   if (base) return base;
   return formatCreatedAt(thread.createdAt);

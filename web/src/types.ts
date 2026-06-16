@@ -45,6 +45,8 @@ export interface ConversationThread {
   id: string;
   agentId: string;
   userId: string;
+  /** Auto-generated from the first user message; null until then. */
+  title?: string | null;
   externalThreadId: string | null;
   threadSource?: ThreadSource;
   /** The directory this conversation is rooted in (the CLI's launch cwd); null for web threads. */
