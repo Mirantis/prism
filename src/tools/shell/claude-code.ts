@@ -13,7 +13,6 @@
  */
 import { z } from 'zod';
 import { resolvePath } from './workspace';
-import { resolveWorkspaceRoot } from './config';
 import {
   AgentTaskParams,
   getAgentTaskManager,
@@ -61,8 +60,10 @@ export const claudeCodeStatusInput = z.object({
     .describe('Max ms to wait for new output if none is buffered (default: 5000)'),
 });
 
-export async function runClaudeCode(input: z.infer<typeof claudeCodeInput>) {
-  const workspace = resolveWorkspaceRoot();
+export async function runClaudeCode(
+  input: z.infer<typeof claudeCodeInput>,
+  workspace: string,
+) {
   const workdir = input.workdir ? resolvePath(workspace, input.workdir) : workspace;
   const params: AgentTaskParams = {
     prompt: input.prompt,

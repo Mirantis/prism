@@ -1,12 +1,14 @@
 /**
  * Single-Agent Routes
  *
- * No-auth read endpoints. The runtime owns exactly one agent and has no
+ * No-auth endpoints. The runtime owns exactly one agent and has no
  * backend in front of it, so a local client (prism-cli) can fetch the
- * active thread and recent messages without a token.
+ * active thread and recent messages — and start a fresh session — without
+ * a token.
  *
- *   GET /single-agent/active-thread       — { threadId }
- *   GET /single-agent/messages?limit=N    — ConversationMessage[]
+ *   GET  /single-agent/active-thread       — { threadId }
+ *   GET  /single-agent/messages?limit=N    — ConversationMessage[]
+ *   POST /single-agent/threads             — { threadId } (starts a new thread)
  */
 
 import { Router, Request, Response } from 'express';
@@ -56,6 +58,29 @@ router.get('/messages', async (req: Request, res: Response) => {
     res.json(await attachmentService.attachMetaToMessages(sorted));
   } catch (err) {
     logger.error({ err }, '[SingleAgent] /messages failed');
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.post('/threads', async (req: Request, res: Response) => {
+  try {
+    if (!config.agentId) {
+      res.status(503).json({ error: 'Single-agent mode not initialized (agentId unset)' });
+      return;
+    }
+    // Optional: the directory the client (CLI) is rooted in, persisted on the
+    // new thread so shell tools can use it as their cwd. Ignored unless a
+    // non-empty string.
+    const raw: unknown = req.body?.workspaceRoot;
+    const workspaceRoot = typeof raw === 'string' && raw.trim() ? raw : undefined;
+    const thread = await conversationService.startNewActiveThread(
+      config.agentId,
+      config.ownerUserId,
+      workspaceRoot ? { workspaceRoot } : undefined,
+    );
+    res.json({ threadId: thread.id });
+  } catch (err) {
+    logger.error({ err }, '[SingleAgent] POST /threads failed');
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });

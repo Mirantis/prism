@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const {
   mockGetOrCreateActiveThread,
+  mockGetThreadWorkspaceRoot,
   mockAddMessage,
   mockPublish,
   mockInvokeStream,
@@ -23,6 +24,7 @@ const {
   mockLinkToMessage,
 } = vi.hoisted(() => ({
   mockGetOrCreateActiveThread: vi.fn(),
+  mockGetThreadWorkspaceRoot: vi.fn(),
   mockAddMessage: vi.fn(),
   mockPublish: vi.fn(),
   mockInvokeStream: vi.fn(),
@@ -49,6 +51,7 @@ function streamFromSteps(steps: Array<{ text: string; toolCalls: unknown[]; bloc
 vi.mock('../conversation.service', () => ({
   conversationService: {
     getOrCreateActiveThread: mockGetOrCreateActiveThread,
+    getThreadWorkspaceRoot: mockGetThreadWorkspaceRoot,
     addMessage: mockAddMessage,
   },
 }));
@@ -105,6 +108,7 @@ describe('Requirement: Conversation Engine', () => {
       id: 'thread-123',
       userId: 'user-123',
     });
+    mockGetThreadWorkspaceRoot.mockResolvedValue(null);
     mockAddMessage.mockImplementation(async (threadId: string, input: Record<string, unknown>) => ({
       id: 'msg-123',
       threadId,
@@ -212,6 +216,40 @@ describe('Requirement: Conversation Engine', () => {
 
       expect(response.threadId).toBe(threadId);
       expect(mockGetOrCreateActiveThread).not.toHaveBeenCalled();
+    });
+
+    it("passes the active thread's workspaceRoot into invokeStream", async () => {
+      mockGetOrCreateActiveThread.mockResolvedValue({
+        id: 'thread-123',
+        userId: 'user-123',
+        workspaceRoot: '/home/me/project',
+      });
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Hello',
+      });
+
+      expect(mockInvokeStream).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceRoot: '/home/me/project' }),
+      );
+    });
+
+    it("resolves workspaceRoot for an explicit threadId via getThreadWorkspaceRoot", async () => {
+      mockGetThreadWorkspaceRoot.mockResolvedValue('/srv/ws');
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Hello',
+        threadId: 'thread-existing',
+      });
+
+      expect(mockGetThreadWorkspaceRoot).toHaveBeenCalledWith('thread-existing');
+      expect(mockInvokeStream).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceRoot: '/srv/ws' }),
+      );
     });
 
     it('should create new thread if not provided', async () => {

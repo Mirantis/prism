@@ -167,6 +167,120 @@ describe('ConversationService', () => {
   });
 
   // ==========================================================================
+  // Start a new active thread (CLI open)
+  // ==========================================================================
+
+  describe('startNewActiveThread', () => {
+    it('archives prior active database threads then creates a fresh ACTIVE thread', async () => {
+      const newThread = createTestThread({ id: 'thread-new' });
+      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.conversationThread.create.mockResolvedValue(newThread);
+
+      const result = await conversationService.startNewActiveThread('agent-123', 'user-123');
+
+      // Archives only this agent+user's active DATABASE threads (Slack/external untouched).
+      expect(mockPrisma.conversationThread.updateMany).toHaveBeenCalledWith({
+        where: {
+          agentId: 'agent-123',
+          userId: 'user-123',
+          status: 'ACTIVE',
+          externalThreadId: null,
+        },
+        data: { status: 'NON_ACTIVE' },
+      });
+      expect(mockPrisma.conversationThread.create).toHaveBeenCalledWith({
+        data: { agentId: 'agent-123', userId: 'user-123', status: 'ACTIVE' },
+      });
+      expect(result.id).toBe('thread-new');
+    });
+
+    it('archives before creating (does not resume an existing active thread)', async () => {
+      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 0 });
+      mockPrisma.conversationThread.create.mockResolvedValue(createTestThread());
+
+      await conversationService.startNewActiveThread('agent-123', 'user-123');
+
+      // findFirst is the get-or-create lookup; startNew never reuses a thread.
+      expect(mockPrisma.conversationThread.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.conversationThread.create).toHaveBeenCalled();
+    });
+
+    it('emits "thread created" telemetry for the new thread', async () => {
+      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.conversationThread.create.mockResolvedValue(
+        createTestThread({ id: 'thread-fresh' }),
+      );
+
+      await conversationService.startNewActiveThread('agent-123', 'user-123');
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('thread created', 'user-123', {
+        'agent.id': 'agent-123',
+        'thread.id': 'thread-fresh',
+        'thread.source': 'database',
+      });
+    });
+
+    it('persists workspaceRoot when provided', async () => {
+      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 0 });
+      mockPrisma.conversationThread.create.mockResolvedValue(createTestThread());
+
+      await conversationService.startNewActiveThread('agent-123', 'user-123', {
+        workspaceRoot: '/home/me/project',
+      });
+
+      expect(mockPrisma.conversationThread.create).toHaveBeenCalledWith({
+        data: {
+          agentId: 'agent-123',
+          userId: 'user-123',
+          status: 'ACTIVE',
+          workspaceRoot: '/home/me/project',
+        },
+      });
+    });
+
+    it('omits workspaceRoot when empty / whitespace-only', async () => {
+      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 0 });
+      mockPrisma.conversationThread.create.mockResolvedValue(createTestThread());
+
+      await conversationService.startNewActiveThread('agent-123', 'user-123', {
+        workspaceRoot: '   ',
+      });
+
+      expect(mockPrisma.conversationThread.create).toHaveBeenCalledWith({
+        data: { agentId: 'agent-123', userId: 'user-123', status: 'ACTIVE' },
+      });
+    });
+  });
+
+  // ==========================================================================
+  // getThreadWorkspaceRoot
+  // ==========================================================================
+
+  describe('getThreadWorkspaceRoot', () => {
+    it('returns the persisted workspace root', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        workspaceRoot: '/home/me/project',
+      });
+
+      const root = await conversationService.getThreadWorkspaceRoot('thread-123');
+
+      expect(root).toBe('/home/me/project');
+      expect(mockPrisma.conversationThread.findUnique).toHaveBeenCalledWith({
+        where: { id: 'thread-123' },
+        select: { workspaceRoot: true },
+      });
+    });
+
+    it('returns null when unset or thread missing', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({ workspaceRoot: null });
+      expect(await conversationService.getThreadWorkspaceRoot('t1')).toBeNull();
+
+      mockPrisma.conversationThread.findUnique.mockResolvedValue(null);
+      expect(await conversationService.getThreadWorkspaceRoot('t2')).toBeNull();
+    });
+  });
+
+  // ==========================================================================
   // Message persistence
   // ==========================================================================
 

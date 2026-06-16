@@ -22,7 +22,6 @@ import { z } from 'zod';
 import { resolvePath, isInsideWorkspace } from './workspace';
 import { applyEdit } from './edit';
 import { formatFileContent } from './format';
-import { resolveWorkspaceRoot } from './config';
 
 export const readFileInput = z.object({
   path: z.string().describe('File path. Relative paths are resolved from the workspace root.'),
@@ -63,7 +62,7 @@ function rejectOutsideWorkspace(fullPath: string, workspace: string): string | n
 
 export async function runReadFile(
   input: z.infer<typeof readFileInput>,
-  workspace: string = resolveWorkspaceRoot(),
+  workspace: string,
 ): Promise<{ content: string } | { error: string }> {
   const fullPath = resolvePath(workspace, input.path);
   const rejected = rejectOutsideWorkspace(fullPath, workspace);
@@ -78,7 +77,7 @@ export async function runReadFile(
 
 export async function runWriteFile(
   input: z.infer<typeof writeFileInput>,
-  workspace: string = resolveWorkspaceRoot(),
+  workspace: string,
 ): Promise<{ ok: true } | { error: string }> {
   const fullPath = resolvePath(workspace, input.path);
   const rejected = rejectOutsideWorkspace(fullPath, workspace);
@@ -94,7 +93,7 @@ export async function runWriteFile(
 
 export async function runEditFile(
   input: z.infer<typeof editFileInput>,
-  workspace: string = resolveWorkspaceRoot(),
+  workspace: string,
 ): Promise<{ ok: true } | { error: string }> {
   const fullPath = resolvePath(workspace, input.path);
   const rejected = rejectOutsideWorkspace(fullPath, workspace);

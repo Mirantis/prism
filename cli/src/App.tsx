@@ -72,23 +72,12 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     return () => tuiAdapterService.markDisconnected();
   }, [userId]);
 
-  // Replay the active thread's recent messages on mount so reopening the TUI
-  // doesn't show a blank screen for an existing conversation. The adapter
-  // fetches them from /single-agent/messages on the runtime.
+  // Start a fresh conversation thread on every CLI open. The runtime archives
+  // the previous active thread and creates a new one, so the TUI opens to a
+  // clean slate instead of resuming the last conversation. Fires once per
+  // launch (not on WebSocket reconnect, which is handled separately).
   useEffect(() => {
-    let cancelled = false;
-    void tuiAdapterService
-      .loadHistory({ userId, agentId: agent.id, limit: 50 })
-      .then((history) => {
-        if (cancelled || history.length === 0) return;
-        setEntries((prev) => [
-          ...history.map((m) => ({ kind: 'message' as const, message: m })),
-          ...prev,
-        ]);
-      });
-    return () => {
-      cancelled = true;
-    };
+    void tuiAdapterService.startNewSession();
   }, [userId, agent.id]);
 
   // Subscribe to adapter event bus.

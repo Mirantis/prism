@@ -15,6 +15,7 @@ const { adapterStub, apiStub } = vi.hoisted(() => {
       markConnected: vi.fn(),
       markDisconnected: vi.fn(),
       loadHistory: vi.fn().mockResolvedValue([]),
+      startNewSession: vi.fn().mockResolvedValue(undefined),
       submitUserMessage: vi.fn().mockResolvedValue(undefined),
       cancel: vi.fn(),
     },
@@ -60,6 +61,7 @@ describe('App', () => {
     adapterStub.markConnected.mockClear();
     adapterStub.markDisconnected.mockClear();
     adapterStub.loadHistory.mockClear();
+    adapterStub.startNewSession.mockClear();
     adapterStub.submitUserMessage.mockClear();
     apiStub.listCronTasks.mockClear();
     apiStub.getDetails.mockClear();
@@ -86,13 +88,11 @@ describe('App', () => {
     unmount();
   });
 
-  it('calls loadHistory with the agentId and userId from props', () => {
+  it('starts a fresh conversation thread on mount', () => {
     const { unmount } = render(<App {...baseProps} />);
-    expect(adapterStub.loadHistory).toHaveBeenCalledWith({
-      userId: 'local',
-      agentId: 'remote',
-      limit: 50,
-    });
+    expect(adapterStub.startNewSession).toHaveBeenCalledTimes(1);
+    // Clean slate: no history replay on open.
+    expect(adapterStub.loadHistory).not.toHaveBeenCalled();
     unmount();
   });
 

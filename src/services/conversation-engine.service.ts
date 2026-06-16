@@ -177,11 +177,17 @@ Respond with exactly one word: WORTHY or SKIP`;
     const startTime = Date.now();
     const { agentId, userId, message, metadata } = input;
 
-    // Get or create thread
+    // Get or create thread, capturing its persisted workspace root so shell
+    // tools run with the thread's cwd (falling back to the global root when
+    // unset — see resolveWorkspace).
     let threadId = input.threadId;
+    let workspaceRoot: string | undefined;
     if (!threadId) {
       const thread = await conversationService.getOrCreateActiveThread(agentId, userId);
       threadId = thread.id;
+      workspaceRoot = thread.workspaceRoot ?? undefined;
+    } else {
+      workspaceRoot = (await conversationService.getThreadWorkspaceRoot(threadId)) ?? undefined;
     }
 
     // Store user message with sender info. The message text arrives
@@ -240,6 +246,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       mode: 'chat',
       prompt: message,
       threadId,
+      workspaceRoot,
       isChannelMessage,
       runtimeNotices: input.runtimeNotices,
       abortSignal: input.abortSignal,

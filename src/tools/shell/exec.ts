@@ -17,7 +17,6 @@ import {
   MAX_EXEC_OUTPUT_BYTES,
   MAX_EXEC_OUTPUT_LIMIT,
   DEFAULT_EXEC_OUTPUT_LIMIT_BYTES,
-  resolveWorkspaceRoot,
 } from './config';
 
 const shellExecInput = z.object({
@@ -90,7 +89,7 @@ export function appendCappedChunk(
  */
 export async function runShellExec(
   input: z.infer<typeof shellExecInput>,
-  workspace: string = resolveWorkspaceRoot(),
+  workspace: string,
   abortSignal?: AbortSignal,
 ): Promise<ExecResult> {
   const cwd = input.workdir ? resolvePath(workspace, input.workdir) : workspace;
