@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createTestAgentWorkspace } from '../test-utils/factories';
 
 // Use vi.hoisted to create mocks that are available before vi.mock hoisting
-const { mockPrisma, mockStartNewThread } = vi.hoisted(() => ({
+const { mockPrisma, mockStartNewThread, mockGetLatestThread } = vi.hoisted(() => ({
   mockPrisma: {
     agentWorkspace: {
       findFirst: vi.fn(),
@@ -21,6 +21,7 @@ const { mockPrisma, mockStartNewThread } = vi.hoisted(() => ({
     },
   },
   mockStartNewThread: vi.fn(),
+  mockGetLatestThread: vi.fn(),
 }));
 
 vi.mock('../lib/prisma', () => ({
@@ -30,6 +31,7 @@ vi.mock('../lib/prisma', () => ({
 vi.mock('./conversation.service', () => ({
   conversationService: {
     startNewThread: mockStartNewThread,
+    getLatestThread: mockGetLatestThread,
   },
 }));
 
@@ -137,6 +139,7 @@ describe('Requirement: Session Management', () => {
       });
 
       mockPrisma.agentWorkspace.findFirst.mockResolvedValue(agent);
+      mockGetLatestThread.mockResolvedValue(null);
       mockStartNewThread.mockResolvedValue({ id: 'thread-new' });
       mockPrisma.agentWorkspace.update.mockResolvedValue({});
 
@@ -144,7 +147,31 @@ describe('Requirement: Session Management', () => {
 
       expect(newSessionId).toMatch(/^sess_/);
       expect(newSessionId).not.toBe(oldSessionId);
-      expect(mockStartNewThread).toHaveBeenCalledWith(agent.id, userId);
+      expect(mockStartNewThread).toHaveBeenCalledWith(agent.id, userId, {
+        workspaceRoot: undefined,
+      });
+    });
+
+    it('carries the current thread workspaceRoot forward across a reset', async () => {
+      const userId = 'user-123';
+      const agent = createTestAgentWorkspace({ userId });
+
+      service.sessions.set(userId, {
+        userId,
+        sessionId: 'sess_old123',
+        lastActivity: new Date(),
+      });
+
+      mockPrisma.agentWorkspace.findFirst.mockResolvedValue(agent);
+      mockGetLatestThread.mockResolvedValue({ id: 'thread-old', workspaceRoot: '/home/me/project' });
+      mockStartNewThread.mockResolvedValue({ id: 'thread-new' });
+      mockPrisma.agentWorkspace.update.mockResolvedValue({});
+
+      await service.resetSession(userId, 'daily');
+
+      expect(mockStartNewThread).toHaveBeenCalledWith(agent.id, userId, {
+        workspaceRoot: '/home/me/project',
+      });
     });
 
     it('should reset session on daily trigger', async () => {
