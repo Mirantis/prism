@@ -123,6 +123,52 @@ describe('ConversationService', () => {
         take: 20,
       });
     });
+
+    it('should filter threads by threadSource (excludes Slack from the resume list)', async () => {
+      mockPrisma.conversationThread.findMany.mockResolvedValue([]);
+
+      await conversationService.listThreads('user-123', 'agent-123', { threadSource: 'DATABASE' });
+
+      expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
+        where: { agentId: 'agent-123', userId: 'user-123', threadSource: 'DATABASE' },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      });
+    });
+  });
+
+  // ==========================================================================
+  // Resume an existing thread (CLI --resume)
+  // ==========================================================================
+
+  describe('resumeThread', () => {
+    it('bumps the target thread createdAt so it becomes the latest', async () => {
+      const target = createTestThread({ id: 'thread-x' });
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(target);
+      mockPrisma.conversationThread.update.mockResolvedValue({ ...target });
+
+      const result = await conversationService.resumeThread('agent-123', 'user-123', 'thread-x');
+
+      // Only a database (non-Slack) thread owned by this agent+user.
+      expect(mockPrisma.conversationThread.findFirst).toHaveBeenCalledWith({
+        where: { id: 'thread-x', agentId: 'agent-123', userId: 'user-123', externalThreadId: null },
+      });
+      // Bring it to the front by bumping createdAt (latest = most recent).
+      expect(mockPrisma.conversationThread.update).toHaveBeenCalledWith({
+        where: { id: 'thread-x' },
+        data: { createdAt: expect.any(Date) },
+      });
+      expect(result?.id).toBe('thread-x');
+    });
+
+    it('returns null and updates nothing when the thread is missing / not owned', async () => {
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
+
+      const result = await conversationService.resumeThread('agent-123', 'user-123', 'missing');
+
+      expect(result).toBeNull();
+      expect(mockPrisma.conversationThread.update).not.toHaveBeenCalled();
+    });
   });
 
   // ==========================================================================
