@@ -157,7 +157,10 @@ export default function ChatInput({
                 <InputGroupButton
                   type="button"
                   size="icon-xs"
-                  variant="default"
+                  // Disabled while disconnected: the cancel can't reach the
+                  // runtime, so don't imply the turn was stopped.
+                  variant={connectionStatus === 'connected' ? 'default' : 'ghost'}
+                  disabled={connectionStatus !== 'connected'}
                   onClick={onCancel}
                   title="Stop response"
                   aria-label="Stop response"

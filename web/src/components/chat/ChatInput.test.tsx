@@ -40,4 +40,13 @@ describe('ChatInput', () => {
     fireEvent.click(screen.getByTestId('chat-stop-button'));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it('disables STOP when disconnected (cancel cannot reach the runtime)', () => {
+    const onCancel = vi.fn();
+    render(<ChatInput {...baseProps} isPending connectionStatus="disconnected" onCancel={onCancel} />);
+    const stop = screen.getByTestId('chat-stop-button');
+    expect(stop).toBeDisabled();
+    fireEvent.click(stop);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
 });
