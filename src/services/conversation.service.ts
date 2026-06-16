@@ -17,6 +17,7 @@ import prisma from '../lib/prisma';
 import { config } from '../config';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
+import { deriveThreadTitle } from '../utils/thread-title';
 import { ThreadMessageProvider } from './thread-provider.interface';
 import { DatabaseThreadProvider } from './providers/database-thread.provider';
 import { SlackThreadProvider } from './providers/slack-thread.provider';
@@ -303,6 +304,19 @@ class ConversationService {
       'message.role': input.role,
       'message.triggered_by': input.triggeredBy,
     });
+
+    // Name the thread after the user's first message (first 3 words, capped).
+    // `title: null` makes this atomic and one-shot — it fires only for the very
+    // first user message with text and is a no-op for every later message.
+    if (input.role === 'USER') {
+      const title = deriveThreadTitle(input.content);
+      if (title) {
+        await prisma.conversationThread.updateMany({
+          where: { id: threadId, title: null },
+          data: { title },
+        });
+      }
+    }
 
     return message;
   }
