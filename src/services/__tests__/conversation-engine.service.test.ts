@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const {
-  mockGetOrCreateActiveThread,
+  mockGetOrCreateLatestThread,
   mockGetThreadWorkspaceRoot,
   mockAddMessage,
   mockPublish,
@@ -23,7 +23,7 @@ const {
   mockTrackEvent,
   mockLinkToMessage,
 } = vi.hoisted(() => ({
-  mockGetOrCreateActiveThread: vi.fn(),
+  mockGetOrCreateLatestThread: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
   mockAddMessage: vi.fn(),
   mockPublish: vi.fn(),
@@ -50,7 +50,7 @@ function streamFromSteps(steps: Array<{ text: string; toolCalls: unknown[]; bloc
 
 vi.mock('../conversation.service', () => ({
   conversationService: {
-    getOrCreateLatestThread: mockGetOrCreateActiveThread,
+    getOrCreateLatestThread: mockGetOrCreateLatestThread,
     getThreadWorkspaceRoot: mockGetThreadWorkspaceRoot,
     addMessage: mockAddMessage,
   },
@@ -104,7 +104,7 @@ describe('Requirement: Conversation Engine', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockGetOrCreateActiveThread.mockResolvedValue({
+    mockGetOrCreateLatestThread.mockResolvedValue({
       id: 'thread-123',
       userId: 'user-123',
     });
@@ -215,11 +215,11 @@ describe('Requirement: Conversation Engine', () => {
       });
 
       expect(response.threadId).toBe(threadId);
-      expect(mockGetOrCreateActiveThread).not.toHaveBeenCalled();
+      expect(mockGetOrCreateLatestThread).not.toHaveBeenCalled();
     });
 
     it("passes the active thread's workspaceRoot into invokeStream", async () => {
-      mockGetOrCreateActiveThread.mockResolvedValue({
+      mockGetOrCreateLatestThread.mockResolvedValue({
         id: 'thread-123',
         userId: 'user-123',
         workspaceRoot: '/home/me/project',
@@ -261,7 +261,7 @@ describe('Requirement: Conversation Engine', () => {
         message: 'Hello',
       });
 
-      expect(mockGetOrCreateActiveThread).toHaveBeenCalledWith('agent-123', userId);
+      expect(mockGetOrCreateLatestThread).toHaveBeenCalledWith('agent-123', userId);
     });
   });
 

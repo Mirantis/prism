@@ -12,7 +12,7 @@ import { MessageDeliveryService } from '../message-delivery.service';
 
 // Mock conversation service
 const mockAddMessage = vi.fn();
-const mockGetOrCreateActiveThread = vi.fn();
+const mockGetOrCreateLatestThread = vi.fn();
 
 // Mock attachment service (publish links + loads shared-file metadata)
 const mockLinkToMessage = vi.fn();
@@ -34,7 +34,7 @@ vi.mock('../../logger', () => ({
 vi.mock('../conversation.service', () => ({
   conversationService: {
     addMessage: (...args: unknown[]) => mockAddMessage(...args),
-    getOrCreateLatestThread: (...args: unknown[]) => mockGetOrCreateActiveThread(...args),
+    getOrCreateLatestThread: (...args: unknown[]) => mockGetOrCreateLatestThread(...args),
   },
 }));
 
@@ -85,7 +85,7 @@ describe('MessageDeliveryService', () => {
     // Create fresh service for each test
     service = new MessageDeliveryService();
     mockAddMessage.mockResolvedValue(sampleMessage);
-    mockGetOrCreateActiveThread.mockResolvedValue({ id: 'thread-456' });
+    mockGetOrCreateLatestThread.mockResolvedValue({ id: 'thread-456' });
     mockLinkToMessage.mockResolvedValue(undefined);
     mockGetMetaByMessageIds.mockResolvedValue(new Map());
   });
@@ -326,7 +326,7 @@ describe('MessageDeliveryService', () => {
 
       await service.publishToLatestThread('agent-123', 'user-123', 'Heartbeat message', 'HEARTBEAT');
 
-      expect(mockGetOrCreateActiveThread).toHaveBeenCalledWith('agent-123', 'user-123');
+      expect(mockGetOrCreateLatestThread).toHaveBeenCalledWith('agent-123', 'user-123');
       expect(mockAddMessage).toHaveBeenCalledWith('thread-456', expect.objectContaining({
         content: 'Heartbeat message',
         triggeredBy: 'HEARTBEAT',

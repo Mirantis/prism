@@ -13,13 +13,13 @@ import express from 'express';
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockStartNewActiveThread } = vi.hoisted(() => ({
-  mockStartNewActiveThread: vi.fn(),
+const { mockStartNewThread } = vi.hoisted(() => ({
+  mockStartNewThread: vi.fn(),
 }));
 
 vi.mock('../services/conversation.service', () => ({
   conversationService: {
-    startNewThread: mockStartNewActiveThread,
+    startNewThread: mockStartNewThread,
     getOrCreateLatestThread: vi.fn(),
     getRecentMessages: vi.fn(),
   },
@@ -58,13 +58,13 @@ describe('Single-Agent Routes', () => {
 
   describe('POST /single-agent/threads', () => {
     it('starts a new active thread and returns its id', async () => {
-      mockStartNewActiveThread.mockResolvedValue({ id: 'thread-fresh' });
+      mockStartNewThread.mockResolvedValue({ id: 'thread-fresh' });
 
       const res = await request(makeApp()).post('/single-agent/threads');
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ threadId: 'thread-fresh' });
-      expect(mockStartNewActiveThread).toHaveBeenCalledWith(
+      expect(mockStartNewThread).toHaveBeenCalledWith(
         'test-agent-id',
         'owner-user-1',
         undefined,
@@ -72,24 +72,24 @@ describe('Single-Agent Routes', () => {
     });
 
     it('forwards a workspaceRoot from the request body', async () => {
-      mockStartNewActiveThread.mockResolvedValue({ id: 'thread-fresh' });
+      mockStartNewThread.mockResolvedValue({ id: 'thread-fresh' });
 
       const res = await request(makeApp())
         .post('/single-agent/threads')
         .send({ workspaceRoot: '/home/me/project' });
 
       expect(res.status).toBe(200);
-      expect(mockStartNewActiveThread).toHaveBeenCalledWith('test-agent-id', 'owner-user-1', {
+      expect(mockStartNewThread).toHaveBeenCalledWith('test-agent-id', 'owner-user-1', {
         workspaceRoot: '/home/me/project',
       });
     });
 
     it('ignores an empty / whitespace-only workspaceRoot', async () => {
-      mockStartNewActiveThread.mockResolvedValue({ id: 'thread-fresh' });
+      mockStartNewThread.mockResolvedValue({ id: 'thread-fresh' });
 
       await request(makeApp()).post('/single-agent/threads').send({ workspaceRoot: '   ' });
 
-      expect(mockStartNewActiveThread).toHaveBeenCalledWith(
+      expect(mockStartNewThread).toHaveBeenCalledWith(
         'test-agent-id',
         'owner-user-1',
         undefined,
@@ -102,11 +102,11 @@ describe('Single-Agent Routes', () => {
       const res = await request(makeApp()).post('/single-agent/threads');
 
       expect(res.status).toBe(503);
-      expect(mockStartNewActiveThread).not.toHaveBeenCalled();
+      expect(mockStartNewThread).not.toHaveBeenCalled();
     });
 
     it('returns 500 when the service throws', async () => {
-      mockStartNewActiveThread.mockRejectedValue(new Error('db down'));
+      mockStartNewThread.mockRejectedValue(new Error('db down'));
 
       const res = await request(makeApp()).post('/single-agent/threads');
 

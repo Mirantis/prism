@@ -24,7 +24,7 @@ const {
   mockGetThread,
   mockListThreads,
   mockAddMessage,
-  mockGetOrCreateActiveThread,
+  mockGetOrCreateLatestThread,
   mockSetExternalId,
   mockGetOrCreateThreadByExternalId,
   mockPrisma,
@@ -40,7 +40,7 @@ const {
   mockGetThread: vi.fn(),
   mockListThreads: vi.fn(),
   mockAddMessage: vi.fn(),
-  mockGetOrCreateActiveThread: vi.fn(),
+  mockGetOrCreateLatestThread: vi.fn(),
   mockSetExternalId: vi.fn(),
   mockGetOrCreateThreadByExternalId: vi.fn(),
   mockSlackHeartbeatTriggerService: {
@@ -108,7 +108,7 @@ vi.mock('../services/conversation.service', () => ({
     getThread: mockGetThread,
     listThreads: mockListThreads,
     addMessage: mockAddMessage,
-    getOrCreateLatestThread: mockGetOrCreateActiveThread,
+    getOrCreateLatestThread: mockGetOrCreateLatestThread,
     setExternalId: mockSetExternalId,
     getOrCreateThreadByExternalId: mockGetOrCreateThreadByExternalId,
   },
@@ -1067,7 +1067,7 @@ describe('Management Routes', () => {
   describe('POST /threads/get-or-create-latest', () => {
     it('returns the thread on success', async () => {
       const thread = { id: 'thread-1', agentId: 'agent-1', userId: 'user-1' };
-      mockGetOrCreateActiveThread.mockResolvedValue(thread);
+      mockGetOrCreateLatestThread.mockResolvedValue(thread);
 
       const res = await authedRequest(app)
         .post('/agents/threads/get-or-create-latest')
@@ -1075,7 +1075,7 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.id).toBe('thread-1');
-      expect(mockGetOrCreateActiveThread).toHaveBeenCalledWith('agent-1', 'user-1');
+      expect(mockGetOrCreateLatestThread).toHaveBeenCalledWith('agent-1', 'user-1');
     });
 
     it('returns 400 when agentId is missing', async () => {
@@ -1097,7 +1097,7 @@ describe('Management Routes', () => {
     });
 
     it('returns 500 when getOrCreateLatestThread throws', async () => {
-      mockGetOrCreateActiveThread.mockRejectedValue(new Error('DB error'));
+      mockGetOrCreateLatestThread.mockRejectedValue(new Error('DB error'));
 
       const res = await authedRequest(app)
         .post('/agents/threads/get-or-create-latest')

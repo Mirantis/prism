@@ -434,36 +434,6 @@ class ConversationService {
       orderBy: { createdAt: 'desc' },
     });
   }
-
-  /**
-   * Delete old threads (cleanup). Removes database threads older than `daysOld`
-   * except the user's latest one, so the current conversation is never deleted.
-   */
-  async cleanupOldThreads(
-    agentId: string,
-    userId: string,
-    daysOld: number = 30
-  ): Promise<number> {
-    const cutoff = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000);
-
-    const latest = await prisma.conversationThread.findFirst({
-      where: { agentId, userId, externalThreadId: null },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true },
-    });
-
-    const result = await prisma.conversationThread.deleteMany({
-      where: {
-        agentId,
-        userId,
-        externalThreadId: null,
-        updatedAt: { lt: cutoff },
-        ...(latest ? { id: { not: latest.id } } : {}),
-      },
-    });
-
-    return result.count;
-  }
 }
 
 // Export singleton instance
