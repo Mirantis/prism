@@ -195,6 +195,55 @@ class SlackAdapterService implements ChannelAdapter {
   private userConnectionCache: Map<string, Set<string>> = new Map(); // lensUserId -> teamIds
 
   /**
+   * In-flight channel responses keyed by `${channelId}:${threadRootTs}`.
+   *
+   * The conversation engine streams a reply as several Slack posts over many
+   * seconds, each `thread_ts`-anchored to the triggering message. If that root
+   * message is deleted mid-stream, Slack silently reroutes the remaining posts
+   * to the channel top level (a deleted `thread_ts` falls back to a plain
+   * channel message). We track each run's AbortController so a `message_deleted`
+   * event for the root can cancel the run before its tail spills into the
+   * channel. A Set covers the rare case of concurrent runs sharing a root.
+   */
+  private inFlightChannelRuns: Map<string, Set<AbortController>> = new Map();
+
+  private channelRunKey(channelId: string, threadRootTs: string): string {
+    return `${channelId}:${threadRootTs}`;
+  }
+
+  /** Register an in-flight run so a root-message deletion can abort it. */
+  private trackChannelRun(key: string, controller: AbortController): void {
+    let runs = this.inFlightChannelRuns.get(key);
+    if (!runs) {
+      runs = new Set();
+      this.inFlightChannelRuns.set(key, runs);
+    }
+    runs.add(controller);
+  }
+
+  /** Drop a finished run; clean up the bucket once the last one leaves. */
+  private untrackChannelRun(key: string, controller: AbortController): void {
+    const runs = this.inFlightChannelRuns.get(key);
+    if (!runs) return;
+    runs.delete(controller);
+    if (runs.size === 0) this.inFlightChannelRuns.delete(key);
+  }
+
+  /**
+   * Abort every in-flight run anchored to a (now-deleted) thread root so the
+   * streamed tail never spills into the channel. No-op when nothing matches.
+   */
+  private abortChannelRuns(channelId: string, threadRootTs: string): void {
+    const runs = this.inFlightChannelRuns.get(this.channelRunKey(channelId, threadRootTs));
+    if (!runs || runs.size === 0) return;
+    logger.info(
+      '[SlackAdapter] Thread root %s in channel %s was deleted — aborting %d in-flight response(s)',
+      threadRootTs, channelId, runs.size,
+    );
+    for (const controller of runs) controller.abort();
+  }
+
+  /**
    * Deliver a message to the user via Slack DM or channel
    *
    * If channelContext is provided and it's a Slack channel, delivers to that channel.
@@ -703,6 +752,15 @@ class SlackAdapterService implements ChannelAdapter {
 
       const hasFiles = Array.isArray(msg.files) && msg.files.length > 0;
 
+      // A deleted message can orphan an in-flight threaded reply: Slack reroutes
+      // posts to a deleted `thread_ts` into the channel top level. Cancel any run
+      // anchored to the deleted message before its streamed tail spills out.
+      if (msg.subtype === 'message_deleted') {
+        const deletedTs = (message as { deleted_ts?: string }).deleted_ts;
+        if (deletedTs) this.abortChannelRuns(msg.channel, deletedTs);
+        return;
+      }
+
       // Skip message subtypes (edits, deletes, etc.) — except `file_share`,
       // which is how a user-uploaded attachment arrives (often with empty text).
       if (msg.subtype && msg.subtype !== 'file_share') {
@@ -1130,24 +1188,35 @@ class SlackAdapterService implements ChannelAdapter {
       // to stale context.
       await this.slackThreadProvider.waitForExternalMessage(thread.id, messageTs);
 
-      // Route through local conversation engine (direct call)
-      await conversationEngineService.chat({
-        userId,
-        agentId: mapping.agentId,
-        threadId: thread.id,
-        message: taggedText,
-        attachmentIds,
-        runtimeNotices: failures.length ? [this.buildAttachmentFailureNote(failures)] : undefined,
-        onToolEvent: indicator ? createToolStatusListener(indicator) : undefined,
-        metadata: {
-          channel: 'slack',
-          channelId,
-          channelName: mapping.slackChannelName ?? undefined,
-          slackThreadTs: slackThreadId,
-          senderExternalId: slackUserId,
-          senderName,
-        },
-      });
+      // Track this run so deleting the thread's root message can abort it
+      // before the streamed tail spills into the channel (see inFlightChannelRuns).
+      const runKey = this.channelRunKey(channelId, slackThreadId);
+      const abortController = new AbortController();
+      this.trackChannelRun(runKey, abortController);
+
+      try {
+        // Route through local conversation engine (direct call)
+        await conversationEngineService.chat({
+          userId,
+          agentId: mapping.agentId,
+          threadId: thread.id,
+          message: taggedText,
+          attachmentIds,
+          runtimeNotices: failures.length ? [this.buildAttachmentFailureNote(failures)] : undefined,
+          onToolEvent: indicator ? createToolStatusListener(indicator) : undefined,
+          abortSignal: abortController.signal,
+          metadata: {
+            channel: 'slack',
+            channelId,
+            channelName: mapping.slackChannelName ?? undefined,
+            slackThreadTs: slackThreadId,
+            senderExternalId: slackUserId,
+            senderName,
+          },
+        });
+      } finally {
+        this.untrackChannelRun(runKey, abortController);
+      }
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
       logger.error(

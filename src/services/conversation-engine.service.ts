@@ -599,8 +599,11 @@ Respond with exactly one word: WORTHY or SKIP`;
     }
 
     // Stream is done. The buffered step (if any) is the LAST text step:
-    // attach the accumulated blocks and the feedback decision here.
-    if (bufferedStep) {
+    // attach the accumulated blocks and the feedback decision here. Skip it
+    // when the turn was aborted — a canceled run (e.g. its Slack thread root
+    // was deleted mid-stream) must not emit any further posts, or the tail
+    // would spill into the channel as a top-level message.
+    if (bufferedStep && !params.abortSignal?.aborted) {
       const includeFeedback = await this.shouldShowFeedback(
         threadId, prompt, bufferedStep.text, userId, agentId, params.abortSignal,
       );
@@ -622,10 +625,12 @@ Respond with exactly one word: WORTHY or SKIP`;
 
     // Fallback: the stream produced no text step. Publish only if there's still
     // something to show (tool calls or UI blocks) — e.g. a tool-only turn. When
-    // a turn is canceled before producing anything, skip it rather than render
-    // an empty agent bubble. (In this branch `response` is always '' because any
-    // text step would have set `agentMessage` via the buffered-step publish.)
-    if (!agentMessage && (allToolCalls.length > 0 || allBlocks.length > 0)) {
+    // a turn is canceled (aborted, or no output at all), skip it rather than
+    // render an empty agent bubble or spill a tool-only post into a channel
+    // whose thread root was deleted. (In this branch `response` is always ''
+    // because any text step would have set `agentMessage` via the buffered-step
+    // publish.)
+    if (!agentMessage && !params.abortSignal?.aborted && (allToolCalls.length > 0 || allBlocks.length > 0)) {
       agentMessage = await messageDeliveryService.publish(
         userId,
         threadId,

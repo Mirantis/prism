@@ -625,4 +625,62 @@ describe('Requirement: Channel message mention detection', () => {
       expect(setStatus).not.toHaveBeenCalled();
     });
   });
+
+  describe('Scenario: Deleting the thread root aborts an in-flight response', () => {
+    // Drives a top-level mention to the point where the conversation engine is
+    // mid-stream, then deletes the triggering message. The run must be aborted
+    // so its streamed tail does not spill into the channel.
+    function startPendingRun() {
+      const mapping = makeMapping();
+      mockSlackMappingService.findByChannelId.mockResolvedValue(mapping);
+      mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-001' });
+      vi.spyOn(SlackThreadProvider.prototype, 'waitForExternalMessage').mockResolvedValue(undefined);
+
+      let capturedSignal: AbortSignal | undefined;
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => { release = resolve; });
+      mockConversationEngineService.chat.mockImplementation(
+        async (input: { abortSignal?: AbortSignal }) => {
+          capturedSignal = input.abortSignal;
+          await pending;
+        }
+      );
+
+      // Top-level mention → run keyed by `${channelId}:${messageTs}`.
+      const handled = handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> investigate #8982`,
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      return { handled, release: () => release(), getSignal: () => capturedSignal };
+    }
+
+    it('aborts the run when the triggering (root) message is deleted', async () => {
+      const run = startPendingRun();
+      await vi.waitFor(() => expect(run.getSignal()).toBeDefined());
+      expect(run.getSignal()!.aborted).toBe(false);
+
+      // Deleting the message whose ts is the thread root cancels the run.
+      (slackAdapterService as any).abortChannelRuns(CHANNEL_ID, MESSAGE_TS);
+      expect(run.getSignal()!.aborted).toBe(true);
+
+      run.release();
+      await run.handled;
+      // Bucket is cleaned up once the run finishes.
+      expect((slackAdapterService as any).inFlightChannelRuns.size).toBe(0);
+    });
+
+    it('does not abort when an unrelated message is deleted', async () => {
+      const run = startPendingRun();
+      await vi.waitFor(() => expect(run.getSignal()).toBeDefined());
+
+      // A different message's ts → no matching run, no abort.
+      (slackAdapterService as any).abortChannelRuns(CHANNEL_ID, '9999999999.000000');
+      expect(run.getSignal()!.aborted).toBe(false);
+
+      run.release();
+      await run.handled;
+    });
+  });
 });

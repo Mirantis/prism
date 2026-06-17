@@ -522,6 +522,28 @@ describe('Requirement: Conversation Engine', () => {
       expect(response.messageId).toBeUndefined();
       expect(response.content).toBe('');
     });
+
+    it('does not publish the final buffered step when the turn was aborted', async () => {
+      // Mirrors the Slack "thread root deleted mid-stream" case: once the run
+      // is aborted, the buffered last step must NOT be published, otherwise it
+      // would spill into the channel as a top-level message.
+      const controller = new AbortController();
+      controller.abort();
+
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'Here is my analysis for the team.', toolCalls: [] },
+      ]));
+
+      const response = await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Investigate ticket #8982',
+        abortSignal: controller.signal,
+      });
+
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(response.messageId).toBeUndefined();
+    });
   });
 
   describe('Scenario: Channel context includes threadId', () => {
