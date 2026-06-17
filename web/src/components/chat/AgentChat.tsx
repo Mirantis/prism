@@ -5,7 +5,7 @@ import { runtimeApi } from '@/api/runtime-client';
 import { ApiError } from '@/api/errors';
 import { useAgent } from '@/lib/agent-context';
 import { useWebSocket } from '@/hooks/use-websocket';
-import { MAX_ATTACHMENTS_PER_MESSAGE, type Attachment, type ConversationMessage, type ConversationThread } from '@/types';
+import { MAX_ATTACHMENTS_PER_MESSAGE, type Attachment, type ConversationMessage } from '@/types';
 import ChatMessageList from './ChatMessageList';
 import ChatInput from './ChatInput';
 import type { PendingAttachment } from './ChatAttachmentChip';
@@ -28,13 +28,12 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         queryClient.invalidateQueries({ queryKey: ['thread', agent.agentId, activeThreadId] });
       }
     },
-    // A thread was just titled (first user message) — patch the cached Recents
-    // list in place so the row's name updates live without a refetch.
-    onThreadUpdate: ({ threadId, title }) => {
-      queryClient.setQueryData<ConversationThread[]>(
-        ['threads', agent.agentId, 'recents'],
-        (old) => old?.map((t) => (t.id === threadId ? { ...t, title } : t)),
-      );
+    // A thread was just titled (the first message of a conversation) — refetch
+    // the Recents list so a brand-new thread appears (and existing rows pick up
+    // their title) immediately, not only after a page reload. A plain in-place
+    // patch can't add a thread that wasn't already in the cached list.
+    onThreadUpdate: () => {
+      queryClient.invalidateQueries({ queryKey: ['threads', agent.agentId, 'recents'] });
     },
   });
 
