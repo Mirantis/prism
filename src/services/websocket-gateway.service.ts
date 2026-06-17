@@ -37,7 +37,7 @@ interface WebSocketMessage {
 }
 
 interface WebSocketResponse {
-  type: 'chat' | 'pong' | 'error' | 'status';
+  type: 'chat' | 'pong' | 'error' | 'status' | 'thread';
   threadId?: string;
   messageId?: string;
   content?: string;
@@ -341,7 +341,7 @@ class WebSocketGatewayService {
       logger.info('Calling conversation engine for %s', userId);
 
       // Process through local conversation engine (direct call, no HTTP)
-      await conversationEngineService.chat({
+      const result = await conversationEngineService.chat({
         userId,
         agentId,
         message: message.content || '',
@@ -352,6 +352,15 @@ class WebSocketGatewayService {
       });
 
       logger.info('Conversation engine completed for %s', userId);
+
+      // If this message just titled the thread (the first user message), push
+      // the new title so the web's thread list updates live.
+      if (result?.titleSet) {
+        this.broadcast(userId, {
+          type: 'thread',
+          payload: { threadId: result.threadId, title: result.titleSet },
+        });
+      }
 
       // Note: Response delivery is handled by messageDeliveryService.publish()
       // which is called by conversationEngineService.chat() - no manual sending needed

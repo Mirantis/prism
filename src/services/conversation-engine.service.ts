@@ -60,6 +60,8 @@ export interface ChatResponse {
   toolCalls: ToolCallRecord[];
   blocks?: unknown[];
   durationMs: number;
+  /** The title just assigned to the thread from this message, else null. */
+  titleSet: string | null;
 }
 
 // ============================================================================
@@ -194,7 +196,7 @@ Respond with exactly one word: WORTHY or SKIP`;
     // already prefixed with the sender's mention marker when the caller
     // (e.g. the Slack adapter) wants the agent to see it in conversation
     // history — see `slackAdapterService.buildSenderTaggedContent`.
-    const userMessage = await conversationService.addMessage(threadId, {
+    const { message: userMessage, titleSet } = await conversationService.addMessage(threadId, {
       content: message,
       role: 'USER',
       triggeredBy: 'USER_INPUT',
@@ -343,6 +345,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       toolCalls: allToolCalls,
       blocks: allBlocks.length > 0 ? allBlocks : undefined,
       durationMs: Date.now() - startTime,
+      titleSet,
     };
   }
 }

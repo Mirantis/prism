@@ -463,6 +463,50 @@ describe('Requirement: WebSocket Gateway', () => {
     });
   });
 
+  describe('Scenario: Thread title broadcast', () => {
+    it('broadcasts a thread title update when the turn set a title', async () => {
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+      ws.readyState = 1;
+      service.connections.set(userId, [ws]);
+
+      mockChat.mockResolvedValue({ threadId: 'thread-123', titleSet: 'keuruun saha translat...' });
+
+      await service.processMessage(ws, userId, {
+        type: 'chat',
+        content: 'keuruun saha translations now',
+        agentId: 'agent-123',
+      });
+
+      expect(ws.send).toHaveBeenCalledWith(
+        JSON.stringify({
+          type: 'thread',
+          payload: { threadId: 'thread-123', title: 'keuruun saha translat...' },
+        }),
+      );
+    });
+
+    it('does not broadcast a thread update when no title was set', async () => {
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+      ws.readyState = 1;
+      service.connections.set(userId, [ws]);
+
+      mockChat.mockResolvedValue({ threadId: 'thread-123', titleSet: null });
+
+      await service.processMessage(ws, userId, {
+        type: 'chat',
+        content: 'a follow-up message',
+        agentId: 'agent-123',
+      });
+
+      const sentTypes = ws.send.mock.calls.map((c: [string]) => JSON.parse(c[0]).type);
+      expect(sentTypes).not.toContain('thread');
+    });
+  });
+
   describe('Scenario: Processing indicator', () => {
     it('should send processing indicator', async () => {
       const userId = 'user-123';

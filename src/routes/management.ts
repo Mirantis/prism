@@ -981,7 +981,7 @@ router.post('/threads/:threadId/messages', async (req: Request<{ threadId: strin
       return;
     }
 
-    const message = await conversationService.addMessage(threadId, {
+    const { message } = await conversationService.addMessage(threadId, {
       content, role, triggeredBy, toolCalls, blocks, tokenCount, senderExternalId, senderName,
     });
 

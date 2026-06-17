@@ -272,12 +272,17 @@ class ConversationService {
   }
 
   /**
-   * Add a message to a thread
+   * Add a message to a thread.
+   *
+   * Returns the created message plus `titleSet` — the title just assigned to
+   * the thread from this (first user) message, or null when no title was set
+   * (non-USER, empty content, or the thread is already titled). Callers use it
+   * to push a live title update to clients.
    */
   async addMessage(
     threadId: string,
     input: MessageInput
-  ): Promise<ConversationMessage> {
+  ): Promise<{ message: ConversationMessage; titleSet: string | null }> {
     const message = await prisma.conversationMessage.create({
       data: {
         threadId,
@@ -308,17 +313,20 @@ class ConversationService {
     // Name the thread after the user's first message (first 3 words, capped).
     // `title: null` makes this atomic and one-shot — it fires only for the very
     // first user message with text and is a no-op for every later message.
+    // `count > 0` means this call actually set it, so callers can broadcast it.
+    let titleSet: string | null = null;
     if (input.role === 'USER') {
       const title = deriveThreadTitle(input.content);
       if (title) {
-        await prisma.conversationThread.updateMany({
+        const res = await prisma.conversationThread.updateMany({
           where: { id: threadId, title: null },
           data: { title },
         });
+        if (res.count > 0) titleSet = title;
       }
     }
 
-    return message;
+    return { message, titleSet };
   }
 
   /**

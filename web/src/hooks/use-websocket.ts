@@ -14,18 +14,20 @@ interface ChatMessage {
 }
 
 interface WebSocketMessage {
-  type: 'chat' | 'status' | 'error' | 'typing' | 'heartbeat' | 'pong';
+  type: 'chat' | 'status' | 'error' | 'typing' | 'heartbeat' | 'pong' | 'thread';
   payload?: unknown;
 }
 
 interface UseWebSocketOptions {
   onMessage?: (msg: ConversationMessage) => void;
+  /** A thread's title was (re)set server-side — update cached thread lists. */
+  onThreadUpdate?: (update: { threadId: string; title: string }) => void;
   reconnectInterval?: number;
   maxReconnectAttempts?: number;
 }
 
 export function useWebSocket(opts: UseWebSocketOptions = {}) {
-  const { onMessage, reconnectInterval = 3000, maxReconnectAttempts = 10 } = opts;
+  const { onMessage, onThreadUpdate, reconnectInterval = 3000, maxReconnectAttempts = 10 } = opts;
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempts = useRef(0);
@@ -59,6 +61,13 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             if (p?.processing === false) setIsTyping(false);
             break;
           }
+          case 'thread': {
+            const p = data.payload as { threadId?: string; title?: string } | undefined;
+            if (p?.threadId && typeof p.title === 'string') {
+              onThreadUpdate?.({ threadId: p.threadId, title: p.title });
+            }
+            break;
+          }
           case 'heartbeat':
             if (wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({ type: 'pong' }));
@@ -74,7 +83,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
         console.error('[ws] failed to parse message:', err);
       }
     },
-    [onMessage],
+    [onMessage, onThreadUpdate],
   );
 
   const connect = useCallback(() => {

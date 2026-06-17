@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { useWebSocket } from '@/hooks/use-websocket';
-import { MAX_ATTACHMENTS_PER_MESSAGE, type Attachment, type ConversationMessage } from '@/types';
+import { MAX_ATTACHMENTS_PER_MESSAGE, type Attachment, type ConversationMessage, type ConversationThread } from '@/types';
 import ChatMessageList from './ChatMessageList';
 import ChatInput from './ChatInput';
 import type { PendingAttachment } from './ChatAttachmentChip';
@@ -24,6 +24,14 @@ export default function AgentChat() {
       if (activeThreadId) {
         queryClient.invalidateQueries({ queryKey: ['thread', agent.agentId, activeThreadId] });
       }
+    },
+    // A thread was just titled (first user message) — patch the cached Recents
+    // list in place so the row's name updates live without a refetch.
+    onThreadUpdate: ({ threadId, title }) => {
+      queryClient.setQueryData<ConversationThread[]>(
+        ['threads', agent.agentId, 'recents'],
+        (old) => old?.map((t) => (t.id === threadId ? { ...t, title } : t)),
+      );
     },
   });
 

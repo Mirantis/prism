@@ -110,10 +110,8 @@ describe('Requirement: Conversation Engine', () => {
     });
     mockGetThreadWorkspaceRoot.mockResolvedValue(null);
     mockAddMessage.mockImplementation(async (threadId: string, input: Record<string, unknown>) => ({
-      id: 'msg-123',
-      threadId,
-      ...input,
-      createdAt: new Date(),
+      message: { id: 'msg-123', threadId, ...input, createdAt: new Date() },
+      titleSet: null,
     }));
     mockPublish.mockResolvedValue({
       id: 'msg-agent-123',
