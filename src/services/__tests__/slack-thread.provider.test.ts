@@ -630,5 +630,115 @@ describe('Requirement: Slack Thread Provider', () => {
       expect(messages[3].toolCalls).toEqual(toolCalls2);
     });
   });
+
+  describe('Scenario: Agent body sourced from stored DB content', () => {
+    // Slack's conversations.replies returns a flattened, newline-stripped
+    // `text` for messages posted with markdown/blocks. Replaying that as
+    // history trains the agent to imitate single-line output, which breaks
+    // Slack markdown rendering. The provider must instead feed back the
+    // lossless stored DB content (which preserves newlines) for the agent's
+    // own messages.
+    const richContent = '**Plan:**\n\n- step one\n- step two\n\nDone.';
+    const flattenedText = '**Plan:**  - step one - step two  Done.';
+
+    it('uses lossless stored DB content (with newlines) for agent messages, not Slack’s flattened text', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'make a plan', ts: '1710000001.000000' },
+          { user: botUserId, text: flattenedText, ts: '1710000002.000000' },
+        ],
+        response_metadata: {},
+      });
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+        { externalMessageId: '1710000002.000000', content: richContent, toolCalls: null },
+      ]);
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[1].role).toBe('AGENT');
+      expect(messages[1].content).toBe(richContent);
+      expect(messages[1].content).toContain('\n');
+    });
+
+    it('falls back to Slack text when no stored row matches the agent message', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: botUserId, text: flattenedText, ts: '1710000002.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+        { externalMessageId: '9999999999.999999', content: richContent, toolCalls: null },
+      ]);
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].content).toBe(flattenedText);
+    });
+
+    it('falls back to Slack text when the stored content is empty/whitespace', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: botUserId, text: flattenedText, ts: '1710000002.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+        { externalMessageId: '1710000002.000000', content: '   ', toolCalls: null },
+      ]);
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].content).toBe(flattenedText);
+    });
+
+    it('does NOT substitute DB content for user messages (only the agent’s own)', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'plain user text', ts: '1710000001.000000' },
+        ],
+        response_metadata: {},
+      });
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+
+      // A stray row keyed by the user message ts must be ignored — user bodies
+      // always come from Slack (faithful, since users type plain text).
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+        { externalMessageId: '1710000001.000000', content: 'SHOULD NOT APPEAR', toolCalls: null },
+      ]);
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages[0].role).toBe('USER');
+      expect(messages[0].content).toBe('<@U100:Alice>: plain user text');
+    });
+
+    it('enriches <@U…> mentions inside DB-sourced agent content', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: botUserId, text: 'flattened', ts: '1710000002.000000' },
+        ],
+        response_metadata: {},
+      });
+      mockUsersInfo.mockImplementation(async ({ user }: { user: string }) => {
+        if (user === 'U200') return { user: { real_name: 'Bob' } };
+        throw new Error(`unexpected user ${user}`);
+      });
+
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+        { externalMessageId: '1710000002.000000', content: 'pinging <@U200> now', toolCalls: null },
+      ]);
+
+      const messages = await provider.getMessages(threadId);
+
+      // The bare token in the stored content is collected for name resolution
+      // and enriched to the combined form the outbound rewrite expects.
+      expect(messages[0].content).toBe('pinging <@U200:Bob> now');
+    });
+  });
 });
 

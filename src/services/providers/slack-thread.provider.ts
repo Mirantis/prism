@@ -65,11 +65,18 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       thread.externalThreadId
     );
 
-    const [rawMessages, toolCallsByTs] = await Promise.all([
+    const [rawMessages, { contentByTs, toolCallsByTs }] = await Promise.all([
       this.fetchAllReplies(channelId, threadTs, teamId),
-      this.getToolCallsForThread(threadId),
+      this.getAgentMessageMaps(threadId),
     ]);
-    return this.mapToConversationMessages(threadId, rawMessages, botUserId, teamId, toolCallsByTs);
+    return this.mapToConversationMessages(
+      threadId,
+      rawMessages,
+      botUserId,
+      teamId,
+      contentByTs,
+      toolCallsByTs,
+    );
   }
 
   /**
@@ -153,15 +160,32 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     slackMessages: SlackMessage[],
     botUserId: string,
     teamId: string,
+    dbContentByTs: Map<string, string>,
     toolCallsByTs: Map<string, Prisma.JsonValue>,
   ): Promise<ConversationMessage[]> {
+    // Choose the authoritative body for a message. For the agent's own
+    // replies, prefer the lossless stored DB content (which preserves
+    // newlines) over Slack's `msg.text`. Slack returns a flattened,
+    // newline-stripped `text` for messages posted with markdown/blocks, and
+    // replaying that as history trains the agent to imitate single-line
+    // output — so we always feed it back its real, well-formatted reply.
+    // Falls back to `msg.text` when no stored row exists (e.g. pre-join or
+    // un-persisted messages).
+    const sourceText = (m: SlackMessage): string => {
+      if (m.user === botUserId) {
+        const stored = dbContentByTs.get(m.ts);
+        if (stored && stored.trim().length > 0) return stored;
+      }
+      return m.text || '';
+    };
+
     // Collect every Slack user ID we'll need a name for: senders + any
     // user mentioned via `<@U…>` inside message bodies. Resolved in one batch.
     const senderIds = slackMessages
       .filter(m => m.user && m.user !== botUserId)
       .map(m => m.user!);
     const mentionIds = slackMessages.flatMap(m =>
-      [...(m.text || '').matchAll(/<@([A-Z0-9]+)>/g)].map(match => match[1]),
+      [...sourceText(m).matchAll(/<@([A-Z0-9]+)>/g)].map(match => match[1]),
     );
     const userIds = [...new Set([...senderIds, ...mentionIds])];
 
@@ -183,7 +207,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         ? 'Agent'
         : userNames.get(msg.user!) || msg.user || 'Unknown';
 
-      const rawText = msg.text || '';
+      const rawText = sourceText(msg);
       const enrichedText = enrichMentions(rawText);
 
       // Prefix user messages with the sender's combined mention marker so
@@ -214,31 +238,45 @@ export class SlackThreadProvider implements ThreadMessageProvider {
   }
 
   /**
-   * Build a lookup map from Slack message ts to tool calls stored in the database.
-   * Agent responses are stored in the DB with toolCalls and externalMessageId (the Slack ts),
-   * so we can match them back to Slack messages for context enrichment.
+   * Build lookup maps from Slack message ts → stored agent data.
+   *
+   * Agent replies are persisted in the DB with `externalMessageId` set to the
+   * Slack ts (and `toolCalls` when present), so we can match them back to the
+   * Slack messages this provider reads. We fetch BOTH the original `content`
+   * (lossless, newline-preserving — used in place of Slack's flattened
+   * `msg.text`) and `toolCalls` for context enrichment.
+   *
+   * Note: no `toolCalls` filter on the query — most agent messages have none,
+   * and we still need their `content`. The `toolCalls` map only gains an entry
+   * when the row actually carries tool calls.
    */
-  private async getToolCallsForThread(threadId: string): Promise<Map<string, Prisma.JsonValue>> {
+  private async getAgentMessageMaps(threadId: string): Promise<{
+    contentByTs: Map<string, string>;
+    toolCallsByTs: Map<string, Prisma.JsonValue>;
+  }> {
     const dbMessages = await prisma.conversationMessage.findMany({
       where: {
         threadId,
         role: 'AGENT',
-        toolCalls: { not: Prisma.DbNull },
         externalMessageId: { not: null },
       },
       select: {
         externalMessageId: true,
+        content: true,
         toolCalls: true,
       },
     });
 
-    const map = new Map<string, Prisma.JsonValue>();
+    const contentByTs = new Map<string, string>();
+    const toolCallsByTs = new Map<string, Prisma.JsonValue>();
     for (const msg of dbMessages) {
-      if (msg.externalMessageId && msg.toolCalls) {
-        map.set(msg.externalMessageId, msg.toolCalls);
+      if (!msg.externalMessageId) continue;
+      contentByTs.set(msg.externalMessageId, msg.content);
+      if (msg.toolCalls != null) {
+        toolCallsByTs.set(msg.externalMessageId, msg.toolCalls);
       }
     }
-    return map;
+    return { contentByTs, toolCallsByTs };
   }
 
   /**
