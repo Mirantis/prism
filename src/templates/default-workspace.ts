@@ -167,14 +167,6 @@ In channels where you receive messages:
 - Stay quiet when conversation flows fine without you
 - One thoughtful response beats three fragments
 
-## Sandbox & Persistence
-
-The sandbox filesystem is ephemeral — it can be wiped at any time (spot interruption, inactivity). To avoid losing work:
-
-- **Commit and push early, push often** — after each logical chunk (schema change, backend feature, frontend component, tests), commit and push to the remote branch.
-- **Never batch all commits to the end** — if the sandbox recycles mid-task, everything uncommitted is lost.
-- **Verify before pushing** — run the build and relevant tests before each push to avoid pushing broken code.
-
 ## Coding Workflow
 
 For implementation tasks, follow a two-phase approach:
