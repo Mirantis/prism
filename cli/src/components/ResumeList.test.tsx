@@ -10,12 +10,15 @@ function makeSessions(): ThreadSummary[] {
   return [
     {
       id: 'thread-alpha',
+      title: 'Saha Translation',
       updatedAt: new Date(Date.now() - 1.5 * MIN).toISOString(),
       workspaceRoot: '/home/me/.claude/worktrees/ability-to-cancel',
       branch: 'worktree/ability-to-cancel',
     },
     {
+      // No title yet → falls back to the id.
       id: 'thread-beta',
+      title: null,
       updatedAt: new Date(Date.now() - 53.5 * MIN).toISOString(),
       workspaceRoot: '/home/me/dev/prism-agent',
       branch: null,
@@ -33,21 +36,22 @@ const pressEscape = async (stdin: { write: (data: string) => void }) => {
 const flush = () => new Promise((r) => setImmediate(r));
 
 describe('ResumeList', () => {
-  it('renders the header, cwd, ids, and time-ago + workspace labels', () => {
+  it('renders the title (or id fallback), cwd, and time-ago + workspace labels', () => {
     const { lastFrame, unmount } = render(
       <ResumeList sessions={makeSessions()} cwd="/home/me/cwd" onSelect={vi.fn()} onCancel={vi.fn()} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Resume session (1 of 2)');
     expect(frame).toContain('/home/me/cwd');
-    expect(frame).toContain('thread-alpha');
+    // Titled thread shows its title, not the id; cursor sits on the first row.
+    expect(frame).toContain('❯ Saha Translation');
+    expect(frame).not.toContain('thread-alpha');
+    // Untitled thread falls back to its id.
     expect(frame).toContain('thread-beta');
     // basename + branch when both are known…
     expect(frame).toContain('1 minute ago · ability-to-cancel (worktree/ability-to-cancel)');
     // …basename only when there's no branch.
     expect(frame).toContain('53 minutes ago · prism-agent');
-    // ❯ cursor sits on the first (selected) row.
-    expect(frame).toContain('❯ thread-alpha');
     unmount();
   });
 
@@ -89,6 +93,7 @@ describe('ResumeList', () => {
   it('shows at most 5 rows but reports the full total', () => {
     const many: ThreadSummary[] = Array.from({ length: 7 }, (_, i) => ({
       id: `thread-${i}`,
+      title: null,
       updatedAt: new Date(Date.now() - (i + 1) * MIN).toISOString(),
       workspaceRoot: null,
       branch: null,

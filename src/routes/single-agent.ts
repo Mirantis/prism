@@ -84,6 +84,7 @@ router.get('/threads', async (_req: Request, res: Response) => {
     const summaries = await Promise.all(
       threads.map(async (t) => ({
         id: t.id,
+        title: t.title,
         updatedAt: t.updatedAt,
         workspaceRoot: t.workspaceRoot,
         branch: t.workspaceRoot ? await getGitBranch(t.workspaceRoot) : null,
