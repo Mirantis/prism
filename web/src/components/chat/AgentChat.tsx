@@ -23,9 +23,17 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
 
   const { status, isTyping, sendFollowup, cancel } = useWebSocket({
     onMessage: (msg) => {
-      setLocalMessages((prev) => [...prev, msg]);
-      if (activeThreadId) {
-        queryClient.invalidateQueries({ queryKey: ['thread', agent.agentId, activeThreadId] });
+      // Deliveries are broadcast to all of the user's connections tagged with
+      // their own thread id — a heartbeat, a cron task, a Slack turn, or a turn
+      // in another tab can all arrive for a *different* thread than the one on
+      // screen. Only render messages that belong to the thread being viewed.
+      if (msg.threadId === activeThreadId) {
+        setLocalMessages((prev) => [...prev, msg]);
+      }
+      // Invalidate the message's own thread cache (never a possibly-stale
+      // active id) so it's fresh whether it's open now or navigated to later.
+      if (msg.threadId) {
+        queryClient.invalidateQueries({ queryKey: ['thread', agent.agentId, msg.threadId] });
       }
     },
     // A thread was just titled (the first message of a conversation) — refetch

@@ -17,14 +17,14 @@ import express from 'express';
 const {
   mockStartNewThread,
   mockListThreads,
-  mockGetThread,
+  mockGetOwnedThreadId,
   mockGetOrCreateLatestThread,
   mockGetRecentMessages,
   mockGetGitBranch,
 } = vi.hoisted(() => ({
   mockStartNewThread: vi.fn(),
   mockListThreads: vi.fn(),
-  mockGetThread: vi.fn(),
+  mockGetOwnedThreadId: vi.fn(),
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetRecentMessages: vi.fn(),
   mockGetGitBranch: vi.fn(),
@@ -34,7 +34,7 @@ vi.mock('../services/conversation.service', () => ({
   conversationService: {
     startNewThread: mockStartNewThread,
     listThreads: mockListThreads,
-    getThread: mockGetThread,
+    getOwnedThreadId: mockGetOwnedThreadId,
     getOrCreateLatestThread: mockGetOrCreateLatestThread,
     getRecentMessages: mockGetRecentMessages,
   },
@@ -136,9 +136,11 @@ describe('Single-Agent Routes', () => {
   });
 
   describe('GET /threads', () => {
-    it('lists resumable threads newest-first with a git-branch label', async () => {
+    it('lists resumable threads newest-first with a git-branch label, one git lookup per unique root', async () => {
       mockListThreads.mockResolvedValue([
         { id: 'thread-new', title: 'Deploy Staging', updatedAt: '2026-06-16T10:00:00.000Z', workspaceRoot: '/repo/a' },
+        // Same repo as thread-new → must NOT spawn a second git lookup.
+        { id: 'thread-dup', title: null, updatedAt: '2026-06-16T09:30:00.000Z', workspaceRoot: '/repo/a' },
         { id: 'thread-old', title: null, updatedAt: '2026-06-16T09:00:00.000Z', workspaceRoot: null },
       ]);
       mockGetGitBranch.mockResolvedValue('worktree/feature');
@@ -151,6 +153,13 @@ describe('Single-Agent Routes', () => {
           id: 'thread-new',
           title: 'Deploy Staging',
           updatedAt: '2026-06-16T10:00:00.000Z',
+          workspaceRoot: '/repo/a',
+          branch: 'worktree/feature',
+        },
+        {
+          id: 'thread-dup',
+          title: null,
+          updatedAt: '2026-06-16T09:30:00.000Z',
           workspaceRoot: '/repo/a',
           branch: 'worktree/feature',
         },
@@ -168,7 +177,8 @@ describe('Single-Agent Routes', () => {
         threadSource: 'DATABASE',
         limit: 50,
       });
-      // Branch is only looked up for threads that have a workspace root.
+      // One git lookup per *unique* workspace root: /repo/a is shared by two
+      // threads (one lookup) and thread-old has none (no lookup).
       expect(mockGetGitBranch).toHaveBeenCalledTimes(1);
       expect(mockGetGitBranch).toHaveBeenCalledWith('/repo/a');
     });
@@ -191,26 +201,26 @@ describe('Single-Agent Routes', () => {
       const res = await request(makeApp()).get('/messages?limit=10');
 
       expect(res.status).toBe(200);
-      expect(mockGetThread).not.toHaveBeenCalled();
+      expect(mockGetOwnedThreadId).not.toHaveBeenCalled();
       expect(mockGetOrCreateLatestThread).toHaveBeenCalledWith('test-agent-id', 'owner-user-1');
       expect(mockGetRecentMessages).toHaveBeenCalledWith('latest-thread', 10);
     });
 
     it('replays a specific, ownership-checked thread when threadId is given', async () => {
-      mockGetThread.mockResolvedValue({ id: 'thread-x' });
+      // Cheap ownership check returns the id (no message load) — not getThread.
+      mockGetOwnedThreadId.mockResolvedValue('thread-x');
       mockGetRecentMessages.mockResolvedValue([]);
 
       const res = await request(makeApp()).get('/messages?threadId=thread-x');
 
       expect(res.status).toBe(200);
-      // Ownership is enforced by getThread(userId, agentId, threadId).
-      expect(mockGetThread).toHaveBeenCalledWith('owner-user-1', 'test-agent-id', 'thread-x');
+      expect(mockGetOwnedThreadId).toHaveBeenCalledWith('owner-user-1', 'test-agent-id', 'thread-x');
       expect(mockGetRecentMessages).toHaveBeenCalledWith('thread-x', 50);
       expect(mockGetOrCreateLatestThread).not.toHaveBeenCalled();
     });
 
     it('returns 404 when the requested thread is not owned / does not exist', async () => {
-      mockGetThread.mockResolvedValue(null);
+      mockGetOwnedThreadId.mockResolvedValue(null);
 
       const res = await request(makeApp()).get('/messages?threadId=nope');
 
