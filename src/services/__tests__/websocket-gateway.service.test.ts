@@ -12,8 +12,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Use vi.hoisted to create mocks that are available before vi.mock hoisting
-const { mockChat, mockConfig } = vi.hoisted(() => ({
+const { mockChat, mockConfig, mockGenerateAndSave } = vi.hoisted(() => ({
   mockChat: vi.fn(),
+  mockGenerateAndSave: vi.fn(),
   mockConfig: {
     agentId: undefined as string | undefined,
     ownerUserId: '00000000-0000-0000-0000-000000000001',
@@ -24,6 +25,10 @@ vi.mock('../conversation-engine.service', () => ({
   conversationEngineService: {
     chat: mockChat,
   },
+}));
+
+vi.mock('../thread-title.service', () => ({
+  threadTitleService: { generateAndSave: mockGenerateAndSave },
 }));
 
 vi.mock('../../config', () => ({
@@ -77,6 +82,8 @@ describe('Requirement: WebSocket Gateway', () => {
 
     // Default mock responses
     mockChat.mockResolvedValue(undefined);
+    // Title upgrade is a no-op by default (no second broadcast).
+    mockGenerateAndSave.mockResolvedValue(null);
   });
 
   describe('Scenario: Connection tracking', () => {
@@ -504,6 +511,66 @@ describe('Requirement: WebSocket Gateway', () => {
 
       const sentTypes = ws.send.mock.calls.map((c: [string]) => JSON.parse(c[0]).type);
       expect(sentTypes).not.toContain('thread');
+    });
+
+    it('upgrades the title via the cheap model and re-broadcasts it', async () => {
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+      ws.readyState = 1;
+      service.connections.set(userId, [ws]);
+
+      mockChat.mockResolvedValue({ threadId: 'thread-123', titleSet: 'keuruun saha translat...' });
+      mockGenerateAndSave.mockResolvedValue('Keuruun Saha Translation');
+
+      await service.processMessage(ws, userId, {
+        type: 'chat',
+        content: 'keuruun saha translations now',
+        agentId: 'agent-123',
+      });
+
+      // Generated from the first user message for this thread.
+      expect(mockGenerateAndSave).toHaveBeenCalledWith(
+        'agent-123',
+        userId,
+        'thread-123',
+        'keuruun saha translations now',
+      );
+
+      // Fire-and-forget — let the .then() run, then assert the upgraded broadcast.
+      await new Promise((r) => setImmediate(r));
+      expect(ws.send).toHaveBeenCalledWith(
+        JSON.stringify({
+          type: 'thread',
+          payload: { threadId: 'thread-123', title: 'Keuruun Saha Translation' },
+        }),
+      );
+    });
+
+    it('does not re-broadcast when the title upgrade yields nothing', async () => {
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+      ws.readyState = 1;
+      service.connections.set(userId, [ws]);
+
+      mockChat.mockResolvedValue({ threadId: 'thread-123', titleSet: 'placeholder' });
+      mockGenerateAndSave.mockResolvedValue(null);
+
+      await service.processMessage(ws, userId, {
+        type: 'chat',
+        content: 'hello',
+        agentId: 'agent-123',
+      });
+      await new Promise((r) => setImmediate(r));
+
+      const threadBroadcasts = ws.send.mock.calls
+        .map((c: [string]) => JSON.parse(c[0]))
+        .filter((e: { type: string }) => e.type === 'thread');
+      // Only the placeholder; no upgrade broadcast.
+      expect(threadBroadcasts).toEqual([
+        { type: 'thread', payload: { threadId: 'thread-123', title: 'placeholder' } },
+      ]);
     });
   });
 

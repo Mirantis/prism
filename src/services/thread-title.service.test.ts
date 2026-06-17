@@ -1,0 +1,74 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const { mockGenerateText, mockGetClassificationModel, mockUpdateThreadTitle } = vi.hoisted(() => ({
+  mockGenerateText: vi.fn(),
+  mockGetClassificationModel: vi.fn(() => 'haiku-model'),
+  mockUpdateThreadTitle: vi.fn(),
+}));
+
+vi.mock('ai', () => ({ generateText: mockGenerateText }));
+vi.mock('../lib/classification', () => ({ getClassificationModel: mockGetClassificationModel }));
+vi.mock('../lib/langfuse', () => ({ isLangfuseEnabled: () => false }));
+vi.mock('./conversation.service', () => ({
+  conversationService: { updateThreadTitle: mockUpdateThreadTitle },
+}));
+vi.mock('../logger', () => ({
+  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+}));
+
+import { threadTitleService } from './thread-title.service';
+
+describe('threadTitleService.generateAndSave', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetClassificationModel.mockReturnValue('haiku-model');
+    mockUpdateThreadTitle.mockResolvedValue(undefined);
+  });
+
+  it('generates a short title (clamped to 3 words) and saves it', async () => {
+    mockGenerateText.mockResolvedValue({ text: 'Keuruun Saha Translation Project' });
+
+    const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', 'please translate the keuruun saha docs');
+
+    expect(title).toBe('Keuruun Saha Translation');
+    expect(mockUpdateThreadTitle).toHaveBeenCalledWith('a1', 'u1', 't1', 'Keuruun Saha Translation');
+    // Direct inference on the cheap model — no tools, no invoke.
+    const call = mockGenerateText.mock.calls[0][0];
+    expect(call.model).toBe('haiku-model');
+    expect(call.tools).toBeUndefined();
+  });
+
+  it('strips wrapping quotes and trailing punctuation', async () => {
+    mockGenerateText.mockResolvedValue({ text: '"Staging Deploy."' });
+
+    const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', 'deploy staging');
+
+    expect(title).toBe('Staging Deploy');
+  });
+
+  it('returns null without calling the model for an empty message', async () => {
+    const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', '   ');
+
+    expect(title).toBeNull();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+    expect(mockUpdateThreadTitle).not.toHaveBeenCalled();
+  });
+
+  it('returns null and does not save when the model errors (fail-open)', async () => {
+    mockGenerateText.mockRejectedValue(new Error('bedrock down'));
+
+    const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', 'hello there');
+
+    expect(title).toBeNull();
+    expect(mockUpdateThreadTitle).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the model yields only punctuation/whitespace', async () => {
+    mockGenerateText.mockResolvedValue({ text: '  "."  ' });
+
+    const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', 'hello there');
+
+    expect(title).toBeNull();
+    expect(mockUpdateThreadTitle).not.toHaveBeenCalled();
+  });
+});
