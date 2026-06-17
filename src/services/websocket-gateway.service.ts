@@ -14,6 +14,7 @@ import { IncomingMessage } from 'http';
 import { logger } from '../logger';
 import { config } from '../config';
 import { conversationEngineService } from './conversation-engine.service';
+import { threadTitleService } from './thread-title.service';
 
 // ============================================================================
 // Types
@@ -360,6 +361,16 @@ class WebSocketGatewayService {
           type: 'thread',
           payload: { threadId: result.threadId, title: result.titleSet },
         });
+        // Fire-and-forget: upgrade the placeholder (first-3-words) title to a
+        // proper one via a cheap model, then push it. The turn is already done,
+        // so this never delays the response; failures keep the placeholder.
+        const { threadId } = result;
+        void threadTitleService
+          .generateAndSave(agentId, userId, threadId, message.content || '')
+          .then((title) => {
+            if (title) this.broadcast(userId, { type: 'thread', payload: { threadId, title } });
+          })
+          .catch((err) => logger.error({ err }, '[Gateway] thread title upgrade failed'));
       }
 
       // Note: Response delivery is handled by messageDeliveryService.publish()
