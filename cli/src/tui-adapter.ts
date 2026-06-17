@@ -37,6 +37,7 @@ export interface TuiAdapterEvents {
 /** A resumable conversation thread, as listed by the `--resume` picker. */
 export interface ThreadSummary {
   id: string;
+  title: string | null;
   updatedAt: string;
   workspaceRoot: string | null;
   branch: string | null;
@@ -72,6 +73,7 @@ function coerceThreadSummary(raw: unknown): ThreadSummary | null {
   if (!raw || typeof raw !== 'object') return null;
   const t = raw as {
     id?: unknown;
+    title?: unknown;
     updatedAt?: unknown;
     workspaceRoot?: unknown;
     branch?: unknown;
@@ -79,6 +81,7 @@ function coerceThreadSummary(raw: unknown): ThreadSummary | null {
   if (typeof t.id !== 'string') return null;
   return {
     id: t.id,
+    title: typeof t.title === 'string' ? t.title : null,
     updatedAt: typeof t.updatedAt === 'string' ? t.updatedAt : new Date().toISOString(),
     workspaceRoot: typeof t.workspaceRoot === 'string' ? t.workspaceRoot : null,
     branch: typeof t.branch === 'string' ? t.branch : null,

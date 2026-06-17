@@ -128,8 +128,8 @@ describe('Single-Agent Routes', () => {
   describe('GET /single-agent/threads', () => {
     it('lists resumable threads newest-first with a git-branch label', async () => {
       mockListThreads.mockResolvedValue([
-        { id: 'thread-new', updatedAt: '2026-06-16T10:00:00.000Z', workspaceRoot: '/repo/a' },
-        { id: 'thread-old', updatedAt: '2026-06-16T09:00:00.000Z', workspaceRoot: null },
+        { id: 'thread-new', title: 'Deploy Staging', updatedAt: '2026-06-16T10:00:00.000Z', workspaceRoot: '/repo/a' },
+        { id: 'thread-old', title: null, updatedAt: '2026-06-16T09:00:00.000Z', workspaceRoot: null },
       ]);
       mockGetGitBranch.mockResolvedValue('worktree/feature');
 
@@ -139,12 +139,14 @@ describe('Single-Agent Routes', () => {
       expect(res.body).toEqual([
         {
           id: 'thread-new',
+          title: 'Deploy Staging',
           updatedAt: '2026-06-16T10:00:00.000Z',
           workspaceRoot: '/repo/a',
           branch: 'worktree/feature',
         },
         {
           id: 'thread-old',
+          title: null,
           updatedAt: '2026-06-16T09:00:00.000Z',
           workspaceRoot: null,
           branch: null,

@@ -329,12 +329,14 @@ describe('App', () => {
   const resumeSessions = [
     {
       id: 'thread-alpha',
+      title: null,
       updatedAt: new Date(Date.now() - 60_000).toISOString(),
       workspaceRoot: '/home/me/.claude/worktrees/ability-to-cancel',
       branch: 'worktree/ability-to-cancel',
     },
     {
       id: 'thread-beta',
+      title: null,
       updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
       workspaceRoot: null,
       branch: null,

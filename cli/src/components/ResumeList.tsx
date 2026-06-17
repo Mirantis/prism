@@ -74,7 +74,7 @@ export const ResumeList: React.FC<Props> = ({ sessions, cwd, onSelect, onCancel 
               <Box key={session.id} flexDirection="column" marginBottom={1}>
                 <Text color={selected ? 'cyan' : undefined} bold={selected}>
                   {selected ? '❯ ' : '  '}
-                  {session.id}
+                  {session.title || session.id}
                 </Text>
                 <Text dimColor>
                   {'  '}
