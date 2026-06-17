@@ -261,6 +261,7 @@ export async function createThread(
     externalThreadId?: string;
     externalChannelId?: string;
     createdAt?: Date;
+    messages?: Array<{ role: 'USER' | 'AGENT'; content: string }>;
   },
 ): Promise<string> {
   const db = getPrisma();
@@ -276,6 +277,11 @@ export async function createThread(
       ...(opts?.createdAt ? { createdAt: opts.createdAt } : {}),
     },
   });
+  for (const msg of opts?.messages ?? []) {
+    await db.conversationMessage.create({
+      data: { threadId: thread.id, role: msg.role, content: msg.content, triggeredBy: 'USER_INPUT' },
+    });
+  }
   return thread.id;
 }
 

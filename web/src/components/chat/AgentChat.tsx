@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { runtimeApi } from '@/api/runtime-client';
+import { ApiError } from '@/api/errors';
 import { useAgent } from '@/lib/agent-context';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { MAX_ATTACHMENTS_PER_MESSAGE, type Attachment, type ConversationMessage, type ConversationThread } from '@/types';
@@ -10,9 +12,10 @@ import type { PendingAttachment } from './ChatAttachmentChip';
 
 let attachmentSeq = 0;
 
-export default function AgentChat() {
+export default function AgentChat({ threadId }: { threadId?: string }) {
   const agent = useAgent();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [message, setMessage] = useState('');
   const [activeThreadId, setActiveThreadId] = useState<string | undefined>(undefined);
   const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
@@ -58,22 +61,43 @@ export default function AgentChat() {
     ]);
   }, [cancel, isTyping, activeThreadId]);
 
+  // Only resolve/create the latest thread when no specific thread is in the URL
+  // — deep-linking to /chat/<id> must not create a fresh thread.
   const { data: latestThread } = useQuery({
     queryKey: ['threads', agent.agentId, 'latest'],
     queryFn: () => runtimeApi.getOrCreateLatestThread(agent.agentId, agent.userId),
+    enabled: !threadId,
   });
 
+  // Drive the active thread from the route: the path thread when /chat/<id>,
+  // else the latest. Reacts to navigation between threads.
   useEffect(() => {
-    if (latestThread?.id && !activeThreadId) {
+    if (threadId) {
+      setActiveThreadId(threadId);
+    } else if (latestThread?.id) {
       setActiveThreadId(latestThread.id);
     }
-  }, [latestThread, activeThreadId]);
+  }, [threadId, latestThread]);
 
-  const { data: thread, isLoading: isLoadingThread } = useQuery({
+  // Clear the previous thread's messages when switching so they don't flash
+  // before the new thread's history loads.
+  useEffect(() => {
+    setLocalMessages([]);
+  }, [activeThreadId]);
+
+  const { data: thread, isLoading: isLoadingThread, error: threadError } = useQuery({
     queryKey: ['thread', agent.agentId, activeThreadId],
     queryFn: () => runtimeApi.getThread(agent.agentId, agent.userId, activeThreadId!),
     enabled: !!activeThreadId,
   });
+
+  // A deep-linked thread that doesn't exist (deleted / not owned) → fall back to
+  // the latest conversation. Guarded on threadId so a latest-thread error can't loop.
+  useEffect(() => {
+    if (threadId && threadError instanceof ApiError) {
+      navigate({ to: '/chat', replace: true });
+    }
+  }, [threadId, threadError, navigate]);
 
   useEffect(() => {
     if (thread?.messages) {

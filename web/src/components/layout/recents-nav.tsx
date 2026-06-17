@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import {
   SidebarGroup,
   SidebarGroupLabel,
@@ -12,11 +13,12 @@ import { threadDisplayName } from '@/lib/thread-name';
 /**
  * "Recents" — lists the agent's conversation threads (newest first) in the
  * sidebar. Database threads only; Slack threads are filtered out server-side.
- * Rows are display-only for now (not clickable). Rendered by AppSidebar only
- * while the Chat page is open.
+ * Each row links to /chat/<threadId>. Rendered by AppSidebar only while the
+ * Chat page is open.
  */
 export function RecentsNav() {
   const agent = useAgent();
+  const { threadId: routeThreadId } = useParams({ strict: false });
   const { data: threads, isLoading } = useQuery({
     queryKey: ['threads', agent.agentId, 'recents'],
     queryFn: () =>
@@ -26,10 +28,9 @@ export function RecentsNav() {
       }),
   });
 
-  // The chat view always shows the latest (newest) database thread, which is
-  // the first row here (server returns createdAt desc). Highlight it as the
-  // current conversation, ChatGPT-style.
-  const selectedThreadId = threads?.[0]?.id;
+  // Highlight the current conversation: the thread in the URL, or — at bare
+  // /chat — the latest (first row, since the server returns createdAt desc).
+  const selectedThreadId = routeThreadId ?? threads?.[0]?.id;
 
   return (
     <SidebarGroup data-testid="recents">
@@ -40,14 +41,16 @@ export function RecentsNav() {
           const selected = thread.id === selectedThreadId;
           return (
             <SidebarMenuItem key={thread.id}>
-              <span
+              <Link
+                to="/chat/$threadId"
+                params={{ threadId: thread.id }}
                 data-testid="recent-thread"
                 data-active={selected ? 'true' : undefined}
                 title={name}
                 className="block truncate rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80 data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground"
               >
                 {name}
-              </span>
+              </Link>
             </SidebarMenuItem>
           );
         })}

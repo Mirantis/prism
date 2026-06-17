@@ -39,6 +39,16 @@ Feature: Recents conversation list
     And I should see an agent response in the conversation
     Then the Recents list shows "deploy the staging"
 
+  Scenario: Clicking a Recents row opens that thread
+    Given an older conversation thread rooted at "/work/project-one" containing "hello from project one"
+    And a conversation thread rooted at "/work/project-two"
+    When I navigate to the agent chat page
+    And I click the "project-one" conversation in Recents
+    Then the URL is a chat thread URL
+    And I should see the message "hello from project one" in the conversation
+    And the "project-one" conversation is highlighted as current
+    And the "project-two" conversation is not highlighted
+
   Scenario: Recents is only visible on the Chat page
     Given a conversation thread rooted at "/work/project-db"
     When I navigate to the agent chat page
