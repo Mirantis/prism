@@ -14,7 +14,7 @@ import { IncomingMessage } from 'http';
 import { logger } from '../logger';
 import { config } from '../config';
 import { conversationEngineService } from './conversation-engine.service';
-import { threadTitleService } from './thread-title.service';
+import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
 
 // ============================================================================
 // Types
@@ -60,6 +60,15 @@ class WebSocketGatewayService {
   // aborts it, which stops the LLM generation mid-turn (see invokeStream).
   // Single-flight per user, so one controller per userId is sufficient.
   private activeRequests: Map<string, AbortController> = new Map();
+
+  constructor() {
+    // Push thread-title changes (placeholder + LLM upgrade) to the user's web
+    // clients. Generation is owned by threadTitleService (channel-agnostic);
+    // the gateway is just the WebSocket transport for the notification.
+    threadTitleService.events.on('change', ({ userId, threadId, title }: ThreadTitleChange) => {
+      this.broadcast(userId, { type: 'thread', payload: { threadId, title } });
+    });
+  }
 
   /**
    * Initialize WebSocket server
@@ -341,8 +350,9 @@ class WebSocketGatewayService {
 
       logger.info('Calling conversation engine for %s', userId);
 
-      // Process through local conversation engine (direct call, no HTTP)
-      const result = await conversationEngineService.chat({
+      // Process through local conversation engine (direct call, no HTTP).
+      // Response delivery + thread-title updates happen inside the engine.
+      await conversationEngineService.chat({
         userId,
         agentId,
         message: message.content || '',
@@ -354,24 +364,9 @@ class WebSocketGatewayService {
 
       logger.info('Conversation engine completed for %s', userId);
 
-      // If this message just titled the thread (the first user message), push
-      // the new title so the web's thread list updates live.
-      if (result?.titleSet) {
-        this.broadcast(userId, {
-          type: 'thread',
-          payload: { threadId: result.threadId, title: result.titleSet },
-        });
-        // Fire-and-forget: upgrade the placeholder (first-3-words) title to a
-        // proper one via a cheap model, then push it. The turn is already done,
-        // so this never delays the response; failures keep the placeholder.
-        const { threadId } = result;
-        void threadTitleService
-          .generateAndSave(agentId, userId, threadId, message.content || '')
-          .then((title) => {
-            if (title) this.broadcast(userId, { type: 'thread', payload: { threadId, title } });
-          })
-          .catch((err) => logger.error({ err }, '[Gateway] thread title upgrade failed'));
-      }
+      // Thread-title updates (placeholder + LLM upgrade) are emitted by
+      // threadTitleService from the conversation engine and broadcast via the
+      // 'change' subscription wired in the constructor — nothing to do here.
 
       // Note: Response delivery is handled by messageDeliveryService.publish()
       // which is called by conversationEngineService.chat() - no manual sending needed

@@ -15,9 +15,9 @@ Feature: Recents conversation list
     And the "project-one" conversation is not highlighted
 
   Scenario: A titled thread is shown by its title, not its folder
-    Given a conversation thread titled "keuruun saha translat..." rooted at "/work/ignored-folder"
+    Given a conversation thread titled "Database Schema Migration" rooted at "/work/ignored-folder"
     When I navigate to the agent chat page
-    Then the Recents list shows "keuruun saha translat..."
+    Then the Recents list shows "Database Schema Migration"
     And the Recents list does not show "ignored-folder"
 
   Scenario: Recents excludes Slack-sourced threads

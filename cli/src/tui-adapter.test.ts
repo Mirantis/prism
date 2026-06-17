@@ -28,12 +28,12 @@ describe('TuiAdapter.startNewSession', () => {
     vi.unstubAllGlobals();
   });
 
-  it('POSTs to /single-agent/threads with the launch cwd as workspaceRoot', async () => {
+  it('POSTs to /threads with the launch cwd as workspaceRoot', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200 } as Response);
 
     await tuiAdapterService.startNewSession();
 
-    expect(fetchMock).toHaveBeenCalledWith('http://example.test:3003/single-agent/threads', {
+    expect(fetchMock).toHaveBeenCalledWith('http://example.test:3003/threads', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceRoot: process.cwd() }),
@@ -44,5 +44,34 @@ describe('TuiAdapter.startNewSession', () => {
     fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
 
     await expect(tuiAdapterService.startNewSession()).resolves.toBeUndefined();
+  });
+});
+
+describe('TuiAdapter.loadHistory', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('GETs /messages with just a limit when no threadId is given', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => [] } as unknown as Response);
+
+    await tuiAdapterService.loadHistory({ userId: 'u1', agentId: 'a1' });
+
+    expect(fetchMock).toHaveBeenCalledWith('http://example.test:3003/messages?limit=50');
+  });
+
+  it('pins the request to a specific thread when threadId is given', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => [] } as unknown as Response);
+
+    await tuiAdapterService.loadHistory({ userId: 'u1', agentId: 'a1', threadId: 'thread-x' });
+
+    expect(fetchMock).toHaveBeenCalledWith('http://example.test:3003/messages?limit=50&threadId=thread-x');
   });
 });

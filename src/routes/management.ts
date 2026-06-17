@@ -80,7 +80,7 @@
 import { Router, Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import multer from 'multer';
-import { AgentType, MessageRole, MessageTrigger, Prisma } from '@prisma/client';
+import { AgentType, MessageRole, MessageTrigger, Prisma, ThreadSource } from '@prisma/client';
 import { logger } from '../logger';
 import { config } from '../config';
 import { trackEvent } from '../lib/telemetry';
@@ -852,13 +852,14 @@ router.post('/threads/get-or-create-latest', async (req: Request, res: Response)
 /**
  * GET /agents/threads
  * List threads for a user+agent (newest first), with an optional limit.
- * `excludeExternal=true` drops Slack / externally-bound threads (the resumable
- * set the web chat shows).
- * Query: { userId (required), agentId (required), limit?, excludeExternal? }
+ * `threadSource=DATABASE` keeps only web/CLI threads (drops Slack) — the
+ * resumable set the web chat shows. Any value other than a known ThreadSource
+ * is ignored (no channel filter).
+ * Query: { userId (required), agentId (required), limit?, threadSource? }
  */
 router.get('/threads', async (req: Request, res: Response) => {
   try {
-    const { userId, agentId, limit, excludeExternal } = req.query;
+    const { userId, agentId, limit, threadSource } = req.query;
     if (!userId || !agentId) {
       res.status(400).json({ error: 'Missing required query params: userId, agentId' });
       return;
@@ -873,10 +874,15 @@ router.get('/threads', async (req: Request, res: Response) => {
       }
     }
 
+    const source =
+      threadSource === ThreadSource.DATABASE || threadSource === ThreadSource.SLACK
+        ? (threadSource as ThreadSource)
+        : undefined;
+
     const threads = await conversationService.listThreads(
       userId as string,
       agentId as string,
-      { limit: parsedLimit, excludeExternal: excludeExternal === 'true' },
+      { limit: parsedLimit, threadSource: source },
     );
 
     res.json(threads);

@@ -9,6 +9,7 @@
 import { generateText } from 'ai';
 import { messageDeliveryService } from './message-delivery.service';
 import { conversationService } from './conversation.service';
+import { threadTitleService } from './thread-title.service';
 import { attachmentService } from './attachment.service';
 import { invokeStream } from '../invoke';
 import { ToolCallRecord, InvokeStep, UIBlock } from '../types';
@@ -203,6 +204,13 @@ Respond with exactly one word: WORTHY or SKIP`;
       senderExternalId: metadata?.senderSlackUserId,
       senderName: metadata?.senderName,
     });
+
+    // First user message named the thread: announce the placeholder title and
+    // kick off the cheap-model upgrade (fire-and-forget, never blocks the
+    // turn). Channel-agnostic — transports subscribe to threadTitleService.
+    if (titleSet) {
+      threadTitleService.onFirstUserMessage(agentId, userId, threadId, message, titleSet);
+    }
 
     // Link any uploaded files (web pre-send uploads / Slack downloads) to the
     // message that carries them so the context builder can expose them.

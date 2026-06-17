@@ -44,6 +44,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // In resume mode, the thread picker owns the screen until the user selects a
   // thread (→ 'chat') or cancels (→ exit). Without `resume` we go straight to chat.
   const [resumePhase, setResumePhase] = useState<'select' | 'chat'>(resume ? 'select' : 'chat');
+  // The thread the user picked in the --resume picker. Pinned onto every send
+  // (and the history replay) so the turn routes to it. Undefined for a fresh
+  // session, where the runtime resolves the latest thread instead.
+  const [activeThreadId, setActiveThreadId] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState<TuiStatus>('idle');
   const [statusDetail, setStatusDetail] = useState<string | undefined>(undefined);
   const [shuttingDown, setShuttingDown] = useState(false);
@@ -86,8 +90,8 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // new thread (which becomes the latest), so the TUI opens to a clean slate
   // instead of resuming the last conversation. Fires once per launch (not on
   // WebSocket reconnect, which is handled separately).
-  // Skipped in resume mode — there we make the picked thread the latest on
-  // selection instead of creating a new one.
+  // Skipped in resume mode — there we pin the picked thread and replay its
+  // history on selection instead of creating a new one.
   useEffect(() => {
     if (resume) return;
     void tuiAdapterService.startNewSession();
@@ -178,14 +182,14 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     setShuttingDown(true);
   }, []);
 
-  // Resume picker → chat: make the chosen thread the latest server-side, replay
-  // its history into the chat surface, then hand over to the normal chat UI. The
-  // subsequent chat + delivery resolve to this thread via the runtime's
-  // latest-thread resolution (no threadId is sent on the wire).
+  // Resume picker → chat: pin the chosen thread, replay its history into the
+  // chat surface, then hand over to the normal chat UI. The thread id is sent
+  // explicitly on every subsequent send (and the history fetch), so the turn
+  // routes to this thread without mutating any server-side "latest" pointer.
   const handleResumeSelect = useCallback(
     async (threadId: string) => {
-      await tuiAdapterService.resumeSession(threadId);
-      const messages = await tuiAdapterService.loadHistory({ userId, agentId: agent.id });
+      setActiveThreadId(threadId);
+      const messages = await tuiAdapterService.loadHistory({ userId, agentId: agent.id, threadId });
       setEntries(messages.map((message) => ({ kind: 'message' as const, message })));
       setResumePhase('chat');
     },
@@ -411,10 +415,11 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         userId,
         agentId: agent.id,
         text: trimmed,
+        threadId: activeThreadId,
         attachmentIds: toSend.map((a) => a.id),
       });
     },
-    [agent.id, userId, runCommand, staged],
+    [agent.id, userId, runCommand, staged, activeThreadId],
   );
 
   const handleInputChange = useCallback((newValue: string) => {

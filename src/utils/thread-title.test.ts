@@ -15,11 +15,11 @@ describe('deriveThreadTitle', () => {
   });
 
   it('truncates the first three words to at most 24 chars with an ellipsis', () => {
-    const title = deriveThreadTitle('keuruun saha translations now');
-    // First three words "keuruun saha translations" is 25 chars → truncated.
+    const title = deriveThreadTitle('migrate the authentication layer');
+    // First three words "migrate the authentication" is 26 chars → truncated.
     expect(title.endsWith('...')).toBe(true);
     expect(title.length).toBeLessThanOrEqual(24);
-    expect(title.startsWith('keuruun saha transl')).toBe(true);
+    expect(title.startsWith('migrate the authent')).toBe(true);
   });
 
   it('does not add an ellipsis when the first three words fit', () => {

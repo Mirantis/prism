@@ -17,7 +17,6 @@ const { adapterStub, apiStub } = vi.hoisted(() => {
       loadHistory: vi.fn().mockResolvedValue([]),
       startNewSession: vi.fn().mockResolvedValue(undefined),
       listSessions: vi.fn().mockResolvedValue([]),
-      resumeSession: vi.fn().mockResolvedValue(undefined),
       submitUserMessage: vi.fn().mockResolvedValue(undefined),
       cancel: vi.fn(),
     },
@@ -66,7 +65,6 @@ describe('App', () => {
     adapterStub.loadHistory.mockResolvedValue([]);
     adapterStub.startNewSession.mockClear();
     adapterStub.listSessions.mockClear();
-    adapterStub.resumeSession.mockClear();
     adapterStub.submitUserMessage.mockClear();
     apiStub.listCronTasks.mockClear();
     apiStub.getDetails.mockClear();
@@ -356,7 +354,7 @@ describe('App', () => {
     unmount();
   });
 
-  it('resumes the highlighted thread on Enter and opens the chat with its history', async () => {
+  it('resumes the highlighted thread on Enter, replays its history, and pins sends to it', async () => {
     adapterStub.loadHistory.mockResolvedValueOnce([
       {
         id: 'm1',
@@ -375,20 +373,38 @@ describe('App', () => {
     await flush();
     await flush();
 
-    expect(adapterStub.resumeSession).toHaveBeenCalledWith('thread-alpha');
-    expect(adapterStub.loadHistory).toHaveBeenCalledWith({ userId: 'local', agentId: 'remote' });
+    // History replay is pinned to the picked thread — no resume endpoint, no
+    // server-side "latest" mutation.
+    expect(adapterStub.loadHistory).toHaveBeenCalledWith({
+      userId: 'local',
+      agentId: 'remote',
+      threadId: 'thread-alpha',
+    });
     const frame = lastFrame() ?? '';
     expect(frame).toContain('chat with Prism'); // chat surface now showing
     expect(frame).toContain('earlier reply'); // replayed history
+
+    // A subsequent send carries the resumed thread id explicitly.
+    stdin.write('continue please');
+    await flush();
+    stdin.write('\r');
+    await flush();
+    expect(adapterStub.submitUserMessage).toHaveBeenCalledWith({
+      userId: 'local',
+      agentId: 'remote',
+      text: 'continue please',
+      threadId: 'thread-alpha',
+      attachmentIds: [],
+    });
     unmount();
   });
 
   it('dismisses the picker without resuming anything when Escape is pressed', async () => {
     // Escape triggers a clean shutdown (the e2e asserts the actual exit code 0);
-    // here we verify the picker is dismissed and no thread was resumed.
+    // here we verify the picker is dismissed and no history was loaded.
     const { lastFrame, stdin, unmount } = render(<App {...resumeProps} />);
     await pressEscape(stdin);
-    expect(adapterStub.resumeSession).not.toHaveBeenCalled();
+    expect(adapterStub.loadHistory).not.toHaveBeenCalled();
     expect(lastFrame() ?? '').not.toContain('Resume session');
     unmount();
   });

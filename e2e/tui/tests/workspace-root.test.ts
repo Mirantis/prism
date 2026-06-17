@@ -69,7 +69,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     Then("the latest thread's workspace root equals the CLI working directory", async () => {
       const expected = realpathSync(PRISM_CLI_DIR);
 
-      // startNewSession() POSTs /single-agent/threads on mount asynchronously;
+      // startNewSession() POSTs /threads on mount asynchronously;
       // poll the DB until the new thread (carrying its workspaceRoot) lands.
       let root: string | null = null;
       for (let i = 0; i < 60 && root !== expected; i++) {

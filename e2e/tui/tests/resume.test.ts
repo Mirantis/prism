@@ -1,8 +1,10 @@
 /**
  * `prism-cli --resume` flow. Exercises the thread picker against a running
  * agent-runtime: listing prior threads (with git-branch labels), resuming a
- * selected thread (asserted authoritatively via the latest-thread row), Escape
- * to exit, and the empty-state message. No Bedrock interaction required.
+ * selected thread (asserted authoritatively by its replayed history, plus that
+ * the latest-thread pointer is left untouched — resuming pins by id, it does
+ * NOT bump createdAt), Escape to exit, and the empty-state message. No Bedrock
+ * interaction required.
  *
  * Written with @amiceli/vitest-cucumber; the Gherkin scenarios live in
  * features/resume.feature.
@@ -20,12 +22,33 @@ import { startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, runtimeRequest, type RuntimeTestEnv } from '../setup';
 
 const GIT_BRANCH = 'e2e-resume-branch';
+// Distinctive history text seeded into the resumable thread so the test can
+// assert the CLI replayed *that* thread after selecting it.
+const RESUMED_MARKER = 'resumed-history-marker';
 
 /** Wipe all threads + messages so each scenario starts from a known state. */
 function wipeThreads(dbPath: string): void {
   const db = new Database(dbPath);
   try {
     db.exec('DELETE FROM conversation_messages; DELETE FROM conversation_threads;');
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Seed one message into a thread by direct SQLite insert. Copies the thread's
+ * own createdAt verbatim so the value round-trips through Prisma regardless of
+ * its on-disk DateTime encoding — no Bedrock / no chat turn required.
+ */
+function seedMessage(dbPath: string, threadId: string, content: string): void {
+  const db = new Database(dbPath);
+  try {
+    db.prepare(
+      `INSERT INTO conversation_messages (id, threadId, role, content, triggeredBy, isCompacted, createdAt)
+       SELECT ?, id, 'AGENT', ?, 'USER_INPUT', 0, createdAt
+       FROM conversation_threads WHERE id = ?`,
+    ).run(`msg-${threadId}`, content, threadId);
   } finally {
     db.close();
   }
@@ -44,7 +67,7 @@ async function seedThread(port: number, workspaceRoot: string): Promise<string> 
   const { threadId } = await runtimeRequest<{ threadId: string }>(
     port,
     'POST',
-    '/single-agent/threads',
+    '/threads',
     { workspaceRoot },
   );
   return threadId;
@@ -109,6 +132,8 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     Given('two prior conversation threads exist', async () => {
       olderThreadId = await seedThread(env.port, gitRepoDir);
       newerThreadId = await seedThread(env.port, plainDir);
+      // Give the older (row 2) thread visible history so resuming it is provable.
+      seedMessage(env.dbPath, olderThreadId, RESUMED_MARKER);
     });
     When('I launch the CLI with --resume', () => {
       launchResume();
@@ -121,15 +146,16 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       session!.send(KEYS.ENTER);
     });
     Then('that thread becomes the active conversation', async () => {
-      // The chat surface only renders after resume + history-replay complete,
-      // so once the header is up the resume POST has landed server-side.
-      await session!.waitForFrame(/Prism/, 30_000);
+      // The CLI replays the *selected* thread's history into the chat surface.
+      await session!.waitForFrame(new RegExp(RESUMED_MARKER), 30_000);
+      // Resuming pins by thread id — it must NOT bump createdAt, so the
+      // latest-thread pointer is still the newer (unselected) thread.
       const { threadId } = await runtimeRequest<{ threadId: string }>(
         env.port,
         'GET',
-        '/single-agent/latest-thread',
+        '/latest-thread',
       );
-      expect(threadId).toBe(olderThreadId);
+      expect(threadId).toBe(newerThreadId);
     });
   });
 

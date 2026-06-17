@@ -127,50 +127,16 @@ describe('ConversationService', () => {
       });
     });
 
-    it('excludeExternal filters to resumable threads (externalThreadId: null)', async () => {
+    it('threadSource filters to a single channel (e.g. DATABASE)', async () => {
       mockPrisma.conversationThread.findMany.mockResolvedValue([]);
 
-      await conversationService.listThreads('user-123', 'agent-123', { excludeExternal: true });
+      await conversationService.listThreads('user-123', 'agent-123', { threadSource: 'DATABASE' });
 
       expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
-        where: { agentId: 'agent-123', userId: 'user-123', externalThreadId: null },
+        where: { agentId: 'agent-123', userId: 'user-123', threadSource: 'DATABASE' },
         orderBy: { createdAt: 'desc' },
         take: 20,
       });
-    });
-  });
-
-  // ==========================================================================
-  // Resume an existing thread (CLI --resume)
-  // ==========================================================================
-
-  describe('resumeThread', () => {
-    it('bumps the target thread createdAt so it becomes the latest', async () => {
-      const target = createTestThread({ id: 'thread-x' });
-      mockPrisma.conversationThread.findFirst.mockResolvedValue(target);
-      mockPrisma.conversationThread.update.mockResolvedValue({ ...target });
-
-      const result = await conversationService.resumeThread('agent-123', 'user-123', 'thread-x');
-
-      // Only a database (non-Slack) thread owned by this agent+user.
-      expect(mockPrisma.conversationThread.findFirst).toHaveBeenCalledWith({
-        where: { id: 'thread-x', agentId: 'agent-123', userId: 'user-123', externalThreadId: null },
-      });
-      // Bring it to the front by bumping createdAt (latest = most recent).
-      expect(mockPrisma.conversationThread.update).toHaveBeenCalledWith({
-        where: { id: 'thread-x' },
-        data: { createdAt: expect.any(Date) },
-      });
-      expect(result?.id).toBe('thread-x');
-    });
-
-    it('returns null and updates nothing when the thread is missing / not owned', async () => {
-      mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
-
-      const result = await conversationService.resumeThread('agent-123', 'user-123', 'missing');
-
-      expect(result).toBeNull();
-      expect(mockPrisma.conversationThread.update).not.toHaveBeenCalled();
     });
   });
 
@@ -338,7 +304,7 @@ describe('ConversationService', () => {
       mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await conversationService.addMessage('thread-1', {
-        content: 'keuruun saha translations now please',
+        content: 'migrate the authentication layer now please',
         role: 'USER',
         triggeredBy: 'USER_INPUT',
       });
@@ -347,9 +313,9 @@ describe('ConversationService', () => {
       // user message — later messages are a no-op (title already set).
       expect(mockPrisma.conversationThread.updateMany).toHaveBeenCalledWith({
         where: { id: 'thread-1', title: null },
-        data: { title: 'keuruun saha translat...' },
+        data: { title: 'migrate the authentic...' },
       });
-      expect(result.titleSet).toBe('keuruun saha translat...');
+      expect(result.titleSet).toBe('migrate the authentic...');
     });
 
     it('reports titleSet=null when the thread is already titled', async () => {
