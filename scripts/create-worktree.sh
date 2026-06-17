@@ -43,6 +43,34 @@ for env_file in "${ENV_FILES[@]}"; do
   fi
 done
 
+# Give the worktree its own copy of the SQLite database(s) so it starts from a
+# snapshot of the current data and never writes to the source repo's DB. This
+# matters because node_modules — and so the single generated Prisma client that
+# resolves the relative `file:./agent.db` URL — is symlinked across worktrees,
+# so without isolation a worktree can clobber another worktree's (or main's) DB.
+SQLITE_REL="prisma/sqlite"
+if [ -d "$REPO_ROOT/$SQLITE_REL" ]; then
+  echo "Copying SQLite database files..."
+  mkdir -p "$WORKTREE_DIR/$SQLITE_REL"
+  shopt -s nullglob
+  for db in "$REPO_ROOT/$SQLITE_REL"/*.db "$REPO_ROOT/$SQLITE_REL"/*.db-wal "$REPO_ROOT/$SQLITE_REL"/*.db-shm; do
+    cp "$db" "$WORKTREE_DIR/$SQLITE_REL/"
+    echo "Copied $SQLITE_REL/$(basename "$db")"
+  done
+  shopt -u nullglob
+fi
+
+# Pin DATABASE_URL to this worktree's own agent.db by absolute path, so the
+# shared Prisma client can't resolve the relative URL to a different worktree's
+# database. Only rewrites a SQLite (file:) URL; other setups are left alone.
+WORKTREE_ENV="$WORKTREE_DIR/.env"
+WORKTREE_DB="$WORKTREE_DIR/$SQLITE_REL/agent.db"
+if [ -f "$WORKTREE_ENV" ] && grep -q '^DATABASE_URL=file:' "$WORKTREE_ENV"; then
+  sed -i.bak "s#^DATABASE_URL=.*#DATABASE_URL=file:$WORKTREE_DB#" "$WORKTREE_ENV"
+  rm -f "$WORKTREE_ENV.bak"
+  echo "Pinned DATABASE_URL to file:$WORKTREE_DB"
+fi
+
 # Symlink node_modules from main repo (faster than copy or npm install)
 echo "Linking node_modules..."
 while IFS= read -r -d '' nm_dir; do
