@@ -232,45 +232,19 @@ class ConversationService {
   async listThreads(
     userId: string,
     agentId: string,
-    options?: { limit?: number; excludeExternal?: boolean }
+    options?: { limit?: number; threadSource?: ThreadSource }
   ): Promise<ConversationThread[]> {
     return prisma.conversationThread.findMany({
       where: {
         agentId,
         userId,
-        // `externalThreadId: null` is the exact "resumable / latest" set used by
-        // getOrCreateLatestThread and resumeThread — it excludes Slack threads
-        // and any externally-bound thread that could never become the latest.
-        ...(options?.excludeExternal && { externalThreadId: null }),
+        // Optional channel filter. `DATABASE` is the web/CLI-resumable set —
+        // it excludes Slack threads (which the resume picker and Recents list
+        // never show).
+        ...(options?.threadSource && { threadSource: options.threadSource }),
       },
       orderBy: { createdAt: 'desc' },
       take: options?.limit ?? 20,
-    });
-  }
-
-  /**
-   * Resume an existing conversation thread by making it the latest — the
-   * runtime resolves the most recently created non-Slack thread (see
-   * getOrCreateLatestThread), so bumping this thread's createdAt brings it to
-   * the front and routes chat, history replay, and shell-tool cwd back to it.
-   * Used by the CLI's `--resume` flow.
-   *
-   * Returns the now-latest thread, or null when no database (non-Slack) thread
-   * with that id belongs to this agent+user (the caller surfaces a 404).
-   */
-  async resumeThread(
-    agentId: string,
-    userId: string,
-    threadId: string,
-  ): Promise<ConversationThread | null> {
-    const target = await prisma.conversationThread.findFirst({
-      where: { id: threadId, agentId, userId, externalThreadId: null },
-    });
-    if (!target) return null;
-
-    return prisma.conversationThread.update({
-      where: { id: threadId },
-      data: { createdAt: new Date() },
     });
   }
 

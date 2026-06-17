@@ -16,7 +16,9 @@ vi.mock('../logger', () => ({
   logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 
-import { threadTitleService } from './thread-title.service';
+import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
+
+const flush = () => new Promise((r) => setImmediate(r));
 
 describe('threadTitleService.generateAndSave', () => {
   beforeEach(() => {
@@ -26,12 +28,12 @@ describe('threadTitleService.generateAndSave', () => {
   });
 
   it('generates a short title (clamped to 3 words) and saves it', async () => {
-    mockGenerateText.mockResolvedValue({ text: 'Keuruun Saha Translation Project' });
+    mockGenerateText.mockResolvedValue({ text: 'Database Schema Migration Plan' });
 
-    const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', 'please translate the keuruun saha docs');
+    const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', 'migrate the authentication layer');
 
-    expect(title).toBe('Keuruun Saha Translation');
-    expect(mockUpdateThreadTitle).toHaveBeenCalledWith('a1', 'u1', 't1', 'Keuruun Saha Translation');
+    expect(title).toBe('Database Schema Migration');
+    expect(mockUpdateThreadTitle).toHaveBeenCalledWith('a1', 'u1', 't1', 'Database Schema Migration');
     // Direct inference on the cheap model — no tools, no invoke.
     const call = mockGenerateText.mock.calls[0][0];
     expect(call.model).toBe('haiku-model');
@@ -69,6 +71,47 @@ describe('threadTitleService.generateAndSave', () => {
     const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', 'hello there');
 
     expect(title).toBeNull();
+    expect(mockUpdateThreadTitle).not.toHaveBeenCalled();
+  });
+});
+
+describe('threadTitleService.onFirstUserMessage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetClassificationModel.mockReturnValue('haiku-model');
+    mockUpdateThreadTitle.mockResolvedValue(undefined);
+    threadTitleService.events.removeAllListeners();
+  });
+
+  it('announces the placeholder immediately, then the upgraded title', async () => {
+    mockGenerateText.mockResolvedValue({ text: 'Database Schema Migration Plan' });
+    const changes: ThreadTitleChange[] = [];
+    threadTitleService.events.on('change', (c: ThreadTitleChange) => changes.push(c));
+
+    threadTitleService.onFirstUserMessage(
+      'a1', 'u1', 't1', 'migrate the authentication layer', 'migrate the authentic...',
+    );
+
+    // Placeholder fires synchronously (it is already persisted by addMessage).
+    expect(changes).toEqual([{ userId: 'u1', threadId: 't1', title: 'migrate the authentic...' }]);
+
+    // Let the fire-and-forget upgrade resolve, then assert the second announce.
+    await flush();
+    await flush();
+    expect(changes).toContainEqual({ userId: 'u1', threadId: 't1', title: 'Database Schema Migration' });
+    expect(mockUpdateThreadTitle).toHaveBeenCalledWith('a1', 'u1', 't1', 'Database Schema Migration');
+  });
+
+  it('announces only the placeholder when the upgrade yields nothing (fail-open)', async () => {
+    mockGenerateText.mockRejectedValue(new Error('bedrock down'));
+    const changes: ThreadTitleChange[] = [];
+    threadTitleService.events.on('change', (c: ThreadTitleChange) => changes.push(c));
+
+    threadTitleService.onFirstUserMessage('a1', 'u1', 't1', 'hello there', 'hello there');
+    await flush();
+    await flush();
+
+    expect(changes).toEqual([{ userId: 'u1', threadId: 't1', title: 'hello there' }]);
     expect(mockUpdateThreadTitle).not.toHaveBeenCalled();
   });
 });

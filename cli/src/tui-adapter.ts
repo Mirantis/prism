@@ -138,19 +138,22 @@ class TuiAdapter {
   }
 
   /**
-   * Replay the active thread's recent messages on mount. Calls the
-   * runtime's `/single-agent/messages` REST endpoint; if it returns
-   * non-2xx (e.g. runtime down), we render with an empty history rather
-   * than blocking.
+   * Replay a thread's recent messages on mount. Calls the runtime's
+   * `/messages` REST endpoint; with `threadId` set (the --resume flow) it
+   * replays that specific thread, otherwise the latest. If it returns non-2xx
+   * (e.g. runtime down), we render with an empty history rather than blocking.
    */
   async loadHistory(args: {
     userId: string;
     agentId: string;
+    threadId?: string;
     limit?: number;
   }): Promise<TuiMessage[]> {
     const limit = args.limit ?? 50;
     try {
-      const res = await fetch(`${this.httpUrl}/single-agent/messages?limit=${limit}`);
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (args.threadId) params.set('threadId', args.threadId);
+      const res = await fetch(`${this.httpUrl}/messages?${params.toString()}`);
       if (!res.ok) return [];
       const body = (await res.json()) as unknown;
       if (!Array.isArray(body)) return [];
@@ -164,9 +167,9 @@ class TuiAdapter {
 
   /**
    * Start a fresh conversation thread for this CLI session. Calls the
-   * runtime's `POST /single-agent/threads`, which creates a new thread — and
-   * since the runtime always uses the latest thread, opening the CLI begins a
-   * clean conversation instead of resuming the last one. The CLI's launch directory
+   * runtime's `POST /threads`, which creates a new thread — and since the
+   * runtime always uses the latest thread, opening the CLI begins a clean
+   * conversation instead of resuming the last one. The CLI's launch directory
    * (`process.cwd()`) is sent as the thread's workspaceRoot so the agent's
    * shell tools operate from where the user opened the CLI. Errors are
    * swallowed (we fall back to whatever thread the runtime resolves) rather
@@ -174,7 +177,7 @@ class TuiAdapter {
    */
   async startNewSession(): Promise<void> {
     try {
-      await fetch(`${this.httpUrl}/single-agent/threads`, {
+      await fetch(`${this.httpUrl}/threads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspaceRoot: process.cwd() }),
@@ -187,13 +190,12 @@ class TuiAdapter {
 
   /**
    * List resumable conversation threads (most-recent first) for the
-   * `--resume` picker. Calls `GET /single-agent/threads`; returns an empty
-   * list on any error so the CLI degrades to "no sessions to resume" instead
-   * of crashing.
+   * `--resume` picker. Calls `GET /threads`; returns an empty list on any
+   * error so the CLI degrades to "no sessions to resume" instead of crashing.
    */
   async listSessions(): Promise<ThreadSummary[]> {
     try {
-      const res = await fetch(`${this.httpUrl}/single-agent/threads`);
+      const res = await fetch(`${this.httpUrl}/threads`);
       if (!res.ok) return [];
       const body = (await res.json()) as unknown;
       if (!Array.isArray(body)) return [];
@@ -206,25 +208,9 @@ class TuiAdapter {
   }
 
   /**
-   * Resume an existing thread: ask the runtime to make it the latest thread so
-   * the subsequent chat + history replay route to it. Errors are swallowed —
-   * the UI renders regardless, and the first message falls back to the
-   * runtime's thread resolution.
-   */
-  async resumeSession(threadId: string): Promise<void> {
-    try {
-      await fetch(
-        `${this.httpUrl}/single-agent/threads/${encodeURIComponent(threadId)}/resume`,
-        { method: 'POST' },
-      );
-    } catch {
-      // Runtime down / unreachable — render anyway.
-    }
-  }
-
-  /**
-   * Send a user message. The runtime fills in `agentId` (and resolves
-   * the latest thread), so we only send the content + mode.
+   * Send a user message. The runtime fills in `agentId`; pass `threadId` to
+   * pin the turn to a specific thread (the --resume flow) — otherwise the
+   * runtime resolves the latest thread.
    */
   async submitUserMessage(_args: {
     userId: string;
@@ -247,6 +233,7 @@ class TuiAdapter {
       payload: {
         mode: 'followup',
         content: _args.text,
+        ...(_args.threadId ? { threadId: _args.threadId } : {}),
         ...(_args.attachmentIds && _args.attachmentIds.length > 0
           ? { attachmentIds: _args.attachmentIds }
           : {}),

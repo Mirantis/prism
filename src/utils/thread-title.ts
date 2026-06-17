@@ -1,7 +1,7 @@
 /**
  * Derive a conversation thread title from the user's first message: the first
  * three words, capped at 24 characters with a trailing "..." when truncated
- * (e.g. "keuruun saha transla...").
+ * (e.g. "migrate the authent...").
  *
  * Returns "" when the message has no usable text (e.g. a file-only message) —
  * callers should not set a title in that case.

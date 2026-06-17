@@ -12,14 +12,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Use vi.hoisted to create mocks that are available before vi.mock hoisting
-const { mockChat, mockConfig, mockGenerateAndSave } = vi.hoisted(() => ({
-  mockChat: vi.fn(),
-  mockGenerateAndSave: vi.fn(),
-  mockConfig: {
-    agentId: undefined as string | undefined,
-    ownerUserId: '00000000-0000-0000-0000-000000000001',
-  },
-}));
+const { mockChat, mockConfig, mockTitleEvents } = vi.hoisted(() => {
+  const listeners: Array<(payload: unknown) => void> = [];
+  return {
+    mockChat: vi.fn(),
+    mockConfig: {
+      agentId: undefined as string | undefined,
+      ownerUserId: '00000000-0000-0000-0000-000000000001',
+    },
+    // Minimal EventEmitter stub. The gateway subscribes via `.on('change', cb)`
+    // in its constructor; tests drive broadcasts via `.emit('change', payload)`.
+    mockTitleEvents: {
+      on: (_event: string, cb: (payload: unknown) => void) => {
+        listeners.push(cb);
+      },
+      emit: (_event: string, payload: unknown) => {
+        listeners.forEach((cb) => cb(payload));
+      },
+    },
+  };
+});
 
 vi.mock('../conversation-engine.service', () => ({
   conversationEngineService: {
@@ -28,7 +40,7 @@ vi.mock('../conversation-engine.service', () => ({
 }));
 
 vi.mock('../thread-title.service', () => ({
-  threadTitleService: { generateAndSave: mockGenerateAndSave },
+  threadTitleService: { events: mockTitleEvents, onFirstUserMessage: vi.fn() },
 }));
 
 vi.mock('../../config', () => ({
@@ -82,8 +94,6 @@ describe('Requirement: WebSocket Gateway', () => {
 
     // Default mock responses
     mockChat.mockResolvedValue(undefined);
-    // Title upgrade is a no-op by default (no second broadcast).
-    mockGenerateAndSave.mockResolvedValue(null);
   });
 
   describe('Scenario: Connection tracking', () => {
@@ -471,106 +481,38 @@ describe('Requirement: WebSocket Gateway', () => {
   });
 
   describe('Scenario: Thread title broadcast', () => {
-    it('broadcasts a thread title update when the turn set a title', async () => {
+    // Title generation is owned by threadTitleService (channel-agnostic) and
+    // triggered from the conversation engine. The gateway only translates its
+    // 'change' events — wired in the constructor — into 'thread' broadcasts.
+    it('broadcasts a thread title change emitted by threadTitleService', () => {
       const userId = 'user-123';
       const ws = createMockWebSocket();
       ws.userId = userId;
       ws.readyState = 1;
       service.connections.set(userId, [ws]);
 
-      mockChat.mockResolvedValue({ threadId: 'thread-123', titleSet: 'keuruun saha translat...' });
-
-      await service.processMessage(ws, userId, {
-        type: 'chat',
-        content: 'keuruun saha translations now',
-        agentId: 'agent-123',
-      });
-
-      expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify({
-          type: 'thread',
-          payload: { threadId: 'thread-123', title: 'keuruun saha translat...' },
-        }),
-      );
-    });
-
-    it('does not broadcast a thread update when no title was set', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-      service.connections.set(userId, [ws]);
-
-      mockChat.mockResolvedValue({ threadId: 'thread-123', titleSet: null });
-
-      await service.processMessage(ws, userId, {
-        type: 'chat',
-        content: 'a follow-up message',
-        agentId: 'agent-123',
-      });
-
-      const sentTypes = ws.send.mock.calls.map((c: [string]) => JSON.parse(c[0]).type);
-      expect(sentTypes).not.toContain('thread');
-    });
-
-    it('upgrades the title via the cheap model and re-broadcasts it', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-      service.connections.set(userId, [ws]);
-
-      mockChat.mockResolvedValue({ threadId: 'thread-123', titleSet: 'keuruun saha translat...' });
-      mockGenerateAndSave.mockResolvedValue('Keuruun Saha Translation');
-
-      await service.processMessage(ws, userId, {
-        type: 'chat',
-        content: 'keuruun saha translations now',
-        agentId: 'agent-123',
-      });
-
-      // Generated from the first user message for this thread.
-      expect(mockGenerateAndSave).toHaveBeenCalledWith(
-        'agent-123',
+      mockTitleEvents.emit('change', {
         userId,
-        'thread-123',
-        'keuruun saha translations now',
-      );
+        threadId: 'thread-123',
+        title: 'Database Schema Migration',
+      });
 
-      // Fire-and-forget — let the .then() run, then assert the upgraded broadcast.
-      await new Promise((r) => setImmediate(r));
       expect(ws.send).toHaveBeenCalledWith(
         JSON.stringify({
           type: 'thread',
-          payload: { threadId: 'thread-123', title: 'Keuruun Saha Translation' },
+          payload: { threadId: 'thread-123', title: 'Database Schema Migration' },
         }),
       );
     });
 
-    it('does not re-broadcast when the title upgrade yields nothing', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-      service.connections.set(userId, [ws]);
-
-      mockChat.mockResolvedValue({ threadId: 'thread-123', titleSet: 'placeholder' });
-      mockGenerateAndSave.mockResolvedValue(null);
-
-      await service.processMessage(ws, userId, {
-        type: 'chat',
-        content: 'hello',
-        agentId: 'agent-123',
-      });
-      await new Promise((r) => setImmediate(r));
-
-      const threadBroadcasts = ws.send.mock.calls
-        .map((c: [string]) => JSON.parse(c[0]))
-        .filter((e: { type: string }) => e.type === 'thread');
-      // Only the placeholder; no upgrade broadcast.
-      expect(threadBroadcasts).toEqual([
-        { type: 'thread', payload: { threadId: 'thread-123', title: 'placeholder' } },
-      ]);
+    it('does not throw when the titled thread has no connected client', () => {
+      expect(() =>
+        mockTitleEvents.emit('change', {
+          userId: 'user-without-connection',
+          threadId: 'thread-123',
+          title: 'Database Schema Migration',
+        }),
+      ).not.toThrow();
     });
   });
 

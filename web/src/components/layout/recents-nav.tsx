@@ -23,7 +23,7 @@ export function RecentsNav() {
     queryKey: ['threads', agent.agentId, 'recents'],
     queryFn: () =>
       runtimeApi.listThreads(agent.agentId, agent.userId, {
-        excludeExternal: true,
+        threadSource: 'DATABASE',
         limit: 100,
       }),
   });

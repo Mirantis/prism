@@ -1,8 +1,9 @@
 /**
  * Single-Agent Routes Tests
  *
- * Covers POST /single-agent/threads — the endpoint the CLI hits on open to
- * start a fresh conversation thread.
+ * Covers the no-auth endpoints the local CLI hits: POST /threads (start a
+ * fresh thread on open), GET /threads (resume picker), and GET /messages
+ * (history replay, optionally pinned to a specific thread via ?threadId).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -13,21 +14,29 @@ import express from 'express';
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockStartNewThread, mockListThreads, mockResumeThread, mockGetGitBranch } =
-  vi.hoisted(() => ({
-    mockStartNewThread: vi.fn(),
-    mockListThreads: vi.fn(),
-    mockResumeThread: vi.fn(),
-    mockGetGitBranch: vi.fn(),
-  }));
+const {
+  mockStartNewThread,
+  mockListThreads,
+  mockGetThread,
+  mockGetOrCreateLatestThread,
+  mockGetRecentMessages,
+  mockGetGitBranch,
+} = vi.hoisted(() => ({
+  mockStartNewThread: vi.fn(),
+  mockListThreads: vi.fn(),
+  mockGetThread: vi.fn(),
+  mockGetOrCreateLatestThread: vi.fn(),
+  mockGetRecentMessages: vi.fn(),
+  mockGetGitBranch: vi.fn(),
+}));
 
 vi.mock('../services/conversation.service', () => ({
   conversationService: {
     startNewThread: mockStartNewThread,
     listThreads: mockListThreads,
-    resumeThread: mockResumeThread,
-    getOrCreateLatestThread: vi.fn(),
-    getRecentMessages: vi.fn(),
+    getThread: mockGetThread,
+    getOrCreateLatestThread: mockGetOrCreateLatestThread,
+    getRecentMessages: mockGetRecentMessages,
   },
 }));
 
@@ -56,7 +65,8 @@ import { config } from '../config';
 function makeApp() {
   const app = express();
   app.use(express.json());
-  app.use('/single-agent', singleAgentRouter);
+  // Mounted at the root (no /single-agent prefix), matching server.ts.
+  app.use(singleAgentRouter);
   return app;
 }
 
@@ -66,11 +76,11 @@ describe('Single-Agent Routes', () => {
     config.agentId = 'test-agent-id';
   });
 
-  describe('POST /single-agent/threads', () => {
+  describe('POST /threads', () => {
     it('starts a new active thread and returns its id', async () => {
       mockStartNewThread.mockResolvedValue({ id: 'thread-fresh' });
 
-      const res = await request(makeApp()).post('/single-agent/threads');
+      const res = await request(makeApp()).post('/threads');
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ threadId: 'thread-fresh' });
@@ -85,7 +95,7 @@ describe('Single-Agent Routes', () => {
       mockStartNewThread.mockResolvedValue({ id: 'thread-fresh' });
 
       const res = await request(makeApp())
-        .post('/single-agent/threads')
+        .post('/threads')
         .send({ workspaceRoot: '/home/me/project' });
 
       expect(res.status).toBe(200);
@@ -97,7 +107,7 @@ describe('Single-Agent Routes', () => {
     it('ignores an empty / whitespace-only workspaceRoot', async () => {
       mockStartNewThread.mockResolvedValue({ id: 'thread-fresh' });
 
-      await request(makeApp()).post('/single-agent/threads').send({ workspaceRoot: '   ' });
+      await request(makeApp()).post('/threads').send({ workspaceRoot: '   ' });
 
       expect(mockStartNewThread).toHaveBeenCalledWith(
         'test-agent-id',
@@ -109,7 +119,7 @@ describe('Single-Agent Routes', () => {
     it('returns 503 when single-agent mode is not initialized', async () => {
       config.agentId = undefined as unknown as string;
 
-      const res = await request(makeApp()).post('/single-agent/threads');
+      const res = await request(makeApp()).post('/threads');
 
       expect(res.status).toBe(503);
       expect(mockStartNewThread).not.toHaveBeenCalled();
@@ -118,14 +128,14 @@ describe('Single-Agent Routes', () => {
     it('returns 500 when the service throws', async () => {
       mockStartNewThread.mockRejectedValue(new Error('db down'));
 
-      const res = await request(makeApp()).post('/single-agent/threads');
+      const res = await request(makeApp()).post('/threads');
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('db down');
     });
   });
 
-  describe('GET /single-agent/threads', () => {
+  describe('GET /threads', () => {
     it('lists resumable threads newest-first with a git-branch label', async () => {
       mockListThreads.mockResolvedValue([
         { id: 'thread-new', title: 'Deploy Staging', updatedAt: '2026-06-16T10:00:00.000Z', workspaceRoot: '/repo/a' },
@@ -133,7 +143,7 @@ describe('Single-Agent Routes', () => {
       ]);
       mockGetGitBranch.mockResolvedValue('worktree/feature');
 
-      const res = await request(makeApp()).get('/single-agent/threads');
+      const res = await request(makeApp()).get('/threads');
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual([
@@ -152,10 +162,10 @@ describe('Single-Agent Routes', () => {
           branch: null,
         },
       ]);
-      // Resumable only (externalThreadId:null), capped at 50; ordering is the
-      // service's responsibility.
+      // Resumable (web/CLI) threads only via threadSource DATABASE, capped at
+      // 50; ordering is the service's responsibility.
       expect(mockListThreads).toHaveBeenCalledWith('owner-user-1', 'test-agent-id', {
-        excludeExternal: true,
+        threadSource: 'DATABASE',
         limit: 50,
       });
       // Branch is only looked up for threads that have a workspace root.
@@ -166,43 +176,55 @@ describe('Single-Agent Routes', () => {
     it('returns 503 when single-agent mode is not initialized', async () => {
       config.agentId = undefined as unknown as string;
 
-      const res = await request(makeApp()).get('/single-agent/threads');
+      const res = await request(makeApp()).get('/threads');
 
       expect(res.status).toBe(503);
       expect(mockListThreads).not.toHaveBeenCalled();
     });
   });
 
-  describe('POST /single-agent/threads/:threadId/resume', () => {
-    it('resumes a thread and returns its id', async () => {
-      mockResumeThread.mockResolvedValue({ id: 'thread-resumed' });
+  describe('GET /messages', () => {
+    it('replays the latest thread when no threadId is given', async () => {
+      mockGetOrCreateLatestThread.mockResolvedValue({ id: 'latest-thread' });
+      mockGetRecentMessages.mockResolvedValue([]);
 
-      const res = await request(makeApp()).post('/single-agent/threads/thread-resumed/resume');
+      const res = await request(makeApp()).get('/messages?limit=10');
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ threadId: 'thread-resumed' });
-      expect(mockResumeThread).toHaveBeenCalledWith(
-        'test-agent-id',
-        'owner-user-1',
-        'thread-resumed',
-      );
+      expect(mockGetThread).not.toHaveBeenCalled();
+      expect(mockGetOrCreateLatestThread).toHaveBeenCalledWith('test-agent-id', 'owner-user-1');
+      expect(mockGetRecentMessages).toHaveBeenCalledWith('latest-thread', 10);
     });
 
-    it('returns 404 when the thread does not exist / is not owned', async () => {
-      mockResumeThread.mockResolvedValue(null);
+    it('replays a specific, ownership-checked thread when threadId is given', async () => {
+      mockGetThread.mockResolvedValue({ id: 'thread-x' });
+      mockGetRecentMessages.mockResolvedValue([]);
 
-      const res = await request(makeApp()).post('/single-agent/threads/nope/resume');
+      const res = await request(makeApp()).get('/messages?threadId=thread-x');
+
+      expect(res.status).toBe(200);
+      // Ownership is enforced by getThread(userId, agentId, threadId).
+      expect(mockGetThread).toHaveBeenCalledWith('owner-user-1', 'test-agent-id', 'thread-x');
+      expect(mockGetRecentMessages).toHaveBeenCalledWith('thread-x', 50);
+      expect(mockGetOrCreateLatestThread).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when the requested thread is not owned / does not exist', async () => {
+      mockGetThread.mockResolvedValue(null);
+
+      const res = await request(makeApp()).get('/messages?threadId=nope');
 
       expect(res.status).toBe(404);
+      expect(mockGetRecentMessages).not.toHaveBeenCalled();
     });
 
     it('returns 503 when single-agent mode is not initialized', async () => {
       config.agentId = undefined as unknown as string;
 
-      const res = await request(makeApp()).post('/single-agent/threads/x/resume');
+      const res = await request(makeApp()).get('/messages');
 
       expect(res.status).toBe(503);
-      expect(mockResumeThread).not.toHaveBeenCalled();
+      expect(mockGetRecentMessages).not.toHaveBeenCalled();
     });
   });
 });

@@ -3,7 +3,7 @@
  *
  * GET  /health         — liveness check
  *      /agents/*       — management routes (heartbeat, chat, cron lifecycle)
- *      /single-agent/* — no-auth read endpoints for the local CLI
+ *      /threads, /messages, /latest-thread — no-auth endpoints for the local CLI
  *      /               — Prism Web UI (static SPA bundle from web/dist)
  *
  * Auth is handled by Nexus inbound routing in front of the runtime;
@@ -29,8 +29,10 @@ export function createApp() {
   // Management routes (heartbeat, cron lifecycle)
   app.use('/agents', managementRouter);
 
-  // No-auth read endpoints for the local CLI (prism-cli).
-  app.use('/single-agent', singleAgentRouter);
+  // No-auth endpoints for the local CLI (prism-cli): /threads, /messages,
+  // /latest-thread. Mounted at the root and registered before the SPA
+  // fallback so these explicit routes win over the static catch-all.
+  app.use(singleAgentRouter);
 
   // Prism Web UI. Skip the SPA mount silently when web/dist isn't
   // present (dev runs Vite separately on :5173). `PRISM_WEB_DIR` lets the
@@ -41,7 +43,7 @@ export function createApp() {
     : path.resolve(__dirname, '../web/dist');
   if (fs.existsSync(webDist)) {
     app.use(express.static(webDist, { index: 'index.html' }));
-    app.get(/^\/(?!agents|api|health|single-agent).*/, (_req, res) => {
+    app.get(/^\/(?!agents|api|health|threads|messages|latest-thread).*/, (_req, res) => {
       res.sendFile(path.join(webDist, 'index.html'));
     });
   }

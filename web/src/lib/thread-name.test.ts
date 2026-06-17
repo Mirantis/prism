@@ -5,11 +5,11 @@ describe('threadDisplayName', () => {
   it('prefers the thread title when set', () => {
     expect(
       threadDisplayName({
-        title: 'keuruun saha translat...',
+        title: 'Database Schema Migration',
         workspaceRoot: '/Users/me/dev/project-two',
         createdAt: '2026-06-16T12:00:00Z',
       }),
-    ).toBe('keuruun saha translat...');
+    ).toBe('Database Schema Migration');
   });
 
   it('falls back to the workspaceRoot basename when title is falsy', () => {
