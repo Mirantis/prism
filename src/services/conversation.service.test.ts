@@ -141,6 +141,32 @@ describe('ConversationService', () => {
   });
 
   // ==========================================================================
+  // Lightweight ownership check
+  // ==========================================================================
+
+  describe('getOwnedThreadId', () => {
+    it('returns the id (selecting only id, no messages) when owned', async () => {
+      mockPrisma.conversationThread.findFirst.mockResolvedValue({ id: 'thread-x' });
+
+      const id = await conversationService.getOwnedThreadId('user-123', 'agent-123', 'thread-x');
+
+      expect(id).toBe('thread-x');
+      expect(mockPrisma.conversationThread.findFirst).toHaveBeenCalledWith({
+        where: { id: 'thread-x', agentId: 'agent-123', userId: 'user-123' },
+        select: { id: true },
+      });
+    });
+
+    it('returns null when the thread is missing / not owned', async () => {
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
+
+      expect(
+        await conversationService.getOwnedThreadId('user-123', 'agent-123', 'nope'),
+      ).toBeNull();
+    });
+  });
+
+  // ==========================================================================
   // Get or create latest thread
   // ==========================================================================
 

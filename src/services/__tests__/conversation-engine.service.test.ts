@@ -22,6 +22,7 @@ const {
   mockIsTelemetryEnabled,
   mockTrackEvent,
   mockLinkToMessage,
+  mockOnFirstUserMessage,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
@@ -33,6 +34,7 @@ const {
   mockIsTelemetryEnabled: vi.fn(),
   mockTrackEvent: vi.fn(),
   mockLinkToMessage: vi.fn(),
+  mockOnFirstUserMessage: vi.fn(),
 }));
 
 /**
@@ -59,6 +61,12 @@ vi.mock('../conversation.service', () => ({
 vi.mock('../message-delivery.service', () => ({
   messageDeliveryService: {
     publish: mockPublish,
+  },
+}));
+
+vi.mock('../thread-title.service', () => ({
+  threadTitleService: {
+    onFirstUserMessage: mockOnFirstUserMessage,
   },
 }));
 
@@ -770,6 +778,59 @@ describe('Requirement: Conversation Engine', () => {
           channelContext: expect.objectContaining({ includeFeedback: true }),
         }),
       );
+    });
+  });
+
+  describe('Scenario: Thread title trigger', () => {
+    it('hands off to threadTitleService.onFirstUserMessage when the first message titles a DATABASE thread', async () => {
+      mockAddMessage.mockResolvedValueOnce({
+        message: { id: 'msg-123', threadId: 'thread-123' },
+        titleSet: 'migrate the authentic...',
+      });
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'migrate the authentication layer',
+        metadata: { channel: 'websocket' },
+      });
+
+      expect(mockOnFirstUserMessage).toHaveBeenCalledWith(
+        'agent-123',
+        'user-123',
+        'thread-123',
+        'migrate the authentication layer',
+        'migrate the authentic...',
+      );
+    });
+
+    it('does not trigger title generation for a follow-up (no title set)', async () => {
+      // Default mockAddMessage returns titleSet: null.
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'a follow-up question',
+        metadata: { channel: 'websocket' },
+      });
+
+      expect(mockOnFirstUserMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not generate a title for a Slack thread (never shown in Recents/resume)', async () => {
+      mockAddMessage.mockResolvedValueOnce({
+        message: { id: 'msg-123', threadId: 'thread-123' },
+        titleSet: 'some placeholder',
+      });
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'hello from slack',
+        threadId: 'thread-123',
+        metadata: { channel: 'slack', channelId: 'C123' },
+      });
+
+      expect(mockOnFirstUserMessage).not.toHaveBeenCalled();
     });
   });
 });

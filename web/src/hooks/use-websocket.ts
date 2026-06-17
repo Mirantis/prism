@@ -34,6 +34,16 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
+  // The socket's `onmessage` is bound once at connect (the connect effect runs
+  // with [] deps), so a handler that closed over `onMessage`/`onThreadUpdate`
+  // would freeze the *first* render's callbacks — and with them any state they
+  // captured (e.g. the active thread id). Route through refs that are refreshed
+  // every render so the stable handler always invokes the latest callbacks.
+  const onMessageRef = useRef(onMessage);
+  const onThreadUpdateRef = useRef(onThreadUpdate);
+  onMessageRef.current = onMessage;
+  onThreadUpdateRef.current = onThreadUpdate;
+
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [isTyping, setIsTyping] = useState(false);
 
@@ -44,7 +54,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
         switch (data.type) {
           case 'chat': {
             const payload = data.payload as ConversationMessage | undefined;
-            if (payload) onMessage?.(payload);
+            if (payload) onMessageRef.current?.(payload);
             setIsTyping(false);
             break;
           }
@@ -64,7 +74,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
           case 'thread': {
             const p = data.payload as { threadId?: string; title?: string } | undefined;
             if (p?.threadId && typeof p.title === 'string') {
-              onThreadUpdate?.({ threadId: p.threadId, title: p.title });
+              onThreadUpdateRef.current?.({ threadId: p.threadId, title: p.title });
             }
             break;
           }
@@ -83,7 +93,9 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
         console.error('[ws] failed to parse message:', err);
       }
     },
-    [onMessage, onThreadUpdate],
+    // Stable: reads the latest callbacks via refs, so the once-bound socket
+    // handler never goes stale and we don't churn the connection.
+    [],
   );
 
   const connect = useCallback(() => {

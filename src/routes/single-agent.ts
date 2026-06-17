@@ -49,12 +49,13 @@ router.get('/messages', async (req: Request, res: Response) => {
     const limit = Number.isFinite(raw) && raw > 0 ? Math.min(raw, 200) : 50;
 
     // Optional ?threadId: replay a specific thread (the CLI's --resume flow).
-    // Ownership-checked via getThread — 404 when it doesn't belong to this
-    // agent+user. Without it, fall back to the latest thread.
+    // Cheap ownership check (no message load) — 404 when it doesn't belong to
+    // this agent+user. getRecentMessages below does the single history read.
+    // Without it, fall back to the latest thread.
     const requested = req.query.threadId;
     let threadId: string;
     if (typeof requested === 'string' && requested) {
-      const owned = await conversationService.getThread(
+      const owned = await conversationService.getOwnedThreadId(
         config.ownerUserId,
         config.agentId,
         requested,
@@ -63,7 +64,7 @@ router.get('/messages', async (req: Request, res: Response) => {
         res.status(404).json({ error: 'Thread not found' });
         return;
       }
-      threadId = owned.id;
+      threadId = owned;
     } else {
       const thread = await conversationService.getOrCreateLatestThread(
         config.agentId,
@@ -99,15 +100,24 @@ router.get('/threads', async (_req: Request, res: Response) => {
       config.agentId,
       { threadSource: ThreadSource.DATABASE, limit: 50 },
     );
-    const summaries = await Promise.all(
-      threads.map(async (t) => ({
-        id: t.id,
-        title: t.title,
-        updatedAt: t.updatedAt,
-        workspaceRoot: t.workspaceRoot,
-        branch: t.workspaceRoot ? await getGitBranch(t.workspaceRoot) : null,
-      })),
+    // Resolve the git branch once per unique workspace root — many threads in
+    // the same repo would otherwise each spawn a redundant `git` subprocess.
+    const uniqueRoots = [
+      ...new Set(threads.map((t) => t.workspaceRoot).filter((r): r is string => !!r)),
+    ];
+    const branchByRoot = new Map<string, string | null>();
+    await Promise.all(
+      uniqueRoots.map(async (root) => {
+        branchByRoot.set(root, await getGitBranch(root));
+      }),
     );
+    const summaries = threads.map((t) => ({
+      id: t.id,
+      title: t.title,
+      updatedAt: t.updatedAt,
+      workspaceRoot: t.workspaceRoot,
+      branch: t.workspaceRoot ? branchByRoot.get(t.workspaceRoot) ?? null : null,
+    }));
     res.json(summaries);
   } catch (err) {
     logger.error({ err }, '[SingleAgent] GET /threads failed');

@@ -227,6 +227,20 @@ class ConversationService {
   }
 
   /**
+   * Lightweight ownership/existence check: returns the thread id when it
+   * belongs to this agent+user, else null. Unlike getThread it does NOT load
+   * the thread's messages or attachment metadata, so callers that only need to
+   * authorize a thread id (e.g. the CLI's /messages replay) stay cheap.
+   */
+  async getOwnedThreadId(userId: string, agentId: string, threadId: string): Promise<string | null> {
+    const thread = await prisma.conversationThread.findFirst({
+      where: { id: threadId, agentId, userId },
+      select: { id: true },
+    });
+    return thread?.id ?? null;
+  }
+
+  /**
    * List all threads for a user
    */
   async listThreads(

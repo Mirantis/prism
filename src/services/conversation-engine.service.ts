@@ -208,7 +208,12 @@ Respond with exactly one word: WORTHY or SKIP`;
     // First user message named the thread: announce the placeholder title and
     // kick off the cheap-model upgrade (fire-and-forget, never blocks the
     // turn). Channel-agnostic — transports subscribe to threadTitleService.
-    if (titleSet) {
+    //
+    // Gated to non-Slack turns: Slack messages live in SLACK threads, which the
+    // web Recents and CLI resume picker (both `threadSource: DATABASE`) never
+    // show — so a generated title for them would cost a Haiku call + DB write
+    // nobody ever sees.
+    if (titleSet && metadata?.channel !== 'slack') {
       threadTitleService.onFirstUserMessage(agentId, userId, threadId, message, titleSet);
     }
 
