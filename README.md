@@ -93,19 +93,19 @@ curl -fsSL https://get.lns.run | bash   # install the lns CLI (macOS on Apple Si
 
 lns run --cpus 2 --mem 2048 \
   -p 3003:3003 -v prism-data:/data \
-  -e AWS_BEARER_TOKEN_BEDROCK="$AWS_BEARER_TOKEN_BEDROCK" \
   ghcr.io/lensapp/prism-agent:latest \
   -- /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
 ```
 
 The flags mirror the Docker command below: the agent's SQLite database
 persists in the `prism-data` named volume (`lns volume ls`), and the run
-attaches to your terminal interactively by default. Run it from a project
-directory — that's where `lns` looks for (or auto-creates) the
-`lns-policy.yaml` governing the run. The first time the agent calls
-Bedrock, the service raises an approval prompt for the outbound
-connection; answering "always" writes the rule to `lns-policy.yaml` so
-future runs proceed without asking.
+attaches to your terminal interactively by default. The sandbox supplies
+the Bedrock credential at the network boundary, so you don't pass it into
+the run. Start it from a project directory — that's where `lns` looks for
+(or auto-creates) the `lns-policy.yaml` governing the run. The first time
+the agent reaches out, the service raises an approval prompt for the
+outbound connection; answering "always" writes the rule to
+`lns-policy.yaml` so future runs proceed without asking.
 
 ### Using Docker
 
