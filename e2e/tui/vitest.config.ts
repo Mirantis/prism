@@ -13,7 +13,10 @@ export default defineConfig({
     // isolation; serialize files (each file owns one runtime).
     pool: 'forks',
     fileParallelism: false,
-    // No setup file; each spec wires its own beforeAll/beforeEach.
+    // Specs wire their own beforeAll/beforeEach; this setup file only hardens
+    // Vitest's source-map symbolication so a malformed inline map can't fail an
+    // otherwise-green run (see vitest.setup.ts).
+    setupFiles: ['tui/vitest.setup.ts'],
     globals: false,
   },
 });
