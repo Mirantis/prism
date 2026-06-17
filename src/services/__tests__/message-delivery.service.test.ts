@@ -84,7 +84,7 @@ describe('MessageDeliveryService', () => {
     vi.clearAllMocks();
     // Create fresh service for each test
     service = new MessageDeliveryService();
-    mockAddMessage.mockResolvedValue(sampleMessage);
+    mockAddMessage.mockResolvedValue({ message: sampleMessage, titleSet: null });
     mockGetOrCreateLatestThread.mockResolvedValue({ id: 'thread-456' });
     mockLinkToMessage.mockResolvedValue(undefined);
     mockGetMetaByMessageIds.mockResolvedValue(new Map());
@@ -160,7 +160,7 @@ describe('MessageDeliveryService', () => {
       service.register(adapter);
 
       // HEARTBEAT is the legitimate no-channelContext/broadcast path.
-      mockAddMessage.mockResolvedValueOnce({ ...sampleMessage, triggeredBy: 'HEARTBEAT' });
+      mockAddMessage.mockResolvedValueOnce({ message: { ...sampleMessage, triggeredBy: 'HEARTBEAT' }, titleSet: null });
 
       await service.publish('user-123', 'thread-456', 'Hello', 'HEARTBEAT');
 
@@ -173,7 +173,7 @@ describe('MessageDeliveryService', () => {
       adapter.isUserConnected.mockResolvedValue(false);
       service.register(adapter);
 
-      mockAddMessage.mockResolvedValueOnce({ ...sampleMessage, triggeredBy: 'HEARTBEAT' });
+      mockAddMessage.mockResolvedValueOnce({ message: { ...sampleMessage, triggeredBy: 'HEARTBEAT' }, titleSet: null });
 
       await service.publish('user-123', 'thread-456', 'Hello', 'HEARTBEAT');
 
@@ -190,7 +190,7 @@ describe('MessageDeliveryService', () => {
       service.register(adapter1);
       service.register(adapter2);
 
-      mockAddMessage.mockResolvedValueOnce({ ...sampleMessage, triggeredBy: 'HEARTBEAT' });
+      mockAddMessage.mockResolvedValueOnce({ message: { ...sampleMessage, triggeredBy: 'HEARTBEAT' }, titleSet: null });
 
       await service.publish('user-123', 'thread-456', 'Hello', 'HEARTBEAT');
 
@@ -208,7 +208,7 @@ describe('MessageDeliveryService', () => {
       service.register(adapter1);
       service.register(adapter2);
 
-      mockAddMessage.mockResolvedValueOnce({ ...sampleMessage, triggeredBy: 'HEARTBEAT' });
+      mockAddMessage.mockResolvedValueOnce({ message: { ...sampleMessage, triggeredBy: 'HEARTBEAT' }, titleSet: null });
 
       // Should not throw
       await service.publish('user-123', 'thread-456', 'Hello', 'HEARTBEAT');

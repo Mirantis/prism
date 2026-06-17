@@ -1282,7 +1282,7 @@ describe('Management Routes', () => {
         triggeredBy: 'USER_INPUT',
         createdAt: '2026-01-01T00:00:00Z',
       };
-      mockAddMessage.mockResolvedValue(message);
+      mockAddMessage.mockResolvedValue({ message, titleSet: null });
 
       const res = await authedRequest(app)
         .post('/agents/threads/thread-1/messages')

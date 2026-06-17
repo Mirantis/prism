@@ -32,6 +32,13 @@ Feature: Recents conversation list
     When I navigate to the agent chat page
     Then the Recents list has 1 conversation
 
+  Scenario: The first message titles the current conversation live
+    When I navigate to the agent chat page
+    And I type "deploy the staging cluster" in the chat input
+    And I send the message
+    And I should see an agent response in the conversation
+    Then the Recents list shows "deploy the staging"
+
   Scenario: Recents is only visible on the Chat page
     Given a conversation thread rooted at "/work/project-db"
     When I navigate to the agent chat page

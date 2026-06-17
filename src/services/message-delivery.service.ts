@@ -104,8 +104,9 @@ export class MessageDeliveryService {
     triggeredBy: MessageTrigger,
     options?: PublishOptions
   ): Promise<ConversationMessage> {
-    // 1. Store in database directly via Prisma
-    const message = await conversationService.addMessage(threadId, {
+    // 1. Store in database directly via Prisma (agent messages never set a
+    // title, so titleSet is unused here).
+    const { message } = await conversationService.addMessage(threadId, {
       content,
       role: 'AGENT',
       triggeredBy,
