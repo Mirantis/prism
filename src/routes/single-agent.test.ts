@@ -126,7 +126,7 @@ describe('Single-Agent Routes', () => {
   });
 
   describe('GET /single-agent/threads', () => {
-    it('lists DATABASE threads newest-first with a git-branch label', async () => {
+    it('lists resumable threads newest-first with a git-branch label', async () => {
       mockListThreads.mockResolvedValue([
         { id: 'thread-new', updatedAt: '2026-06-16T10:00:00.000Z', workspaceRoot: '/repo/a' },
         { id: 'thread-old', updatedAt: '2026-06-16T09:00:00.000Z', workspaceRoot: null },
@@ -150,9 +150,10 @@ describe('Single-Agent Routes', () => {
           branch: null,
         },
       ]);
-      // DATABASE-only, capped at 50; ordering is the service's responsibility.
+      // Resumable only (externalThreadId:null), capped at 50; ordering is the
+      // service's responsibility.
       expect(mockListThreads).toHaveBeenCalledWith('owner-user-1', 'test-agent-id', {
-        threadSource: 'DATABASE',
+        excludeExternal: true,
         limit: 50,
       });
       // Branch is only looked up for threads that have a workspace root.

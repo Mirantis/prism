@@ -97,11 +97,11 @@ export const runtimeApi = {
   listThreads: (
     agentId: string,
     userId: string,
-    opts?: { limit?: number; threadSource?: 'DATABASE' | 'SLACK' },
+    opts?: { limit?: number; excludeExternal?: boolean },
   ) => {
     const params = new URLSearchParams({ agentId, userId });
     if (opts?.limit) params.set('limit', String(opts.limit));
-    if (opts?.threadSource) params.set('threadSource', opts.threadSource);
+    if (opts?.excludeExternal) params.set('excludeExternal', 'true');
     return request<ConversationThread[]>(`/agents/threads?${params.toString()}`);
   },
   getThread: (agentId: string, userId: string, threadId: string) => {
