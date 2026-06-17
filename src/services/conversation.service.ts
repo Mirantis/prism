@@ -232,13 +232,16 @@ class ConversationService {
   async listThreads(
     userId: string,
     agentId: string,
-    options?: { limit?: number; threadSource?: ThreadSource }
+    options?: { limit?: number; excludeExternal?: boolean }
   ): Promise<ConversationThread[]> {
     return prisma.conversationThread.findMany({
       where: {
         agentId,
         userId,
-        ...(options?.threadSource && { threadSource: options.threadSource }),
+        // `externalThreadId: null` is the exact "resumable / latest" set used by
+        // getOrCreateLatestThread and resumeThread — it excludes Slack threads
+        // and any externally-bound thread that could never become the latest.
+        ...(options?.excludeExternal && { externalThreadId: null }),
       },
       orderBy: { createdAt: 'desc' },
       take: options?.limit ?? 20,

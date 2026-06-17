@@ -127,13 +127,13 @@ describe('ConversationService', () => {
       });
     });
 
-    it('should filter threads by threadSource (excludes Slack from the resume list)', async () => {
+    it('excludeExternal filters to resumable threads (externalThreadId: null)', async () => {
       mockPrisma.conversationThread.findMany.mockResolvedValue([]);
 
-      await conversationService.listThreads('user-123', 'agent-123', { threadSource: 'DATABASE' });
+      await conversationService.listThreads('user-123', 'agent-123', { excludeExternal: true });
 
       expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
-        where: { agentId: 'agent-123', userId: 'user-123', threadSource: 'DATABASE' },
+        where: { agentId: 'agent-123', userId: 'user-123', externalThreadId: null },
         orderBy: { createdAt: 'desc' },
         take: 20,
       });

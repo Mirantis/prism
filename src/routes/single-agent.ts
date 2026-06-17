@@ -14,7 +14,6 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { ThreadSource } from '@prisma/client';
 import { config } from '../config';
 import { logger } from '../logger';
 import { conversationService } from '../services/conversation.service';
@@ -72,14 +71,15 @@ router.get('/threads', async (_req: Request, res: Response) => {
       res.status(503).json({ error: 'Single-agent mode not initialized (agentId unset)' });
       return;
     }
-    // Database threads only (newest first) — Slack threads aren't resumable
-    // from the CLI. 50 leaves the scrollable picker plenty beyond its 5
-    // visible rows. Each row is labelled with the git branch of its workspace
-    // root when one is set.
+    // Resumable threads only (newest first): excludeExternal drops Slack /
+    // externally-bound threads — exactly the set resumeThread + the latest-thread
+    // resolution operate on, so the picker never lists a thread that can't
+    // resume. 50 leaves the scrollable picker plenty beyond its 5 visible rows.
+    // Each row is labelled with the git branch of its workspace root when set.
     const threads = await conversationService.listThreads(
       config.ownerUserId,
       config.agentId,
-      { threadSource: ThreadSource.DATABASE, limit: 50 },
+      { excludeExternal: true, limit: 50 },
     );
     const summaries = await Promise.all(
       threads.map(async (t) => ({

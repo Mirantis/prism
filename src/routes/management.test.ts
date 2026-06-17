@@ -1144,7 +1144,7 @@ describe('Management Routes', () => {
       expect(res.body[0].id).toBe('thread-1');
       expect(mockListThreads).toHaveBeenCalledWith('user-1', 'agent-1', {
         limit: undefined,
-        threadSource: undefined,
+        excludeExternal: false,
       });
     });
 
@@ -1157,30 +1157,21 @@ describe('Management Routes', () => {
       expect(res.status).toBe(200);
       expect(mockListThreads).toHaveBeenCalledWith('user-1', 'agent-1', {
         limit: 5,
-        threadSource: undefined,
+        excludeExternal: false,
       });
     });
 
-    it('forwards the threadSource filter (e.g. DATABASE to exclude Slack)', async () => {
+    it('forwards excludeExternal=true to drop Slack / external threads', async () => {
       mockListThreads.mockResolvedValue([]);
 
       const res = await authedRequest(app)
-        .get('/agents/threads?userId=user-1&agentId=agent-1&threadSource=DATABASE');
+        .get('/agents/threads?userId=user-1&agentId=agent-1&excludeExternal=true');
 
       expect(res.status).toBe(200);
       expect(mockListThreads).toHaveBeenCalledWith('user-1', 'agent-1', {
         limit: undefined,
-        threadSource: 'DATABASE',
+        excludeExternal: true,
       });
-    });
-
-    it('returns 400 for an invalid threadSource', async () => {
-      const res = await authedRequest(app)
-        .get('/agents/threads?userId=user-1&agentId=agent-1&threadSource=BOGUS');
-
-      expect(res.status).toBe(400);
-      expect(res.body.error).toContain('threadSource');
-      expect(mockListThreads).not.toHaveBeenCalled();
     });
 
     it('returns 500 when listThreads throws', async () => {
