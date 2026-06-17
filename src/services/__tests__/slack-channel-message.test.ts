@@ -662,7 +662,7 @@ describe('Requirement: Channel message mention detection', () => {
       expect(run.getSignal()!.aborted).toBe(false);
 
       // Deleting the message whose ts is the thread root cancels the run.
-      (slackAdapterService as any).abortChannelRuns(CHANNEL_ID, MESSAGE_TS);
+      (slackAdapterService as any).abortChannelRuns(TEAM_ID, CHANNEL_ID, MESSAGE_TS);
       expect(run.getSignal()!.aborted).toBe(true);
 
       run.release();
@@ -676,7 +676,20 @@ describe('Requirement: Channel message mention detection', () => {
       await vi.waitFor(() => expect(run.getSignal()).toBeDefined());
 
       // A different message's ts → no matching run, no abort.
-      (slackAdapterService as any).abortChannelRuns(CHANNEL_ID, '9999999999.000000');
+      (slackAdapterService as any).abortChannelRuns(TEAM_ID, CHANNEL_ID, '9999999999.000000');
+      expect(run.getSignal()!.aborted).toBe(false);
+
+      run.release();
+      await run.handled;
+    });
+
+    it('does not abort a run in another workspace when channel/ts collide', async () => {
+      const run = startPendingRun();
+      await vi.waitFor(() => expect(run.getSignal()).toBeDefined());
+
+      // Same channel + ts, but a different team — the key is team-scoped, so a
+      // delete in another workspace must not cancel this run.
+      (slackAdapterService as any).abortChannelRuns('T_OTHER_TEAM', CHANNEL_ID, MESSAGE_TS);
       expect(run.getSignal()!.aborted).toBe(false);
 
       run.release();

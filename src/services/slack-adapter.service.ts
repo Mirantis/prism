@@ -195,7 +195,7 @@ class SlackAdapterService implements ChannelAdapter {
   private userConnectionCache: Map<string, Set<string>> = new Map(); // lensUserId -> teamIds
 
   /**
-   * In-flight channel responses keyed by `${channelId}:${threadRootTs}`.
+   * In-flight channel responses keyed by `${teamId}:${channelId}:${threadRootTs}`.
    *
    * The conversation engine streams a reply as several Slack posts over many
    * seconds, each `thread_ts`-anchored to the triggering message. If that root
@@ -204,11 +204,16 @@ class SlackAdapterService implements ChannelAdapter {
    * channel message). We track each run's AbortController so a `message_deleted`
    * event for the root can cancel the run before its tail spills into the
    * channel. A Set covers the rare case of concurrent runs sharing a root.
+   *
+   * The key is scoped by `teamId` because this singleton can hold multiple
+   * connected workspaces, and channel IDs / timestamps are not guaranteed
+   * unique across teams — an unscoped key risks a delete in one workspace
+   * aborting an unrelated run in another.
    */
   private inFlightChannelRuns: Map<string, Set<AbortController>> = new Map();
 
-  private channelRunKey(channelId: string, threadRootTs: string): string {
-    return `${channelId}:${threadRootTs}`;
+  private channelRunKey(teamId: string, channelId: string, threadRootTs: string): string {
+    return `${teamId}:${channelId}:${threadRootTs}`;
   }
 
   /** Register an in-flight run so a root-message deletion can abort it. */
@@ -233,12 +238,12 @@ class SlackAdapterService implements ChannelAdapter {
    * Abort every in-flight run anchored to a (now-deleted) thread root so the
    * streamed tail never spills into the channel. No-op when nothing matches.
    */
-  private abortChannelRuns(channelId: string, threadRootTs: string): void {
-    const runs = this.inFlightChannelRuns.get(this.channelRunKey(channelId, threadRootTs));
+  private abortChannelRuns(teamId: string, channelId: string, threadRootTs: string): void {
+    const runs = this.inFlightChannelRuns.get(this.channelRunKey(teamId, channelId, threadRootTs));
     if (!runs || runs.size === 0) return;
     logger.info(
-      '[SlackAdapter] Thread root %s in channel %s was deleted — aborting %d in-flight response(s)',
-      threadRootTs, channelId, runs.size,
+      '[SlackAdapter] Thread root %s in channel %s (team %s) was deleted — aborting %d in-flight response(s)',
+      threadRootTs, channelId, teamId, runs.size,
     );
     for (const controller of runs) controller.abort();
   }
@@ -757,7 +762,7 @@ class SlackAdapterService implements ChannelAdapter {
       // anchored to the deleted message before its streamed tail spills out.
       if (msg.subtype === 'message_deleted') {
         const deletedTs = (message as { deleted_ts?: string }).deleted_ts;
-        if (deletedTs) this.abortChannelRuns(msg.channel, deletedTs);
+        if (deletedTs) this.abortChannelRuns(teamId, msg.channel, deletedTs);
         return;
       }
 
@@ -1190,7 +1195,7 @@ class SlackAdapterService implements ChannelAdapter {
 
       // Track this run so deleting the thread's root message can abort it
       // before the streamed tail spills into the channel (see inFlightChannelRuns).
-      const runKey = this.channelRunKey(channelId, slackThreadId);
+      const runKey = this.channelRunKey(teamId, channelId, slackThreadId);
       const abortController = new AbortController();
       this.trackChannelRun(runKey, abortController);
 
