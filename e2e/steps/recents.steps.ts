@@ -4,7 +4,7 @@ import { HomePage } from '../pages/home.page';
 import * as dbHelper from '../support/db-helper';
 import { getCurrentAgentId } from './common.steps';
 
-const { Given, Then } = createBdd();
+const { Given, When, Then } = createBdd();
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -26,6 +26,17 @@ Given('an older conversation thread rooted at {string}', async ({}, workspaceRoo
     createdAt: new Date(Date.now() - DAY_MS),
   });
 });
+
+Given(
+  'an older conversation thread rooted at {string} containing {string}',
+  async ({}, workspaceRoot: string, content: string) => {
+    await dbHelper.createThread(getCurrentAgentId(), {
+      workspaceRoot,
+      createdAt: new Date(Date.now() - DAY_MS),
+      messages: [{ role: 'USER', content }],
+    });
+  },
+);
 
 Given('a conversation thread with no workspace root', async () => {
   await dbHelper.createThread(getCurrentAgentId());
@@ -53,6 +64,15 @@ Then('the Recents list shows {string} above {string}', async ({ page }, first: s
 Then('the Recents list shows {string}', async ({ page }, name: string) => {
   const home = new HomePage(page);
   await expect(home.recentThreads.filter({ hasText: name })).toBeVisible();
+});
+
+When('I click the {string} conversation in Recents', async ({ page }, name: string) => {
+  const home = new HomePage(page);
+  await home.recentThreads.filter({ hasText: name }).click();
+});
+
+Then('the URL is a chat thread URL', async ({ page }) => {
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]+$/);
 });
 
 Then('the Recents list does not show {string}', async ({ page }, name: string) => {
