@@ -21,7 +21,7 @@ export default function ChatMessageList({ messages, agentName, isTyping, isLoadi
   const isEmpty = messages.length === 0 && !isLoading;
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="flex-1 overflow-y-auto" data-testid="chat-messages">
       {isEmpty ? (
         <ChatWelcome />
       ) : (

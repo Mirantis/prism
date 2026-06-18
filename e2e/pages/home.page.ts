@@ -59,10 +59,15 @@ export class HomePage extends BasePage {
   }
 
   /**
-   * Find a message containing specific text anywhere in the chat area.
+   * Find a message containing specific text inside the conversation list.
+   *
+   * Scoped to the message list (data-testid="chat-messages") rather than the
+   * whole page: the Recents sidebar shows each thread's title, and a short
+   * first message ("hello") is titled verbatim, so an unscoped getByText would
+   * also match the sidebar row and trip Playwright's strict-mode check.
    */
   getMessageByText(text: string) {
-    return this.page.getByText(text, { exact: false });
+    return this.page.getByTestId('chat-messages').getByText(text, { exact: false });
   }
 
   /**
