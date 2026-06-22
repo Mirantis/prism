@@ -23,6 +23,15 @@ The agent is not a chatbot session — it persists between conversations,
 maintains its own memory, runs heartbeat checks on a schedule, can put work on
 its own calendar, and can act over a shell.
 
+## Documentation
+
+Full user docs live in **[`docs/`](docs/README.md)** — installation (native,
+Docker, Lens Sandbox), the [Web UI](docs/web-ui.md) and
+[Terminal UI](docs/terminal-ui.md), [Slack](docs/slack.md), and a guide to every
+feature: [identity](docs/agent-identity.md), [memory](docs/memory.md),
+[heartbeat](docs/heartbeat.md), [scheduled tasks](docs/scheduled-tasks.md),
+[tools](docs/tools.md), and [configuration](docs/configuration.md).
+
 ## Web UI
 
 ![Prism Web UI](docs/images/web-ui.png)
