@@ -40,11 +40,11 @@
     "@aws-sdk/credential-provider-node": "^3.972.17",
     "@langfuse/otel": "^4.6.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@opentelemetry/api-logs": "^0.213.0",
-    "@opentelemetry/exporter-logs-otlp-http": "^0.213.0",
+    "@opentelemetry/api-logs": "^0.217.0",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.217.0",
     "@opentelemetry/resources": "^2.6.0",
-    "@opentelemetry/sdk-logs": "^0.213.0",
-    "@opentelemetry/sdk-node": "^0.213.0",
+    "@opentelemetry/sdk-logs": "^0.217.0",
+    "@opentelemetry/sdk-node": "^0.217.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
     "@prisma/client": "^6.19.2",
     "@slack/bolt": "^4.6.0",
@@ -52,7 +52,7 @@
     "better-sqlite3": "^12.9.0",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
-    "multer": "^2.1.1",
+    "multer": "^2.2.0",
     "node-cron": "^4.2.1",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3",
@@ -74,7 +74,7 @@
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.0.18",
     "concurrently": "^9.2.1",
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.1",
     "husky": "^9.1.7",
     "markdownlint-cli2": "^0.21.0",
     "oxlint": "^1.51.0",
@@ -83,5 +83,20 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "form-data": "^4.0.6",
+    "vite": "7.3.5",
+    "dompurify": "^3.4.11",
+    "undici": "^7.28.0",
+    "hono": "^4.12.25",
+    "protobufjs": "^7.6.3",
+    "markdown-it": "^14.2.0",
+    "shell-quote": "^1.8.4",
+    "esbuild": "$esbuild",
+    "@opentelemetry/core": "^2.8.0",
+    "@cucumber/messages": {
+      "uuid": "^11.1.1"
+    }
   }
 }
