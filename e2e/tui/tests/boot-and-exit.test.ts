@@ -2,10 +2,6 @@
  * Boot + shutdown lifecycle for prism-cli. No Bedrock interaction required —
  * these scenarios exercise the Ink render path, the /exit slash command, and
  * the Ctrl+C → SIGINT shutdown bridge against a running agent-runtime.
- *
- * Written with @amiceli/vitest-cucumber: the Gherkin scenarios live in
- * features/boot-and-exit.feature; the runtime + PTY lifecycle is wired through
- * the BeforeAll/BeforeEach/AfterEach/AfterAll scenario hooks.
  */
 
 import { readFileSync } from 'node:fs';

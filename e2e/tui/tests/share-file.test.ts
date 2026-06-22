@@ -6,8 +6,6 @@
  * A unique sentinel in the file body makes the on-disk assertion deterministic.
  * The runtime gets a writable temp workspace via SHELL_WORKSPACE_ROOT so
  * shell_write_file/share_file don't hit the non-writable `/home/node` default.
- *
- * Written with @amiceli/vitest-cucumber (features/share-file.feature).
  */
 
 import fs from 'node:fs';

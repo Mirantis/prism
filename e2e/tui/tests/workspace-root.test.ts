@@ -6,9 +6,6 @@
  * cwd set to the cli/ package dir (PRISM_CLI_DIR), so the runtime must persist
  * exactly that path on the freshly created thread. We assert against the real
  * (symlink-resolved) path because `process.cwd()` returns the canonical form.
- *
- * Written with @amiceli/vitest-cucumber; scenarios live in
- * features/workspace-root.feature.
  */
 
 import { readFileSync, realpathSync } from 'node:fs';

@@ -38,6 +38,7 @@ enum MessageTrigger {
   USER_INPUT
   HEARTBEAT
   CRON_TASK
+  GOAL
   SYSTEM
 }
 
@@ -89,6 +90,7 @@ model AgentWorkspace {
 
   threads                ConversationThread[]
   cronTasks              CronTask[]
+  goals                  Goal[]
   memoryEntries          MemoryEntry[]
   slackMappings          SlackMapping[]
   slackVerificationCodes SlackVerificationCode[]
@@ -129,6 +131,7 @@ model ConversationThread {
   compactedAt       DateTime?
 
   messages ConversationMessage[]
+  goals    Goal[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -236,6 +239,56 @@ model CronTask {
   agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
   @@map("cron_tasks")
+}
+
+// ============================================================================
+// Goals
+// ============================================================================
+//
+// A durable objective the agent pursues autonomously across many turns until a
+// cheap classification gate judges it complete, or it hits a turn/token/stall
+// cap. One active goal per thread (enforced in GoalService.startGoal). The
+// background continuation loop lives in goal.service.ts, modeled on the
+// heartbeat re-trigger loop. Cascades from both the agent and the thread, so
+// deleting either removes the goal row (the running loop is also aborted
+// explicitly via goalService.stopGoal on thread archive/delete).
+
+model Goal {
+  id       String @id @default(uuid())
+  agentId  String
+  userId   String
+  threadId String
+
+  objective String
+
+  // active | complete | blocked | budget_limited | turn_limited | paused | stopped
+  status String @default("active")
+
+  tokenBudget Int?
+  tokensUsed  Int @default(0)
+  turnCount   Int @default(0)
+  maxTurns    Int
+
+  // Consecutive zero-progress turns; goal is blocked once this hits GOAL_MAX_STALL_TURNS.
+  stallCount Int @default(0)
+  // Latest loop/gate reason (why it continued, blocked, or stopped) — surfaced in status.
+  lastReason String?
+
+  // Originating channel (REQUIRED) used for scoped delivery of goal-turn output.
+  originChannel String // 'slack' | 'websocket'
+  // Nullable: absent for Slack DMs (delivery falls back to the DM mapping).
+  originChannelId String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  agentWorkspace AgentWorkspace     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  thread         ConversationThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, status])
+  @@index([threadId])
+  @@map("goals")
 }
 
 // ============================================================================

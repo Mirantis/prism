@@ -9,6 +9,7 @@
 import { generateText } from 'ai';
 import { messageDeliveryService } from './message-delivery.service';
 import { conversationService } from './conversation.service';
+import { goalService } from './goal.service';
 import { threadTitleService } from './thread-title.service';
 import { attachmentService } from './attachment.service';
 import { invokeStream } from '../invoke';
@@ -255,89 +256,99 @@ Respond with exactly one word: WORTHY or SKIP`;
     // the final delivered message, so they appear alongside the answer.
     const allAttachmentIds: string[] = [];
 
-    for await (const step of invokeStream({
-      userId,
-      agentId,
-      mode: 'chat',
-      prompt: message,
-      threadId,
-      workspaceRoot,
-      isChannelMessage,
-      runtimeNotices: input.runtimeNotices,
-      abortSignal: input.abortSignal,
-    })) {
-      allToolCalls.push(...step.toolCalls);
-      if (step.blocks) allBlocks.push(...step.blocks);
-      if (step.attachmentIds) allAttachmentIds.push(...step.attachmentIds);
-      pendingToolCalls.push(...step.toolCalls);
+    let response = '';
 
-      if (step.text) {
-        responseTexts.push(step.text);
+    // Run the whole turn under the per-thread lock so an interactive user turn
+    // and a background goal turn never invoke() the same thread concurrently.
+    // A `create_goal` call made during this turn kicks its loop fire-and-forget;
+    // that loop's first turn queues behind this lock and runs once we release.
+    await goalService.runExclusive(threadId, async () => {
+      for await (const step of invokeStream({
+        userId,
+        agentId,
+        mode: 'chat',
+        prompt: message,
+        threadId,
+        workspaceRoot,
+        isChannelMessage,
+        originChannel: metadata?.channel,
+        originChannelId: metadata?.channelId,
+        runtimeNotices: input.runtimeNotices,
+        abortSignal: input.abortSignal,
+      })) {
+        allToolCalls.push(...step.toolCalls);
+        if (step.blocks) allBlocks.push(...step.blocks);
+        if (step.attachmentIds) allAttachmentIds.push(...step.attachmentIds);
+        pendingToolCalls.push(...step.toolCalls);
 
-        // Flush previously-buffered step now that we know it wasn't last:
-        // no blocks, no feedback gate.
-        if (bufferedStep) {
-          agentMessage = await messageDeliveryService.publish(
-            userId,
-            threadId,
-            bufferedStep.text,
-            'USER_INPUT',
-            {
-              toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
-              channelContext: channelContext
-                ? { ...channelContext, includeFeedback: false }
-                : undefined,
-            }
-          );
+        if (step.text) {
+          responseTexts.push(step.text);
+
+          // Flush previously-buffered step now that we know it wasn't last:
+          // no blocks, no feedback gate.
+          if (bufferedStep) {
+            agentMessage = await messageDeliveryService.publish(
+              userId,
+              threadId,
+              bufferedStep.text,
+              'USER_INPUT',
+              {
+                toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
+                channelContext: channelContext
+                  ? { ...channelContext, includeFeedback: false }
+                  : undefined,
+              }
+            );
+          }
+
+          bufferedStep = step;
+          bufferedToolCalls = pendingToolCalls;
+          pendingToolCalls = [];
         }
-
-        bufferedStep = step;
-        bufferedToolCalls = pendingToolCalls;
-        pendingToolCalls = [];
       }
-    }
 
-    // Stream is done. The buffered step (if any) is the LAST text step:
-    // attach the accumulated blocks and the feedback decision here.
-    if (bufferedStep) {
-      const includeFeedback = await this.shouldShowFeedback(
-        threadId, message, bufferedStep.text, userId, agentId, input.abortSignal,
-      );
-      agentMessage = await messageDeliveryService.publish(
-        userId,
-        threadId,
-        bufferedStep.text,
-        'USER_INPUT',
-        {
-          toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
-          blocks: allBlocks.length > 0 ? allBlocks : undefined,
-          attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
-          channelContext: channelContext ? { ...channelContext, includeFeedback } : undefined,
-        }
-      );
-    }
+      // Stream is done. The buffered step (if any) is the LAST text step:
+      // attach the accumulated blocks and the feedback decision here.
+      if (bufferedStep) {
+        const includeFeedback = await this.shouldShowFeedback(
+          threadId, message, bufferedStep.text, userId, agentId, input.abortSignal,
+        );
+        agentMessage = await messageDeliveryService.publish(
+          userId,
+          threadId,
+          bufferedStep.text,
+          'USER_INPUT',
+          {
+            toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
+            blocks: allBlocks.length > 0 ? allBlocks : undefined,
+            attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
+            channelContext: channelContext ? { ...channelContext, includeFeedback } : undefined,
+          }
+        );
+      }
 
-    const response = responseTexts.join('\n\n');
+      response = responseTexts.join('\n\n');
 
-    // Fallback: the stream produced no text step. Publish only if there's still
-    // something to show (tool calls or UI blocks) — e.g. a tool-only turn. When
-    // a turn is canceled before producing anything, skip it rather than render
-    // an empty agent bubble. (In this branch `response` is always '' because any
-    // text step would have set `agentMessage` via the buffered-step publish.)
-    if (!agentMessage && (allToolCalls.length > 0 || allBlocks.length > 0)) {
-      agentMessage = await messageDeliveryService.publish(
-        userId,
-        threadId,
-        response,
-        'USER_INPUT',
-        {
-          toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
-          blocks: allBlocks.length > 0 ? allBlocks : undefined,
-          attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
-          channelContext,
-        }
-      );
-    }
+      // Fallback: the stream produced no text step. Publish only if there's still
+      // something to show (tool calls or UI blocks) — e.g. a tool-only turn. When
+      // a turn is canceled before producing anything, skip it rather than render
+      // an empty agent bubble. (In this branch `response` is always '' because any
+      // text step would have set `agentMessage` via the buffered-step publish.)
+      if (!agentMessage && (allToolCalls.length > 0 || allBlocks.length > 0)) {
+        agentMessage = await messageDeliveryService.publish(
+          userId,
+          threadId,
+          response,
+          'USER_INPUT',
+          {
+            toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
+            blocks: allBlocks.length > 0 ? allBlocks : undefined,
+            attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
+            channelContext,
+          }
+        );
+      }
+    });
 
     trackEvent('chat message handled', userId, {
       'agent.id': agentId,

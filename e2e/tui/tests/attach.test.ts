@@ -5,9 +5,8 @@
  * sentinel so the assertion is deterministic without snapshotting free-form
  * generation.
  *
- * Written with @amiceli/vitest-cucumber (features/attach.feature). Tab
- * path-completion is deliberately NOT exercised here — it's flaky under the
- * test PTY; the cli/ unit tests own that logic.
+ * Tab path-completion is deliberately NOT exercised here — it's flaky under
+ * the test PTY; the cli/ unit tests own that logic.
  */
 
 import fs from 'node:fs';

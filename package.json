@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "db:migrate": "prisma migrate dev",
-    "predev": "prisma migrate deploy --schema=prisma/sqlite/schema.prisma",
+    "predev": "prisma migrate deploy --schema=prisma/sqlite/schema.prisma && prisma generate --schema=prisma/sqlite/schema.prisma",
     "dev": "tsx watch src/index.ts",
     "dev:web": "npm --workspace=prism-agent-web run dev",
     "dev:tui": "npm --workspace=prism-cli run dev",

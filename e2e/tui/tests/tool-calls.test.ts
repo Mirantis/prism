@@ -4,8 +4,6 @@
  * can assert on the input/output blocks once expanded. Also verifies that the
  * Ctrl+O keypress does not leak an `o` into the input field — the
  * `swallowNextChangeRef` race in App.tsx is the regression we care about.
- *
- * Written with @amiceli/vitest-cucumber (features/tool-calls.feature).
  */
 
 import { readFileSync } from 'node:fs';

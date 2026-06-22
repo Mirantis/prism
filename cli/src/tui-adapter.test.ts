@@ -28,19 +28,30 @@ describe('TuiAdapter.startNewSession', () => {
     vi.unstubAllGlobals();
   });
 
-  it('POSTs to /threads with the launch cwd as workspaceRoot', async () => {
-    fetchMock.mockResolvedValue({ ok: true, status: 200 } as Response);
+  it('POSTs to /threads with the launch cwd and returns the new thread id', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ threadId: 'thread-new' }),
+    } as unknown as Response);
 
-    await tuiAdapterService.startNewSession();
+    const threadId = await tuiAdapterService.startNewSession();
 
     expect(fetchMock).toHaveBeenCalledWith('http://example.test:3003/threads', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceRoot: process.cwd() }),
     });
+    expect(threadId).toBe('thread-new');
   });
 
-  it('resolves without throwing when the runtime is unreachable', async () => {
+  it('returns undefined on a non-OK response', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500 } as Response);
+
+    await expect(tuiAdapterService.startNewSession()).resolves.toBeUndefined();
+  });
+
+  it('resolves to undefined without throwing when the runtime is unreachable', async () => {
     fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
 
     await expect(tuiAdapterService.startNewSession()).resolves.toBeUndefined();

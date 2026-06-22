@@ -92,7 +92,8 @@ import { conversationService, type MessageInput } from '../services/conversation
 import { conversationEngineService, type ChatInput } from '../services/conversation-engine.service';
 import { slackAdapterService } from '../services/slack-adapter.service';
 import { attachmentService, detectMediaType, classifyMediaType } from '../services/attachment.service';
-import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '../constants';
+import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, GOAL_MAX_OBJECTIVE_CHARS } from '../constants';
+import { goalService } from '../services/goal.service';
 import {
   agentWorkspaceService,
   ValidationError,
@@ -691,6 +692,142 @@ router.delete('/cron-tasks/:taskId', async (req: Request<{ taskId: string }>, re
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to delete cron task ${req.params.taskId}: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ============================================================================
+// Goal Management
+// ============================================================================
+
+/**
+ * GET /agents/goals
+ * List all goals for the agent (newest first).
+ */
+router.get('/goals', async (_req: Request, res: Response) => {
+  try {
+    const agent = await agentWorkspaceService.getAgent();
+    const goals = await goalService.listGoals(agent.id);
+    res.json(goals);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to list goals: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * GET /agents/threads/:threadId/goal
+ * The current active (or paused) goal for a thread, or null.
+ */
+router.get('/threads/:threadId/goal', async (req: Request<{ threadId: string }>, res: Response) => {
+  try {
+    const goal = await goalService.getGoalForThread(req.params.threadId);
+    res.json(goal ?? null);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to get goal for thread ${req.params.threadId}: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * POST /agents/goals
+ * Start (or replace) the active goal on a thread. One active goal per thread.
+ * Body: { threadId, objective, tokenBudget?, originChannel?, originChannelId? }
+ */
+router.post('/goals', async (req: Request, res: Response) => {
+  try {
+    const { threadId, objective, tokenBudget, originChannel, originChannelId } = req.body;
+    if (!threadId || typeof objective !== 'string' || !objective.trim()) {
+      res.status(400).json({ error: 'Missing required fields: threadId, objective' });
+      return;
+    }
+    if (objective.length > GOAL_MAX_OBJECTIVE_CHARS) {
+      res.status(400).json({ error: `Objective is too long (max ${GOAL_MAX_OBJECTIVE_CHARS} characters)` });
+      return;
+    }
+    // tokenBudget is optional, but when present must be a positive integer —
+    // reject negatives / non-integers / NaN / Infinity rather than passing them
+    // through to a surprising immediate stop or a Prisma 500.
+    if (tokenBudget !== undefined && tokenBudget !== null) {
+      if (typeof tokenBudget !== 'number' || !Number.isInteger(tokenBudget) || tokenBudget <= 0) {
+        res.status(400).json({ error: 'tokenBudget must be a positive integer' });
+        return;
+      }
+    }
+
+    const agent = await agentWorkspaceService.getAgent();
+    const goal = await goalService.startGoal({
+      userId: agent.userId,
+      agentId: agent.id,
+      threadId,
+      objective,
+      tokenBudget: typeof tokenBudget === 'number' ? tokenBudget : null,
+      originChannel: originChannel === 'slack' ? 'slack' : 'websocket',
+      originChannelId: typeof originChannelId === 'string' ? originChannelId : null,
+    });
+    res.status(201).json(goal);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to start goal: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * DELETE /agents/goals/:goalId
+ * Stop a goal (aborts its loop).
+ */
+router.delete('/goals/:goalId', async (req: Request<{ goalId: string }>, res: Response) => {
+  try {
+    const goal = await goalService.stopGoal(req.params.goalId);
+    if (!goal) {
+      res.status(404).json({ error: 'Goal not found' });
+      return;
+    }
+    res.json(goal);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to stop goal ${req.params.goalId}: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * POST /agents/goals/:goalId/pause
+ * Pause an active goal (the loop exits after the current turn).
+ */
+router.post('/goals/:goalId/pause', async (req: Request<{ goalId: string }>, res: Response) => {
+  try {
+    const goal = await goalService.pauseGoal(req.params.goalId);
+    if (!goal) {
+      res.status(404).json({ error: 'Goal not found' });
+      return;
+    }
+    res.json(goal);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to pause goal ${req.params.goalId}: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * POST /agents/goals/:goalId/resume
+ * Resume a paused goal (restarts its loop).
+ */
+router.post('/goals/:goalId/resume', async (req: Request<{ goalId: string }>, res: Response) => {
+  try {
+    const goal = await goalService.resumeGoal(req.params.goalId);
+    if (!goal) {
+      res.status(404).json({ error: 'Goal not found' });
+      return;
+    }
+    res.json(goal);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to resume goal ${req.params.goalId}: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });

@@ -175,16 +175,20 @@ class TuiAdapter {
    * swallowed (we fall back to whatever thread the runtime resolves) rather
    * than blocking the UI.
    */
-  async startNewSession(): Promise<void> {
+  async startNewSession(): Promise<string | undefined> {
     try {
-      await fetch(`${this.httpUrl}/threads`, {
+      const res = await fetch(`${this.httpUrl}/threads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspaceRoot: process.cwd() }),
       });
+      if (!res.ok) return undefined;
+      const body = (await res.json()) as { threadId: string };
+      return body.threadId;
     } catch {
       // Runtime down / unreachable — render anyway; first message will still
       // route through the runtime's thread resolution.
+      return undefined;
     }
   }
 
@@ -280,7 +284,7 @@ class TuiAdapter {
         this.events.emit('status', 'error', payload?.error ?? 'unknown error');
         break;
       }
-      // typing / heartbeat / pong intentionally ignored
+      // thread / typing / heartbeat / pong intentionally ignored
     }
   }
 }

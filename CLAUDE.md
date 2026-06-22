@@ -49,6 +49,22 @@ authoritative state where possible (downloaded file bytes, DB rows via the
 management API) rather than only on-screen text. Both suites need Node 24+
 and AWS/Bedrock credentials in the shell (see `e2e/README.md`).
 
+## Telemetry
+
+Every new **user-facing feature must also emit product telemetry** for its key
+lifecycle events via `trackEvent(name, userId, props)` (`lib/telemetry.ts`).
+Cover at least creation and terminal outcomes (success + failure/error paths) so
+the feature is observable in production. Rules:
+
+- **One owning emitter per event** — callers delegate, never re-emit (a duplicate
+  count silently corrupts the metric). Keep events lean.
+- **No PII in props** — never include free-text user content (e.g. a goal
+  objective, message body, file contents). Emit ids, statuses, counts, and
+  durations (e.g. `goal.turns`, `goal.elapsed_ms`) instead.
+- Mirror the lifecycle shape of existing features: e.g. goals emit
+  `goal started` (creation) and `goal finished` (with `status`, `turns`,
+  `elapsed_ms`); cron emits `cron task scheduled` / `cron task executed`.
+
 ## Deployment shape
 
 One `AGENT_ID` per container, embedded SQLite + sqlite-vec at

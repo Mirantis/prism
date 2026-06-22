@@ -520,6 +520,24 @@ describe('Management Routes', () => {
   // POST /cron-tasks
   // ==========================================================================
 
+  describe('POST /goals validation', () => {
+    it('returns 400 when threadId or objective is missing', async () => {
+      const res = await authedRequest(app).post('/agents/goals').send({ objective: 'do it' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Missing required fields');
+    });
+
+    it('returns 400 for a non-positive-integer tokenBudget', async () => {
+      for (const tokenBudget of [-5, 0, 3.5]) {
+        const res = await authedRequest(app)
+          .post('/agents/goals')
+          .send({ threadId: 't-1', objective: 'do it', tokenBudget });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain('tokenBudget');
+      }
+    });
+  });
+
   describe('POST /cron-tasks', () => {
     const persistedTask = {
       id: 'ct-1',

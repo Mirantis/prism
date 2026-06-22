@@ -8,8 +8,6 @@
  * that logic is also unit-tested in cli/. Panel-close via Esc is isolated to
  * one scenario so its escape-sequence handling can't mask the core
  * open/list/delete assertions.
- *
- * Written with @amiceli/vitest-cucumber (features/panels.feature).
  */
 
 import { readFileSync } from 'node:fs';

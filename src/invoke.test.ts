@@ -285,9 +285,11 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ mode: 'chat' }));
 
       const callArgs = mockGenerateText.mock.calls[0][0];
-      // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file
-      expect(Object.keys(callArgs.tools)).toHaveLength(9);
+      // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file + 2 goal
+      expect(Object.keys(callArgs.tools)).toHaveLength(11);
       expect(Object.keys(callArgs.tools)).toContain('share_file');
+      expect(Object.keys(callArgs.tools)).toContain('create_goal');
+      expect(Object.keys(callArgs.tools)).toContain('get_goal');
     });
 
     it('subagent mode excludes share_file (no channel to the user)', async () => {
@@ -296,6 +298,8 @@ describe('invoke', () => {
       const callArgs = mockGenerateText.mock.calls[0][0];
       const toolNames = Object.keys(callArgs.tools);
       expect(toolNames).not.toContain('share_file');
+      expect(toolNames).not.toContain('create_goal');
+      expect(toolNames).not.toContain('get_goal');
       expect(toolNames).toContain('shell_exec');
     });
 
@@ -307,6 +311,8 @@ describe('invoke', () => {
       expect(toolNames).not.toContain('schedule_task');
       expect(toolNames).not.toContain('list_scheduled_tasks');
       expect(toolNames).not.toContain('delete_scheduled_task');
+      expect(toolNames).not.toContain('create_goal');
+      expect(toolNames).not.toContain('get_goal');
       expect(toolNames).toContain('memory_search');
       expect(toolNames).toContain('update_soul');
       expect(toolNames).toContain('shell_exec');
@@ -325,6 +331,17 @@ describe('invoke', () => {
       // The original regression: cron runs lost the built-in shell tools
       // (shell_exec etc.), so a scheduled task could not run shell commands.
       expect(toolNames).toContain('shell_exec');
+    });
+
+    it('goal mode drops create_goal (no nesting) but keeps get_goal + working tools', async () => {
+      await invoke(createTestInvokeRequest({ mode: 'goal' }));
+
+      const callArgs = mockGenerateText.mock.calls[0][0];
+      const toolNames = Object.keys(callArgs.tools);
+      expect(toolNames).not.toContain('create_goal');
+      expect(toolNames).toContain('get_goal');
+      expect(toolNames).toContain('shell_exec');
+      expect(toolNames).not.toContain('schedule_task');
     });
   });
 

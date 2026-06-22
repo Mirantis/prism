@@ -1,6 +1,7 @@
 import path from 'path';
 import sea from 'node:sea';
 import dotenv from 'dotenv';
+import { GOAL_MAX_TURNS } from './constants';
 
 // In SEA (the packaged prism-server binary), the source tree is gone — the
 // sidecar `.env` lives next to the executable (e.g. ~/.prism/.env). In dev,
@@ -90,4 +91,13 @@ export const config = {
   otelApiKey: process.env.OTEL_EXPORTER_OTLP_API_KEY || '',
   // Identifies the deployment for OTel resource routing (production | staging | development)
   deploymentEnvironment: process.env.DEPLOYMENT_ENVIRONMENT || 'development',
+
+  // Goals — autonomous multi-turn objectives. `goalMaxTurns` overrides the
+  // GOAL_MAX_TURNS hard cap. `goalDefaultTokenBudget` is the per-goal token
+  // budget applied when the caller doesn't specify one — null means unbounded
+  // (only the turn/stall caps bound the goal).
+  goalMaxTurns: process.env.GOAL_MAX_TURNS ? parseInt(process.env.GOAL_MAX_TURNS, 10) : GOAL_MAX_TURNS,
+  goalDefaultTokenBudget: process.env.GOAL_DEFAULT_TOKEN_BUDGET
+    ? parseInt(process.env.GOAL_DEFAULT_TOKEN_BUDGET, 10)
+    : null,
 };
