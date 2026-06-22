@@ -33,7 +33,7 @@ export const config = {
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
   // via start.sh so the container's mounted /data volume is used.
   databaseUrl: process.env.DATABASE_URL ?? 'file:./agent.db',
-  bedrockModelId: process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-4-7',
+  bedrockModelId: process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-4-8',
   bedrockClassificationModelId: process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
   bedrockEmbeddingModelId: process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0',
   awsRegion,

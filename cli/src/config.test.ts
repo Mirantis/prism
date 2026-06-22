@@ -23,7 +23,7 @@ describe('loadConfig', () => {
     });
     const cfg = loadConfig();
     expect(cfg.agentName).toBe('Prism');
-    expect(cfg.modelId).toBe('us.anthropic.claude-opus-4-7');
+    expect(cfg.modelId).toBe('us.anthropic.claude-opus-4-8');
     expect(cfg.hideCursor).toBe(false);
     expect(cfg.hideStatusBar).toBe(false);
     expect(cfg.httpUrl).toBe('http://localhost:3003');
@@ -74,7 +74,7 @@ describe('loadConfig', () => {
     vi.spyOn(process.stderr, 'write').mockReturnValue(true);
     const cfg = loadConfig();
     expect(cfg.hideCursor).toBe(false);
-    expect(cfg.modelId).toBe('us.anthropic.claude-opus-4-7');
+    expect(cfg.modelId).toBe('us.anthropic.claude-opus-4-8');
   });
 });
 
