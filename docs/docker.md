@@ -1,0 +1,80 @@
+# Run with Docker
+
+Prism is published as a multi-arch container image. One container runs one
+agent, with its database persisted in a mounted volume.
+
+- **Image:** `ghcr.io/lensapp/prism-agent:latest`
+- **Architectures:** linux/amd64, linux/arm64
+- **Port:** 3003
+- **Data:** the agent's SQLite database lives at `/data/agent.db` inside the
+  container — mount a volume at `/data` to persist it.
+
+Tagged versions (`vYYYY.M.DDHHMMSS`) and commit-SHA tags are published
+alongside `latest`.
+
+## Run the agent and boot into the terminal UI
+
+```bash
+docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK \
+  ghcr.io/lensapp/prism-agent:latest \
+  /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
+```
+
+This starts the runtime in the background and attaches your terminal to the
+`prism` TUI. A few notes:
+
+- `-e AWS_BEARER_TOKEN_BEDROCK` (no `=`) passes the value through from your
+  parent shell — so export it first: `export AWS_BEARER_TOKEN_BEDROCK=<your-key>`.
+- `-v prism-data:/data` persists the agent's database in the `prism-data` named
+  volume across container restarts.
+- `-p 3003:3003` exposes the runtime so you can also reach the
+  **[Web UI](web-ui.md)** at <http://localhost:3003>.
+
+## Run the runtime only (server)
+
+If you only want the HTTP runtime (Web UI, Slack, WebSocket) and not the
+attached TUI, run the image with its default entrypoint:
+
+```bash
+docker run -d --name prism \
+  -p 3003:3003 \
+  -v prism-data:/data \
+  -e AWS_BEARER_TOKEN_BEDROCK=<your-key> \
+  ghcr.io/lensapp/prism-agent:latest
+```
+
+The image's default command runs `start.sh`, which applies database migrations,
+applies any pending `.prism` import, kicks off an embedding backfill in the
+background, and then launches the server. The container exposes a health check
+on `GET /health`.
+
+You can still open a TUI against a running server container:
+
+```bash
+docker exec -it prism prism
+```
+
+## Persisting data
+
+Everything the agent knows — identity, conversation history, memory, scheduled
+tasks, and Slack mappings — lives in the single SQLite database at
+`/data/agent.db`. Mount a volume at `/data` (named volume or host bind mount) so
+it survives container restarts and image upgrades. Back up the agent by backing
+up that volume, or export a `.prism` snapshot from the **[Web UI](web-ui.md)**.
+
+`start.sh` defaults `DATABASE_URL` to `file:/data/agent.db`; you generally don't
+need to set it. See **[Configuration](configuration.md)** for the rest of the
+environment variables.
+
+## Pinning the agent identity
+
+By default the container generates a fresh agent UUID on first boot and reuses
+it on later boots (it's stored in the database). To pin a specific identity —
+useful when re-creating a container against an existing data volume — set
+`AGENT_ID` to a UUID.
+
+## What's in the image
+
+The image bundles the tools the agent's shell can reach (`git`, `gh`, `kubectl`,
+`aws`, `jq`, `yq`, `ripgrep`, and Claude Code) so the agent can do real work out
+of the box. It runs as a non-root `node` user and drops privileges after setup.

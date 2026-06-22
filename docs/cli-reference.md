@@ -1,0 +1,119 @@
+# CLI reference
+
+Reference for the `prism` terminal UI — flags, slash commands, keyboard
+shortcuts, and the settings file. For a guided tour, see
+**[Terminal UI](terminal-ui.md)**.
+
+```
+prism [flags]
+```
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--resume` | Show a picker of previous conversations to resume, instead of starting fresh. |
+| `--version`, `-v` | Print the version and exit. |
+| `--help`, `-h` | Print help and exit. |
+
+## Connecting to the runtime
+
+`prism` talks to a `prism-server` over HTTP and a WebSocket. By default it uses
+`http://localhost:3003`. Override it with:
+
+- the `PRISM_HTTP_URL` environment variable, or
+- the `httpUrl` key in `~/.prism/settings.json`.
+
+There's no authentication for the bundled single-agent runtime — the TUI talks
+to it directly on localhost.
+
+## Slash commands
+
+Type `/` in the chat input to open the command popup; filter by typing, **Tab**
+to complete, **Enter** to run.
+
+| Command | Arguments | Description |
+|---------|-----------|-------------|
+| `/help` | — | List all commands. |
+| `/copy` | — | Copy the most recent message to the clipboard. |
+| `/attach` | `<path>` | Stage a file (≤10 MB) to send with the next message. Offers path completion. |
+| `/detach` | — | Remove all staged attachments. |
+| `/save` | `[dir\|file]` | Save files shared by the agent's most recent message to disk (current dir by default). |
+| `/rename` | `<name>` | Rename the agent (1–64 characters). |
+| `/model` | `<id>` \| `reset` | Set the agent's model, or reset to the server default. |
+| `/heartbeat` | `status` \| `start` \| `stop` \| `trigger` \| `every <N>m`\|`<N>h` | Control the heartbeat (interval 1 min – 7 days). |
+| `/schedules` | — | Open the scheduled-tasks panel. |
+| `/config` | — | Open the identity/config viewer panel. |
+| `/exit` | — | Shut down the TUI. |
+
+## Keyboard shortcuts
+
+### Chat
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Send the message (or run the slash command). |
+| `Esc` | Cancel the in-flight response while the agent is thinking. |
+| `Ctrl+O` | Expand / collapse tool calls in the latest agent message. |
+| `Up` / `Down` | Walk back/forward through your message history (from an empty input). |
+| `Ctrl+C` | Quit. |
+
+### Command popup (while typing `/…`)
+
+| Key | Action |
+|-----|--------|
+| `Up` / `Down` | Move the selection. |
+| `Tab` | Complete the selected command or path. |
+
+### Resume picker (`--resume`)
+
+| Key | Action |
+|-----|--------|
+| `Up` / `Down` | Move between threads. |
+| `Enter` | Resume the selected thread. |
+| `Esc` | Cancel and exit. |
+
+### Schedules panel (`/schedules`)
+
+| Key | Action |
+|-----|--------|
+| `Up` / `Down` | Navigate the list. |
+| `n` | Create a new schedule. |
+| `d` | Delete the selected schedule (`y` to confirm). |
+| `Tab` / arrows | Move between fields in the create form. |
+| `Enter` | Submit the form. |
+| `Esc` | Close the panel / cancel. |
+
+### Config panel (`/config`)
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `←` `→` | Move between the file list and the content pane. |
+| `Up` / `Down` | Select a document / scroll content. |
+| `Page Up` / `Page Down` | Page through content. |
+| `Esc` | Close the panel. |
+
+## Settings file
+
+`~/.prism/settings.json` configures the TUI. All keys are optional; missing keys
+fall back to defaults, and a malformed file is ignored.
+
+```json
+{
+  "agentName": "Prism",
+  "modelId": "us.anthropic.claude-opus-4-7",
+  "httpUrl": "http://localhost:3003",
+  "hideCursor": false,
+  "hideStatusBar": false
+}
+```
+
+| Key | Purpose | Default |
+|-----|---------|---------|
+| `agentName` | Display name in the header and chat | `Prism` |
+| `modelId` | Model label shown in the status bar (display only) | runtime default |
+| `httpUrl` | Runtime base URL | `http://localhost:3003` |
+| `hideCursor` | Hide the input cursor (accessibility) | `false` |
+| `hideStatusBar` | Hide the bottom status bar (accessibility) | `false` |
+
+`PRISM_HTTP_URL` overrides `httpUrl` when set.
