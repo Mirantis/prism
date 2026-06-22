@@ -26,7 +26,7 @@ missing or malformed config falls back silently to the bundled defaults.
 ```json
 {
   "agentName": "Prism",
-  "modelId": "us.anthropic.claude-opus-4-7",
+  "modelId": "us.anthropic.claude-opus-4-8",
   "hideCursor": false,
   "hideStatusBar": false,
   "httpUrl": "http://localhost:3003"
@@ -36,7 +36,7 @@ missing or malformed config falls back silently to the bundled defaults.
 | Key             | Type    | Default                          | Purpose                                                              |
 | --------------- | ------- | -------------------------------- | -------------------------------------------------------------------- |
 | `agentName`     | string  | `Prism`                          | Display name in the chat prefix and header.                          |
-| `modelId`       | string  | `us.anthropic.claude-opus-4-7`   | Display only — pretty-printed in the status bar.                     |
+| `modelId`       | string  | `us.anthropic.claude-opus-4-8`   | Display only — pretty-printed in the status bar.                     |
 | `hideCursor`    | boolean | `false`                          | Hide the input cursor (a11y).                                        |
 | `hideStatusBar` | boolean | `false`                          | Hide the bottom status bar (a11y).                                   |
 | `httpUrl`       | string  | `http://localhost:3003`          | Agent-runtime base URL. WebSocket URL is derived (`/api/ws`, ws/wss). |
