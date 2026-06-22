@@ -2,8 +2,6 @@
  * End-to-end chat round-trip against real Bedrock via prism-cli → WS →
  * agent-runtime. The prompt constrains the agent's reply so we can assert on a
  * deterministic substring without snapshotting free-form generation.
- *
- * Written with @amiceli/vitest-cucumber (features/chat.feature).
  */
 
 import { readFileSync } from 'node:fs';

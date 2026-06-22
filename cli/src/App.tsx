@@ -94,7 +94,11 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // history on selection instead of creating a new one.
   useEffect(() => {
     if (resume) return;
-    void tuiAdapterService.startNewSession();
+    // Pin the freshly-created session thread id so slash commands that need a
+    // thread (e.g. /goal) work immediately, before any message is sent.
+    void tuiAdapterService.startNewSession().then((threadId) => {
+      if (threadId) setActiveThreadId(threadId);
+    });
   }, [userId, agent.id, resume]);
 
   // Subscribe to adapter event bus.
@@ -238,6 +242,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         rawArgs,
         openPanel,
         api: apiClient,
+        threadId: activeThreadId ?? null,
         recentAttachments,
         stagedAttachments: staged,
         stageAttachment,
@@ -248,7 +253,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       // synthetic SYSTEM message when there's actual text to show.
       if (result) appendSystemMessage(result);
     },
-    [entries, appendSystemMessage, triggerShutdown, openPanel, staged, stageAttachment, clearStagedAttachments],
+    [entries, appendSystemMessage, triggerShutdown, openPanel, staged, stageAttachment, clearStagedAttachments, activeThreadId],
   );
 
   // Ctrl+C must work everywhere, including while a panel owns the screen, so

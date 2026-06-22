@@ -24,7 +24,7 @@ import { logger } from '../logger';
 /**
  * What triggered this message
  */
-export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK';
+export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'GOAL';
 
 /**
  * Options for publishing a message
@@ -143,7 +143,7 @@ export class MessageDeliveryService {
     agentId: string,
     userId: string,
     content: string,
-    triggeredBy: 'HEARTBEAT' | 'CRON_TASK',
+    triggeredBy: 'HEARTBEAT' | 'CRON_TASK' | 'GOAL',
     options?: PublishOptions
   ): Promise<ConversationMessage> {
     // Resolve (or create) the latest thread for this user

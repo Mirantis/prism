@@ -28,6 +28,7 @@ import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
 import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
 import { heartbeatService } from './services/heartbeat.service';
 import { cronSchedulerService } from './services/cron-scheduler.service';
+import { goalService } from './services/goal.service';
 import { sessionManagerService } from './services/session-manager.service';
 import { slackAdapterService } from './services/slack-adapter.service';
 import { webSocketAdapterService } from './services/websocket-adapter.service';
@@ -103,6 +104,9 @@ const initialize = async () => {
     }
     logger.info(`Cron tasks scheduled: ${cronTasks.length}`);
 
+    // Resume any goal that was still active when the process last stopped.
+    await goalService.restoreActiveGoals(agent.id);
+
     await sessionManagerService.initialize();
     logger.info('Session manager initialized');
 
@@ -148,6 +152,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
 
   heartbeatService.stopAll();
   cronSchedulerService.stopAll();
+  goalService.stopAll();
   sessionManagerService.stopAll();
   if (orphanCleanupTimer) clearInterval(orphanCleanupTimer);
   webSocketGatewayService.closeAll();

@@ -26,6 +26,8 @@ const { adapterStub, apiStub } = vi.hoisted(() => {
     apiStub: {
       listCronTasks: vi.fn().mockResolvedValue([]),
       getDetails: vi.fn().mockResolvedValue({}),
+      createGoal: vi.fn().mockResolvedValue({ objective: 'x', maxTurns: 100 }),
+      getThreadGoal: vi.fn().mockResolvedValue(null),
       uploadAttachment: vi.fn().mockResolvedValue({
         id: 'att-1',
         filename: 'report.txt',
@@ -68,6 +70,8 @@ describe('App', () => {
     adapterStub.submitUserMessage.mockClear();
     apiStub.listCronTasks.mockClear();
     apiStub.getDetails.mockClear();
+    apiStub.createGoal.mockClear();
+    apiStub.getThreadGoal.mockClear();
     apiStub.uploadAttachment.mockClear();
     apiStub.deleteAttachment.mockClear();
     adapterStub.cancel.mockClear();
@@ -168,6 +172,27 @@ describe('App', () => {
     // Panel header replaces the chat surface.
     expect(frame).toContain('Schedules');
     expect(apiStub.listCronTasks).toHaveBeenCalled();
+    unmount();
+  });
+
+  it('/goal works on a fresh session with no prior message (thread pinned from startup)', async () => {
+    // The fresh-launch session creates a thread server-side; the CLI pins its
+    // id so /goal has a thread immediately, without sending a message first.
+    adapterStub.startNewSession.mockResolvedValueOnce('thread-startup');
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    const flush = () => new Promise((r) => setImmediate(r));
+    await flush(); // let startNewSession().then(pin) settle
+    await flush();
+    stdin.write('/goal make the tests pass');
+    await flush();
+    stdin.write('\r');
+    await flush();
+    await flush();
+    expect(apiStub.createGoal).toHaveBeenCalledWith({
+      threadId: 'thread-startup',
+      objective: 'make the tests pass',
+    });
+    expect(lastFrame() ?? '').not.toContain('Start a conversation');
     unmount();
   });
 

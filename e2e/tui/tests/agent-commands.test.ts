@@ -5,10 +5,6 @@
  * on-screen SYSTEM reply is asserted in the PTY frame, and the persistent
  * side effect is confirmed with a direct REST query against the runtime.
  *
- * Written with @amiceli/vitest-cucumber (features/agent-commands.feature). The
- * shared "I run …" / "I see …" steps are registered once via defineSteps;
- * scenario-specific REST assertions are bound inline.
- *
  * /heartbeat trigger is intentionally omitted: it awaits a full heartbeat run
  * (LLM) and is covered by the cli/ unit tests instead.
  */

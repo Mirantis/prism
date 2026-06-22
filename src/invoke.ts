@@ -14,6 +14,7 @@ import { createProvider } from './lib/create-provider';
 import { getMCPTools } from './lib/mcp-client';
 import { getMemoryTools } from './tools/memory';
 import { getCronTools } from './tools/cron';
+import { getGoalTools } from './tools/goals';
 import { getAgentConfigTools } from './tools/agent-config';
 import { getShellTools } from './tools/shell/index';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from './tools/share-file';
@@ -110,6 +111,13 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       {
         ...getMemoryTools(request.userId, request.agentId),
         ...getCronTools(request.userId, request.agentId),
+        ...getGoalTools(
+          request.userId,
+          request.agentId,
+          request.threadId,
+          request.originChannel ?? 'websocket',
+          request.originChannelId,
+        ),
         ...getAgentConfigTools(),
         ...getShellTools(request.workspaceRoot),
         ...getShareFileTools(),
@@ -256,9 +264,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
         const blocks = extractBlocks(step.text);
         const attachmentIds = extractAttachmentIds(step.toolCalls, step.toolResults);
+        const totalTokens = step.usage?.totalTokens;
         channel.push({
           text: step.text,
           toolCalls: stepToolCalls,
+          ...(typeof totalTokens === 'number' ? { usage: { totalTokens } } : {}),
           blocks,
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         });
@@ -283,7 +293,13 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         });
 
         const earlyStoppingBlocks = extractBlocks(summaryResult.text);
-        channel.push({ text: summaryResult.text, toolCalls: [], blocks: earlyStoppingBlocks });
+        const summaryTokens = summaryResult.usage?.totalTokens;
+        channel.push({
+          text: summaryResult.text,
+          toolCalls: [],
+          ...(typeof summaryTokens === 'number' ? { usage: { totalTokens: summaryTokens } } : {}),
+          blocks: earlyStoppingBlocks,
+        });
       }
 
        channel.close();
@@ -360,9 +376,10 @@ export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
   const response = joinStepTexts(steps) || '';
   const allBlocks = steps.flatMap((s) => s.blocks ?? []);
   const allAttachmentIds = steps.flatMap((s) => s.attachmentIds ?? []);
+  const totalTokens = steps.reduce((sum, s) => sum + (s.usage?.totalTokens ?? 0), 0);
 
   logger.info(
-    `${agentName} responded: ${response.length} chars, ${allToolCalls.length} tool call(s)`
+    `${agentName} responded: ${response.length} chars, ${allToolCalls.length} tool call(s), ${totalTokens} token(s)`
   );
 
   return {
@@ -370,6 +387,7 @@ export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
     toolCalls: allToolCalls,
     ...(allBlocks.length > 0 ? { blocks: allBlocks } : {}),
     ...(allAttachmentIds.length > 0 ? { attachmentIds: allAttachmentIds } : {}),
+    usage: { totalTokens },
     steps,
     ...(errorMeta ? { error: errorMeta } : {}),
   };
@@ -431,36 +449,50 @@ export function withToolsCacheControl(tools: Record<string, Tool>): Record<strin
 }
 
 /**
- * Filter backend MCP tools by invocation mode.
+ * Filter built-in tools by invocation mode.
  *
  * - chat: All tools
- * - heartbeat/cron: All tools except cron-management tools
+ * - heartbeat/cron: minus cron-management AND goal tools (autonomous runs don't
+ *   reshape the schedule or spawn goals)
+ * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
+ * - goal: minus create_goal (no nested goals) and cron-management; get_goal stays
  */
 function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<string, Tool> {
+  // Goal-management tools are chat-only entry points; a goal turn keeps only
+  // get_goal so it can introspect its own progress.
+  const goalToolNames = new Set(['create_goal', 'get_goal']);
+  const cronToolNames = new Set(['schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task']);
+
+  const omit = (names: Set<string>): Record<string, Tool> => {
+    const result: Record<string, Tool> = {};
+    for (const [name, tool] of Object.entries(tools)) {
+      if (!names.has(name)) result[name] = tool;
+    }
+    return result;
+  };
+
   if (mode === 'chat') {
     return tools;
   }
 
   // Subagents return their result as text to the parent invocation (via the
   // Task tool) — they have no direct channel to the user, so a file they
-  // "shared" would never be delivered. Drop share_file to avoid silent loss.
+  // "shared" would never be delivered. Drop share_file. They also don't own a
+  // user thread, so drop goal tools.
   if (mode === 'subagent') {
-    const { [SHARE_FILE_TOOL_NAME]: _omit, ...rest } = tools;
-    return rest;
+    return omit(new Set([SHARE_FILE_TOOL_NAME, ...goalToolNames]));
   }
 
-  const cronToolNames = new Set(['schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task']);
-
   // heartbeat and cron are autonomous runs: full tool access, minus the
-  // cron-management tools so autonomous runs don't reshape the schedule.
+  // cron-management and goal tools so they don't reshape the schedule or goals.
   if (mode === 'heartbeat' || mode === 'cron') {
-    const filtered: Record<string, Tool> = {};
-    for (const [name, tool] of Object.entries(tools)) {
-      if (!cronToolNames.has(name)) {
-        filtered[name] = tool;
-      }
-    }
-    return filtered;
+    return omit(new Set([...cronToolNames, ...goalToolNames]));
+  }
+
+  // A goal turn does real work but must not create/nest a goal or reshape the
+  // schedule.
+  if (mode === 'goal') {
+    return omit(new Set(['create_goal', ...cronToolNames]));
   }
 
   return tools;

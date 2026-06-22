@@ -28,3 +28,26 @@ export const MAX_INLINE_TEXT_CHARS = 100_000;
  * mirrored as a UX guard in the web composer and CLI.
  */
 export const MAX_ATTACHMENTS_PER_MESSAGE = 100;
+
+// ============================================================================
+// Goals
+// ============================================================================
+
+/**
+ * Default hard cap on autonomous goal turns before the loop stops with status
+ * `turn_limited`. Env-overridable via `config.goalMaxTurns` (GOAL_MAX_TURNS).
+ */
+export const GOAL_MAX_TURNS = 100;
+
+/** Max characters allowed in a goal objective (matches Claude Code / Codex). */
+export const GOAL_MAX_OBJECTIVE_CHARS = 4000;
+
+/**
+ * Consecutive zero-progress goal turns (a turn with no tool calls while the
+ * completion gate still says CONTINUE) before the goal is marked `blocked`.
+ * Stops a goal that can no longer make headway from spinning to the turn cap.
+ */
+export const GOAL_MAX_STALL_TURNS = 2;
+
+/** Pause between goal turns so the background loop never hot-spins. */
+export const GOAL_TURN_DELAY_MS = 200;

@@ -5,9 +5,6 @@
  * the latest-thread pointer is left untouched — resuming pins by id, it does
  * NOT bump createdAt), Escape to exit, and the empty-state message. No Bedrock
  * interaction required.
- *
- * Written with @amiceli/vitest-cucumber; the Gherkin scenarios live in
- * features/resume.feature.
  */
 
 import fs from 'node:fs';

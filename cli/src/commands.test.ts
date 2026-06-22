@@ -33,6 +33,12 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     listCronTasks: vi.fn(),
     createCronTask: vi.fn(),
     deleteCronTask: vi.fn(),
+    createGoal: vi.fn(),
+    getThreadGoal: vi.fn(),
+    listGoals: vi.fn(),
+    stopGoal: vi.fn(),
+    pauseGoal: vi.fn(),
+    resumeGoal: vi.fn(),
     uploadAttachment: vi.fn(),
     deleteAttachment: vi.fn(),
     downloadAttachment: vi.fn(),
@@ -48,6 +54,7 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
     rawArgs: '',
     openPanel: vi.fn(),
     api: stubApi() as unknown as ApiClient,
+    threadId: 'thread-1',
     recentAttachments: [],
     stagedAttachments: [],
     stageAttachment: vi.fn(),
@@ -121,6 +128,95 @@ describe('parseCommandLine', () => {
       args: [],
       rawArgs: '',
     });
+  });
+});
+
+describe('/goal routing', () => {
+  const sampleGoal = {
+    id: 'g1',
+    threadId: 'thread-1',
+    objective: 'make the tests pass',
+    status: 'active',
+    tokenBudget: null,
+    tokensUsed: 12,
+    turnCount: 3,
+    maxTurns: 100,
+    stallCount: 0,
+    lastReason: 'In progress.',
+    originChannel: 'websocket',
+    originChannelId: null,
+    createdAt: '2026-06-18T00:00:00.000Z',
+    updatedAt: '2026-06-18T00:00:00.000Z',
+    completedAt: null,
+  };
+
+  it('sets a new goal from a free-text objective', async () => {
+    const api = stubApi();
+    api.createGoal.mockResolvedValue({ ...sampleGoal, objective: 'ship it', maxTurns: 100 });
+    const out = await cmd('/goal').run(
+      makeCtx({ args: ['ship', 'it'], rawArgs: 'ship it', api: api as unknown as ApiClient }),
+    );
+    expect(api.createGoal).toHaveBeenCalledWith({ threadId: 'thread-1', objective: 'ship it' });
+    expect(out).toContain('Goal set');
+    expect(out).toContain('ship it');
+  });
+
+  it('treats a multi-word input starting with a reserved word as an objective', async () => {
+    const api = stubApi();
+    api.createGoal.mockResolvedValue({ ...sampleGoal, objective: 'stop the flakiness' });
+    const out = await cmd('/goal').run(
+      makeCtx({ args: ['stop', 'the', 'flakiness'], rawArgs: 'stop the flakiness', api: api as unknown as ApiClient }),
+    );
+    expect(api.createGoal).toHaveBeenCalledTimes(1);
+    expect(api.stopGoal).not.toHaveBeenCalled();
+    expect(out).toContain('Goal set');
+  });
+
+  it('shows status for the active goal when called with no args', async () => {
+    const api = stubApi();
+    api.getThreadGoal.mockResolvedValue(sampleGoal);
+    const out = await cmd('/goal').run(makeCtx({ args: [], rawArgs: '', api: api as unknown as ApiClient }));
+    expect(api.getThreadGoal).toHaveBeenCalledWith('thread-1');
+    expect(out).toContain('make the tests pass');
+    expect(out).toContain('3/100');
+  });
+
+  it('reports when there is no active goal', async () => {
+    const api = stubApi();
+    api.getThreadGoal.mockResolvedValue(null);
+    const out = await cmd('/goal').run(makeCtx({ args: [], rawArgs: '', api: api as unknown as ApiClient }));
+    expect(out).toContain('No active goal');
+  });
+
+  it('stop resolves the thread goal then stops it', async () => {
+    const api = stubApi();
+    api.getThreadGoal.mockResolvedValue(sampleGoal);
+    api.stopGoal.mockResolvedValue({ ...sampleGoal, status: 'stopped' });
+    const out = await cmd('/goal').run(
+      makeCtx({ args: ['stop'], rawArgs: 'stop', api: api as unknown as ApiClient }),
+    );
+    expect(api.getThreadGoal).toHaveBeenCalledWith('thread-1');
+    expect(api.stopGoal).toHaveBeenCalledWith('g1');
+    expect(out).toContain('Goal stopped');
+  });
+
+  it('list calls listGoals', async () => {
+    const api = stubApi();
+    api.listGoals.mockResolvedValue([sampleGoal]);
+    const out = await cmd('/goal').run(
+      makeCtx({ args: ['list'], rawArgs: 'list', api: api as unknown as ApiClient }),
+    );
+    expect(api.listGoals).toHaveBeenCalledTimes(1);
+    expect(out).toContain('make the tests pass');
+  });
+
+  it('refuses to set a goal before a conversation exists', async () => {
+    const api = stubApi();
+    const out = await cmd('/goal').run(
+      makeCtx({ args: ['do', 'stuff'], rawArgs: 'do stuff', threadId: null, api: api as unknown as ApiClient }),
+    );
+    expect(api.createGoal).not.toHaveBeenCalled();
+    expect(out).toContain('Start a conversation');
   });
 });
 

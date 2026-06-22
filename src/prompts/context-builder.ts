@@ -75,7 +75,7 @@ export interface SystemPromptPart {
  */
 export async function buildSystemPromptParts(
   context: AgentContext,
-  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' = 'chat',
+  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' = 'chat',
   slackMessages?: SlackTriggerMessage[],
   query?: string,
 ): Promise<SystemPromptPart[]> {
@@ -132,6 +132,10 @@ export async function buildSystemPromptParts(
     }
   } else if (mode === 'cron') {
     stableSections.push(getCronInstructions());
+  } else if (mode === 'goal') {
+    // Goal turns do real work like a chat turn, plus the autonomous-goal framing.
+    stableSections.push(getChatInstructions());
+    stableSections.push(getGoalInstructions());
   } else {
     stableSections.push(getChatInstructions());
   }
@@ -189,7 +193,7 @@ export async function buildSystemPromptParts(
  */
 export async function buildSystemPrompt(
   context: AgentContext,
-  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' = 'chat',
+  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' = 'chat',
   slackMessages?: SlackTriggerMessage[],
   query?: string,
 ): Promise<string> {
@@ -442,6 +446,17 @@ function getCronInstructions(): string {
   return `# Scheduled Task Mode
 
 You are executing a scheduled task. Follow the task instruction, report findings, and store important observations in memory.`;
+}
+
+function getGoalInstructions(): string {
+  return `# Goal Mode
+
+You are autonomously pursuing a standing objective across multiple turns. The current
+turn's objective and progress are in the user message. Each turn, make concrete,
+verifiable progress using your tools rather than narrating or re-doing prior work. A
+separate checker decides after each turn whether the objective is complete — you do not
+need to declare completion with any tool; just do the work and state clearly when the
+objective is fully met. If you become blocked, explain precisely what is blocking you.`;
 }
 
 function getSubagentInstructions(): string {

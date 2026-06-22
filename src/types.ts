@@ -52,7 +52,7 @@ export interface SlackTriggerMessage {
 export interface InvokeRequest {
   userId: string;
   agentId: string;
-  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent';
+  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal';
   prompt: string;
   threadId?: string;
   /**
@@ -61,6 +61,13 @@ export interface InvokeRequest {
    */
   workspaceRoot?: string;
   isChannelMessage?: boolean;
+  /**
+   * Originating channel of this turn, threaded through so the `create_goal`
+   * tool can record where to deliver a goal's autonomous turns. Defaults to
+   * 'websocket' when unset.
+   */
+  originChannel?: 'slack' | 'websocket';
+  originChannelId?: string;
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
   slackMessages?: SlackTriggerMessage[];
@@ -105,6 +112,10 @@ export interface InvokeError {
 export interface InvokeStep {
   text: string;
   toolCalls: ToolCallRecord[];
+  // Total tokens (input + output) the model reported for this step, when the
+  // provider returns usage. Aggregated by invoke() into InvokeResponse.usage so
+  // callers (e.g. the goal loop's per-goal token budget) can meter spend.
+  usage?: { totalTokens: number };
   blocks?: UIBlock[];
   // Ids of MessageAttachment rows the agent shared during this step (via the
   // share_file tool). The delivery layer links these to the published message
@@ -122,6 +133,9 @@ export interface InvokeResponse {
   blocks?: UIBlock[];
   // Aggregated across all steps — files the agent shared this invocation.
   attachmentIds?: string[];
+  // Sum of per-step totalTokens across the invocation (0 when the provider
+  // reported no usage). Used by the goal loop to meter per-goal token budgets.
+  usage?: { totalTokens: number };
   steps: InvokeStep[];
   error?: InvokeError;
 }

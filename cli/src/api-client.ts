@@ -76,6 +76,24 @@ export interface CronTask {
   updatedAt: string;
 }
 
+export interface Goal {
+  id: string;
+  threadId: string;
+  objective: string;
+  status: string;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  turnCount: number;
+  maxTurns: number;
+  stallCount: number;
+  lastReason: string | null;
+  originChannel: string;
+  originChannelId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
 export interface ApiClient {
   getMe(): Promise<{ agentId: string; userId: string; name: string }>;
   getDetails(): Promise<AgentDetails>;
@@ -94,6 +112,12 @@ export interface ApiClient {
     instruction?: string;
   }): Promise<CronTask>;
   deleteCronTask(taskId: string): Promise<{ success: boolean }>;
+  createGoal(input: { threadId: string; objective: string; tokenBudget?: number }): Promise<Goal>;
+  getThreadGoal(threadId: string): Promise<Goal | null>;
+  listGoals(): Promise<Goal[]>;
+  stopGoal(goalId: string): Promise<Goal>;
+  pauseGoal(goalId: string): Promise<Goal>;
+  resumeGoal(goalId: string): Promise<Goal>;
   uploadAttachment(filePath: string): Promise<AttachmentMeta>;
   deleteAttachment(id: string): Promise<{ success: boolean }>;
   downloadAttachment(id: string): Promise<Buffer>;
@@ -193,6 +217,31 @@ export class HttpApiClient implements ApiClient {
 
   deleteCronTask(taskId: string): Promise<{ success: boolean }> {
     return this.request('DELETE', `/agents/cron-tasks/${taskId}`);
+  }
+
+  createGoal(input: { threadId: string; objective: string; tokenBudget?: number }): Promise<Goal> {
+    // The CLI receives goal-turn output over the WS gateway, so deliver there.
+    return this.request('POST', '/agents/goals', { ...input, originChannel: 'websocket' });
+  }
+
+  getThreadGoal(threadId: string): Promise<Goal | null> {
+    return this.request('GET', `/agents/threads/${threadId}/goal`);
+  }
+
+  listGoals(): Promise<Goal[]> {
+    return this.request('GET', '/agents/goals');
+  }
+
+  stopGoal(goalId: string): Promise<Goal> {
+    return this.request('DELETE', `/agents/goals/${goalId}`);
+  }
+
+  pauseGoal(goalId: string): Promise<Goal> {
+    return this.request('POST', `/agents/goals/${goalId}/pause`);
+  }
+
+  resumeGoal(goalId: string): Promise<Goal> {
+    return this.request('POST', `/agents/goals/${goalId}/resume`);
   }
 
   /**
