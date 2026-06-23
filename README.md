@@ -143,10 +143,16 @@ Default models:
 - **Classification gate**: Claude Haiku (fast, deterministic)
 - **Embeddings**: Amazon Titan v2
 
-All three are configurable. Prompt caching is built in: the stable parts of
-the system prompt — identity, curated memory, vision, operating manual —
-cache across turns; only the dynamic parts (timestamps, recalled memories)
-re-process.
+All three are configurable. Heartbeat and scheduled (cron) runs use the main
+loop model by default, but each can be pointed at its own model — e.g. a
+cheaper model for routine heartbeats while chat stays on a stronger one. Set
+them from the Profile page, the TUI (`/heartbeat-model`, `/cron-model`), or as
+bootstrap defaults in `~/.prism/settings.json`; leave them empty to inherit the
+main model.
+
+Prompt caching is built in: the stable parts of the system prompt — identity,
+curated memory, vision, operating manual — cache across turns; only the dynamic
+parts (timestamps, recalled memories) re-process.
 
 ### Tools the agent can use
 
@@ -203,13 +209,18 @@ channels queue, and incoming traffic wakes the heartbeat between scheduled
 runs. Pending messages are drained atomically so no message is orphaned, even
 if multiple arrive while the agent is busy.
 
+The heartbeat's reasoning runs on the main model by default, or a
+heartbeat-specific model if one is set (the Haiku DELIVER/SUPPRESS gate is
+always its own fast model).
+
 ### Scheduled tasks
 
 The agent puts work on its own calendar. Tasks can be one-shot or recurring,
 specified in natural language or cron syntax, and survive restarts. One-shot
 tasks delete themselves after running; recurring tasks track their last run,
 their next run, and consecutive errors. The agent can list, run-now, or
-cancel its own tasks.
+cancel its own tasks. Scheduled runs use the main model by default, or a
+scheduled-task-specific model if one is set.
 
 ### Sessions and idle handling
 

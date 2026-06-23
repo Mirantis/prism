@@ -52,6 +52,8 @@ Type `/` to open a command popup; keep typing to filter, **Tab** to complete,
 | `/save [dir\|file]` | Save files the agent shared in its last message to disk |
 | `/rename <name>` | Rename the agent (1–64 characters) |
 | `/model <id\|reset>` | Set the agent's model, or `reset` to the server default |
+| `/heartbeat-model <id\|reset>` | Set the heartbeat model, or `reset` to inherit the main model |
+| `/cron-model <id\|reset>` | Set the scheduled-task model, or `reset` to inherit the main model |
 | `/heartbeat <…>` | Control the heartbeat — see below |
 | `/goal <…>` | Set or manage a background [goal](#goal) — see below |
 | `/skills [list\|run <name>]` | List installed [skills](skills.md), or run one |
@@ -107,7 +109,8 @@ schedule, next run, and active state. From the list:
 ### Config panel (`/config`)
 
 A two-pane viewer for the agent's identity. The left pane shows the agent's
-name, model, timezone, and heartbeat status, plus a list of the seven identity
+name, model (plus the heartbeat and scheduled-task models, or `(main)` when they
+inherit it), timezone, and heartbeat status, plus a list of the seven identity
 documents (Soul, User, Memory, Heartbeat, Vision, Agent, Bootstrap). The right pane shows the selected document's content. Use Tab or the
 left/right arrows to move between panes, up/down to scroll, and Page Up/Down to
 page through long documents. It's a viewer — edit these documents through

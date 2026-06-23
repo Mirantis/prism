@@ -17,6 +17,15 @@ On each tick the agent:
 You configure *what* it checks by editing the Heartbeat document (just tell the
 agent what to watch). You configure *how often* with the interval.
 
+The check itself runs on the agent's main model by default, but you can give
+the heartbeat its own model — useful for running routine checks on a cheaper
+model. Set it from the **[Web UI → Profile](web-ui.md#profile)**, the
+**[Terminal UI](terminal-ui.md#slash-commands)** (`/heartbeat-model <id>`), or as
+a bootstrap default in
+**[`~/.prism/settings.json`](configuration.md#bootstrap-model-defaults-prismsettingsjson)**;
+leave it empty to use the main model. (The DELIVER/SUPPRESS gate below always
+runs on its own fast model, regardless.)
+
 ## Cadence
 
 - **Default interval:** every **8 hours**.

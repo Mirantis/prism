@@ -41,6 +41,8 @@ to complete, **Enter** to run.
 | `/save` | `[dir\|file]` | Save files shared by the agent's most recent message to disk (current dir by default). |
 | `/rename` | `<name>` | Rename the agent (1–64 characters). |
 | `/model` | `<id>` \| `reset` | Set the agent's model, or reset to the server default. |
+| `/heartbeat-model` | `<id>` \| `reset` | Set the heartbeat model, or `reset` to inherit the main model. |
+| `/cron-model` | `<id>` \| `reset` | Set the scheduled-task model, or `reset` to inherit the main model. |
 | `/heartbeat` | `status` \| `start` \| `stop` \| `trigger` \| `every <N>m`\|`<N>h` | Control the heartbeat (interval 1 min – 7 days). |
 | `/goal` | `<objective>` \| `status` \| `list` \| `pause` \| `resume` \| `stop` | Set or manage a background goal the agent pursues across turns. |
 | `/skills` | `[list]` \| `run <name>` | List installed [skills](skills.md), or run one. |
@@ -104,6 +106,8 @@ fall back to defaults, and a malformed file is ignored.
 {
   "agentName": "Prism",
   "modelId": "us.anthropic.claude-opus-4-8",
+  "heartbeatModelId": "us.anthropic.claude-haiku-4-5",
+  "cronModelId": "us.anthropic.claude-sonnet-4-6",
   "httpUrl": "http://localhost:3003",
   "hideCursor": false,
   "hideStatusBar": false
@@ -113,9 +117,14 @@ fall back to defaults, and a malformed file is ignored.
 | Key | Purpose | Default |
 |-----|---------|---------|
 | `agentName` | Display name in the header and chat | `Prism` |
-| `modelId` | Model label shown in the status bar (display only) | runtime default |
+| `modelId` | Model label shown in the status bar; also seeds the main model when the runtime first bootstraps an agent | runtime default |
+| `heartbeatModelId` | Seeds the heartbeat model when the runtime first bootstraps an agent | unset (inherits main model) |
+| `cronModelId` | Seeds the scheduled-task model when the runtime first bootstraps an agent | unset (inherits main model) |
 | `httpUrl` | Runtime base URL | `http://localhost:3003` |
 | `hideCursor` | Hide the input cursor (accessibility) | `false` |
 | `hideStatusBar` | Hide the bottom status bar (accessibility) | `false` |
 
-`PRISM_HTTP_URL` overrides `httpUrl` when set.
+`PRISM_HTTP_URL` overrides `httpUrl` when set. The runtime (sharing `~/.prism/`)
+reads `modelId`, `heartbeatModelId`, and `cronModelId` from this file only when
+it **first creates an agent** — see
+[Configuration → Bootstrap model defaults](configuration.md#bootstrap-model-defaults-prismsettingsjson).
