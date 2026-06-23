@@ -56,6 +56,13 @@ agent runs on each tick. When a task fires, the agent executes that instruction
 with its full toolset and delivers the result to your active conversation (and
 to connected channels, labeled as a scheduled-task result).
 
+Scheduled runs use the agent's main model by default, but you can give them
+their own model from the **[Web UI → Profile](web-ui.md#profile)**, the
+**[Terminal UI](terminal-ui.md#slash-commands)** (`/cron-model <id>`), or as a
+bootstrap default in
+**[`~/.prism/settings.json`](configuration.md#bootstrap-model-defaults-prismsettingsjson)**;
+leave it empty to inherit the main model.
+
 ## Reliability
 
 - Tasks are stored in the embedded database, so they **persist across

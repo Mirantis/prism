@@ -44,7 +44,32 @@ with an empty database; later boots reuse the stored workspace.
 | `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
 
 The main model can also be set per-agent at runtime (Web UI Profile, the TUI
-`/model` command, or by asking the agent), which overrides the default.
+`/model` command, or by asking the agent), which overrides `BEDROCK_MODEL_ID`.
+
+**Heartbeat and scheduled (cron) runs** can each use their own model, set the
+same ways — the Web UI Profile page or the TUI `/heartbeat-model` /
+`/cron-model` commands. Both default to empty and fall back to the main model
+(which in turn falls back to `BEDROCK_MODEL_ID`), so you can, for example, run
+routine heartbeats on a cheaper model while chat stays on a stronger one. The
+heartbeat DELIVER/SUPPRESS gate always uses `BEDROCK_CLASSIFICATION_MODEL_ID`,
+independent of this.
+
+### Bootstrap model defaults (`~/.prism/settings.json`)
+
+When the runtime **first creates an agent** (empty database), it seeds the three
+model overrides from `~/.prism/settings.json` if present — the same file the
+[`prism` TUI](cli-reference.md#settings-file) reads:
+
+| Key | Seeds |
+|-----|-------|
+| `modelId` | the main model |
+| `heartbeatModelId` | the heartbeat model |
+| `cronModelId` | the scheduled-task model |
+
+Each is optional; an unset, blank, or malformed value leaves that override empty
+(and it falls back as above). These apply **only at creation** — editing them
+later doesn't touch an existing agent; use the Profile page or the TUI commands
+for that.
 
 ## Integrations
 

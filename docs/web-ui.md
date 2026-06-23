@@ -96,8 +96,12 @@ TUI, also accept natural-language schedules like "every weekday at 9am" — see
 
 The agent's identity and runtime controls.
 
-- **Name & model.** Edit the agent's display name (1–64 characters) and its LLM
-  model ID inline. **Reset** returns the model to the runtime default.
+- **Name & models.** Edit the agent's display name (1–64 characters) and its LLM
+  model ID inline. **Reset** returns the main model to the runtime default.
+  Separate **Heartbeat model** and **Scheduled-task model** fields let you run
+  those on their own model; leave a field empty to inherit the main model (the
+  field shows the model it falls back to). See
+  **[Configuration → Models](configuration.md#models)**.
 - **Identity documents.** Seven tabs show the agent's markdown documents —
   **Agent** (guide), **Soul**, **User**, **Heartbeat**, **Memory**, **Vision**,
   and **Bootstrap**. These are **read-only viewers** in the Web UI: the agent
