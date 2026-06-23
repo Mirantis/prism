@@ -33,6 +33,43 @@ export function resolveEffectiveModel(stored: string | null | undefined): string
   return stored ?? config.bedrockModelId;
 }
 
+/**
+ * Resolve the effective model for a scoped override (heartbeat or cron): the
+ * scoped override when set, otherwise the main per-agent override, otherwise
+ * the runtime's env-configured default. Layers on top of
+ * `resolveEffectiveModel` so the `?? config.bedrockModelId` fallback stays in
+ * exactly one place.
+ */
+export function resolveScopedModel(
+  scoped: string | null | undefined,
+  main: string | null | undefined,
+): string {
+  return resolveEffectiveModel(scoped ?? main);
+}
+
+/**
+ * Validate and normalize a model-override input. Accepts a non-empty string
+ * (format-checked, trimmed) or `null` to clear. Throws `ValidationError` on
+ * anything else. Shared by every model setter so the format rule lives once.
+ */
+function normalizeModelOverride(model: unknown): string | null {
+  if (model === null) return null;
+  if (typeof model === 'string') {
+    const trimmed = model.trim();
+    if (
+      trimmed.length === 0 ||
+      trimmed.length > MODEL_ID_MAX_LEN ||
+      !MODEL_ID_PATTERN.test(trimmed)
+    ) {
+      throw new ValidationError(
+        `model must be 1-${MODEL_ID_MAX_LEN} chars of [A-Za-z0-9._:-/], or null to clear`,
+      );
+    }
+    return trimmed;
+  }
+  throw new ValidationError('model must be a string or null');
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -41,6 +78,16 @@ export interface SubagentInfo {
   id: string;
   name: string;
   description: string;
+}
+
+/**
+ * A scoped model override (heartbeat/cron) plus the model it resolves to.
+ * `override` is the raw stored value (`null` when unset); `effective` is what
+ * the corresponding run would actually use after applying the fallback chain.
+ */
+export interface ModelOverrideInfo {
+  override: string | null;
+  effective: string;
 }
 
 export interface CreateAgentInput {
@@ -94,6 +141,11 @@ class AgentWorkspaceService {
         visionMd: defaults.visionMd,
         agentMd: defaults.agentMd,
         currentSessionId: uuidv4(),
+        // Seed model overrides from ~/.prism/settings.json when present; null
+        // leaves the agent on the env-default model (resolveEffectiveModel).
+        model: config.agentDefaults?.model ?? null,
+        heartbeatModel: config.agentDefaults?.heartbeatModel ?? null,
+        cronModel: config.agentDefaults?.cronModel ?? null,
       },
     });
     trackEvent('agent created', input.userId, {
@@ -264,24 +316,7 @@ class AgentWorkspaceService {
    * reimplement the `?? config.bedrockModelId` fallback.
    */
   async updateModel(model: unknown): Promise<string> {
-    let normalized: string | null;
-    if (model === null) {
-      normalized = null;
-    } else if (typeof model === 'string') {
-      const trimmed = model.trim();
-      if (
-        trimmed.length === 0 ||
-        trimmed.length > MODEL_ID_MAX_LEN ||
-        !MODEL_ID_PATTERN.test(trimmed)
-      ) {
-        throw new ValidationError(
-          `model must be 1-${MODEL_ID_MAX_LEN} chars of [A-Za-z0-9._:-/], or null to clear`,
-        );
-      }
-      normalized = trimmed;
-    } else {
-      throw new ValidationError('model must be a string or null');
-    }
+    const normalized = normalizeModelOverride(model);
     const agent = await this.getAgent();
     const updated = await prisma.agentWorkspace.update({
       where: { id: agent.id },
@@ -293,6 +328,66 @@ class AgentWorkspaceService {
       'agent.model': effective,
     });
     return effective;
+  }
+
+  /**
+   * Read the heartbeat-specific model override and the model it currently
+   * resolves to. `override` is the raw stored value (`null` when unset, so the
+   * UI can render "empty → falls back"); `effective` is what a heartbeat run
+   * would actually use (heartbeat override → main override → env default).
+   */
+  async getHeartbeatModelInfo(): Promise<ModelOverrideInfo> {
+    const agent = await this.getAgent();
+    return {
+      override: agent.heartbeatModel,
+      effective: resolveScopedModel(agent.heartbeatModel, agent.model),
+    };
+  }
+
+  /** Cron equivalent of {@link getHeartbeatModelInfo}. */
+  async getCronModelInfo(): Promise<ModelOverrideInfo> {
+    const agent = await this.getAgent();
+    return {
+      override: agent.cronModel,
+      effective: resolveScopedModel(agent.cronModel, agent.model),
+    };
+  }
+
+  /**
+   * Set or clear the heartbeat-specific model override. `null` clears it; the
+   * agent then falls back to the main override, then the env default. Validates
+   * format only (same rule as {@link updateModel}). Returns the raw override
+   * and the resolved effective model after the write.
+   */
+  async updateHeartbeatModel(model: unknown): Promise<ModelOverrideInfo> {
+    const normalized = normalizeModelOverride(model);
+    const agent = await this.getAgent();
+    const updated = await prisma.agentWorkspace.update({
+      where: { id: agent.id },
+      data: { heartbeatModel: normalized },
+    });
+    const effective = resolveScopedModel(updated.heartbeatModel, updated.model);
+    trackEvent('agent heartbeat model updated', null, {
+      'agent.id': updated.id,
+      'agent.model': effective,
+    });
+    return { override: updated.heartbeatModel, effective };
+  }
+
+  /** Cron equivalent of {@link updateHeartbeatModel}. */
+  async updateCronModel(model: unknown): Promise<ModelOverrideInfo> {
+    const normalized = normalizeModelOverride(model);
+    const agent = await this.getAgent();
+    const updated = await prisma.agentWorkspace.update({
+      where: { id: agent.id },
+      data: { cronModel: normalized },
+    });
+    const effective = resolveScopedModel(updated.cronModel, updated.model);
+    trackEvent('agent cron model updated', null, {
+      'agent.id': updated.id,
+      'agent.model': effective,
+    });
+    return { override: updated.cronModel, effective };
   }
 }
 

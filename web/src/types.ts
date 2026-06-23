@@ -69,6 +69,8 @@ export interface AgentDetails {
   agentMd: string | null;
   bootstrapMd: string | null;
   model: string | null;
+  heartbeatModel: string | null;
+  cronModel: string | null;
   status: 'RUNNING' | 'IDLE' | 'ERROR';
   lastHeartbeat: string | null;
   createdAt: string;
@@ -77,6 +79,16 @@ export interface AgentDetails {
 
 export interface ModelInfo {
   model: string;
+}
+
+/**
+ * A scoped model override (heartbeat/cron). `model` is the raw override
+ * (`null` when unset); `effective` is the model that scope would actually use
+ * after the fallback chain (override → main model → server default).
+ */
+export interface OverrideModelInfo {
+  model: string | null;
+  effective: string;
 }
 
 export interface AgentSummary {

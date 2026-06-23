@@ -20,6 +20,7 @@ vi.mock('../config', () => ({
   config: {
     port: 3003,
     agentId: 'test-agent-id',
+    agentDefaults: {},
     bedrockModelId: 'anthropic.claude-3-sonnet-20240229-v1:0',
     bedrockClassificationModelId: 'anthropic.claude-3-haiku-20240307-v1:0',
     awsRegion: 'us-east-1',

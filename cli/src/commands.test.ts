@@ -25,6 +25,10 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     setName: vi.fn(),
     getModel: vi.fn(),
     setModel: vi.fn(),
+    getHeartbeatModel: vi.fn(),
+    setHeartbeatModel: vi.fn(),
+    getCronModel: vi.fn(),
+    setCronModel: vi.fn(),
     getHeartbeatStatus: vi.fn(),
     startHeartbeat: vi.fn(),
     stopHeartbeat: vi.fn(),
@@ -452,6 +456,68 @@ describe('/skills', () => {
       makeCtx({ args: ['run', 'nope'], api: api as unknown as ApiClient }),
     );
     expect(out).toContain('No available skill named');
+  });
+});
+
+describe('/heartbeat-model', () => {
+  it('reset calls setHeartbeatModel(null) and mentions the main model', async () => {
+    const api = stubApi();
+    api.setHeartbeatModel.mockResolvedValue({ model: null, effective: 'main-model' });
+    const out = await cmd('/heartbeat-model').run(
+      makeCtx({ args: ['reset'], api: api as unknown as ApiClient }),
+    );
+    expect(api.setHeartbeatModel).toHaveBeenCalledWith(null);
+    expect(out).toContain('main-model');
+  });
+
+  it('foo calls setHeartbeatModel("foo")', async () => {
+    const api = stubApi();
+    api.setHeartbeatModel.mockResolvedValue({ model: 'foo', effective: 'foo' });
+    const out = await cmd('/heartbeat-model').run(
+      makeCtx({ args: ['foo'], api: api as unknown as ApiClient }),
+    );
+    expect(api.setHeartbeatModel).toHaveBeenCalledWith('foo');
+    expect(out).toContain('foo');
+  });
+
+  it('missing arg returns usage and makes no call', async () => {
+    const api = stubApi();
+    const out = await cmd('/heartbeat-model').run(
+      makeCtx({ args: [], api: api as unknown as ApiClient }),
+    );
+    expect(api.setHeartbeatModel).not.toHaveBeenCalled();
+    expect(out).toMatch(/usage/i);
+  });
+});
+
+describe('/cron-model', () => {
+  it('reset calls setCronModel(null) and mentions the main model', async () => {
+    const api = stubApi();
+    api.setCronModel.mockResolvedValue({ model: null, effective: 'main-model' });
+    const out = await cmd('/cron-model').run(
+      makeCtx({ args: ['reset'], api: api as unknown as ApiClient }),
+    );
+    expect(api.setCronModel).toHaveBeenCalledWith(null);
+    expect(out).toContain('main-model');
+  });
+
+  it('foo calls setCronModel("foo")', async () => {
+    const api = stubApi();
+    api.setCronModel.mockResolvedValue({ model: 'foo', effective: 'foo' });
+    const out = await cmd('/cron-model').run(
+      makeCtx({ args: ['foo'], api: api as unknown as ApiClient }),
+    );
+    expect(api.setCronModel).toHaveBeenCalledWith('foo');
+    expect(out).toContain('foo');
+  });
+
+  it('missing arg returns usage and makes no call', async () => {
+    const api = stubApi();
+    const out = await cmd('/cron-model').run(
+      makeCtx({ args: [], api: api as unknown as ApiClient }),
+    );
+    expect(api.setCronModel).not.toHaveBeenCalled();
+    expect(out).toMatch(/usage/i);
   });
 });
 

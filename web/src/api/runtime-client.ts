@@ -12,6 +12,7 @@ import type {
   SlackLinkStatus,
   SlackWorkspace,
   ModelInfo,
+  OverrideModelInfo,
   SkillSummary,
   Goal,
 } from '@/types';
@@ -86,6 +87,22 @@ export const runtimeApi = {
   getModel: () => request<ModelInfo>('/agents/model'),
   updateModel: (model: string | null) =>
     request<ModelInfo>('/agents/model', {
+      method: 'PATCH',
+      body: JSON.stringify({ model }),
+    }),
+
+  // Heartbeat-specific model override (empty → falls back to the main model)
+  getHeartbeatModel: () => request<OverrideModelInfo>('/agents/heartbeat-model'),
+  updateHeartbeatModel: (model: string | null) =>
+    request<OverrideModelInfo>('/agents/heartbeat-model', {
+      method: 'PATCH',
+      body: JSON.stringify({ model }),
+    }),
+
+  // Cron/scheduled-task model override (empty → falls back to the main model)
+  getCronModel: () => request<OverrideModelInfo>('/agents/cron-model'),
+  updateCronModel: (model: string | null) =>
+    request<OverrideModelInfo>('/agents/cron-model', {
       method: 'PATCH',
       body: JSON.stringify({ model }),
     }),

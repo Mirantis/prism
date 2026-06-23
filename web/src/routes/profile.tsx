@@ -125,7 +125,26 @@ function ProfilePage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <AgentNameField />
-          <ModelField />
+          <ModelField
+            label="Model"
+            queryKey="agent-model"
+            load={() => runtimeApi.getModel()}
+            save={(m) => runtimeApi.updateModel(m)}
+          />
+          <ModelField
+            label="Heartbeat model"
+            queryKey="agent-heartbeat-model"
+            load={() => runtimeApi.getHeartbeatModel()}
+            save={(m) => runtimeApi.updateHeartbeatModel(m)}
+            allowEmpty
+          />
+          <ModelField
+            label="Scheduled-task model"
+            queryKey="agent-cron-model"
+            load={() => runtimeApi.getCronModel()}
+            save={(m) => runtimeApi.updateCronModel(m)}
+            allowEmpty
+          />
           {details ? (
             <Tabs defaultValue="agentMd">
               <TabsList variant="line">
@@ -243,7 +262,25 @@ function AgentNameField() {
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:\-/]+$/;
 const MODEL_ID_MAX_LEN = 200;
 
-function ModelField() {
+/**
+ * Editable model-ID field. Used for the main agent model and for the
+ * heartbeat/cron overrides. When `allowEmpty` is set the field may be cleared
+ * to fall back to the main model; the resolved fallback is shown as a hint via
+ * the `effective` value returned by the loader.
+ */
+function ModelField({
+  label,
+  queryKey,
+  load,
+  save,
+  allowEmpty = false,
+}: {
+  label: string;
+  queryKey: string;
+  load: () => Promise<{ model: string | null; effective?: string }>;
+  save: (model: string | null) => Promise<{ model: string | null; effective?: string }>;
+  allowEmpty?: boolean;
+}) {
   const agent = useAgent();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -251,16 +288,18 @@ function ModelField() {
   const [error, setError] = useState<string | null>(null);
 
   const { data: modelInfo } = useQuery({
-    queryKey: ['agent-model', agent.agentId],
-    queryFn: () => runtimeApi.getModel(),
+    queryKey: [queryKey, agent.agentId],
+    queryFn: load,
   });
 
-  const effective = modelInfo?.model ?? '';
+  // Raw override ('' when unset) and the model this scope actually resolves to.
+  const override = modelInfo?.model ?? '';
+  const effective = modelInfo?.effective;
 
   const updateMut = useMutation({
-    mutationFn: (next: string | null) => runtimeApi.updateModel(next),
+    mutationFn: (next: string | null) => save(next),
     onSuccess: (data) => {
-      queryClient.setQueryData(['agent-model', agent.agentId], data);
+      queryClient.setQueryData([queryKey, agent.agentId], data);
       queryClient.invalidateQueries({ queryKey: ['agent-details', agent.agentId] });
       setEditing(false);
       setError(null);
@@ -269,35 +308,36 @@ function ModelField() {
   });
 
   const trimmed = value.trim();
+  const next = trimmed.length === 0 ? null : trimmed;
   const valid =
-    trimmed.length > 0 && trimmed.length <= MODEL_ID_MAX_LEN && MODEL_ID_PATTERN.test(trimmed);
+    (allowEmpty && trimmed.length === 0) ||
+    (trimmed.length > 0 && trimmed.length <= MODEL_ID_MAX_LEN && MODEL_ID_PATTERN.test(trimmed));
+  const unchanged = (next ?? '') === override;
+  const canSave = valid && !updateMut.isPending && !unchanged;
 
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-muted-foreground">Model</span>
+      <span className="text-xs text-muted-foreground">{label}</span>
       {editing ? (
         <span className="inline-flex flex-wrap items-center gap-2">
           <Input
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && valid && !updateMut.isPending && trimmed !== effective) {
-                updateMut.mutate(trimmed);
+              if (e.key === 'Enter' && canSave) {
+                updateMut.mutate(next);
               } else if (e.key === 'Escape') {
                 setEditing(false);
                 setError(null);
               }
             }}
             maxLength={MODEL_ID_MAX_LEN}
+            placeholder={allowEmpty ? 'Empty → use main model' : undefined}
             className="h-7 w-[360px] px-2 py-1 text-sm"
-            aria-label="Model ID"
+            aria-label={`${label} ID`}
             autoFocus
           />
-          <Button
-            size="sm"
-            onClick={() => updateMut.mutate(trimmed)}
-            disabled={!valid || updateMut.isPending || trimmed === effective}
-          >
+          <Button size="sm" onClick={() => updateMut.mutate(next)} disabled={!canSave}>
             Save
           </Button>
           <Button
@@ -318,6 +358,11 @@ function ModelField() {
           >
             Reset
           </Button>
+          {allowEmpty && (
+            <span className="basis-full text-xs text-muted-foreground">
+              Leave empty to use the main agent model.
+            </span>
+          )}
           {!valid && value.length > 0 && (
             <span className="basis-full text-xs text-destructive">
               Use 1–{MODEL_ID_MAX_LEN} chars: letters, digits, and ._:-/ only.
@@ -327,17 +372,25 @@ function ModelField() {
         </span>
       ) : (
         <span className="inline-flex items-center gap-1 text-sm">
-          {effective || <span className="text-muted-foreground">Loading…</span>}
+          {override ? (
+            override
+          ) : allowEmpty ? (
+            <span className="text-muted-foreground">
+              Default{effective ? ` — uses ${effective}` : ''}
+            </span>
+          ) : (
+            override || <span className="text-muted-foreground">Loading…</span>
+          )}
           <Button
             variant="ghost"
             size="icon-sm"
             onClick={() => {
-              setValue(effective);
+              setValue(override);
               setError(null);
               setEditing(true);
             }}
             disabled={!modelInfo}
-            aria-label="Edit model"
+            aria-label={`Edit ${label.toLowerCase()}`}
           >
             <Pencil className="size-3" />
           </Button>

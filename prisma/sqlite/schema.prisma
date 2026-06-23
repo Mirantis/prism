@@ -77,6 +77,8 @@ model AgentWorkspace {
   verbosity           Int                  @default(3)
   timezone            String               @default("UTC")
   model               String?
+  heartbeatModel      String?
+  cronModel           String?
 
   dailyResetHour  Int  @default(4)
   idleTimeoutMins Int?

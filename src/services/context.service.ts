@@ -37,6 +37,8 @@ class ContextService {
       proactivity: agent.proactivity,
       verbosity: agent.verbosity,
       model: agent.model ?? null,
+      heartbeatModel: agent.heartbeatModel ?? null,
+      cronModel: agent.cronModel ?? null,
       isBootstrapPhase,
       conversationSummary: null,
       recentMessages: [],

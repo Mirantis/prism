@@ -27,19 +27,29 @@ missing or malformed config falls back silently to the bundled defaults.
 {
   "agentName": "Prism",
   "modelId": "us.anthropic.claude-opus-4-8",
+  "heartbeatModelId": "us.anthropic.claude-haiku-4-5",
+  "cronModelId": "us.anthropic.claude-sonnet-4-6",
   "hideCursor": false,
   "hideStatusBar": false,
   "httpUrl": "http://localhost:3003"
 }
 ```
 
-| Key             | Type    | Default                          | Purpose                                                              |
-| --------------- | ------- | -------------------------------- | -------------------------------------------------------------------- |
-| `agentName`     | string  | `Prism`                          | Display name in the chat prefix and header.                          |
-| `modelId`       | string  | `us.anthropic.claude-opus-4-8`   | Display only — pretty-printed in the status bar.                     |
-| `hideCursor`    | boolean | `false`                          | Hide the input cursor (a11y).                                        |
-| `hideStatusBar` | boolean | `false`                          | Hide the bottom status bar (a11y).                                   |
-| `httpUrl`       | string  | `http://localhost:3003`          | Agent-runtime base URL. WebSocket URL is derived (`/api/ws`, ws/wss). |
+| Key                | Type    | Default                          | Purpose                                                              |
+| ------------------ | ------- | -------------------------------- | -------------------------------------------------------------------- |
+| `agentName`        | string  | `Prism`                          | Display name in the chat prefix and header.                          |
+| `modelId`          | string  | `us.anthropic.claude-opus-4-8`   | Status-bar display, and the main-model default a fresh agent is bootstrapped with. |
+| `heartbeatModelId` | string  | _(unset)_                        | Heartbeat-model default a fresh agent is bootstrapped with. Empty → falls back to the main model. |
+| `cronModelId`      | string  | _(unset)_                        | Scheduled-task-model default a fresh agent is bootstrapped with. Empty → falls back to the main model. |
+| `hideCursor`       | boolean | `false`                          | Hide the input cursor (a11y).                                        |
+| `hideStatusBar`    | boolean | `false`                          | Hide the bottom status bar (a11y).                                   |
+| `httpUrl`          | string  | `http://localhost:3003`          | Agent-runtime base URL. WebSocket URL is derived (`/api/ws`, ws/wss). |
+
+`modelId`, `heartbeatModelId`, and `cronModelId` are read by the agent-runtime
+(which shares `~/.prism/`) when it **first bootstraps an agent** — they seed the
+agent's model overrides. Changing them later has no effect on an
+already-created agent; use the Profile page or the `/model`, `/heartbeat-model`,
+and `/cron-model` commands for that.
 
 `PRISM_HTTP_URL` (env) overrides `httpUrl` for ad-hoc runs and test
 harnesses that need to point at an ephemeral port without writing to

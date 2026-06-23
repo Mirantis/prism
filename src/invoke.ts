@@ -20,7 +20,11 @@ import { getShellTools } from './tools/shell/index';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from './tools/share-file';
 import { getSkillTools } from './tools/skills/index';
 import { contextService } from './services/context.service';
-import { agentWorkspaceService, resolveEffectiveModel } from './services/agent-workspace.service';
+import {
+  agentWorkspaceService,
+  resolveEffectiveModel,
+  resolveScopedModel,
+} from './services/agent-workspace.service';
 import { isLangfuseEnabled } from './lib/langfuse';
 import { buildSystemPromptParts, buildConversationMessages } from './prompts/context-builder';
 import { getChannelBehaviorInstructions } from './prompts/channel-prompt';
@@ -98,7 +102,15 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // section (e.g. a Slack attachment that failed to download).
     context.runtimeNotices = request.runtimeNotices;
 
-    const modelId = resolveEffectiveModel(context.model);
+    // Heartbeat and cron runs honor their own optional model override,
+    // falling back to the main per-agent model, then the env default. Chat
+    // and every other mode use the main model directly.
+    const modelId =
+      request.mode === 'heartbeat'
+        ? resolveScopedModel(context.heartbeatModel, context.model)
+        : request.mode === 'cron'
+          ? resolveScopedModel(context.cronModel, context.model)
+          : resolveEffectiveModel(context.model);
     logger.info(`Invoking in ${request.mode} mode with model ${modelId} for agent ${context.agentName}`);
 
     // 3. Create provider and model — createProvider picks Nexus when

@@ -108,6 +108,51 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
   });
 
+  Scenario('/heartbeat-model sets then resets the heartbeat model override', ({ Then }) => {
+    Then('the heartbeat model is set to {string}', async (_ctx, model: string) => {
+      await session.waitForFrame(`Heartbeat model set to "${model}"`, 10_000);
+      const res = await runtimeRequest<{ model: string | null; effective: string }>(
+        env.port,
+        'GET',
+        '/agents/heartbeat-model',
+      );
+      expect(res.model).toBe(model);
+    });
+    Then('the heartbeat model is cleared to the main model', async () => {
+      await session.waitForFrame('Heartbeat model reset', 10_000);
+      const res = await runtimeRequest<{ model: string | null; effective: string }>(
+        env.port,
+        'GET',
+        '/agents/heartbeat-model',
+      );
+      // Override cleared; effective falls back to the main/default model.
+      expect(res.model).toBeNull();
+      expect(res.effective.length).toBeGreaterThan(0);
+    });
+  });
+
+  Scenario('/cron-model sets then resets the scheduled-task model override', ({ Then }) => {
+    Then('the cron model is set to {string}', async (_ctx, model: string) => {
+      await session.waitForFrame(`Scheduled-task model set to "${model}"`, 10_000);
+      const res = await runtimeRequest<{ model: string | null; effective: string }>(
+        env.port,
+        'GET',
+        '/agents/cron-model',
+      );
+      expect(res.model).toBe(model);
+    });
+    Then('the cron model is cleared to the main model', async () => {
+      await session.waitForFrame('Scheduled-task model reset', 10_000);
+      const res = await runtimeRequest<{ model: string | null; effective: string }>(
+        env.port,
+        'GET',
+        '/agents/cron-model',
+      );
+      expect(res.model).toBeNull();
+      expect(res.effective.length).toBeGreaterThan(0);
+    });
+  });
+
   Scenario('/heartbeat status reports the current state', () => {
     // Covered by the shared steps.
   });

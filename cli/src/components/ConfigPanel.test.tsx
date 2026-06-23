@@ -9,6 +9,8 @@ const DETAILS: AgentDetails = {
   userId: 'u',
   name: 'Prism',
   model: null,
+  heartbeatModel: null,
+  cronModel: null,
   soulMd: '# Soul\n\nBe helpful.',
   userMd: 'user notes',
   memoryMd: 'memory',
@@ -68,6 +70,20 @@ describe('ConfigPanel focus indicator', () => {
     stdin.write(LEFT);
     await flush();
     expect(lastFrame() ?? '').toContain('▌ Files');
+
+    unmount();
+  });
+
+  it('shows the heartbeat and scheduled-task model overrides (default when unset)', async () => {
+    const { lastFrame, unmount } = render(
+      <ConfigPanel api={stubApi()} onClose={vi.fn()} />,
+    );
+    await flush();
+    await flush();
+
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Heartbeat model default');
+    expect(frame).toContain('Cron model default');
 
     unmount();
   });
