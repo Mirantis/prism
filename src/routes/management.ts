@@ -275,7 +275,6 @@ router.patch('/heartbeat-model', async (req: Request, res: Response) => {
 
 /**
  * GET /agents/cron-model
- * Cron equivalent of `GET /agents/heartbeat-model`.
  */
 router.get('/cron-model', async (_req: Request, res: Response) => {
   try {
@@ -290,7 +289,6 @@ router.get('/cron-model', async (_req: Request, res: Response) => {
 
 /**
  * PATCH /agents/cron-model
- * Cron equivalent of `PATCH /agents/heartbeat-model`.
  */
 router.patch('/cron-model', async (req: Request, res: Response) => {
   try {
