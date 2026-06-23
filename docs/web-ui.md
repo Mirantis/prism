@@ -94,8 +94,7 @@ The agent's identity and runtime controls.
   **Agent** (guide), **Soul**, **User**, **Heartbeat**, **Memory**, **Vision**,
   and **Bootstrap**. These are **read-only viewers** in the Web UI: the agent
   edits them itself during conversation (e.g. you ask it to update its soul or
-  it records something to memory), and you can edit them out-of-band via the
-  backup/restore flow below. See **[The agent's identity](agent-identity.md)**.
+  it records something to memory). See **[The agent's identity](agent-identity.md)**.
 - **Heartbeat controls.** A status panel shows whether the heartbeat is Active
   or Stopped, its interval, the last run time, and a consecutive-error count.
   Buttons let you **Start**, **Stop**, or **Trigger now**, and you can edit the
@@ -103,8 +102,7 @@ The agent's identity and runtime controls.
 - **Backup & restore.** **Export** downloads a `.prism` snapshot of the entire
   agent — chat history, memory, scheduled tasks, settings, and Slack mappings.
   **Restore** replaces the agent from a `.prism` file (a destructive operation;
-  the runtime restarts and the page reconnects when it's back). This is also the
-  way to hand-edit identity documents: export, edit, restore.
+  the runtime restarts and the page reconnects when it's back).
 
 ## Behind the scenes
 
