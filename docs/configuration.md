@@ -48,7 +48,8 @@ The main model can also be set per-agent at runtime (Web UI Profile, the TUI
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `NEXUS_API_URL` | Base URL for the external MCP/LLM proxy used for extra [tools](tools.md#external-tools-mcp) and WebSocket authorization | `http://localhost:3002` |
+| `NEXUS_MCP_URL` | Endpoint of an external [MCP server](tools.md#external-tools-mcp). When set, its tools are exposed to the agent. | — (no external tools) |
+| `NEXUS_API_URL` | Base URL of a Nexus instance, used for the LLM proxy and WebSocket authorization. It is **not** a fallback for `NEXUS_MCP_URL`. | — |
 
 ## Observability
 

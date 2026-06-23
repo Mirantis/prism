@@ -42,18 +42,25 @@ Create and manage its own [scheduled tasks](scheduled-tasks.md):
 ## Shell
 
 The agent can act on a real shell — this is what lets it do work rather than
-just talk about it. It operates inside a workspace directory (the
-`workspace` folder in your install, or `/home/node` in the container), and paths
-are confined to that workspace.
+just talk about it. By default it works inside a workspace directory (the
+`workspace` folder in your install, or `/home/node` in the container): relative
+paths resolve from there.
 
 - **Run a command** — execute a shell command and get back stdout, stderr, and
   the exit code. Commands have a timeout (default ~30s, up to 20 minutes) and
   output is size-capped (see **[Sessions & safety](sessions-and-safety.md)**).
 - **Read / write / edit files** — read a file (line-numbered), write a file, or
-  make an exact-string edit.
+  make an exact-string edit. These tools reject paths outside the workspace.
 - **Long-running processes** — spawn a background process, write to its stdin,
   drain its stdout/stderr, and kill it with a signal. Useful for servers, watch
   processes, and interactive tools.
+
+> **On confinement:** the file read/write/edit tools reject paths outside the
+> workspace, but running a command does not — `shell_exec` can run anything the
+> runtime's OS user is permitted to, including reading paths elsewhere on the
+> machine. The workspace is a default working directory, not a security sandbox;
+> the real boundary is OS filesystem permissions. For a hard boundary around
+> what the agent can reach, run Prism under **[Lens Sandbox](lens-sandbox.md)**.
 
 In the published container image, the shell comes with common tooling
 preinstalled — `git`, `gh` (GitHub CLI), `kubectl`, `aws`, `jq`, `yq`, and
@@ -84,6 +91,6 @@ TUI, save them to disk with [`/save`](terminal-ui.md#attaching-and-saving-files)
 ## External tools (MCP)
 
 Beyond the built-in tools, the runtime can connect to an external **MCP** server
-(configured via `NEXUS_API_URL`) to expose additional, project-scoped tools to
+(configured via `NEXUS_MCP_URL`) to expose additional, project-scoped tools to
 the agent. When connected, those tools appear to the agent alongside the
 built-in ones and it can use them the same way.
