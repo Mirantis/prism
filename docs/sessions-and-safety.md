@@ -36,9 +36,12 @@ Every turn is bounded so the agent can't run away:
 - **File limits.** Attachments are capped at **10 MB** each and **100 per
   message**; very large text files are truncated when inlined into context
   (the full file is still stored).
-- **Workspace confinement.** The agent's [shell tools](tools.md#shell) operate
-  inside a workspace directory and can't escape it with `../` or stray absolute
-  paths.
+- **Workspace paths.** The agent's file read/write/edit
+  [tools](tools.md#shell) reject paths outside the workspace directory (no `../`
+  traversal, no stray absolute paths). This is a guardrail on those tools, not a
+  sandbox — `shell_exec` can still run commands that reach anything the runtime's
+  OS user is permitted to. The real boundary is OS filesystem permissions; for a
+  hard one, run under [Lens Sandbox](lens-sandbox.md).
 - **Heartbeat fail-open gate.** The [heartbeat](heartbeat.md) gate runs cheap
   programmatic checks first (empty response, 24-hour exact duplicate) and only
   then the LLM gate; if the gate errors, the alert is delivered rather than

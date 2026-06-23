@@ -139,16 +139,38 @@ prism
 
 ## Uninstalling
 
-The repository ships a cleanup script that stops and removes the service, the
-`PATH` symlinks, and the install directory (binaries, config, database, and
-workspace):
+> Uninstalling removes the agent database along with everything else, so the
+> agent's memory and history go with it — export a `.prism` backup from the
+> **[Web UI](web-ui.md)** first if you want to keep it.
+
+### Uninstall on macOS / Linux
+
+The repository ships a cleanup script that stops and removes the service,
+deletes the `prism` symlink **only if it points at your install**, and removes
+`$PRISM_HOME` (default `~/.prism`). Run it straight from GitHub — the same way
+you installed:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lensapp/prism-agent/main/cleanup-local-prism.sh | bash -s -- -y
+```
+
+The `-s -- -y` passes `-y` through to the script so it doesn't try to read a
+confirmation prompt from the piped input. If you have a local clone of the repo,
+you can run it directly instead and keep the prompt:
 
 ```bash
 ./cleanup-local-prism.sh        # add -y to skip the confirmation prompt
 ```
 
-It removes the launchd/systemd registration, deletes the `prism` symlink **only
-if it points at your install**, and removes `$PRISM_HOME` (default `~/.prism`).
-Because that directory holds the agent database, uninstalling this way also
-deletes the agent's memory and history — export a backup from the
-**[Web UI](web-ui.md)** first if you want to keep it.
+### Uninstall on Windows
+
+There's no cleanup script for Windows — remove the pieces the installer added:
+
+```powershell
+Unregister-ScheduledTask -TaskName PrismServer -Confirm:$false
+Stop-Process -Name prism-server -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force "$env:USERPROFILE\.prism"
+```
+
+Then remove `%USERPROFILE%\.prism` from your user `PATH` (System Properties →
+Environment Variables, or `setx`).

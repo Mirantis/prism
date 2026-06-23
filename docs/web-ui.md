@@ -19,8 +19,8 @@ The UI is organized around a left sidebar with five sections: **Overview**,
 The landing page. It shows the agent's status (RUNNING / IDLE / ERROR), its
 heartbeat state, a count of linked Slack channels, the number of scheduled
 tasks, and when the agent was created. The stat cards are clickable shortcuts
-into Profile, Channels, Scheduled Tasks, and Chat. You can rename the agent
-inline from here.
+into Profile, Channels, Scheduled Tasks, and Chat. (To rename the agent, use the
+Name field on the [Profile](#profile) page.)
 
 ## Chat
 
