@@ -15,6 +15,7 @@ import prisma from '../../lib/prisma';
 import { getSlackConnection } from '../../lib/slack-source';
 import { ThreadMessageProvider } from '../thread-provider.interface';
 import { slackAdapterService } from '../slack-adapter.service';
+import { pollUntil, PollUntilOptions } from '../../utils/poll-until';
 
 interface SlackMessage {
   user?: string;
@@ -39,6 +40,84 @@ export class SlackThreadProvider implements ThreadMessageProvider {
   async getRecentMessages(threadId: string, limit: number): Promise<ConversationMessage[]> {
     const allMessages = await this.fetchSlackMessages(threadId);
     return allMessages.slice(-limit);
+  }
+
+  /**
+   * Wait (bounded, exponential backoff) until a message with `externalTs` is
+   * visible in this thread's live Slack history.
+   *
+   * `conversations.replies` is eventually consistent: a just-posted message can
+   * be absent for a few seconds, so building context immediately would read a
+   * thread that ends on the bot's previous reply rather than the user's new
+   * turn. Callers invoke this before building context so the history reflects
+   * the message being responded to.
+   *
+   * Resolves once the message appears. If it never shows within the time
+   * budget, **throws** — the turn must fail rather than respond to stale
+   * context (and risk Bedrock's assistant-prefill rejection): the message is
+   * not dropped. Uses a light raw-replies check (no name resolution / mapping);
+   * the full read happens later via `getMessages`.
+   */
+  async waitForExternalMessage(
+    threadId: string,
+    externalTs: string,
+    options: PollUntilOptions = {},
+  ): Promise<void> {
+    const thread = await prisma.conversationThread.findUnique({
+      where: { id: threadId },
+      select: { externalChannelId: true, externalThreadId: true },
+    });
+    if (!thread?.externalChannelId || !thread?.externalThreadId) return;
+
+    const { channelId, threadTs, teamId } = await this.resolveSlackThread(
+      threadId,
+      thread.externalChannelId,
+      thread.externalThreadId,
+    );
+
+    const found = await pollUntil(
+      () => this.isMessageVisible(channelId, threadTs, externalTs, teamId),
+      options,
+    );
+
+    if (!found) {
+      throw new Error(
+        `Slack message ${externalTs} did not become visible in thread ${threadId} within the wait budget`,
+      );
+    }
+  }
+
+  /**
+   * Check whether a single message (by ts) is visible in a thread, without
+   * paginating the whole thread.
+   *
+   * Slack has no "fetch one message by id" endpoint, but `conversations.replies`
+   * accepts an `oldest`/`inclusive` window. The message we wait for is the
+   * newest one, so windowing to `ts >= externalTs` returns just the thread's
+   * tail — a single small page, no cursor — instead of every reply. (The thread
+   * parent is always returned too, so we match on `ts` rather than assume a
+   * position.)
+   */
+  private async isMessageVisible(
+    channelId: string,
+    threadTs: string,
+    externalTs: string,
+    teamId: string,
+  ): Promise<boolean> {
+    const app = slackAdapterService.getAppForTeam(teamId);
+    if (!app) {
+      throw new Error(`No Slack app found for team ${teamId}`);
+    }
+
+    const response = await app.app.client.conversations.replies({
+      channel: channelId,
+      ts: threadTs,
+      oldest: externalTs,
+      inclusive: true,
+      limit: 200,
+    });
+
+    return ((response.messages ?? []) as SlackMessage[]).some((m) => m.ts === externalTs);
   }
 
   /**
