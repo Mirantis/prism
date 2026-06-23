@@ -130,6 +130,7 @@ function ProfilePage() {
             queryKey="agent-model"
             load={() => runtimeApi.getModel()}
             save={(m) => runtimeApi.updateModel(m)}
+            affects={['agent-heartbeat-model', 'agent-cron-model']}
           />
           <ModelField
             label="Heartbeat model"
@@ -274,12 +275,19 @@ function ModelField({
   load,
   save,
   allowEmpty = false,
+  affects = [],
 }: {
   label: string;
   queryKey: string;
   load: () => Promise<{ model: string | null; effective?: string }>;
   save: (model: string | null) => Promise<{ model: string | null; effective?: string }>;
   allowEmpty?: boolean;
+  /**
+   * Other model-field query keys whose resolved `effective` depends on this
+   * one (the heartbeat/cron fields fall back to the main model), so they get
+   * invalidated when this field changes.
+   */
+  affects?: string[];
 }) {
   const agent = useAgent();
   const queryClient = useQueryClient();
@@ -301,6 +309,11 @@ function ModelField({
     onSuccess: (data) => {
       queryClient.setQueryData([queryKey, agent.agentId], data);
       queryClient.invalidateQueries({ queryKey: ['agent-details', agent.agentId] });
+      // Dependent fields (heartbeat/cron) resolve `effective` off this model,
+      // so refresh them too.
+      for (const key of affects) {
+        queryClient.invalidateQueries({ queryKey: [key, agent.agentId] });
+      }
       setEditing(false);
       setError(null);
     },

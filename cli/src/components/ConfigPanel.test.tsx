@@ -82,8 +82,10 @@ describe('ConfigPanel focus indicator', () => {
     await flush();
 
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('Heartbeat model default');
-    expect(frame).toContain('Cron model default');
+    // Unset heartbeat/cron overrides inherit the main model — labeled "(main)",
+    // distinct from the main Model line's "default" (the env default).
+    expect(frame).toContain('Heartbeat model (main)');
+    expect(frame).toContain('Cron model (main)');
 
     unmount();
   });
