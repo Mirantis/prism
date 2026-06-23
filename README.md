@@ -239,10 +239,9 @@ context from compounding indefinitely.
 
 ## How it runs
 
-One container, one agent. The embedded database (SQLite with vector search)
-lives in the container at `/data/agent.db` (or `prisma/sqlite/agent.db`
-next to the schema when running locally without Docker) and is the only
-persistence.
+One container, one agent. The embedded database lives in the container at
+`/data/agent.db` (or `prisma/sqlite/agent.db` next to the schema when running
+locally without Docker) and is the only persistence.
 
 ## Getting started
 
