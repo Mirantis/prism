@@ -69,6 +69,6 @@ to connected channels, labeled as a scheduled-task result).
 
 - Use the **[heartbeat](heartbeat.md)** for ongoing *monitoring* where you only
   want to hear about it when something's worth reporting — it has a built-in
-  DELIVER/SUPPRESS gate and duplicate suppression.
+  DELIVER/SUPPRESS gate.
 - Use a **scheduled task** for *specific work at specific times* whose output you
   always want — reports, reminders, periodic actions.

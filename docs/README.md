@@ -19,15 +19,15 @@ These docs walk you from a first install through every feature the agent has.
 
 Three ways to run the same agent. Pick one.
 
+- **[Run with Lens Sandbox](lens-sandbox.md)** — run the same image inside a
+  local microVM with every outbound connection checked against a policy you
+  control.
+- **[Run with Docker](docker.md)** — pull the published image and run the
+  agent in a container with a persistent data volume.
 - **[Install natively](installation.md)** — the one-line installer puts the
   `prism` (terminal UI) and `prism-server` (runtime) binaries on your machine
   and runs the runtime as a background service (launchd / systemd / Scheduled
   Task). Best for everyday local use.
-- **[Run with Docker](docker.md)** — pull the published image and run the
-  agent in a container with a persistent data volume.
-- **[Run with Lens Sandbox](lens-sandbox.md)** — run the same image inside a
-  local microVM with every outbound connection checked against a policy you
-  control.
 
 ## Interfaces
 
@@ -51,7 +51,7 @@ What the agent can do.
 - **[Memory](memory.md)** — the two-layer memory system: curated long-term
   memory plus an embedding-indexed searchable store.
 - **[Heartbeat](heartbeat.md)** — the always-on monitoring loop, its
-  DELIVER/SUPPRESS gate, duplicate suppression, and Slack triggers.
+  DELIVER/SUPPRESS gate and Slack triggers.
 - **[Scheduled tasks](scheduled-tasks.md)** — putting one-shot and recurring
   work on the agent's calendar with natural language or cron.
 - **[Tools](tools.md)** — everything the agent can call: memory, self-management,
