@@ -13,10 +13,13 @@ export default defineConfig({
     // isolation; serialize files (each file owns one runtime).
     pool: 'forks',
     fileParallelism: false,
-    // Specs wire their own beforeAll/beforeEach; this setup file only hardens
-    // Vitest's source-map symbolication so a malformed inline map can't fail an
-    // otherwise-green run (see vitest.setup.ts).
+    // Specs wire their own beforeAll/beforeEach; these only harden Vitest's
+    // source-map symbolication so a malformed inline map can't fail an
+    // otherwise-green run. The setup file patches each worker fork; globalSetup
+    // patches the MAIN process where the reporter symbolicates the final stack
+    // trace (setupFiles never run there). See harden-source-map.ts.
     setupFiles: ['tui/vitest.setup.ts'],
+    globalSetup: ['tui/vitest.global-setup.ts'],
     globals: false,
   },
 });
