@@ -47,8 +47,6 @@ export interface AgentDetails {
   visionMd: string;
   agentMd: string;
   bootstrapMd: string;
-  proactivity: number;
-  verbosity: number;
   timezone: string;
   heartbeatIntervalMs: number;
   heartbeatStatus: string;

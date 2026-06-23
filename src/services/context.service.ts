@@ -34,8 +34,6 @@ class ContextService {
       agentName: agent.name,
       agentId: agent.id,
       userId,
-      proactivity: agent.proactivity,
-      verbosity: agent.verbosity,
       model: agent.model ?? null,
       heartbeatModel: agent.heartbeatModel ?? null,
       cronModel: agent.cronModel ?? null,

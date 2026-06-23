@@ -18,8 +18,6 @@ const DETAILS: AgentDetails = {
   visionMd: '',
   agentMd: '',
   bootstrapMd: 'bootstrap',
-  proactivity: 3,
-  verbosity: 3,
   timezone: 'UTC',
   heartbeatIntervalMs: 28_800_000,
   heartbeatStatus: 'ENABLED',

@@ -156,8 +156,6 @@ export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({
           <Text dimColor>Model {details.model ?? 'default'}</Text>
           <Text dimColor>Heartbeat model {details.heartbeatModel ?? '(main)'}</Text>
           <Text dimColor>Cron model {details.cronModel ?? '(main)'}</Text>
-          <Text dimColor>Proactivity {details.proactivity}</Text>
-          <Text dimColor>Verbosity {details.verbosity}</Text>
           <Text dimColor>Timezone {details.timezone}</Text>
           <Text dimColor>{`Heartbeat ${details.heartbeatStatus} ${heartbeatEvery}`}</Text>
           <Box marginTop={1} flexDirection="column">
