@@ -39,8 +39,7 @@ There are two ways the documents change:
 2. **On first run.** The **Bootstrap** document drives an onboarding
    conversation that fills in Soul and User for you, then clears itself.
 
-The Web UI and TUI panels show these documents as **read-only viewers** — they
-reflect the current state but you don't type into them there.
+The Web UI and TUI panels show these documents as **read-only viewers**.
 
 ## The bootstrap flow
 
@@ -55,9 +54,6 @@ agent.
 
 Beyond the documents, a few dials shape behavior and are stored on the agent:
 
-- **Proactivity** (1–5, default 3) — how eagerly the agent reaches out
-  unprompted.
-- **Verbosity** (1–5, default 3) — how much it says.
 - **Timezone** (default `UTC`) — used for scheduling and daily resets.
 - **Heartbeat interval** (default 8 hours) — see **[Heartbeat](heartbeat.md)**.
 - **Model** — the LLM it runs on (defaults to the runtime's configured model).
