@@ -42,6 +42,8 @@ to complete, **Enter** to run.
 | `/rename` | `<name>` | Rename the agent (1–64 characters). |
 | `/model` | `<id>` \| `reset` | Set the agent's model, or reset to the server default. |
 | `/heartbeat` | `status` \| `start` \| `stop` \| `trigger` \| `every <N>m`\|`<N>h` | Control the heartbeat (interval 1 min – 7 days). |
+| `/goal` | `<objective>` \| `status` \| `list` \| `pause` \| `resume` \| `stop` | Set or manage a background goal the agent pursues across turns. |
+| `/skills` | `[list]` \| `run <name>` | List installed [skills](skills.md), or run one. |
 | `/schedules` | — | Open the scheduled-tasks panel. |
 | `/config` | — | Open the identity/config viewer panel. |
 | `/exit` | — | Shut down the TUI. |

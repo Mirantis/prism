@@ -29,6 +29,14 @@ The main conversation surface.
 - **Sending messages.** Type in the input pinned to the bottom and press send.
   Responses **stream** in as the agent works — you see intermediate text from
   multi-step responses in real time rather than one block at the end.
+- **Slash commands.** Type `/` to open a command popup, the same as the
+  **[Terminal UI](terminal-ui.md#slash-commands)**: filter by typing, **Tab** to
+  complete, arrow keys to move the selection, **Enter** to run. The web supports
+  `/help`, **`/skills`** (list installed [skills](skills.md), or `/skills run
+  <name>`), and **`/goal`** (set or manage a background goal — `/goal
+  <objective>`, `status`, `list`, `pause`, `resume`, `stop`). Commands run
+  locally and call the runtime directly; their output appears as a system note
+  in the conversation, and `/goal`/`/skills run` stream the agent's reply in.
 - **Attachments.** Attach files with the paperclip button or by drag-and-drop.
   Pending attachments show as chips (with a progress spinner, name, and size)
   and can be removed before sending. Up to 100 attachments per message.

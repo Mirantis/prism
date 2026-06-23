@@ -68,6 +68,15 @@ preinstalled — `git`, `gh` (GitHub CLI), `kubectl`, `aws`, `jq`, `yq`, and
 under **[Lens Sandbox](lens-sandbox.md)**, every outbound connection those tools
 make is checked against your policy.)
 
+## Skills
+
+The agent can load an installed **[Skill](skills.md)** — a `SKILL.md` bundle of
+task-specific instructions (the agentskills.io standard) — and follow it. It sees
+each available skill's name and description up front and loads the full
+instructions on demand when a task matches; you can also list and run skills with
+the [`/skills` command](skills.md#the-skills-command). Skills come from a global
+directory and, in the terminal UI, the current repository's `.claude/skills`.
+
 ## Claude Code sub-agent
 
 For larger coding tasks, the agent can hand work to **Claude Code** running as an
