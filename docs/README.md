@@ -66,8 +66,8 @@ What the agent can do.
 
 ## How it runs
 
-One container, one agent. The embedded database (SQLite with vector search)
-holds everything: agent identity, conversation history, memory, scheduled
+One container, one agent. The embedded database holds everything: agent
+identity, conversation history, memory, scheduled
 tasks, and Slack mappings. When you install natively it lives under your install
 directory; in Docker it lives in the `/data` volume at `/data/agent.db`. There
 is no separate datastore to stand up — back up that one file and you've backed
