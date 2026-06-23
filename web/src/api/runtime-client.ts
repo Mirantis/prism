@@ -12,6 +12,7 @@ import type {
   SlackLinkStatus,
   SlackWorkspace,
   ModelInfo,
+  SkillSummary,
 } from '@/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -194,6 +195,19 @@ export const runtimeApi = {
     }),
   deleteCronTask: (taskId: string) =>
     request<{ success: true }>(`/agents/cron-tasks/${taskId}`, { method: 'DELETE' }),
+
+  // Skills (Agent Skills — agentskills.io). threadId scopes the listing to that
+  // thread's workspace (repo skills); web threads have no workspaceRoot so it's
+  // a harmless no-op that returns global skills.
+  listSkills: (threadId?: string) =>
+    request<SkillSummary[]>(
+      `/agents/skills${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ''}`,
+    ),
+  runSkill: (name: string, threadId?: string) =>
+    request<{ threadId: string; skill: string }>(
+      `/agents/skills/${encodeURIComponent(name)}/run`,
+      { method: 'POST', body: JSON.stringify(threadId ? { threadId } : {}) },
+    ),
 
   // Backup / restore
   importAgent: (file: File) => {

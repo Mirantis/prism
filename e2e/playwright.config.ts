@@ -30,6 +30,22 @@ const E2E_DATABASE_URL = 'file:./e2e.db';
 const E2E_WORKSPACE = path.join(os.tmpdir(), 'prism-e2e-workspace');
 fs.mkdirSync(E2E_WORKSPACE, { recursive: true });
 
+// Persistent data dir for the runtime (skills live at <dir>/skills). Pointed at
+// a temp dir via PRISM_DATA_DIR so we never touch the host's real ~/.prism, and
+// seeded with a deterministic skill bundle BEFORE the runtime boots so it's in
+// the catalog from the first request. The `echo-marker` skill instructs the
+// agent to reply with a fixed sentinel, which the web-skills run scenario
+// asserts end-to-end.
+const E2E_DATA_DIR = path.join(os.tmpdir(), 'prism-e2e-data');
+const E2E_ECHO_SKILL_DIR = path.join(E2E_DATA_DIR, 'skills', 'echo-marker');
+fs.mkdirSync(E2E_ECHO_SKILL_DIR, { recursive: true });
+fs.writeFileSync(
+  path.join(E2E_ECHO_SKILL_DIR, 'SKILL.md'),
+  '---\nname: echo-marker\ndescription: Reply with a fixed test marker.\n---\n\n' +
+    'When this skill is invoked, reply with exactly the following text and nothing else:\n\n' +
+    'SKILL_RAN_OK\n',
+);
+
 // Provision the SQLite e2e DB *at config load* so it exists before
 // Playwright spawns the runtime webServer (the WebServerPlugin runs in
 // the plugin-setup phase, which precedes globalSetup).
@@ -129,6 +145,8 @@ export default defineConfig({
         AGENT_ID: DEFAULT_AGENT_ID,
         // Writable workspace for the agent's shell/share_file tools (see above).
         SHELL_WORKSPACE_ROOT: E2E_WORKSPACE,
+        // Persistent data dir → skills live at <dir>/skills (seeded above).
+        PRISM_DATA_DIR: E2E_DATA_DIR,
         // Heartbeat-driven broadcasts publish under config.ownerUserId, and
         // the slack adapter delivers via SlackMapping rows scoped by
         // lensUserId. db-helper.seed() uses TEST_USER.id, so the SPA's

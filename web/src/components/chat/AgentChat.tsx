@@ -9,6 +9,7 @@ import { MAX_ATTACHMENTS_PER_MESSAGE, type Attachment, type ConversationMessage 
 import ChatMessageList from './ChatMessageList';
 import ChatInput from './ChatInput';
 import type { PendingAttachment } from './ChatAttachmentChip';
+import { findExact, parseCommandLine, type SlashCommand } from './commands';
 
 let attachmentSeq = 0;
 
@@ -190,9 +191,64 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     });
   }, []);
 
+  // A client-only SYSTEM line (e.g. a slash-command result). Never stored, so it
+  // doesn't pollute the history fed back to the model — same pattern as the
+  // cancel marker above.
+  const appendSystemMessage = useCallback(
+    (content: string) => {
+      setLocalMessages((prev) => [
+        ...prev,
+        {
+          id: `cmd-${Date.now()}`,
+          threadId: activeThreadId ?? '',
+          role: 'SYSTEM',
+          content,
+          triggeredBy: 'USER_INPUT',
+          toolCalls: null,
+          blocks: null,
+          tokenCount: null,
+          isCompacted: false,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    },
+    [activeThreadId],
+  );
+
+  // Run a slash command locally and surface its result as a SYSTEM message. The
+  // command itself calls the runtime's REST endpoints (e.g. /skills run streams
+  // the agent's reply back over WebSocket); we never send the slash text to the
+  // engine as chat.
+  const runSlashCommand = useCallback(
+    async (cmd: SlashCommand, args: string[], rawArgs: string) => {
+      let result: string;
+      try {
+        result = await cmd.run({ args, rawArgs, threadId: activeThreadId });
+      } catch (err) {
+        result = err instanceof Error ? err.message : String(err);
+      }
+      if (result) appendSystemMessage(result);
+    },
+    [activeThreadId, appendSystemMessage],
+  );
+
   const handleSend = (e: FormEvent) => {
     e.preventDefault();
     const userMessage = message.trim();
+
+    // Slash-command dispatch: a registered leading command runs locally instead
+    // of being sent to the agent. Staged attachments are untouched (only a chat
+    // send consumes them), matching the TUI.
+    if (userMessage.startsWith('/')) {
+      const { headWord, args, rawArgs } = parseCommandLine(userMessage);
+      const cmd = findExact(headWord);
+      if (cmd) {
+        setMessage('');
+        void runSlashCommand(cmd, args, rawArgs);
+        return;
+      }
+    }
+
     const ready = attachments.filter((a) => a.status === 'ready' && a.id);
     if (!userMessage && ready.length === 0) return;
 

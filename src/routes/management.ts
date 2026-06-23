@@ -33,6 +33,10 @@
  *   POST   /agents/cron-tasks             - Create + register
  *   DELETE /agents/cron-tasks/:taskId     - Unschedule + delete
  *
+ * Skills (Agent Skills — agentskills.io):
+ *   GET    /agents/skills                 - List available skills (name + description + source)
+ *   POST   /agents/skills/:name/run       - Manually trigger a skill (streams over WS)
+ *
  * Slack heartbeat trigger management:
  *   GET    /agents/slack-heartbeat-trigger/channel/:channelId - Check if channel is a trigger
  *   GET    /agents/slack-heartbeat-trigger                    - List active triggers
@@ -90,6 +94,7 @@ import { cronSchedulerService } from '../services/cron-scheduler.service';
 import { slackHeartbeatTriggerService } from '../services/slack-heartbeat-trigger.service';
 import { conversationService, type MessageInput } from '../services/conversation.service';
 import { conversationEngineService, type ChatInput } from '../services/conversation-engine.service';
+import { skillCatalogService } from '../services/skill-catalog.service';
 import { slackAdapterService } from '../services/slack-adapter.service';
 import { attachmentService, detectMediaType, classifyMediaType } from '../services/attachment.service';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, GOAL_MAX_OBJECTIVE_CHARS } from '../constants';
@@ -1909,6 +1914,128 @@ router.delete('/:agentId/subagents/:childAgentId', async (req: Request<{ agentId
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to remove subagent from agent: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Skills (Agent Skills — agentskills.io). Used by both the web SPA and the CLI.
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /agents/skills — available Agent Skills (name + description + on-disk
+ * folder + source). Bodies are NOT included; the agent loads a skill's full
+ * SKILL.md via the `skill` tool (progressive disclosure). Powers the `/skills`
+ * listing.
+ *
+ * The listing is scoped to a thread's workspace: when that thread has a
+ * `workspaceRoot` (the repo the CLI was started in), the repo's `.claude/skills`
+ * + `.agents/skills` are merged in (labeled `source: "workspace"`). The thread
+ * is the ownership-checked `?threadId` when given, else the latest thread (so
+ * the CLI — which doesn't track its thread id — still gets its repo's skills).
+ * Web threads have no workspaceRoot, so they list global skills only.
+ */
+router.get('/skills', async (req: Request, res: Response) => {
+  try {
+    const requested = req.query.threadId;
+    let workspaceRoot: string | undefined;
+    if (typeof requested === 'string' && requested && config.agentId) {
+      const owned = await conversationService.getOwnedThreadId(
+        config.ownerUserId,
+        config.agentId,
+        requested,
+      );
+      if (owned) {
+        workspaceRoot = (await conversationService.getThreadWorkspaceRoot(owned)) ?? undefined;
+      }
+    } else {
+      // No explicit thread → use the latest thread's workspace, read-only (never
+      // creates one). The CLI's startup thread carries its launch cwd here.
+      const latest = await conversationService.getLatestThread(config.ownerUserId);
+      workspaceRoot = latest?.workspaceRoot ?? undefined;
+    }
+    const skills = skillCatalogService.getCatalog(workspaceRoot).map((s) => ({
+      name: s.name,
+      description: s.description,
+      dirName: s.dirName,
+      source: s.source,
+    }));
+    res.json(skills);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] GET /skills failed: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * POST /agents/skills/:name/run — manually trigger a skill (the `/skills run`
+ * command in the web/CLI). The UI parses the slash command and calls this REST
+ * endpoint (we never parse a slash command in the conversation engine). The run
+ * is dispatched as an ordinary chat turn — the agent loads the skill body with
+ * the `skill` tool and follows it — so the streamed reply rides out over the
+ * WebSocket channel the client is already on. Fire-and-forget: we return 202
+ * immediately and let the turn stream; engine errors surface as friendly steps.
+ */
+router.post('/skills/:name/run', async (req: Request, res: Response) => {
+  try {
+    if (!config.agentId) {
+      res.status(503).json({ error: 'Single-agent mode not initialized (agentId unset)' });
+      return;
+    }
+    // Express 5 types a mid-path param as `string | string[]`; a single
+    // `:name` is always a string at runtime.
+    const rawName = req.params.name;
+    const skillName = Array.isArray(rawName) ? rawName[0] : rawName;
+
+    // Resolve the thread (and its workspace) FIRST: run in the thread the client
+    // is viewing when given (ownership-checked), else the latest active thread —
+    // same resolution as GET /messages. The workspaceRoot is needed so a repo
+    // skill can be found, not just the global ones.
+    const requested = req.body?.threadId;
+    let threadId: string;
+    if (typeof requested === 'string' && requested) {
+      const owned = await conversationService.getOwnedThreadId(
+        config.ownerUserId,
+        config.agentId,
+        requested,
+      );
+      if (!owned) {
+        res.status(404).json({ error: 'Thread not found' });
+        return;
+      }
+      threadId = owned;
+    } else {
+      const thread = await conversationService.getOrCreateLatestThread(
+        config.agentId,
+        config.ownerUserId,
+      );
+      threadId = thread.id;
+    }
+    const workspaceRoot =
+      (await conversationService.getThreadWorkspaceRoot(threadId)) ?? undefined;
+
+    const entry = skillCatalogService.find(skillName, workspaceRoot);
+    if (!entry) {
+      res.status(404).json({ error: `No available skill named "${skillName}".` });
+      return;
+    }
+
+    const directive = `Use the "${entry.name}" skill.`;
+    void conversationEngineService
+      .chat({
+        userId: config.ownerUserId,
+        agentId: config.agentId,
+        message: directive,
+        threadId,
+        metadata: { channel: 'websocket' },
+      })
+      .catch((err) => logger.error({ err }, '[Management] skill run failed'));
+
+    res.status(202).json({ threadId, skill: entry.name });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] POST /skills/:name/run failed: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });

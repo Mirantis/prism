@@ -25,8 +25,14 @@ const {
   mockListThreads,
   mockAddMessage,
   mockGetOrCreateLatestThread,
+  mockGetLatestThread,
+  mockGetOwnedThreadId,
+  mockGetThreadWorkspaceRoot,
   mockSetExternalId,
   mockGetOrCreateThreadByExternalId,
+  mockGetCatalog,
+  mockFind,
+  mockChatEngine,
   mockPrisma,
   mockSlackHeartbeatTriggerService,
 } = vi.hoisted(() => ({
@@ -41,8 +47,14 @@ const {
   mockListThreads: vi.fn(),
   mockAddMessage: vi.fn(),
   mockGetOrCreateLatestThread: vi.fn(),
+  mockGetLatestThread: vi.fn(),
+  mockGetOwnedThreadId: vi.fn(),
+  mockGetThreadWorkspaceRoot: vi.fn(),
   mockSetExternalId: vi.fn(),
   mockGetOrCreateThreadByExternalId: vi.fn(),
+  mockGetCatalog: vi.fn(),
+  mockFind: vi.fn(),
+  mockChatEngine: vi.fn(),
   mockSlackHeartbeatTriggerService: {
     isHeartbeatTriggerChannel: vi.fn(),
     getActiveTriggers: vi.fn(),
@@ -109,9 +121,20 @@ vi.mock('../services/conversation.service', () => ({
     listThreads: mockListThreads,
     addMessage: mockAddMessage,
     getOrCreateLatestThread: mockGetOrCreateLatestThread,
+    getLatestThread: mockGetLatestThread,
+    getOwnedThreadId: mockGetOwnedThreadId,
+    getThreadWorkspaceRoot: mockGetThreadWorkspaceRoot,
     setExternalId: mockSetExternalId,
     getOrCreateThreadByExternalId: mockGetOrCreateThreadByExternalId,
   },
+}));
+
+vi.mock('../services/skill-catalog.service', () => ({
+  skillCatalogService: { getCatalog: mockGetCatalog, find: mockFind },
+}));
+
+vi.mock('../services/conversation-engine.service', () => ({
+  conversationEngineService: { chat: mockChatEngine },
 }));
 
 vi.mock('../services/slack-heartbeat-trigger.service', () => ({
@@ -179,6 +202,7 @@ vi.mock('../lib/telemetry', () => ({
 // ---------------------------------------------------------------------------
 
 import { createApp } from '../server';
+import { config } from '../config';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2003,6 +2027,167 @@ describe('Management Routes', () => {
       await authedRequest(app).delete('/agents/slack/dm-mapping?connectionId=conn-001');
 
       expect(mockTrackEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
+  // Skills (GET /skills, POST /skills/:name/run)
+  // ==========================================================================
+
+  describe('Skills Routes', () => {
+    beforeEach(() => {
+      // The global config mock has agentId but no ownerUserId; the skills run
+      // route reads both. Restore them before each test (the 503 case mutates
+      // agentId).
+      config.agentId = 'test-agent-id';
+      (config as unknown as { ownerUserId: string }).ownerUserId = 'owner-user-id';
+      // Default: threads have no workspace root (global skills only).
+      mockGetThreadWorkspaceRoot.mockResolvedValue(null);
+      mockGetLatestThread.mockResolvedValue(null);
+    });
+
+    it('GET /skills returns name/description/dirName/source (no bodies); no threadId → latest thread workspace', async () => {
+      mockGetCatalog.mockReturnValue([
+        { name: 'echo', description: 'Echo it.', dirName: 'echo', dir: '/d/skills/echo', skillMdPath: '/d/skills/echo/SKILL.md', source: 'global' },
+        { name: 'greet', description: 'Greet.', dirName: 'greet', dir: '/d/skills/greet', skillMdPath: '/d/skills/greet/SKILL.md', source: 'global' },
+      ]);
+
+      const res = await authedRequest(app).get('/agents/skills');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([
+        { name: 'echo', description: 'Echo it.', dirName: 'echo', source: 'global' },
+        { name: 'greet', description: 'Greet.', dirName: 'greet', source: 'global' },
+      ]);
+      // No threadId → latest thread (null here) → global-only catalog.
+      expect(mockGetCatalog).toHaveBeenCalledWith(undefined);
+      expect(mockGetOwnedThreadId).not.toHaveBeenCalled();
+    });
+
+    it('GET /skills with no threadId falls back to the latest thread\'s workspace', async () => {
+      mockGetLatestThread.mockResolvedValue({ id: 'latest', workspaceRoot: '/repo' });
+      mockGetCatalog.mockReturnValue([
+        { name: 'repo-skill', description: 'r', dirName: 'repo-skill', dir: '/repo/.claude/skills/repo-skill', skillMdPath: '/repo/.claude/skills/repo-skill/SKILL.md', source: 'workspace' },
+      ]);
+
+      const res = await authedRequest(app).get('/agents/skills');
+
+      expect(res.status).toBe(200);
+      expect(mockGetCatalog).toHaveBeenCalledWith('/repo');
+      expect(res.body[0]).toMatchObject({ name: 'repo-skill', source: 'workspace' });
+    });
+
+    it('GET /skills?threadId merges the thread\'s workspace skills', async () => {
+      mockGetOwnedThreadId.mockResolvedValue('thread-x');
+      mockGetThreadWorkspaceRoot.mockResolvedValue('/repo');
+      mockGetCatalog.mockReturnValue([
+        { name: 'repo-skill', description: 'From the repo.', dirName: 'repo-skill', dir: '/repo/.claude/skills/repo-skill', skillMdPath: '/repo/.claude/skills/repo-skill/SKILL.md', source: 'workspace' },
+        { name: 'echo', description: 'Echo it.', dirName: 'echo', dir: '/d/skills/echo', skillMdPath: '/d/skills/echo/SKILL.md', source: 'global' },
+      ]);
+
+      const res = await authedRequest(app).get('/agents/skills?threadId=thread-x');
+
+      expect(res.status).toBe(200);
+      expect(mockGetOwnedThreadId).toHaveBeenCalledWith('owner-user-id', 'test-agent-id', 'thread-x');
+      expect(mockGetCatalog).toHaveBeenCalledWith('/repo');
+      expect(res.body).toEqual([
+        { name: 'repo-skill', description: 'From the repo.', dirName: 'repo-skill', source: 'workspace' },
+        { name: 'echo', description: 'Echo it.', dirName: 'echo', source: 'global' },
+      ]);
+    });
+
+    it('GET /skills returns 500 when the catalog throws', async () => {
+      mockGetCatalog.mockImplementation(() => {
+        throw new Error('fs boom');
+      });
+
+      const res = await authedRequest(app).get('/agents/skills');
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('fs boom');
+    });
+
+    it('POST /skills/:name/run runs in the latest thread when no threadId given', async () => {
+      mockFind.mockReturnValue({ name: 'echo-marker', dirName: 'echo-marker' });
+      mockGetOrCreateLatestThread.mockResolvedValue({ id: 'latest-thread' });
+      mockChatEngine.mockResolvedValue({});
+
+      const res = await authedRequest(app).post('/agents/skills/echo-marker/run');
+
+      expect(res.status).toBe(202);
+      expect(res.body).toEqual({ threadId: 'latest-thread', skill: 'echo-marker' });
+      expect(mockGetOwnedThreadId).not.toHaveBeenCalled();
+      expect(mockChatEngine).toHaveBeenCalledWith({
+        userId: 'owner-user-id',
+        agentId: 'test-agent-id',
+        message: 'Use the "echo-marker" skill.',
+        threadId: 'latest-thread',
+        metadata: { channel: 'websocket' },
+      });
+    });
+
+    it('POST /skills/:name/run runs in a specific, ownership-checked thread when given', async () => {
+      mockFind.mockReturnValue({ name: 'echo-marker', dirName: 'echo-marker' });
+      mockGetOwnedThreadId.mockResolvedValue('thread-x');
+      mockChatEngine.mockResolvedValue({});
+
+      const res = await authedRequest(app)
+        .post('/agents/skills/echo-marker/run')
+        .send({ threadId: 'thread-x' });
+
+      expect(res.status).toBe(202);
+      expect(mockGetOwnedThreadId).toHaveBeenCalledWith('owner-user-id', 'test-agent-id', 'thread-x');
+      expect(mockGetOrCreateLatestThread).not.toHaveBeenCalled();
+      expect(mockChatEngine).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'thread-x' }));
+    });
+
+    it('POST /skills/:name/run resolves the skill against the thread\'s workspace', async () => {
+      mockGetOwnedThreadId.mockResolvedValue('thread-x');
+      mockGetThreadWorkspaceRoot.mockResolvedValue('/repo');
+      mockFind.mockReturnValue({ name: 'repo-skill', dirName: 'repo-skill' });
+      mockChatEngine.mockResolvedValue({});
+
+      const res = await authedRequest(app)
+        .post('/agents/skills/repo-skill/run')
+        .send({ threadId: 'thread-x' });
+
+      expect(res.status).toBe(202);
+      // find() must be called with the thread's workspaceRoot so a repo skill resolves.
+      expect(mockFind).toHaveBeenCalledWith('repo-skill', '/repo');
+      expect(res.body).toEqual({ threadId: 'thread-x', skill: 'repo-skill' });
+    });
+
+    it('POST /skills/:name/run returns 404 for an unknown skill and never starts a turn', async () => {
+      mockGetOrCreateLatestThread.mockResolvedValue({ id: 'latest-thread' });
+      mockFind.mockReturnValue(undefined);
+
+      const res = await authedRequest(app).post('/agents/skills/nope/run');
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain('No available skill named "nope"');
+      expect(mockChatEngine).not.toHaveBeenCalled();
+    });
+
+    it('POST /skills/:name/run returns 404 when the requested thread is not owned', async () => {
+      mockFind.mockReturnValue({ name: 'echo-marker', dirName: 'echo-marker' });
+      mockGetOwnedThreadId.mockResolvedValue(null);
+
+      const res = await authedRequest(app)
+        .post('/agents/skills/echo-marker/run')
+        .send({ threadId: 'nope' });
+
+      expect(res.status).toBe(404);
+      expect(mockChatEngine).not.toHaveBeenCalled();
+    });
+
+    it('POST /skills/:name/run returns 503 when single-agent mode is not initialized', async () => {
+      config.agentId = undefined as unknown as string;
+
+      const res = await authedRequest(app).post('/agents/skills/echo-marker/run');
+
+      expect(res.status).toBe(503);
+      expect(mockFind).not.toHaveBeenCalled();
+      expect(mockChatEngine).not.toHaveBeenCalled();
     });
   });
 });

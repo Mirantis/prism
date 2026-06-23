@@ -42,6 +42,8 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     uploadAttachment: vi.fn(),
     deleteAttachment: vi.fn(),
     downloadAttachment: vi.fn(),
+    listSkills: vi.fn(),
+    runSkill: vi.fn(),
   };
 }
 
@@ -385,6 +387,71 @@ describe('/model', () => {
     );
     expect(api.setModel).not.toHaveBeenCalled();
     expect(out).toMatch(/usage/i);
+  });
+});
+
+describe('/skills', () => {
+  it('lists available skills with descriptions, passing the active thread, labeling workspace ones', async () => {
+    const api = stubApi();
+    api.listSkills.mockResolvedValue([
+      { name: 'repo-skill', description: 'From the repo.', dirName: 'repo-skill', source: 'workspace' },
+      { name: 'echo-marker', description: 'Reply with a marker.', dirName: 'echo-marker', source: 'global' },
+    ]);
+    const out = await cmd('/skills').run(
+      makeCtx({ args: [], threadId: 't1', api: api as unknown as ApiClient }),
+    );
+    // The active thread is forwarded so the runtime includes repo skills.
+    expect(api.listSkills).toHaveBeenCalledWith('t1');
+    expect(out).toContain('repo-skill — From the repo. (workspace)');
+    expect(out).toContain('echo-marker — Reply with a marker.');
+    // Global skills are not labeled (workspace)
+    expect(out).not.toContain('echo-marker — Reply with a marker. (workspace)');
+  });
+
+  it('list subcommand also lists', async () => {
+    const api = stubApi();
+    api.listSkills.mockResolvedValue([
+      { name: 'echo-marker', description: 'Reply with a marker.', dirName: 'echo-marker', source: 'global' },
+    ]);
+    const out = await cmd('/skills').run(
+      makeCtx({ args: ['list'], api: api as unknown as ApiClient }),
+    );
+    expect(out).toContain('echo-marker');
+  });
+
+  it('reports when no skills are available', async () => {
+    const api = stubApi();
+    api.listSkills.mockResolvedValue([]);
+    const out = await cmd('/skills').run(makeCtx({ args: [], api: api as unknown as ApiClient }));
+    expect(out).toMatch(/no skills available/i);
+  });
+
+  it('run forwards the name and the active thread id', async () => {
+    const api = stubApi();
+    api.runSkill.mockResolvedValue({ threadId: 't1', skill: 'echo-marker' });
+    const out = await cmd('/skills').run(
+      makeCtx({ args: ['run', 'echo-marker'], threadId: 't1', api: api as unknown as ApiClient }),
+    );
+    expect(api.runSkill).toHaveBeenCalledWith('echo-marker', 't1');
+    expect(out).toContain('echo-marker');
+  });
+
+  it('run without a name returns usage and makes no call', async () => {
+    const api = stubApi();
+    const out = await cmd('/skills').run(
+      makeCtx({ args: ['run'], api: api as unknown as ApiClient }),
+    );
+    expect(api.runSkill).not.toHaveBeenCalled();
+    expect(out).toMatch(/usage/i);
+  });
+
+  it('surfaces an ApiError message (e.g. unknown skill 404)', async () => {
+    const api = stubApi();
+    api.runSkill.mockRejectedValue(new ApiError('No available skill named "nope".', 404));
+    const out = await cmd('/skills').run(
+      makeCtx({ args: ['run', 'nope'], api: api as unknown as ApiClient }),
+    );
+    expect(out).toContain('No available skill named');
   });
 });
 

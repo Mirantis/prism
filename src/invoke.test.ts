@@ -26,6 +26,7 @@ const {
   mockGetAgentConfigTools,
   mockGetShellTools,
   mockGetShareFileTools,
+  mockGetSkillTools,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
   mockIsBedrockConfigured: vi.fn(),
@@ -45,6 +46,7 @@ const {
   mockGetAgentConfigTools: vi.fn(),
   mockGetShellTools: vi.fn(),
   mockGetShareFileTools: vi.fn(),
+  mockGetSkillTools: vi.fn(),
 }));
 
 /**
@@ -101,6 +103,10 @@ vi.mock('./tools/shell', () => ({
 vi.mock('./tools/share-file', () => ({
   getShareFileTools: mockGetShareFileTools,
   SHARE_FILE_TOOL_NAME: 'share_file',
+}));
+
+vi.mock('./tools/skills/index', () => ({
+  getSkillTools: mockGetSkillTools,
 }));
 
 vi.mock('./prompts/context-builder', () => ({
@@ -165,6 +171,7 @@ describe('invoke', () => {
     mockGetAgentConfigTools.mockReturnValue({});
     mockGetShellTools.mockReturnValue({});
     mockGetShareFileTools.mockReturnValue({});
+    mockGetSkillTools.mockReturnValue({});
 
     mockIsBedrockConfigured.mockReturnValue(true);
     mockCreateBedrockProvider.mockReturnValue(() => 'model-instance');
@@ -279,17 +286,21 @@ describe('invoke', () => {
       mockGetShareFileTools.mockReturnValue({
         share_file: { description: 'share' },
       });
+      mockGetSkillTools.mockReturnValue({
+        skill: { description: 'skill' },
+      });
     });
 
     it('chat mode gets all tools', async () => {
       await invoke(createTestInvokeRequest({ mode: 'chat' }));
 
       const callArgs = mockGenerateText.mock.calls[0][0];
-      // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file + 2 goal
-      expect(Object.keys(callArgs.tools)).toHaveLength(11);
+      // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file + 2 goal + 1 skill
+      expect(Object.keys(callArgs.tools)).toHaveLength(12);
       expect(Object.keys(callArgs.tools)).toContain('share_file');
       expect(Object.keys(callArgs.tools)).toContain('create_goal');
       expect(Object.keys(callArgs.tools)).toContain('get_goal');
+      expect(Object.keys(callArgs.tools)).toContain('skill');
     });
 
     it('subagent mode excludes share_file (no channel to the user)', async () => {

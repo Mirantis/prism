@@ -179,6 +179,12 @@ export interface StartPrismOptions {
   runtime?: RuntimeHandle;
   /** Extra CLI argv appended after the entry (e.g. ['--resume']). */
   args?: string[];
+  /**
+   * Directory to launch the CLI from. The CLI sends this as the thread's
+   * workspaceRoot, so a repo seeded with `.claude/skills/` is picked up as
+   * workspace skills. Defaults to the prism-cli package dir.
+   */
+  cwd?: string;
 }
 
 export interface TuiSession {
@@ -200,12 +206,14 @@ export interface TuiSession {
 export function startPrism(opts: StartPrismOptions): TuiSession {
   const child = pty.spawn(
     process.execPath,
-    [TSX_CLI, 'src/index.tsx', ...(opts.args ?? [])],
+    // Absolute entry path so `cwd` can be an arbitrary repo dir (the CLI sends
+    // its cwd as the thread's workspaceRoot) without breaking entry resolution.
+    [TSX_CLI, path.join(PRISM_CLI_DIR, 'src/index.tsx'), ...(opts.args ?? [])],
     {
       name: 'xterm-256color',
       cols: opts.cols ?? 120,
       rows: opts.rows ?? 32,
-      cwd: PRISM_CLI_DIR,
+      cwd: opts.cwd ?? PRISM_CLI_DIR,
       env: sanitizeEnv(opts.env),
     },
   );

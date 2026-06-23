@@ -39,6 +39,7 @@ import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttl
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
 import { ensureWorkspaceRoot } from './tools/shell/config';
+import { ensureDataDirs } from './lib/data-dir';
 
 // Initialize Langfuse tracing before any LLM calls
 initLangfuse();
@@ -75,6 +76,25 @@ const initialize = async () => {
     } else {
       logger.info('[Startup] shell workspace: %s', ws.root);
     }
+
+    // Ensure the persistent skills dir exists and point Claude Code
+    // (CLAUDE_CONFIG_DIR + a symlink inside our own data dir) at the same
+    // canonical skills folder, so the prism loop and the embedded claude_code
+    // tool see one shared set of skills without touching the user's ~/.claude.
+    const dirs = ensureDataDirs();
+    if (dirs.fellBackFrom) {
+      logger.warn(
+        '[Startup] data dir %s is not usable; falling back to %s. Set PRISM_DATA_DIR to choose another.',
+        dirs.fellBackFrom,
+        dirs.dataDir,
+      );
+    }
+    logger.info(
+      '[Startup] skills dir: %s (claude config: %s, symlink %s)',
+      dirs.skillsDir,
+      dirs.claudeConfigDir,
+      dirs.symlinkOk ? 'ok' : 'unavailable',
+    );
 
     // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
     // either picks up the existing row via findFirst() or creates a
