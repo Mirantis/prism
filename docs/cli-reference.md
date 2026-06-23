@@ -101,7 +101,7 @@ fall back to defaults, and a malformed file is ignored.
 ```json
 {
   "agentName": "Prism",
-  "modelId": "us.anthropic.claude-opus-4-7",
+  "modelId": "us.anthropic.claude-opus-4-8",
   "httpUrl": "http://localhost:3003",
   "hideCursor": false,
   "hideStatusBar": false
