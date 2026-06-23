@@ -37,11 +37,11 @@ A couple of things work differently from a plain Docker run:
 - **Credentials come from the network boundary.** The sandbox supplies the
   Bedrock credential at the edge, so you don't pass `AWS_BEARER_TOKEN_BEDROCK`
   into the run.
-- **Outbound access is policy-gated.** Start the run from a project directory —
-  that's where `lns` looks for (or auto-creates) the `lns-policy.yaml` that
-  governs the run. The first time the agent reaches out over the network, the
-  service raises an approval prompt for that connection. Answering "always"
-  writes the rule into `lns-policy.yaml`, so future runs proceed without asking.
+- **Outbound access is policy-gated.** Start the run from a project directory,
+  where `lns` keeps the policy that governs the run. The first time the agent
+  reaches out over the network, the service raises an approval prompt for that
+  connection; answering "always" remembers it so future runs proceed without
+  asking.
 
 Because the agent can run shell commands, spawn processes, and call out to tools
 like `kubectl` and `gh`, the policy boundary is doing real work here: nothing

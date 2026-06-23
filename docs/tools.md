@@ -48,7 +48,7 @@ paths resolve from there.
 
 - **Run a command** — execute a shell command and get back stdout, stderr, and
   the exit code. Commands have a timeout (default ~30s, up to 20 minutes) and
-  output is size-capped (see **[Sessions & safety](sessions-and-safety.md)**).
+  output is size-capped so a noisy command can't flood the context.
 - **Read / write / edit files** — read a file (line-numbered), write a file, or
   make an exact-string edit. These tools reject paths outside the workspace.
 - **Long-running processes** — spawn a background process, write to its stdin,

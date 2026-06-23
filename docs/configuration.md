@@ -53,8 +53,9 @@ The main model can also be set per-agent at runtime (Web UI Profile, the TUI
 
 ## Observability
 
-All optional; each is off until its variable is set. See
-**[Sessions & safety → Observability](sessions-and-safety.md#observability)**.
+All optional; each is off until its variable is set. Langfuse traces every LLM
+call (model, tokens, tool calls, latency); OpenTelemetry exports product
+telemetry to a collector. Structured logs (Pino) are always on.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|

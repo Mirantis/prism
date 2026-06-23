@@ -65,6 +65,15 @@ the feature is observable in production. Rules:
   `goal started` (creation) and `goal finished` (with `status`, `turns`,
   `elapsed_ms`); cron emits `cron task scheduled` / `cron task executed`.
 
+## Documentation
+
+Any **user-facing change must update the docs** in the same PR. The user docs
+live in `docs/` (see `docs/README.md` for the layout): installation, the web
+and terminal UIs, Slack, and a page per feature, plus the configuration and CLI
+reference. When you add, change, or remove a feature, flag, env var, command,
+slash command, or UI surface, update the relevant doc page (and the root
+`README.md` if it covers the same thing) so the docs never drift from behavior.
+
 ## Deployment shape
 
 One `AGENT_ID` per container, embedded SQLite + sqlite-vec at

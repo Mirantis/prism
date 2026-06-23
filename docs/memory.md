@@ -60,6 +60,6 @@ else, the searchable store is the default.
 ## Persistence and backup
 
 Both layers live in the agent's SQLite database, so they survive restarts,
-daily [session resets](sessions-and-safety.md), and upgrades. Memory is included
+daily session resets, and upgrades. Memory is included
 in the `.prism` export from the **[Web UI](web-ui.md#profile)**, so backing up
 the agent backs up everything it remembers.
