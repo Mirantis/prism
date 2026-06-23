@@ -30,16 +30,13 @@ agent to change its soul or add a heartbeat check, and it uses its
 
 ## How editing works
 
-There are three ways the documents change:
+There are two ways the documents change:
 
 1. **Through conversation (the normal way).** Tell the agent what you want —
    "from now on, be more concise," "remember that our staging cluster is
    `eu-west-1`," "add a heartbeat check for failing pods." It edits the relevant
    document itself.
-2. **Backup / restore.** Export a `.prism` snapshot from the
-   **[Web UI](web-ui.md#profile)**, edit the documents directly, and restore it.
-   This is the way to hand-edit a document outside a conversation.
-3. **On first run.** The **Bootstrap** document drives an onboarding
+2. **On first run.** The **Bootstrap** document drives an onboarding
    conversation that fills in Soul and User for you, then clears itself.
 
 The Web UI and TUI panels show these documents as **read-only viewers** — they
