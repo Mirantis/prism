@@ -27,3 +27,5 @@ Feature: Agent Configuration
     Then the stored scheduled-task model override is "cron-web-model"
     When I clear the heartbeat model override
     Then the heartbeat model override is empty and falls back to the main model
+    When I clear the scheduled-task model override
+    Then the scheduled-task model override is empty and falls back to the main model
