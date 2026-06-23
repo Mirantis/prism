@@ -100,3 +100,18 @@ Then('the heartbeat model override is empty and falls back to the main model', a
     expect(body.effective.length).toBeGreaterThan(0);
   }).toPass({ timeout: 5000 });
 });
+
+When('I clear the scheduled-task model override', async ({ page }) => {
+  await page.getByRole('button', { name: 'Edit scheduled-task model' }).click();
+  await page.getByRole('button', { name: 'Reset' }).click();
+});
+
+Then('the scheduled-task model override is empty and falls back to the main model', async ({ page }) => {
+  await expect(async () => {
+    const res = await page.request.get('/agents/cron-model');
+    expect(res.ok()).toBeTruthy();
+    const body = (await res.json()) as OverrideModelInfo;
+    expect(body.model).toBeNull();
+    expect(body.effective.length).toBeGreaterThan(0);
+  }).toPass({ timeout: 5000 });
+});
