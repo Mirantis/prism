@@ -73,8 +73,6 @@ model AgentWorkspace {
 
   heartbeatIntervalMs Int                  @default(28800000)
   heartbeatStatus     AgentHeartbeatStatus @default(ENABLED)
-  proactivity         Int                  @default(3)
-  verbosity           Int                  @default(3)
   timezone            String               @default("UTC")
   model               String?
   heartbeatModel      String?

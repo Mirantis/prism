@@ -27,8 +27,6 @@ export interface AgentContext {
   agentName: string;
   agentId: string;
   userId: string;
-  proactivity: number;
-  verbosity: number;
   model: string | null;
   /** Heartbeat-specific model override; falls back to `model`, then env default. */
   heartbeatModel: string | null;

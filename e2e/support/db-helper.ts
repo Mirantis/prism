@@ -91,8 +91,6 @@ export async function seed(): Promise<string> {
     memoryMd: DEFAULT_AGENT_SEED.memoryMd,
     heartbeatMd: DEFAULT_AGENT_SEED.heartbeatMd,
     bootstrapMd: '',
-    proactivity: 3,
-    verbosity: 3,
   };
 
   const agent = await db.agentWorkspace.upsert({

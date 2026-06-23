@@ -42,8 +42,6 @@ function createTestAgentWorkspace(overrides: Record<string, unknown> = {}) {
     agentMd: '',
     nexusMcpAgentToken: null,
     heartbeatIntervalMs: 28800000,
-    proactivity: 3,
-    verbosity: 3,
     timezone: 'UTC',
     ...overrides,
   };
@@ -208,33 +206,10 @@ describe('getAgentConfigTools', () => {
   });
 
   describe('update_settings', () => {
-    it('validates proactivity bounds', async () => {
-      await expect(
-        tools.update_settings.execute({ setting: 'proactivity', value: 0 }),
-      ).rejects.toThrow('Proactivity must be 1-5');
-      await expect(
-        tools.update_settings.execute({ setting: 'proactivity', value: 6 }),
-      ).rejects.toThrow('Proactivity must be 1-5');
-    });
-
-    it('validates verbosity bounds', async () => {
-      await expect(
-        tools.update_settings.execute({ setting: 'verbosity', value: 0 }),
-      ).rejects.toThrow('Verbosity must be 1-5');
-    });
-
     it('validates heartbeatIntervalMs minimum', async () => {
       await expect(
         tools.update_settings.execute({ setting: 'heartbeatIntervalMs', value: 1000 }),
       ).rejects.toThrow('>= 60000ms');
-    });
-
-    it('updates proactivity', async () => {
-      await tools.update_settings.execute({ setting: 'proactivity', value: 3 });
-      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
-        where: { id: agentId },
-        data: { proactivity: 3 },
-      });
     });
 
     it('triggers startHeartbeat when heartbeatIntervalMs changes', async () => {
@@ -247,22 +222,6 @@ describe('getAgentConfigTools', () => {
       expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
         where: { id: agentId },
         data: { heartbeatIntervalMs: 600000 },
-      });
-    });
-
-    it('accepts string-typed proactivity and coerces to number', async () => {
-      await tools.update_settings.execute({ setting: 'proactivity', value: '3' });
-      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
-        where: { id: agentId },
-        data: { proactivity: 3 },
-      });
-    });
-
-    it('accepts string-typed verbosity and coerces to number', async () => {
-      await tools.update_settings.execute({ setting: 'verbosity', value: '3' });
-      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
-        where: { id: agentId },
-        data: { verbosity: 3 },
       });
     });
 
@@ -289,11 +248,11 @@ describe('getAgentConfigTools', () => {
 
     it('rejects non-integer numeric values for numeric settings', async () => {
       await expect(
-        tools.update_settings.execute({ setting: 'proactivity', value: '3.5' }),
-      ).rejects.toThrow('Proactivity must be a finite integer');
+        tools.update_settings.execute({ setting: 'heartbeatIntervalMs', value: '60000.5' }),
+      ).rejects.toThrow('Heartbeat interval must be a finite integer');
       await expect(
-        tools.update_settings.execute({ setting: 'verbosity', value: Infinity }),
-      ).rejects.toThrow('Verbosity must be a finite integer');
+        tools.update_settings.execute({ setting: 'heartbeatIntervalMs', value: Infinity }),
+      ).rejects.toThrow('Heartbeat interval must be a finite integer');
     });
   });
 

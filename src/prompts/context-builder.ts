@@ -47,8 +47,6 @@ export interface AgentContext {
   agentName: string;
   agentId: string;
   userId: string;
-  proactivity: number;
-  verbosity: number;
   model: string | null;
   isBootstrapPhase: boolean;
   conversationSummary: string | null;

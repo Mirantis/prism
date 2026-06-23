@@ -83,13 +83,13 @@ describe('buildSystemPrompt', () => {
   });
 
   it('chat mode includes chat instructions', async () => {
-    const context = createTestAgentContext({ proactivity: 4 });
+    const context = createTestAgentContext();
     const prompt = await buildSystemPrompt(context, 'chat');
     expect(prompt).toContain('# Chat Mode');
   });
 
   it('heartbeat mode includes minimal heartbeat instructions (no HEARTBEAT_OK)', async () => {
-    const context = createTestAgentContext({ proactivity: 4 });
+    const context = createTestAgentContext();
     const prompt = await buildSystemPrompt(context, 'heartbeat');
     expect(prompt).toContain('## Heartbeats');
     expect(prompt).not.toContain('HEARTBEAT_OK');

@@ -151,16 +151,14 @@ export function getAgentConfigTools(): Record<string, Tool> {
     }),
 
     update_settings: tool({
-      description: 'Update agent behavioral settings (proactivity, verbosity, timezone, heartbeatIntervalMs).',
+      description: 'Update agent behavioral settings (timezone, heartbeatIntervalMs).',
       inputSchema: z.object({
-        setting: z.enum(['proactivity', 'verbosity', 'heartbeatIntervalMs', 'timezone']).describe('Which setting'),
+        setting: z.enum(['heartbeatIntervalMs', 'timezone']).describe('Which setting'),
         value: z.union([z.number(), z.string()]).describe('The new value'),
       }),
       execute: async ({ setting, value }) => {
-        const numericSettings = ['proactivity', 'verbosity', 'heartbeatIntervalMs'] as const;
+        const numericSettings = ['heartbeatIntervalMs'] as const;
         const settingLabels: Record<string, string> = {
-          proactivity: 'Proactivity',
-          verbosity: 'Verbosity',
           heartbeatIntervalMs: 'Heartbeat interval',
         };
         let coerced: unknown = value;
@@ -180,14 +178,6 @@ export function getAgentConfigTools(): Record<string, Tool> {
         const updateData: Record<string, unknown> = {};
 
         switch (setting) {
-          case 'proactivity':
-            if (typeof coerced !== 'number' || coerced < 1 || coerced > 5) throw new Error('Proactivity must be 1-5');
-            updateData.proactivity = coerced;
-            break;
-          case 'verbosity':
-            if (typeof coerced !== 'number' || coerced < 1 || coerced > 5) throw new Error('Verbosity must be 1-5');
-            updateData.verbosity = coerced;
-            break;
           case 'heartbeatIntervalMs':
             if (typeof coerced !== 'number' || coerced < 60000) throw new Error('Heartbeat interval must be >= 60000ms');
             updateData.heartbeatIntervalMs = coerced;

@@ -106,8 +106,6 @@ function createAgent(overrides: Record<string, unknown> = {}): AgentWorkspace {
     bootstrapMd: '',
     heartbeatIntervalMs: 28_800_000,
     heartbeatStatus: 'ENABLED' as const,
-    proactivity: 3,
-    verbosity: 3,
     timezone: 'UTC',
     model: null,
     dailyResetHour: 4,
@@ -832,7 +830,7 @@ describe('HeartbeatService', () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
     });
 
-    it('uses a single minimal prompt regardless of vision or proactivity', async () => {
+    it('uses a single minimal prompt regardless of vision', async () => {
       heartbeatService.startHeartbeat(createAgent());
       await heartbeatService.triggerHeartbeat();
 
