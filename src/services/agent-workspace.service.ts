@@ -367,6 +367,10 @@ class AgentWorkspaceService {
       data: { heartbeatModel: normalized },
     });
     const effective = resolveScopedModel(updated.heartbeatModel, updated.model);
+    logger.info(
+      { agentId: updated.id, heartbeatModel: updated.heartbeatModel, effective },
+      '[AgentWorkspace] heartbeat model updated',
+    );
     trackEvent('agent heartbeat model updated', null, {
       'agent.id': updated.id,
       'agent.model': effective,
@@ -383,6 +387,10 @@ class AgentWorkspaceService {
       data: { cronModel: normalized },
     });
     const effective = resolveScopedModel(updated.cronModel, updated.model);
+    logger.info(
+      { agentId: updated.id, cronModel: updated.cronModel, effective },
+      '[AgentWorkspace] cron model updated',
+    );
     trackEvent('agent cron model updated', null, {
       'agent.id': updated.id,
       'agent.model': effective,
