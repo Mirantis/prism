@@ -139,7 +139,7 @@ conversations and multi-turn threads.
 
 Default models:
 
-- **Main loop**: Claude Opus 4.7
+- **Main loop**: Claude Opus 4.8
 - **Classification gate**: Claude Haiku (fast, deterministic)
 - **Embeddings**: Amazon Titan v2
 

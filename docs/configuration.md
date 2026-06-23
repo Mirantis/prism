@@ -36,7 +36,7 @@ with an empty database; later boots reuse the stored workspace.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `BEDROCK_MODEL_ID` | Main model (the agent's reasoning loop) | `us.anthropic.claude-opus-4-7` |
+| `BEDROCK_MODEL_ID` | Main model (the agent's reasoning loop) | `us.anthropic.claude-opus-4-8` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Fast model for the [heartbeat](heartbeat.md) DELIVER/SUPPRESS gate | a Claude Haiku model |
 | `BEDROCK_EMBEDDING_MODEL_ID` | Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
