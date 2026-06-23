@@ -17,6 +17,10 @@ export class HomePage extends BasePage {
   readonly recentsSection: Locator;
   /** Each conversation row in the Recents list. */
   readonly recentThreads: Locator;
+  /** Slash-command suggestion popup shown above the composer when "/" is typed. */
+  readonly commandPopup: Locator;
+  /** Individual rows in the command popup. */
+  readonly commandPopupItems: Locator;
 
   constructor(page: Page) {
     super(page);
@@ -28,6 +32,24 @@ export class HomePage extends BasePage {
     this.fileInput = page.locator('input[type="file"]');
     this.recentsSection = page.getByTestId('recents');
     this.recentThreads = page.getByTestId('recent-thread');
+    this.commandPopup = page.getByTestId('command-popup');
+    this.commandPopupItems = page.getByTestId('command-popup-item');
+  }
+
+  /** A command popup row matching the given command name (e.g. "/skills"). */
+  commandPopupItem(name: string) {
+    return this.commandPopupItems.filter({ hasText: name });
+  }
+
+  /** Press a key while the composer is focused (e.g. Tab to autocomplete). */
+  async pressKeyInInput(key: string) {
+    await this.chatInput.focus();
+    await this.page.keyboard.press(key);
+  }
+
+  /** Current value of the composer textarea. */
+  inputValue() {
+    return this.chatInput.inputValue();
   }
 
   /** Visible Recents row labels, in document (top-to-bottom) order. */

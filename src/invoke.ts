@@ -18,6 +18,7 @@ import { getGoalTools } from './tools/goals';
 import { getAgentConfigTools } from './tools/agent-config';
 import { getShellTools } from './tools/shell/index';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from './tools/share-file';
+import { getSkillTools } from './tools/skills/index';
 import { contextService } from './services/context.service';
 import { agentWorkspaceService, resolveEffectiveModel } from './services/agent-workspace.service';
 import { isLangfuseEnabled } from './lib/langfuse';
@@ -121,6 +122,10 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         ...getAgentConfigTools(),
         ...getShellTools(request.workspaceRoot),
         ...getShareFileTools(),
+        // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md
+        // body on demand. workspaceRoot merges the repo's skills with the global
+        // ones. Empty (and omitted) when no skills are available.
+        ...getSkillTools(request.workspaceRoot),
       },
       request.mode,
     );
@@ -155,7 +160,13 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     const cachedTools = withToolsCacheControl(limitedTools);
 
     // 6. Build system prompt parts (stable vs dynamic for granular caching)
-    const systemParts = await buildSystemPromptParts(context, request.mode, request.slackMessages, request.prompt);
+    const systemParts = await buildSystemPromptParts(
+      context,
+      request.mode,
+      request.slackMessages,
+      request.prompt,
+      request.workspaceRoot,
+    );
 
     // Append channel/task instructions to the stable (cacheable) part
     const stablePart = systemParts.find((p) => p.cacheable);

@@ -529,3 +529,46 @@ The agent-runtime owns the WebSocket gateway for real-time browser chat. The bac
 ## Agent Guide (agentMd)
 
 The `agentMd` workspace file is the agent's operating manual. It appears in the system prompt as `# Agent Guide` and contains guidance on heartbeat behavior, memory usage, safety, and Slack channel etiquette. It is included in the `AgentContext` type and built into the system prompt by `context-builder.ts` (between Soul and User sections).
+
+## Agent Skills
+
+The runtime supports **Agent Skills** following the open standard at
+[agentskills.io](https://agentskills.io) — `SKILL.md` folder bundles (YAML
+frontmatter with required `name` + `description`, optional `scripts/`/
+`references/`/`assets/`).
+
+- **Where skills live.** Two sources, merged by `skillCatalogService` with
+  workspace winning a name clash (project > personal, like Claude Code):
+  - **Global** — `<DATA>/skills`, the persistent data dir resolved by
+    `src/lib/data-dir.ts`: `/data` inside the container, `~/.prism` outside
+    (local dev, SEA binary), overridable via `PRISM_DATA_DIR` (or
+    `PRISM_SKILLS_DIR`). One physical copy — no duplicates.
+  - **Workspace** — the repo the CLI was started in: `<workspaceRoot>/.claude/skills`
+    and `<workspaceRoot>/.agents/skills` (`.claude` wins over `.agents`). The
+    workspaceRoot is the thread's persisted launch cwd; autonomous heartbeat/cron
+    runs have none, so they see global skills only. `getCatalog`/`find`/
+    `getSkillBody` take an optional `workspaceRoot`; the `# Skills` section labels
+    workspace vs installed groups. `<workspaceRoot>/.claude/skills` is also seen
+    natively by the embedded `claude_code` (its cwd = workspaceRoot).
+- **Shared with `claude_code`.** At startup `ensureDataDirs()` points Claude
+  Code at our own config dir (`CLAUDE_CONFIG_DIR=<DATA>/.claude`) and symlinks
+  `<DATA>/.claude/skills` → `<DATA>/skills`, so the embedded `claude_code` tool
+  discovers the same skills — without touching the user's real `~/.claude`.
+- **Progressive disclosure.** `skillCatalogService` (mtime-cached) parses only
+  `name` + `description` for the `# Skills` system-prompt section; the `skill`
+  tool (`src/tools/skills/index.ts`) loads a skill's full `SKILL.md` body on
+  demand. The tool is omitted when no skills are installed.
+- **Clients (web + CLI).** `/skills` (or `/skills list`) lists available skills
+  (workspace ones labeled) via `GET /agents/skills` — scoped to the thread's
+  workspace (explicit `?threadId`, else the latest thread, read-only);
+  `/skills run <name>` triggers one via
+  `POST /agents/skills/:name/run` (management router, shared by the web SPA and
+  the CLI), which dispatches an ordinary chat turn so the reply streams over the
+  WebSocket channel — automatic (model-chosen) invocation uses the same `skill`
+  tool. The slash command is parsed client-side (web `SlashCommand` registry /
+  TUI `commands.ts`) and calls REST; the conversation engine never parses it.
+- **Installation is out of band.** Drop bundles into `<DATA>/skills` directly,
+  or install with the standard CLI, e.g.
+  `npx skills add <source> -g -a claude-code --copy` (writes into the
+  Claude-config skills dir, i.e. the symlink → `<DATA>/skills`). The catalog
+  refreshes on the skills-dir mtime, so new skills appear without a restart.

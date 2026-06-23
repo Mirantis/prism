@@ -94,6 +94,14 @@ export interface Goal {
   completedAt: string | null;
 }
 
+export interface SkillSummary {
+  name: string;
+  description: string;
+  dirName: string;
+  /** Where the skill came from: the workspace repo or the global dir. */
+  source: 'workspace' | 'global';
+}
+
 export interface ApiClient {
   getMe(): Promise<{ agentId: string; userId: string; name: string }>;
   getDetails(): Promise<AgentDetails>;
@@ -121,6 +129,8 @@ export interface ApiClient {
   uploadAttachment(filePath: string): Promise<AttachmentMeta>;
   deleteAttachment(id: string): Promise<{ success: boolean }>;
   downloadAttachment(id: string): Promise<Buffer>;
+  listSkills(threadId?: string): Promise<SkillSummary[]>;
+  runSkill(name: string, threadId?: string): Promise<{ threadId: string; skill: string }>;
 }
 
 export class HttpApiClient implements ApiClient {
@@ -284,6 +294,18 @@ export class HttpApiClient implements ApiClient {
 
   deleteAttachment(id: string): Promise<{ success: boolean }> {
     return this.request('DELETE', `/agents/attachments/${id}`);
+  }
+
+  // Skills live on the management router under /agents (shared with the web SPA,
+  // which reaches the runtime via the /agents proxy). Passing the active thread
+  // id scopes the listing to that thread's workspace (repo skills included).
+  listSkills(threadId?: string): Promise<SkillSummary[]> {
+    const qs = threadId ? `?threadId=${encodeURIComponent(threadId)}` : '';
+    return this.request('GET', `/agents/skills${qs}`);
+  }
+
+  runSkill(name: string, threadId?: string): Promise<{ threadId: string; skill: string }> {
+    return this.request('POST', `/agents/skills/${encodeURIComponent(name)}/run`, threadId ? { threadId } : {});
   }
 
   /**

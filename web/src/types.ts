@@ -141,3 +141,12 @@ export interface CronTask {
   createdAt: string;
   updatedAt: string;
 }
+
+/** An available Agent Skill (agentskills.io), as listed by GET /agents/skills. */
+export interface SkillSummary {
+  name: string;
+  description: string;
+  dirName: string;
+  /** Where the skill came from: the workspace repo or the global dir. */
+  source: 'workspace' | 'global';
+}

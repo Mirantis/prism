@@ -18,6 +18,7 @@ import { renameCommand } from './commands/rename.js';
 import { modelCommand } from './commands/model.js';
 import { heartbeatCommand } from './commands/heartbeat.js';
 import { goalCommand } from './commands/goal.js';
+import { skillsCommand } from './commands/skills.js';
 import { attachCommand } from './commands/attach.js';
 import { detachCommand } from './commands/detach.js';
 import { saveCommand } from './commands/save.js';
@@ -37,6 +38,7 @@ export const COMMANDS: SlashCommand[] = [
   modelCommand,
   heartbeatCommand,
   goalCommand,
+  skillsCommand,
   attachCommand,
   detachCommand,
   saveCommand,

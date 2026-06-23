@@ -15,6 +15,8 @@ import {
 } from '../services/attachment.service';
 import { MAX_INLINE_TEXT_CHARS } from '../constants';
 import { SlackTriggerMessage } from '../types';
+import { skillCatalogService } from '../services/skill-catalog.service';
+import { resolveSkillsDir } from '../lib/data-dir';
 
 // Minimal type for conversation messages (matches Prisma's shape).
 // toolCalls uses Prisma's Json? type (any JSON value); parseToolCalls() validates at runtime.
@@ -78,6 +80,7 @@ export async function buildSystemPromptParts(
   mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' = 'chat',
   slackMessages?: SlackTriggerMessage[],
   query?: string,
+  workspaceRoot?: string,
 ): Promise<SystemPromptPart[]> {
   const stableSections: string[] = [];
   const dynamicSections: string[] = [];
@@ -122,6 +125,13 @@ export async function buildSystemPromptParts(
     `and then re-run. If an integration isn't wired up for a task, the CLI ` +
     `will return a clear error you can relay back.`,
   );
+
+  // Skills — Agent Skills (agentskills.io). Progressive disclosure: only name +
+  // description go here so the model knows what's available; the `skill` tool
+  // loads a skill's full instructions on demand. Includes the repo's workspace
+  // skills when this turn has a workspaceRoot. Cacheable: stable within a thread
+  // (a thread's workspaceRoot is fixed) and rescans only when a skills dir changes.
+  stableSections.push(buildSkillsSection(workspaceRoot));
 
   // Mode-specific instructions
   if (mode === 'heartbeat') {
@@ -199,6 +209,71 @@ export async function buildSystemPrompt(
 ): Promise<string> {
   const parts = await buildSystemPromptParts(context, mode, slackMessages, query);
   return parts.map((p) => p.text).join('\n\n---\n\n');
+}
+
+/** Max skills listed inline before we summarize the overflow (a guardrail —
+ * realistically the catalog is small). */
+const MAX_SKILLS_LISTED = 50;
+
+/**
+ * Build the `# Skills` system-prompt section. Lists available skills (name +
+ * one-line description — the `skill` tool loads a skill's full instructions on
+ * demand) and tells the agent where skills live and how to add more. When the
+ * turn has a `workspaceRoot`, the repo's own skills are listed first under a
+ * labeled group. Always rendered so the agent can bootstrap its first skill too.
+ */
+function buildSkillsSection(workspaceRoot?: string): string {
+  const skills = skillCatalogService.getCatalog(workspaceRoot);
+  const skillsDir = resolveSkillsDir();
+
+  // Where skills live + how to add more. Phrased around the canonical dir so
+  // it's correct regardless of where an ecosystem installer fetches to — the
+  // agent just needs the bundle to end up under `skillsDir`.
+  const install =
+    `Global skills are installed in \`${skillsDir}\` — each is a \`<name>/SKILL.md\` bundle ` +
+    `(the agentskills.io standard, optionally with \`scripts/\`/\`references/\`/\`assets/\`). ` +
+    `Repository skills come from the workspace's \`.claude/skills/\` or \`.agents/skills/\`. ` +
+    `To add a global skill, use your shell tools to land a bundle there: copy or clone a ` +
+    `\`SKILL.md\` folder into \`${skillsDir}/<name>/\`, or fetch one from the ecosystem ` +
+    `with \`npx skills add <source> --copy\` (browse at https://skills.sh; \`<source>\` is a ` +
+    `GitHub repo like \`owner/repo\`, a skill URL, or a local path) and copy the resulting ` +
+    `\`<name>/\` folder into \`${skillsDir}\`. Newly added skills are detected automatically — ` +
+    `no restart needed.`;
+
+  if (skills.length === 0) {
+    return `# Skills\n\nNo Agent Skills are available yet.\n\n${install}`;
+  }
+
+  // Group by source so the model (and the user) can see which skills are
+  // repo-local. Workspace skills are listed first since they take precedence.
+  const workspace = skills.filter((s) => s.source === 'workspace').slice(0, MAX_SKILLS_LISTED);
+  const global = skills.filter((s) => s.source === 'global').slice(0, MAX_SKILLS_LISTED);
+  const overflow = skills.length - workspace.length - global.length;
+  const bullet = (s: { name: string; description: string }) => `- **${s.name}**: ${s.description}`;
+
+  const groups: string[] = [];
+  if (workspace.length > 0) {
+    groups.push(
+      `**Workspace skills** (from this repository):\n` + workspace.map(bullet).join('\n'),
+    );
+  }
+  if (global.length > 0) {
+    const heading = workspace.length > 0 ? '**Installed skills** (global):\n' : '';
+    groups.push(heading + global.map(bullet).join('\n'));
+  }
+
+  return (
+    `# Skills\n\n` +
+    `You have Agent Skills — specialized instruction sets for specific tasks. ` +
+    `Each entry below is a name and a one-line description. When a task matches a skill, ` +
+    `call the \`skill\` tool with its exact name to load the full instructions, then follow ` +
+    `them. Don't guess a skill's contents from its description.\n\n` +
+    groups.join('\n\n') +
+    (overflow > 0
+      ? `\n\n(+${overflow} more available — call \`skill\` with any listed skill's name to load it.)`
+      : '') +
+    `\n\n${install}`
+  );
 }
 
 /**

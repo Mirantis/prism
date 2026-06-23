@@ -188,9 +188,10 @@ RUN --mount=type=secret,id=otel_api_key \
 
 EXPOSE 3003
 
-# Per-agent SQLite DB lives here. Owned by node so the runtime user can
-# write.
-RUN mkdir -p /data && chown -R node:node /data
+# Per-agent SQLite DB and the installed skills bundles live here. Owned by node
+# so the runtime user can write; the skills/ subdir is pre-created so first-boot
+# ownership is correct before the runtime's ensureDataDirs() touches it.
+RUN mkdir -p /data/skills && chown -R node:node /data
 VOLUME ["/data"]
 
 # Health check

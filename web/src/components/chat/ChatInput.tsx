@@ -1,6 +1,7 @@
 import {
   useRef,
   useEffect,
+  useMemo,
   useState,
   type ChangeEvent,
   type ClipboardEvent,
@@ -17,6 +18,8 @@ import {
 import { ArrowUp, Paperclip, Square } from 'lucide-react';
 import type { ConnectionStatus } from '@/hooks/use-websocket';
 import { PendingAttachmentChip, type PendingAttachment } from './ChatAttachmentChip';
+import CommandPopup from './CommandPopup';
+import { filterByPrefix, isSlashMode, type SlashCommand } from './commands';
 
 interface ChatInputProps {
   value: string;
@@ -52,6 +55,10 @@ export default function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  // Slash-command popup state (mirrors the TUI). `dismissed` lets Escape hide
+  // the popup without clearing the input; it resets the moment the user types.
+  const [commandIndex, setCommandIndex] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     textareaRef.current?.focus();
@@ -61,7 +68,61 @@ export default function ChatInput({
   const isUploading = attachments.some((a) => a.status === 'uploading');
   const isDisabled = (!value.trim() && !hasReady) || isPending || isUploading;
 
+  // Filtered command list shown while typing a leading "/" with no space yet.
+  // '/' alone lists everything; '/sk' filters by prefix. Mirrors the TUI's
+  // `filterByPrefix(value === '/' ? '/' : value)`.
+  const filteredCommands = useMemo<SlashCommand[]>(
+    () => (isSlashMode(value) ? filterByPrefix(value) : []),
+    [value],
+  );
+  const showCommandPopup = filteredCommands.length > 0 && !dismissed;
+
+  // Keep the highlight in range as the filtered list shrinks/grows.
+  useEffect(() => {
+    setCommandIndex((i) => (i >= filteredCommands.length ? 0 : i));
+  }, [filteredCommands.length]);
+
+  const handleChange = (next: string) => {
+    // Any edit re-opens a popup the user had dismissed with Escape.
+    if (dismissed) setDismissed(false);
+    onChange(next);
+  };
+
+  // Tab / click completes the highlighted command to "<name> " — the trailing
+  // space ends slash mode so the popup closes and the user types arguments.
+  const completeCommand = (cmd: SlashCommand) => {
+    onChange(cmd.name + ' ');
+    setDismissed(false);
+    textareaRef.current?.focus();
+  };
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showCommandPopup) {
+      const n = filteredCommands.length;
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setCommandIndex((i) => (i - 1 + n) % n);
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setCommandIndex((i) => (i + 1) % n);
+        return;
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const chosen = filteredCommands[commandIndex];
+        if (chosen) completeCommand(chosen);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setDismissed(true);
+        return;
+      }
+      // Enter falls through to submit — like the TUI, Enter dispatches the typed
+      // command line (the registry resolves it) rather than the highlighted row.
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (!isDisabled) onSend(e as unknown as FormEvent);
@@ -125,6 +186,14 @@ export default function ChatInput({
               ))}
             </div>
           )}
+          <div className="relative">
+          {showCommandPopup && (
+            <CommandPopup
+              items={filteredCommands}
+              selectedIndex={commandIndex}
+              onSelect={completeCommand}
+            />
+          )}
           <InputGroup className={`h-auto ${isDragging ? 'ring-2 ring-primary ring-offset-1' : ''}`}>
             <InputGroupAddon align="inline-start">
               <span
@@ -145,7 +214,7 @@ export default function ChatInput({
             <InputGroupTextarea
               ref={textareaRef}
               value={value}
-              onChange={(e) => onChange(e.target.value)}
+              onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder={isDragging ? 'Drop files to attach…' : 'Message your agent...'}
@@ -182,6 +251,7 @@ export default function ChatInput({
               )}
             </InputGroupAddon>
           </InputGroup>
+          </div>
           <input
             ref={fileInputRef}
             type="file"
