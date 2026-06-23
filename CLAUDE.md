@@ -74,6 +74,13 @@ reference. When you add, change, or remove a feature, flag, env var, command,
 slash command, or UI surface, update the relevant doc page (and the root
 `README.md` if it covers the same thing) so the docs never drift from behavior.
 
+## Code conventions
+
+- **One component per file.** Each React (`web/`) and Ink (`cli/`) component
+  lives in its own file named for the component (kebab-case, e.g.
+  `model-field.tsx`), not several components sharing a module. A component's
+  small private helpers may stay in its file; shared ones move to a module.
+
 ## Deployment shape
 
 One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
