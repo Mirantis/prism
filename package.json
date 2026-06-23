@@ -94,6 +94,8 @@
     "markdown-it": "^14.2.0",
     "shell-quote": "^1.8.4",
     "esbuild": "$esbuild",
+    "js-yaml": "^4.2.0",
+    "@babel/core": "^7.29.6",
     "@opentelemetry/core": "^2.8.0",
     "@cucumber/messages": {
       "uuid": "^11.1.1"
