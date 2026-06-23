@@ -30,6 +30,10 @@ export interface AgentContext {
   proactivity: number;
   verbosity: number;
   model: string | null;
+  /** Heartbeat-specific model override; falls back to `model`, then env default. */
+  heartbeatModel: string | null;
+  /** Cron/scheduled-task model override; falls back to `model`, then env default. */
+  cronModel: string | null;
   isBootstrapPhase: boolean;
   conversationSummary: string | null;
   recentMessages: ConversationMessage[];

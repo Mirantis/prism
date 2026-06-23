@@ -36,6 +36,7 @@ vi.mock('../../lib/telemetry', () => ({
 }));
 
 import { agentWorkspaceService } from '../agent-workspace.service';
+import { config } from '../../config';
 
 // config.agentId is mocked globally to 'test-agent-id' (test-utils/setup.ts).
 const agentId = 'test-agent-id';
@@ -74,6 +75,53 @@ describe('AgentWorkspaceService telemetry', () => {
       'agent.id': 'agent-new',
       'agent.type': 'SUBAGENT',
     });
+  });
+
+  it('seeds model overrides from config.agentDefaults on createAgent', async () => {
+    const prev = config.agentDefaults;
+    config.agentDefaults = {
+      model: 'us.anthropic.main',
+      heartbeatModel: 'us.anthropic.hb',
+      cronModel: 'us.anthropic.cron',
+    };
+    try {
+      mockPrisma.agentWorkspace.create.mockResolvedValue(createAgentRow({ id: 'agent-new' }));
+      await agentWorkspaceService.createAgent({
+        id: 'agent-new',
+        userId: 'user-1',
+        name: 'Helper',
+        agentType: 'AGENT',
+        teamName: 'Team',
+      });
+      expect(mockPrisma.agentWorkspace.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            model: 'us.anthropic.main',
+            heartbeatModel: 'us.anthropic.hb',
+            cronModel: 'us.anthropic.cron',
+          }),
+        }),
+      );
+    } finally {
+      config.agentDefaults = prev;
+    }
+  });
+
+  it('creates the agent with null model overrides when no settings defaults are set', async () => {
+    // config.agentDefaults is {} in the test config mock (setup.ts).
+    mockPrisma.agentWorkspace.create.mockResolvedValue(createAgentRow({ id: 'agent-new' }));
+    await agentWorkspaceService.createAgent({
+      id: 'agent-new',
+      userId: 'user-1',
+      name: 'Helper',
+      agentType: 'AGENT',
+      teamName: 'Team',
+    });
+    expect(mockPrisma.agentWorkspace.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ model: null, heartbeatModel: null, cronModel: null }),
+      }),
+    );
   });
 
   it('emits "agent deleted" on successful deleteAgent', async () => {
@@ -122,6 +170,61 @@ describe('AgentWorkspaceService telemetry', () => {
       'agent.id': agentId,
       'agent.model': 'us.anthropic.claude-opus-4-8',
     });
+  });
+
+  it('emits "agent heartbeat model updated" with the resolved model on updateHeartbeatModel', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(
+      createAgentRow({ heartbeatModel: 'us.anthropic.claude-haiku-4-5', model: null }),
+    );
+
+    const result = await agentWorkspaceService.updateHeartbeatModel('us.anthropic.claude-haiku-4-5');
+
+    expect(result).toEqual({
+      override: 'us.anthropic.claude-haiku-4-5',
+      effective: 'us.anthropic.claude-haiku-4-5',
+    });
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent heartbeat model updated', null, {
+      'agent.id': agentId,
+      'agent.model': 'us.anthropic.claude-haiku-4-5',
+    });
+  });
+
+  it('emits "agent cron model updated" with the resolved model on updateCronModel', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(
+      createAgentRow({ cronModel: 'us.anthropic.claude-sonnet-4-6', model: null }),
+    );
+
+    const result = await agentWorkspaceService.updateCronModel('us.anthropic.claude-sonnet-4-6');
+
+    expect(result).toEqual({
+      override: 'us.anthropic.claude-sonnet-4-6',
+      effective: 'us.anthropic.claude-sonnet-4-6',
+    });
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent cron model updated', null, {
+      'agent.id': agentId,
+      'agent.model': 'us.anthropic.claude-sonnet-4-6',
+    });
+  });
+
+  it('clearing the heartbeat override falls back to the main model in the effective result', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(
+      createAgentRow({ heartbeatModel: null, model: 'us.anthropic.main-override' }),
+    );
+
+    const result = await agentWorkspaceService.updateHeartbeatModel(null);
+
+    // override cleared, effective resolves to the main per-agent override
+    expect(result).toEqual({ override: null, effective: 'us.anthropic.main-override' });
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent heartbeat model updated', null, {
+      'agent.id': agentId,
+      'agent.model': 'us.anthropic.main-override',
+    });
+  });
+
+  it('rejects a malformed heartbeat model without emitting telemetry', async () => {
+    await expect(agentWorkspaceService.updateHeartbeatModel('has spaces')).rejects.toThrow();
+    expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    expect(mockTrackEvent).not.toHaveBeenCalled();
   });
 
   it('emits "subagent added" on successful addSubagent', async () => {

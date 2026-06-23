@@ -38,6 +38,8 @@ export interface AgentDetails {
   userId: string;
   name: string;
   model: string | null;
+  heartbeatModel: string | null;
+  cronModel: string | null;
   soulMd: string;
   userMd: string;
   memoryMd: string;
@@ -108,6 +110,10 @@ export interface ApiClient {
   setName(name: string): Promise<{ name: string }>;
   getModel(): Promise<{ model: string | null }>;
   setModel(model: string | null): Promise<{ model: string | null }>;
+  getHeartbeatModel(): Promise<{ model: string | null; effective: string }>;
+  setHeartbeatModel(model: string | null): Promise<{ model: string | null; effective: string }>;
+  getCronModel(): Promise<{ model: string | null; effective: string }>;
+  setCronModel(model: string | null): Promise<{ model: string | null; effective: string }>;
   getHeartbeatStatus(): Promise<HeartbeatStatus>;
   startHeartbeat(agent: AgentDetails): Promise<{ success: boolean; message: string }>;
   stopHeartbeat(): Promise<{ success: boolean; message: string }>;
@@ -191,6 +197,22 @@ export class HttpApiClient implements ApiClient {
 
   setModel(model: string | null): Promise<{ model: string | null }> {
     return this.request('PATCH', '/agents/model', { model });
+  }
+
+  getHeartbeatModel(): Promise<{ model: string | null; effective: string }> {
+    return this.request('GET', '/agents/heartbeat-model');
+  }
+
+  setHeartbeatModel(model: string | null): Promise<{ model: string | null; effective: string }> {
+    return this.request('PATCH', '/agents/heartbeat-model', { model });
+  }
+
+  getCronModel(): Promise<{ model: string | null; effective: string }> {
+    return this.request('GET', '/agents/cron-model');
+  }
+
+  setCronModel(model: string | null): Promise<{ model: string | null; effective: string }> {
+    return this.request('PATCH', '/agents/cron-model', { model });
   }
 
   getHeartbeatStatus(): Promise<HeartbeatStatus> {

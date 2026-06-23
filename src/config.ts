@@ -2,6 +2,7 @@ import path from 'path';
 import sea from 'node:sea';
 import dotenv from 'dotenv';
 import { GOAL_MAX_TURNS } from './constants';
+import { readAgentModelDefaults } from './lib/prism-settings';
 
 // In SEA (the packaged prism-server binary), the source tree is gone — the
 // sidecar `.env` lives next to the executable (e.g. ~/.prism/.env). In dev,
@@ -56,6 +57,13 @@ export const config = {
   ownerUserId: process.env.OWNER_USER_ID || '00000000-0000-0000-0000-000000000001',
   agentName: process.env.AGENT_NAME || 'Prism',
   teamName: process.env.TEAM_NAME || 'Local',
+
+  // Per-agent model overrides seeded onto a freshly-bootstrapped agent, read
+  // from the shared `~/.prism/settings.json` (`modelId`, `heartbeatModelId`,
+  // `cronModelId`). Empty fields leave the column null → the agent resolves to
+  // `bedrockModelId` at invoke time. Read once at startup, same as the rest of
+  // config; only consulted by `createAgent`, so a later edit needs a restart.
+  agentDefaults: readAgentModelDefaults(),
 
   nexusApiUrl,
 

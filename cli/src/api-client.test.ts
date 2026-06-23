@@ -107,6 +107,42 @@ describe('HttpApiClient', () => {
     expect(init?.body).toBe(JSON.stringify({ model: null }));
   });
 
+  it('getHeartbeatModel GETs /agents/heartbeat-model', async () => {
+    fetchMock.mockResolvedValue(ok({ model: null, effective: 'main' }));
+    const result = await client.getHeartbeatModel();
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(`${BASE}/agents/heartbeat-model`);
+    expect(init?.method).toBe('GET');
+    expect(result).toEqual({ model: null, effective: 'main' });
+  });
+
+  it('setHeartbeatModel PATCHes /agents/heartbeat-model with a JSON { model } body', async () => {
+    fetchMock.mockResolvedValue(ok({ model: 'hb', effective: 'hb' }));
+    await client.setHeartbeatModel('hb');
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(`${BASE}/agents/heartbeat-model`);
+    expect(init?.method).toBe('PATCH');
+    expect(init?.body).toBe(JSON.stringify({ model: 'hb' }));
+  });
+
+  it('getCronModel GETs /agents/cron-model', async () => {
+    fetchMock.mockResolvedValue(ok({ model: null, effective: 'main' }));
+    const result = await client.getCronModel();
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(`${BASE}/agents/cron-model`);
+    expect(init?.method).toBe('GET');
+    expect(result).toEqual({ model: null, effective: 'main' });
+  });
+
+  it('setCronModel PATCHes /agents/cron-model with null to reset', async () => {
+    fetchMock.mockResolvedValue(ok({ model: null, effective: 'main' }));
+    await client.setCronModel(null);
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(`${BASE}/agents/cron-model`);
+    expect(init?.method).toBe('PATCH');
+    expect(init?.body).toBe(JSON.stringify({ model: null }));
+  });
+
   it('createCronTask POSTs the input as the JSON body', async () => {
     fetchMock.mockResolvedValue(ok({ id: 't1' }));
     const input = { name: 'daily', schedule: '0 9 * * *', instruction: 'check things' };

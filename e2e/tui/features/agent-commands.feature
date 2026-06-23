@@ -21,6 +21,18 @@ Feature: CLI management commands
     Then the model is set back to the default
     And the stored model is the default
 
+  Scenario: /heartbeat-model sets then resets the heartbeat model override
+    When I run "/heartbeat-model hb-test-model"
+    Then the heartbeat model is set to "hb-test-model"
+    When I run "/heartbeat-model reset"
+    Then the heartbeat model is cleared to the main model
+
+  Scenario: /cron-model sets then resets the scheduled-task model override
+    When I run "/cron-model cron-test-model"
+    Then the cron model is set to "cron-test-model"
+    When I run "/cron-model reset"
+    Then the cron model is cleared to the main model
+
   Scenario: /heartbeat status reports the current state
     When I run "/heartbeat status"
     Then I see "active:"

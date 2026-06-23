@@ -132,6 +132,8 @@ vi.mock('./services/agent-workspace.service', () => ({
   },
   resolveEffectiveModel: (stored: string | null | undefined) =>
     stored ?? 'anthropic.claude-3-sonnet-20240229-v1:0',
+  resolveScopedModel: (scoped: string | null | undefined, main: string | null | undefined) =>
+    scoped ?? main ?? 'anthropic.claude-3-sonnet-20240229-v1:0',
 }));
 
 vi.mock('./services/context.service', () => ({
@@ -223,6 +225,71 @@ describe('invoke', () => {
         maxOutputTokens: 16000,
       })
     );
+  });
+
+  describe('model selection by mode', () => {
+    // The mocked provider is `(modelId) => LanguageModel`; capture the modelId
+    // it's called with to assert which model each mode resolves to.
+    function captureModelId() {
+      const modelFn = vi.fn(() => 'model-instance');
+      mockCreateBedrockProvider.mockReturnValue(modelFn);
+      return modelFn;
+    }
+
+    it('heartbeat mode uses the heartbeat override when set', async () => {
+      mockGetAgentContext.mockResolvedValue(
+        createTestAgentContext({ heartbeatModel: 'hb-model', cronModel: 'cron-model', model: 'main-model' }),
+      );
+      const modelFn = captureModelId();
+
+      await invoke(createTestInvokeRequest({ mode: 'heartbeat' }));
+
+      expect(modelFn).toHaveBeenCalledWith('hb-model');
+    });
+
+    it('heartbeat mode falls back to the main model when the override is empty', async () => {
+      mockGetAgentContext.mockResolvedValue(
+        createTestAgentContext({ heartbeatModel: null, model: 'main-model' }),
+      );
+      const modelFn = captureModelId();
+
+      await invoke(createTestInvokeRequest({ mode: 'heartbeat' }));
+
+      expect(modelFn).toHaveBeenCalledWith('main-model');
+    });
+
+    it('heartbeat mode falls back to the env default when both overrides are empty', async () => {
+      mockGetAgentContext.mockResolvedValue(
+        createTestAgentContext({ heartbeatModel: null, model: null }),
+      );
+      const modelFn = captureModelId();
+
+      await invoke(createTestInvokeRequest({ mode: 'heartbeat' }));
+
+      expect(modelFn).toHaveBeenCalledWith('anthropic.claude-3-sonnet-20240229-v1:0');
+    });
+
+    it('cron mode uses the cron override when set', async () => {
+      mockGetAgentContext.mockResolvedValue(
+        createTestAgentContext({ cronModel: 'cron-model', model: 'main-model' }),
+      );
+      const modelFn = captureModelId();
+
+      await invoke(createTestInvokeRequest({ mode: 'cron' }));
+
+      expect(modelFn).toHaveBeenCalledWith('cron-model');
+    });
+
+    it('chat mode ignores heartbeat/cron overrides and uses the main model', async () => {
+      mockGetAgentContext.mockResolvedValue(
+        createTestAgentContext({ heartbeatModel: 'hb-model', cronModel: 'cron-model', model: 'main-model' }),
+      );
+      const modelFn = captureModelId();
+
+      await invoke(createTestInvokeRequest({ mode: 'chat' }));
+
+      expect(modelFn).toHaveBeenCalledWith('main-model');
+    });
   });
 
   it('returns response text on successful chat invocation', async () => {

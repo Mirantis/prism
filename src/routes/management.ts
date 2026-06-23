@@ -13,6 +13,10 @@
  *   PATCH  /agents/name                            - Rename agent
  *   GET    /agents/model                           - Effective model (override or env default)
  *   PATCH  /agents/model                           - Set/clear per-agent LLM model override
+ *   GET    /agents/heartbeat-model                 - Heartbeat model override + resolved effective
+ *   PATCH  /agents/heartbeat-model                 - Set/clear heartbeat model override
+ *   GET    /agents/cron-model                      - Cron model override + resolved effective
+ *   PATCH  /agents/cron-model                      - Set/clear cron model override
  *   GET    /agents/details                         - Full agent record (markdown fields, etc.)
  *   DELETE /agents                                 - Delete agent
  *
@@ -222,6 +226,88 @@ router.patch('/model', async (req: Request, res: Response) => {
     }
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to update model for agent: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * GET /agents/heartbeat-model
+ * Returns `{ model, effective }`: the raw heartbeat override (`null` when
+ * unset, so the UI can show "empty → falls back") and the model a heartbeat
+ * run would actually use (heartbeat override → main override → env default).
+ */
+router.get('/heartbeat-model', async (_req: Request, res: Response) => {
+  try {
+    const { override, effective } = await agentWorkspaceService.getHeartbeatModelInfo();
+    res.json({ model: override, effective });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to read heartbeat model for agent: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * PATCH /agents/heartbeat-model
+ * Set or clear the heartbeat model override. Body: `{ model: string | null }`.
+ * `null` clears it (falls back to the main model, then env default). Returns
+ * `{ model, effective }` — same shape as the GET so the UI can prime its cache.
+ */
+router.patch('/heartbeat-model', async (req: Request, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (!('model' in body)) {
+      res.status(400).json({ error: "missing required field 'model' (use null to clear)" });
+      return;
+    }
+    const { override, effective } = await agentWorkspaceService.updateHeartbeatModel(body.model);
+    res.json({ model: override, effective });
+  } catch (error: unknown) {
+    if (error instanceof ValidationError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to update heartbeat model for agent: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * GET /agents/cron-model
+ * Cron equivalent of `GET /agents/heartbeat-model`.
+ */
+router.get('/cron-model', async (_req: Request, res: Response) => {
+  try {
+    const { override, effective } = await agentWorkspaceService.getCronModelInfo();
+    res.json({ model: override, effective });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to read cron model for agent: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * PATCH /agents/cron-model
+ * Cron equivalent of `PATCH /agents/heartbeat-model`.
+ */
+router.patch('/cron-model', async (req: Request, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (!('model' in body)) {
+      res.status(400).json({ error: "missing required field 'model' (use null to clear)" });
+      return;
+    }
+    const { override, effective } = await agentWorkspaceService.updateCronModel(body.model);
+    res.json({ model: override, effective });
+  } catch (error: unknown) {
+    if (error instanceof ValidationError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to update cron model for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
