@@ -82,4 +82,3 @@ and then clears the bootstrap prompt. See
 - Give the agent standing work: **[Heartbeat](heartbeat.md)** and
   **[Scheduled tasks](scheduled-tasks.md)**.
 - Wire it into **[Slack](slack.md)**.
-- Understand what bounds each turn: **[Sessions & safety](sessions-and-safety.md)**.

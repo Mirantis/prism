@@ -56,8 +56,6 @@ What the agent can do.
   work on the agent's calendar with natural language or cron.
 - **[Tools](tools.md)** — everything the agent can call: memory, self-management,
   scheduling, shell, file sharing, and the Claude Code sub-agent.
-- **[Sessions & safety](sessions-and-safety.md)** — daily resets, idle handling,
-  the safety limits that bound every turn, and observability.
 
 ## Reference
 

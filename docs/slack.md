@@ -82,10 +82,8 @@ needs a verification code to activate. Each channel can be linked to one agent.
 - **Files.** You can share files with the agent in Slack, and it can share files
   back (uploaded via the Slack API). If a file can't be read (too large, or a
   permissions issue), the agent tells you why.
-- **Mentions.** When you mention other people, the agent sees their names; when
-  it mentions someone back, Slack notifies them as usual.
 - **Feedback.** Final messages carry 👍 / 👎 buttons; tapping one records
-  feedback and briefly shows a thank-you.
+  feedback.
 
 Autonomous messages from the agent — [heartbeat](heartbeat.md) alerts and
 [scheduled task](scheduled-tasks.md) results — arrive as channel posts labeled
