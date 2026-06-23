@@ -92,9 +92,8 @@ schedule, next run, and active state. From the list:
 ### Config panel (`/config`)
 
 A two-pane viewer for the agent's identity. The left pane shows the agent's
-name, model, proactivity, verbosity, timezone, and heartbeat status, plus a list
-of the seven identity documents (Soul, User, Memory, Heartbeat, Vision, Agent,
-Bootstrap). The right pane shows the selected document's content. Use Tab or the
+name, model, timezone, and heartbeat status, plus a list of the seven identity
+documents (Soul, User, Memory, Heartbeat, Vision, Agent, Bootstrap). The right pane shows the selected document's content. Use Tab or the
 left/right arrows to move between panes, up/down to scroll, and Page Up/Down to
 page through long documents. It's a viewer — edit these documents through
 conversation (see **[The agent's identity](agent-identity.md)**).
