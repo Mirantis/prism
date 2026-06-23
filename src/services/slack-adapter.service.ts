@@ -40,6 +40,7 @@ import { slackHeartbeatTriggerService } from './slack-heartbeat-trigger.service'
 import { heartbeatService } from './heartbeat.service';
 import { conversationService } from './conversation.service';
 import { conversationEngineService } from './conversation-engine.service';
+import { SlackThreadProvider } from './providers/slack-thread.provider';
 import { getSlackHeartbeatThrottleQueue } from '../queues/slack-heartbeat-throttle-queue';
 import { channelLearningQueue } from '../queues/channel-learning.queue';
 import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
@@ -149,6 +150,15 @@ class SlackAdapterService implements ChannelAdapter {
 
   /** Active Slack Bolt apps by teamId */
   private apps: Map<string, SlackApp> = new Map();
+
+  // Reads the live Slack thread; used here to await read-consistency. Created
+  // lazily (not in a field initializer) because SlackThreadProvider imports
+  // this module back — eager construction during that import cycle would see
+  // SlackThreadProvider undefined.
+  private _slackThreadProvider?: SlackThreadProvider;
+  private get slackThreadProvider(): SlackThreadProvider {
+    return (this._slackThreadProvider ??= new SlackThreadProvider());
+  }
 
   /**
    * Get the Slack Bolt app for a team.
@@ -976,6 +986,16 @@ class SlackAdapterService implements ChannelAdapter {
       const effectiveText = text || (sharedSomething ? describeSharedFiles(files) : text);
       const senderName = userInfo?.real_name || userInfo?.name;
       const taggedText = this.buildSenderTaggedContent(slackUserId, senderName, effectiveText);
+
+      // Slack's conversations.replies is eventually consistent: the message we
+      // just received may not be returned by the live thread read for a few
+      // seconds. Wait (bounded, exponential backoff up to 30s) for it to be
+      // visible before the engine builds context, so the assembled history ends
+      // on the user's turn rather than the bot's previous reply (which Bedrock
+      // rejects: "the conversation must end with a user message"). Throws on
+      // timeout — surfaced to the user by the catch below — so we never respond
+      // to stale context.
+      await this.slackThreadProvider.waitForExternalMessage(thread.id, messageTs);
 
       // Route through local conversation engine (direct call)
       await conversationEngineService.chat({

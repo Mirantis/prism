@@ -97,6 +97,7 @@ vi.mock('@slack/bolt', () => ({
 
 // Import after all mocks
 import { slackAdapterService } from '../slack-adapter.service';
+import { SlackThreadProvider } from '../providers/slack-thread.provider';
 
 // ============================================================================
 // Test Helpers
@@ -228,6 +229,50 @@ describe('Requirement: Channel message mention detection', () => {
           userId: 'lens-user-001',
           threadId: 'thread-001',
         })
+      );
+    });
+
+    it('waits for the triggering message to be visible (Slack eventual consistency) before building context', async () => {
+      const mapping = makeMapping();
+      mockSlackMappingService.findByChannelId.mockResolvedValue(mapping);
+      mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-001' });
+      const waitSpy = vi
+        .spyOn(SlackThreadProvider.prototype, 'waitForExternalMessage')
+        .mockResolvedValue(undefined);
+      mockConversationEngineService.chat.mockResolvedValue(undefined);
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> what's the status?`,
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect(waitSpy).toHaveBeenCalledWith('thread-001', MESSAGE_TS);
+      // The wait must precede the engine call so context is built from a
+      // consistent read.
+      const waitOrder = waitSpy.mock.invocationCallOrder[0];
+      const chatOrder = mockConversationEngineService.chat.mock.invocationCallOrder[0];
+      expect(waitOrder).toBeLessThan(chatOrder);
+    });
+
+    it('stops with an error (does not build context) when the message never becomes visible', async () => {
+      const mapping = makeMapping();
+      mockSlackMappingService.findByChannelId.mockResolvedValue(mapping);
+      mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-001' });
+      vi.spyOn(SlackThreadProvider.prototype, 'waitForExternalMessage').mockRejectedValue(
+        new Error('Slack message 111.222 did not become visible'),
+      );
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> what's the status?`,
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      // The turn is aborted: the engine is never invoked, and the user is told.
+      expect(mockConversationEngineService.chat).not.toHaveBeenCalled();
+      expect(mockSay).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('did not become visible') }),
       );
     });
   });
