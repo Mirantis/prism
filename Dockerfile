@@ -194,6 +194,11 @@ EXPOSE 3003
 RUN mkdir -p /data/skills && chown -R node:node /data
 VOLUME ["/data"]
 
+# The persistent data dir for the runtime (skills, Claude Code config). The
+# resolver (src/lib/data-dir.ts) uses PRISM_DATA_DIR when set, else ~/.prism —
+# so the container points it at the mounted /data volume here.
+ENV PRISM_DATA_DIR=/data
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD wget -q --spider http://127.0.0.1:3003/health || exit 1

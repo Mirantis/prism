@@ -18,31 +18,19 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-/** The container's mounted persistent volume. */
-const CONTAINER_DATA_DIR = '/data';
-
-function isWritableDir(p: string): boolean {
-  try {
-    return fs.statSync(p).isDirectory() && (fs.accessSync(p, fs.constants.W_OK), true);
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Resolve the persistent data dir.
  *
- *  1. `PRISM_DATA_DIR` — explicit operator override (also the pin set by the
- *     temp-dir fallback below, so every resolver agrees within a process).
- *  2. `/data` when it's a writable directory — i.e. inside the container, where
- *     the persistent volume is mounted there.
- *  3. `~/.prism` — everywhere else (local dev, the packaged SEA binary, which
+ *  1. `PRISM_DATA_DIR` when set — the container image bakes
+ *     `PRISM_DATA_DIR=/data` (the mounted volume), so in-container this is `/data`.
+ *     It's also the pin set by the temp-dir fallback below so every resolver
+ *     agrees within a process, and an operator can override it.
+ *  2. `~/.prism` — everywhere else (local dev, the packaged SEA binary, which
  *     also keeps its DB under `~/.prism`).
  */
 export function resolveDataDir(): string {
-  const override = process.env.PRISM_DATA_DIR?.trim();
-  if (override) return path.resolve(override);
-  if (isWritableDir(CONTAINER_DATA_DIR)) return CONTAINER_DATA_DIR;
+  const dir = process.env.PRISM_DATA_DIR?.trim();
+  if (dir) return path.resolve(dir);
   return path.join(os.homedir(), '.prism');
 }
 
