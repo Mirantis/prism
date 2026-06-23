@@ -53,6 +53,8 @@ Type `/` to open a command popup; keep typing to filter, **Tab** to complete,
 | `/rename <name>` | Rename the agent (1–64 characters) |
 | `/model <id\|reset>` | Set the agent's model, or `reset` to the server default |
 | `/heartbeat <…>` | Control the heartbeat — see below |
+| `/goal <…>` | Set or manage a background [goal](#goal) — see below |
+| `/skills [list\|run <name>]` | List installed [skills](skills.md), or run one |
 | `/schedules` | Open the scheduled-tasks panel |
 | `/config` | Open the identity/config viewer panel |
 | `/exit` | Shut down the TUI |
@@ -67,6 +69,19 @@ Manage the agent's [heartbeat](heartbeat.md) inline:
 - `/heartbeat trigger` — run a heartbeat right now
 - `/heartbeat every 5m` or `/heartbeat every 2h` — set the interval (1 minute to
   7 days)
+
+### `/goal`
+
+Set or manage a **background goal** — an objective the agent keeps working toward
+across multiple turns until it's done:
+
+- `/goal <objective>` — set a goal in plain language and start it
+- `/goal` or `/goal status` — show the current goal's status (turns, tokens)
+- `/goal list` — list all goals
+- `/goal pause` / `/goal resume` — pause or resume the active goal
+- `/goal stop` (aliases `clear`/`cancel`/`off`) — stop the active goal
+
+The same `/goal` command is also available in the **[Web UI](web-ui.md#chat)**.
 
 ### Attaching and saving files
 
