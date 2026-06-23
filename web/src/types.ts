@@ -150,3 +150,22 @@ export interface SkillSummary {
   /** Where the skill came from: the workspace repo or the global dir. */
   source: 'workspace' | 'global';
 }
+
+/** A background goal the agent works toward across turns (GET/POST /agents/goals). */
+export interface Goal {
+  id: string;
+  threadId: string;
+  objective: string;
+  status: string;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  turnCount: number;
+  maxTurns: number;
+  stallCount: number;
+  lastReason: string | null;
+  originChannel: string;
+  originChannelId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
