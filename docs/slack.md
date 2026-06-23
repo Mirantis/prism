@@ -76,9 +76,6 @@ needs a verification code to activate. Each channel can be linked to one agent.
   quiet — so it doesn't talk over the channel.
 - **Threads.** Each Slack thread maps to a Prism conversation thread; the agent
   can read the thread's history, including messages from before it joined.
-- **Formatting.** Replies use Slack's native markdown (mrkdwn): bold, italics,
-  lists, code blocks, links, and so on. Long replies are split across Block Kit
-  blocks. Tables are flattened to bullet lists (Slack has no table support).
 - **Files.** You can share files with the agent in Slack, and it can share files
   back (uploaded via the Slack API). If a file can't be read (too large, or a
   permissions issue), the agent tells you why.
