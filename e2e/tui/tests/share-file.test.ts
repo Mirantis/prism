@@ -32,6 +32,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Poll for a file to appear on disk. The CLI prints "Saved N file" from the
+// /save handler; on slower machines the on-disk write can lag the rendered
+// frame by a tick, so assert with a short poll instead of a single
+// synchronous existsSync (which intermittently raced false).
+async function waitForFile(p: string, timeoutMs = 10_000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (fs.existsSync(p)) return true;
+    await sleep(50);
+  }
+  return fs.existsSync(p);
+}
+
 describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachScenario, AfterEachScenario, Scenario }) => {
   BeforeAllScenarios(async () => {
     // The agent writes files here (shell_write_file) before sharing them.
@@ -67,20 +80,24 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     Then('the shared file appears with a save hint', async () => {
       // The agent reply with the shared-file chip and the /save hint
       // ("· 📎 <name> ... · /save to download").
-      await session.waitForFrame(/▌\s+Prism\b/, 120_000);
-      await session.waitForFrame(new RegExp(`📎\\s+${sharedName}`), 30_000);
-      await session.waitForFrame(/\/save to download/, 5_000);
+      //
+      // Producing the chip takes several Bedrock round-trips (shell_write_file
+      // then share_file). Under Opus 4.8 that multi-tool sequence runs slower,
+      // so the chip wait is generous (was 30s — too tight, timed out in CI).
+      await session.waitForFrame(/▌\s+Prism\b/, 90_000);
+      await session.waitForFrame(new RegExp(`📎\\s+${sharedName}`), 120_000);
+      await session.waitForFrame(/\/save to download/, 15_000);
     });
     When('I run /save into a local directory', async () => {
       session.send(`/save ${saveDir}`);
       await sleep(300);
       session.send(KEYS.ENTER);
-      await session.waitForFrame(/Saved 1 file/, 15_000);
+      await session.waitForFrame(/Saved 1 file/, 30_000);
     });
-    Then('{string} is written to disk containing {string}', (_ctx, name: string, content: string) => {
+    Then('{string} is written to disk containing {string}', async (_ctx, name: string, content: string) => {
       // Authoritative on-disk assertion: the bytes the agent shared landed here.
       const savedPath = path.join(saveDir, name);
-      expect(fs.existsSync(savedPath), `expected ${savedPath} to exist`).toBe(true);
+      expect(await waitForFile(savedPath), `expected ${savedPath} to exist`).toBe(true);
       expect(fs.readFileSync(savedPath, 'utf8')).toContain(content);
     });
   });

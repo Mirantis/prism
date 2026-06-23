@@ -72,8 +72,12 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     And('the agent reply contains {string}', async (_ctx, sentinel: string) => {
       // The reply must contain the sentinel from the file body — proof the
       // attachment flowed WS → chat() → context builder → Bedrock.
+      //
+      // The sentinel renders as the reply streams; under Opus 4.8 the reply is
+      // slower to stream, so the post-reply wait is generous (was 5s — too
+      // tight, timed out in CI once the reply header had appeared).
       await session.waitForFrame(/▌\s+Prism\b/, 120_000);
-      await session.waitForFrame(new RegExp(sentinel), 5_000);
+      await session.waitForFrame(new RegExp(sentinel), 60_000);
     });
   });
 });
