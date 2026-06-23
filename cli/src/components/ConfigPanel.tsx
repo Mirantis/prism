@@ -154,8 +154,8 @@ export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({
         <Box flexDirection="column" width={24} marginRight={2}>
           <Text bold>{details.name}</Text>
           <Text dimColor>Model {details.model ?? 'default'}</Text>
-          <Text dimColor>Heartbeat model {details.heartbeatModel ?? 'default'}</Text>
-          <Text dimColor>Cron model {details.cronModel ?? 'default'}</Text>
+          <Text dimColor>Heartbeat model {details.heartbeatModel ?? '(main)'}</Text>
+          <Text dimColor>Cron model {details.cronModel ?? '(main)'}</Text>
           <Text dimColor>Proactivity {details.proactivity}</Text>
           <Text dimColor>Verbosity {details.verbosity}</Text>
           <Text dimColor>Timezone {details.timezone}</Text>
