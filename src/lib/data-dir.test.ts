@@ -33,9 +33,9 @@ describe('resolveDataDir', () => {
     expect(resolveDataDir()).toBe(path.resolve(tmp));
   });
 
-  it('falls back to ~/.prism outside the container', () => {
-    // /data is not a writable dir on the dev/CI host, so this exercises the
-    // home-dir branch deterministically.
+  it('falls back to ~/.prism when PRISM_DATA_DIR is unset', () => {
+    // The container image sets PRISM_DATA_DIR=/data; with it unset (dev, SEA
+    // binary) the resolver uses the home dir. The beforeEach cleared the env.
     expect(resolveDataDir()).toBe(path.join(os.homedir(), '.prism'));
   });
 });
