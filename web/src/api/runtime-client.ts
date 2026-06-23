@@ -13,6 +13,7 @@ import type {
   SlackWorkspace,
   ModelInfo,
   SkillSummary,
+  Goal,
 } from '@/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -208,6 +209,23 @@ export const runtimeApi = {
       `/agents/skills/${encodeURIComponent(name)}/run`,
       { method: 'POST', body: JSON.stringify(threadId ? { threadId } : {}) },
     ),
+
+  // Goals (background objectives the agent works toward across turns). Goal-turn
+  // output streams back over the WebSocket channel, so create tags originChannel.
+  createGoal: (input: { threadId: string; objective: string; tokenBudget?: number }) =>
+    request<Goal>('/agents/goals', {
+      method: 'POST',
+      body: JSON.stringify({ ...input, originChannel: 'websocket' }),
+    }),
+  getThreadGoal: (threadId: string) =>
+    request<Goal | null>(`/agents/threads/${encodeURIComponent(threadId)}/goal`),
+  listGoals: () => request<Goal[]>('/agents/goals'),
+  stopGoal: (goalId: string) =>
+    request<Goal>(`/agents/goals/${encodeURIComponent(goalId)}`, { method: 'DELETE' }),
+  pauseGoal: (goalId: string) =>
+    request<Goal>(`/agents/goals/${encodeURIComponent(goalId)}/pause`, { method: 'POST' }),
+  resumeGoal: (goalId: string) =>
+    request<Goal>(`/agents/goals/${encodeURIComponent(goalId)}/resume`, { method: 'POST' }),
 
   // Backup / restore
   importAgent: (file: File) => {
