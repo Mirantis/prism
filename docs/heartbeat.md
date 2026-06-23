@@ -45,13 +45,6 @@ The gate is **fail-open**: if the classification call itself errors, the message
 is delivered rather than dropped, so a transient failure never hides a real
 alert.
 
-## Duplicate suppression
-
-Even when a check keeps finding the same thing, you only want to hear about it
-once. If a new alert's text exactly matches the last one delivered within the
-past **24 hours**, it's suppressed. So a persistent condition pages you once, not
-on every tick.
-
 ## Controlling the heartbeat
 
 | Where | How |
