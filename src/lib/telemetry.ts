@@ -41,12 +41,8 @@ export function initTelemetry(): void {
   }
 
   // Resource attributes describe the *emitter* of every event on this stream.
-  // `service.version` identifies the deployed build so analytics (e.g. Metabase
-  // 12561 — "Prism Agent — Version Distribution") can break events down by
-  // version and correlate regressions to specific releases. Omitted entirely
-  // when SERVICE_VERSION isn't set, rather than baked as a misleading literal
-  // (a fixed `'unknown'` default would collide with genuinely-missing-attribute
-  // rows downstream and hide misconfigured deploys).
+  // `service.version` identifies the deployed build so events can be broken
+  // down by version and regressions correlated to specific releases.
   const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: 'prism-agent-runtime',
     [ATTR_SERVICE_NAMESPACE]: 'prism-agent',
