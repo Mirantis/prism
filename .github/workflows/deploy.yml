@@ -73,6 +73,7 @@ jobs:
           build-args: |
             OTEL_EXPORTER_OTLP_ENDPOINT=${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
             DEPLOYMENT_ENVIRONMENT=production
+            SERVICE_VERSION=canary-${{ github.sha }}
           cache-from: type=gha,scope=deploy-prism-${{ matrix.platform }}
           cache-to: type=gha,scope=deploy-prism-${{ matrix.platform }},mode=max
 
