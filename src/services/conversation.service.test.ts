@@ -33,6 +33,9 @@ const { mockPrisma } = vi.hoisted(() => ({
       aggregate: vi.fn(),
       updateMany: vi.fn(),
     },
+    slackMapping: {
+      findFirst: vi.fn(),
+    },
   },
 }));
 
@@ -569,6 +572,77 @@ describe('ConversationService', () => {
         null,
         expect.objectContaining({ 'thread.id': 'thread-123' }),
       );
+    });
+  });
+
+  // ==========================================================================
+  // getChannelContext — channel-neutral routing for thread-bound delivery
+  // ==========================================================================
+
+  describe('getChannelContext', () => {
+    it('returns a websocket context for non-slack threads (no DB lookup)', async () => {
+      const ctx = await conversationService.getChannelContext('thread-1', 'websocket');
+
+      expect(ctx).toEqual({ channel: 'websocket', threadId: 'thread-1' });
+      expect(mockPrisma.conversationThread.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('recovers the Slack thread_ts + channel for a channel-bound thread', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalThreadId: '1700000000.000100',
+        externalChannelId: 'C123',
+        userId: 'user-123',
+        agentId: 'agent-123',
+      });
+
+      const ctx = await conversationService.getChannelContext('thread-1', 'slack', 'C123');
+
+      expect(ctx).toEqual({
+        channel: 'slack',
+        channelId: 'C123',
+        threadTs: '1700000000.000100',
+        threadId: 'thread-1',
+      });
+      // A known channel id means no DM fallback lookup is needed.
+      expect(mockPrisma.slackMapping.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the user DM channel for a DM-originated thread with no channel id', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalThreadId: null,
+        externalChannelId: null,
+        userId: 'user-123',
+        agentId: 'agent-123',
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValue({ dmChannelId: 'D999' });
+
+      const ctx = await conversationService.getChannelContext('thread-1', 'slack');
+
+      expect(mockPrisma.slackMapping.findFirst).toHaveBeenCalledWith({
+        where: { lensUserId: 'user-123', agentId: 'agent-123', dmChannelId: { not: null } },
+        select: { dmChannelId: true },
+      });
+      // Scoped to the DM channel (so the Slack adapter won't broadcast to mappings).
+      expect(ctx).toEqual({
+        channel: 'slack',
+        channelId: 'D999',
+        threadTs: undefined,
+        threadId: 'thread-1',
+      });
+    });
+
+    it('leaves channelId undefined when there is no DM mapping to fall back to', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalThreadId: null,
+        externalChannelId: null,
+        userId: 'user-123',
+        agentId: 'agent-123',
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValue(null);
+
+      const ctx = await conversationService.getChannelContext('thread-1', 'slack');
+
+      expect(ctx.channelId).toBeUndefined();
     });
   });
 });

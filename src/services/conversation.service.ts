@@ -169,11 +169,24 @@ class ConversationService {
     if (originChannel === 'slack') {
       const thread = await prisma.conversationThread.findUnique({
         where: { id: threadId },
-        select: { externalThreadId: true, externalChannelId: true },
+        select: { externalThreadId: true, externalChannelId: true, userId: true, agentId: true },
       });
+      let channelId = originChannelId ?? thread?.externalChannelId ?? undefined;
+      // A DM-originated thread carries no channel id (the Slack DM path doesn't
+      // capture one, and DM threads have no externalChannelId). Without an
+      // explicit channel id the Slack adapter falls back to its mapping
+      // broadcast, which can also post into the user's linked channels — so
+      // resolve the user's DM channel to keep the continuation scoped to the DM.
+      if (!channelId && thread) {
+        const dm = await prisma.slackMapping.findFirst({
+          where: { lensUserId: thread.userId, agentId: thread.agentId, dmChannelId: { not: null } },
+          select: { dmChannelId: true },
+        });
+        channelId = dm?.dmChannelId ?? undefined;
+      }
       return {
         channel: 'slack',
-        channelId: originChannelId ?? thread?.externalChannelId ?? undefined,
+        channelId,
         threadTs: thread?.externalThreadId ?? undefined,
         threadId,
       };
