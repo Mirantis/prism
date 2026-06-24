@@ -6,12 +6,12 @@ matching tests below exist and pass.
 
 ## Testing requirements
 
-### 1. Every PR must add or update unit tests
+### 1. Every PR that changes behavior must add or update unit tests
 
 Any PR that changes behavior must ship with related unit tests covering the
 new or modified logic. If you change a function's behavior, the unit tests for
-that function must change with it. Pure refactors with no behavior change still
-need the existing unit tests to pass.
+that function must change with it. Pure refactors with no behavior change must
+still keep the existing unit tests passing.
 
 ### 2. Every user-facing change must add end-to-end tests
 
