@@ -151,6 +151,37 @@ class ConversationService {
   }
 
   /**
+   * Build the channel-neutral delivery context for an autonomous message that
+   * must land in a *specific* thread — e.g. a thread-bound scheduled task that
+   * "continues" the conversation in the same place it was scheduled from.
+   *
+   * Mirrors the `channelContext` the conversation engine builds for a live turn,
+   * but reconstructed from the stored origin channel plus the thread row, so a
+   * Slack channel reply nests under the original `thread_ts` and a WebSocket
+   * reply routes to the same session. Channel-specific knowledge stays here; the
+   * scheduler just forwards the result to `publish()`.
+   */
+  async getChannelContext(
+    threadId: string,
+    originChannel?: string | null,
+    originChannelId?: string | null,
+  ): Promise<{ channel: 'slack' | 'websocket'; channelId?: string; threadTs?: string; threadId: string }> {
+    if (originChannel === 'slack') {
+      const thread = await prisma.conversationThread.findUnique({
+        where: { id: threadId },
+        select: { externalThreadId: true, externalChannelId: true },
+      });
+      return {
+        channel: 'slack',
+        channelId: originChannelId ?? thread?.externalChannelId ?? undefined,
+        threadTs: thread?.externalThreadId ?? undefined,
+        threadId,
+      };
+    }
+    return { channel: 'websocket', threadId };
+  }
+
+  /**
    * Get or create a conversation thread bound to a specific external thread ID.
    * Used for Slack channel threads where each Slack thread maps to its own conversation.
    */

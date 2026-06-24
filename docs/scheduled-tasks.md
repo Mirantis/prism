@@ -26,6 +26,7 @@ create form takes cron expressions.
 
 | You say | Becomes |
 |---------|---------|
+| "in 30 seconds" | one-shot, 30 seconds from now |
 | "in 5 minutes" | one-shot, 5 minutes from now |
 | "at 3pm" / "at 14:30" | one-shot at that time (today if still ahead, else tomorrow) |
 | "every 2 hours" | recurring, every 2 hours |
@@ -59,6 +60,31 @@ to connected channels, labeled as a scheduled-task result).
 Scheduled runs use the agent's main model by default, but you can give them
 their own model from the **[Web UI → Profile](web-ui.md#profile)** or the
 **[Terminal UI](terminal-ui.md#slash-commands)** (`/cron-model <id>`).
+
+## Waiting: continue in the same conversation
+
+Sometimes the agent needs to **wait** for something mid-conversation — "check the
+deploy in 10 minutes," "ping me once the build finishes." It does this by
+scheduling a **one-off** task that **continues in the current thread** instead of
+starting a fresh one. When that task fires, the agent resumes the *same*
+conversation — with its full history — and replies right where you left off:
+
+- In **Slack**, the reply lands in the **same thread** (and Slack DM), not as a new
+  top-level message.
+- In the **web** and **terminal** UIs, it continues the same conversation thread.
+
+This is channel-neutral — the agent only needs to know *which conversation* to
+resume; the runtime routes the reply back to wherever that conversation lives.
+
+The resumed run keeps `schedule_task`, so if what it's waiting for still hasn't
+happened it can schedule **another** short wait and check again — a poll loop that
+stays entirely inside one thread. (Pair this with short delays like
+`"in 30 seconds"` for tight polling.) Continuation is only available for one-off
+schedules — a recurring task has no single conversation to belong to.
+
+A regular scheduled task (without continuation) still behaves as before: its
+result is delivered to your latest conversation, labeled as a scheduled-task
+result.
 
 ## Reliability
 

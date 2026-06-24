@@ -748,6 +748,9 @@ router.post('/cron-tasks', async (req: Request, res: Response) => {
       lastRunAt: task.lastRunAt?.toISOString() ?? null,
       createdAt: task.createdAt.toISOString(),
       updatedAt: task.updatedAt.toISOString(),
+      threadId: task.threadId,
+      originChannel: task.originChannel,
+      originChannelId: task.originChannelId,
     });
 
     res.status(201).json(task);

@@ -14,6 +14,7 @@
 import * as cron from 'node-cron';
 import { invoke } from '../invoke';
 import { messageDeliveryService } from './message-delivery.service';
+import { conversationService } from './conversation.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { trackEvent } from '../lib/telemetry';
@@ -36,6 +37,14 @@ export interface BackendCronTask {
   lastRunAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * When set, the task "continues" the originating conversation in this thread
+   * instead of broadcasting to the user's latest thread. originChannel/
+   * originChannelId drive channel-neutral scoped delivery (see executeTask).
+   */
+  threadId: string | null;
+  originChannel: string | null;
+  originChannelId: string | null;
 }
 
 interface ScheduledJob {
@@ -100,6 +109,7 @@ class CronSchedulerService {
         'cron.task.name': task.name,
         'cron.schedule': task.schedule,
         'cron.one_shot': String(isOneShot),
+        'cron.continue_in_thread': String(!!task.threadId),
       });
     }
 
@@ -194,6 +204,7 @@ class CronSchedulerService {
 
   private async executeTask(task: BackendCronTask): Promise<void> {
     const startTime = Date.now();
+    const boundThreadId = task.threadId;
 
     logger.info(`[CronScheduler] Executing "${task.name}" for user ${task.userId}`);
 
@@ -203,27 +214,58 @@ class CronSchedulerService {
         'cron.task.id': task.id,
         'cron.task.name': task.name,
         'cron.result': result,
+        'cron.continue_in_thread': String(!!boundThreadId),
         'cron.duration_ms': String(Date.now() - startTime),
       });
 
     try {
-      // Invoke LLM directly (in-process)
+      // A thread-bound ("continue in this conversation") task resumes in its
+      // originating thread; make sure that thread still exists before invoking —
+      // it may have been deleted since scheduling (the cascade removes the row,
+      // but the in-memory one-shot timer can still fire).
+      if (boundThreadId) {
+        const thread = await prisma.conversationThread.findUnique({
+          where: { id: boundThreadId },
+          select: { id: true },
+        });
+        if (!thread) {
+          logger.warn(`[CronScheduler] "${task.name}" thread ${boundThreadId} is gone — skipping`);
+          return;
+        }
+      }
+
+      // Invoke LLM directly (in-process). A bound task runs against its thread so
+      // it sees the conversation history (see includeConversation in invoke.ts)
+      // and can re-schedule another "wait" to keep polling in-thread.
       const result = await invoke({
         userId: task.userId,
         agentId: task.agentId,
         mode: 'cron',
         prompt: task.instruction,
+        ...(boundThreadId
+          ? {
+              threadId: boundThreadId,
+              originChannel: (task.originChannel as 'slack' | 'websocket' | null) ?? undefined,
+              originChannelId: task.originChannelId ?? undefined,
+            }
+          : {}),
       });
+
+      // Build channel-neutral routing for a bound task once (Slack thread_ts /
+      // WebSocket session recovered from the thread row); undefined for unbound.
+      const channelContext = boundThreadId
+        ? await conversationService.getChannelContext(boundThreadId, task.originChannel, task.originChannelId)
+        : undefined;
 
       // Budget exceeded — notify user and record the attempt
       if (result.error?.type === 'budget_exceeded') {
         await this.updateCronTaskRun(task.id, new Date().toISOString());
-        await messageDeliveryService.publishToLatestThread(
-          task.agentId,
-          task.userId,
-          `**Scheduled Task: ${task.name}**\n\nThis task could not run — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`,
-          'CRON_TASK',
-        );
+        const budgetMessage = `**Scheduled Task: ${task.name}**\n\nThis task could not run — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`;
+        if (boundThreadId) {
+          await messageDeliveryService.publish(task.userId, boundThreadId, budgetMessage, 'CRON_TASK', { channelContext });
+        } else {
+          await messageDeliveryService.publishToLatestThread(task.agentId, task.userId, budgetMessage, 'CRON_TASK');
+        }
         trackRun('budget_exceeded');
         return;
       }
@@ -237,17 +279,28 @@ class CronSchedulerService {
       // Use only the last step's text (the final summary), not intermediate step texts
       const lastStep = result.steps[result.steps.length - 1];
       const responseText = (lastStep?.text ?? '').trim();
+      const body = responseText || result.response;
 
-      await messageDeliveryService.publishToLatestThread(
-        task.agentId,
-        task.userId,
-        `**Scheduled Task: ${task.name}**\n\n${responseText || result.response}`,
-        'CRON_TASK',
-        {
+      if (boundThreadId) {
+        // Thread-bound: deliver as a natural continuation of the conversation
+        // (no "Scheduled Task" header), scoped to the originating channel/thread.
+        await messageDeliveryService.publish(task.userId, boundThreadId, body, 'CRON_TASK', {
           toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
           attachmentIds: result.attachmentIds,
-        },
-      );
+          channelContext,
+        });
+      } else {
+        await messageDeliveryService.publishToLatestThread(
+          task.agentId,
+          task.userId,
+          `**Scheduled Task: ${task.name}**\n\n${body}`,
+          'CRON_TASK',
+          {
+            toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+            attachmentIds: result.attachmentIds,
+          },
+        );
+      }
 
       logger.info(`[CronScheduler] "${task.name}" completed in ${Date.now() - startTime}ms`);
       trackRun('completed');

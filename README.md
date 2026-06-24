@@ -220,7 +220,10 @@ specified in natural language or cron syntax, and survive restarts. One-shot
 tasks delete themselves after running; recurring tasks track their last run,
 their next run, and consecutive errors. The agent can list, run-now, or
 cancel its own tasks. Scheduled runs use the main model by default, or a
-scheduled-task-specific model if one is set.
+scheduled-task-specific model if one is set. A one-shot task can also
+**continue in the current conversation** when it fires — so the agent can
+"wait" for something and resume in the same thread (the same Slack thread,
+web, or terminal conversation) instead of starting a new one.
 
 ### Sessions and idle handling
 

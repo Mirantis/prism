@@ -81,7 +81,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
   try {
     context = await contextService.getAgentContext(request.userId, {
       threadId: request.threadId,
-      includeConversation: request.mode === 'chat',
+      // Chat always sees history. A thread-bound cron run ("continue in this
+      // conversation") also needs it so the resumed agent remembers what it was
+      // waiting for; plain cron/heartbeat/goal stay history-less by design (goal
+      // turns intentionally restate their objective rather than replay history).
+      includeConversation: request.mode === 'chat' || (request.mode === 'cron' && !!request.threadId),
       agentId: request.agentId,
     });
   } catch (error) {
@@ -123,7 +127,13 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     const builtInTools = filterToolsByMode(
       {
         ...getMemoryTools(request.userId, request.agentId),
-        ...getCronTools(request.userId, request.agentId),
+        ...getCronTools(
+          request.userId,
+          request.agentId,
+          request.threadId,
+          request.originChannel ?? 'websocket',
+          request.originChannelId,
+        ),
         ...getGoalTools(
           request.userId,
           request.agentId,
@@ -475,8 +485,9 @@ export function withToolsCacheControl(tools: Record<string, Tool>): Record<strin
  * Filter built-in tools by invocation mode.
  *
  * - chat: All tools
- * - heartbeat/cron: minus cron-management AND goal tools (autonomous runs don't
- *   reshape the schedule or spawn goals)
+ * - heartbeat: minus cron-management AND goal tools (no schedule/goal reshaping)
+ * - cron: minus list/delete-task AND goal tools, but KEEPS schedule_task so a
+ *   thread-bound "continue in this conversation" run can re-`wait` (poll in-thread)
  * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
  * - goal: minus create_goal (no nested goals) and cron-management; get_goal stays
  */
@@ -506,10 +517,17 @@ function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<st
     return omit(new Set([SHARE_FILE_TOOL_NAME, ...goalToolNames]));
   }
 
-  // heartbeat and cron are autonomous runs: full tool access, minus the
-  // cron-management and goal tools so they don't reshape the schedule or goals.
-  if (mode === 'heartbeat' || mode === 'cron') {
+  // Heartbeat is an autonomous run: full tool access, minus the cron-management
+  // and goal tools so it can't reshape the schedule or spawn goals.
+  if (mode === 'heartbeat') {
     return omit(new Set([...cronToolNames, ...goalToolNames]));
+  }
+
+  // Cron keeps `schedule_task` so a thread-bound "continue in this conversation"
+  // run can re-`wait` (schedule a follow-up) and keep polling in-thread, but
+  // still can't enumerate/delete the whole schedule or create/nest goals.
+  if (mode === 'cron') {
+    return omit(new Set(['list_scheduled_tasks', 'delete_scheduled_task', ...goalToolNames]));
   }
 
   // A goal turn does real work but must not create/nest a goal or reshape the

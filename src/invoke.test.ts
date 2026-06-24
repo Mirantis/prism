@@ -396,14 +396,19 @@ describe('invoke', () => {
       expect(toolNames).toContain('shell_exec');
     });
 
-    it('cron mode excludes cron tools (mirrors heartbeat)', async () => {
+    it('cron mode keeps schedule_task (so it can re-wait) but drops list/delete + goal tools', async () => {
       await invoke(createTestInvokeRequest({ mode: 'cron' }));
 
       const callArgs = mockGenerateText.mock.calls[0][0];
       const toolNames = Object.keys(callArgs.tools);
-      expect(toolNames).not.toContain('schedule_task');
+      // schedule_task stays so a thread-bound "continue in this conversation" run
+      // can schedule another wait and keep polling in-thread.
+      expect(toolNames).toContain('schedule_task');
+      // ...but a cron run still can't enumerate/delete the whole schedule.
       expect(toolNames).not.toContain('list_scheduled_tasks');
       expect(toolNames).not.toContain('delete_scheduled_task');
+      expect(toolNames).not.toContain('create_goal');
+      expect(toolNames).not.toContain('get_goal');
       expect(toolNames).toContain('memory_search');
       expect(toolNames).toContain('update_soul');
       // The original regression: cron runs lost the built-in shell tools
