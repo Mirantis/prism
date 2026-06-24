@@ -9,6 +9,7 @@ vi.mock('../config', () => ({
     otelEndpoint: 'http://example.test',
     otelApiKey: '',
     deploymentEnvironment: 'staging',
+    serviceVersion: 'v2026.6.18060952',
   },
 }));
 
@@ -49,5 +50,11 @@ describe('telemetry (enabled path)', () => {
     expect(attrs['deployment.environment.name']).toBe('staging');
     expect(attrs['service.name']).toBe('prism-agent-runtime');
     expect(attrs['service.namespace']).toBe('prism-agent');
+  });
+
+  it('attaches service.version to the OTel resource when configured', () => {
+    expect(loggerProviderArgs).toHaveLength(1);
+    const attrs = loggerProviderArgs[0]?.resource?.attributes ?? {};
+    expect(attrs['service.version']).toBe('v2026.6.18060952');
   });
 });

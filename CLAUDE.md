@@ -357,6 +357,7 @@ What the operator sets on `docker run`:
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP collector for product telemetry (unset/empty = disabled) | baked into published images via `vars.OTEL_EXPORTER_OTLP_ENDPOINT`; empty otherwise |
 | `OTEL_EXPORTER_OTLP_API_KEY` | Collector auth, sent as `x-api-key` header | baked into published images as a file (`/app/.otel-api-key`, exported by `start.sh`) from `secrets.OTEL_EXPORTER_OTLP_API_KEY`; empty otherwise |
 | `DEPLOYMENT_ENVIRONMENT` | Tags OTel records (production \| staging \| development) | `production` in published images, `development` otherwise |
+| `SERVICE_VERSION` | Build identifier emitted as the OTel `service.version` resource attribute | release tag (e.g. `v2026.6.18060952`) for release-deploy.yml; `canary-<sha>` for deploy.yml; empty otherwise |
 
 ## Chat Flow
 

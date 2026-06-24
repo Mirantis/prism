@@ -12,7 +12,11 @@
 import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { resourceFromAttributes } from '@opentelemetry/resources';
-import { ATTR_SERVICE_NAME, ATTR_SERVICE_NAMESPACE } from '@opentelemetry/semantic-conventions';
+import {
+  ATTR_SERVICE_NAME,
+  ATTR_SERVICE_NAMESPACE,
+  ATTR_SERVICE_VERSION,
+} from '@opentelemetry/semantic-conventions';
 import { SeverityNumber, Logger } from '@opentelemetry/api-logs';
 import { v7 as uuidv7 } from 'uuid';
 import { config } from '../config';
@@ -36,10 +40,14 @@ export function initTelemetry(): void {
     return;
   }
 
+  // Resource attributes describe the *emitter* of every event on this stream.
+  // `service.version` identifies the deployed build so events can be broken
+  // down by version and regressions correlated to specific releases.
   const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: 'prism-agent-runtime',
     [ATTR_SERVICE_NAMESPACE]: 'prism-agent',
     [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: config.deploymentEnvironment,
+    ...(config.serviceVersion ? { [ATTR_SERVICE_VERSION]: config.serviceVersion } : {}),
   });
 
   const headers: Record<string, string> = {};
@@ -58,7 +66,7 @@ export function initTelemetry(): void {
   otelLogger = provider.getLogger('product-telemetry');
 
   logger.info(
-    `[Telemetry] Initialized → ${config.otelEndpoint} (env: ${config.deploymentEnvironment})`,
+    `[Telemetry] Initialized → ${config.otelEndpoint} (env: ${config.deploymentEnvironment}, version: ${config.serviceVersion || '<unset>'})`,
   );
 }
 

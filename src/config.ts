@@ -99,6 +99,13 @@ export const config = {
   otelApiKey: process.env.OTEL_EXPORTER_OTLP_API_KEY || '',
   // Identifies the deployment for OTel resource routing (production | staging | development)
   deploymentEnvironment: process.env.DEPLOYMENT_ENVIRONMENT || 'development',
+  // Build identifier emitted as the OTel `service.version` resource attribute.
+  // Baked into published images at build time via the `SERVICE_VERSION` Docker
+  // ARG/ENV — release-deploy.yml passes the release tag (e.g. v2026.6.18060952);
+  // deploy.yml (canary) passes the build commit SHA. Empty when unset, in which
+  // case `service.version` is omitted from the resource (rather than reported
+  // as a misleading literal default like `unknown`).
+  serviceVersion: process.env.SERVICE_VERSION || '',
 
   // Goals — autonomous multi-turn objectives. `goalMaxTurns` overrides the
   // GOAL_MAX_TURNS hard cap. `goalDefaultTokenBudget` is the per-goal token

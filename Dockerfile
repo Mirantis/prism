@@ -180,6 +180,14 @@ ARG DEPLOYMENT_ENVIRONMENT=development
 ENV OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
 ENV DEPLOYMENT_ENVIRONMENT=${DEPLOYMENT_ENVIRONMENT}
 
+# Build identifier surfaced as the OTel `service.version` resource attribute on
+# every product-telemetry event. release-deploy.yml passes the release tag
+# (e.g. v2026.6.18060952); deploy.yml (canary) passes the build commit SHA.
+# Empty default keeps PR-validation and local builds from emitting a misleading
+# literal — config.ts treats '' as "omit the attribute".
+ARG SERVICE_VERSION=""
+ENV SERVICE_VERSION=${SERVICE_VERSION}
+
 # Absent or empty secret (PR validation, local builds) bakes nothing.
 RUN --mount=type=secret,id=otel_api_key \
     if [ -s /run/secrets/otel_api_key ]; then \
