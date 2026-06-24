@@ -36,7 +36,7 @@ vi.mock('../../lib/telemetry', () => ({
   trackEvent: mockTrackEvent,
 }));
 
-import { getCronTools } from '../cron';
+import { getCronTools, parseSchedule } from '../cron';
 
 type ToolExecute = (input: Record<string, unknown>) => Promise<unknown>;
 
@@ -104,5 +104,136 @@ describe('cron tools', () => {
 
     expect(mockScheduler.unscheduleTask).not.toHaveBeenCalled();
     expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+
+  // --------------------------------------------------------------------------
+  // continueInThread ("wait & resume here")
+  // --------------------------------------------------------------------------
+
+  describe('continueInThread', () => {
+    /** Tools pre-bound to a Slack thread, as a chat turn from a channel would be. */
+    function boundTools() {
+      return getCronTools('user-1', 'agent-1', 'thread-9', 'slack', 'C123') as unknown as Record<
+        string,
+        { execute: ToolExecute }
+      >;
+    }
+
+    it('binds a one-off task to the originating thread + channel and schedules it', async () => {
+      mockPrisma.cronTask.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({
+          id: 'wait-1',
+          name: data.name,
+          schedule: data.schedule,
+          instruction: data.instruction,
+          isActive: true,
+          nextRunAt: new Date('2025-01-15T12:05:00Z'),
+          lastRunAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          threadId: data.threadId ?? null,
+          originChannel: data.originChannel ?? null,
+          originChannelId: data.originChannelId ?? null,
+        }),
+      );
+
+      const result = (await boundTools().schedule_task.execute({
+        name: 'Recheck deploy',
+        schedule: 'in 5 minutes',
+        instruction: 'Check the deploy again.',
+        continueInThread: true,
+      })) as { success: boolean; continueInThread?: boolean };
+
+      expect(result.success).toBe(true);
+      expect(result.continueInThread).toBe(true);
+      expect(mockPrisma.cronTask.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          threadId: 'thread-9',
+          originChannel: 'slack',
+          originChannelId: 'C123',
+        }),
+      });
+      expect(mockScheduler.scheduleTask).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: 'thread-9', originChannel: 'slack', originChannelId: 'C123' }),
+      );
+    });
+
+    it('rejects continueInThread on a recurring schedule without creating a task', async () => {
+      const result = (await boundTools().schedule_task.execute({
+        name: 'Loop',
+        schedule: 'every 2 hours',
+        instruction: 'x',
+        continueInThread: true,
+      })) as { success: boolean; error?: string };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/one-off/i);
+      expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
+      expect(mockScheduler.scheduleTask).not.toHaveBeenCalled();
+    });
+
+    it('rejects continueInThread when there is no thread to resume in', async () => {
+      // Default `tools` is built without a threadId (autonomous/subagent-style).
+      const result = (await tools.schedule_task.execute({
+        name: 'Recheck',
+        schedule: 'in 5 minutes',
+        instruction: 'x',
+        continueInThread: true,
+      })) as { success: boolean; error?: string };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/thread/i);
+      expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
+    });
+
+    it('leaves an ordinary (unbound) one-off task with no thread binding', async () => {
+      mockPrisma.cronTask.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({
+          id: 'task-2',
+          name: data.name,
+          schedule: data.schedule,
+          instruction: data.instruction,
+          isActive: true,
+          nextRunAt: new Date('2025-01-15T12:05:00Z'),
+          lastRunAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          threadId: null,
+          originChannel: null,
+          originChannelId: null,
+        }),
+      );
+
+      await boundTools().schedule_task.execute({
+        name: 'One-off',
+        schedule: 'in 5 minutes',
+        instruction: 'do it',
+      });
+
+      // No continueInThread → no binding fields persisted.
+      const createArg = mockPrisma.cronTask.create.mock.calls[0][0] as { data: Record<string, unknown> };
+      expect(createArg.data.threadId).toBeUndefined();
+      expect(createArg.data.originChannel).toBeUndefined();
+    });
+  });
+});
+
+describe('parseSchedule', () => {
+  it('parses "in N seconds" as a one-shot', () => {
+    const { isOneShot, nextRunAt } = parseSchedule('in 30 seconds');
+    expect(isOneShot).toBe(true);
+    expect(nextRunAt).toBeInstanceOf(Date);
+  });
+
+  it('parses "every N seconds" as a recurring 6-field cron expression', () => {
+    const { isOneShot, cronExpression, nextRunAt } = parseSchedule('every 15 seconds');
+    expect(isOneShot).toBe(false);
+    expect(cronExpression).toBe('*/15 * * * * *');
+    expect(nextRunAt).toBeNull();
+  });
+
+  it('still parses minutes one-shot / recurring', () => {
+    expect(parseSchedule('in 5 minutes').isOneShot).toBe(true);
+    expect(parseSchedule('every 2 hours').isOneShot).toBe(false);
   });
 });

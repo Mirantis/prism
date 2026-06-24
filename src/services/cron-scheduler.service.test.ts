@@ -14,6 +14,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const {
   mockInvoke,
   mockDeliverMessage,
+  mockPublish,
+  mockGetChannelContext,
+  mockThreadFindUnique,
   mockCronTaskUpdate,
   mockCronTaskDelete,
   mockCronTaskFindMany,
@@ -23,6 +26,9 @@ const {
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockDeliverMessage: vi.fn(),
+  mockPublish: vi.fn(),
+  mockGetChannelContext: vi.fn(),
+  mockThreadFindUnique: vi.fn(),
   mockCronTaskUpdate: vi.fn(),
   mockCronTaskDelete: vi.fn(),
   mockCronTaskFindMany: vi.fn(),
@@ -38,6 +44,13 @@ vi.mock('../invoke', () => ({
 vi.mock('./message-delivery.service', () => ({
   messageDeliveryService: {
     publishToLatestThread: mockDeliverMessage,
+    publish: mockPublish,
+  },
+}));
+
+vi.mock('./conversation.service', () => ({
+  conversationService: {
+    getChannelContext: mockGetChannelContext,
   },
 }));
 
@@ -47,6 +60,9 @@ vi.mock('../lib/prisma', () => ({
       findMany: mockCronTaskFindMany,
       update: mockCronTaskUpdate,
       delete: mockCronTaskDelete,
+    },
+    conversationThread: {
+      findUnique: mockThreadFindUnique,
     },
   },
 }));
@@ -94,6 +110,9 @@ function createCronTask(overrides: Partial<BackendCronTask> = {}): BackendCronTa
     lastRunAt: null,
     createdAt: '2025-01-01T00:00:00.000Z',
     updatedAt: '2025-01-01T00:00:00.000Z',
+    threadId: null,
+    originChannel: null,
+    originChannelId: null,
     ...overrides,
   };
 }
@@ -113,6 +132,9 @@ describe('CronSchedulerService', () => {
       steps: [{ text: 'Task completed.', toolCalls: [{ tool: 'memory_write', input: '{}', output: 'ok', success: true, timestamp: '2025-01-15T12:00:00Z' }] }],
     });
     mockDeliverMessage.mockResolvedValue({ messageId: 'msg-1', threadId: 'thr-1' });
+    mockPublish.mockResolvedValue({ id: 'msg-1', threadId: 'thr-1' });
+    mockGetChannelContext.mockResolvedValue({ channel: 'websocket', threadId: 'thread-bound' });
+    mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
     mockCronTaskUpdate.mockResolvedValue({});
     mockCronTaskDelete.mockResolvedValue({});
   });
@@ -315,6 +337,89 @@ describe('CronSchedulerService', () => {
   });
 
   // ==========================================================================
+  // scheduleTask — thread-bound continuation ("wait & resume here")
+  // ==========================================================================
+
+  describe('scheduleTask (continue in thread)', () => {
+    const bound = () =>
+      createCronTask({
+        id: 'wait-1',
+        schedule: 'in 1 minute',
+        nextRunAt: new Date(Date.now() + 60_000).toISOString(),
+        instruction: 'Re-check the deploy.',
+        threadId: 'thread-bound',
+        originChannel: 'slack',
+        originChannelId: 'C999',
+      });
+
+    it('resumes in the originating thread: invokes with that thread + scoped channel delivery', async () => {
+      mockCronValidate.mockReturnValue(false);
+      mockGetChannelContext.mockResolvedValue({
+        channel: 'slack',
+        channelId: 'C999',
+        threadTs: '1700000000.000100',
+        threadId: 'thread-bound',
+      });
+
+      cronSchedulerService.scheduleTask(bound());
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      // Existence-checked, then invoked against the bound thread with channel
+      // context so it sees history and can re-wait.
+      expect(mockThreadFindUnique).toHaveBeenCalledWith({
+        where: { id: 'thread-bound' },
+        select: { id: true },
+      });
+      expect(mockInvoke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-abc-123',
+          agentId: 'agent-1',
+          mode: 'cron',
+          prompt: 'Re-check the deploy.',
+          threadId: 'thread-bound',
+          originChannel: 'slack',
+          originChannelId: 'C999',
+        }),
+      );
+
+      // Delivered into the SAME thread via scoped publish (not the latest-thread
+      // broadcast), as a plain continuation with no "Scheduled Task" header.
+      expect(mockGetChannelContext).toHaveBeenCalledWith('thread-bound', 'slack', 'C999');
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-abc-123',
+        'thread-bound',
+        'Task completed.',
+        'CRON_TASK',
+        expect.objectContaining({
+          channelContext: expect.objectContaining({ threadTs: '1700000000.000100', threadId: 'thread-bound' }),
+        }),
+      );
+      const [, , body] = mockPublish.mock.calls[0];
+      expect(body).not.toContain('Scheduled Task:');
+
+      // Telemetry flags the continuation.
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.continue_in_thread': 'true' }),
+      );
+    });
+
+    it('skips delivery when the bound thread no longer exists', async () => {
+      mockCronValidate.mockReturnValue(false);
+      mockThreadFindUnique.mockResolvedValue(null);
+
+      cronSchedulerService.scheduleTask(bound());
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(mockInvoke).not.toHaveBeenCalled();
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
   // scheduleTask — validation
   // ==========================================================================
 
@@ -427,6 +532,7 @@ describe('CronSchedulerService', () => {
         'cron.task.id': 'task-1',
         'cron.task.name': 'Daily Report',
         'cron.result': 'completed',
+        'cron.continue_in_thread': 'false',
         'cron.duration_ms': expect.any(String),
       });
     });
@@ -474,6 +580,7 @@ describe('CronSchedulerService', () => {
         'cron.task.name': 'Daily Report',
         'cron.schedule': '0 9 * * *',
         'cron.one_shot': 'false',
+        'cron.continue_in_thread': 'false',
       });
     });
 

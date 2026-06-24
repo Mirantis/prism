@@ -23,13 +23,15 @@ export function parseSchedule(schedule: string): {
 } {
   const normalized = schedule.toLowerCase().trim();
 
-  const inMatch = normalized.match(/^in\s+(\d+)\s+(minute|minutes|hour|hours|min|mins|hr|hrs)$/);
+  const inMatch = normalized.match(/^in\s+(\d+)\s+(second|seconds|sec|secs|minute|minutes|hour|hours|min|mins|hr|hrs)$/);
   if (inMatch) {
     const value = parseInt(inMatch[1]);
     const unit = inMatch[2];
     const ms = unit.startsWith('hour') || unit.startsWith('hr')
       ? value * 60 * 60 * 1000
-      : value * 60 * 1000;
+      : unit.startsWith('sec')
+        ? value * 1000
+        : value * 60 * 1000;
 
     return {
       cronExpression: schedule,
@@ -62,11 +64,15 @@ export function parseSchedule(schedule: string): {
     };
   }
 
-  const everyMatch = normalized.match(/^every\s+(\d+)\s+(minute|minutes|hour|hours|min|mins|hr|hrs)$/);
+  const everyMatch = normalized.match(/^every\s+(\d+)\s+(second|seconds|sec|secs|minute|minutes|hour|hours|min|mins|hr|hrs)$/);
   if (everyMatch) {
     const value = parseInt(everyMatch[1]);
     const unit = everyMatch[2];
 
+    if (unit.startsWith('sec')) {
+      // node-cron supports a leading seconds field (6-field expression).
+      return { cronExpression: `*/${value} * * * * *`, isOneShot: false, nextRunAt: null };
+    }
     if (unit.startsWith('hour') || unit.startsWith('hr')) {
       return { cronExpression: `0 */${value} * * *`, isOneShot: false, nextRunAt: null };
     }
@@ -91,20 +97,50 @@ export function parseSchedule(schedule: string): {
 export function getCronTools(
   userId: string,
   agentId: string,
+  threadId?: string,
+  originChannel: 'slack' | 'websocket' = 'websocket',
+  originChannelId?: string,
 ): Record<string, Tool> {
   return {
     schedule_task: tool({
-      description: 'Schedule a task to run at a specific time or interval.',
+      description:
+        'Schedule a task to run at a specific time or interval. Set continueInThread to ' +
+        'resume in THIS conversation thread instead of starting a new one — this is how you ' +
+        '"wait" for something and pick the conversation back up here.',
       inputSchema: z.object({
         name: z.string().describe('Short name for the task'),
-        schedule: z.string().describe('When to run: "in 2 minutes", "every hour", "at 3pm", cron expression'),
+        schedule: z.string().describe('When to run: "in 30 seconds", "in 2 minutes", "every hour", "at 3pm", cron expression'),
         instruction: z.string().describe('What to do when the task runs'),
+        continueInThread: z
+          .boolean()
+          .optional()
+          .describe(
+            'Continue in THIS conversation/thread when the task runs, instead of posting to a new ' +
+            'thread. Use this to "wait" and resume the conversation here. Only valid for one-off ' +
+            'schedules like "in 10 minutes".',
+          ),
       }),
-      execute: async ({ name, schedule, instruction }) => {
+      execute: async ({ name, schedule, instruction, continueInThread }) => {
         const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule);
 
         if (!isOneShot && !cron.validate(cronExpression)) {
           throw new Error(`Invalid cron expression: ${cronExpression}`);
+        }
+
+        // Thread continuation is only meaningful for a one-off "wait then resume"
+        // and needs a thread to resume in (absent on autonomous/subagent runs).
+        const bindToThread = continueInThread === true;
+        if (bindToThread && !isOneShot) {
+          return {
+            success: false,
+            error: 'continueInThread only works with one-off schedules (e.g. "in 10 minutes"), not recurring ones.',
+          };
+        }
+        if (bindToThread && !threadId) {
+          return {
+            success: false,
+            error: 'continueInThread requires an active conversation thread to resume in.',
+          };
         }
 
         const task = await prisma.cronTask.create({
@@ -115,6 +151,9 @@ export function getCronTools(
             schedule: cronExpression,
             instruction,
             nextRunAt,
+            ...(bindToThread
+              ? { threadId, originChannel, originChannelId: originChannelId ?? null }
+              : {}),
           },
         });
 
@@ -131,17 +170,24 @@ export function getCronTools(
             lastRunAt: task.lastRunAt?.toISOString() ?? null,
             createdAt: task.createdAt.toISOString(),
             updatedAt: task.updatedAt.toISOString(),
+            threadId: task.threadId,
+            originChannel: task.originChannel,
+            originChannelId: task.originChannelId,
           });
         } catch (err) {
           logger.error({ err }, '[CronTool] Failed to schedule task in-process');
         }
 
+        const when = task.nextRunAt
+          ? `to run at ${task.nextRunAt.toLocaleString()}`
+          : `with schedule: ${task.schedule}`;
         return {
           success: true,
           taskId: task.id,
-          message: task.nextRunAt
-            ? `Scheduled "${name}" to run at ${task.nextRunAt.toLocaleString()}`
-            : `Scheduled "${name}" with schedule: ${task.schedule}`,
+          message: bindToThread
+            ? `Scheduled "${name}" ${when} — it will continue in this conversation.`
+            : `Scheduled "${name}" ${when}`,
+          continueInThread: bindToThread,
           nextRunAt: task.nextRunAt?.toISOString() ?? null,
           schedule: task.schedule,
         };

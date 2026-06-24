@@ -520,7 +520,9 @@ export function formatTimeAgo(timestamp: number): string {
 function getCronInstructions(): string {
   return `# Scheduled Task Mode
 
-You are executing a scheduled task. Follow the task instruction, report findings, and store important observations in memory.`;
+You are executing a scheduled task. Follow the task instruction, report findings, and store important observations in memory.
+
+If this run is continuing an earlier conversation (its prior messages appear above), you are resuming after a wait you scheduled — respond as a natural continuation of that conversation, not as a standalone report. If what you were waiting for still hasn't happened, you may schedule another one-off task with continueInThread to check again later.`;
 }
 
 function getGoalInstructions(): string {
