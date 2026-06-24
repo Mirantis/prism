@@ -43,6 +43,6 @@ level that reproduces the bug (unit for logic bugs, e2e for user-facing bugs).
 
 Before requesting review, confirm:
 
-- [ ] Related unit tests added or updated.
-- [ ] User-facing changes covered by e2e tests on every surface they touch.
-- [ ] Bug fixes include a regression test that fails without the fix.
+- [ ] If behavior changed, related unit tests added or updated.
+- [ ] If user-facing behavior changed, e2e tests added on every surface it touches.
+- [ ] If this PR fixes a bug, a regression test added that fails without the fix.
