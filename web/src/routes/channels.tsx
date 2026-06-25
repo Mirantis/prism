@@ -155,13 +155,13 @@ function SlackModeSections({
 
   const { data: linkStatus } = useQuery({
     queryKey: ['slack-link-status', agentId, connectionId],
-    queryFn: () => runtimeApi.slackLinkStatus(connectionId),
+    queryFn: () => runtimeApi.slackLinkStatus(),
     refetchInterval: verificationCode ? 3000 : false,
   });
 
   const { data: channelsResp } = useQuery({
     queryKey: ['slack-channels', agentId, connectionId],
-    queryFn: () => runtimeApi.slackChannelMappings(connectionId),
+    queryFn: () => runtimeApi.slackChannelMappings(),
     refetchInterval: channelLinkCode ? 3000 : false,
   });
 
@@ -193,7 +193,7 @@ function SlackModeSections({
   });
 
   const dmUnlinkMutation = useMutation({
-    mutationFn: () => runtimeApi.deleteDmMapping(connectionId),
+    mutationFn: () => runtimeApi.deleteDmMapping(),
     onSuccess: () => {
       setIsUnlinkDmOpen(false);
       queryClient.invalidateQueries({ queryKey: ['slack-link-status', agentId, connectionId] });
@@ -215,7 +215,7 @@ function SlackModeSections({
   });
 
   const unlinkChannelMutation = useMutation({
-    mutationFn: (channelId: string) => runtimeApi.deleteChannelMapping(channelId, connectionId),
+    mutationFn: (channelId: string) => runtimeApi.deleteChannelMapping(channelId),
     onSuccess: () => {
       setChannelToUnlink(null);
       queryClient.invalidateQueries({ queryKey: ['slack-channels', agentId, connectionId] });

@@ -74,6 +74,7 @@ const {
     slackMapping: {
       findUnique: vi.fn(),
       findFirst: vi.fn(),
+      findMany: vi.fn(),
       create: vi.fn(),
       deleteMany: vi.fn(),
     },
@@ -1098,6 +1099,95 @@ describe('Management Routes', () => {
           slackUserId: null,
           dmChannelId: null,
         },
+      });
+    });
+  });
+
+  // ==========================================================================
+  // Slack mapping read/delete routes — legacy connectionId regression
+  //
+  // Agents migrated from the old multi-tenant world carry a UUID connectionId
+  // on their slack_mappings rows, while single-agent mode identifies its one
+  // connection by the Slack teamId. These routes must NOT filter by
+  // connectionId, or those legacy mappings vanish from the UI (AGENT-74).
+  // ==========================================================================
+
+  const LEGACY_CONNECTION_ID = 'c85e8ac7-2a5c-4b6c-90b7-65cb477389bd';
+
+  describe('GET /slack-channel-mappings', () => {
+    it('lists channel mappings regardless of their stored connectionId', async () => {
+      mockPrisma.slackMapping.findMany.mockResolvedValue([
+        {
+          id: 'm-1',
+          slackChannelId: 'C03PSDNTYDT',
+          slackChannelName: 'lens-support',
+          connectionId: LEGACY_CONNECTION_ID,
+          createdAt: new Date('2026-06-12T00:00:00Z'),
+          agentWorkspace: { name: 'Support' },
+        },
+      ]);
+
+      const res = await authedRequest(app).get('/agents/slack-channel-mappings');
+
+      expect(res.status).toBe(200);
+      expect(res.body.channels).toHaveLength(1);
+      expect(res.body.channels[0].channelId).toBe('C03PSDNTYDT');
+      // The query must be scoped only by slackChannelId — adding connectionId
+      // is what hid legacy rows.
+      expect(mockPrisma.slackMapping.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { slackChannelId: { not: null } } }),
+      );
+    });
+  });
+
+  describe('GET /slack-link-status', () => {
+    it('reports DM + channel mappings without filtering by connectionId', async () => {
+      // 1st findFirst = DM mapping (stored under a legacy UUID); 2nd = channel existence.
+      mockPrisma.slackMapping.findFirst
+        .mockResolvedValueOnce({ slackUserId: 'U123' })
+        .mockResolvedValueOnce({ id: 'm-1' });
+
+      const res = await authedRequest(app).get('/agents/slack-link-status');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        hasDmMapping: true,
+        hasChannelMapping: true,
+        slackUserId: 'U123',
+      });
+      expect(mockPrisma.slackMapping.findFirst).toHaveBeenNthCalledWith(1, {
+        where: { slackUserId: { not: null } },
+        select: { slackUserId: true },
+      });
+    });
+  });
+
+  describe('DELETE /slack/channel-mapping/:channelId', () => {
+    it('unlinks by channelId alone (no connectionId scoping)', async () => {
+      mockPrisma.slackMapping.deleteMany.mockResolvedValue({ count: 1 });
+
+      const res = await authedRequest(app).delete(
+        '/agents/slack/channel-mapping/C03PSDNTYDT',
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.deleted).toBe(1);
+      expect(mockPrisma.slackMapping.deleteMany).toHaveBeenCalledWith({
+        where: { slackChannelId: 'C03PSDNTYDT' },
+      });
+    });
+  });
+
+  describe('DELETE /slack/dm-mapping', () => {
+    it('deletes the DM mapping without connectionId scoping', async () => {
+      mockPrisma.slackMapping.deleteMany.mockResolvedValue({ count: 1 });
+
+      const res = await authedRequest(app).delete('/agents/slack/dm-mapping');
+
+      expect(res.status).toBe(200);
+      expect(res.body.deleted).toBe(1);
+      expect(mockPrisma.slackMapping.deleteMany).toHaveBeenCalledWith({
+        where: { slackUserId: { not: null } },
       });
     });
   });
