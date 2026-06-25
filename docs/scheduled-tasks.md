@@ -73,15 +73,6 @@ conversation — with its full history — and replies right where you left off:
   top-level message.
 - In the **web** and **terminal** UIs, it continues the same conversation thread.
 
-This is channel-neutral — the agent only needs to know *which conversation* to
-resume; the runtime routes the reply back to wherever that conversation lives.
-
-The resumed run keeps `schedule_task`, so if what it's waiting for still hasn't
-happened it can schedule **another** short wait and check again — a poll loop that
-stays entirely inside one thread. (Pair this with short delays like
-`"in 30 seconds"` for tight polling.) Continuation is only available for one-off
-schedules — a recurring task has no single conversation to belong to.
-
 A regular scheduled task (without continuation) still behaves as before: its
 result is delivered to your latest conversation, labeled as a scheduled-task
 result.
