@@ -135,8 +135,8 @@ export const runtimeApi = {
 
   // Slack mappings
   slackWorkspaces: () => request<{ workspaces: SlackWorkspace[] }>('/agents/slack/workspaces'),
-  // Single-agent mode has one Slack connection, so these read/delete routes are
-  // not scoped by connectionId (see the runtime's `lib/slack-source.ts`).
+  // There is one Slack connection, so these read/delete routes are not scoped by
+  // connectionId (see the runtime's `lib/slack-source.ts`).
   slackLinkStatus: () => request<SlackLinkStatus>('/agents/slack-link-status'),
   slackChannelMappings: () =>
     request<{ channels: SlackChannelMapping[] }>('/agents/slack-channel-mappings'),

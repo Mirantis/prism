@@ -116,7 +116,7 @@ describe('Single-Agent Routes', () => {
       );
     });
 
-    it('returns 503 when single-agent mode is not initialized', async () => {
+    it('returns 503 when the agent is not initialized', async () => {
       config.agentId = undefined as unknown as string;
 
       const res = await request(makeApp()).post('/threads');
@@ -183,7 +183,7 @@ describe('Single-Agent Routes', () => {
       expect(mockGetGitBranch).toHaveBeenCalledWith('/repo/a');
     });
 
-    it('returns 503 when single-agent mode is not initialized', async () => {
+    it('returns 503 when the agent is not initialized', async () => {
       config.agentId = undefined as unknown as string;
 
       const res = await request(makeApp()).get('/threads');
@@ -228,7 +228,7 @@ describe('Single-Agent Routes', () => {
       expect(mockGetRecentMessages).not.toHaveBeenCalled();
     });
 
-    it('returns 503 when single-agent mode is not initialized', async () => {
+    it('returns 503 when the agent is not initialized', async () => {
       config.agentId = undefined as unknown as string;
 
       const res = await request(makeApp()).get('/messages');

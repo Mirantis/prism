@@ -25,7 +25,7 @@ const router = Router();
 router.get('/latest-thread', async (_req: Request, res: Response) => {
   try {
     if (!config.agentId) {
-      res.status(503).json({ error: 'Single-agent mode not initialized (agentId unset)' });
+      res.status(503).json({ error: 'Agent not initialized (agentId unset)' });
       return;
     }
     const thread = await conversationService.getOrCreateLatestThread(
@@ -42,7 +42,7 @@ router.get('/latest-thread', async (_req: Request, res: Response) => {
 router.get('/messages', async (req: Request, res: Response) => {
   try {
     if (!config.agentId) {
-      res.status(503).json({ error: 'Single-agent mode not initialized (agentId unset)' });
+      res.status(503).json({ error: 'Agent not initialized (agentId unset)' });
       return;
     }
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
@@ -88,7 +88,7 @@ router.get('/messages', async (req: Request, res: Response) => {
 router.get('/threads', async (_req: Request, res: Response) => {
   try {
     if (!config.agentId) {
-      res.status(503).json({ error: 'Single-agent mode not initialized (agentId unset)' });
+      res.status(503).json({ error: 'Agent not initialized (agentId unset)' });
       return;
     }
     // Resumable threads only (newest first): threadSource DATABASE drops Slack
@@ -128,7 +128,7 @@ router.get('/threads', async (_req: Request, res: Response) => {
 router.post('/threads', async (req: Request, res: Response) => {
   try {
     if (!config.agentId) {
-      res.status(503).json({ error: 'Single-agent mode not initialized (agentId unset)' });
+      res.status(503).json({ error: 'Agent not initialized (agentId unset)' });
       return;
     }
     // Optional: the directory the client (CLI) is rooted in, persisted on the
