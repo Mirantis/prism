@@ -142,9 +142,28 @@ Given('I link the channel to the agent via the UI', async ({ page }) => {
   await page.getByText(`#${slack.channelName}`).waitFor({ timeout: 30_000 });
 });
 
+// Regression for AGENT-74: agents migrated from the old multi-tenant world
+// carry a UUID connectionId on their slack_mappings rows that no longer matches
+// the env connection's teamId. Rewrite the freshly-linked mapping to such a
+// legacy value to reproduce the "channel vanished from /channels" bug.
+const LEGACY_CONNECTION_ID = 'c85e8ac7-2a5c-4b6c-90b7-65cb477389bd';
+
+Given('the channel mapping has a legacy connectionId', async () => {
+  const slack = getSlackState();
+  const updated = await getPrisma().slackMapping.updateMany({
+    where: { slackChannelId: slack.channelId },
+    data: { connectionId: LEGACY_CONNECTION_ID },
+  });
+  expect(updated.count).toBe(1);
+});
+
 // ============================================================================
 // When
 // ============================================================================
+
+When('I reload the Channels page', async ({ page }) => {
+  await new ChannelsPage(page).navigate();
+});
 
 When(
   'I send a message mentioning the bot {string}',
@@ -181,4 +200,19 @@ Then(
 Then("the bot's reply should not be empty", async () => {
   expect(botReplyText).toBeTruthy();
   expect(botReplyText!.trim().length).toBeGreaterThan(0);
+});
+
+Then('the linked channel is still listed', async ({ page }) => {
+  const slack = getSlackState();
+  await expect(page.getByText(`#${slack.channelName}`)).toBeVisible({ timeout: 15_000 });
+});
+
+Then('I can unlink the channel from the UI', async ({ page }) => {
+  const slack = getSlackState();
+  await new ChannelsPage(page).unlinkChannel();
+  // Authoritative: the mapping row is gone from the runtime DB.
+  const remaining = await getPrisma().slackMapping.count({
+    where: { slackChannelId: slack.channelId },
+  });
+  expect(remaining).toBe(0);
 });

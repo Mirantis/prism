@@ -184,50 +184,28 @@ Vite-proxy-shaped that would mask a real bug.
 
 ## Architecture
 
-### Communication with Backend
+### Self-sufficiency — owns its data, no backend
 
-**Single-agent mode short-circuits this entire section.** No backend
-HTTP calls, no management API, no internal API secret. The container
-owns one `AgentWorkspace` (identified by `AGENT_ID` env), reads Slack
-connection from env, and all "Communication with Backend" flows below
-are unused.
+The runtime is self-contained: there is no backend, no `/internal/api`
+calls, and no internal API secret. The container owns exactly one
+`AgentWorkspace` (identified by the `AGENT_ID` env), reads its Slack
+connection from env (`lib/slack-config.ts`), and persists everything
+locally.
 
-Multi-tenant (default) communicates through the following channels:
+1. **Owns its data** — agent CRUD/ownership/subagents, conversation
+   threads + messages, active-thread resolution, agent field updates
+   (heartbeat timestamp/status), cron task state, Slack mappings, and the
+   pending Slack-message queue all live in the embedded SQLite DB
+   (`file:/data/agent.db`) accessed via Prisma. Vector search over
+   `memory_entries.embedding` goes through a sibling `better-sqlite3`
+   handle that loads the `sqlite-vec` extension (`lib/sqlite-bootstrap.ts`).
 
-1. **Internal REST API** (`/internal/api/*`) - Agent-runtime calls backend for:
-   - Access control checks via `POST /internal/api/can-access-agent` (backend has Nexus client)
-   - SlackConnection read-only access via `/internal/api/slack-connections` (list active, get by ID)
-
-2. **Runtime Database** (PostgreSQL via Prisma) - Agent-runtime reads/writes directly for:
-   - **Agent CRUD** (create, delete, list, lookup, ownership validation, subagents) via `agentWorkspaceService`
-   - Conversation history (thread context, recent messages)
-   - Active thread resolution
-   - Thread and message CRUD
-   - Agent field updates (heartbeat timestamp, heartbeat status)
-   - Cron task state (list active tasks, update run timestamps, delete one-shot tasks)
-   - Slack message queue drain (pending heartbeat trigger messages)
-
-3. **Management API** (`/agents/*`) - Backend calls agent-runtime to:
-   - **Agent CRUD**: create (`POST /`, receives pre-generated `id` from backend), delete (`DELETE /:agentId`), get details, validate ownership, nexus token get/set, subagent add/remove/list
-   - Chat: `POST /agents/chat` (internal/debug use)
-   - Start/stop/trigger heartbeat timers
-   - Notify of pending Slack messages (`POST /:agentId/heartbeat/slack-trigger`, no body)
-   - Schedule/unschedule cron jobs
-   - Query heartbeat status
-   - CRUD for slack heartbeat triggers (get, create, update throttle, delete, claim, channel check)
-   - Get or create active thread (`POST /agents/threads/get-or-create-active`)
-   - List threads for user+agent (`GET /agents/threads`)
-   - Fetch thread with messages (`GET /agents/threads/:threadId`)
-   - Add message to thread (`POST /agents/threads/:threadId/messages`)
-   - Deactivate a thread (`POST /agents/threads/:threadId/archive`, sets status to NON_ACTIVE)
-   - Get or create thread by external ID (`POST /agents/threads/get-or-create-by-external-id`)
-   - Set external thread ID (`POST /agents/threads/:threadId/set-external-id`)
-   - Verify Slack DM link codes (`POST /agents/slack/verify-link-code`)
-   - Verify Slack channel link codes (`POST /agents/slack/verify-channel-link-code`)
-   - Create Slack verification codes (`POST /agents/slack/create-verification-code`)
-   - Slack connection management: add-connection, remove-connection, list connections, get channel name
-   - Slack mapping queries: link status (`GET /:agentId/slack-link-status`), channel mappings (`GET /:agentId/slack-channel-mappings`), specific channel mapping (`GET /slack/channel-mapping/:channelId`), connection ID lookup (`GET /:agentId/slack-connection-id`)
-   - Slack mapping mutations: delete channel mapping (`DELETE /slack/channel-mapping/:channelId`), delete DM mapping (`DELETE /:agentId/slack/dm-mapping`)
+2. **Exposes a Management API** (`/agents/*`) consumed by its local
+   clients — the bundled web SPA and `prism-cli` (not a backend): chat and
+   thread/message CRUD, heartbeat start/stop/trigger + status, cron
+   schedule/unschedule, Slack link/verification codes + mapping queries and
+   mutations, and skills list/run. The Slack-specific endpoints are
+   detailed in the "Management API Endpoints (for Slack)" table below.
 
 ### MCP Tool Servers
 
