@@ -1490,11 +1490,10 @@ router.get('/slack/workspaces', async (_req: Request, res: Response) => {
  * GET /agents/slack-link-status
  * Check whether the agent has a DM and/or channel mapping.
  *
- * Single-agent mode has exactly one Slack connection (see `lib/slack-source.ts`),
- * so there is nothing to scope by — we intentionally do NOT filter by
- * connectionId. Legacy rows migrated from multi-tenant carry a UUID
- * connectionId that never matches the env connection's teamId; filtering on it
- * would hide them.
+ * There is exactly one Slack connection (see `lib/slack-source.ts`), so there is
+ * nothing to scope by — we intentionally do NOT filter by connectionId. Legacy
+ * rows carry a UUID connectionId that never matches the env connection's teamId;
+ * filtering on it would hide them.
  */
 router.get('/slack-link-status', async (_req: Request, res: Response) => {
   try {
@@ -1520,10 +1519,10 @@ router.get('/slack-link-status', async (_req: Request, res: Response) => {
  * GET /agents/slack-channel-mappings
  * List the agent's channel mappings.
  *
- * Single-agent mode has exactly one Slack connection (see `lib/slack-source.ts`),
- * so we intentionally do NOT filter by connectionId — legacy multi-tenant rows
- * carry a UUID connectionId that never matches the env connection's teamId, and
- * filtering on it is what made linked channels vanish from the UI.
+ * There is exactly one Slack connection (see `lib/slack-source.ts`), so we
+ * intentionally do NOT filter by connectionId — legacy rows carry a UUID
+ * connectionId that never matches the env connection's teamId, and filtering on
+ * it is what made linked channels vanish from the UI.
  */
 router.get('/slack-channel-mappings', async (_req: Request, res: Response) => {
   try {
@@ -1558,9 +1557,9 @@ router.get('/slack-channel-mappings', async (_req: Request, res: Response) => {
  * GET /agents/slack/channel-mapping/:channelId
  * Find a channel mapping by Slack channel ID.
  *
- * `slackChannelId` is globally unique, and single-agent mode has one Slack
- * connection (see `lib/slack-source.ts`), so the lookup is by channelId alone —
- * no connectionId scoping (which would 404 legacy multi-tenant rows).
+ * `slackChannelId` is globally unique, and there is one Slack connection (see
+ * `lib/slack-source.ts`), so the lookup is by channelId alone — no connectionId
+ * scoping (which would 404 legacy rows).
  */
 router.get('/slack/channel-mapping/:channelId', async (req: Request<{ channelId: string }>, res: Response) => {
   try {
@@ -1589,7 +1588,7 @@ router.get('/slack/channel-mapping/:channelId', async (req: Request<{ channelId:
  * Delete a channel mapping by Slack channel ID.
  *
  * Keyed by the unique `slackChannelId` only — no connectionId scoping, so legacy
- * multi-tenant rows (UUID connectionId) can be unlinked. See `lib/slack-source.ts`.
+ * rows (UUID connectionId) can be unlinked. See `lib/slack-source.ts`.
  */
 router.delete('/slack/channel-mapping/:channelId', async (req: Request<{ channelId: string }>, res: Response) => {
   try {
@@ -1621,9 +1620,9 @@ router.delete('/slack/channel-mapping/:channelId', async (req: Request<{ channel
  * DELETE /agents/slack/dm-mapping
  * Delete the agent's DM mapping.
  *
- * Single-agent mode has one Slack connection (see `lib/slack-source.ts`), so we
- * delete the DM mapping without connectionId scoping — legacy multi-tenant rows
- * (UUID connectionId) would otherwise be left undeletable.
+ * There is one Slack connection (see `lib/slack-source.ts`), so we delete the DM
+ * mapping without connectionId scoping — legacy rows (UUID connectionId) would
+ * otherwise be left undeletable.
  */
 router.delete('/slack/dm-mapping', async (_req: Request, res: Response) => {
   try {
@@ -2054,7 +2053,7 @@ router.get('/skills', async (req: Request, res: Response) => {
 router.post('/skills/:name/run', async (req: Request, res: Response) => {
   try {
     if (!config.agentId) {
-      res.status(503).json({ error: 'Single-agent mode not initialized (agentId unset)' });
+      res.status(503).json({ error: 'Agent not initialized (agentId unset)' });
       return;
     }
     // Express 5 types a mid-path param as `string | string[]`; a single

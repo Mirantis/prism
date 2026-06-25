@@ -1107,7 +1107,7 @@ describe('Management Routes', () => {
   // Slack mapping read/delete routes — legacy connectionId regression
   //
   // Agents migrated from the old multi-tenant world carry a UUID connectionId
-  // on their slack_mappings rows, while single-agent mode identifies its one
+  // on their slack_mappings rows, while the runtime now identifies its one
   // connection by the Slack teamId. These routes must NOT filter by
   // connectionId, or those legacy mappings vanish from the UI (AGENT-74).
   // ==========================================================================
@@ -2270,7 +2270,7 @@ describe('Management Routes', () => {
       expect(mockChatEngine).not.toHaveBeenCalled();
     });
 
-    it('POST /skills/:name/run returns 503 when single-agent mode is not initialized', async () => {
+    it('POST /skills/:name/run returns 503 when the agent is not initialized', async () => {
       config.agentId = undefined as unknown as string;
 
       const res = await authedRequest(app).post('/agents/skills/echo-marker/run');
