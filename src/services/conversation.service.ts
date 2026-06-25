@@ -184,6 +184,15 @@ class ConversationService {
         });
         channelId = dm?.dmChannelId ?? undefined;
       }
+      // With no channel id, the Slack adapter has nowhere to post: the resume is
+      // dropped silently. Warn so an undeliverable "continue in thread" run is at
+      // least diagnosable rather than vanishing without a trace.
+      if (!channelId) {
+        logger.warn(
+          'No Slack channel resolved for thread %s (no origin/external channel id and no DM mapping) — a "continue in thread" resume will not be delivered',
+          threadId,
+        );
+      }
       return {
         channel: 'slack',
         channelId,
