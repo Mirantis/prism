@@ -167,7 +167,9 @@ export async function buildSystemPromptParts(
   }
 
   // Runtime context — dynamic (timestamp changes every call)
-  dynamicSections.push(`# Runtime Context\n\nCurrent UTC date and time (ISO-8601): ${new Date().toISOString()}`);
+  const now = new Date();
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+  dynamicSections.push(`# Runtime Context\n\nCurrent UTC date and time (ISO-8601): ${now.toISOString()} (${weekday})`);
 
   const parts: SystemPromptPart[] = [];
   if (stableSections.length > 0) {

@@ -214,6 +214,8 @@ describe('buildSystemPromptParts', () => {
 
     expect(dynamic).toContain('# Runtime Context');
     expect(dynamic).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    // Includes the weekday name to prevent the model miscalculating the day of week.
+    expect(dynamic).toMatch(/\((Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\)/);
   });
 
   it('stable part does NOT contain runtime context timestamp', async () => {
