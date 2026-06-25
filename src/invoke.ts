@@ -290,7 +290,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
             tool: tc.toolName,
             input: JSON.stringify(tc.input),
             output: tr ? JSON.stringify(tr.output) : '',
-            success: !!tr,
+            success: Boolean(tr),
             timestamp: new Date().toISOString(),
           });
         }

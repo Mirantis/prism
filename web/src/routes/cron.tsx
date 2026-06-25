@@ -179,22 +179,22 @@ function CronPage() {
         submitDisabled={!form.name.trim() || !form.schedule.trim()}
       >
         <FieldGroup>
-          <Field data-invalid={!!fieldErrors.name}>
+          <Field data-invalid={Boolean(fieldErrors.name)}>
             <FieldLabel htmlFor="cron-name">Name</FieldLabel>
             <Input
               id="cron-name"
-              aria-invalid={!!fieldErrors.name || undefined}
+              aria-invalid={Boolean(fieldErrors.name) || undefined}
               value={form.name}
               onChange={(e) => setField('name', e.target.value)}
               placeholder="Daily standup summary"
             />
             {fieldErrors.name && <FieldError>{fieldErrors.name}</FieldError>}
           </Field>
-          <Field data-invalid={!!fieldErrors.schedule}>
+          <Field data-invalid={Boolean(fieldErrors.schedule)}>
             <FieldLabel htmlFor="cron-schedule">Schedule</FieldLabel>
             <Input
               id="cron-schedule"
-              aria-invalid={!!fieldErrors.schedule || undefined}
+              aria-invalid={Boolean(fieldErrors.schedule) || undefined}
               value={form.schedule}
               onChange={(e) => setField('schedule', e.target.value)}
               placeholder="0 9 * * *"
@@ -208,11 +208,11 @@ function CronPage() {
               </FieldDescription>
             )}
           </Field>
-          <Field data-invalid={!!fieldErrors.instruction}>
+          <Field data-invalid={Boolean(fieldErrors.instruction)}>
             <FieldLabel htmlFor="cron-instruction">Instruction</FieldLabel>
             <Textarea
               id="cron-instruction"
-              aria-invalid={!!fieldErrors.instruction || undefined}
+              aria-invalid={Boolean(fieldErrors.instruction) || undefined}
               value={form.instruction}
               onChange={(e) => setField('instruction', e.target.value)}
               placeholder="What should the agent do on each tick?"

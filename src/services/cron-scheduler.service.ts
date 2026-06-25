@@ -100,7 +100,7 @@ class CronSchedulerService {
       return;
     }
 
-    const isOneShot = !!(task.nextRunAt && !cron.validate(task.schedule));
+    const isOneShot = Boolean(task.nextRunAt && !cron.validate(task.schedule));
 
     if (opts.source !== 'boot') {
       trackEvent('cron task scheduled', task.userId, {

@@ -71,7 +71,7 @@ export function stringifyToolOutput(output: unknown): string {
   if (output === undefined) return '';
   if (isMCPCallToolResult(output)) {
     return output.content
-      .filter((c): c is { type: 'text'; text: string } => c.type === 'text' && !!c.text)
+      .filter((c): c is { type: 'text'; text: string } => c.type === 'text' && Boolean(c.text))
       .map((c) => c.text)
       .join('\n');
   }

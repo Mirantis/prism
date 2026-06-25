@@ -85,7 +85,7 @@ export function startRuntime(opts: StartRuntimeOptions): RuntimeHandle {
     },
   );
 
-  const verbose = opts.verbose ?? !!process.env.CI;
+  const verbose = opts.verbose ?? Boolean(process.env.CI);
   let buffer = '';
   const sink = (chunk: Buffer) => {
     const s = chunk.toString();

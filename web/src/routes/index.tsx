@@ -205,12 +205,12 @@ function ChannelsCard({ onClick }: { onClick: () => void }) {
   const { data: linkStatus } = useQuery({
     queryKey: ['slack-link-status', agent.agentId],
     queryFn: () => runtimeApi.slackLinkStatus(),
-    enabled: !!workspace,
+    enabled: Boolean(workspace),
   });
   const { data: channelsResp } = useQuery({
     queryKey: ['slack-channel-mappings', agent.agentId],
     queryFn: () => runtimeApi.slackChannelMappings(),
-    enabled: !!workspace,
+    enabled: Boolean(workspace),
   });
 
   const count = channelsResp?.channels.length ?? 0;
@@ -307,7 +307,7 @@ function CreatedCard({ details }: { details: AgentDetails | undefined }) {
 function nextRunAt(tasks: CronTask[]): string | null {
   const times = tasks
     .map((t) => t.nextRunAt)
-    .filter((v): v is string => !!v)
+    .filter((v): v is string => Boolean(v))
     .map((v) => ({ raw: v, ts: new Date(v).getTime() }))
     .filter((v) => Number.isFinite(v.ts) && v.ts >= Date.now());
   if (times.length === 0) return null;

@@ -31,7 +31,7 @@ let provider: LoggerProvider | null = null;
 let otelLogger: Logger | null = null;
 
 export function isTelemetryEnabled(): boolean {
-  return !!config.otelEndpoint;
+  return Boolean(config.otelEndpoint);
 }
 
 export function initTelemetry(): void {
