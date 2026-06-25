@@ -740,6 +740,11 @@ class SlackAdapterService implements ChannelAdapter {
       const mapping = await slackMappingService.findUserMapping(connectionId, slackUserId);
 
       if (!mapping) {
+        logger.info(
+          'Slack DM from unlinked user %s (connection %s) — message not handled; prompting them to link their account',
+          slackUserId,
+          connectionId,
+        );
         await say(
           "👋 Hi! I don't recognize you yet.\n\nTo link your Lens Platform account:\n1. Go to *Settings → Channels* in the web app\n2. Click *Link Account* under Slack\n3. Send me the 6-character code you receive\n\nOnce linked, you can chat with me about your Kubernetes clusters!"
         );
@@ -866,6 +871,7 @@ class SlackAdapterService implements ChannelAdapter {
     // Check if channel is linked to an agent
     const mapping = await slackMappingService.findByChannelId(channelId);
     if (!mapping) {
+      logger.info('Slack channel %s is not linked to an agent — message not handled', channelId);
       // Channel not linked — if the bot was @mentioned, prompt the user to link
       if (messageText.includes(`<@${botUserId}>`)) {
         await say("I'm not activated in this channel yet.\n\nPlease enter a verification code from your agent settings to link me.");
