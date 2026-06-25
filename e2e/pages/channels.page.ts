@@ -47,4 +47,17 @@ export class ChannelsPage extends BasePage {
     if (!code) throw new Error('Channel link code not found');
     return code.trim();
   }
+
+  /**
+   * Unlink the single linked channel: click its "Unlink" button, confirm in
+   * the "Delete channel" dialog, and wait for the dialog to close (the
+   * confirm button is unique to the open dialog). Assumes exactly one linked
+   * channel and Team Mode (so the only "Unlink" button is the channel's).
+   */
+  async unlinkChannel() {
+    await this.page.getByRole('button', { name: 'Unlink' }).first().click();
+    const confirm = this.page.getByRole('button', { name: 'Delete' });
+    await confirm.click();
+    await confirm.waitFor({ state: 'detached', timeout: 15_000 });
+  }
 }

@@ -1565,7 +1565,7 @@ router.get('/slack/channel-mapping/:channelId', async (req: Request<{ channelId:
   try {
     const { channelId } = req.params;
 
-    const mapping = await prisma.slackMapping.findFirst({
+    const mapping = await prisma.slackMapping.findUnique({
       where: { slackChannelId: channelId },
       select: { id: true, agentId: true, slackChannelId: true },
     });
