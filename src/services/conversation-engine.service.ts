@@ -225,7 +225,7 @@ Respond with exactly one word: WORTHY or SKIP`;
     }
 
     // Determine if this is a channel message
-    const isChannelMessage = metadata?.channel === 'slack' && !!metadata?.channelId;
+    const isChannelMessage = metadata?.channel === 'slack' && Boolean(metadata?.channelId);
 
     // Build channel context for delivery — scopes response to the originating channel.
     // For Slack, channelId/threadTs may be undefined (DM case — routing falls back

@@ -96,7 +96,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   const { data: thread, isLoading: isLoadingThread, error: threadError } = useQuery({
     queryKey: ['thread', agent.agentId, activeThreadId],
     queryFn: () => runtimeApi.getThread(agent.agentId, agent.userId, activeThreadId!),
-    enabled: !!activeThreadId,
+    enabled: Boolean(activeThreadId),
   });
 
   // A deep-linked thread that doesn't exist (deleted / not owned) → fall back to

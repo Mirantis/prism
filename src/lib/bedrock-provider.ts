@@ -109,5 +109,5 @@ export function createBedrockProvider() {
  * Only AWS_REGION and BEDROCK_MODEL_ID are required as env vars.
  */
 export function isBedrockConfigured(): boolean {
-  return !!(config.awsRegion && config.bedrockModelId);
+  return Boolean(config.awsRegion && config.bedrockModelId);
 }

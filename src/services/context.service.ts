@@ -21,7 +21,7 @@ class ContextService {
     // 1. Fetch agent from database
     const agent = await agentWorkspaceService.getAgent();
 
-    const isBootstrapPhase = !!(agent.bootstrapMd && agent.bootstrapMd.trim());
+    const isBootstrapPhase = Boolean(agent.bootstrapMd && agent.bootstrapMd.trim());
 
     const context: AgentContext = {
       soulMd: agent.soulMd,
@@ -79,14 +79,14 @@ class ContextService {
     const metaMap = isSlack
       ? await attachmentService.getMetaByExternalTs(
           threadId,
-          messages.map(m => m.externalMessageId).filter((t): t is string => !!t),
+          messages.map(m => m.externalMessageId).filter((t): t is string => Boolean(t)),
         )
       : await attachmentService.getMetaByMessageIds(messages.map(m => m.id));
 
     const windowed = messages
       .filter(m =>
         m.content.trim().length > 0 ||
-        (m.role === 'AGENT' && !!m.toolCalls) ||
+        (m.role === 'AGENT' && Boolean(m.toolCalls)) ||
         metaMap.has(keyOf(m)),
       )
       .slice(-20);
@@ -96,7 +96,7 @@ class ContextService {
     // nothing — skip it (the common, attachment-free case).
     if (metaMap.size === 0) return windowed;
 
-    const windowKeys = windowed.map(keyOf).filter((k): k is string => !!k);
+    const windowKeys = windowed.map(keyOf).filter((k): k is string => Boolean(k));
     if (windowKeys.length === 0) return windowed;
 
     const bytesMap = isSlack

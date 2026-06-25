@@ -540,7 +540,7 @@ class SlackAdapterService implements ChannelAdapter {
     const appToken = process.env.SLACK_APP_TOKEN;
 
     // Determine if Socket Mode is available
-    const isSocketMode = !!appToken;
+    const isSocketMode = Boolean(appToken);
 
     // Create Bolt app. clientOptions forwards to the internal WebClient:
     //   - `agent`: routes axios through the Nexus sandbox proxy when

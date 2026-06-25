@@ -62,7 +62,9 @@ function ChannelsPage() {
     queryFn: () => runtimeApi.slackWorkspaces(),
   });
   const workspace = workspacesResp?.workspaces[0];
-  const isConfigured = !!workspace;
+  // `!== undefined` (not Boolean(workspace)) so TS narrows `workspace` to
+  // defined where `isConfigured` is used as a guard below.
+  const isConfigured = workspace !== undefined;
 
   return (
     <div className="space-y-6">
@@ -223,7 +225,7 @@ function SlackModeSections({
   });
 
   const hasLinkedChannel = (channelsResp?.channels.length ?? 0) > 0;
-  const isPersonalLinked = !!linkStatus?.hasDmMapping;
+  const isPersonalLinked = Boolean(linkStatus?.hasDmMapping);
 
   const personalSection = (
     <div className="rounded-lg border p-3">
@@ -552,11 +554,11 @@ function HeartbeatTriggersCard({
         submitDisabled={!form.channelId.trim()}
       >
         <FieldGroup>
-          <Field data-invalid={!!fieldErrors.channelId}>
+          <Field data-invalid={Boolean(fieldErrors.channelId)}>
             <FieldLabel htmlFor="hb-channel-id">Channel ID</FieldLabel>
             <Input
               id="hb-channel-id"
-              aria-invalid={!!fieldErrors.channelId || undefined}
+              aria-invalid={Boolean(fieldErrors.channelId) || undefined}
               value={form.channelId}
               onChange={(e) => setField('channelId', e.target.value)}
               placeholder="C0123ABCD"
@@ -568,11 +570,11 @@ function HeartbeatTriggersCard({
               <FieldDescription>Find the channel ID via Slack channel details.</FieldDescription>
             )}
           </Field>
-          <Field data-invalid={!!fieldErrors.channelName}>
+          <Field data-invalid={Boolean(fieldErrors.channelName)}>
             <FieldLabel htmlFor="hb-channel-name">Channel name</FieldLabel>
             <Input
               id="hb-channel-name"
-              aria-invalid={!!fieldErrors.channelName || undefined}
+              aria-invalid={Boolean(fieldErrors.channelName) || undefined}
               value={form.channelName}
               onChange={(e) => setField('channelName', e.target.value)}
               placeholder="alerts"
@@ -583,7 +585,7 @@ function HeartbeatTriggersCard({
               <FieldDescription>Optional, for display only.</FieldDescription>
             )}
           </Field>
-          <Field data-invalid={!!fieldErrors.throttleSeconds}>
+          <Field data-invalid={Boolean(fieldErrors.throttleSeconds)}>
             <FieldLabel>Throttle</FieldLabel>
             <div className="flex items-center gap-2">
               <Input

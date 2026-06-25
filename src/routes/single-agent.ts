@@ -103,7 +103,7 @@ router.get('/threads', async (_req: Request, res: Response) => {
     // Resolve the git branch once per unique workspace root — many threads in
     // the same repo would otherwise each spawn a redundant `git` subprocess.
     const uniqueRoots = [
-      ...new Set(threads.map((t) => t.workspaceRoot).filter((r): r is string => !!r)),
+      ...new Set(threads.map((t) => t.workspaceRoot).filter((r): r is string => Boolean(r))),
     ];
     const branchByRoot = new Map<string, string | null>();
     await Promise.all(
