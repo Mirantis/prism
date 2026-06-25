@@ -109,7 +109,7 @@ class CronSchedulerService {
         'cron.task.name': task.name,
         'cron.schedule': task.schedule,
         'cron.one_shot': String(isOneShot),
-        'cron.continue_in_thread': String(!!task.threadId),
+        'cron.continue_in_thread': String(Boolean(task.threadId)),
       });
     }
 
@@ -214,7 +214,7 @@ class CronSchedulerService {
         'cron.task.id': task.id,
         'cron.task.name': task.name,
         'cron.result': result,
-        'cron.continue_in_thread': String(!!boundThreadId),
+        'cron.continue_in_thread': String(Boolean(boundThreadId)),
         'cron.duration_ms': String(Date.now() - startTime),
       });
 

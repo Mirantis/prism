@@ -85,7 +85,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       // conversation") also needs it so the resumed agent remembers what it was
       // waiting for; plain cron/heartbeat/goal stay history-less by design (goal
       // turns intentionally restate their objective rather than replay history).
-      includeConversation: request.mode === 'chat' || (request.mode === 'cron' && !!request.threadId),
+      includeConversation: request.mode === 'chat' || (request.mode === 'cron' && Boolean(request.threadId)),
       agentId: request.agentId,
     });
   } catch (error) {
