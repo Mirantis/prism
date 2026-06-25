@@ -49,6 +49,14 @@ vi.mock('../lib/telemetry', () => ({
   trackEvent: mockTrackEvent,
 }));
 
+const { mockLogger } = vi.hoisted(() => ({
+  mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock('../logger', () => ({
+  logger: mockLogger,
+}));
+
 // ---------------------------------------------------------------------------
 // Import under test
 // ---------------------------------------------------------------------------
@@ -629,9 +637,11 @@ describe('ConversationService', () => {
         threadTs: undefined,
         threadId: 'thread-1',
       });
+      // A resolved channel is deliverable — no warning.
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
-    it('leaves channelId undefined when there is no DM mapping to fall back to', async () => {
+    it('warns when no Slack channel can be resolved (undeliverable resume)', async () => {
       mockPrisma.conversationThread.findUnique.mockResolvedValue({
         externalThreadId: null,
         externalChannelId: null,
@@ -643,6 +653,8 @@ describe('ConversationService', () => {
       const ctx = await conversationService.getChannelContext('thread-1', 'slack');
 
       expect(ctx.channelId).toBeUndefined();
+      // A Slack context with no channel id has nowhere to post — must be logged.
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('No Slack channel resolved'), 'thread-1');
     });
   });
 });
