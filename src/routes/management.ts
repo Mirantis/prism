@@ -1488,19 +1488,18 @@ router.get('/slack/workspaces', async (_req: Request, res: Response) => {
 
 /**
  * GET /agents/slack-link-status
- * Check whether the agent has DM and/or channel mappings for a connection.
- * Query: connectionId (required)
+ * Check whether the agent has a DM and/or channel mapping.
+ *
+ * Single-agent mode has exactly one Slack connection (see `lib/slack-source.ts`),
+ * so there is nothing to scope by — we intentionally do NOT filter by
+ * connectionId. Legacy rows migrated from multi-tenant carry a UUID
+ * connectionId that never matches the env connection's teamId; filtering on it
+ * would hide them.
  */
-router.get('/slack-link-status', async (req: Request, res: Response) => {
+router.get('/slack-link-status', async (_req: Request, res: Response) => {
   try {
-    const connectionId = req.query.connectionId as string;
-    if (!connectionId) {
-      res.status(400).json({ error: 'Missing connectionId query parameter' });
-      return;
-    }
-
     const dmMapping = await prisma.slackMapping.findFirst({
-      where: { connectionId, slackUserId: { not: null } },
+      where: { slackUserId: { not: null } },
       select: { slackUserId: true },
     });
 
@@ -1519,20 +1518,17 @@ router.get('/slack-link-status', async (req: Request, res: Response) => {
 
 /**
  * GET /agents/slack-channel-mappings
- * List channel mappings for the agent, filtered by connection.
- * Query: connectionId (required)
+ * List the agent's channel mappings.
+ *
+ * Single-agent mode has exactly one Slack connection (see `lib/slack-source.ts`),
+ * so we intentionally do NOT filter by connectionId — legacy multi-tenant rows
+ * carry a UUID connectionId that never matches the env connection's teamId, and
+ * filtering on it is what made linked channels vanish from the UI.
  */
-router.get('/slack-channel-mappings', async (req: Request, res: Response) => {
+router.get('/slack-channel-mappings', async (_req: Request, res: Response) => {
   try {
-    const connectionId = req.query.connectionId as string;
-    if (!connectionId) {
-      res.status(400).json({ error: 'Missing connectionId query parameter' });
-      return;
-    }
-
     const mappings = await prisma.slackMapping.findMany({
       where: {
-        connectionId,
         slackChannelId: { not: null },
       },
       include: {
@@ -1561,18 +1557,17 @@ router.get('/slack-channel-mappings', async (req: Request, res: Response) => {
 /**
  * GET /agents/slack/channel-mapping/:channelId
  * Find a channel mapping by Slack channel ID.
- * Query: connectionId (optional, narrows search to specific connection)
+ *
+ * `slackChannelId` is globally unique, and single-agent mode has one Slack
+ * connection (see `lib/slack-source.ts`), so the lookup is by channelId alone —
+ * no connectionId scoping (which would 404 legacy multi-tenant rows).
  */
 router.get('/slack/channel-mapping/:channelId', async (req: Request<{ channelId: string }>, res: Response) => {
   try {
     const { channelId } = req.params;
-    const connectionId = req.query.connectionId as string | undefined;
-
-    const where: { slackChannelId: string; connectionId?: string } = { slackChannelId: channelId };
-    if (connectionId) where.connectionId = connectionId;
 
     const mapping = await prisma.slackMapping.findFirst({
-      where,
+      where: { slackChannelId: channelId },
       select: { id: true, agentId: true, slackChannelId: true },
     });
 
@@ -1592,18 +1587,16 @@ router.get('/slack/channel-mapping/:channelId', async (req: Request<{ channelId:
 /**
  * DELETE /agents/slack/channel-mapping/:channelId
  * Delete a channel mapping by Slack channel ID.
- * Query: connectionId (optional, narrows deletion to specific connection)
+ *
+ * Keyed by the unique `slackChannelId` only — no connectionId scoping, so legacy
+ * multi-tenant rows (UUID connectionId) can be unlinked. See `lib/slack-source.ts`.
  */
 router.delete('/slack/channel-mapping/:channelId', async (req: Request<{ channelId: string }>, res: Response) => {
   try {
     const { channelId } = req.params;
-    const connectionId = req.query.connectionId as string | undefined;
-
-    const where: { slackChannelId: string; connectionId?: string } = { slackChannelId: channelId };
-    if (connectionId) where.connectionId = connectionId;
 
     const result = await prisma.slackMapping.deleteMany({
-      where,
+      where: { slackChannelId: channelId },
     });
 
     if (result.count === 0) {
@@ -1626,19 +1619,16 @@ router.delete('/slack/channel-mapping/:channelId', async (req: Request<{ channel
 
 /**
  * DELETE /agents/slack/dm-mapping
- * Delete DM mappings for the agent and connection.
- * Query: connectionId (required)
+ * Delete the agent's DM mapping.
+ *
+ * Single-agent mode has one Slack connection (see `lib/slack-source.ts`), so we
+ * delete the DM mapping without connectionId scoping — legacy multi-tenant rows
+ * (UUID connectionId) would otherwise be left undeletable.
  */
-router.delete('/slack/dm-mapping', async (req: Request, res: Response) => {
+router.delete('/slack/dm-mapping', async (_req: Request, res: Response) => {
   try {
-    const connectionId = req.query.connectionId as string;
-    if (!connectionId) {
-      res.status(400).json({ error: 'Missing connectionId query parameter' });
-      return;
-    }
-
     const result = await prisma.slackMapping.deleteMany({
-      where: { connectionId, slackUserId: { not: null } },
+      where: { slackUserId: { not: null } },
     });
 
     if (result.count > 0) {

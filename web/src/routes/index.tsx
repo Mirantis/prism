@@ -204,12 +204,12 @@ function ChannelsCard({ onClick }: { onClick: () => void }) {
 
   const { data: linkStatus } = useQuery({
     queryKey: ['slack-link-status', agent.agentId, workspace?.teamId],
-    queryFn: () => runtimeApi.slackLinkStatus(workspace!.teamId),
+    queryFn: () => runtimeApi.slackLinkStatus(),
     enabled: !!workspace,
   });
   const { data: channelsResp } = useQuery({
     queryKey: ['slack-channel-mappings', agent.agentId, workspace?.teamId],
-    queryFn: () => runtimeApi.slackChannelMappings(workspace!.teamId),
+    queryFn: () => runtimeApi.slackChannelMappings(),
     enabled: !!workspace,
   });
 

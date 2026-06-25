@@ -135,16 +135,11 @@ export const runtimeApi = {
 
   // Slack mappings
   slackWorkspaces: () => request<{ workspaces: SlackWorkspace[] }>('/agents/slack/workspaces'),
-  slackLinkStatus: (connectionId: string) => {
-    const params = new URLSearchParams({ connectionId });
-    return request<SlackLinkStatus>(`/agents/slack-link-status?${params.toString()}`);
-  },
-  slackChannelMappings: (connectionId: string) => {
-    const params = new URLSearchParams({ connectionId });
-    return request<{ channels: SlackChannelMapping[] }>(
-      `/agents/slack-channel-mappings?${params.toString()}`,
-    );
-  },
+  // Single-agent mode has one Slack connection, so these read/delete routes are
+  // not scoped by connectionId (see the runtime's `lib/slack-source.ts`).
+  slackLinkStatus: () => request<SlackLinkStatus>('/agents/slack-link-status'),
+  slackChannelMappings: () =>
+    request<{ channels: SlackChannelMapping[] }>('/agents/slack-channel-mappings'),
   createSlackVerificationCode: (body: {
     type: 'DM' | 'CHANNEL';
     lensUserId: string;
@@ -157,22 +152,12 @@ export const runtimeApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  deleteDmMapping: (connectionId: string) => {
-    const params = new URLSearchParams({ connectionId });
-    return request<{ deleted: number }>(
-      `/agents/slack/dm-mapping?${params.toString()}`,
-      { method: 'DELETE' },
-    );
-  },
-  deleteChannelMapping: (channelId: string, connectionId?: string) => {
-    const params = new URLSearchParams();
-    if (connectionId) params.set('connectionId', connectionId);
-    const q = params.toString();
-    return request<{ deleted: number }>(
-      `/agents/slack/channel-mapping/${channelId}${q ? `?${q}` : ''}`,
-      { method: 'DELETE' },
-    );
-  },
+  deleteDmMapping: () =>
+    request<{ deleted: number }>('/agents/slack/dm-mapping', { method: 'DELETE' }),
+  deleteChannelMapping: (channelId: string) =>
+    request<{ deleted: number }>(`/agents/slack/channel-mapping/${channelId}`, {
+      method: 'DELETE',
+    }),
 
   // Heartbeat triggers
   listHeartbeatTriggers: (userId: string) => {
