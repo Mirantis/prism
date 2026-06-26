@@ -73,8 +73,7 @@ Two modes:
   to generate a channel link code, invite the agent to the channel, and post the
   code there. You can link **multiple** channels — they're listed in a table,
   each with an **Unlink** action. One channel is the **main channel** (marked ★);
-  it's where heartbeat alerts post and where scheduled tasks fall back when their
-  origin channel can't be resolved. Use **Set main** to move it. The first
+  it's where heartbeat alerts post. Use **Set main** to move it. The first
   channel you link becomes main by default.
 
 Personal and Team modes are mutually exclusive — unlink one before switching to

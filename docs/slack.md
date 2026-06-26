@@ -70,16 +70,14 @@ an **Unlink** action. A channel can only be linked to one agent.
 #### The main channel
 
 When several channels are linked, one is the **main channel** (marked ★ in the
-table; the first channel you link becomes main by default). It controls where
-the agent's *autonomous* messages go:
+table; the first channel you link becomes main by default). **Heartbeat alerts**
+post to the main channel only — never fanned out to every linked channel. Use
+**Set main** in the table to move it.
 
-- **Heartbeat alerts** post to the main channel only — never fanned out to every
-  linked channel.
-- **Scheduled tasks** post to the channel they were created in; if that channel
-  can't be resolved (e.g. it was unlinked), they fall back to the main channel.
-
-Replies to your own messages always go back to the channel you wrote in,
-regardless of which channel is main. Use **Set main** in the table to move it.
+The main channel applies to heartbeats only. **Scheduled tasks** post to the
+channel they were created in; if that channel can't be resolved (e.g. it was
+unlinked) the run is logged as undeliverable rather than rerouted elsewhere.
+**Replies** to your own messages always go back to the channel you wrote in.
 
 Personal Mode and Team Mode are mutually exclusive — unlink all channels before
 switching to a DM link, and vice-versa.
@@ -105,9 +103,9 @@ switching to a DM link, and vice-versa.
 
 Autonomous messages from the agent — [heartbeat](heartbeat.md) alerts and
 [scheduled task](scheduled-tasks.md) results — arrive as channel posts. In Team
-Mode they route by the [main-channel](#the-main-channel) rules above (heartbeats
-to the main channel; scheduled tasks to their origin channel, falling back to
-the main channel); in Personal Mode they arrive in your DM.
+Mode, heartbeat alerts go to the [main channel](#the-main-channel) and scheduled
+tasks go to the channel they were created in; in Personal Mode they arrive in
+your DM.
 
 ## Slack-triggered heartbeats
 

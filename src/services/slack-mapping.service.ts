@@ -273,22 +273,6 @@ class SlackMappingService {
   }
 
   /**
-   * Resolve the agent's "main" channel mapping — where autonomous output
-   * (heartbeat alerts, and scheduled tasks with no resolvable origin channel)
-   * is posted. Prefers the explicitly flagged channel; falls back to the oldest
-   * linked channel so delivery still works before the user picks one (and for
-   * legacy rows linked before the flag existed). Returns null if no channel is
-   * linked.
-   */
-  async getMainChannel(agentId: string): Promise<SlackMapping | null> {
-    const channels = await prisma.slackMapping.findMany({
-      where: { agentId, slackChannelId: { not: null } },
-      orderBy: { createdAt: 'asc' },
-    });
-    return channels.find(c => c.isMainChannel) ?? channels[0] ?? null;
-  }
-
-  /**
    * Flag a linked channel as the agent's main channel, clearing the flag on the
    * agent's other channels so at most one is ever main. Runs in a transaction so
    * the clear + set are atomic.
