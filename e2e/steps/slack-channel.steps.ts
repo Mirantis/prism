@@ -58,28 +58,30 @@ After({ tags: '@slack' }, async () => {
   const prisma = getPrisma();
   const slack = getSlackState();
 
-  // Delete the SlackMapping if it was created
-  if (slack.channelId) {
+  // Tear down every channel the scenario may have created (the second is only
+  // set by the multi-channel scenario).
+  const channelIds = [slack.channelId, slack.secondChannelId].filter(Boolean);
+
+  for (const channelId of channelIds) {
+    // Delete the SlackMapping if it was created
     try {
-      await prisma.slackMapping.deleteMany({
-        where: { slackChannelId: slack.channelId },
-      });
+      await prisma.slackMapping.deleteMany({ where: { slackChannelId: channelId } });
     } catch {
       // Ignore — mapping may not exist
     }
-  }
 
-  // Leave and archive the Slack channel
-  if (slack.channelId && slack.userClient) {
-    try {
-      await slack.userClient.conversations.leave({ channel: slack.channelId });
-    } catch {
-      // Ignore — may not be a member
-    }
-    try {
-      await slack.userClient.conversations.archive({ channel: slack.channelId });
-    } catch {
-      // Ignore — channel may already be archived or deleted
+    // Leave and archive the Slack channel
+    if (slack.userClient) {
+      try {
+        await slack.userClient.conversations.leave({ channel: channelId });
+      } catch {
+        // Ignore — may not be a member
+      }
+      try {
+        await slack.userClient.conversations.archive({ channel: channelId });
+      } catch {
+        // Ignore — channel may already be archived or deleted
+      }
     }
   }
 });
@@ -140,6 +142,49 @@ Given('I link the channel to the agent via the UI', async ({ page }) => {
   // Wait for the bot to verify the code and create the mapping.
   // The UI auto-refreshes every 3s; wait for the channel to appear.
   await page.getByText(`#${slack.channelName}`).waitFor({ timeout: 30_000 });
+});
+
+Given('a second test Slack channel exists', async () => {
+  const slack = getSlackState();
+  slack.secondChannelName = `lens-agents-test2-${Date.now()}`;
+  const result = await slack.userClient!.conversations.create({
+    name: slack.secondChannelName,
+  });
+  slack.secondChannelId = result.channel!.id!;
+});
+
+Given('the bot is invited to the second channel', async () => {
+  const slack = getSlackState();
+  await slack.userClient!.conversations.invite({
+    channel: slack.secondChannelId,
+    users: slack.botUserId,
+  });
+
+  // Same event-subscription settle as the first channel (see above).
+  const start = Date.now();
+  while (Date.now() - start < 15_000) {
+    const info = await slack.userClient!.conversations.members({
+      channel: slack.secondChannelId,
+    });
+    if (info.members?.includes(slack.botUserId!)) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await new Promise((r) => setTimeout(r, 2_000));
+});
+
+Given('I link the second channel to the agent via the UI', async ({ page }) => {
+  const slack = getSlackState();
+  const channelsPage = new ChannelsPage(page);
+  await channelsPage.navigate();
+
+  // "Add channel" stays available even with a channel already linked.
+  const code = await channelsPage.getChannelLinkCode();
+  await slack.userClient!.chat.postMessage({
+    channel: slack.secondChannelId,
+    text: code,
+  });
+
+  await page.getByText(`#${slack.secondChannelName}`).waitFor({ timeout: 30_000 });
 });
 
 // Regression for AGENT-74: agents migrated from the old multi-tenant world
@@ -215,4 +260,41 @@ Then('I can unlink the channel from the UI', async ({ page }) => {
     where: { slackChannelId: slack.channelId },
   });
   expect(remaining).toBe(0);
+});
+
+// ============================================================================
+// Multiple channels + main channel
+// ============================================================================
+
+Then('both channels are listed on the Channels page', async ({ page }) => {
+  const slack = getSlackState();
+  await expect(page.getByText(`#${slack.channelName}`)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(`#${slack.secondChannelName}`)).toBeVisible({ timeout: 15_000 });
+});
+
+Then('the first channel is the main channel', async ({ page }) => {
+  const slack = getSlackState();
+  // The first-linked channel is main by default.
+  expect(await new ChannelsPage(page).isChannelMain(slack.channelName)).toBe(true);
+});
+
+When('I set the second channel as the main channel', async ({ page }) => {
+  const slack = getSlackState();
+  await new ChannelsPage(page).setChannelAsMain(slack.secondChannelName);
+});
+
+Then('the second channel is the main channel', async ({ page }) => {
+  const slack = getSlackState();
+  expect(await new ChannelsPage(page).isChannelMain(slack.secondChannelName)).toBe(true);
+});
+
+Then('only the second channel is flagged main in the database', async () => {
+  const slack = getSlackState();
+  const prisma = getPrisma();
+  // Authoritative: exactly one row flagged, and it's the second channel.
+  const flagged = await prisma.slackMapping.findMany({
+    where: { isMainChannel: true, slackChannelId: { not: null } },
+    select: { slackChannelId: true },
+  });
+  expect(flagged.map((m) => m.slackChannelId)).toEqual([slack.secondChannelId]);
 });

@@ -10,7 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Hash, ScrollText, Plus, Trash2, Slack } from 'lucide-react';
+import { Hash, ScrollText, Plus, Trash2, Slack, Star } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -224,6 +224,13 @@ function SlackModeSections({
     },
   });
 
+  const setMainMutation = useMutation({
+    mutationFn: (channelId: string) => runtimeApi.setMainChannel(channelId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['slack-channels', agentId, connectionId] });
+    },
+  });
+
   const hasLinkedChannel = (channelsResp?.channels.length ?? 0) > 0;
   const isPersonalLinked = Boolean(linkStatus?.hasDmMapping);
 
@@ -289,68 +296,124 @@ function SlackModeSections({
 
   const teamSection = (
     <div className="rounded-lg border p-3">
-      <h4 className="text-sm font-semibold mb-1">Team Mode</h4>
+      <div className="flex items-center justify-between mb-1">
+        <h4 className="text-sm font-semibold">Team Mode</h4>
+        {!channelLinkCode && (
+          <Button
+            size="sm"
+            onClick={() => channelCodeMutation.mutate()}
+            disabled={channelCodeMutation.isPending}
+          >
+            <Plus className="mr-1 size-4" />
+            {channelCodeMutation.isPending ? 'Generating...' : 'Add channel'}
+          </Button>
+        )}
+      </div>
       <p className="text-sm text-muted-foreground mb-3">
-        Invite this agent to Slack channels to help your team
+        Invite this agent to Slack channels to help your team. Heartbeat alerts post to
+        the <strong>main</strong> channel; scheduled tasks post to the channel they were
+        created in (or the main channel).
       </p>
-      {hasLinkedChannel && (
-        <div className="mb-3">
-          {channelsResp?.channels.map((ch) => (
-            <div
-              key={ch.id}
-              className="flex items-center justify-between p-1.5 rounded-md bg-accent mb-1.5"
-            >
-              <span className="text-sm font-medium text-primary">
-                #{ch.channelName || ch.channelId}
-              </span>
-              <Button variant="secondary" size="sm" onClick={() => setChannelToUnlink(ch)}>
-                Unlink
-              </Button>
-            </div>
-          ))}
+
+      {channelCodeMutation.isError && (
+        <p className="text-sm text-destructive mb-2">
+          {getErrorMessage(channelCodeMutation.error)}
+        </p>
+      )}
+
+      {channelLinkCode && (
+        <div className="rounded-md border bg-primary/5 p-3 mb-3 text-center">
+          <p className="text-sm mb-1">
+            Invite <strong>@{agentName}</strong> to the channel, then paste this code:
+          </p>
+          <div className="font-mono text-2xl font-bold tracking-widest text-primary bg-primary/10 p-2 rounded-md mb-2 select-all">
+            {channelLinkCode}
+          </div>
+          <p className="text-xs text-muted-foreground mb-2">
+            Expires in 15 minutes · Waiting for the code in Slack…
+          </p>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setChannelLinkCode(null);
+              queryClient.invalidateQueries({
+                queryKey: ['slack-channels', agentId, connectionId],
+              });
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
+      )}
+
+      {hasLinkedChannel ? (
+        <>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Channel</TableHead>
+                <TableHead className="w-[120px]">Main</TableHead>
+                <TableHead className="w-[60px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {channelsResp?.channels.map((ch) => (
+                <TableRow key={ch.id}>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <div className="flex size-8 items-center justify-center rounded-md bg-muted">
+                        <Hash className="size-4 text-muted-foreground" />
+                      </div>
+                      <span className="font-medium">
+                        #{(ch.channelName || ch.channelId).replace(/^#/, '')}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {ch.isMain ? (
+                      <Badge variant="secondary" className="gap-1">
+                        <Star className="size-3 fill-current" />
+                        Main
+                      </Badge>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setMainMutation.mutate(ch.channelId)}
+                        disabled={setMainMutation.isPending}
+                      >
+                        Set main
+                      </Button>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Unlink"
+                      onClick={() => setChannelToUnlink(ch)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
           <p className="text-xs text-muted-foreground mt-2 italic">
             To switch to Personal Mode, unlink all channels first.
           </p>
-        </div>
-      )}
-      {!hasLinkedChannel &&
-        (channelLinkCode ? (
-          <div className="text-center">
-            <p className="text-sm mb-1">
-              Invite <strong>@{agentName}</strong> to a channel, then enter this code:
-            </p>
-            <div className="font-mono text-2xl font-bold tracking-widest text-primary bg-primary/10 p-2 rounded-md mb-2 select-all">
-              {channelLinkCode}
-            </div>
-            <p className="text-xs text-muted-foreground mb-2">Expires in 15 minutes</p>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setChannelLinkCode(null);
-                queryClient.invalidateQueries({
-                  queryKey: ['slack-channels', agentId, connectionId],
-                });
-              }}
-            >
-              Generate new code
-            </Button>
+        </>
+      ) : (
+        !channelLinkCode && (
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+            <Hash className="h-10 w-10 mb-2 opacity-50" />
+            <p className="text-sm">No channels linked</p>
+            <p className="text-xs">Invite the agent to a Slack channel to get started.</p>
           </div>
-        ) : (
-          <>
-            <Button
-              onClick={() => channelCodeMutation.mutate()}
-              disabled={channelCodeMutation.isPending}
-            >
-              {channelCodeMutation.isPending ? 'Generating...' : 'Get Channel Link Code'}
-            </Button>
-            {channelCodeMutation.isError && (
-              <p className="text-sm text-destructive mt-2">
-                {getErrorMessage(channelCodeMutation.error)}
-              </p>
-            )}
-          </>
-        ))}
+        )
+      )}
     </div>
   );
 

@@ -56,14 +56,33 @@ issues a short-lived six-character code.
 If an unrecognized person DMs the agent, it replies with a short prompt
 explaining how to link, rather than answering.
 
-### Team Mode — link a channel
+### Team Mode — link channels
 
-1. In the Web UI **Channels** page, generate a **channel link code**.
+1. In the Web UI **Channels** page, click **Add channel** to generate a
+   **channel link code**.
 2. Invite the agent to the Slack channel.
 3. Post the code in the channel. The agent confirms it's now connected.
 
-When the agent is first added to a channel it posts a brief hello explaining it
-needs a verification code to activate. Each channel can be linked to one agent.
+You can link **multiple channels** to the agent — click **Add channel** again
+for each one; linked channels appear in a table on the Channels page, each with
+an **Unlink** action. A channel can only be linked to one agent.
+
+#### The main channel
+
+When several channels are linked, one is the **main channel** (marked ★ in the
+table; the first channel you link becomes main by default). It controls where
+the agent's *autonomous* messages go:
+
+- **Heartbeat alerts** post to the main channel only — never fanned out to every
+  linked channel.
+- **Scheduled tasks** post to the channel they were created in; if that channel
+  can't be resolved (e.g. it was unlinked), they fall back to the main channel.
+
+Replies to your own messages always go back to the channel you wrote in,
+regardless of which channel is main. Use **Set main** in the table to move it.
+
+Personal Mode and Team Mode are mutually exclusive — unlink all channels before
+switching to a DM link, and vice-versa.
 
 ## How the agent behaves in Slack
 
@@ -83,8 +102,10 @@ needs a verification code to activate. Each channel can be linked to one agent.
   feedback.
 
 Autonomous messages from the agent — [heartbeat](heartbeat.md) alerts and
-[scheduled task](scheduled-tasks.md) results — arrive as channel posts labeled
-with their source.
+[scheduled task](scheduled-tasks.md) results — arrive as channel posts. In Team
+Mode they route by the [main-channel](#the-main-channel) rules above (heartbeats
+to the main channel; scheduled tasks to their origin channel, falling back to
+the main channel); in Personal Mode they arrive in your DM.
 
 ## Slack-triggered heartbeats
 

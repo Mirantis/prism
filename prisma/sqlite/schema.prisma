@@ -343,6 +343,12 @@ model SlackMapping {
   slackChannelId   String? @unique
   slackChannelName String?
 
+  // Team mode: the agent's "main" channel — where heartbeat alerts (and
+  // scheduled tasks with no resolvable origin channel) are posted. At most one
+  // channel mapping per agent is flagged; delivery falls back to the oldest
+  // linked channel when none is flagged (see slackMappingService.getMainChannel).
+  isMainChannel Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

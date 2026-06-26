@@ -43,6 +43,12 @@ vi.mock('../lib/prisma', () => ({
   default: mockPrisma,
 }));
 
+const { mockGetMainChannel } = vi.hoisted(() => ({ mockGetMainChannel: vi.fn() }));
+
+vi.mock('./slack-mapping.service', () => ({
+  slackMappingService: { getMainChannel: mockGetMainChannel },
+}));
+
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
 
 vi.mock('../lib/telemetry', () => ({
@@ -641,6 +647,24 @@ describe('ConversationService', () => {
       expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
+    it('falls back to the main channel when origin + DM cannot be resolved', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalThreadId: null,
+        externalChannelId: null,
+        userId: 'user-123',
+        agentId: 'agent-123',
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValue(null); // no DM mapping
+      mockGetMainChannel.mockResolvedValue({ slackChannelId: 'C_MAIN' });
+
+      const ctx = await conversationService.getChannelContext('thread-1', 'slack');
+
+      expect(mockGetMainChannel).toHaveBeenCalledWith('agent-123');
+      expect(ctx.channelId).toBe('C_MAIN');
+      // A resolved channel is deliverable — no warning.
+      expect(mockLogger.warn).not.toHaveBeenCalled();
+    });
+
     it('warns when no Slack channel can be resolved (undeliverable resume)', async () => {
       mockPrisma.conversationThread.findUnique.mockResolvedValue({
         externalThreadId: null,
@@ -649,6 +673,7 @@ describe('ConversationService', () => {
         agentId: 'agent-123',
       });
       mockPrisma.slackMapping.findFirst.mockResolvedValue(null);
+      mockGetMainChannel.mockResolvedValue(null); // no linked channels either
 
       const ctx = await conversationService.getChannelContext('thread-1', 'slack');
 

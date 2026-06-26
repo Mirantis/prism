@@ -27,6 +27,7 @@ const {
       findMany: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       upsert: vi.fn(),
       delete: vi.fn(),
       deleteMany: vi.fn(),
@@ -35,6 +36,7 @@ const {
     agentWorkspace: {
       findUnique: vi.fn(),
     },
+    $transaction: vi.fn(),
   },
   mockGetSlackConfig: vi.fn(),
   mockGetSlackConnection: vi.fn(),
@@ -403,6 +405,69 @@ describe('Requirement: Channel Mappings (Team Mode)', () => {
       expect(mockPrisma.slackMapping.delete).toHaveBeenCalledWith({
         where: { slackChannelId: 'C789GHI' },
       });
+    });
+  });
+
+  describe('Scenario: getMainChannel', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it('should return the explicitly flagged channel when one is set', async () => {
+      const oldest = createTestChannelMapping({ id: 'm1', slackChannelId: 'C_OLD', isMainChannel: false });
+      const flagged = createTestChannelMapping({ id: 'm2', slackChannelId: 'C_MAIN', isMainChannel: true });
+      mockPrisma.slackMapping.findMany.mockResolvedValue([oldest, flagged]);
+
+      const result = await slackMappingService.getMainChannel('agent-001');
+
+      expect(mockPrisma.slackMapping.findMany).toHaveBeenCalledWith({
+        where: { agentId: 'agent-001', slackChannelId: { not: null } },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(result?.slackChannelId).toBe('C_MAIN');
+    });
+
+    it('should fall back to the oldest channel when none is flagged', async () => {
+      const oldest = createTestChannelMapping({ id: 'm1', slackChannelId: 'C_OLD', isMainChannel: false });
+      const newer = createTestChannelMapping({ id: 'm2', slackChannelId: 'C_NEW', isMainChannel: false });
+      mockPrisma.slackMapping.findMany.mockResolvedValue([oldest, newer]);
+
+      const result = await slackMappingService.getMainChannel('agent-001');
+
+      expect(result?.slackChannelId).toBe('C_OLD');
+    });
+
+    it('should return null when the agent has no linked channels', async () => {
+      mockPrisma.slackMapping.findMany.mockResolvedValue([]);
+
+      const result = await slackMappingService.getMainChannel('agent-001');
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('Scenario: setMainChannel', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it('should clear other mains and flag the chosen channel atomically', async () => {
+      mockPrisma.slackMapping.updateMany.mockReturnValue('clear-op');
+      mockPrisma.slackMapping.update.mockReturnValue('set-op');
+      mockPrisma.$transaction.mockResolvedValue([]);
+
+      await slackMappingService.setMainChannel('agent-001', 'C_MAIN');
+
+      expect(mockPrisma.slackMapping.updateMany).toHaveBeenCalledWith({
+        where: { agentId: 'agent-001', slackChannelId: { not: null }, isMainChannel: true },
+        data: { isMainChannel: false },
+      });
+      expect(mockPrisma.slackMapping.update).toHaveBeenCalledWith({
+        where: { slackChannelId: 'C_MAIN' },
+        data: { isMainChannel: true },
+      });
+      // Both ops are batched into a single transaction for atomicity.
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(['clear-op', 'set-op']);
     });
   });
 

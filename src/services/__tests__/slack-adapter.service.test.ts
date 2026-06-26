@@ -487,4 +487,33 @@ describe('Requirement: Adapter telemetry', () => {
       }),
     );
   });
+
+  it('broadcasts an autonomous message to the main channel only, not every linked channel', async () => {
+    mockPrisma.conversationThread.findUnique.mockResolvedValue({ agentId: 'agent-1' });
+    // Two linked channels; the second is flagged main. A heartbeat must hit only it.
+    mockPrisma.slackMapping.findMany.mockResolvedValue([
+      { id: 'map-1', connectionId: 'conn-001', dmChannelId: null, slackChannelId: 'C_OTHER', isMainChannel: false, createdAt: new Date('2026-06-01T00:00:00Z') },
+      { id: 'map-2', connectionId: 'conn-001', dmChannelId: null, slackChannelId: 'C_MAIN', isMainChannel: true, createdAt: new Date('2026-06-02T00:00:00Z') },
+    ]);
+    mockGetSlackConnection.mockResolvedValue({
+      id: 'conn-001',
+      teamId: 'T001',
+      teamName: 'Test Workspace',
+      isActive: true,
+    });
+    const deliverSpy = vi
+      .spyOn(slackAdapterService, 'deliverToChannel')
+      .mockResolvedValue(undefined);
+
+    await slackAdapterService.deliver(
+      'lens-user-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { id: 'msg-1', threadId: 'thr-1', content: 'hi', toolCalls: null } as any,
+    );
+
+    const deliveredChannels = deliverSpy.mock.calls.map((c) => c[0]);
+    deliverSpy.mockRestore();
+
+    expect(deliveredChannels).toEqual(['C_MAIN']);
+  });
 });

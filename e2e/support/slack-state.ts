@@ -18,6 +18,9 @@ interface SlackState {
   botUserId: string;
   channelId: string;
   channelName: string;
+  // A second linked channel, used by the multi-channel / main-channel scenario.
+  secondChannelId: string;
+  secondChannelName: string;
   messageTs: string;
 }
 
@@ -26,6 +29,8 @@ const state: SlackState = {
   botUserId: '',
   channelId: '',
   channelName: '',
+  secondChannelId: '',
+  secondChannelName: '',
   messageTs: '',
 };
 
@@ -38,5 +43,7 @@ export function resetSlackState(): void {
   state.botUserId = '';
   state.channelId = '';
   state.channelName = '';
+  state.secondChannelId = '';
+  state.secondChannelName = '';
   state.messageTs = '';
 }

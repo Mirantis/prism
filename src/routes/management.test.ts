@@ -35,6 +35,7 @@ const {
   mockChatEngine,
   mockPrisma,
   mockSlackHeartbeatTriggerService,
+  mockSlackMappingService,
 } = vi.hoisted(() => ({
   mockStartHeartbeat: vi.fn(),
   mockStopHeartbeat: vi.fn(),
@@ -62,6 +63,10 @@ const {
     updateThrottle: vi.fn(),
     deleteTrigger: vi.fn(),
     tryClaimTrigger: vi.fn(),
+  },
+  mockSlackMappingService: {
+    setMainChannel: vi.fn(),
+    getMainChannel: vi.fn(),
   },
   mockPrisma: {
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
@@ -142,6 +147,10 @@ vi.mock('../services/slack-heartbeat-trigger.service', () => ({
   slackHeartbeatTriggerService: mockSlackHeartbeatTriggerService,
 }));
 
+vi.mock('../services/slack-mapping.service', () => ({
+  slackMappingService: mockSlackMappingService,
+}));
+
 const { mockExportAgent, mockImportAgent } = vi.hoisted(() => ({
   mockExportAgent: vi.fn(),
   mockImportAgent: vi.fn(),
@@ -217,6 +226,8 @@ function authedRequest(app: ReturnType<typeof createApp>) {
       request(app).get(url).set('Authorization', 'Bearer test-secret'),
     patch: (url: string) =>
       request(app).patch(url).set('Authorization', 'Bearer test-secret'),
+    put: (url: string) =>
+      request(app).put(url).set('Authorization', 'Bearer test-secret'),
     delete: (url: string) =>
       request(app).delete(url).set('Authorization', 'Bearer test-secret'),
   };
@@ -1138,6 +1149,34 @@ describe('Management Routes', () => {
         expect.objectContaining({ where: { slackChannelId: { not: null } } }),
       );
     });
+
+    it('marks the flagged channel as main (else the oldest as the default)', async () => {
+      mockPrisma.slackMapping.findMany.mockResolvedValue([
+        {
+          id: 'm-old',
+          slackChannelId: 'C_OLD',
+          slackChannelName: 'general',
+          isMainChannel: false,
+          createdAt: new Date('2026-06-01T00:00:00Z'),
+          agentWorkspace: { name: 'A' },
+        },
+        {
+          id: 'm-flagged',
+          slackChannelId: 'C_FLAGGED',
+          slackChannelName: 'alerts',
+          isMainChannel: true,
+          createdAt: new Date('2026-06-10T00:00:00Z'),
+          agentWorkspace: { name: 'A' },
+        },
+      ]);
+
+      const res = await authedRequest(app).get('/agents/slack-channel-mappings');
+
+      expect(res.status).toBe(200);
+      const byId = Object.fromEntries(res.body.channels.map((c: { id: string; isMain: boolean }) => [c.id, c.isMain]));
+      expect(byId['m-flagged']).toBe(true);
+      expect(byId['m-old']).toBe(false);
+    });
   });
 
   describe('GET /slack-link-status', () => {
@@ -1175,6 +1214,33 @@ describe('Management Routes', () => {
       expect(mockPrisma.slackMapping.deleteMany).toHaveBeenCalledWith({
         where: { slackChannelId: 'C03PSDNTYDT' },
       });
+    });
+  });
+
+  describe('PUT /slack/channel-mapping/:channelId/main', () => {
+    it('sets the channel as the agent main channel', async () => {
+      mockPrisma.slackMapping.findUnique.mockResolvedValue({ agentId: 'agent-1' });
+      mockSlackMappingService.setMainChannel.mockResolvedValue(undefined);
+
+      const res = await authedRequest(app).put('/agents/slack/channel-mapping/C123/main');
+
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(mockSlackMappingService.setMainChannel).toHaveBeenCalledWith('agent-1', 'C123');
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'slack main channel set',
+        null,
+        expect.objectContaining({ 'slack.channel.id': 'C123' }),
+      );
+    });
+
+    it('returns 404 when the channel is not linked', async () => {
+      mockPrisma.slackMapping.findUnique.mockResolvedValue(null);
+
+      const res = await authedRequest(app).put('/agents/slack/channel-mapping/C_UNKNOWN/main');
+
+      expect(res.status).toBe(404);
+      expect(mockSlackMappingService.setMainChannel).not.toHaveBeenCalled();
     });
   });
 
