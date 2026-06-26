@@ -8,14 +8,13 @@
 /**
  * Get channel-specific behavioral guidance for team conversations.
  *
- * When `channelName` is provided it's named explicitly so the agent knows
- * *which* channel it's in (e.g. to behave differently in `#alerts` vs
- * `#general`); otherwise the guidance stays generic.
+ * `channelName` is required and named explicitly so the agent knows *which*
+ * channel it's in (e.g. to behave differently in `#alerts` vs `#general`). It's
+ * a required string because callers only reach this in a channel turn, where
+ * `InvokeRequest`'s `ChannelOrigin` discriminant guarantees the name is present.
  */
-export function getChannelBehaviorInstructions(channelName?: string): string {
-  const where = channelName
-    ? `the team Slack channel **#${channelName.replace(/^#/, '')}**`
-    : 'a team Slack channel';
+export function getChannelBehaviorInstructions(channelName: string): string {
+  const where = `the team Slack channel **#${channelName.replace(/^#/, '')}**`;
   return `
 ## Channel Participation Guidelines
 

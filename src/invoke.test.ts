@@ -463,7 +463,7 @@ describe('invoke', () => {
   });
 
   it('appends channel instructions to the stable part when isChannelMessage is true', async () => {
-    await invoke(createTestInvokeRequest({ isChannelMessage: true }));
+    await invoke(createTestInvokeRequest({ isChannelMessage: true, channelName: 'general' }));
 
     expect(mockGetChannelBehaviorInstructions).toHaveBeenCalled();
     const callArgs = mockGenerateText.mock.calls[0][0];

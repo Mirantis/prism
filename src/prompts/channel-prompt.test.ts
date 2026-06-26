@@ -12,10 +12,4 @@ describe('getChannelBehaviorInstructions', () => {
     expect(out).toContain('**#general**');
     expect(out).not.toContain('**##general**');
   });
-
-  it('stays generic when no channel name is given', () => {
-    const out = getChannelBehaviorInstructions();
-    expect(out).toContain('a team Slack channel');
-    expect(out).not.toContain('**#');
-  });
 });

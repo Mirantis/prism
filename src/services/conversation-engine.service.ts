@@ -13,7 +13,7 @@ import { goalService } from './goal.service';
 import { threadTitleService } from './thread-title.service';
 import { attachmentService } from './attachment.service';
 import { invokeStream } from '../invoke';
-import { ToolCallRecord, InvokeStep, UIBlock } from '../types';
+import { ToolCallRecord, InvokeStep, UIBlock, ChannelOrigin } from '../types';
 import { logger } from '../logger';
 import prisma from '../lib/prisma';
 import { getClassificationModel } from '../lib/classification';
@@ -226,8 +226,14 @@ Respond with exactly one word: WORTHY or SKIP`;
       await attachmentService.linkToMessage(input.attachmentIds, userMessage.id, threadId);
     }
 
-    // Determine if this is a channel message
-    const isChannelMessage = metadata?.channel === 'slack' && Boolean(metadata?.channelId);
+    // A Slack channel turn carries its channel's display name so the system
+    // prompt can name it; the two travel together as a discriminated union
+    // (channelName is guaranteed present wherever isChannelMessage is true).
+    // Fall back to the channel id when no name is stored on the mapping.
+    const slackChannelId = metadata?.channel === 'slack' ? metadata.channelId : undefined;
+    const channelOrigin: ChannelOrigin = slackChannelId
+      ? { isChannelMessage: true, channelName: metadata?.channelName ?? slackChannelId }
+      : { isChannelMessage: false };
 
     // Build channel context for delivery — scopes response to the originating channel.
     // For Slack, channelId/threadTs may be undefined (DM case — routing falls back
@@ -272,8 +278,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         prompt: message,
         threadId,
         workspaceRoot,
-        isChannelMessage,
-        channelName: isChannelMessage ? metadata?.channelName : undefined,
+        ...channelOrigin,
         originChannel: metadata?.channel,
         originChannelId: metadata?.channelId,
         runtimeNotices: input.runtimeNotices,
