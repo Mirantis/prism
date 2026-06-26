@@ -49,6 +49,8 @@ export interface ChatInput {
   metadata?: {
     channel?: 'websocket' | 'slack';
     channelId?: string;
+    /** Human-readable Slack channel name (no `#`), surfaced to the model. */
+    channelName?: string;
     slackThreadTs?: string;
     senderSlackUserId?: string;
     senderName?: string;
@@ -271,6 +273,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         threadId,
         workspaceRoot,
         isChannelMessage,
+        channelName: isChannelMessage ? metadata?.channelName : undefined,
         originChannel: metadata?.channel,
         originChannelId: metadata?.channelId,
         runtimeNotices: input.runtimeNotices,

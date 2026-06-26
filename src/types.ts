@@ -64,6 +64,12 @@ export interface InvokeRequest {
   workspaceRoot?: string;
   isChannelMessage?: boolean;
   /**
+   * Human-readable name of the originating Slack channel (no `#`), surfaced in
+   * the channel-participation system prompt so the agent knows which channel
+   * it's in. Only meaningful when `isChannelMessage` is true.
+   */
+  channelName?: string;
+  /**
    * Originating channel of this turn, threaded through so the `create_goal`
    * tool can record where to deliver a goal's autonomous turns. Defaults to
    * 'websocket' when unset.

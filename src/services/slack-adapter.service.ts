@@ -1025,6 +1025,7 @@ class SlackAdapterService implements ChannelAdapter {
         metadata: {
           channel: 'slack',
           channelId,
+          channelName: mapping.slackChannelName ?? undefined,
           slackThreadTs: slackThreadId,
           senderSlackUserId: slackUserId,
           senderName,

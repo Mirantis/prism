@@ -6,13 +6,20 @@
  */
 
 /**
- * Get channel-specific behavioral guidance for team conversations
+ * Get channel-specific behavioral guidance for team conversations.
+ *
+ * When `channelName` is provided it's named explicitly so the agent knows
+ * *which* channel it's in (e.g. to behave differently in `#alerts` vs
+ * `#general`); otherwise the guidance stays generic.
  */
-export function getChannelBehaviorInstructions(): string {
+export function getChannelBehaviorInstructions(channelName?: string): string {
+  const where = channelName
+    ? `the team Slack channel **#${channelName.replace(/^#/, '')}**`
+    : 'a team Slack channel';
   return `
 ## Channel Participation Guidelines
 
-You are participating in a team Slack channel. Multiple team members may interact with you.
+You are participating in ${where}. Multiple team members may interact with you.
 Follow these guidelines for effective team communication:
 
 ### Communication Style

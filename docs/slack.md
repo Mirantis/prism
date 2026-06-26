@@ -92,7 +92,9 @@ switching to a DM link, and vice-versa.
   thread it's already part of. Other channel messages are observed for context
   but not answered. When a thread it participated in gets a new message, a quick
   classifier decides whether to **reply**, **react** (e.g. 👀, 👍), or stay
-  quiet — so it doesn't talk over the channel.
+  quiet — so it doesn't talk over the channel. The agent knows **which channel**
+  it's replying in (the channel name is part of its context), so it can behave
+  differently across linked channels.
 - **Threads.** Each Slack thread maps to a Prism conversation thread; the agent
   can read the thread's history, including messages from before it joined.
 - **Files.** You can share files with the agent in Slack, and it can share files
