@@ -653,7 +653,8 @@ describe('ConversationService', () => {
       const ctx = await conversationService.getChannelContext('thread-1', 'slack');
 
       expect(ctx.channelId).toBeUndefined();
-      // A Slack context with no channel id has nowhere to post — must be logged.
+      // A thread-bound resume with no resolvable channel is NOT rerouted to the
+      // main channel — it's logged and left undelivered.
       expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('No Slack channel resolved'), 'thread-1');
     });
   });

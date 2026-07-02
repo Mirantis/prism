@@ -158,6 +158,10 @@ export const runtimeApi = {
     request<{ deleted: number }>(`/agents/slack/channel-mapping/${channelId}`, {
       method: 'DELETE',
     }),
+  setMainChannel: (channelId: string) =>
+    request<{ ok: true }>(`/agents/slack/channel-mapping/${channelId}/main`, {
+      method: 'PUT',
+    }),
 
   // Heartbeat triggers
   listHeartbeatTriggers: (userId: string) => {

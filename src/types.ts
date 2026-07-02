@@ -51,7 +51,7 @@ export interface SlackTriggerMessage {
   timestamp: string;
 }
 
-export interface InvokeRequest {
+interface InvokeRequestBase {
   userId: string;
   agentId: string;
   mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal';
@@ -62,7 +62,6 @@ export interface InvokeRequest {
    * tools fall back to the global SHELL_WORKSPACE_ROOT (see `resolveWorkspace`).
    */
   workspaceRoot?: string;
-  isChannelMessage?: boolean;
   /**
    * Originating channel of this turn, threaded through so the `create_goal`
    * tool can record where to deliver a goal's autonomous turns. Defaults to
@@ -88,6 +87,19 @@ export interface InvokeRequest {
    */
   abortSignal?: AbortSignal;
 }
+
+/**
+ * Whether this turn originates from a Slack *channel* message. When it does,
+ * the channel's human-readable name (no `#`) travels with it so the
+ * channel-participation system prompt can name it. The two are coupled as a
+ * discriminated union: wherever `isChannelMessage` is true, `channelName` is
+ * guaranteed to be a `string` (no null-checking needed downstream).
+ */
+export type ChannelOrigin =
+  | { isChannelMessage: true; channelName: string }
+  | { isChannelMessage?: false; channelName?: undefined };
+
+export type InvokeRequest = InvokeRequestBase & ChannelOrigin;
 
 // ============================================================================
 // Response Types

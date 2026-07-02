@@ -222,29 +222,39 @@ class SlackAdapterService implements ChannelAdapter {
       select: { agentId: true },
     });
 
-    // Deliver to active Slack mappings, filtered by agent when possible
+    // Deliver to active Slack mappings, filtered by agent when possible.
+    // Ordered oldest-first so the main-channel fallback below is deterministic.
     const mappings = await prisma.slackMapping.findMany({
       where: {
         lensUserId: userId,
         ...(thread?.agentId && { agentId: thread.agentId }),
       },
+      orderBy: { createdAt: 'asc' },
     });
 
+    // Autonomous output (heartbeat, unbound cron) must land in exactly ONE
+    // channel — the agent's main channel — never every linked channel, or a
+    // heartbeat would spam all of them. Resolve it the same way as everywhere
+    // else: the flagged channel, else the oldest linked one as the default.
+    const channelMappings = mappings.filter(m => m.slackChannelId);
+    const mainChannelId =
+      (channelMappings.find(m => m.isMainChannel) ?? channelMappings[0])?.slackChannelId ?? null;
+
+    // One Slack connection (env/DB-backed singleton) — resolve it once up front
+    // rather than per mapping. If it's missing or inactive there's nowhere to
+    // deliver, so bail before the loop.
+    const connection = await getSlackConnection();
+    if (!connection || !connection.isActive) {
+      if (mappings.length > 0) {
+        logger.warn('No active Slack connection — skipping autonomous delivery for user %s', userId);
+      }
+      return;
+    }
+    const slackApp = this.apps.get(connection.teamId);
+
     for (const mapping of mappings) {
-      const connection = await getSlackConnection();
-      if (!connection) {
-        logger.warn('Slack connection %s not found for mapping %s', mapping.connectionId, mapping.id);
-        continue;
-      }
-
-      // Skip inactive connections
-      if (!connection.isActive) {
-        continue;
-      }
-
       // Deliver to DM channel (personal mode)
       if (mapping.dmChannelId) {
-        const slackApp = this.apps.get(connection.teamId);
         if (!slackApp) {
           logger.warn('Slack app not found for team %s', connection.teamId);
           continue;
@@ -292,8 +302,9 @@ class SlackAdapterService implements ChannelAdapter {
         }
       }
 
-      // Deliver to Slack channel (team mode)
-      if (mapping.slackChannelId) {
+      // Deliver to Slack channel (team mode) — only the main channel, so an
+      // autonomous broadcast doesn't fan out to every linked channel.
+      if (mapping.slackChannelId && mapping.slackChannelId === mainChannelId) {
         await this.deliverToChannel(
           mapping.slackChannelId,
           message.content,
@@ -1014,6 +1025,7 @@ class SlackAdapterService implements ChannelAdapter {
         metadata: {
           channel: 'slack',
           channelId,
+          channelName: mapping.slackChannelName ?? undefined,
           slackThreadTs: slackThreadId,
           senderSlackUserId: slackUserId,
           senderName,

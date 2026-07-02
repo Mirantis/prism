@@ -27,6 +27,7 @@ const {
       findMany: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       upsert: vi.fn(),
       delete: vi.fn(),
       deleteMany: vi.fn(),
@@ -35,6 +36,7 @@ const {
     agentWorkspace: {
       findUnique: vi.fn(),
     },
+    $transaction: vi.fn(),
   },
   mockGetSlackConfig: vi.fn(),
   mockGetSlackConnection: vi.fn(),
@@ -403,6 +405,47 @@ describe('Requirement: Channel Mappings (Team Mode)', () => {
       expect(mockPrisma.slackMapping.delete).toHaveBeenCalledWith({
         where: { slackChannelId: 'C789GHI' },
       });
+    });
+  });
+
+  describe('Scenario: setMainChannel', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it('should clear other mains and flag the chosen channel atomically', async () => {
+      mockPrisma.slackMapping.updateMany
+        .mockReturnValueOnce('clear-op')
+        .mockReturnValueOnce('set-op');
+      // The transaction resolves to each op's result; the set op updated 1 row.
+      mockPrisma.$transaction.mockResolvedValue([{ count: 1 }, { count: 1 }]);
+
+      await slackMappingService.setMainChannel('agent-001', 'C_MAIN');
+
+      expect(mockPrisma.slackMapping.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { agentId: 'agent-001', slackChannelId: { not: null }, isMainChannel: true },
+        data: { isMainChannel: false },
+      });
+      // The set is scoped to BOTH agentId + channelId so it can't flag another
+      // agent's channel.
+      expect(mockPrisma.slackMapping.updateMany).toHaveBeenNthCalledWith(2, {
+        where: { agentId: 'agent-001', slackChannelId: 'C_MAIN' },
+        data: { isMainChannel: true },
+      });
+      // Both ops are batched into a single transaction for atomicity.
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(['clear-op', 'set-op']);
+    });
+
+    it('should throw when the agent has no such channel (mismatched call)', async () => {
+      mockPrisma.slackMapping.updateMany
+        .mockReturnValueOnce('clear-op')
+        .mockReturnValueOnce('set-op');
+      // Set op matched no rows — the channel does not belong to this agent.
+      mockPrisma.$transaction.mockResolvedValue([{ count: 0 }, { count: 0 }]);
+
+      await expect(slackMappingService.setMainChannel('agent-001', 'C_OTHER')).rejects.toThrow(
+        /No channel mapping C_OTHER/,
+      );
     });
   });
 

@@ -186,7 +186,10 @@ class ConversationService {
       }
       // With no channel id, the Slack adapter has nowhere to post: the resume is
       // dropped silently. Warn so an undeliverable "continue in thread" run is at
-      // least diagnosable rather than vanishing without a trace.
+      // least diagnosable rather than vanishing without a trace. We intentionally
+      // do NOT fall back to the main channel here — a thread-bound task resumes in
+      // its own thread or not at all; redirecting it elsewhere would surprise the
+      // user with output in an unrelated channel.
       if (!channelId) {
         logger.warn(
           'No Slack channel resolved for thread %s (no origin/external channel id and no DM mapping) — a "continue in thread" resume will not be delivered',

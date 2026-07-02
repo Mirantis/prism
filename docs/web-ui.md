@@ -69,9 +69,15 @@ Two modes:
   Click **Link Account** to generate a six-character verification code (it
   expires in ~15 minutes), then DM that code to the agent in Slack. Once linked,
   the page shows the linked DM; you can **Unlink** to undo.
-- **Team Mode (channels).** Invite the agent to channels. Generate a channel
-  link code, invite the agent to the channel, and post the code there. Linked
-  channels are listed as badges, each with an unlink button.
+- **Team Mode (channels).** Invite the agent to channels. Click **Add channel**
+  to generate a channel link code, invite the agent to the channel, and post the
+  code there. You can link **multiple** channels — they're listed in a table,
+  each with an **Unlink** action. One channel is the **main channel** (marked ★);
+  it's where heartbeat alerts post. Use **Set main** to move it. The first
+  channel you link becomes main by default.
+
+Personal and Team modes are mutually exclusive — unlink one before switching to
+the other.
 
 The page also manages **heartbeat triggers**: designate a Slack channel so that
 incoming messages wake the agent's heartbeat, with a configurable throttle

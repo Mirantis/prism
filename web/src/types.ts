@@ -124,6 +124,9 @@ export interface SlackChannelMapping {
   channelName: string | null;
   agentName: string;
   linkedAt: string;
+  /** True for the channel that receives heartbeat alerts (and scheduled-task
+   *  output with no resolvable origin channel). Exactly one per agent. */
+  isMain: boolean;
 }
 
 export interface SlackHeartbeatTrigger {

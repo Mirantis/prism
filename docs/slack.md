@@ -56,14 +56,31 @@ issues a short-lived six-character code.
 If an unrecognized person DMs the agent, it replies with a short prompt
 explaining how to link, rather than answering.
 
-### Team Mode — link a channel
+### Team Mode — link channels
 
-1. In the Web UI **Channels** page, generate a **channel link code**.
+1. In the Web UI **Channels** page, click **Add channel** to generate a
+   **channel link code**.
 2. Invite the agent to the Slack channel.
 3. Post the code in the channel. The agent confirms it's now connected.
 
-When the agent is first added to a channel it posts a brief hello explaining it
-needs a verification code to activate. Each channel can be linked to one agent.
+You can link **multiple channels** to the agent — click **Add channel** again
+for each one; linked channels appear in a table on the Channels page, each with
+an **Unlink** action. A channel can only be linked to one agent.
+
+#### The main channel
+
+When several channels are linked, one is the **main channel** (marked ★ in the
+table; the first channel you link becomes main by default). **Heartbeat alerts**
+post to the main channel only — never fanned out to every linked channel. Use
+**Set main** in the table to move it.
+
+The main channel applies to heartbeats only. **Scheduled tasks** post to the
+channel they were created in; if that channel can't be resolved (e.g. it was
+unlinked) the run is logged as undeliverable rather than rerouted elsewhere.
+**Replies** to your own messages always go back to the channel you wrote in.
+
+Personal Mode and Team Mode are mutually exclusive — unlink all channels before
+switching to a DM link, and vice-versa.
 
 ## How the agent behaves in Slack
 
@@ -73,7 +90,9 @@ needs a verification code to activate. Each channel can be linked to one agent.
   thread it's already part of. Other channel messages are observed for context
   but not answered. When a thread it participated in gets a new message, a quick
   classifier decides whether to **reply**, **react** (e.g. 👀, 👍), or stay
-  quiet — so it doesn't talk over the channel.
+  quiet — so it doesn't talk over the channel. The agent knows **which channel**
+  it's replying in (the channel name is part of its context), so it can behave
+  differently across linked channels.
 - **Threads.** Each Slack thread maps to a Prism conversation thread; the agent
   can read the thread's history, including messages from before it joined.
 - **Files.** You can share files with the agent in Slack, and it can share files
@@ -83,8 +102,10 @@ needs a verification code to activate. Each channel can be linked to one agent.
   feedback.
 
 Autonomous messages from the agent — [heartbeat](heartbeat.md) alerts and
-[scheduled task](scheduled-tasks.md) results — arrive as channel posts labeled
-with their source.
+[scheduled task](scheduled-tasks.md) results — arrive as channel posts. In Team
+Mode, heartbeat alerts go to the [main channel](#the-main-channel) and scheduled
+tasks go to the channel they were created in; in Personal Mode they arrive in
+your DM.
 
 ## Slack-triggered heartbeats
 

@@ -272,6 +272,31 @@ class SlackMappingService {
     });
   }
 
+  /**
+   * Flag a linked channel as the agent's main channel, clearing the flag on the
+   * agent's other channels so at most one is ever main. Runs in a transaction so
+   * the clear + set are atomic.
+   *
+   * The set is scoped to BOTH agentId + channelId (not channelId alone) so a
+   * mismatched call can never flag a channel that belongs to another agent;
+   * throws if no such channel exists for the agent.
+   */
+  async setMainChannel(agentId: string, channelId: string): Promise<void> {
+    const [, set] = await prisma.$transaction([
+      prisma.slackMapping.updateMany({
+        where: { agentId, slackChannelId: { not: null }, isMainChannel: true },
+        data: { isMainChannel: false },
+      }),
+      prisma.slackMapping.updateMany({
+        where: { agentId, slackChannelId: channelId },
+        data: { isMainChannel: true },
+      }),
+    ]);
+    if (set.count === 0) {
+      throw new Error(`No channel mapping ${channelId} found for agent ${agentId}`);
+    }
+  }
+
   // ============================================================================
   // General Queries
   // ============================================================================

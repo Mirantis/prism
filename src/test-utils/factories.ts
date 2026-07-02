@@ -82,13 +82,17 @@ export function createTestAgentContext(overrides?: Partial<AgentContext>): Agent
 }
 
 export function createTestInvokeRequest(overrides?: Partial<InvokeRequest>): InvokeRequest {
+  // `InvokeRequest` is a discriminated union (ChannelOrigin), so a base object
+  // merged with a `Partial<>` of the union can't be proven to match a variant —
+  // assert the shape. Tests pass a coherent override (e.g. isChannelMessage +
+  // channelName together) when exercising the channel branch.
   return {
     userId: 'user-test-456',
     agentId: 'agent-test-123',
     mode: 'chat',
     prompt: 'What pods are running?',
     ...overrides,
-  };
+  } as InvokeRequest;
 }
 
 export function createTestInvokeResponse(overrides?: Partial<InvokeResponse>): InvokeResponse {

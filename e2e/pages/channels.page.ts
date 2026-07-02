@@ -36,16 +36,34 @@ export class ChannelsPage extends BasePage {
   }
 
   /**
-   * Click "Get Channel Link Code" and return the 6-char hex code from
-   * the .font-mono.text-2xl block that appears.
+   * Click "Add channel" and return the 6-char hex code from the
+   * .font-mono.text-2xl block that appears. Always available — works whether or
+   * not channels are already linked (the multi-channel flow).
    */
   async getChannelLinkCode(): Promise<string> {
-    await this.page.getByRole('button', { name: 'Get Channel Link Code' }).click();
+    await this.page.getByRole('button', { name: 'Add channel' }).click();
     const codeEl = this.page.locator('.font-mono.text-2xl');
     await codeEl.waitFor({ timeout: 10_000 });
     const code = await codeEl.textContent();
     if (!code) throw new Error('Channel link code not found');
     return code.trim();
+  }
+
+  /** The table row for a linked channel, located by its (#-prefixed) name. */
+  private channelRow(channelName: string) {
+    return this.page.getByRole('row').filter({ hasText: channelName });
+  }
+
+  /** True if the named channel's row shows the ★ Main badge. */
+  async isChannelMain(channelName: string): Promise<boolean> {
+    return this.channelRow(channelName).getByText('Main', { exact: true }).isVisible();
+  }
+
+  /** Click "Set main" in the named channel's row and wait for its ★ Main badge. */
+  async setChannelAsMain(channelName: string) {
+    const row = this.channelRow(channelName);
+    await row.getByRole('button', { name: 'Set main' }).click();
+    await row.getByText('Main', { exact: true }).waitFor({ timeout: 15_000 });
   }
 
   /**

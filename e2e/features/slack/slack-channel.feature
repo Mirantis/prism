@@ -11,6 +11,22 @@ Feature: Slack Channel Integration
     Then the bot should reply in the thread within 60 seconds
     And the bot's reply should not be empty
 
+  # Multiple channels can be linked to one agent, and one is the "main"
+  # channel (where heartbeat alerts post). The first-linked channel is main by
+  # default; the user can move it.
+  Scenario: Linking multiple channels and choosing the main channel
+    Given a test Slack channel exists
+    And the bot is invited to the channel
+    And I link the channel to the agent via the UI
+    And a second test Slack channel exists
+    And the bot is invited to the second channel
+    And I link the second channel to the agent via the UI
+    Then both channels are listed on the Channels page
+    And the first channel is the main channel
+    When I set the second channel as the main channel
+    Then the second channel is the main channel
+    And only the second channel is flagged main in the database
+
   # Regression for AGENT-74: a channel linked under a legacy (multi-tenant)
   # connectionId — one that no longer matches the env connection's teamId —
   # must still appear on /channels and be unlinkable.

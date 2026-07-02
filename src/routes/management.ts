@@ -96,6 +96,7 @@ import { prisma } from '../lib/prisma';
 import { heartbeatService } from '../services/heartbeat.service';
 import { cronSchedulerService } from '../services/cron-scheduler.service';
 import { slackHeartbeatTriggerService } from '../services/slack-heartbeat-trigger.service';
+import { slackMappingService } from '../services/slack-mapping.service';
 import { conversationService, type MessageInput } from '../services/conversation.service';
 import { conversationEngineService, type ChatInput } from '../services/conversation-engine.service';
 import { skillCatalogService } from '../services/skill-catalog.service';
@@ -1538,7 +1539,13 @@ router.get('/slack-channel-mappings', async (_req: Request, res: Response) => {
           select: { name: true },
         },
       },
+      orderBy: { createdAt: 'asc' },
     });
+
+    // Resolve the "main" channel the same way delivery does: the flagged one,
+    // else the oldest linked channel as the implicit default. (One agent per
+    // container, so a single resolution across the list is correct.)
+    const mainId = (mappings.find(m => m.isMainChannel) ?? mappings[0])?.id ?? null;
 
     const channels = mappings.map(m => ({
       id: m.id,
@@ -1546,6 +1553,7 @@ router.get('/slack-channel-mappings', async (_req: Request, res: Response) => {
       channelName: m.slackChannelName,
       agentName: m.agentWorkspace.name,
       linkedAt: m.createdAt,
+      isMain: m.id === mainId,
     }));
 
     res.json({ channels });
@@ -1615,6 +1623,41 @@ router.delete('/slack/channel-mapping/:channelId', async (req: Request<{ channel
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to delete channel mapping for ${req.params.channelId}: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * PUT /agents/slack/channel-mapping/:channelId/main
+ * Mark a linked channel as the agent's main channel — where heartbeat alerts
+ * (and scheduled tasks with no resolvable origin channel) are posted. Clears the
+ * flag on the agent's other channels so exactly one is main.
+ */
+router.put('/slack/channel-mapping/:channelId/main', async (req: Request<{ channelId: string }>, res: Response) => {
+  try {
+    const { channelId } = req.params;
+
+    const mapping = await prisma.slackMapping.findUnique({
+      where: { slackChannelId: channelId },
+      select: { agentId: true },
+    });
+
+    if (!mapping) {
+      res.status(404).json({ error: 'Channel mapping not found' });
+      return;
+    }
+
+    await slackMappingService.setMainChannel(mapping.agentId, channelId);
+
+    trackEvent('slack main channel set', null, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'slack.channel.id': channelId,
+    });
+
+    res.json({ ok: true });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to set main channel for ${req.params.channelId}: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
