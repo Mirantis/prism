@@ -28,7 +28,9 @@ The agent can edit its own identity from inside a conversation — this is how
 - Rewrite its **Soul**, **User** profile, **Memory**, **Vision**, **Heartbeat**
   config, or **Agent Guide**.
 - **Rename** itself.
-- Adjust **settings** — heartbeat interval, timezone.
+- Adjust **settings** — heartbeat interval, timezone, and
+  [verbose responses](configuration.md#chat-verbosity) (concise final answer
+  vs. streaming every step).
 - **Clear the bootstrap** prompt once first-run onboarding is done.
 
 ## Scheduling

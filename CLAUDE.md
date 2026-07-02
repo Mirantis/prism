@@ -189,7 +189,7 @@ Vite-proxy-shaped that would mask a real bug.
 ## Principles
 
 - **Self-sufficient** - Builds its own context locally: reads agent data and conversation history directly from its own embedded SQLite database.
-- **Owns conversation engine** - Runs `ConversationEngineService` locally: manages chat flow, thread management, and iterates `invokeStream()` directly (no HTTP, no queue) so each step is delivered as it arrives.
+- **Owns conversation engine** - Runs `ConversationEngineService` locally: manages chat flow, thread management, and iterates `invokeStream()` directly (no HTTP, no queue). Delivery honors the per-agent `verbose` flag: concise (default) publishes only the final step, streaming (`verbose: true`) publishes each step as it arrives.
 - **Owns message delivery** - Runs `MessageDeliveryService` locally: stores messages via `conversationService` and delivers via local adapters. User-initiated messages deliver only to the originating channel; autonomous messages (heartbeat/cron) broadcast to all connected channels.
 - **Owns channel adapters** - WebSocket and Slack adapters run locally, registered with `messageDeliveryService` in `index.ts`.
 - **Owns scheduling** - Heartbeat timers and cron jobs run in-process (not in the backend).
@@ -237,7 +237,7 @@ The runtime hosts one MCP server and connects to another externally:
 |---------|------|---------|
 | **invokeStream** | `invoke.ts` | Streaming primitive: builds context, collects tools, calls `generateText()` with step limit and early stopping, yields each `InvokeStep` as `onStepFinish` fires. Errors are yielded as friendly steps (via `buildErrorStep`) rather than thrown. Bridges the SDK's push-based callback into async iteration via `utils/async-channel.ts`. |
 | **invoke** | `invoke.ts` | Thin aggregating wrapper around `invokeStream()`: drains the step stream into a single `InvokeResponse`. Used by callers that need the full result before acting (heartbeat, cron, subagent/task tool). |
-| **ConversationEngineService** | `services/conversation-engine.service.ts` | Chat flow orchestration: thread management, iterates `invokeStream()` directly and publishes each text-bearing step the moment it arrives, delivers via local `messageDeliveryService` |
+| **ConversationEngineService** | `services/conversation-engine.service.ts` | Chat flow orchestration: thread management, iterates `invokeStream()` directly and publishes per the agent's `verbose` flag (concise = final step only, folding all steps' tool calls in; streaming = each text-bearing step as it arrives), delivers via local `messageDeliveryService` |
 | **MessageDeliveryService** | `services/message-delivery.service.ts` | Unified message publish: stores via `conversationService`, delivers via channel adapters (channel-scoped for user messages, broadcast for autonomous) |
 | **ContextService** | `services/context.service.ts` | Builds agent context from local database: agent data via `agentWorkspaceService.getAgentById()` and conversation history via Prisma |
 | **ConversationService** | `services/conversation.service.ts` | Thread and message CRUD via Prisma, pluggable thread providers (database + Slack) |
@@ -267,7 +267,7 @@ src/
 ├── constants.ts                # Shared constants (STEP_LIMIT, MAX_OUTPUT_TOKENS)
 ├── types.ts                    # Request/response types (ChatRequest, InvokeRequest, InvokeStep with optional InvokeError, etc.)
 ├── services/
-│   ├── conversation-engine.service.ts # Chat flow orchestration: thread mgmt, iterates invokeStream() with per-step publish, local message delivery
+│   ├── conversation-engine.service.ts # Chat flow orchestration: thread mgmt, iterates invokeStream() with verbose-gated publish (concise final-only vs per-step), local message delivery
 │   ├── message-delivery.service.ts # Unified message publish: store + channel-scoped or broadcast delivery
 │   ├── agent-workspace.service.ts # Agent CRUD, ownership validation, nexus tokens, subagents
 │   ├── agent-status.service.ts  # Direct Prisma writes for agent fields (heartbeat timestamp/status)
@@ -370,9 +370,14 @@ There are two entry points for chat, both handled locally by the agent-runtime:
 1. **WebSocket**: Client -> Backend (JWT verify + proxy) -> Agent-runtime WS gateway -> `conversationEngineService.chat()` (local, no HTTP)
 2. **Slack**: Bolt Socket Mode message -> `conversationEngineService.chat()` (local, no HTTP)
 
-In both cases, `conversationEngineService.chat()` manages the thread, **iterates `invokeStream()` directly** (no queue, no HTTP), and `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
+In both cases, `conversationEngineService.chat()` manages the thread and **iterates `invokeStream()` directly** (no queue, no HTTP). What it publishes depends on the per-agent **`verbose`** flag (`AgentWorkspace.verbose`, read once per turn via `agentWorkspaceService.getAgent()`):
 
-The engine keeps a **one-step buffer**: it can't know a step is the last text step until the next step (or stream end) arrives, so the last publish is the one that carries the accumulated UI `blocks` and the `shouldShowFeedback` decision. Earlier steps publish with `includeFeedback: false` and no blocks.
+- **Concise (`verbose: false`, default):** only the final text step of the turn is published. Intermediate steps are neither delivered nor persisted; their tool calls are folded into the final message (`allToolCalls`) so the tool-call trail survives.
+- **Streaming (`verbose: true`):** `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires, so users see intermediate text from multi-step responses in real time.
+
+Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack). `verbose` is user-configurable three ways: the agent's own `update_settings` tool, `PATCH /agents/verbose`, and the Profile-page toggle in the Web UI.
+
+The engine keeps a **one-step buffer**: it can't know a step is the last text step until the next step (or stream end) arrives, so the last publish is the one that carries the accumulated UI `blocks` and the `shouldShowFeedback` decision. In streaming mode, earlier steps publish with `includeFeedback: false` and no blocks.
 
 The management `POST /agents/chat` endpoint remains available for internal/debug use.
 

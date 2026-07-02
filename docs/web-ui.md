@@ -27,8 +27,11 @@ Name field on the [Profile](#profile) page.)
 The main conversation surface.
 
 - **Sending messages.** Type in the input pinned to the bottom and press send.
-  Responses **stream** in as the agent works — you see intermediate text from
-  multi-step responses in real time rather than one block at the end.
+  By default the agent posts a **single final answer** per turn; a typing
+  indicator shows while it works. Set **Verbosity** to **Verbose** on the
+  [Profile](#profile) page to instead stream each intermediate step of a
+  multi-step turn as its own message. See
+  [Chat verbosity](configuration.md#chat-verbosity).
 - **Slash commands.** Type `/` to open a command popup, the same as the
   **[Terminal UI](terminal-ui.md#slash-commands)**: filter by typing, **Tab** to
   complete, arrow keys to move the selection, **Enter** to run. The web supports
@@ -124,6 +127,9 @@ The agent's identity and runtime controls.
   those on their own model; leave a field empty to inherit the main model (the
   field shows the model it falls back to). See
   **[Configuration → Models](configuration.md#models)**.
+- **Verbosity.** A selector controls chat delivery: **Concise** (default) posts
+  only the final result of a turn; **Verbose** streams each intermediate step as
+  its own message. See **[Configuration → Chat verbosity](configuration.md#chat-verbosity)**.
 - **Identity documents.** Seven tabs show the agent's markdown documents —
   **Agent** (guide), **Soul**, **User**, **Heartbeat**, **Memory**, **Vision**,
   and **Bootstrap**. These are **read-only viewers** in the Web UI: the agent

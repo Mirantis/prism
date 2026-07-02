@@ -97,6 +97,26 @@ heartbeat DELIVER/SUPPRESS gate always uses the active platform's
 classification model (`BEDROCK_CLASSIFICATION_MODEL_ID` on Bedrock,
 `AZURE_CLASSIFICATION_MODEL_ID` on Azure), independent of this.
 
+## Chat verbosity
+
+By default the agent replies with a **single final message** per turn — the
+intermediate steps of a multi-step turn (its narration between tool calls) are
+suppressed, and only the tool-call trail is folded into that final message. Set
+**`verbose`** to stream each intermediate step as its own message instead.
+
+`verbose` is a per-agent setting (not an env var), default `false`, changed
+three ways:
+
+- **Web UI** — the **Verbosity** selector (Concise / Verbose) on the [Profile](web-ui.md#profile) page.
+- **In chat** — just ask the agent ("stop narrating your steps" / "be concise"
+  → off; "show me your working" / "narrate your steps" → on); it flips the flag
+  via its `update_settings` tool.
+- **REST** — `PATCH /agents/verbose` with `{ "verbose": true }` (strict boolean),
+  which returns the saved `{ "verbose": true }`.
+
+Heartbeat and scheduled-task runs are unaffected — they only ever deliver their
+final result. Existing agents default to concise the first time this ships.
+
 ### Bootstrap model defaults (`~/.prism/settings.json`)
 
 When the runtime **first creates an agent** (empty database), it seeds the three
