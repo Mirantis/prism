@@ -297,6 +297,30 @@ class AgentWorkspaceService {
   }
 
   /**
+   * Set chat verbosity: `true` streams every intermediate step of a turn as
+   * its own message, `false` (default) publishes only the final result.
+   * Shared by the management `PATCH /agents/verbose` endpoint and the
+   * `update_settings` agent tool, and the sole telemetry emitter for verbose
+   * changes — callers must not re-emit. Throws `ValidationError` unless the
+   * value is strictly boolean.
+   */
+  async updateVerbose(verbose: unknown): Promise<boolean> {
+    if (typeof verbose !== 'boolean') {
+      throw new ValidationError('verbose must be a boolean');
+    }
+    const agent = await this.getAgent();
+    const updated = await prisma.agentWorkspace.update({
+      where: { id: agent.id },
+      data: { verbose },
+    });
+    trackEvent('agent verbose updated', null, {
+      'agent.id': updated.id,
+      'agent.verbose': String(updated.verbose),
+    });
+    return updated.verbose;
+  }
+
+  /**
    * Resolve the effective LLM model for an agent: the per-agent override if
    * set, otherwise the runtime's env-configured default. Callers that need
    * the raw override (e.g. to decide whether to display "unset") should use

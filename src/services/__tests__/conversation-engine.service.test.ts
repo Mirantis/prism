@@ -18,6 +18,7 @@ const {
   mockPublish,
   mockInvokeStream,
   mockCountAgentMessages,
+  mockGetAgent,
   mockGenerateText,
   mockIsTelemetryEnabled,
   mockTrackEvent,
@@ -30,6 +31,7 @@ const {
   mockPublish: vi.fn(),
   mockInvokeStream: vi.fn(),
   mockCountAgentMessages: vi.fn(),
+  mockGetAgent: vi.fn(),
   mockGenerateText: vi.fn(),
   mockIsTelemetryEnabled: vi.fn(),
   mockTrackEvent: vi.fn(),
@@ -61,6 +63,12 @@ vi.mock('../conversation.service', () => ({
 vi.mock('../message-delivery.service', () => ({
   messageDeliveryService: {
     publish: mockPublish,
+  },
+}));
+
+vi.mock('../agent-workspace.service', () => ({
+  agentWorkspaceService: {
+    getAgent: mockGetAgent,
   },
 }));
 
@@ -133,6 +141,9 @@ describe('Requirement: Conversation Engine', () => {
       { text: 'I am a helpful AI assistant.', toolCalls: [] },
     ]));
     mockCountAgentMessages.mockResolvedValue(0);
+    // Default: concise (verbose=false) — only the final result of a turn is
+    // published. Tests asserting per-step streaming opt into verbose=true.
+    mockGetAgent.mockResolvedValue({ id: 'agent-123', verbose: false });
     // Default: telemetry off so unrelated scenarios don't exercise the classifier.
     mockIsTelemetryEnabled.mockReturnValue(false);
     mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
@@ -205,7 +216,25 @@ describe('Requirement: Conversation Engine', () => {
           'agent.id': 'agent-123',
           'thread.id': 'thread-123',
           'channel.type': 'websocket',
+          'chat.verbose': 'false',
         }),
+      );
+    });
+
+    it('tags the telemetry event with chat.verbose=true when streaming', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-123', verbose: true });
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'What pods are running?',
+        metadata: { channel: 'websocket' },
+      });
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'chat message handled',
+        'user-123',
+        expect.objectContaining({ 'chat.verbose': 'true' }),
       );
     });
 
@@ -310,7 +339,8 @@ describe('Requirement: Conversation Engine', () => {
   });
 
   describe('Scenario: Multi-step response delivery', () => {
-    it('should publish one message per text-producing step', async () => {
+    it('verbose=true publishes one message per text-producing step', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-123', verbose: true });
       mockInvokeStream.mockReturnValue(streamFromSteps([
         {
           text: 'Let me check...',
@@ -324,7 +354,7 @@ describe('Requirement: Conversation Engine', () => {
         },
       ]));
 
-      await conversationEngineService.chat({
+      const result = await conversationEngineService.chat({
         userId: 'user-123',
         agentId: 'agent-123',
         message: 'Show me pods',
@@ -332,6 +362,9 @@ describe('Requirement: Conversation Engine', () => {
 
       // Should publish two messages (one per text-producing step)
       expect(mockPublish).toHaveBeenCalledTimes(2);
+
+      // Verbose delivered both steps, so the returned content joins them.
+      expect(result.content).toBe('Let me check...\n\nHere are the results.');
 
       // First message should carry the tool calls from step 1
       expect(mockPublish).toHaveBeenNthCalledWith(
@@ -357,6 +390,103 @@ describe('Requirement: Conversation Engine', () => {
         expect.objectContaining({
           toolCalls: undefined,
         }),
+      );
+    });
+
+    it('verbose=false (default) publishes only the final step, folding every step\'s tool calls into it', async () => {
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: 'Let me check...',
+          toolCalls: [
+            { tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+        {
+          text: 'Here are the results.',
+          toolCalls: [
+            { tool: 'logs', input: '{}', output: 'ok', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+      ]));
+
+      const result = await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Show me pods',
+      });
+
+      // Only the final step is published; the intermediate step's text is
+      // dropped but its tool call survives on the final message.
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-123',
+        'thread-123',
+        'Here are the results.',
+        'USER_INPUT',
+        expect.objectContaining({
+          toolCalls: [
+            expect.objectContaining({ tool: 'kubectl' }),
+            expect.objectContaining({ tool: 'logs' }),
+          ],
+        }),
+      );
+
+      // The returned content mirrors what was delivered — only the final step,
+      // NOT the suppressed intermediate narration (which would otherwise leak
+      // via POST /agents/chat and chat.response_chars).
+      expect(result.content).toBe('Here are the results.');
+    });
+
+    it('verbose=false folds a trailing tool-only step\'s calls into the single published message', async () => {
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'Working on it.', toolCalls: [] },
+        {
+          text: '',
+          toolCalls: [
+            { tool: 'late_tool', input: '{}', output: 'x', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Do a thing',
+      });
+
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-123',
+        'thread-123',
+        'Working on it.',
+        'USER_INPUT',
+        expect.objectContaining({
+          toolCalls: [expect.objectContaining({ tool: 'late_tool' })],
+        }),
+      );
+    });
+
+    it('verbose=false still publishes the buffered text once when the stream ends mid-turn (cancel)', async () => {
+      // A cancel just closes the stream: whatever text was buffered is the
+      // "last" step and must land exactly once, same as a natural finish.
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'Partial progress...', toolCalls: [] },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Long task',
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-123',
+        'thread-123',
+        'Partial progress...',
+        'USER_INPUT',
+        expect.anything(),
       );
     });
 
@@ -742,6 +872,7 @@ describe('Requirement: Conversation Engine', () => {
     });
 
     it('only calls the classifier (and only folds includeFeedback=true) on the terminal step of a multi-step response', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-123', verbose: true });
       mockIsTelemetryEnabled.mockReturnValue(true);
       mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
       mockCountAgentMessages.mockResolvedValue(1);

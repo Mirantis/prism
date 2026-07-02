@@ -75,6 +75,7 @@ model AgentWorkspace {
   heartbeatIntervalMs Int                  @default(28800000)
   heartbeatStatus     AgentHeartbeatStatus @default(ENABLED)
   timezone            String               @default("UTC")
+  verbose             Boolean              @default(false)
   model               String?
   heartbeatModel      String?
   cronModel           String?

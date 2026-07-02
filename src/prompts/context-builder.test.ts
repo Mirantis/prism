@@ -88,6 +88,27 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('# Chat Mode');
   });
 
+  it('adds the concise-delivery instruction in chat mode when not verbose (default)', async () => {
+    const context = createTestAgentContext({ verbose: false });
+    const prompt = await buildSystemPrompt(context, 'chat');
+    expect(prompt).toContain('# Response Delivery (Concise Mode)');
+    expect(prompt).toContain('Only your **final** message');
+  });
+
+  it('omits the concise-delivery instruction when verbose is on', async () => {
+    const context = createTestAgentContext({ verbose: true });
+    const prompt = await buildSystemPrompt(context, 'chat');
+    expect(prompt).not.toContain('# Response Delivery (Concise Mode)');
+  });
+
+  it('does not add the concise-delivery instruction outside chat mode', async () => {
+    const context = createTestAgentContext({ verbose: false });
+    for (const mode of ['heartbeat', 'cron', 'subagent'] as const) {
+      const prompt = await buildSystemPrompt(context, mode);
+      expect(prompt).not.toContain('# Response Delivery (Concise Mode)');
+    }
+  });
+
   it('heartbeat mode includes minimal heartbeat instructions (no HEARTBEAT_OK)', async () => {
     const context = createTestAgentContext();
     const prompt = await buildSystemPrompt(context, 'heartbeat');

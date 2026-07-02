@@ -9,6 +9,7 @@
 import { generateText } from 'ai';
 import { messageDeliveryService } from './message-delivery.service';
 import { conversationService } from './conversation.service';
+import { agentWorkspaceService } from './agent-workspace.service';
 import { goalService } from './goal.service';
 import { threadTitleService } from './thread-title.service';
 import { attachmentService } from './attachment.service';
@@ -249,10 +250,17 @@ Respond with exactly one word: WORTHY or SKIP`;
         ? { channel: 'websocket' as const, threadId }
         : undefined;
 
-    // Stream steps from invokeStream and publish each text-bearing step as
-    // it arrives. A one-step buffer lets us tag the LAST text step with the
-    // accumulated UI blocks and the feedback decision — we can't know a step
-    // was last until the next step (or the stream end) arrives.
+    // Concise vs. streaming delivery. When `verbose` is false (the default)
+    // only the final result of the turn is published — intermediate text is
+    // neither delivered nor persisted; when true, each text-bearing step is
+    // published the moment it arrives. Read once so a mid-turn toggle can't
+    // split delivery across modes.
+    const { verbose } = await agentWorkspaceService.getAgent();
+
+    // Stream steps from invokeStream. A one-step buffer lets us tag the LAST
+    // text step with the accumulated UI blocks and the feedback decision —
+    // we can't know a step was last until the next step (or the stream end)
+    // arrives.
     let agentMessage: Awaited<ReturnType<typeof messageDeliveryService.publish>> | undefined;
     let pendingToolCalls: ToolCallRecord[] = [];
     let bufferedStep: InvokeStep | null = null;
@@ -292,9 +300,11 @@ Respond with exactly one word: WORTHY or SKIP`;
         if (step.text) {
           responseTexts.push(step.text);
 
-          // Flush previously-buffered step now that we know it wasn't last:
-          // no blocks, no feedback gate.
-          if (bufferedStep) {
+          // Verbose: flush the previously-buffered step now that we know it
+          // wasn't last — no blocks, no feedback gate. Concise: keep
+          // buffering; the dropped steps' tool calls survive on the final
+          // message via `allToolCalls`.
+          if (verbose && bufferedStep) {
             agentMessage = await messageDeliveryService.publish(
               userId,
               threadId,
@@ -316,8 +326,12 @@ Respond with exactly one word: WORTHY or SKIP`;
       }
 
       // Stream is done. The buffered step (if any) is the LAST text step:
-      // attach the accumulated blocks and the feedback decision here.
+      // attach the accumulated blocks and the feedback decision here. In
+      // concise mode this is the turn's ONLY publish, so fold every step's
+      // tool calls into it (including trailing tool-only steps) — the
+      // tool-call trail survives even though intermediate text doesn't.
       if (bufferedStep) {
+        const finalToolCalls = verbose ? bufferedToolCalls : allToolCalls;
         const includeFeedback = await this.shouldShowFeedback(
           threadId, message, bufferedStep.text, userId, agentId, input.abortSignal,
         );
@@ -327,7 +341,7 @@ Respond with exactly one word: WORTHY or SKIP`;
           bufferedStep.text,
           'USER_INPUT',
           {
-            toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
+            toolCalls: finalToolCalls.length > 0 ? finalToolCalls : undefined,
             blocks: allBlocks.length > 0 ? allBlocks : undefined,
             attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
             channelContext: channelContext ? { ...channelContext, includeFeedback } : undefined,
@@ -335,7 +349,12 @@ Respond with exactly one word: WORTHY or SKIP`;
         );
       }
 
-      response = responseTexts.join('\n\n');
+      // `response` (the returned `content` + `chat.response_chars` telemetry)
+      // must mirror what was actually delivered: verbose published every text
+      // step, so join them; concise published only the final step, so return
+      // just that — otherwise the suppressed intermediate narration would leak
+      // via the return value / telemetry / POST /agents/chat.
+      response = verbose ? responseTexts.join('\n\n') : (bufferedStep?.text ?? '');
 
       // Fallback: the stream produced no text step. Publish only if there's still
       // something to show (tool calls or UI blocks) — e.g. a tool-only turn. When
@@ -365,6 +384,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       'chat.duration_ms': String(Date.now() - startTime),
       'chat.tool_calls': String(allToolCalls.length),
       'chat.response_chars': String(response.length),
+      'chat.verbose': String(verbose),
     });
 
     return {

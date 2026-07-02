@@ -48,6 +48,8 @@ export interface AgentContext {
   agentId: string;
   userId: string;
   model: string | null;
+  /** When false ("concise"), only the final chat message reaches the user. */
+  verbose: boolean;
   isBootstrapPhase: boolean;
   conversationSummary: string | null;
   recentMessages: ConversationMessage[];
@@ -153,6 +155,14 @@ export async function buildSystemPromptParts(
   // These are in addition to chat instructions, which are also relevant for subagents.
   if (mode === 'subagent') {
     stableSections.push(getSubagentInstructions());
+  }
+
+  // Concise delivery: for interactive chat turns only, when the agent isn't in
+  // verbose mode, tell the model that only its final message reaches the user
+  // (see conversationEngineService.chat). Not for subagents (they return to the
+  // parent) or heartbeat/cron (they deliver their aggregated result anyway).
+  if (mode === 'chat' && !context.verbose) {
+    stableSections.push(getConciseDeliveryInstructions());
   }
 
   // Recalled memories — auto-retrieved from memory_entries via embedding search.
@@ -442,6 +452,25 @@ You are an autonomous agent. Use your tools to take real action on behalf of the
 2. **Store what you learn** - User preferences go in memory_write. Critical facts go in update_memory.
 3. **Be proactive** - If user says "alert me when..." or "remind me to...", configure it immediately.
 4. **Advance the vision** - When you see opportunities to help achieve the user's goals, take action.`;
+}
+
+/**
+ * Concise-delivery contract, injected only for chat turns when the agent's
+ * `verbose` setting is false. The engine delivers ONLY the final assistant
+ * message of the turn to the user (folding the tool-call trail in); any text
+ * written in intermediate steps is discarded. Without this the model tends to
+ * put its substantive answer in an early step and end on a bare "let me know"
+ * coda, so the user sees a dangling remark. Tell it to make the final message
+ * self-contained.
+ */
+function getConciseDeliveryInstructions(): string {
+  return `# Response Delivery (Concise Mode)
+Only your **final** message in this turn is delivered to the user. Text you write in intermediate steps — before or between tool calls — is **not** shown to them (the tools you used are summarized automatically).
+
+So your final message must stand on its own:
+- Put the actual answer or result in it — not just a closing remark or a follow-up offer.
+- Don't refer to things "above" or assume the user saw your earlier narration; they didn't.
+- If you did work (created a file, ran a command), state the outcome in this final message.`;
 }
 
 /**

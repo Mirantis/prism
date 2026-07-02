@@ -227,6 +227,32 @@ describe('AgentWorkspaceService telemetry', () => {
     expect(mockTrackEvent).not.toHaveBeenCalled();
   });
 
+  it('persists verbose and emits "agent verbose updated" on updateVerbose', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ verbose: true }));
+
+    const result = await agentWorkspaceService.updateVerbose(true);
+
+    expect(result).toBe(true);
+    expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+      where: { id: agentId },
+      data: { verbose: true },
+    });
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent verbose updated', null, {
+      'agent.id': agentId,
+      'agent.verbose': 'true',
+    });
+  });
+
+  it('rejects non-boolean verbose values without writing or emitting telemetry', async () => {
+    for (const value of ['true' as unknown, 1, null, undefined]) {
+      await expect(agentWorkspaceService.updateVerbose(value)).rejects.toThrow(
+        'verbose must be a boolean',
+      );
+    }
+    expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+
   it('emits "subagent added" on successful addSubagent', async () => {
     mockPrisma.agentWorkspace.findUnique
       .mockResolvedValueOnce(createAgentRow()) // parent

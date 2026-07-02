@@ -32,6 +32,12 @@ export interface AgentContext {
   heartbeatModel: string | null;
   /** Cron/scheduled-task model override; falls back to `model`, then env default. */
   cronModel: string | null;
+  /**
+   * Chat verbosity. When false (default, "concise") only the final message of
+   * a chat turn is delivered to the user; when true every step streams. Drives
+   * the concise-delivery instruction in the chat system prompt.
+   */
+  verbose: boolean;
   isBootstrapPhase: boolean;
   conversationSummary: string | null;
   recentMessages: ConversationMessage[];
