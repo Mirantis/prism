@@ -41,6 +41,7 @@ import { useAgent } from '@/lib/agent-context';
 import { formatInterval } from '@/lib/format';
 import { RestoreBackupDialog } from '@/components/profile/restore-backup-dialog';
 import { ModelField } from '@/components/profile/model-field';
+import { VerbosityField } from '@/components/profile/verbosity-field';
 import type { AgentDetails } from '@/types';
 
 const SECTIONS = [
@@ -147,6 +148,7 @@ function ProfilePage() {
             save={(m) => runtimeApi.updateCronModel(m)}
             allowEmpty
           />
+          {details && <VerbosityField verbose={details.verbose} agentId={agent.agentId} />}
           {details ? (
             <Tabs defaultValue="agentMd">
               <TabsList variant="line">

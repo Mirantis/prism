@@ -108,6 +108,13 @@ export const runtimeApi = {
       body: JSON.stringify({ model }),
     }),
 
+  // Chat verbosity (false = final result only, true = stream every step)
+  updateVerbose: (verbose: boolean) =>
+    request<{ verbose: boolean }>('/agents/verbose', {
+      method: 'PATCH',
+      body: JSON.stringify({ verbose }),
+    }),
+
   // Threads
   getOrCreateLatestThread: (agentId: string, userId: string) =>
     request<ConversationThread>('/agents/threads/get-or-create-latest', {
