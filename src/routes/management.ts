@@ -1007,11 +1007,18 @@ router.delete('/webhook-subscriptions/:id', async (req: Request<{ id: string }>,
       }
       throw err;
     }
-    const agent = await agentWorkspaceService.getAgent();
-    trackEvent('webhook subscription deleted', agent.userId, {
-      'agent.id': agent.id,
-      'webhook.subscription_id': subscription.id,
-    });
+    // Telemetry is best-effort: the row is already gone, so a failure here
+    // must not turn the response into a 500.
+    try {
+      const agent = await agentWorkspaceService.getAgent();
+      trackEvent('webhook subscription deleted', agent.userId, {
+        'agent.id': agent.id,
+        'webhook.subscription_id': subscription.id,
+      });
+    } catch (telemetryError: unknown) {
+      const msg = telemetryError instanceof Error ? telemetryError.message : String(telemetryError);
+      logger.warn(`[Management] webhook-subscription-deleted telemetry failed: ${msg}`);
+    }
     res.json({ success: true });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';

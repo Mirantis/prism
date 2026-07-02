@@ -85,6 +85,13 @@ describe('POST /agents/webhooks/:name', () => {
     expect(res.body.error).toMatch(/disabled/i);
   });
 
+  it('429s when a run for the subscription is already in flight', async () => {
+    mockHandleInbound.mockResolvedValue({ status: 'busy' });
+    const res = await request(createTestApp()).post('/agents/webhooks/alerts').send({});
+    expect(res.status).toBe(429);
+    expect(res.body.error).toMatch(/already has a run in progress/i);
+  });
+
   it('200s filtered events with the resolved type', async () => {
     mockHandleInbound.mockResolvedValue({ status: 'ignored', event: 'push' });
     const res = await request(createTestApp()).post('/agents/webhooks/alerts').send({});

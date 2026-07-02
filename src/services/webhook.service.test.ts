@@ -383,7 +383,7 @@ describe('handleInbound agent mode', () => {
     );
   });
 
-  it('tracks an error outcome when the run throws', async () => {
+  it('delivers a failure notice when the run throws (the sender will not retry)', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
     mockInvoke.mockRejectedValue(new Error('bedrock down'));
 
@@ -395,6 +395,30 @@ describe('handleInbound agent mode', () => {
         expect.objectContaining({ 'webhook.status': 'error' }),
       ),
     );
-    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
+    const [, , content] = mockPublishToLatestThread.mock.calls[0];
+    expect(content).toContain('**Webhook: alerts**');
+    expect(content).toContain('bedrock down');
+  });
+
+  it('rejects a concurrent delivery for the same subscription while a run is in flight', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    let resolveInvoke!: (v: unknown) => void;
+    mockInvoke.mockReturnValue(new Promise((r) => (resolveInvoke = r)));
+
+    const first = await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    expect(first).toEqual({ status: 'accepted', event: 'unknown' });
+
+    const second = await webhookService.handleInbound('alerts', {}, {}, 'run-2');
+    expect(second).toEqual({ status: 'busy' });
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+    resolveInvoke(invokeResult('done'));
+    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
+
+    // Slot freed — the next delivery runs again.
+    mockInvoke.mockResolvedValue(invokeResult('done again'));
+    const third = await webhookService.handleInbound('alerts', {}, {}, 'run-3');
+    expect(third).toEqual({ status: 'accepted', event: 'unknown' });
   });
 });

@@ -137,7 +137,13 @@ function WebhooksPage() {
   const endpointUrl = (name: string) => `${window.location.origin}/agents/webhooks/${name}`;
 
   const copyUrl = async (id: string, name: string) => {
-    await navigator.clipboard.writeText(endpointUrl(name));
+    try {
+      await navigator.clipboard.writeText(endpointUrl(name));
+    } catch {
+      // Clipboard is unavailable (insecure context / permission denied) —
+      // skip the confirmation tick; the path stays selectable in the row.
+      return;
+    }
     setCopiedId(id);
     setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 1500);
   };

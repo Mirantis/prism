@@ -36,6 +36,7 @@ export type WebhookInboundResult =
   | { status: 'receiver_disabled' } // 403
   | { status: 'not_found' } // 404
   | { status: 'subscription_disabled' } // 403
+  | { status: 'busy' } // 429 — an agent run for this subscription is in flight
   | { status: 'ignored'; event: string } // 200 — event filter miss
   | { status: 'delivered'; event: string } // 200 — deliver-only, published
   | { status: 'accepted'; event: string }; // 202 — agent run dispatched
@@ -136,6 +137,15 @@ export function renderWebhookPrompt(
 
 export class WebhookService {
   /**
+   * Subscription ids with an agent run currently in flight. One run per
+   * subscription at a time: with no in-container auth and retry-happy senders
+   * (Alertmanager re-notifies on repeat_interval and retries on non-2xx), an
+   * unguarded fan-out could turn one flapping alert into unbounded concurrent
+   * LLM runs. A concurrent delivery answers 429 so the sender retries later.
+   */
+  private readonly inFlight = new Set<string>();
+
+  /**
    * Process one inbound delivery. Synchronous parts (lookups, event filter,
    * deliver-only publish) complete before returning; agent-mode runs are
    * dispatched fire-and-forget so the route can answer 202 immediately.
@@ -180,10 +190,19 @@ export class WebhookService {
     }
 
     // Agent mode — fire and forget; the route answers 202 now.
-    this.runAgent(subscription, prompt, runId, startTime).catch((error: unknown) => {
-      const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Webhook] Agent run for '${name}' failed: ${msg}`);
-    });
+    if (this.inFlight.has(subscription.id)) {
+      logger.warn(`[Webhook] '${name}' already has a run in flight — rejecting with 429`);
+      return { status: 'busy' };
+    }
+    this.inFlight.add(subscription.id);
+    this.runAgent(subscription, prompt, runId, startTime)
+      .catch((error: unknown) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`[Webhook] Agent run for '${name}' failed: ${msg}`);
+      })
+      .finally(() => {
+        this.inFlight.delete(subscription.id);
+      });
     return { status: 'accepted', event: eventType };
   }
 
@@ -235,6 +254,20 @@ export class WebhookService {
       const msg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[Webhook] '${subscription.name}' failed: ${msg}`);
       trackRun('error');
+      // The sender already got 202 and won't retry — a silent failure would
+      // mean the user never hears about the event at all. Deliver a brief
+      // notice (best-effort; delivery itself may be what failed).
+      try {
+        await this.deliver(
+          agent.id,
+          agent.userId,
+          subscription.deliverTo,
+          `**Webhook: ${subscription.name}**\n\nThis event could not be processed — the run failed with: ${msg}`,
+        );
+      } catch (deliverError: unknown) {
+        const deliverMsg = deliverError instanceof Error ? deliverError.message : String(deliverError);
+        logger.error(`[Webhook] '${subscription.name}' failure notice could not be delivered: ${deliverMsg}`);
+      }
     }
   }
 

@@ -878,6 +878,17 @@ describe('Management Routes', () => {
       expect(res.body).toEqual({ success: true });
     });
 
+    it('still reports success when telemetry lookup fails after the delete', async () => {
+      mockPrisma.webhookSubscription.delete.mockResolvedValue({ id: 'wh-1' });
+      mockGetAgent.mockRejectedValue(new Error('agent lookup exploded'));
+
+      const res = await authedRequest(app).delete('/agents/webhook-subscriptions/wh-1');
+
+      // The destructive action already succeeded — telemetry is best-effort.
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true });
+    });
+
     it('404s a missing subscription', async () => {
       mockPrisma.webhookSubscription.delete.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('Not found', {

@@ -43,20 +43,30 @@ POST /agents/webhooks/<name>
 Content-Type: application/json
 ```
 
-The body must be a JSON object. Responses:
+The body must be a JSON object. Responses (`event` is the resolved event type —
+see [Event filtering](#event-filtering)):
 
 | Status | Meaning |
 |--------|---------|
-| `202 Accepted` | Agent run dispatched (`{"status":"accepted","runId":"..."}`). The response is delivered to your channels when the run finishes. |
-| `200 OK` | Deliver-only message posted (`{"status":"delivered"}`), or the event was filtered out by the Events list (`{"status":"ignored"}`). |
+| `202 Accepted` | Agent run dispatched: `{"status":"accepted","event":"<type>","runId":"..."}`. The response is delivered to your channels when the run finishes. |
+| `200 OK` | Deliver-only message posted: `{"status":"delivered","event":"<type>"}` — or the event was filtered out by the Events list: `{"status":"ignored","event":"<type>"}`. |
 | `400` | Body was not a JSON object. |
 | `403` | Receiver disabled, or this subscription is disabled. |
 | `404` | No subscription with that name. |
+| `429` | This subscription already has an agent run in flight — retry later. |
 
 Agent runs are asynchronous by design — webhook senders like Alertmanager time
 out quickly and retry on non-2xx, so the endpoint never holds the connection
 open while the agent works. The agent's response arrives in the conversation
-(prefixed `**Webhook: <name>**`) on the subscription's delivery target.
+(prefixed `**Webhook: <name>**`) on the subscription's delivery target. If the
+run fails outright, a brief failure notice is delivered there instead, so a
+triggered event never disappears silently.
+
+**One run at a time per subscription**: while an agent run is in flight,
+further POSTs to the same subscription answer `429` (senders that retry on
+non-2xx will simply deliver later). This bounds LLM spend when a sender
+re-notifies aggressively or an alert flaps. Deliver-only requests are not
+limited — they cost no LLM tokens.
 
 **Authentication**: the runtime itself does not authenticate webhook calls —
 like every other runtime endpoint, auth is terminated by the platform routing
@@ -127,9 +137,9 @@ route:
 
 Alertmanager groups alerts and sends one JSON payload per group (with
 `status`, `commonLabels`, and an `alerts` array) — the raw-payload default
-prompt handles it well. Note that Alertmanager retries on non-2xx and
-re-notifies on `repeat_interval`, so a flapping alert can trigger multiple
-runs.
+prompt handles it well. Alertmanager retries on non-2xx and re-notifies on
+`repeat_interval`; the per-subscription in-flight guard (`429` while a run is
+active) keeps that from fanning out into concurrent agent runs.
 
 **PagerDuty** — create a v3 webhook subscription (Integrations → Developer
 Tools → Webhooks) pointing at
