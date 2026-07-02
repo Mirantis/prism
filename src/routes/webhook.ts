@@ -1,0 +1,78 @@
+/**
+ * Inbound Webhook Route
+ *
+ * POST /agents/webhooks/:name — the ingestion endpoint external systems
+ * (Alertmanager, PagerDuty, GitHub, …) POST events to. Agent-mode
+ * subscriptions are fire-and-forget: the route answers 202 with a runId and
+ * the agent's response is delivered to the subscription's channels when the
+ * run finishes. Deliver-only subscriptions publish synchronously (200).
+ *
+ * Auth is terminated by the platform in front of the container (same as every
+ * other route); subscription CRUD lives in routes/management.ts.
+ */
+
+import { Router, Request, Response } from 'express';
+import { v7 as uuidv7 } from 'uuid';
+import { webhookService } from '../services/webhook.service';
+import { trackEvent } from '../lib/telemetry';
+import { logger } from '../logger';
+
+const router = Router();
+
+router.post('/webhooks/:name', async (req: Request<{ name: string }>, res: Response) => {
+  const { name } = req.params;
+  try {
+    const payload = req.body;
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+      res.status(400).json({ error: 'Body must be a JSON object' });
+      return;
+    }
+
+    const runId = uuidv7();
+    const result = await webhookService.handleInbound(
+      name,
+      payload as Record<string, unknown>,
+      req.headers,
+      runId,
+    );
+
+    // One owning emitter for 'webhook received' — every delivery attempt is
+    // counted with its gate outcome. No user resolved on this hot path.
+    trackEvent('webhook received', null, {
+      'webhook.run_id': runId,
+      'webhook.outcome':
+        result.status === 'accepted' || result.status === 'delivered'
+          ? 'accepted'
+          : result.status === 'ignored'
+            ? 'filtered'
+            : 'rejected',
+    });
+
+    switch (result.status) {
+      case 'receiver_disabled':
+        res.status(403).json({ error: 'Webhook receiver is disabled' });
+        return;
+      case 'not_found':
+        res.status(404).json({ error: `Unknown webhook: ${name}` });
+        return;
+      case 'subscription_disabled':
+        res.status(403).json({ error: `Webhook subscription "${name}" is disabled` });
+        return;
+      case 'ignored':
+        res.json({ status: 'ignored', event: result.event });
+        return;
+      case 'delivered':
+        res.json({ status: 'delivered', event: result.event });
+        return;
+      case 'accepted':
+        res.status(202).json({ status: 'accepted', event: result.event, runId });
+        return;
+    }
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Webhook] Failed to handle inbound webhook '${name}': ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+export const webhookRouter = router;

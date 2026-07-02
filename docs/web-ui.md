@@ -11,8 +11,8 @@ to the runtime.)
 
 ![Prism Web UI](images/web-ui.png)
 
-The UI is organized around a left sidebar with five sections: **Overview**,
-**Chat**, **Channels**, **Scheduled Tasks**, and **Profile**.
+The UI is organized around a left sidebar with six sections: **Overview**,
+**Chat**, **Channels**, **Scheduled Tasks**, **Webhooks**, and **Profile**.
 
 ## Overview
 
@@ -97,6 +97,22 @@ List, create, and delete the agent's cron-driven runs.
 The Web UI's create form takes raw cron expressions. (The agent itself, and the
 TUI, also accept natural-language schedules like "every weekday at 9am" — see
 **[Scheduled tasks](scheduled-tasks.md)**.)
+
+## Webhooks
+
+Let external systems trigger the agent by POSTing JSON to a named endpoint.
+
+- **Enable Webhooks** turns the inbound receiver on (it starts disabled); the
+  toggle applies immediately, no restart.
+- **New subscription** creates a named route (`/agents/webhooks/<name>`) with
+  an optional description, an event-type filter, a delivery target (All
+  channels / Chat / Slack), a **deliver only** mode that posts the rendered
+  payload without running the agent, and an optional prompt template.
+- Each row shows the endpoint path with a copy button, an **Active** switch
+  (disabled subscriptions reject events), and a delete action.
+
+See **[Webhooks](webhooks.md)** for the endpoint contract, prompt-template
+syntax, and copy-paste Alertmanager/PagerDuty/GitHub configs.
 
 ## Profile
 

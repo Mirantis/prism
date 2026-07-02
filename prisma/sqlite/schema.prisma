@@ -39,6 +39,7 @@ enum MessageTrigger {
   HEARTBEAT
   CRON_TASK
   GOAL
+  WEBHOOK
   SYSTEM
 }
 
@@ -81,6 +82,11 @@ model AgentWorkspace {
   dailyResetHour  Int  @default(4)
   idleTimeoutMins Int?
 
+  // Inbound webhook receiver master switch (the Webhooks page "Enable
+  // Webhooks" button). Off by default; POST /agents/webhooks/:name rejects
+  // with 403 while disabled.
+  webhooksEnabled Boolean @default(false)
+
   nexusMcpAgentToken String?
   nexusAgentTokenId  String?
 
@@ -96,6 +102,7 @@ model AgentWorkspace {
   slackVerificationCodes SlackVerificationCode[]
   slackHeartbeatTriggers SlackHeartbeatTrigger[]
   pendingSlackMessages   PendingSlackMessage[]
+  webhookSubscriptions   WebhookSubscription[]
   subagentLinks          AgentSubagent[]         @relation("ParentAgent")
   parentAgentLinks       AgentSubagent[]         @relation("ChildAgent")
 
@@ -436,4 +443,36 @@ model PendingSlackMessage {
 
   @@index([agentId, createdAt])
   @@map("pending_slack_messages")
+}
+
+// ============================================================================
+// Webhook Subscriptions
+// ============================================================================
+//
+// Named inbound webhook routes (POST /agents/webhooks/:name). Modeled on
+// hermes-agent's webhook subscriptions: an optional event-type allowlist
+// (matched against X-GitHub-Event / X-GitLab-Event / payload `event_type`),
+// an optional prompt template ({dot.path} / {__raw__} substitution; empty =
+// raw payload dump), and a delivery target. `deliverOnly` skips the agent and
+// delivers the rendered template directly (no LLM). Auth is terminated by the
+// platform in front of the container — no per-route secrets.
+
+model WebhookSubscription {
+  id          String  @id @default(uuid())
+  agentId     String
+  name        String  @unique
+  description String?
+  events      String? // comma-separated allowlist; null/empty = all events
+  prompt      String? // template; null/empty = raw payload dump
+  deliverTo   String  @default("all") // 'all' | 'chat' | 'slack'
+  deliverOnly Boolean @default(false)
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@map("webhook_subscriptions")
 }

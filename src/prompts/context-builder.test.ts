@@ -161,6 +161,15 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('# Scheduled Task Mode');
   });
 
+  it('webhook mode includes webhook instructions and no chat/bootstrap sections', async () => {
+    const context = createTestAgentContext({ isBootstrapPhase: true });
+    const prompt = await buildSystemPrompt(context, 'webhook');
+    expect(prompt).toContain('# Webhook Mode');
+    expect(prompt).toContain('inbound webhook');
+    expect(prompt).not.toContain('# Bootstrap Phase');
+    expect(prompt).not.toContain('# Scheduled Task Mode');
+  });
+
   it('includes agent guide when agentMd is non-empty', async () => {
     const context = createTestAgentContext({ agentMd: 'Be proactive with heartbeats.' });
     const prompt = await buildSystemPrompt(context, 'chat');

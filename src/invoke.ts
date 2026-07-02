@@ -488,6 +488,8 @@ export function withToolsCacheControl(tools: Record<string, Tool>): Record<strin
  * - heartbeat: minus cron-management AND goal tools (no schedule/goal reshaping)
  * - cron: minus list/delete-task AND goal tools, but KEEPS schedule_task so a
  *   thread-bound "continue in this conversation" run can re-`wait` (poll in-thread)
+ * - webhook: same as cron — an event-triggered run keeps schedule_task for
+ *   "check again later" follow-ups
  * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
  * - goal: minus create_goal (no nested goals) and cron-management; get_goal stays
  */
@@ -526,7 +528,7 @@ function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<st
   // Cron keeps `schedule_task` so a thread-bound "continue in this conversation"
   // run can re-`wait` (schedule a follow-up) and keep polling in-thread, but
   // still can't enumerate/delete the whole schedule or create/nest goals.
-  if (mode === 'cron') {
+  if (mode === 'cron' || mode === 'webhook') {
     return omit(new Set(['list_scheduled_tasks', 'delete_scheduled_task', ...goalToolNames]));
   }
 

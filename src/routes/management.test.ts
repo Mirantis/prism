@@ -88,6 +88,12 @@ const {
       delete: vi.fn(),
       findMany: vi.fn(),
     },
+    webhookSubscription: {
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      findMany: vi.fn(),
+    },
     agentWorkspace: {
       update: vi.fn(),
     },
@@ -714,6 +720,175 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Delete error');
+    });
+  });
+
+  // ==========================================================================
+  // Webhook Management
+  // ==========================================================================
+
+  describe('GET + PATCH /webhooks/receiver', () => {
+    it('returns the receiver enabled state', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', webhooksEnabled: false });
+
+      const res = await authedRequest(app).get('/agents/webhooks/receiver');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ enabled: false });
+    });
+
+    it('flips the receiver flag on the agent row', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', webhooksEnabled: false });
+      mockPrisma.agentWorkspace.update.mockResolvedValue({});
+
+      const res = await authedRequest(app)
+        .patch('/agents/webhooks/receiver')
+        .send({ enabled: true });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ enabled: true });
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: 'agent-1' },
+        data: { webhooksEnabled: true },
+      });
+    });
+
+    it('rejects a non-boolean enabled', async () => {
+      const res = await authedRequest(app)
+        .patch('/agents/webhooks/receiver')
+        .send({ enabled: 'yes' });
+
+      expect(res.status).toBe(400);
+      expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /webhook-subscriptions', () => {
+    beforeEach(() => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1' });
+    });
+
+    it('creates a subscription with a normalized name', async () => {
+      const created = { id: 'wh-1', name: 'github-push', deliverTo: 'all', deliverOnly: false };
+      mockPrisma.webhookSubscription.create.mockResolvedValue(created);
+
+      const res = await authedRequest(app)
+        .post('/agents/webhook-subscriptions')
+        .send({ name: '  GitHub Push ', description: 'PR reviews' });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toEqual(created);
+      expect(mockPrisma.webhookSubscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          agentId: 'agent-1',
+          name: 'github-push',
+          description: 'PR reviews',
+          deliverTo: 'all',
+          deliverOnly: false,
+        }),
+      });
+    });
+
+    it('rejects invalid names with a field error', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/webhook-subscriptions')
+        .send({ name: '-leading-hyphen' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.fieldErrors.name).toBeTruthy();
+      expect(mockPrisma.webhookSubscription.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects unknown deliverTo values with a field error', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/webhook-subscriptions')
+        .send({ name: 'alerts', deliverTo: 'log' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.fieldErrors.deliverTo).toBeTruthy();
+    });
+
+    it('409s duplicate names', async () => {
+      mockPrisma.webhookSubscription.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      const res = await authedRequest(app)
+        .post('/agents/webhook-subscriptions')
+        .send({ name: 'alerts' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.fieldErrors.name).toContain('already taken');
+    });
+  });
+
+  describe('PATCH /webhook-subscriptions/:id', () => {
+    it('toggles isActive', async () => {
+      const updated = { id: 'wh-1', isActive: false };
+      mockPrisma.webhookSubscription.update.mockResolvedValue(updated);
+
+      const res = await authedRequest(app)
+        .patch('/agents/webhook-subscriptions/wh-1')
+        .send({ isActive: false });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(updated);
+      expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
+        where: { id: 'wh-1' },
+        data: { isActive: false },
+      });
+    });
+
+    it('400s when no updatable fields are provided', async () => {
+      const res = await authedRequest(app)
+        .patch('/agents/webhook-subscriptions/wh-1')
+        .send({ bogus: true });
+
+      expect(res.status).toBe(400);
+      expect(mockPrisma.webhookSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it('404s a missing subscription', async () => {
+      mockPrisma.webhookSubscription.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Not found', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      const res = await authedRequest(app)
+        .patch('/agents/webhook-subscriptions/wh-missing')
+        .send({ isActive: true });
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe('DELETE /webhook-subscriptions/:id', () => {
+    it('deletes and reports success', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1' });
+      mockPrisma.webhookSubscription.delete.mockResolvedValue({ id: 'wh-1' });
+
+      const res = await authedRequest(app).delete('/agents/webhook-subscriptions/wh-1');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true });
+    });
+
+    it('404s a missing subscription', async () => {
+      mockPrisma.webhookSubscription.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Not found', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      const res = await authedRequest(app).delete('/agents/webhook-subscriptions/wh-missing');
+
+      expect(res.status).toBe(404);
     });
   });
 

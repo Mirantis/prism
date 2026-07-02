@@ -34,6 +34,12 @@ See **[Slack](slack.md)** for how the tokens are used.
 `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID` only matter on the **first** boot
 with an empty database; later boots reuse the stored workspace.
 
+[Webhooks](webhooks.md) need no environment variables — the receiver toggle and
+subscriptions live in the database, managed from the Web UI. Note that the
+runtime does not authenticate inbound webhook calls itself (auth is the
+platform's job in front of the container), so don't expose the runtime port
+directly to the internet.
+
 ## Models
 
 | Variable | Purpose | Default |

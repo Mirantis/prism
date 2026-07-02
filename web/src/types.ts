@@ -1,5 +1,5 @@
 export type MessageRole = 'USER' | 'AGENT' | 'SYSTEM';
-export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'SYSTEM';
+export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'WEBHOOK' | 'SYSTEM';
 
 export interface ToolCallRecord {
   tool: string;
@@ -153,6 +153,24 @@ export interface CronTask {
   isActive: boolean;
   lastRunAt: string | null;
   nextRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type WebhookDeliverTo = 'all' | 'chat' | 'slack';
+
+export interface WebhookSubscription {
+  id: string;
+  agentId: string;
+  name: string;
+  description: string | null;
+  /** Comma-separated event-type allowlist; null = accept all events. */
+  events: string | null;
+  /** Prompt template ({dot.path} / {__raw__}); null = raw payload dump. */
+  prompt: string | null;
+  deliverTo: WebhookDeliverTo;
+  deliverOnly: boolean;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }

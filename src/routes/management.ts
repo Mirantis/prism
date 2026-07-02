@@ -37,6 +37,14 @@
  *   POST   /agents/cron-tasks             - Create + register
  *   DELETE /agents/cron-tasks/:taskId     - Unschedule + delete
  *
+ * Webhook subscriptions (inbound ingestion lives in routes/webhook.ts):
+ *   GET    /agents/webhooks/receiver              - Receiver enabled state
+ *   PATCH  /agents/webhooks/receiver              - Enable/disable the receiver
+ *   GET    /agents/webhook-subscriptions          - List subscriptions
+ *   POST   /agents/webhook-subscriptions          - Create subscription
+ *   PATCH  /agents/webhook-subscriptions/:id      - Update (toggle/edit) subscription
+ *   DELETE /agents/webhook-subscriptions/:id      - Delete subscription
+ *
  * Skills (Agent Skills — agentskills.io):
  *   GET    /agents/skills                 - List available skills (name + description + source)
  *   POST   /agents/skills/:name/run       - Manually trigger a skill (streams over WS)
@@ -115,6 +123,12 @@ import {
 } from '../services/agent-archive.service';
 import { parseSchedule } from '../tools/cron';
 import cron from 'node-cron';
+import {
+  WEBHOOK_NAME_RE,
+  isValidDeliverTo,
+  normalizeWebhookName,
+  WEBHOOK_DELIVER_TARGETS,
+} from '../services/webhook.service';
 
 // 100 MiB cap — agent DBs are tens of MB in practice; this keeps a
 // malformed / oversized upload from filling memory before validation runs.
@@ -785,6 +799,223 @@ router.delete('/cron-tasks/:taskId', async (req: Request<{ taskId: string }>, re
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to delete cron task ${req.params.taskId}: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ============================================================================
+// Webhook Management
+// ============================================================================
+//
+// CRUD for inbound webhook subscriptions + the receiver master switch,
+// consumed by the Webhooks page in the web SPA. The ingestion endpoint
+// (POST /agents/webhooks/:name) lives in routes/webhook.ts.
+
+/**
+ * GET /agents/webhooks/receiver
+ * Whether the inbound webhook receiver is enabled.
+ */
+router.get('/webhooks/receiver', async (_req: Request, res: Response) => {
+  try {
+    const agent = await agentWorkspaceService.getAgent();
+    res.json({ enabled: agent.webhooksEnabled });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to read webhook receiver state: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * PATCH /agents/webhooks/receiver
+ * Enable/disable the inbound webhook receiver (hot toggle, no restart).
+ * Body: { enabled: boolean }
+ */
+router.patch('/webhooks/receiver', async (req: Request, res: Response) => {
+  try {
+    const { enabled } = req.body ?? {};
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled must be a boolean' });
+      return;
+    }
+    const agent = await agentWorkspaceService.getAgent();
+    await prisma.agentWorkspace.update({
+      where: { id: agent.id },
+      data: { webhooksEnabled: enabled },
+    });
+    trackEvent('webhook receiver toggled', agent.userId, {
+      'agent.id': agent.id,
+      'webhook.receiver_enabled': String(enabled),
+    });
+    res.json({ enabled });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to toggle webhook receiver: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * GET /agents/webhook-subscriptions
+ * List webhook subscriptions.
+ */
+router.get('/webhook-subscriptions', async (_req: Request, res: Response) => {
+  try {
+    const subscriptions = await prisma.webhookSubscription.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(subscriptions);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to list webhook subscriptions: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * POST /agents/webhook-subscriptions
+ * Create a webhook subscription.
+ * Body: { name, description?, events?, prompt?, deliverTo?, deliverOnly? }
+ */
+router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
+  try {
+    const body = req.body ?? {};
+    const name = normalizeWebhookName(body.name);
+    if (!name) {
+      res.status(400).json({ error: 'name is required', fieldErrors: { name: 'Name is required' } });
+      return;
+    }
+    if (!WEBHOOK_NAME_RE.test(name)) {
+      res.status(400).json({
+        error: `Invalid name: ${name}`,
+        fieldErrors: { name: 'Use lowercase letters, digits, hyphens, and underscores (must start with a letter or digit)' },
+      });
+      return;
+    }
+    const deliverTo = body.deliverTo ?? 'all';
+    if (!isValidDeliverTo(deliverTo)) {
+      res.status(400).json({
+        error: `deliverTo must be one of: ${WEBHOOK_DELIVER_TARGETS.join(', ')}`,
+        fieldErrors: { deliverTo: `Must be one of: ${WEBHOOK_DELIVER_TARGETS.join(', ')}` },
+      });
+      return;
+    }
+
+    const agent = await agentWorkspaceService.getAgent();
+    let subscription;
+    try {
+      subscription = await prisma.webhookSubscription.create({
+        data: {
+          agentId: agent.id,
+          name,
+          description: typeof body.description === 'string' && body.description.trim() ? body.description.trim() : null,
+          events: typeof body.events === 'string' && body.events.trim() ? body.events.trim() : null,
+          prompt: typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : null,
+          deliverTo,
+          deliverOnly: body.deliverOnly === true,
+        },
+      });
+    } catch (err) {
+      // P2002 = unique constraint (name)
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        res.status(409).json({
+          error: `A subscription named "${name}" already exists`,
+          fieldErrors: { name: `"${name}" is already taken` },
+        });
+        return;
+      }
+      throw err;
+    }
+
+    trackEvent('webhook subscription created', agent.userId, {
+      'agent.id': agent.id,
+      'webhook.subscription_id': subscription.id,
+      'webhook.deliver_to': subscription.deliverTo,
+      'webhook.deliver_only': String(subscription.deliverOnly),
+    });
+    res.status(201).json(subscription);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to create webhook subscription: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * PATCH /agents/webhook-subscriptions/:id
+ * Update a subscription (isActive toggle and/or editable fields).
+ * Body: any of { isActive, description, events, prompt, deliverTo, deliverOnly }
+ */
+router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const body = req.body ?? {};
+    const data: Prisma.WebhookSubscriptionUpdateInput = {};
+    if (typeof body.isActive === 'boolean') data.isActive = body.isActive;
+    if (typeof body.description === 'string') data.description = body.description.trim() || null;
+    if (typeof body.events === 'string') data.events = body.events.trim() || null;
+    if (typeof body.prompt === 'string') data.prompt = body.prompt.trim() || null;
+    if (body.deliverTo !== undefined) {
+      if (!isValidDeliverTo(body.deliverTo)) {
+        res.status(400).json({
+          error: `deliverTo must be one of: ${WEBHOOK_DELIVER_TARGETS.join(', ')}`,
+          fieldErrors: { deliverTo: `Must be one of: ${WEBHOOK_DELIVER_TARGETS.join(', ')}` },
+        });
+        return;
+      }
+      data.deliverTo = body.deliverTo;
+    }
+    if (typeof body.deliverOnly === 'boolean') data.deliverOnly = body.deliverOnly;
+    if (Object.keys(data).length === 0) {
+      res.status(400).json({ error: 'No updatable fields provided' });
+      return;
+    }
+
+    let subscription;
+    try {
+      subscription = await prisma.webhookSubscription.update({
+        where: { id: req.params.id },
+        data,
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+        res.status(404).json({ error: 'Webhook subscription not found' });
+        return;
+      }
+      throw err;
+    }
+    res.json(subscription);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to update webhook subscription ${req.params.id}: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * DELETE /agents/webhook-subscriptions/:id
+ * Delete a subscription.
+ */
+router.delete('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    let subscription;
+    try {
+      subscription = await prisma.webhookSubscription.delete({ where: { id: req.params.id } });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+        res.status(404).json({ error: 'Webhook subscription not found' });
+        return;
+      }
+      throw err;
+    }
+    const agent = await agentWorkspaceService.getAgent();
+    trackEvent('webhook subscription deleted', agent.userId, {
+      'agent.id': agent.id,
+      'webhook.subscription_id': subscription.id,
+    });
+    res.json({ success: true });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to delete webhook subscription ${req.params.id}: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });

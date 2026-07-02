@@ -1,0 +1,132 @@
+/**
+ * Webhook Step Definitions (web)
+ *
+ * Drives the Webhooks page (receiver banner, subscription modal, row
+ * toggles) and asserts on authoritative state: the receiver flag and
+ * subscription list via the management API, and delivered messages via the
+ * `conversation_messages` table (triggeredBy = WEBHOOK) — the agent run is
+ * asynchronous, so on-screen text alone would race it.
+ */
+
+import { createBdd } from 'playwright-bdd';
+import { expect } from '@playwright/test';
+import { WebhooksPage } from '../pages/webhooks.page';
+import * as dbHelper from '../support/db-helper';
+import { getCurrentAgentId } from './common.steps';
+
+const { When, Then } = createBdd();
+
+let lastWebhookStatus: number | null = null;
+
+/** Poll `fn` until `ok` holds or the timeout elapses; returns the last value. */
+async function pollUntil<T>(
+  fn: () => Promise<T>,
+  ok: (v: T) => boolean,
+  timeoutMs: number,
+  intervalMs = 1000,
+): Promise<T> {
+  const start = Date.now();
+  let last = await fn();
+  while (!ok(last) && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    last = await fn();
+  }
+  return last;
+}
+
+When('I navigate to the webhooks page', async ({ page }) => {
+  const webhooksPage = new WebhooksPage(page);
+  await webhooksPage.navigate();
+});
+
+Then('the webhook receiver banner is visible', async ({ page }) => {
+  await expect(page.getByText('Webhook receiver disabled')).toBeVisible();
+  await expect(new WebhooksPage(page).enableButton).toBeVisible();
+});
+
+When('I enable the webhook receiver', async ({ page }) => {
+  await new WebhooksPage(page).enableReceiver();
+});
+
+Then('the stored webhook receiver state is enabled', async ({ page }) => {
+  const res = await page.request.get('/agents/webhooks/receiver');
+  expect(res.ok()).toBe(true);
+  expect(await res.json()).toEqual({ enabled: true });
+});
+
+When(
+  'I create a deliver-only webhook subscription named {string} with prompt {string}',
+  async ({ page }, name: string, prompt: string) => {
+    await new WebhooksPage(page).createSubscription({ name, prompt, deliverOnly: true });
+  },
+);
+
+When(
+  'I create a webhook subscription named {string} with prompt {string}',
+  async ({ page }, name: string, prompt: string) => {
+    await new WebhooksPage(page).createSubscription({ name, prompt });
+  },
+);
+
+Then('the subscription {string} appears in the subscriptions list', async ({ page }, name: string) => {
+  await expect(new WebhooksPage(page).subscriptionRow(name)).toBeVisible();
+});
+
+Then('the stored webhook subscriptions include {string}', async ({ page }, name: string) => {
+  const res = await page.request.get('/agents/webhook-subscriptions');
+  expect(res.ok()).toBe(true);
+  const subscriptions = (await res.json()) as Array<{ name: string }>;
+  expect(subscriptions.map((s) => s.name)).toContain(name);
+});
+
+When('I disable the subscription {string}', async ({ page }, name: string) => {
+  await new WebhooksPage(page).toggleSubscription(name);
+  // Wait for the PATCH + list refetch to settle before firing the POST.
+  await pollUntil(
+    async () => {
+      const res = await page.request.get('/agents/webhook-subscriptions');
+      const subs = (await res.json()) as Array<{ name: string; isActive: boolean }>;
+      return subs.find((s) => s.name === name)?.isActive;
+    },
+    (active) => active === false,
+    10_000,
+    250,
+  );
+});
+
+When('I disable the webhook receiver via the API', async ({ page }) => {
+  const res = await page.request.patch('/agents/webhooks/receiver', {
+    data: { enabled: false },
+  });
+  expect(res.ok()).toBe(true);
+});
+
+When(
+  'I POST the payload {string} to webhook {string}',
+  async ({ page }, payload: string, name: string) => {
+    const res = await page.request.post(`/agents/webhooks/${name}`, {
+      data: JSON.parse(payload),
+    });
+    lastWebhookStatus = res.status();
+  },
+);
+
+Then('the webhook response status is {int}', async ({}, status: number) => {
+  expect(lastWebhookStatus).toBe(status);
+});
+
+Then(
+  'a webhook-triggered message containing {string} is stored in the conversation',
+  async ({}, text: string) => {
+    const agentId = getCurrentAgentId();
+    const messages = await pollUntil(
+      () =>
+        dbHelper.getPrisma().conversationMessage.findMany({
+          where: { triggeredBy: 'WEBHOOK', thread: { agentId } },
+        }),
+      (rows) => rows.some((m) => m.content.includes(text)),
+      120_000,
+    );
+    expect(messages.some((m) => m.content.includes(text))).toBe(true);
+  },
+);
