@@ -559,6 +559,62 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
+  // PATCH /verbose
+  // ==========================================================================
+
+  describe('PATCH /verbose', () => {
+    it('persists the flag, emits telemetry, and returns { verbose }', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', verbose: false });
+      mockPrisma.agentWorkspace.update.mockResolvedValue({ id: 'agent-1', verbose: true });
+
+      const res = await authedRequest(app)
+        .patch('/agents/verbose')
+        .send({ verbose: true });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ verbose: true });
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: 'agent-1' },
+        data: { verbose: true },
+      });
+      expect(mockTrackEvent).toHaveBeenCalledWith('agent verbose updated', null, {
+        'agent.id': 'agent-1',
+        'agent.verbose': 'true',
+      });
+    });
+
+    it('returns 400 when verbose is missing', async () => {
+      const res = await authedRequest(app)
+        .patch('/agents/verbose')
+        .send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('verbose');
+      expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 for non-boolean values (never coerces)', async () => {
+      for (const verbose of ['true', 1, null]) {
+        const res = await authedRequest(app)
+          .patch('/agents/verbose')
+          .send({ verbose });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain('boolean');
+      }
+      expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when Prisma update throws', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1' });
+      mockPrisma.agentWorkspace.update.mockRejectedValue(new Error('DB error'));
+      const res = await authedRequest(app)
+        .patch('/agents/verbose')
+        .send({ verbose: true });
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
   // POST /cron-tasks
   // ==========================================================================
 

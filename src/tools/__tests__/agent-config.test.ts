@@ -254,6 +254,64 @@ describe('getAgentConfigTools', () => {
         tools.update_settings.execute({ setting: 'heartbeatIntervalMs', value: Infinity }),
       ).rejects.toThrow('Heartbeat interval must be a finite integer');
     });
+
+    it('updates verbose with a boolean', async () => {
+      mockPrisma.agentWorkspace.update.mockResolvedValue(createTestAgentWorkspace({ verbose: true }));
+
+      const result = (await tools.update_settings.execute({
+        setting: 'verbose',
+        value: true,
+      })) as AgentConfigResult;
+
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: agentId },
+        data: { verbose: true },
+      });
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('true');
+    });
+
+    it('accepts only the exact strings "true"/"false" for verbose', async () => {
+      mockPrisma.agentWorkspace.update.mockResolvedValue(createTestAgentWorkspace({ verbose: true }));
+      await tools.update_settings.execute({ setting: 'verbose', value: 'true' });
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: agentId },
+        data: { verbose: true },
+      });
+
+      mockPrisma.agentWorkspace.update.mockClear();
+      mockPrisma.agentWorkspace.update.mockResolvedValue(createTestAgentWorkspace({ verbose: false }));
+      await tools.update_settings.execute({ setting: 'verbose', value: 'false' });
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: agentId },
+        data: { verbose: false },
+      });
+    });
+
+    it('rejects non-boolean verbose values instead of coercing them to false', async () => {
+      for (const value of ['yes', '1', '', 5]) {
+        await expect(
+          tools.update_settings.execute({ setting: 'verbose', value }),
+        ).rejects.toThrow('verbose must be a boolean');
+      }
+      expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    });
+
+    it('emits "agent verbose updated" (via updateVerbose) and not the generic config event', async () => {
+      mockPrisma.agentWorkspace.update.mockResolvedValue(createTestAgentWorkspace({ verbose: true }));
+
+      await tools.update_settings.execute({ setting: 'verbose', value: true });
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('agent verbose updated', null, {
+        'agent.id': agentId,
+        'agent.verbose': 'true',
+      });
+      expect(mockTrackEvent).not.toHaveBeenCalledWith(
+        'agent config updated',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
   });
 
   describe('update_vision', () => {

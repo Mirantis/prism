@@ -17,6 +17,7 @@
  *   PATCH  /agents/heartbeat-model                 - Set/clear heartbeat model override
  *   GET    /agents/cron-model                      - Cron model override + resolved effective
  *   PATCH  /agents/cron-model                      - Set/clear cron model override
+ *   PATCH  /agents/verbose                         - Set chat verbosity (stream steps vs final only)
  *   GET    /agents/details                         - Full agent record (markdown fields, etc.)
  *   DELETE /agents                                 - Delete agent
  *
@@ -321,6 +322,33 @@ router.patch('/cron-model', async (req: Request, res: Response) => {
     }
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to update cron model for agent: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * PATCH /agents/verbose
+ * Set chat verbosity. Body: `{ verbose: boolean }` (strict — non-boolean 400s).
+ * `true` streams every intermediate step of a turn; `false` (default) posts
+ * only the final result. Returns `{ verbose }` so the UI can prime its cache
+ * from the mutation response.
+ */
+router.patch('/verbose', async (req: Request, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (!('verbose' in body)) {
+      res.status(400).json({ error: "missing required field 'verbose'" });
+      return;
+    }
+    const verbose = await agentWorkspaceService.updateVerbose(body.verbose);
+    res.json({ verbose });
+  } catch (error: unknown) {
+    if (error instanceof ValidationError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to update verbose for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
