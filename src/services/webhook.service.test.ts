@@ -84,6 +84,7 @@ import {
   parseEventsList,
   normalizeWebhookName,
   isValidDeliverTo,
+  WEBHOOK_MAX_PENDING,
 } from './webhook.service';
 
 // ---------------------------------------------------------------------------
@@ -401,24 +402,52 @@ describe('handleInbound agent mode', () => {
     expect(content).toContain('bedrock down');
   });
 
-  it('rejects a concurrent delivery for the same subscription while a run is in flight', async () => {
+  it('queues concurrent deliveries and runs them serially, dropping nothing', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
-    let resolveInvoke!: (v: unknown) => void;
-    mockInvoke.mockReturnValue(new Promise((r) => (resolveInvoke = r)));
+    const resolvers: Array<(v: unknown) => void> = [];
+    mockInvoke.mockImplementation(() => new Promise((r) => resolvers.push(r)));
 
-    const first = await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    // Two distinct events arrive back-to-back — both are accepted.
+    const first = await webhookService.handleInbound('alerts', { n: 1 }, {}, 'run-1');
+    const second = await webhookService.handleInbound('alerts', { n: 2 }, {}, 'run-2');
     expect(first).toEqual({ status: 'accepted', event: 'unknown' });
+    expect(second).toEqual({ status: 'accepted', event: 'unknown' });
 
-    const second = await webhookService.handleInbound('alerts', {}, {}, 'run-2');
-    expect(second).toEqual({ status: 'busy' });
-    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    // Serial execution: the second run does not start until the first finishes.
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(1));
+    resolvers[0](invokeResult('first done'));
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(2));
+    resolvers[1](invokeResult('second done'));
 
-    resolveInvoke(invokeResult('done'));
-    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
+    // Both events produced a delivered message — nothing was dropped.
+    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalledTimes(2));
+    const contents = mockPublishToLatestThread.mock.calls.map((c) => c[2]);
+    expect(contents).toContain('**Webhook: alerts**\n\nfirst done');
+    expect(contents).toContain('**Webhook: alerts**\n\nsecond done');
+  });
 
-    // Slot freed — the next delivery runs again.
-    mockInvoke.mockResolvedValue(invokeResult('done again'));
-    const third = await webhookService.handleInbound('alerts', {}, {}, 'run-3');
-    expect(third).toEqual({ status: 'accepted', event: 'unknown' });
+  it('rejects deliveries once the per-subscription queue is full', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    let resolveFirst!: (v: unknown) => void;
+    mockInvoke.mockImplementation(() => new Promise((r) => (resolveFirst = r)));
+
+    // One in flight + WEBHOOK_MAX_PENDING queued — all accepted.
+    const inFlight = await webhookService.handleInbound('alerts', {}, {}, 'run-0');
+    expect(inFlight.status).toBe('accepted');
+    for (let i = 0; i < WEBHOOK_MAX_PENDING; i++) {
+      const queued = await webhookService.handleInbound('alerts', {}, {}, `run-${i + 1}`);
+      expect(queued.status).toBe('accepted');
+    }
+
+    // The next one overflows the cap.
+    const overflow = await webhookService.handleInbound('alerts', {}, {}, 'run-overflow');
+    expect(overflow).toEqual({ status: 'busy' });
+
+    // Unwind so the queued runs don't leak into other tests.
+    mockInvoke.mockResolvedValue(invokeResult('done'));
+    resolveFirst(invokeResult('done'));
+    await vi.waitFor(() =>
+      expect(mockPublishToLatestThread).toHaveBeenCalledTimes(WEBHOOK_MAX_PENDING + 1),
+    );
   });
 });

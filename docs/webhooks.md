@@ -53,7 +53,7 @@ see [Event filtering](#event-filtering)):
 | `400` | Body was not a JSON object. |
 | `403` | Receiver disabled, or this subscription is disabled. |
 | `404` | No subscription with that name. |
-| `429` | This subscription already has an agent run in flight — retry later. |
+| `429` | This subscription's run queue is full — retry later. |
 
 Agent runs are asynchronous by design — webhook senders like Alertmanager time
 out quickly and retry on non-2xx, so the endpoint never holds the connection
@@ -62,11 +62,13 @@ open while the agent works. The agent's response arrives in the conversation
 run fails outright, a brief failure notice is delivered there instead, so a
 triggered event never disappears silently.
 
-**One run at a time per subscription**: while an agent run is in flight,
-further POSTs to the same subscription answer `429` (senders that retry on
-non-2xx will simply deliver later). This bounds LLM spend when a sender
-re-notifies aggressively or an alert flaps. Deliver-only requests are not
-limited — they cost no LLM tokens.
+**Runs are serialized per subscription**: concurrent deliveries are accepted
+(`202`) and queued, then executed one at a time in arrival order — so rapid
+distinct events are never dropped, even from senders that don't retry on
+non-2xx (GitHub never redelivers automatically). The queue is capped
+(10 pending); beyond that, deliveries answer `429` as a backstop against
+pathological floods. Deliver-only requests are not queued or limited — they
+cost no LLM tokens.
 
 **Authentication**: the runtime itself does not authenticate webhook calls —
 like every other runtime endpoint, auth is terminated by the platform routing
@@ -138,8 +140,8 @@ route:
 Alertmanager groups alerts and sends one JSON payload per group (with
 `status`, `commonLabels`, and an `alerts` array) — the raw-payload default
 prompt handles it well. Alertmanager retries on non-2xx and re-notifies on
-`repeat_interval`; the per-subscription in-flight guard (`429` while a run is
-active) keeps that from fanning out into concurrent agent runs.
+`repeat_interval`; per-subscription run serialization keeps that from fanning
+out into concurrent agent runs, without dropping distinct alert groups.
 
 **PagerDuty** — create a v3 webhook subscription (Integrations → Developer
 Tools → Webhooks) pointing at

@@ -36,10 +36,17 @@ export type WebhookInboundResult =
   | { status: 'receiver_disabled' } // 403
   | { status: 'not_found' } // 404
   | { status: 'subscription_disabled' } // 403
-  | { status: 'busy' } // 429 — an agent run for this subscription is in flight
+  | { status: 'busy' } // 429 — this subscription's run queue is full
   | { status: 'ignored'; event: string } // 200 — event filter miss
   | { status: 'delivered'; event: string } // 200 — deliver-only, published
-  | { status: 'accepted'; event: string }; // 202 — agent run dispatched
+  | { status: 'accepted'; event: string }; // 202 — agent run dispatched or queued
+
+/**
+ * Max agent runs waiting per subscription (excluding the one in flight).
+ * Beyond this the delivery answers 429 — a backstop for pathological floods,
+ * not a normal-operation limit.
+ */
+export const WEBHOOK_MAX_PENDING = 10;
 
 // Hermes truncation caps for payload rendering.
 const RAW_PAYLOAD_MAX_CHARS = 4000;
@@ -137,13 +144,16 @@ export function renderWebhookPrompt(
 
 export class WebhookService {
   /**
-   * Subscription ids with an agent run currently in flight. One run per
-   * subscription at a time: with no in-container auth and retry-happy senders
-   * (Alertmanager re-notifies on repeat_interval and retries on non-2xx), an
-   * unguarded fan-out could turn one flapping alert into unbounded concurrent
-   * LLM runs. A concurrent delivery answers 429 so the sender retries later.
+   * Per-subscription run queues. Agent runs execute serially per subscription
+   * (one in flight, the rest FIFO-queued): rejecting concurrent deliveries
+   * outright would silently lose distinct events from senders that don't
+   * retry on non-2xx (GitHub never redelivers automatically), while unbounded
+   * fan-out would let a flapping alert turn into arbitrary concurrent LLM
+   * runs. Queueing gives both: nothing is dropped under normal bursts, and
+   * spend stays bounded by serialization plus the WEBHOOK_MAX_PENDING cap.
    */
-  private readonly inFlight = new Set<string>();
+  private readonly pending = new Map<string, Array<() => Promise<void>>>();
+  private readonly running = new Set<string>();
 
   /**
    * Process one inbound delivery. Synchronous parts (lookups, event filter,
@@ -189,21 +199,37 @@ export class WebhookService {
       return { status: 'delivered', event: eventType };
     }
 
-    // Agent mode — fire and forget; the route answers 202 now.
-    if (this.inFlight.has(subscription.id)) {
-      logger.warn(`[Webhook] '${name}' already has a run in flight — rejecting with 429`);
+    // Agent mode — enqueue and answer 202 now; runs drain serially per
+    // subscription so nothing is dropped and nothing fans out.
+    const queue = this.pending.get(subscription.id) ?? [];
+    if (queue.length >= WEBHOOK_MAX_PENDING) {
+      logger.warn(`[Webhook] '${name}' queue is full (${queue.length} pending) — rejecting with 429`);
       return { status: 'busy' };
     }
-    this.inFlight.add(subscription.id);
-    this.runAgent(subscription, prompt, runId, startTime)
+    queue.push(() => this.runAgent(subscription, prompt, runId, startTime));
+    this.pending.set(subscription.id, queue);
+    this.drainQueue(subscription.id);
+    return { status: 'accepted', event: eventType };
+  }
+
+  /** Run the next queued delivery for a subscription, if none is in flight. */
+  private drainQueue(subscriptionId: string): void {
+    if (this.running.has(subscriptionId)) return;
+    const next = this.pending.get(subscriptionId)?.shift();
+    if (!next) {
+      this.pending.delete(subscriptionId);
+      return;
+    }
+    this.running.add(subscriptionId);
+    next()
       .catch((error: unknown) => {
         const msg = error instanceof Error ? error.message : String(error);
-        logger.error(`[Webhook] Agent run for '${name}' failed: ${msg}`);
+        logger.error(`[Webhook] Agent run failed: ${msg}`);
       })
       .finally(() => {
-        this.inFlight.delete(subscription.id);
+        this.running.delete(subscriptionId);
+        this.drainQueue(subscriptionId);
       });
-    return { status: 'accepted', event: eventType };
   }
 
   /** Invoke the agent over the rendered prompt and deliver its final response. */

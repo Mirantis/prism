@@ -59,7 +59,7 @@ router.post('/webhooks/:name', async (req: Request<{ name: string }>, res: Respo
         res.status(403).json({ error: `Webhook subscription "${name}" is disabled` });
         return;
       case 'busy':
-        res.status(429).json({ error: `Webhook "${name}" already has a run in progress — retry later` });
+        res.status(429).json({ error: `Webhook "${name}" run queue is full — retry later` });
         return;
       case 'ignored':
         res.json({ status: 'ignored', event: result.event });
