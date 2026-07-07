@@ -101,8 +101,10 @@ sentinel); model IDs are Foundry deployment names (defaults
 Azure OpenAI `text-embedding-3` deployment on the same resource
 (optional — memory search fail-opens without it). Either provider can run
 direct or through the Nexus LLM gateway — routing is automatic when
-`NEXUS_API_URL` is set (`…/llm/bedrock/{region}` for Bedrock, `…/llm/azure`
-for Azure chat).
+`NEXUS_API_URL` is set (`…/llm/bedrock/{region}` for Bedrock,
+`…/llm/azure/v1` for Azure chat; Nexus holds the platform credentials, so no
+local LLM key is needed on that path). Azure embeddings always go direct —
+Nexus proxies the Anthropic surface only.
 
 ## SEA binaries — Node 22 pin
 

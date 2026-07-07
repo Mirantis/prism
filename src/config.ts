@@ -38,15 +38,17 @@ const llmProvider: 'bedrock' | 'azure' = rawLlmProvider === 'azure' ? 'azure' : 
 
 // Nexus LLM proxy base URL for Azure. Mirrors the Bedrock route mounts below
 // (`nexusLlmBaseUrl`), swapping the vendor segment:
-//   /projects/{projectId}/llm/azure  (explicit project — PROJECT_ID set)
-//   /llm/azure                        (auto-resolve project — PROJECT_ID unset)
-// The anthropic SDK appends `/messages`, so Nexus proxies this route to the
-// Foundry endpoint (`…/anthropic/v1/messages`). null when NEXUS_API_URL is
-// unset (callers talk to Foundry directly instead of going through Nexus).
+//   /projects/{projectId}/llm/azure/v1  (explicit project — PROJECT_ID set)
+//   /llm/azure/v1                        (auto-resolve project — PROJECT_ID unset)
+// Nexus forwards everything after `/llm/azure/` onto the Foundry resource's
+// `/anthropic` surface (nexus-monorepo#404), and the anthropic SDK appends
+// `/messages` — so the base must end at `/v1` for the proxied URL to land on
+// `…/anthropic/v1/messages`. null when NEXUS_API_URL is unset (callers talk
+// to Foundry directly instead of going through Nexus).
 const nexusAzureBaseUrl = nexusApiUrl
   ? (projectId
-      ? `${nexusApiUrl}/projects/${projectId}/llm/azure`
-      : `${nexusApiUrl}/llm/azure`)
+      ? `${nexusApiUrl}/projects/${projectId}/llm/azure/v1`
+      : `${nexusApiUrl}/llm/azure/v1`)
   : null;
 
 // Foundry Anthropic chat endpoint for Azure (Claude via Microsoft Foundry).

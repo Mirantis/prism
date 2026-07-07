@@ -52,10 +52,28 @@ describe('createAzureProvider', () => {
   });
 
   it('Nexus routing: an explicit baseURL overrides the Foundry endpoint', () => {
-    createAzureProvider('https://nexus.example/llm/azure');
+    createAzureProvider('https://nexus.example/llm/azure/v1');
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith(
-      expect.objectContaining({ baseURL: 'https://nexus.example/llm/azure' }),
+      expect.objectContaining({ baseURL: 'https://nexus.example/llm/azure/v1' }),
+    );
+  });
+
+  it('Nexus routing without a local key: falls back to a decoy apiKey (gateway injects the real one)', () => {
+    config.azureApiKey = undefined;
+    createAzureProvider('https://nexus.example/llm/azure/v1');
+
+    expect(mockCreateAnthropic).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: 'nexus-managed' }),
+    );
+  });
+
+  it('direct routing without a key passes undefined (SDK env fallback), no decoy', () => {
+    config.azureApiKey = undefined;
+    createAzureProvider();
+
+    expect(mockCreateAnthropic).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: undefined }),
     );
   });
 
@@ -98,9 +116,10 @@ describe('isAzureConfigured', () => {
     expect(isAzureConfigured()).toBe(true);
   });
 
-  it('true with deployment + key + nexus base URL (no Foundry endpoint)', () => {
+  it('true with deployment + nexus base URL and NO key/resource (gateway holds the key)', () => {
     config.azureFoundryBaseUrl = undefined;
-    config.nexusAzureBaseUrl = 'https://nexus.example/llm/azure';
+    config.azureApiKey = undefined;
+    config.nexusAzureBaseUrl = 'https://nexus.example/llm/azure/v1';
     expect(isAzureConfigured()).toBe(true);
   });
 

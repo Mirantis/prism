@@ -22,9 +22,12 @@ disabled without it.
 
 Each platform can run **direct** or **through Nexus** (the LLM gateway).
 Routing is automatic for both: set `NEXUS_API_URL` and the runtime routes
-through Nexus (`…/llm/bedrock/{region}` for Bedrock, `…/llm/azure` for Azure),
-otherwise it talks to the platform directly. The credentials and model IDs
-below are grouped per platform.
+through Nexus (`…/llm/bedrock/{region}` for Bedrock, `…/llm/azure/v1` for
+Azure chat), otherwise it talks to the platform directly. Through Nexus the
+gateway holds the platform credentials, so no local LLM credential is needed.
+Note: Nexus proxies the Anthropic (chat) surface only — Azure embeddings
+always go direct to Azure OpenAI. The credentials and model IDs below are
+grouped per platform.
 
 ## Credentials
 
@@ -32,7 +35,7 @@ below are grouped per platform.
 |----------|---------|
 | `AWS_BEARER_TOKEN_BEDROCK` | **(Bedrock)** Bedrock API key. The AI SDK auto-selects bearer auth when this is set. This is the one credential required for chat on Bedrock. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | **(Bedrock)** AWS SigV4 credentials, as an alternative to the bearer token. |
-| `AZURE_API_KEY` | **(Azure)** Foundry resource key, sent as the `x-api-key` header. Required for chat on Azure. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `AZURE_API_KEY` | **(Azure)** Foundry resource key, sent as the `x-api-key` header. Required for direct chat (not needed when routing through Nexus — the gateway holds the key) and for embeddings. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `AZURE_RESOURCE_NAME` | **(Azure, direct)** Foundry resource name — derives the chat endpoint `https://{resource}.services.ai.azure.com/anthropic/v1` and the embeddings endpoint `https://{resource}.openai.azure.com`. |
 | `AZURE_FOUNDRY_BASE_URL` | **(Azure)** Override the derived Foundry Anthropic chat endpoint (must end at `/anthropic/v1`). |
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). Enables the Slack adapter; validated via `auth.test` on boot. |

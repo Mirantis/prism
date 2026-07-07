@@ -54,9 +54,15 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
   );
 
   // Chat/classification — Anthropic Messages API. The SDK builds
-  // `${baseURL}/messages`, so the base must end at `/anthropic/v1`.
+  // `${baseURL}/messages`, so the base must end at `…/anthropic/v1` (direct)
+  // or `…/llm/azure/v1` (Nexus).
+  //
+  // Through Nexus the gateway injects the real Foundry key (`api-key` from
+  // its NEXUS_AZURE_TOKEN) on the outbound leg, so no local key is needed —
+  // but the SDK insists on one, so fall back to a decoy (the same pattern the
+  // Nexus sandbox uses for its provisioned ANTHROPIC_API_KEY).
   const anthropic = createAnthropic({
-    apiKey: config.azureApiKey,
+    apiKey: config.azureApiKey || (baseURL ? 'nexus-managed' : undefined),
     baseURL: baseURL ?? config.azureFoundryBaseUrl,
   });
 
@@ -75,15 +81,15 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
 }
 
 /**
- * Check if Azure is configured: a chat deployment, an api-key, and a Foundry
- * chat endpoint (Nexus gateway URL, explicit Foundry base URL, or a resource
- * name to derive it from). Embedding config is deliberately NOT required —
- * memory embeddings fail-open without it.
+ * Check if Azure is configured. Through Nexus only a chat deployment is
+ * needed — the gateway holds the Foundry key (Bedrock parity: no local
+ * credentials when routed via Nexus). Direct mode needs the deployment, an
+ * api-key, and a Foundry endpoint (resource name or explicit base URL).
+ * Embedding config is deliberately NOT required — memory embeddings
+ * fail-open without it.
  */
 export function isAzureConfigured(): boolean {
-  return Boolean(
-    config.azureModelId &&
-      config.azureApiKey &&
-      (config.nexusAzureBaseUrl || config.azureFoundryBaseUrl),
-  );
+  if (!config.azureModelId) return false;
+  if (config.nexusAzureBaseUrl) return true;
+  return Boolean(config.azureApiKey && config.azureFoundryBaseUrl);
 }
