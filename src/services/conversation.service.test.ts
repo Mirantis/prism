@@ -539,6 +539,24 @@ describe('ConversationService', () => {
       });
     });
 
+    it('emits thread.source=database for a top-level DM thread (no channelId → DATABASE)', async () => {
+      const now = new Date('2025-01-15T12:00:00Z');
+      mockPrisma.conversationThread.upsert.mockResolvedValue(
+        createTestThread({ id: 'thread-dm', createdAt: now, updatedAt: now }),
+      );
+
+      // Top-level DM: keyed by dmChannelId, no channelId option → DATABASE.
+      await conversationService.getOrCreateThreadByExternalId(
+        'user-123', 'agent-123', 'D07ERBJA69M',
+      );
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('thread created', 'user-123', {
+        'agent.id': 'agent-123',
+        'thread.id': 'thread-dm',
+        'thread.source': 'database',
+      });
+    });
+
     it('does not emit "thread created" when the external-id upsert hits an existing thread', async () => {
       mockPrisma.conversationThread.upsert.mockResolvedValue(
         createTestThread({

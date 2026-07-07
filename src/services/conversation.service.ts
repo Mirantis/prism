@@ -253,7 +253,10 @@ class ConversationService {
       trackEvent('thread created', userId, {
         'agent.id': agentId,
         'thread.id': thread.id,
-        'thread.source': 'slack',
+        // Mirror the actual threadSource: with a channelId this is a SLACK
+        // thread (channel or threaded DM); without one it's a top-level DM,
+        // which stays DATABASE — don't mislabel those as Slack.
+        'thread.source': options?.channelId ? 'slack' : 'database',
       });
     }
 
