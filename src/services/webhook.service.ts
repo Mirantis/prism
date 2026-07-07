@@ -17,6 +17,7 @@ import { invoke } from '../invoke';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
 import { conversationService } from './conversation.service';
 import { agentWorkspaceService } from './agent-workspace.service';
+import { slackMappingService } from './slack-mapping.service';
 import { prisma } from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
@@ -299,9 +300,15 @@ export class WebhookService {
 
   /**
    * Deliver a webhook message per the subscription's target:
-   * - 'all' — broadcast to every connected channel (heartbeat/cron behavior).
-   * - 'chat' / 'slack' — scoped to one channel via channelContext; the Slack
-   *   adapter falls back to the user's DM mapping when no channelId is given.
+   * - 'all' — broadcast to every connected channel (heartbeat/cron behavior);
+   *   post-#58 the Slack side is the DM + main channel, not every channel.
+   * - 'chat' — scoped to web chat; stored in the web-visible latest thread.
+   * - 'slack' — scoped to Slack (DM in personal mode, main channel in team
+   *   mode). Stored in the Slack destination's own thread — the DM
+   *   conversation thread (keyed by dmChannelId) or a per-main-channel thread —
+   *   both keyed by a non-null externalThreadId, so `listThreads` hides them
+   *   from web Recents + the CLI resume picker. Falls back to the latest
+   *   (web-visible) thread + a warning when no Slack destination is linked.
    */
   private async deliver(
     agentId: string,
@@ -310,18 +317,57 @@ export class WebhookService {
     content: string,
     options?: Pick<PublishOptions, 'toolCalls' | 'attachmentIds'>,
   ): Promise<void> {
-    if (deliverTo === 'chat' || deliverTo === 'slack') {
+    if (deliverTo === 'chat') {
       const thread = await conversationService.getOrCreateLatestThread(agentId, userId);
       await messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
         ...options,
-        channelContext: {
-          channel: deliverTo === 'chat' ? 'websocket' : 'slack',
-          threadId: thread.id,
-        },
+        channelContext: { channel: 'websocket', threadId: thread.id },
       });
       return;
     }
+
+    if (deliverTo === 'slack') {
+      const destChannelId = await this.resolveSlackDestination(agentId, userId);
+      if (destChannelId) {
+        // Reuse the Slack destination's conversation thread (the DM chat thread
+        // in personal mode; a dedicated per-channel thread in team mode). Both
+        // are DATABASE-source with externalThreadId set, hidden from web/CLI.
+        // No channelId in channelContext → the adapter's mapping fallback posts
+        // to the DM (personal) or the main channel (team), matching autonomous
+        // routing. (A channelId would route to deliverToChannel, which can't
+        // post to DM ids.)
+        const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, destChannelId);
+        await messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
+          ...options,
+          channelContext: { channel: 'slack', threadId: thread.id },
+        });
+        return;
+      }
+      // No DM or channel linked — Slack delivery is impossible. Store in the
+      // web-visible latest thread so the event isn't silently lost, and warn.
+      logger.warn(
+        "[Webhook] deliverTo:'slack' but no Slack DM or channel is linked — storing in the web thread instead",
+      );
+      await messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
+      return;
+    }
+
+    // 'all' — broadcast (web + Slack DM/main channel).
     await messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
+  }
+
+  /**
+   * Resolve the Slack destination channel id for a slack-scoped delivery:
+   * the user's DM channel (personal mode) if linked, else the agent's main
+   * linked channel (team mode), else null when Slack isn't linked.
+   */
+  private async resolveSlackDestination(agentId: string, userId: string): Promise<string | null> {
+    const dm = await prisma.slackMapping.findFirst({
+      where: { lensUserId: userId, agentId, dmChannelId: { not: null } },
+      select: { dmChannelId: true },
+    });
+    if (dm?.dmChannelId) return dm.dmChannelId;
+    return slackMappingService.getMainChannel(agentId);
   }
 }
 

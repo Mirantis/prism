@@ -267,6 +267,42 @@ describe('Requirement: User Mappings (DM Mode)', () => {
     });
   });
 
+  describe('Scenario: getMainChannel', () => {
+    it('returns the flagged main channel when one is set', async () => {
+      mockPrisma.slackMapping.findMany.mockResolvedValue([
+        { slackChannelId: 'C_OLD', isMainChannel: false },
+        { slackChannelId: 'C_MAIN', isMainChannel: true },
+      ]);
+
+      const result = await slackMappingService.getMainChannel('agent-001');
+
+      expect(result).toBe('C_MAIN');
+      expect(mockPrisma.slackMapping.findMany).toHaveBeenCalledWith({
+        where: { agentId: 'agent-001', slackChannelId: { not: null } },
+        orderBy: { createdAt: 'asc' },
+      });
+    });
+
+    it('falls back to the oldest linked channel when none is flagged', async () => {
+      mockPrisma.slackMapping.findMany.mockResolvedValue([
+        { slackChannelId: 'C_OLDEST', isMainChannel: false },
+        { slackChannelId: 'C_NEWER', isMainChannel: false },
+      ]);
+
+      const result = await slackMappingService.getMainChannel('agent-001');
+
+      expect(result).toBe('C_OLDEST');
+    });
+
+    it('returns null when the agent has no linked channels', async () => {
+      mockPrisma.slackMapping.findMany.mockResolvedValue([]);
+
+      const result = await slackMappingService.getMainChannel('agent-001');
+
+      expect(result).toBeNull();
+    });
+  });
+
   describe('Scenario: deleteUserMapping', () => {
     it('should delete user mappings for a specific connection and user', async () => {
       mockPrisma.slackMapping.deleteMany.mockResolvedValue({ count: 1 });

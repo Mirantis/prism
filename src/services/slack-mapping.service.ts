@@ -297,6 +297,20 @@ class SlackMappingService {
     }
   }
 
+  /**
+   * Resolve the agent's main channel id: the flagged channel, else the oldest
+   * linked channel (same "flagged, else oldest" rule the adapter uses to route
+   * autonomous output). Returns null when the agent has no linked channels.
+   */
+  async getMainChannel(agentId: string): Promise<string | null> {
+    const channels = await prisma.slackMapping.findMany({
+      where: { agentId, slackChannelId: { not: null } },
+      orderBy: { createdAt: 'asc' },
+    });
+    const main = channels.find((m) => m.isMainChannel) ?? channels[0];
+    return main?.slackChannelId ?? null;
+  }
+
   // ============================================================================
   // General Queries
   // ============================================================================

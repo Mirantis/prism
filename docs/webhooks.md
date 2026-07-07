@@ -28,7 +28,7 @@ Click **New subscription** on the Webhooks page:
 | **Name** | Lowercase slug (`[a-z0-9][a-z0-9_-]*`); becomes the endpoint path `/agents/webhooks/<name>`. Spaces are normalized to hyphens. |
 | **Description** | What this webhook does (optional, shown in the list). |
 | **Events** | Comma-separated event-type allowlist; empty = accept all. See [Event filtering](#event-filtering). |
-| **Deliver to** | Where results go: **All channels** (default — web chat + Slack, like heartbeat alerts), **Chat** (web only), or **Slack** (the linked DM). |
+| **Deliver to** | Where results go: **All channels** (default — web chat + Slack, like heartbeat alerts), **Chat** (web chat only), or **Slack** (Slack only — see [Delivery targets & storage](#delivery-targets--storage)). |
 | **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
 | **Prompt** | Instructions for the agent when this webhook fires (optional). Supports payload substitution — see below. |
 
@@ -74,6 +74,25 @@ cost no LLM tokens.
 like every other runtime endpoint, auth is terminated by the platform routing
 in front of the container. Don't expose the runtime port directly to the
 internet.
+
+## Delivery targets & storage
+
+Each subscription's **Deliver to** setting controls both where the message is
+sent and where it's recorded:
+
+- **All channels** (default) — broadcast, exactly like a heartbeat alert: the
+  message appears in web chat and is sent to Slack. On Slack that means your
+  **DM** (personal mode) or the agent's **main channel** (team mode — the one
+  flagged on the [Channels page](web-ui.md#channels-slack), else the oldest
+  linked channel), not every linked channel.
+- **Chat** — web chat only; nothing is sent to Slack.
+- **Slack** — Slack only. The message is delivered to your DM (personal mode)
+  or the main channel (team mode) and is **kept out of web chat**: it's stored
+  in that Slack destination's own conversation thread (the DM conversation in
+  personal mode; a dedicated per-channel thread in team mode), which the web
+  Recents list and CLI resume picker don't show. If no Slack DM or channel is
+  linked, the message falls back to the web thread (and the runtime logs a
+  warning) so a triggered event is never silently lost.
 
 ## Prompt templates
 
