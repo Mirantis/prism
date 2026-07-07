@@ -3,8 +3,8 @@
  *
  * Two orthogonal choices:
  *  - Vendor: `config.llmProvider` (`bedrock` default, or `azure`).
- *  - Routing: direct vs. through the Nexus gateway, decided per vendor by
- *    whether its Nexus base URL is set (`nexusLlmBaseUrl` / `nexusAzureBaseUrl`).
+ *  - Routing: each vendor's factory takes an optional Nexus base URL — set →
+ *    route through the Nexus gateway, unset → direct to the vendor.
  *
  * Every underlying factory returns the same call shape — a callable
  * `(modelId) => LanguageModel` with `.embedding(modelId)` attached — so callers
@@ -13,17 +13,12 @@
 
 import { config } from '../config';
 import { createBedrockProvider, isBedrockConfigured } from './bedrock-provider';
-import { createNexusProvider } from './nexus-provider';
 import { createAzureProvider, isAzureConfigured } from './azure-provider';
 
 export function createProvider() {
-  if (config.llmProvider === 'azure') {
-    // baseURL set → Nexus routing; unset → direct Azure.
-    return createAzureProvider(config.nexusAzureBaseUrl ?? undefined);
-  }
-  return config.nexusLlmBaseUrl
-    ? createNexusProvider(config.nexusLlmBaseUrl)
-    : createBedrockProvider();
+  return config.llmProvider === 'azure'
+    ? createAzureProvider(config.nexusAzureBaseUrl ?? undefined)
+    : createBedrockProvider(config.nexusLlmBaseUrl ?? undefined);
 }
 
 /** Whether the selected provider has the config it needs to serve requests. */

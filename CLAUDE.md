@@ -292,10 +292,9 @@ src/
 │   └── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
 ├── lib/
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
-│   ├── create-provider.ts      # Unified LLM provider factory: picks vendor (bedrock/azure) x routing (direct/nexus); `isProviderConfigured()`
-│   ├── bedrock-provider.ts     # AWS Bedrock provider factory (direct)
-│   ├── nexus-provider.ts       # Nexus-routed Bedrock provider (baseURL override)
-│   ├── azure-provider.ts       # Azure OpenAI provider factory (direct or Nexus via baseURL)
+│   ├── create-provider.ts      # Unified LLM provider factory: picks vendor (bedrock/azure), passes each its optional Nexus baseURL; `isProviderConfigured()`
+│   ├── bedrock-provider.ts     # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or Nexus when baseURL set)
+│   ├── azure-provider.ts       # Azure OpenAI provider factory: `createAzureProvider(baseURL?)` (direct, or Nexus when baseURL set)
 │   ├── classification.ts       # Classification-gate model factory (`getClassificationModel()`)
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers

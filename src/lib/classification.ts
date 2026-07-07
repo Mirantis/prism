@@ -1,14 +1,13 @@
 /**
  * Classification-gate model factory.
  *
- * Routes through Nexus when NEXUS_API_URL is configured, otherwise falls
- * back to direct Bedrock — the gate's classification model (default
- * Haiku) is supported either way; Nexus is only needed for usage/audit
- * tracking.
+ * Goes through the unified `createProvider()`, so it inherits whatever vendor
+ * and routing (direct or Nexus) the runtime is configured for. The classifier
+ * uses a fast model (`classificationModelId`) supported on either provider.
  *
- * Lives in its own module so `nexus-provider.ts` doesn't need to import
- * `create-provider.ts` (which would create a cycle:
- * create-provider → nexus-provider → create-provider).
+ * Kept in its own module (rather than in `create-provider.ts`) so the provider
+ * factories never transitively import `create-provider`, keeping that a leaf
+ * factory with no import cycle.
  */
 
 import { config } from '../config';

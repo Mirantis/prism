@@ -12,8 +12,10 @@
  * model surfaces a Bedrock deserialization error ("Invalid 'tools': missing
  * field type") because Kimi expects OpenAI-shaped tool definitions.
  *
- * Two authentication paths exist side by side; the SDK picks between them
- * automatically based on which environment is populated:
+ * Routing: `createBedrockProvider(baseURL?)` runs direct to AWS (unset) or
+ * through the Nexus LLM gateway (a `baseURL` — Nexus re-signs, tracks usage,
+ * and audits, so no local credentials are used). Direct mode has two auth
+ * paths, picked automatically by the SDK from the environment:
  *
  * 1. Bearer token: when `AWS_BEARER_TOKEN_BEDROCK` is set,
  *    `@ai-sdk/amazon-bedrock` short-circuits SigV4 and sends
@@ -84,14 +86,14 @@ export function isAnthropicModelId(modelId: string): boolean {
  *  - Embeddings always route through the generic provider (the Anthropic
  *    provider doesn't expose embedding models).
  *
- * Supports two credential modes:
- * 1. Explicit keys via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (local dev)
- * 2. Default credential chain via credentialProvider — ECS task role, instance profile, etc. (production)
+ * `baseURL` selects routing: unset → direct AWS (credentials via explicit keys
+ * or the default credential chain); set → the Nexus gateway, which does its own
+ * signing (so no local credentials are attached).
  */
-export function createBedrockProvider() {
-  logger.info('Creating Bedrock provider with configuration');
+export function createBedrockProvider(baseURL?: string) {
+  logger.info({ routing: baseURL ? 'nexus' : 'direct' }, 'Creating Bedrock provider');
 
-  const sharedOptions = createSharedBedrockOptions();
+  const sharedOptions = baseURL ? { region: config.awsRegion, baseURL } : createSharedBedrockOptions();
   const anthropic = createBedrockAnthropic(sharedOptions);
   const generic = createAmazonBedrock(sharedOptions);
 

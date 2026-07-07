@@ -7,13 +7,11 @@ import { config } from '../config';
 
 const {
   mockCreateBedrockProvider,
-  mockCreateNexusProvider,
   mockCreateAzureProvider,
   mockIsBedrockConfigured,
   mockIsAzureConfigured,
 } = vi.hoisted(() => ({
   mockCreateBedrockProvider: vi.fn(() => 'bedrock-provider'),
-  mockCreateNexusProvider: vi.fn(() => 'nexus-provider'),
   mockCreateAzureProvider: vi.fn(() => 'azure-provider'),
   mockIsBedrockConfigured: vi.fn(() => true),
   mockIsAzureConfigured: vi.fn(() => true),
@@ -22,9 +20,6 @@ const {
 vi.mock('./bedrock-provider', () => ({
   createBedrockProvider: mockCreateBedrockProvider,
   isBedrockConfigured: mockIsBedrockConfigured,
-}));
-vi.mock('./nexus-provider', () => ({
-  createNexusProvider: mockCreateNexusProvider,
 }));
 vi.mock('./azure-provider', () => ({
   createAzureProvider: mockCreateAzureProvider,
@@ -41,16 +36,16 @@ describe('createProvider', () => {
     vi.clearAllMocks();
   });
 
-  it('bedrock + no nexus URL → direct Bedrock', () => {
+  it('bedrock + no nexus URL → direct Bedrock (undefined baseURL)', () => {
     expect(createProvider()).toBe('bedrock-provider');
-    expect(mockCreateNexusProvider).not.toHaveBeenCalled();
+    expect(mockCreateBedrockProvider).toHaveBeenCalledWith(undefined);
     expect(mockCreateAzureProvider).not.toHaveBeenCalled();
   });
 
-  it('bedrock + nexus URL → Nexus-routed Bedrock', () => {
+  it('bedrock + nexus URL → Bedrock with the Nexus baseURL', () => {
     config.nexusLlmBaseUrl = 'https://nexus.example/llm/bedrock/us-east-1';
-    expect(createProvider()).toBe('nexus-provider');
-    expect(mockCreateNexusProvider).toHaveBeenCalledWith('https://nexus.example/llm/bedrock/us-east-1');
+    expect(createProvider()).toBe('bedrock-provider');
+    expect(mockCreateBedrockProvider).toHaveBeenCalledWith('https://nexus.example/llm/bedrock/us-east-1');
   });
 
   it('azure + no nexus URL → direct Azure (undefined baseURL)', () => {
