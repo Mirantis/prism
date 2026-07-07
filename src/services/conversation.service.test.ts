@@ -599,6 +599,7 @@ describe('ConversationService', () => {
       mockPrisma.conversationThread.findUnique.mockResolvedValue({
         externalThreadId: '1700000000.000100',
         externalChannelId: 'C123',
+        threadSource: 'SLACK',
         userId: 'user-123',
         agentId: 'agent-123',
       });
@@ -638,6 +639,30 @@ describe('ConversationService', () => {
         threadId: 'thread-1',
       });
       // A resolved channel is deliverable — no warning.
+      expect(mockLogger.warn).not.toHaveBeenCalled();
+    });
+
+    it('does NOT treat a top-level DM thread externalThreadId as a Slack thread_ts', async () => {
+      // Top-level DMs are threadSource=DATABASE and store the dmChannelId in
+      // externalThreadId. A cron/goal continuation must post top-level (into the
+      // DM channel), NOT with thread_ts=dmChannelId (an invalid Slack ts).
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalThreadId: 'D07ERBJA69M',
+        externalChannelId: null,
+        threadSource: 'DATABASE',
+        userId: 'user-123',
+        agentId: 'agent-123',
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValue({ dmChannelId: 'D07ERBJA69M' });
+
+      const ctx = await conversationService.getChannelContext('thread-1', 'slack');
+
+      expect(ctx).toEqual({
+        channel: 'slack',
+        channelId: 'D07ERBJA69M',
+        threadTs: undefined,
+        threadId: 'thread-1',
+      });
       expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 

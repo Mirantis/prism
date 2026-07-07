@@ -169,7 +169,7 @@ class ConversationService {
     if (originChannel === 'slack') {
       const thread = await prisma.conversationThread.findUnique({
         where: { id: threadId },
-        select: { externalThreadId: true, externalChannelId: true, userId: true, agentId: true },
+        select: { externalThreadId: true, externalChannelId: true, threadSource: true, userId: true, agentId: true },
       });
       let channelId = originChannelId ?? thread?.externalChannelId ?? undefined;
       // A DM-originated thread carries no channel id (the Slack DM path doesn't
@@ -199,7 +199,12 @@ class ConversationService {
       return {
         channel: 'slack',
         channelId,
-        threadTs: thread?.externalThreadId ?? undefined,
+        // Only SLACK-sourced threads carry a real Slack thread_ts in
+        // externalThreadId. Top-level DM threads are threadSource=DATABASE and
+        // store the dmChannelId (a `D…` id) there — using that as a thread_ts
+        // would post with an invalid thread_ts and break the continuation, so
+        // resume them top-level (channelId scopes delivery to the DM).
+        threadTs: thread?.threadSource === ThreadSource.SLACK ? (thread.externalThreadId ?? undefined) : undefined,
         threadId,
       };
     }
