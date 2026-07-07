@@ -43,15 +43,26 @@ const llmProvider: 'bedrock' | 'azure' = rawLlmProvider === 'azure' ? 'azure' : 
 // here; otherwise (null) it talks to Azure directly.
 const nexusAzureBaseUrl = process.env.NEXUS_AZURE_BASE_URL || null;
 
+// Foundry Anthropic chat endpoint for Azure (Claude via Microsoft Foundry).
+// Explicit override wins; else derived from the resource name. Must end at
+// `/anthropic/v1` — the anthropic SDK appends `/messages`.
+const azureResourceName = process.env.AZURE_RESOURCE_NAME;
+const azureFoundryBaseUrl =
+  process.env.AZURE_FOUNDRY_BASE_URL ||
+  (azureResourceName ? `https://${azureResourceName}.services.ai.azure.com/anthropic/v1` : undefined);
+
 // Resolved once so the vendor-specific fields and the provider-neutral
 // `chatModelId`/`classificationModelId`/`embeddingModelId` share one source.
 const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-4-8';
 const bedrockClassificationModelId =
   process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 const bedrockEmbeddingModelId = process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0';
-// Azure model IDs are deployment names; empty when Azure isn't configured.
-const azureModelId = process.env.AZURE_MODEL_ID || '';
-const azureClassificationModelId = process.env.AZURE_CLASSIFICATION_MODEL_ID || '';
+// Azure model IDs are Foundry *deployment names*. Defaults match Foundry's
+// default deployment names (= Claude model IDs, hosted on Azure). The
+// embedding deployment (Azure OpenAI text-embedding-3) has no default —
+// optional, memory embeddings fail-open without it.
+const azureModelId = process.env.AZURE_MODEL_ID || 'claude-opus-4-8';
+const azureClassificationModelId = process.env.AZURE_CLASSIFICATION_MODEL_ID || 'claude-haiku-4-5';
 const azureEmbeddingModelId = process.env.AZURE_EMBEDDING_MODEL_ID || '';
 
 export const config = {
@@ -72,13 +83,17 @@ export const config = {
   // rest of the runtime reads instead of the vendor-specific fields.
   llmProvider,
 
-  // Azure OpenAI (used when LLM_PROVIDER=azure). Model IDs are Azure
-  // *deployment names*, not OpenAI model names. `azureApiKey` is sent as the
-  // `api-key` header; it may be a `__nexus_cred:<uuid>__` sentinel the MITM
-  // proxy rewrites on the wire (same mechanism as AWS_BEARER_TOKEN_BEDROCK).
-  azureResourceName: process.env.AZURE_RESOURCE_NAME,
+  // Azure — Claude via Microsoft Foundry (used when LLM_PROVIDER=azure).
+  // Chat/classification speak the Anthropic Messages API at
+  // `azureFoundryBaseUrl`; embeddings go to Azure OpenAI (text-embedding-3
+  // deployment) on the same resource. Model IDs are Foundry *deployment
+  // names*. `azureApiKey` is sent as the `x-api-key` header; it may be a
+  // `__nexus_cred:<uuid>__` sentinel the MITM proxy rewrites on the wire
+  // (same mechanism as AWS_BEARER_TOKEN_BEDROCK).
+  azureResourceName,
+  azureFoundryBaseUrl,
   azureApiKey: process.env.AZURE_API_KEY,
-  azureApiVersion: process.env.AZURE_API_VERSION, // undefined → SDK default ('preview')
+  azureApiVersion: process.env.AZURE_API_VERSION, // embeddings only; undefined → SDK default ('preview')
   azureModelId,
   azureClassificationModelId,
   azureEmbeddingModelId,

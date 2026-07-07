@@ -11,14 +11,21 @@ The runtime talks to one LLM provider per container, chosen by `LLM_PROVIDER`:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `LLM_PROVIDER` | LLM vendor: `bedrock` or `azure`. Any other value falls back to `bedrock`. | `bedrock` |
+| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS) or `azure` (Claude via Microsoft Foundry). Any other value falls back to `bedrock`. | `bedrock` |
 
-Each provider can run **direct** to the vendor or **through Nexus** (the LLM
-gateway). For **Bedrock**, routing is automatic — set `NEXUS_API_URL` and the
-runtime routes through Nexus, otherwise direct. For **Azure**, routing through
-Nexus is opt-in: set `NEXUS_AZURE_BASE_URL` to the real Nexus Azure endpoint
-(there is no auto-computed route); unset means direct to Azure. The credentials
-and model IDs below are grouped per provider.
+Both platforms serve **Claude** through the Anthropic Messages API — `azure`
+mode runs the agent on Claude deployed in [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
+(`https://{resource}.services.ai.azure.com/anthropic/v1/messages`). On Azure,
+memory embeddings come from an Azure OpenAI `text-embedding-3` deployment
+(Anthropic has no embedding model); this is optional — memory search is
+disabled without it.
+
+Each platform can run **direct** or **through Nexus** (the LLM gateway). For
+**Bedrock**, routing is automatic — set `NEXUS_API_URL` and the runtime routes
+through Nexus, otherwise direct. For **Azure**, routing through Nexus is
+opt-in: set `NEXUS_AZURE_BASE_URL` to the real Nexus Azure endpoint (there is
+no auto-computed route); unset means direct to Foundry. The credentials and
+model IDs below are grouped per platform.
 
 ## Credentials
 
@@ -26,8 +33,9 @@ and model IDs below are grouped per provider.
 |----------|---------|
 | `AWS_BEARER_TOKEN_BEDROCK` | **(Bedrock)** Bedrock API key. The AI SDK auto-selects bearer auth when this is set. This is the one credential required for chat on Bedrock. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | **(Bedrock)** AWS SigV4 credentials, as an alternative to the bearer token. |
-| `AZURE_API_KEY` | **(Azure)** Azure OpenAI key, sent as the `api-key` header. Required for chat on Azure. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
-| `AZURE_RESOURCE_NAME` | **(Azure, direct)** Azure OpenAI resource name — builds the endpoint `https://{resourceName}.openai.azure.com`. Ignored when routing through Nexus. |
+| `AZURE_API_KEY` | **(Azure)** Foundry resource key, sent as the `x-api-key` header. Required for chat on Azure. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `AZURE_RESOURCE_NAME` | **(Azure, direct)** Foundry resource name — derives the chat endpoint `https://{resource}.services.ai.azure.com/anthropic/v1` and the embeddings endpoint `https://{resource}.openai.azure.com`. |
+| `AZURE_FOUNDRY_BASE_URL` | **(Azure)** Override the derived Foundry Anthropic chat endpoint (must end at `/anthropic/v1`). |
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). Enables the Slack adapter; validated via `auth.test` on boot. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-…`) for Socket Mode. |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check — the bot token's app ID must match this if set. |
@@ -60,7 +68,8 @@ directly to the internet.
 ## Models
 
 Which set applies depends on `LLM_PROVIDER`. Bedrock model IDs are Bedrock model
-identifiers; **Azure model IDs are deployment names**, not OpenAI model names.
+identifiers; **Azure model IDs are Foundry deployment names** (which default to
+Claude model IDs when you deploy without renaming).
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -68,14 +77,14 @@ identifiers; **Azure model IDs are deployment names**, not OpenAI model names.
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | **(Bedrock)** Fast model for the [heartbeat](heartbeat.md) DELIVER/SUPPRESS gate | a Claude Haiku model |
 | `BEDROCK_EMBEDDING_MODEL_ID` | **(Bedrock)** Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | **(Bedrock)** AWS region for Bedrock | `us-east-1` |
-| `AZURE_MODEL_ID` | **(Azure)** Main model — a chat deployment name | — |
-| `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast deployment for the heartbeat gate | — |
-| `AZURE_EMBEDDING_MODEL_ID` | **(Azure)** Embedding deployment (a `text-embedding-3` model; truncated to 1024 dims to match the memory index) | — |
-| `AZURE_API_VERSION` | **(Azure)** Azure OpenAI API version | SDK default (`preview`) |
+| `AZURE_MODEL_ID` | **(Azure)** Main model — a Claude chat deployment name | `claude-opus-4-8` |
+| `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast Claude deployment for the heartbeat gate | `claude-haiku-4-5` |
+| `AZURE_EMBEDDING_MODEL_ID` | **(Azure)** Azure OpenAI embedding deployment (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). Optional — memory search is disabled without it. | — |
+| `AZURE_API_VERSION` | **(Azure)** Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
 
 The main model can also be set per-agent at runtime (Web UI Profile, the TUI
 `/model` command, or by asking the agent), which overrides the env default. On
-Azure, per-agent overrides are deployment names.
+Azure, per-agent overrides are Foundry deployment names.
 
 **Heartbeat and scheduled (cron) runs** can each use their own model, set the
 same ways — the Web UI Profile page or the TUI `/heartbeat-model` /

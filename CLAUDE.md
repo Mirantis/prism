@@ -90,14 +90,20 @@ credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy.
 
 One LLM provider per container, selected by `LLM_PROVIDER` (`bedrock`
-default, or `azure`). **Bedrock** via Bearer API key
+default, or `azure`). Both serve **Claude**. **Bedrock** via Bearer API key
 (`AWS_BEARER_TOKEN_BEDROCK`) — the SDK auto-selects Bearer over SigV4
-when set. **Azure OpenAI** via `AZURE_API_KEY` (sent as the `api-key`
-header; may also be a `__nexus_cred__` sentinel) + `AZURE_RESOURCE_NAME`
-and Azure deployment names as model IDs. Either provider can run direct or
-through the Nexus LLM gateway: Bedrock routes via Nexus automatically when
-`NEXUS_API_URL` is set; Azure routes via Nexus only when `NEXUS_AZURE_BASE_URL`
-is set explicitly (its Nexus route is not assumed/computed).
+when set. **Azure = Claude via Microsoft Foundry**: chat/classification
+speak the Anthropic Messages API at
+`https://{AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic/v1/messages`
+with `AZURE_API_KEY` sent as `x-api-key` (may be a `__nexus_cred__`
+sentinel); model IDs are Foundry deployment names (defaults
+`claude-opus-4-8` / `claude-haiku-4-5`). Azure embeddings come from an
+Azure OpenAI `text-embedding-3` deployment on the same resource
+(optional — memory search fail-opens without it). Either provider can run
+direct or through the Nexus LLM gateway: Bedrock routes via Nexus
+automatically when `NEXUS_API_URL` is set; Azure chat routes via Nexus only
+when `NEXUS_AZURE_BASE_URL` is set explicitly (its Nexus route is not
+assumed/computed).
 
 ## SEA binaries — Node 22 pin
 
@@ -296,7 +302,7 @@ src/
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
 │   ├── create-provider.ts      # Unified LLM provider factory: picks vendor (bedrock/azure), passes each its optional Nexus baseURL; `isProviderConfigured()`
 │   ├── bedrock-provider.ts     # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or Nexus when baseURL set)
-│   ├── azure-provider.ts       # Azure OpenAI provider factory: `createAzureProvider(baseURL?)` (direct, or Nexus when baseURL set)
+│   ├── azure-provider.ts       # Azure provider factory (Claude via MS Foundry, Anthropic Messages API; embeddings via Azure OpenAI): `createAzureProvider(baseURL?)`
 │   ├── classification.ts       # Classification-gate model factory (`getClassificationModel()`)
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
@@ -342,10 +348,12 @@ What the operator sets on `docker run`:
 | `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | — |
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `us.anthropic.claude-opus-4-8` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat DELIVER/SUPPRESS) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
-| `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Azure OpenAI resource + api-key (used when `LLM_PROVIDER=azure`) | — |
-| `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` / `AZURE_EMBEDDING_MODEL_ID` | Azure deployment names (chat / classification gate / embeddings) | — |
-| `AZURE_API_VERSION` | Azure OpenAI API version | SDK default (`preview`) |
-| `NEXUS_AZURE_BASE_URL` | Full Nexus Azure LLM endpoint; set to route Azure via Nexus (not computed from `NEXUS_API_URL`). Unset = direct Azure | — |
+| `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
+| `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-4-8` / `claude-haiku-4-5` |
+| `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (optional — fail-open) | — |
+| `AZURE_FOUNDRY_BASE_URL` | Override the derived `…/anthropic/v1` Foundry chat endpoint | derived from resource |
+| `AZURE_API_VERSION` | Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
+| `NEXUS_AZURE_BASE_URL` | Full Nexus Azure LLM endpoint; set to route Azure chat via Nexus (not computed from `NEXUS_API_URL`). Unset = direct to Foundry | — |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |
