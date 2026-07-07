@@ -36,16 +36,12 @@ const awsRegion = process.env.AWS_REGION || 'us-east-1';
 const rawLlmProvider = (process.env.LLM_PROVIDER || 'bedrock').toLowerCase();
 const llmProvider: 'bedrock' | 'azure' = rawLlmProvider === 'azure' ? 'azure' : 'bedrock';
 
-// Nexus LLM proxy base URL for Azure. Explicit override wins; otherwise mirror
-// the Bedrock route shape (see `nexusLlmBaseUrl` below), swapping the vendor
-// segment. null when NEXUS_API_URL is unset → callers route direct to Azure.
-const nexusAzureBaseUrl =
-  process.env.NEXUS_AZURE_BASE_URL ||
-  (nexusApiUrl
-    ? projectId
-      ? `${nexusApiUrl}/projects/${projectId}/llm/azure`
-      : `${nexusApiUrl}/llm/azure`
-    : null);
+// Nexus LLM proxy base URL for Azure. Explicit-only: unlike Bedrock (whose
+// route we know and compute below), we don't know Nexus's Azure route, so we
+// never fabricate one from NEXUS_API_URL — that would silently misroute every
+// call. Azure goes through Nexus ONLY when the operator sets the real endpoint
+// here; otherwise (null) it talks to Azure directly.
+const nexusAzureBaseUrl = process.env.NEXUS_AZURE_BASE_URL || null;
 
 // Resolved once so the vendor-specific fields and the provider-neutral
 // `chatModelId`/`classificationModelId`/`embeddingModelId` share one source.

@@ -94,8 +94,10 @@ default, or `azure`). **Bedrock** via Bearer API key
 (`AWS_BEARER_TOKEN_BEDROCK`) — the SDK auto-selects Bearer over SigV4
 when set. **Azure OpenAI** via `AZURE_API_KEY` (sent as the `api-key`
 header; may also be a `__nexus_cred__` sentinel) + `AZURE_RESOURCE_NAME`
-and Azure deployment names as model IDs. Either provider runs direct or
-through the Nexus LLM gateway (routing is automatic on `NEXUS_API_URL`).
+and Azure deployment names as model IDs. Either provider can run direct or
+through the Nexus LLM gateway: Bedrock routes via Nexus automatically when
+`NEXUS_API_URL` is set; Azure routes via Nexus only when `NEXUS_AZURE_BASE_URL`
+is set explicitly (its Nexus route is not assumed/computed).
 
 ## SEA binaries — Node 22 pin
 
@@ -343,7 +345,7 @@ What the operator sets on `docker run`:
 | `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Azure OpenAI resource + api-key (used when `LLM_PROVIDER=azure`) | — |
 | `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` / `AZURE_EMBEDDING_MODEL_ID` | Azure deployment names (chat / classification gate / embeddings) | — |
 | `AZURE_API_VERSION` | Azure OpenAI API version | SDK default (`preview`) |
-| `NEXUS_AZURE_BASE_URL` | Override the Nexus Azure LLM route (else computed from `NEXUS_API_URL`) | computed |
+| `NEXUS_AZURE_BASE_URL` | Full Nexus Azure LLM endpoint; set to route Azure via Nexus (not computed from `NEXUS_API_URL`). Unset = direct Azure | — |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |

@@ -14,9 +14,11 @@ The runtime talks to one LLM provider per container, chosen by `LLM_PROVIDER`:
 | `LLM_PROVIDER` | LLM vendor: `bedrock` or `azure`. Any other value falls back to `bedrock`. | `bedrock` |
 
 Each provider can run **direct** to the vendor or **through Nexus** (the LLM
-gateway) — routing is automatic: if `NEXUS_API_URL` is set the runtime routes
-through Nexus, otherwise it goes direct. The credentials and model IDs below are
-grouped per provider.
+gateway). For **Bedrock**, routing is automatic — set `NEXUS_API_URL` and the
+runtime routes through Nexus, otherwise direct. For **Azure**, routing through
+Nexus is opt-in: set `NEXUS_AZURE_BASE_URL` to the real Nexus Azure endpoint
+(there is no auto-computed route); unset means direct to Azure. The credentials
+and model IDs below are grouped per provider.
 
 ## Credentials
 
@@ -106,7 +108,7 @@ for that.
 |----------|---------|---------|
 | `NEXUS_MCP_URL` | Endpoint of an external [MCP server](tools.md#external-tools-mcp). When set, its tools are exposed to the agent. | — (no external tools) |
 | `NEXUS_API_URL` | Base URL of a Nexus instance, used for the LLM proxy and WebSocket authorization. When set, LLM calls route through Nexus (for either provider). It is **not** a fallback for `NEXUS_MCP_URL`. | — |
-| `NEXUS_AZURE_BASE_URL` | Override the Nexus Azure LLM route. Defaults to `{NEXUS_API_URL}[/projects/{PROJECT_ID}]/llm/azure`. Only used when `LLM_PROVIDER=azure`. | computed |
+| `NEXUS_AZURE_BASE_URL` | Full Nexus Azure LLM endpoint. Set it to route Azure through Nexus; unset = direct to Azure. Not auto-computed from `NEXUS_API_URL` (Nexus's Azure route isn't assumed). Only used when `LLM_PROVIDER=azure`. | — |
 
 ## Observability
 
