@@ -225,6 +225,19 @@ scheduled-task-specific model if one is set. A one-shot task can also
 "wait" for something and resume in the same thread (the same Slack thread,
 web, or terminal conversation) instead of starting a new one.
 
+### Webhooks
+
+External systems push events at the agent instead of the agent polling for
+them. Each webhook is a named subscription — created on the Web UI's
+**Webhooks** page — with its own endpoint (`POST /agents/webhooks/<name>`),
+an optional event-type filter, an optional prompt template with payload
+substitution (`{field.path}`, `{__raw__}`), and a delivery target (all
+channels, web chat, or Slack). Agent runs are asynchronous (`202 Accepted` +
+run id, result delivered to your channels); a **deliver-only** mode posts the
+rendered template directly with zero LLM cost. Works out of the box with
+Alertmanager, PagerDuty, GitHub, or any sender that can POST JSON — see
+[docs/webhooks.md](docs/webhooks.md).
+
 ### Sessions and idle handling
 
 A configurable daily reset (default 4 AM local time) and idle timeouts give

@@ -54,6 +54,9 @@ What the agent can do.
   DELIVER/SUPPRESS gate and Slack triggers.
 - **[Scheduled tasks](scheduled-tasks.md)** — putting one-shot and recurring
   work on the agent's calendar with natural language or cron.
+- **[Webhooks](webhooks.md)** — named HTTP endpoints external systems
+  (Alertmanager, PagerDuty, GitHub, …) POST events to, triggering an agent run
+  or a direct notification.
 - **[Skills](skills.md)** — installable `SKILL.md` capability bundles (the
   agentskills.io standard) the agent uses automatically, from a global directory
   or a repository's own `.claude/skills`.

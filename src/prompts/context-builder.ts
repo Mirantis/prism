@@ -75,7 +75,7 @@ export interface SystemPromptPart {
  */
 export async function buildSystemPromptParts(
   context: AgentContext,
-  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' = 'chat',
+  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' = 'chat',
   slackMessages?: SlackTriggerMessage[],
   query?: string,
   workspaceRoot?: string,
@@ -140,6 +140,8 @@ export async function buildSystemPromptParts(
     }
   } else if (mode === 'cron') {
     stableSections.push(getCronInstructions());
+  } else if (mode === 'webhook') {
+    stableSections.push(getWebhookInstructions());
   } else if (mode === 'goal') {
     // Goal turns do real work like a chat turn, plus the autonomous-goal framing.
     stableSections.push(getChatInstructions());
@@ -203,7 +205,7 @@ export async function buildSystemPromptParts(
  */
 export async function buildSystemPrompt(
   context: AgentContext,
-  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' = 'chat',
+  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' = 'chat',
   slackMessages?: SlackTriggerMessage[],
   query?: string,
 ): Promise<string> {
@@ -523,6 +525,12 @@ function getCronInstructions(): string {
 You are executing a scheduled task. Follow the task instruction, report findings, and store important observations in memory.
 
 If this run is continuing an earlier conversation (its prior messages appear above), you are resuming after a wait you scheduled — respond as a natural continuation of that conversation, not as a standalone report. If what you were waiting for still hasn't happened, you may schedule another one-off task with continueInThread to check again later.`;
+}
+
+function getWebhookInstructions(): string {
+  return `# Webhook Mode
+
+You received an event pushed by an external system (e.g. Alertmanager, PagerDuty, GitHub) via an inbound webhook. The event payload and any subscription instructions are in the user message. Assess the event, take appropriate action with your tools per your configured guidance, and report your findings concisely. Store important observations in memory. If follow-up is needed later, you may schedule a one-off task to check again.`;
 }
 
 function getGoalInstructions(): string {

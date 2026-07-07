@@ -3,6 +3,7 @@
  *
  * GET  /health         — liveness check
  *      /agents/*       — management routes (heartbeat, chat, cron lifecycle)
+ *                        + inbound webhook ingestion (/agents/webhooks/:name)
  *      /threads, /messages, /latest-thread — no-auth endpoints for the local CLI
  *      /               — Prism Web UI (static SPA bundle from web/dist)
  *
@@ -15,6 +16,7 @@ import path from 'path';
 import fs from 'fs';
 import { managementRouter } from './routes/management';
 import { singleAgentRouter } from './routes/single-agent';
+import { webhookRouter } from './routes/webhook';
 
 export function createApp() {
   const app = express();
@@ -28,6 +30,9 @@ export function createApp() {
 
   // Management routes (heartbeat, cron lifecycle)
   app.use('/agents', managementRouter);
+
+  // Inbound webhook ingestion (POST /agents/webhooks/:name)
+  app.use('/agents', webhookRouter);
 
   // No-auth endpoints for the local CLI (prism-cli): /threads, /messages,
   // /latest-thread. Mounted at the root and registered before the SPA

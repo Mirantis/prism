@@ -15,6 +15,7 @@ import type {
   OverrideModelInfo,
   SkillSummary,
   Goal,
+  WebhookSubscription,
 } from '@/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -202,6 +203,37 @@ export const runtimeApi = {
     }),
   deleteCronTask: (taskId: string) =>
     request<{ success: true }>(`/agents/cron-tasks/${taskId}`, { method: 'DELETE' }),
+
+  // Webhooks — inbound receiver toggle + subscription CRUD
+  getWebhookReceiver: () => request<{ enabled: boolean }>('/agents/webhooks/receiver'),
+  setWebhookReceiver: (enabled: boolean) =>
+    request<{ enabled: boolean }>('/agents/webhooks/receiver', {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    }),
+  listWebhookSubscriptions: () =>
+    request<WebhookSubscription[]>('/agents/webhook-subscriptions'),
+  createWebhookSubscription: (body: {
+    name: string;
+    description?: string;
+    events?: string;
+    prompt?: string;
+    deliverTo?: WebhookSubscription['deliverTo'];
+    deliverOnly?: boolean;
+  }) =>
+    request<WebhookSubscription>('/agents/webhook-subscriptions', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateWebhookSubscription: (id: string, body: Partial<Pick<WebhookSubscription, 'isActive' | 'description' | 'events' | 'prompt' | 'deliverTo' | 'deliverOnly'>>) =>
+    request<WebhookSubscription>(`/agents/webhook-subscriptions/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteWebhookSubscription: (id: string) =>
+    request<{ success: true }>(`/agents/webhook-subscriptions/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
 
   // Skills (Agent Skills — agentskills.io). threadId scopes the listing to that
   // thread's workspace (repo skills); web threads have no workspaceRoot so it's

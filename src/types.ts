@@ -54,7 +54,7 @@ export interface SlackTriggerMessage {
 interface InvokeRequestBase {
   userId: string;
   agentId: string;
-  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal';
+  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook';
   prompt: string;
   threadId?: string;
   /**
