@@ -93,8 +93,9 @@ same ways — the Web UI Profile page or the TUI `/heartbeat-model` /
 `/cron-model` commands. Both default to empty and fall back to the main model
 (which in turn falls back to `BEDROCK_MODEL_ID`), so you can, for example, run
 routine heartbeats on a cheaper model while chat stays on a stronger one. The
-heartbeat DELIVER/SUPPRESS gate always uses `BEDROCK_CLASSIFICATION_MODEL_ID`,
-independent of this.
+heartbeat DELIVER/SUPPRESS gate always uses the active platform's
+classification model (`BEDROCK_CLASSIFICATION_MODEL_ID` on Bedrock,
+`AZURE_CLASSIFICATION_MODEL_ID` on Azure), independent of this.
 
 ### Bootstrap model defaults (`~/.prism/settings.json`)
 

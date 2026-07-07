@@ -95,7 +95,7 @@ default, or `azure`). Both serve **Claude**. **Bedrock** via Bearer API key
 when set. **Azure = Claude via Microsoft Foundry**: chat/classification
 speak the Anthropic Messages API at
 `https://{AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic/v1/messages`
-with `AZURE_API_KEY` sent as `x-api-key` (may be a `__nexus_cred__`
+with `AZURE_API_KEY` sent as `x-api-key` (may be a `__nexus_cred:<uuid>__`
 sentinel); model IDs are Foundry deployment names (defaults
 `claude-opus-4-8` / `claude-haiku-4-5`). Azure embeddings come from an
 Azure OpenAI `text-embedding-3` deployment on the same resource
