@@ -345,25 +345,30 @@ class SlackAdapterService implements ChannelAdapter {
     includeFeedback: boolean = false,
     attachments: AttachmentMeta[] = [],
   ): Promise<void> {
-    // Find the mapping for this channel
+    // Find the mapping for this channel. DM channels are keyed by dmChannelId
+    // (not slackChannelId), so findByChannelId misses them — fall back to the
+    // single Slack connection so thread-bound continuations to a DM still post.
+    // (getChannelContext resolves the DM channel id here for DM-originated
+    // cron/goal "continue in this conversation" resumes.)
     const mapping = await slackMappingService.findByChannelId(channelId);
+    const teamId = mapping?.connection.teamId ?? (await getSlackConnection())?.teamId;
 
-    if (!mapping) {
-      logger.warn('No channel mapping found for channel %s', channelId);
+    if (!teamId) {
+      logger.warn('No Slack connection or channel mapping for channel %s — cannot deliver', channelId);
       return;
     }
 
-    const slackApp = this.apps.get(mapping.connection.teamId);
+    const slackApp = this.apps.get(teamId);
 
     if (!slackApp) {
-      logger.warn('Slack app not found for team %s', mapping.connection.teamId);
+      logger.warn('Slack app not found for team %s', teamId);
       return;
     }
 
     try {
       const formatted = await this.prepareOutboundMessage(
         content,
-        mapping.connection.teamId,
+        teamId,
         undefined,
         toolCalls,
         includeFeedback && messageId ? { feedbackMessageId: messageId } : undefined,
@@ -398,7 +403,7 @@ class SlackAdapterService implements ChannelAdapter {
         attachments,
       );
 
-      logger.info('Delivered message to Slack channel %s', mapping.slackChannelName || channelId);
+      logger.info('Delivered message to Slack channel %s', mapping?.slackChannelName || channelId);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('Slack channel delivery failed for %s: %s', channelId, message);

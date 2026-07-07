@@ -33,6 +33,7 @@ const {
     deleteByConnectionId: vi.fn(),
     getActiveUserMappingsWithDmChannel: vi.fn(),
     upsertUserMapping: vi.fn(),
+    findByChannelId: vi.fn(),
   },
   mockSlackHeartbeatTriggerService: {
     deleteByConnectionId: vi.fn(),
@@ -515,5 +516,44 @@ describe('Requirement: Adapter telemetry', () => {
     deliverSpy.mockRestore();
 
     expect(deliveredChannels).toEqual(['C_MAIN']);
+  });
+});
+
+describe('deliverToChannel — DM channel fallback', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adapter = slackAdapterService as any;
+  const postMessage = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    postMessage.mockResolvedValue({ ts: '1700000000.000200' });
+    adapter.apps = new Map([
+      ['T001', { app: { client: { chat: { postMessage } } }, teamId: 'T001' }],
+    ]);
+    // Stub the message-shaping + attachment helpers so the test isolates routing.
+    adapter.prepareOutboundMessage = vi.fn().mockResolvedValue({ text: 'hi', blocks: undefined });
+    adapter.uploadAttachmentsToSlack = vi.fn().mockResolvedValue(undefined);
+  });
+
+  it('posts to a DM channel id even though it has no channel mapping (thread-bound DM continuation)', async () => {
+    // DMs live on dmChannelId, so findByChannelId (which looks up slackChannelId)
+    // returns null — the fallback must resolve the single connection and post anyway.
+    mockSlackMappingService.findByChannelId.mockResolvedValue(null);
+    mockGetSlackConnection.mockResolvedValue({ id: 'conn-001', teamId: 'T001', isActive: true });
+
+    await adapter.deliverToChannel('D07ERBJA69M', 'hi', 'thr-1');
+
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: 'D07ERBJA69M', thread_ts: undefined, text: 'hi' }),
+    );
+  });
+
+  it('does not post when neither a channel mapping nor a Slack connection resolves', async () => {
+    mockSlackMappingService.findByChannelId.mockResolvedValue(null);
+    mockGetSlackConnection.mockResolvedValue(null);
+
+    await adapter.deliverToChannel('D07ERBJA69M', 'hi', 'thr-1');
+
+    expect(postMessage).not.toHaveBeenCalled();
   });
 });
