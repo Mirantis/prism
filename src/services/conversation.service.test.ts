@@ -138,13 +138,30 @@ describe('ConversationService', () => {
       });
     });
 
-    it('threadSource filters to a single channel (e.g. DATABASE)', async () => {
+    it('DATABASE filter also requires externalThreadId: null (excludes top-level DM threads from Recents/resume)', async () => {
       mockPrisma.conversationThread.findMany.mockResolvedValue([]);
 
       await conversationService.listThreads('user-123', 'agent-123', { threadSource: 'DATABASE' });
 
       expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
-        where: { agentId: 'agent-123', userId: 'user-123', threadSource: 'DATABASE' },
+        where: {
+          agentId: 'agent-123',
+          userId: 'user-123',
+          threadSource: 'DATABASE',
+          externalThreadId: null,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      });
+    });
+
+    it('SLACK filter is untouched (no externalThreadId constraint)', async () => {
+      mockPrisma.conversationThread.findMany.mockResolvedValue([]);
+
+      await conversationService.listThreads('user-123', 'agent-123', { threadSource: 'SLACK' });
+
+      expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
+        where: { agentId: 'agent-123', userId: 'user-123', threadSource: 'SLACK' },
         orderBy: { createdAt: 'desc' },
         take: 20,
       });

@@ -316,10 +316,17 @@ class ConversationService {
       where: {
         agentId,
         userId,
-        // Optional channel filter. `DATABASE` is the web/CLI-resumable set —
-        // it excludes Slack threads (which the resume picker and Recents list
-        // never show).
-        ...(options?.threadSource && { threadSource: options.threadSource }),
+        // The DATABASE set is the web/CLI-resumable one. Genuine web/CLI threads
+        // are always created with externalThreadId: null (getOrCreateLatestThread
+        // / startNewThread); externalId-keyed DATABASE threads (top-level Slack
+        // DMs keyed by dmChannelId) are conversation records, not resumable
+        // threads — exclude them so they don't surface in Recents or the resume
+        // picker. The SLACK listing path is untouched.
+        ...(options?.threadSource === ThreadSource.DATABASE
+          ? { threadSource: ThreadSource.DATABASE, externalThreadId: null }
+          : options?.threadSource
+            ? { threadSource: options.threadSource }
+            : {}),
       },
       orderBy: { createdAt: 'desc' },
       take: options?.limit ?? 20,
