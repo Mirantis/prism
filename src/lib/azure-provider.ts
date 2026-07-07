@@ -20,8 +20,9 @@
  * `{res}.openai.azure.com` (OpenAI) hosts with resource-level keys.
  * `AZURE_FOUNDRY_BASE_URL` is the escape hatch when an operator splits them.
  *
- * Routing: a `baseURL` argument (the explicit Nexus Azure gateway,
- * `NEXUS_AZURE_BASE_URL`) overrides the Foundry chat endpoint; unset → direct.
+ * Routing: a `baseURL` argument (the Nexus Azure gateway route, computed from
+ * `NEXUS_API_URL` as `…/llm/azure`, mirroring Bedrock's `…/llm/bedrock/{region}`)
+ * overrides the Foundry chat endpoint; unset → direct to Foundry.
  *
  * Auth: the key is sent as the `x-api-key` header (Foundry accepts both
  * `api-key` and `x-api-key`); `anthropic-version: 2023-06-01` is added by the

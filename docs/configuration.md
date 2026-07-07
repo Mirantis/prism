@@ -20,12 +20,11 @@ memory embeddings come from an Azure OpenAI `text-embedding-3` deployment
 (Anthropic has no embedding model); this is optional — memory search is
 disabled without it.
 
-Each platform can run **direct** or **through Nexus** (the LLM gateway). For
-**Bedrock**, routing is automatic — set `NEXUS_API_URL` and the runtime routes
-through Nexus, otherwise direct. For **Azure**, routing through Nexus is
-opt-in: set `NEXUS_AZURE_BASE_URL` to the real Nexus Azure endpoint (there is
-no auto-computed route); unset means direct to Foundry. The credentials and
-model IDs below are grouped per platform.
+Each platform can run **direct** or **through Nexus** (the LLM gateway).
+Routing is automatic for both: set `NEXUS_API_URL` and the runtime routes
+through Nexus (`…/llm/bedrock/{region}` for Bedrock, `…/llm/azure` for Azure),
+otherwise it talks to the platform directly. The credentials and model IDs
+below are grouped per platform.
 
 ## Credentials
 
@@ -116,8 +115,7 @@ for that.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `NEXUS_MCP_URL` | Endpoint of an external [MCP server](tools.md#external-tools-mcp). When set, its tools are exposed to the agent. | — (no external tools) |
-| `NEXUS_API_URL` | Base URL of a Nexus instance, used for the LLM proxy and WebSocket authorization. When set, LLM calls route through Nexus (for either provider). It is **not** a fallback for `NEXUS_MCP_URL`. | — |
-| `NEXUS_AZURE_BASE_URL` | Full Nexus Azure LLM endpoint. Set it to route Azure through Nexus; unset = direct to Azure. Not auto-computed from `NEXUS_API_URL` (Nexus's Azure route isn't assumed). Only used when `LLM_PROVIDER=azure`. | — |
+| `NEXUS_API_URL` | Base URL of a Nexus instance, used for the LLM proxy and WebSocket authorization. When set, LLM calls route through Nexus (for either platform). It is **not** a fallback for `NEXUS_MCP_URL`. | — |
 
 ## Observability
 

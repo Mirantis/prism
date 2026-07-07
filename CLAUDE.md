@@ -100,10 +100,9 @@ sentinel); model IDs are Foundry deployment names (defaults
 `claude-opus-4-8` / `claude-haiku-4-5`). Azure embeddings come from an
 Azure OpenAI `text-embedding-3` deployment on the same resource
 (optional — memory search fail-opens without it). Either provider can run
-direct or through the Nexus LLM gateway: Bedrock routes via Nexus
-automatically when `NEXUS_API_URL` is set; Azure chat routes via Nexus only
-when `NEXUS_AZURE_BASE_URL` is set explicitly (its Nexus route is not
-assumed/computed).
+direct or through the Nexus LLM gateway — routing is automatic when
+`NEXUS_API_URL` is set (`…/llm/bedrock/{region}` for Bedrock, `…/llm/azure`
+for Azure chat).
 
 ## SEA binaries — Node 22 pin
 
@@ -353,7 +352,6 @@ What the operator sets on `docker run`:
 | `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (optional — fail-open) | — |
 | `AZURE_FOUNDRY_BASE_URL` | Override the derived `…/anthropic/v1` Foundry chat endpoint | derived from resource |
 | `AZURE_API_VERSION` | Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
-| `NEXUS_AZURE_BASE_URL` | Full Nexus Azure LLM endpoint; set to route Azure chat via Nexus (not computed from `NEXUS_API_URL`). Unset = direct to Foundry | — |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |

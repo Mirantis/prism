@@ -36,12 +36,18 @@ const awsRegion = process.env.AWS_REGION || 'us-east-1';
 const rawLlmProvider = (process.env.LLM_PROVIDER || 'bedrock').toLowerCase();
 const llmProvider: 'bedrock' | 'azure' = rawLlmProvider === 'azure' ? 'azure' : 'bedrock';
 
-// Nexus LLM proxy base URL for Azure. Explicit-only: unlike Bedrock (whose
-// route we know and compute below), we don't know Nexus's Azure route, so we
-// never fabricate one from NEXUS_API_URL — that would silently misroute every
-// call. Azure goes through Nexus ONLY when the operator sets the real endpoint
-// here; otherwise (null) it talks to Azure directly.
-const nexusAzureBaseUrl = process.env.NEXUS_AZURE_BASE_URL || null;
+// Nexus LLM proxy base URL for Azure. Mirrors the Bedrock route mounts below
+// (`nexusLlmBaseUrl`), swapping the vendor segment:
+//   /projects/{projectId}/llm/azure  (explicit project — PROJECT_ID set)
+//   /llm/azure                        (auto-resolve project — PROJECT_ID unset)
+// The anthropic SDK appends `/messages`, so Nexus proxies this route to the
+// Foundry endpoint (`…/anthropic/v1/messages`). null when NEXUS_API_URL is
+// unset (callers talk to Foundry directly instead of going through Nexus).
+const nexusAzureBaseUrl = nexusApiUrl
+  ? (projectId
+      ? `${nexusApiUrl}/projects/${projectId}/llm/azure`
+      : `${nexusApiUrl}/llm/azure`)
+  : null;
 
 // Foundry Anthropic chat endpoint for Azure (Claude via Microsoft Foundry).
 // Explicit override wins; else derived from the resource name. Must end at
