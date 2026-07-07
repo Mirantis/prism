@@ -138,13 +138,30 @@ describe('ConversationService', () => {
       });
     });
 
-    it('threadSource filters to a single channel (e.g. DATABASE)', async () => {
+    it('DATABASE filter also requires externalThreadId: null (excludes top-level DM threads from Recents/resume)', async () => {
       mockPrisma.conversationThread.findMany.mockResolvedValue([]);
 
       await conversationService.listThreads('user-123', 'agent-123', { threadSource: 'DATABASE' });
 
       expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
-        where: { agentId: 'agent-123', userId: 'user-123', threadSource: 'DATABASE' },
+        where: {
+          agentId: 'agent-123',
+          userId: 'user-123',
+          threadSource: 'DATABASE',
+          externalThreadId: null,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      });
+    });
+
+    it('SLACK filter is untouched (no externalThreadId constraint)', async () => {
+      mockPrisma.conversationThread.findMany.mockResolvedValue([]);
+
+      await conversationService.listThreads('user-123', 'agent-123', { threadSource: 'SLACK' });
+
+      expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
+        where: { agentId: 'agent-123', userId: 'user-123', threadSource: 'SLACK' },
         orderBy: { createdAt: 'desc' },
         take: 20,
       });
@@ -539,6 +556,24 @@ describe('ConversationService', () => {
       });
     });
 
+    it('emits thread.source=database for a top-level DM thread (no channelId → DATABASE)', async () => {
+      const now = new Date('2025-01-15T12:00:00Z');
+      mockPrisma.conversationThread.upsert.mockResolvedValue(
+        createTestThread({ id: 'thread-dm', createdAt: now, updatedAt: now }),
+      );
+
+      // Top-level DM: keyed by dmChannelId, no channelId option → DATABASE.
+      await conversationService.getOrCreateThreadByExternalId(
+        'user-123', 'agent-123', 'D07ERBJA69M',
+      );
+
+      expect(mockTrackEvent).toHaveBeenCalledWith('thread created', 'user-123', {
+        'agent.id': 'agent-123',
+        'thread.id': 'thread-dm',
+        'thread.source': 'database',
+      });
+    });
+
     it('does not emit "thread created" when the external-id upsert hits an existing thread', async () => {
       mockPrisma.conversationThread.upsert.mockResolvedValue(
         createTestThread({
@@ -599,6 +634,7 @@ describe('ConversationService', () => {
       mockPrisma.conversationThread.findUnique.mockResolvedValue({
         externalThreadId: '1700000000.000100',
         externalChannelId: 'C123',
+        threadSource: 'SLACK',
         userId: 'user-123',
         agentId: 'agent-123',
       });
@@ -638,6 +674,30 @@ describe('ConversationService', () => {
         threadId: 'thread-1',
       });
       // A resolved channel is deliverable — no warning.
+      expect(mockLogger.warn).not.toHaveBeenCalled();
+    });
+
+    it('does NOT treat a top-level DM thread externalThreadId as a Slack thread_ts', async () => {
+      // Top-level DMs are threadSource=DATABASE and store the dmChannelId in
+      // externalThreadId. A cron/goal continuation must post top-level (into the
+      // DM channel), NOT with thread_ts=dmChannelId (an invalid Slack ts).
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalThreadId: 'D07ERBJA69M',
+        externalChannelId: null,
+        threadSource: 'DATABASE',
+        userId: 'user-123',
+        agentId: 'agent-123',
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValue({ dmChannelId: 'D07ERBJA69M' });
+
+      const ctx = await conversationService.getChannelContext('thread-1', 'slack');
+
+      expect(ctx).toEqual({
+        channel: 'slack',
+        channelId: 'D07ERBJA69M',
+        threadTs: undefined,
+        threadId: 'thread-1',
+      });
       expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 

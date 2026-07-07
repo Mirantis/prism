@@ -169,7 +169,7 @@ class ConversationService {
     if (originChannel === 'slack') {
       const thread = await prisma.conversationThread.findUnique({
         where: { id: threadId },
-        select: { externalThreadId: true, externalChannelId: true, userId: true, agentId: true },
+        select: { externalThreadId: true, externalChannelId: true, threadSource: true, userId: true, agentId: true },
       });
       let channelId = originChannelId ?? thread?.externalChannelId ?? undefined;
       // A DM-originated thread carries no channel id (the Slack DM path doesn't
@@ -199,7 +199,12 @@ class ConversationService {
       return {
         channel: 'slack',
         channelId,
-        threadTs: thread?.externalThreadId ?? undefined,
+        // Only SLACK-sourced threads carry a real Slack thread_ts in
+        // externalThreadId. Top-level DM threads are threadSource=DATABASE and
+        // store the dmChannelId (a `D…` id) there — using that as a thread_ts
+        // would post with an invalid thread_ts and break the continuation, so
+        // resume them top-level (channelId scopes delivery to the DM).
+        threadTs: thread?.threadSource === ThreadSource.SLACK ? (thread.externalThreadId ?? undefined) : undefined,
         threadId,
       };
     }
@@ -248,7 +253,10 @@ class ConversationService {
       trackEvent('thread created', userId, {
         'agent.id': agentId,
         'thread.id': thread.id,
-        'thread.source': 'slack',
+        // Mirror the actual threadSource: with a channelId this is a SLACK
+        // thread (channel or threaded DM); without one it's a top-level DM,
+        // which stays DATABASE — don't mislabel those as Slack.
+        'thread.source': options?.channelId ? 'slack' : 'database',
       });
     }
 
@@ -308,10 +316,17 @@ class ConversationService {
       where: {
         agentId,
         userId,
-        // Optional channel filter. `DATABASE` is the web/CLI-resumable set —
-        // it excludes Slack threads (which the resume picker and Recents list
-        // never show).
-        ...(options?.threadSource && { threadSource: options.threadSource }),
+        // The DATABASE set is the web/CLI-resumable one. Genuine web/CLI threads
+        // are always created with externalThreadId: null (getOrCreateLatestThread
+        // / startNewThread); externalId-keyed DATABASE threads (top-level Slack
+        // DMs keyed by dmChannelId) are conversation records, not resumable
+        // threads — exclude them so they don't surface in Recents or the resume
+        // picker. The SLACK listing path is untouched.
+        ...(options?.threadSource === ThreadSource.DATABASE
+          ? { threadSource: ThreadSource.DATABASE, externalThreadId: null }
+          : options?.threadSource
+            ? { threadSource: options.threadSource }
+            : {}),
       },
       orderBy: { createdAt: 'desc' },
       take: options?.limit ?? 20,

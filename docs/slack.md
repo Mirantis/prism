@@ -85,7 +85,10 @@ switching to a DM link, and vice-versa.
 ## How the agent behaves in Slack
 
 - **DMs.** It treats your DM as a conversation thread and replies to everything
-  you send.
+  you send. Your DM history stays in Slack — it's kept separate from the web
+  chat, so DM messages don't show up there. You can also reply **in a thread**
+  on one of the agent's DM messages; the agent keeps that thread's context and
+  replies back inside the same thread.
 - **Channels.** It responds when **@mentioned** and when you reply within a
   thread it's already part of. Other channel messages are observed for context
   but not answered. When a thread it participated in gets a new message, a quick

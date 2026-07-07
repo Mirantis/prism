@@ -166,8 +166,16 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     channelId: string,
     threadTs: string
   ): Promise<{ channelId: string; threadTs: string; teamId: string; botUserId: string }> {
+    // Channels store their id on slackChannelId; DMs store theirs on
+    // dmChannelId. Look in both so threaded DMs (which are SLACK-sourced and
+    // pass dmChannelId as externalChannelId) can resolve their workspace here.
     const mapping = await prisma.slackMapping.findFirst({
-      where: { slackChannelId: channelId },
+      where: {
+        OR: [
+          { slackChannelId: channelId },
+          { dmChannelId: channelId },
+        ],
+      },
     });
 
     if (!mapping) {

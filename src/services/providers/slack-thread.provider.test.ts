@@ -88,6 +88,27 @@ describe('SlackThreadProvider.waitForExternalMessage', () => {
     ).rejects.toThrow(/999\.9/);
   });
 
+  it('resolves the workspace mapping by slackChannelId OR dmChannelId (so threaded DMs resolve)', async () => {
+    mockReplies.mockResolvedValue({ messages: [reply('100.1'), reply('100.2')] });
+
+    await provider.waitForExternalMessage('thread-1', '100.2', {
+      sleep: vi.fn().mockResolvedValue(undefined),
+    });
+
+    // DM channels are stored on dmChannelId, not slackChannelId — the lookup
+    // must match either so threaded-DM reads can resolve their workspace.
+    expect(mockPrisma.slackMapping.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            { slackChannelId: 'C1' },
+            { dmChannelId: 'C1' },
+          ]),
+        }),
+      }),
+    );
+  });
+
   it('does not poll when the thread is not a resolvable Slack thread', async () => {
     mockPrisma.conversationThread.findUnique.mockResolvedValue({
       externalChannelId: null,

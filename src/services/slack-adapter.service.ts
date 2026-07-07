@@ -271,6 +271,9 @@ class SlackAdapterService implements ChannelAdapter {
 
           const dmResponse = await slackApp.app.client.chat.postMessage({
             channel: mapping.dmChannelId,
+            // Reply into the DM thread if the incoming message was in one;
+            // undefined posts the reply top-level (existing behavior).
+            thread_ts: channelContext?.threadTs,
             text: formatted.text,
             blocks: formatted.blocks,
             metadata: {
@@ -342,25 +345,30 @@ class SlackAdapterService implements ChannelAdapter {
     includeFeedback: boolean = false,
     attachments: AttachmentMeta[] = [],
   ): Promise<void> {
-    // Find the mapping for this channel
+    // Find the mapping for this channel. DM channels are keyed by dmChannelId
+    // (not slackChannelId), so findByChannelId misses them — fall back to the
+    // single Slack connection so thread-bound continuations to a DM still post.
+    // (getChannelContext resolves the DM channel id here for DM-originated
+    // cron/goal "continue in this conversation" resumes.)
     const mapping = await slackMappingService.findByChannelId(channelId);
+    const teamId = mapping?.connection.teamId ?? (await getSlackConnection())?.teamId;
 
-    if (!mapping) {
-      logger.warn('No channel mapping found for channel %s', channelId);
+    if (!teamId) {
+      logger.warn('No Slack connection or channel mapping for channel %s — cannot deliver', channelId);
       return;
     }
 
-    const slackApp = this.apps.get(mapping.connection.teamId);
+    const slackApp = this.apps.get(teamId);
 
     if (!slackApp) {
-      logger.warn('Slack app not found for team %s', mapping.connection.teamId);
+      logger.warn('Slack app not found for team %s', teamId);
       return;
     }
 
     try {
       const formatted = await this.prepareOutboundMessage(
         content,
-        mapping.connection.teamId,
+        teamId,
         undefined,
         toolCalls,
         includeFeedback && messageId ? { feedbackMessageId: messageId } : undefined,
@@ -395,7 +403,7 @@ class SlackAdapterService implements ChannelAdapter {
         attachments,
       );
 
-      logger.info('Delivered message to Slack channel %s', mapping.slackChannelName || channelId);
+      logger.info('Delivered message to Slack channel %s', mapping?.slackChannelName || channelId);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('Slack channel delivery failed for %s: %s', channelId, message);
@@ -676,7 +684,7 @@ class SlackAdapterService implements ChannelAdapter {
       if (msg.channel_type === 'im') {
         logger.info('Routing to DM handler');
         // DM message - existing logic
-        await this.handleDmMessage(connectionId, slackUserId, messageText, channelId, say, teamId, msg.ts, files);
+        await this.handleDmMessage(connectionId, slackUserId, messageText, channelId, say, teamId, msg.ts, msg.thread_ts, files);
       } else {
         logger.info('Routing to channel handler');
         // Channel message - route to channel handler
@@ -723,6 +731,7 @@ class SlackAdapterService implements ChannelAdapter {
     say: SayFn,
     teamId: string,
     eventTs?: string,
+    threadTs?: string,
     files: SlackFileMeta[] = []
   ): Promise<void> {
     logger.info('Slack DM from %s', slackUserId);
@@ -789,17 +798,37 @@ class SlackAdapterService implements ChannelAdapter {
         effectiveText,
       );
 
+      // Resolve a dedicated DM thread so Slack DM history stays out of the
+      // webchat ACTIVE thread (which is keyed by externalThreadId: null).
+      //   - Top-level DM turn (no thread_ts) → key by dmChannelId, threadSource
+      //     stays DATABASE. All top-level turns share one ongoing
+      //     ConversationThread; DatabaseThreadProvider serves its history from
+      //     Prisma (where we persist every turn).
+      //   - Threaded DM turn (thread_ts present) → key by thread_ts AND pass
+      //     { channelId } so threadSource flips to SLACK. Reads then flow
+      //     through SlackThreadProvider.fetchAllReplies(dmChannelId, thread_ts),
+      //     returning the parent message + all replies straight from Slack.
+      //     Without this the parent lives on the top-level ConversationThread
+      //     row and is invisible to the threaded turn's context builder.
+      const threadKey = threadTs ?? dmChannelId;
+      const dmThread = await conversationService.getOrCreateThreadByExternalId(
+        mapping.lensUserId!,
+        mapping.agentId,
+        threadKey,
+        threadTs ? { channelId: dmChannelId } : undefined,
+      );
+
       // Route through local conversation engine (direct call).
-      // Pass metadata.channel so the engine builds a channelContext and the
-      // reply is scoped to Slack only — without it, delivery falls through
-      // to the broadcast path and the DM reply leaks into webchat too.
+      // metadata.channel='slack' scopes delivery to Slack only; slackThreadTs
+      // makes the reply land in the same DM thread (undefined → top-level).
       await conversationEngineService.chat({
         userId: mapping.lensUserId!,
         agentId: mapping.agentId,
+        threadId: dmThread.id,
         message: taggedText,
         attachmentIds,
         runtimeNotices: failures.length ? [this.buildAttachmentFailureNote(failures)] : undefined,
-        metadata: { channel: 'slack' },
+        metadata: { channel: 'slack', slackThreadTs: threadTs },
       });
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
