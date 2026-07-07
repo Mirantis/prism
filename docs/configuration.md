@@ -5,12 +5,27 @@ install they go in `~/.prism/.env` (restart the service after editing); for
 Docker, pass them with `-e`. Only an LLM credential is required — everything
 else has a sensible default.
 
+## Provider selection
+
+The runtime talks to one LLM provider per container, chosen by `LLM_PROVIDER`:
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `LLM_PROVIDER` | LLM vendor: `bedrock` or `azure`. Any other value falls back to `bedrock`. | `bedrock` |
+
+Each provider can run **direct** to the vendor or **through Nexus** (the LLM
+gateway) — routing is automatic: if `NEXUS_API_URL` is set the runtime routes
+through Nexus, otherwise it goes direct. The credentials and model IDs below are
+grouped per provider.
+
 ## Credentials
 
 | Variable | Purpose |
 |----------|---------|
-| `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key. The AI SDK auto-selects bearer auth when this is set. This is the one credential required for chat. |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials, as an alternative to the bearer token. |
+| `AWS_BEARER_TOKEN_BEDROCK` | **(Bedrock)** Bedrock API key. The AI SDK auto-selects bearer auth when this is set. This is the one credential required for chat on Bedrock. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | **(Bedrock)** AWS SigV4 credentials, as an alternative to the bearer token. |
+| `AZURE_API_KEY` | **(Azure)** Azure OpenAI key, sent as the `api-key` header. Required for chat on Azure. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `AZURE_RESOURCE_NAME` | **(Azure, direct)** Azure OpenAI resource name — builds the endpoint `https://{resourceName}.openai.azure.com`. Ignored when routing through Nexus. |
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). Enables the Slack adapter; validated via `auth.test` on boot. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-…`) for Socket Mode. |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check — the bot token's app ID must match this if set. |
@@ -42,15 +57,23 @@ directly to the internet.
 
 ## Models
 
+Which set applies depends on `LLM_PROVIDER`. Bedrock model IDs are Bedrock model
+identifiers; **Azure model IDs are deployment names**, not OpenAI model names.
+
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `BEDROCK_MODEL_ID` | Main model (the agent's reasoning loop) | `us.anthropic.claude-opus-4-8` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | Fast model for the [heartbeat](heartbeat.md) DELIVER/SUPPRESS gate | a Claude Haiku model |
-| `BEDROCK_EMBEDDING_MODEL_ID` | Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
-| `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
+| `BEDROCK_MODEL_ID` | **(Bedrock)** Main model (the agent's reasoning loop) | `us.anthropic.claude-opus-4-8` |
+| `BEDROCK_CLASSIFICATION_MODEL_ID` | **(Bedrock)** Fast model for the [heartbeat](heartbeat.md) DELIVER/SUPPRESS gate | a Claude Haiku model |
+| `BEDROCK_EMBEDDING_MODEL_ID` | **(Bedrock)** Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
+| `AWS_REGION` | **(Bedrock)** AWS region for Bedrock | `us-east-1` |
+| `AZURE_MODEL_ID` | **(Azure)** Main model — a chat deployment name | — |
+| `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast deployment for the heartbeat gate | — |
+| `AZURE_EMBEDDING_MODEL_ID` | **(Azure)** Embedding deployment (a `text-embedding-3` model; truncated to 1024 dims to match the memory index) | — |
+| `AZURE_API_VERSION` | **(Azure)** Azure OpenAI API version | SDK default (`preview`) |
 
 The main model can also be set per-agent at runtime (Web UI Profile, the TUI
-`/model` command, or by asking the agent), which overrides `BEDROCK_MODEL_ID`.
+`/model` command, or by asking the agent), which overrides the env default. On
+Azure, per-agent overrides are deployment names.
 
 **Heartbeat and scheduled (cron) runs** can each use their own model, set the
 same ways — the Web UI Profile page or the TUI `/heartbeat-model` /
@@ -82,7 +105,8 @@ for that.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `NEXUS_MCP_URL` | Endpoint of an external [MCP server](tools.md#external-tools-mcp). When set, its tools are exposed to the agent. | — (no external tools) |
-| `NEXUS_API_URL` | Base URL of a Nexus instance, used for the LLM proxy and WebSocket authorization. It is **not** a fallback for `NEXUS_MCP_URL`. | — |
+| `NEXUS_API_URL` | Base URL of a Nexus instance, used for the LLM proxy and WebSocket authorization. When set, LLM calls route through Nexus (for either provider). It is **not** a fallback for `NEXUS_MCP_URL`. | — |
+| `NEXUS_AZURE_BASE_URL` | Override the Nexus Azure LLM route. Defaults to `{NEXUS_API_URL}[/projects/{PROJECT_ID}]/llm/azure`. Only used when `LLM_PROVIDER=azure`. | computed |
 
 ## Observability
 
