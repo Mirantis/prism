@@ -27,17 +27,18 @@ const MODEL_ID_MAX_LEN = 200;
  * Resolve the effective model ID from a stored per-agent override: the
  * override when set, otherwise the runtime's env-configured default. Single
  * source of truth for the fallback rule — call sites must not inline
- * `?? config.bedrockModelId` themselves.
+ * `?? config.chatModelId` themselves. The default is provider-neutral
+ * (`chatModelId` resolves to the active vendor's model).
  */
 export function resolveEffectiveModel(stored: string | null | undefined): string {
-  return stored ?? config.bedrockModelId;
+  return stored ?? config.chatModelId;
 }
 
 /**
  * Resolve the effective model for a scoped override (heartbeat or cron): the
  * scoped override when set, otherwise the main per-agent override, otherwise
  * the runtime's env-configured default. Layers on top of
- * `resolveEffectiveModel` so the `?? config.bedrockModelId` fallback stays in
+ * `resolveEffectiveModel` so the `?? config.chatModelId` fallback stays in
  * exactly one place.
  */
 export function resolveScopedModel(
@@ -309,11 +310,11 @@ class AgentWorkspaceService {
   /**
    * Set or clear the per-agent LLM model override. Passing `null` clears the
    * override and the agent falls back to the runtime's default model
-   * (`config.bedrockModelId`). Validates format only — the model ID does NOT
+   * (`config.chatModelId`). Validates format only — the model ID does NOT
    * have to be in the curated suggestion list, so users can opt into models
    * the runtime hasn't been told about yet. Returns the **resolved** effective
    * model after the write, so callers (e.g. the PATCH route) don't have to
-   * reimplement the `?? config.bedrockModelId` fallback.
+   * reimplement the `?? config.chatModelId` fallback.
    */
   async updateModel(model: unknown): Promise<string> {
     const normalized = normalizeModelOverride(model);

@@ -30,18 +30,63 @@ const nexusApiUrl = process.env.NEXUS_API_URL;
 const projectId = process.env.PROJECT_ID;
 const awsRegion = process.env.AWS_REGION || 'us-east-1';
 
+// Which vendor the runtime talks to. One provider per container (matching one
+// AGENT_ID per container). Anything other than `azure` falls back to `bedrock`
+// so an unset/typo'd value never silently breaks a Bedrock deployment.
+const rawLlmProvider = (process.env.LLM_PROVIDER || 'bedrock').toLowerCase();
+const llmProvider: 'bedrock' | 'azure' = rawLlmProvider === 'azure' ? 'azure' : 'bedrock';
+
+// Nexus LLM proxy base URL for Azure. Explicit override wins; otherwise mirror
+// the Bedrock route shape (see `nexusLlmBaseUrl` below), swapping the vendor
+// segment. null when NEXUS_API_URL is unset → callers route direct to Azure.
+const nexusAzureBaseUrl =
+  process.env.NEXUS_AZURE_BASE_URL ||
+  (nexusApiUrl
+    ? projectId
+      ? `${nexusApiUrl}/projects/${projectId}/llm/azure`
+      : `${nexusApiUrl}/llm/azure`
+    : null);
+
+// Resolved once so the vendor-specific fields and the provider-neutral
+// `chatModelId`/`classificationModelId`/`embeddingModelId` share one source.
+const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-4-8';
+const bedrockClassificationModelId =
+  process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+const bedrockEmbeddingModelId = process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0';
+// Azure model IDs are deployment names; empty when Azure isn't configured.
+const azureModelId = process.env.AZURE_MODEL_ID || '';
+const azureClassificationModelId = process.env.AZURE_CLASSIFICATION_MODEL_ID || '';
+const azureEmbeddingModelId = process.env.AZURE_EMBEDDING_MODEL_ID || '';
+
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
   // via start.sh so the container's mounted /data volume is used.
   databaseUrl: process.env.DATABASE_URL ?? 'file:./agent.db',
-  bedrockModelId: process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-4-8',
-  bedrockClassificationModelId: process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-  bedrockEmbeddingModelId: process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0',
+  bedrockModelId,
+  bedrockClassificationModelId,
+  bedrockEmbeddingModelId,
   awsRegion,
   awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID,
   awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   awsSessionToken: process.env.AWS_SESSION_TOKEN, // Optional, only needed for temporary credentials
+
+  // LLM provider selection. `bedrock` (default) or `azure`. See the neutral
+  // `chatModelId`/`classificationModelId`/`embeddingModelId` below, which the
+  // rest of the runtime reads instead of the vendor-specific fields.
+  llmProvider,
+
+  // Azure OpenAI (used when LLM_PROVIDER=azure). Model IDs are Azure
+  // *deployment names*, not OpenAI model names. `azureApiKey` is sent as the
+  // `api-key` header; it may be a `__nexus_cred:<uuid>__` sentinel the MITM
+  // proxy rewrites on the wire (same mechanism as AWS_BEARER_TOKEN_BEDROCK).
+  azureResourceName: process.env.AZURE_RESOURCE_NAME,
+  azureApiKey: process.env.AZURE_API_KEY,
+  azureApiVersion: process.env.AZURE_API_VERSION, // undefined → SDK default ('preview')
+  azureModelId,
+  azureClassificationModelId,
+  azureEmbeddingModelId,
+  nexusAzureBaseUrl,
 
   // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
   // either picks up the existing row via findFirst() or creates a fresh
@@ -115,4 +160,12 @@ export const config = {
   goalDefaultTokenBudget: process.env.GOAL_DEFAULT_TOKEN_BUDGET
     ? parseInt(process.env.GOAL_DEFAULT_TOKEN_BUDGET, 10)
     : null,
+
+  // Provider-neutral model IDs. The runtime (invoke, classification gate,
+  // embeddings, per-agent model fallback) reads these so it never has to know
+  // which vendor is active — they resolve to the selected provider's fields.
+  // For Azure these are deployment names; empty when Azure isn't configured.
+  chatModelId: llmProvider === 'azure' ? azureModelId : bedrockModelId,
+  classificationModelId: llmProvider === 'azure' ? azureClassificationModelId : bedrockClassificationModelId,
+  embeddingModelId: llmProvider === 'azure' ? azureEmbeddingModelId : bedrockEmbeddingModelId,
 };

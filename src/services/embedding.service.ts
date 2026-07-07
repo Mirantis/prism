@@ -13,13 +13,20 @@ import { logger } from '../logger';
 import { memoryEmbeddingStore, type SearchOptions } from './memory-store';
 import type { MemorySearchResult } from './memory-manager.service';
 
-const BEDROCK_EMBEDDING_PROVIDER_OPTIONS = {
-  bedrock: { dimensions: 1024 as const },
-};
+// The sqlite-vec index is fixed at 1024 dims (see EMBEDDING_DIM in
+// sqlite-bootstrap.ts), so both vendors must emit exactly that. Titan v2 takes
+// the target under the `bedrock` key; Azure/OpenAI text-embedding-3 models
+// truncate to it under the `openai` key. The provider-option key must match the
+// active vendor or the setting is silently ignored (wrong dimensionality).
+const EMBEDDING_DIMENSIONS = 1024;
+const EMBEDDING_PROVIDER_OPTIONS: Record<string, Record<string, number>> =
+  config.llmProvider === 'azure'
+    ? { openai: { dimensions: EMBEDDING_DIMENSIONS } }
+    : { bedrock: { dimensions: EMBEDDING_DIMENSIONS } };
 
 class EmbeddingService {
   private getEmbeddingModel(): EmbeddingModel {
-    return createProvider().embedding(config.bedrockEmbeddingModelId);
+    return createProvider().embedding(config.embeddingModelId);
   }
 
   /** Generate an embedding vector for the given text. */
@@ -28,7 +35,7 @@ class EmbeddingService {
       const { embedding } = await embed({
         model: this.getEmbeddingModel(),
         value: text,
-        providerOptions: BEDROCK_EMBEDDING_PROVIDER_OPTIONS,
+        providerOptions: EMBEDDING_PROVIDER_OPTIONS,
         experimental_telemetry: { isEnabled: true, functionId: 'memory-embedding' },
       });
 
@@ -55,7 +62,7 @@ class EmbeddingService {
         // backfills. Caller-side BATCH_SIZE keeps the per-call payload
         // small; this guards the rare case where the SDK still parallelizes.
         maxParallelCalls: 1,
-        providerOptions: BEDROCK_EMBEDDING_PROVIDER_OPTIONS,
+        providerOptions: EMBEDDING_PROVIDER_OPTIONS,
         experimental_telemetry: { isEnabled: true, functionId: 'memory-embedding-backfill' },
       });
 

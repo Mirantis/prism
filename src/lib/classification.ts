@@ -15,5 +15,5 @@ import { config } from '../config';
 import { createProvider } from './create-provider';
 
 export function getClassificationModel() {
-  return createProvider()(config.bedrockClassificationModelId);
+  return createProvider()(config.classificationModelId);
 }

@@ -96,6 +96,21 @@ const initialize = async () => {
       dirs.symlinkOk ? 'ok' : 'unavailable',
     );
 
+    // Active LLM provider + routing, so the deployed vendor is observable in
+    // logs. `routing` is 'nexus' when the selected vendor's Nexus base URL is
+    // set, else 'direct'.
+    logger.info(
+      {
+        provider: config.llmProvider,
+        routing:
+          (config.llmProvider === 'azure' ? config.nexusAzureBaseUrl : config.nexusLlmBaseUrl)
+            ? 'nexus'
+            : 'direct',
+        chatModel: config.chatModelId,
+      },
+      '[Startup] LLM provider',
+    );
+
     // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
     // either picks up the existing row via findFirst() or creates a
     // fresh one with a generated UUID. Auth is handled by Nexus inbound
