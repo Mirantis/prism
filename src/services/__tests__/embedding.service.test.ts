@@ -19,7 +19,8 @@ const {
     mockCreateBedrockProvider: vi.fn().mockReturnValue({ embedding: mockDirectEmbeddingFn }),
     mockDirectEmbeddingFn,
     mockConfig: {
-      bedrockEmbeddingModelId: 'amazon.titan-embed-text-v2:0',
+      llmProvider: 'bedrock',
+      embeddingModelId: 'amazon.titan-embed-text-v2:0',
     },
   };
 });

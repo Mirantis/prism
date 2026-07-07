@@ -194,7 +194,7 @@ describe('invoke', () => {
     });
   });
 
-  it('returns placeholder response when Bedrock is not configured', async () => {
+  it('returns placeholder response when the LLM provider is not configured', async () => {
     mockIsBedrockConfigured.mockReturnValue(false);
 
     const result = await invoke(createTestInvokeRequest());
@@ -203,7 +203,7 @@ describe('invoke', () => {
     expect(result.toolCalls).toEqual([]);
     expect(result.steps).toEqual([
       {
-        text: "I apologize, but I am not fully configured yet. Please ensure the Bedrock credentials are set up.",
+        text: "I apologize, but I am not fully configured yet. Please ensure the LLM credentials are set up.",
         toolCalls: [],
       },
     ]);
