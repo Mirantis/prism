@@ -39,6 +39,7 @@ describe('createAzureProvider', () => {
     config.azureResourceName = 'my-resource';
     config.azureFoundryBaseUrl = 'https://my-resource.services.ai.azure.com/anthropic/v1';
     config.azureApiVersion = undefined;
+    config.nexusAzureOpenAiBaseUrl = null;
     vi.clearAllMocks();
   });
 
@@ -52,20 +53,33 @@ describe('createAzureProvider', () => {
   });
 
   it('Nexus routing: an explicit baseURL overrides the Foundry endpoint', () => {
-    createAzureProvider('https://nexus.example/llm/azure/v1');
+    createAzureProvider('https://nexus.example/llm/azure/anthropic/v1');
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith(
-      expect.objectContaining({ baseURL: 'https://nexus.example/llm/azure/v1' }),
+      expect.objectContaining({ baseURL: 'https://nexus.example/llm/azure/anthropic/v1' }),
     );
   });
 
   it('Nexus routing without a local key: falls back to a decoy apiKey (gateway injects the real one)', () => {
     config.azureApiKey = undefined;
-    createAzureProvider('https://nexus.example/llm/azure/v1');
+    createAzureProvider('https://nexus.example/llm/azure/anthropic/v1');
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: 'nexus-managed' }),
     );
+  });
+
+  it('Nexus routing: embeddings ride the gateway openai mount (no resourceName)', () => {
+    config.azureApiKey = undefined;
+    config.nexusAzureOpenAiBaseUrl = 'https://nexus.example/llm/azure/openai/v1';
+    createAzureProvider('https://nexus.example/llm/azure/anthropic/v1');
+
+    const opts = mockCreateAzure.mock.calls[0][0];
+    expect(opts).toMatchObject({
+      apiKey: 'nexus-managed',
+      baseURL: 'https://nexus.example/llm/azure/openai/v1',
+    });
+    expect(opts).not.toHaveProperty('resourceName');
   });
 
   it('direct routing without a key passes undefined (SDK env fallback), no decoy', () => {
@@ -119,7 +133,7 @@ describe('isAzureConfigured', () => {
   it('true with deployment + nexus base URL and NO key/resource (gateway holds the key)', () => {
     config.azureFoundryBaseUrl = undefined;
     config.azureApiKey = undefined;
-    config.nexusAzureBaseUrl = 'https://nexus.example/llm/azure/v1';
+    config.nexusAzureBaseUrl = 'https://nexus.example/llm/azure/anthropic/v1';
     expect(isAzureConfigured()).toBe(true);
   });
 

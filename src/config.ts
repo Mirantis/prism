@@ -36,20 +36,23 @@ const awsRegion = process.env.AWS_REGION || 'us-east-1';
 const rawLlmProvider = (process.env.LLM_PROVIDER || 'bedrock').toLowerCase();
 const llmProvider: 'bedrock' | 'azure' = rawLlmProvider === 'azure' ? 'azure' : 'bedrock';
 
-// Nexus LLM proxy base URL for Azure. Mirrors the Bedrock route mounts below
-// (`nexusLlmBaseUrl`), swapping the vendor segment:
-//   /projects/{projectId}/llm/azure/v1  (explicit project — PROJECT_ID set)
-//   /llm/azure/v1                        (auto-resolve project — PROJECT_ID unset)
-// Nexus forwards everything after `/llm/azure/` onto the Foundry resource's
-// `/anthropic` surface (nexus-monorepo#404), and the anthropic SDK appends
-// `/messages` — so the base must end at `/v1` for the proxied URL to land on
-// `…/anthropic/v1/messages`. null when NEXUS_API_URL is unset (callers talk
-// to Foundry directly instead of going through Nexus).
-const nexusAzureBaseUrl = nexusApiUrl
+// Nexus LLM proxy base URLs for Azure. Mirrors the Bedrock route mount below
+// (`nexusLlmBaseUrl`), swapping the vendor segment. Nexus exposes the two
+// Foundry surfaces separately (`…/llm/azure/anthropic/{path}` → the resource's
+// `/anthropic` surface; `…/llm/azure/openai/{path}` → its `/openai` surface):
+//   /projects/{projectId}/llm/azure/…  (explicit project — PROJECT_ID set)
+//   /llm/azure/…                        (auto-resolve project — PROJECT_ID unset)
+// The anthropic SDK appends `/messages` to its base and the azure SDK appends
+// `/embeddings` to a custom base, so both bases end at `/v1` for the proxied
+// URLs to land on `…/anthropic/v1/messages` and `…/openai/v1/embeddings`.
+// null when NEXUS_API_URL is unset (callers talk to Foundry directly).
+const nexusAzureRoot = nexusApiUrl
   ? (projectId
-      ? `${nexusApiUrl}/projects/${projectId}/llm/azure/v1`
-      : `${nexusApiUrl}/llm/azure/v1`)
+      ? `${nexusApiUrl}/projects/${projectId}/llm/azure`
+      : `${nexusApiUrl}/llm/azure`)
   : null;
+const nexusAzureBaseUrl = nexusAzureRoot ? `${nexusAzureRoot}/anthropic/v1` : null;
+const nexusAzureOpenAiBaseUrl = nexusAzureRoot ? `${nexusAzureRoot}/openai/v1` : null;
 
 // Foundry Anthropic chat endpoint for Azure (Claude via Microsoft Foundry).
 // Explicit override wins; else derived from the resource name. Must end at
@@ -106,6 +109,7 @@ export const config = {
   azureClassificationModelId,
   azureEmbeddingModelId,
   nexusAzureBaseUrl,
+  nexusAzureOpenAiBaseUrl,
 
   // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
   // either picks up the existing row via findFirst() or creates a fresh

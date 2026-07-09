@@ -57,9 +57,9 @@ describe('createProvider', () => {
 
   it('azure + nexus Azure URL → Nexus-routed Azure', () => {
     config.llmProvider = 'azure';
-    config.nexusAzureBaseUrl = 'https://nexus.example/llm/azure/v1';
+    config.nexusAzureBaseUrl = 'https://nexus.example/llm/azure/anthropic/v1';
     expect(createProvider()).toBe('azure-provider');
-    expect(mockCreateAzureProvider).toHaveBeenCalledWith('https://nexus.example/llm/azure/v1');
+    expect(mockCreateAzureProvider).toHaveBeenCalledWith('https://nexus.example/llm/azure/anthropic/v1');
   });
 });
 

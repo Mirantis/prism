@@ -20,9 +20,11 @@
  * `{res}.openai.azure.com` (OpenAI) hosts with resource-level keys.
  * `AZURE_FOUNDRY_BASE_URL` is the escape hatch when an operator splits them.
  *
- * Routing: a `baseURL` argument (the Nexus Azure gateway route, computed from
- * `NEXUS_API_URL` as `…/llm/azure`, mirroring Bedrock's `…/llm/bedrock/{region}`)
- * overrides the Foundry chat endpoint; unset → direct to Foundry.
+ * Routing: a `baseURL` argument (the Nexus Azure gateway chat route, computed
+ * from `NEXUS_API_URL` as `…/llm/azure/anthropic/v1`, mirroring Bedrock's
+ * `…/llm/bedrock/{region}`) overrides the Foundry chat endpoint, and
+ * embeddings then ride the gateway's `…/llm/azure/openai/v1` mount; unset →
+ * both surfaces go direct to the Foundry resource.
  *
  * Auth: the key is sent as the `x-api-key` header (Foundry accepts both
  * `api-key` and `x-api-key`); `anthropic-version: 2023-06-01` is added by the
@@ -55,24 +57,34 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
 
   // Chat/classification — Anthropic Messages API. The SDK builds
   // `${baseURL}/messages`, so the base must end at `…/anthropic/v1` (direct)
-  // or `…/llm/azure/v1` (Nexus).
+  // or `…/llm/azure/anthropic/v1` (Nexus).
   //
   // Through Nexus the gateway injects the real Foundry key (`api-key` from
   // its NEXUS_AZURE_TOKEN) on the outbound leg, so no local key is needed —
-  // but the SDK insists on one, so fall back to a decoy (the same pattern the
+  // but the SDKs insist on one, so fall back to a decoy (the same pattern the
   // Nexus sandbox uses for its provisioned ANTHROPIC_API_KEY).
+  const decoyableKey = config.azureApiKey || (baseURL ? 'nexus-managed' : undefined);
   const anthropic = createAnthropic({
-    apiKey: config.azureApiKey || (baseURL ? 'nexus-managed' : undefined),
+    apiKey: decoyableKey,
     baseURL: baseURL ?? config.azureFoundryBaseUrl,
   });
 
-  // Embeddings — Azure OpenAI (text-embedding-3 deployment).
-  const openai = createAzure({
-    apiKey: config.azureApiKey,
-    resourceName: config.azureResourceName,
-    // undefined → SDK default ('preview')
-    apiVersion: config.azureApiVersion || undefined,
-  });
+  // Embeddings — Azure OpenAI (text-embedding-3 deployment). In Nexus mode
+  // they route through the gateway's `…/llm/azure/openai/v1` mount (the SDK
+  // treats a non-*.openai.azure.com base as a custom gateway and appends
+  // `/embeddings` bare, landing on the resource's `/openai/v1/embeddings`);
+  // direct mode derives the endpoint from the resource name.
+  const openai = baseURL && config.nexusAzureOpenAiBaseUrl
+    ? createAzure({
+        apiKey: decoyableKey,
+        baseURL: config.nexusAzureOpenAiBaseUrl,
+      })
+    : createAzure({
+        apiKey: config.azureApiKey,
+        resourceName: config.azureResourceName,
+        // undefined → SDK default
+        apiVersion: config.azureApiVersion || undefined,
+      });
 
   const dispatcher = (modelId: string) => anthropic(modelId);
   return Object.assign(dispatcher, {
