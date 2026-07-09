@@ -44,6 +44,27 @@ describe('shell_exec (runShellExec)', () => {
     expect(result.exitCode).toBe(3);
   });
 
+  it('does not leak server-only env (NODE_ENV, HUSKY) into the spawned shell', async () => {
+    const saved = { NODE_ENV: process.env.NODE_ENV, HUSKY: process.env.HUSKY };
+    process.env.NODE_ENV = 'production';
+    process.env.HUSKY = '0';
+    try {
+      const result = await runShellExec(
+        { command: 'echo "[$NODE_ENV][$HUSKY]"' },
+        workspace,
+      );
+      expect(result.stdout.trim()).toBe('[][]');
+      // Other inherited vars (e.g. PATH) must still reach the shell.
+      const withPath = await runShellExec({ command: 'echo "$PATH"' }, workspace);
+      expect(withPath.stdout.trim()).toBe(process.env.PATH);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   it('runs in the workspace by default and honors a workdir override', async () => {
     const sub = path.join(workspace, 'sub');
     await fs.mkdir(sub, { recursive: true });

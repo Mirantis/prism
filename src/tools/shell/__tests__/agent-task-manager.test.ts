@@ -13,6 +13,7 @@ import {
   AgentTaskParams,
   MAX_BUFFER_SIZE,
   MAX_CONCURRENT,
+  type Spawner,
 } from '../agent-task-manager';
 
 class FakeChild extends EventEmitter {
@@ -214,5 +215,29 @@ describe('AgentTaskManager', () => {
     manager.killAll();
     // The task has been reaped, so the next readStatus should error.
     await expect(manager.readStatus(taskId)).rejects.toThrow();
+  });
+
+  it('spawns the CLI with server-only env (NODE_ENV, HUSKY) stripped', () => {
+    const saved = { NODE_ENV: process.env.NODE_ENV, HUSKY: process.env.HUSKY };
+    process.env.NODE_ENV = 'production';
+    process.env.HUSKY = '0';
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    try {
+      const capturingSpawner: Spawner = (_command, _args, options) => {
+        capturedEnv = options.env;
+        return new FakeChild() as unknown as ChildProcess;
+      };
+      new AgentTaskManager(capturingSpawner).startTask(sampleParams);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+    expect(capturedEnv).toBeDefined();
+    expect(capturedEnv?.NODE_ENV).toBeUndefined();
+    expect(capturedEnv?.HUSKY).toBeUndefined();
+    // Non-server vars still pass through to the CLI.
+    expect(capturedEnv?.PATH).toBe(process.env.PATH);
   });
 });

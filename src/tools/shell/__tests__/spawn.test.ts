@@ -74,6 +74,34 @@ describe('shell_spawn family', () => {
     await runShellKill({ processId });
   });
 
+  it('does not leak server-only env (NODE_ENV, HUSKY) into spawned processes', async () => {
+    const saved = { NODE_ENV: process.env.NODE_ENV, HUSKY: process.env.HUSKY };
+    process.env.NODE_ENV = 'production';
+    process.env.HUSKY = '0';
+    try {
+      const { processId } = await runShellSpawn(
+        { command: 'echo "[$NODE_ENV][$HUSKY]"' },
+        workspace,
+      );
+      await waitFor(() => {
+        const exit = (
+          getProcessManager() as unknown as {
+            processes: Map<string, { exitCode: number | null }>;
+          }
+        ).processes.get(processId)?.exitCode;
+        return exit !== null && exit !== undefined;
+      });
+      const drained = await runShellStdout({ processId });
+      if ('error' in drained) throw new Error(drained.error);
+      expect(drained.stdout.trim()).toBe('[][]');
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   it('captures exitCode after the process exits', async () => {
     const { processId } = await runShellSpawn(
       { command: 'sh -c "echo done; exit 7"' },
