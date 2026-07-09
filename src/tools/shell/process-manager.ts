@@ -18,6 +18,7 @@ import { ChildProcess, spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { logger } from '../../logger';
 import { appendCappedChunk } from './exec';
+import { sandboxEnv } from './sandbox-env';
 
 export const MAX_PROCESSES = 10;
 export const MAX_OUTPUT_BUFFER = 10 * 1024 * 1024; // 10 MiB per stream
@@ -61,7 +62,7 @@ class ProcessManager {
     const child = spawn('/bin/bash', ['-c', params.command], {
       cwd: params.workdir,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...params.env },
+      env: { ...sandboxEnv(), ...params.env },
       detached: true,
     });
 
