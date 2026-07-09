@@ -1,13 +1,21 @@
 // The agent-runtime container doubles as the shell sandbox: shell tools
 // (shell_exec, shell_spawn, claude_code) spawn /bin/bash as children of this
-// server process. The server runs with NODE_ENV=production, which leaks into
-// every repo the agent clones — causing `npm install` to apply --omit=dev
-// (skips devDependencies, breaks `prepare: husky` with exit 127). We strip
-// server-runtime-only vars rather than allowlisting because the sandbox
-// legitimately needs inherited PATH, HOME, AWS_*, GH_*, and token vars for
-// gh/aws/kubectl/claude auth.
+// server process, so anything in the server's env leaks into every repo the
+// agent clones. Two container-baked vars are actively harmful there and are
+// stripped here:
+//
+//   - NODE_ENV=production → `npm install` applies --omit=dev, silently skipping
+//     the dev toolchain (typescript/vitest/oxlint), so typecheck/lint/test
+//     fail with `tsc: not found`. (This is also the root of the `prepare: husky`
+//     exit-127 crash: husky isn't installed because it's a devDependency.)
+//   - HUSKY=0 → disables the cloned repo's own git hooks. Suppressing a repo's
+//     hooks is not the sandbox's call to make for someone else's code.
+//
+// We strip server-runtime-only vars rather than allowlisting because the
+// sandbox legitimately needs inherited PATH, HOME, AWS_*, GH_*, and token vars
+// for gh/aws/kubectl/claude auth.
 
-const SERVER_ONLY_VARS = ['NODE_ENV'] as const;
+const SERVER_ONLY_VARS = ['NODE_ENV', 'HUSKY'] as const;
 
 export function sandboxEnv(
   base: NodeJS.ProcessEnv = process.env,

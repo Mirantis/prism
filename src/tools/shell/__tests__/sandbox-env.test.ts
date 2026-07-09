@@ -10,6 +10,14 @@ describe('sandboxEnv', () => {
     expect('NODE_ENV' in result).toBe(false);
   });
 
+  it('strips HUSKY so cloned repos keep their own git hooks', () => {
+    const base = { HUSKY: '0', PATH: '/usr/bin', HOME: '/root' };
+    const result = sandboxEnv(base);
+
+    expect(result.HUSKY).toBeUndefined();
+    expect('HUSKY' in result).toBe(false);
+  });
+
   it('preserves PATH, HOME, and other vars', () => {
     const base = {
       NODE_ENV: 'production',
