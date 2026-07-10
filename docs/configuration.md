@@ -17,8 +17,9 @@ Both platforms serve **Claude** through the Anthropic Messages API — `azure`
 mode runs the agent on Claude deployed in [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
 (`https://{resource}.services.ai.azure.com/anthropic/v1/messages`). On Azure,
 memory embeddings come from an Azure OpenAI `text-embedding-3` deployment
-(Anthropic has no embedding model); this is optional — memory search is
-disabled without it.
+(Anthropic has no embedding model), defaulting to `text-embedding-3-small`;
+if that deployment doesn't exist, memory embedding fails open (search
+degraded, no crash).
 
 Each platform can run **direct** or **through Nexus** (the LLM gateway).
 Routing is automatic for both: set `NEXUS_API_URL` and the runtime routes
@@ -80,7 +81,7 @@ Claude model IDs when you deploy without renaming).
 | `AWS_REGION` | **(Bedrock)** AWS region for Bedrock | `us-east-1` |
 | `AZURE_MODEL_ID` | **(Azure)** Main model — a Claude chat deployment name | `claude-opus-4-8` |
 | `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast Claude deployment for the heartbeat gate | `claude-haiku-4-5` |
-| `AZURE_EMBEDDING_MODEL_ID` | **(Azure)** Azure OpenAI embedding deployment (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). Optional — memory search is disabled without it. | — |
+| `AZURE_EMBEDDING_MODEL_ID` | **(Azure)** Azure OpenAI embedding deployment (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). The deployment must exist on the resource, else memory embedding fails open (no vector). Set to `''` to skip embeddings entirely. | `text-embedding-3-small` |
 | `AZURE_API_VERSION` | **(Azure)** Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
 
 The main model can also be set per-agent at runtime (Web UI Profile, the TUI

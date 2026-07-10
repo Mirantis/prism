@@ -99,7 +99,8 @@ with `AZURE_API_KEY` sent as `x-api-key` (may be a `__nexus_cred:<uuid>__`
 sentinel); model IDs are Foundry deployment names (defaults
 `claude-opus-4-8` / `claude-haiku-4-5`). Azure embeddings come from an
 Azure OpenAI `text-embedding-3` deployment on the same resource
-(optional — memory search fail-opens without it). Either provider can run
+(default `text-embedding-3-small`; fails open if the deployment is
+absent, or set `AZURE_EMBEDDING_MODEL_ID=''` to skip). Either provider can run
 direct or through the Nexus LLM gateway — routing is automatic when
 `NEXUS_API_URL` is set (`…/llm/bedrock/{region}` for Bedrock; Azure chat
 rides `…/llm/azure/anthropic/v1` and Azure embeddings
@@ -351,7 +352,7 @@ What the operator sets on `docker run`:
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat DELIVER/SUPPRESS) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
 | `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-4-8` / `claude-haiku-4-5` |
-| `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (optional — fail-open) | — |
+| `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (fail-open if absent; `''` to skip) | `text-embedding-3-small` |
 | `AZURE_FOUNDRY_BASE_URL` | Override the derived `…/anthropic/v1` Foundry chat endpoint | derived from resource |
 | `AZURE_API_VERSION` | Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |

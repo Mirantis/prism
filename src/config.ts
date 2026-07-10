@@ -68,13 +68,15 @@ const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus
 const bedrockClassificationModelId =
   process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 const bedrockEmbeddingModelId = process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0';
-// Azure model IDs are Foundry *deployment names*. Defaults match Foundry's
-// default deployment names (= Claude model IDs, hosted on Azure). The
-// embedding deployment (Azure OpenAI text-embedding-3) has no default —
-// optional, memory embeddings fail-open without it.
+// Azure model IDs are deployment names. Chat/classification default to
+// Foundry's default Claude deployment names; embeddings default to an Azure
+// OpenAI text-embedding-3 deployment (like Bedrock defaults to Titan). The
+// embedding deployment must exist on the resource — if it doesn't, memory
+// embedding fails open (the SDK call errors and is swallowed → no vector);
+// set AZURE_EMBEDDING_MODEL_ID='' to skip embedding entirely.
 const azureModelId = process.env.AZURE_MODEL_ID || 'claude-opus-4-8';
 const azureClassificationModelId = process.env.AZURE_CLASSIFICATION_MODEL_ID || 'claude-haiku-4-5';
-const azureEmbeddingModelId = process.env.AZURE_EMBEDDING_MODEL_ID || '';
+const azureEmbeddingModelId = process.env.AZURE_EMBEDDING_MODEL_ID ?? 'text-embedding-3-small';
 
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
