@@ -5,12 +5,39 @@ install they go in `~/.prism/.env` (restart the service after editing); for
 Docker, pass them with `-e`. Only an LLM credential is required — everything
 else has a sensible default.
 
+## Provider selection
+
+The runtime talks to one LLM provider per container, chosen by `LLM_PROVIDER`:
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS) or `azure` (Claude via Microsoft Foundry). Any other value falls back to `bedrock`. | `bedrock` |
+
+Both platforms serve **Claude** through the Anthropic Messages API — `azure`
+mode runs the agent on Claude deployed in [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
+(`https://{resource}.services.ai.azure.com/anthropic/v1/messages`). On Azure,
+memory embeddings come from an Azure OpenAI `text-embedding-3` deployment
+(Anthropic has no embedding model), defaulting to `text-embedding-3-small`;
+if that deployment doesn't exist, memory embedding fails open (search
+degraded, no crash).
+
+Each platform can run **direct** or **through Nexus** (the LLM gateway).
+Routing is automatic for both: set `NEXUS_API_URL` and the runtime routes
+through Nexus (`…/llm/bedrock/{region}` for Bedrock; for Azure, chat rides
+`…/llm/azure/anthropic/v1` and embeddings `…/llm/azure/openai/v1`), otherwise
+it talks to the platform directly. Through Nexus the gateway holds the
+platform credentials, so no local LLM credential is needed. The credentials
+and model IDs below are grouped per platform.
+
 ## Credentials
 
 | Variable | Purpose |
 |----------|---------|
-| `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key. The AI SDK auto-selects bearer auth when this is set. This is the one credential required for chat. |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials, as an alternative to the bearer token. |
+| `AWS_BEARER_TOKEN_BEDROCK` | **(Bedrock)** Bedrock API key. The AI SDK auto-selects bearer auth when this is set. This is the one credential required for chat on Bedrock. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | **(Bedrock)** AWS SigV4 credentials, as an alternative to the bearer token. |
+| `AZURE_API_KEY` | **(Azure)** Foundry resource key, sent as the `x-api-key` header. Required for direct mode only — when routing through Nexus the gateway holds the key for both chat and embeddings. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `AZURE_RESOURCE_NAME` | **(Azure, direct)** Foundry resource name — derives the chat endpoint `https://{resource}.services.ai.azure.com/anthropic/v1` and the embeddings endpoint `https://{resource}.openai.azure.com`. |
+| `AZURE_FOUNDRY_BASE_URL` | **(Azure)** Override the derived Foundry Anthropic chat endpoint (must end at `/anthropic/v1`). |
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). Enables the Slack adapter; validated via `auth.test` on boot. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-…`) for Socket Mode. |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check — the bot token's app ID must match this if set. |
@@ -42,23 +69,33 @@ directly to the internet.
 
 ## Models
 
+Which set applies depends on `LLM_PROVIDER`. Bedrock model IDs are Bedrock model
+identifiers; **Azure model IDs are Foundry deployment names** (which default to
+Claude model IDs when you deploy without renaming).
+
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `BEDROCK_MODEL_ID` | Main model (the agent's reasoning loop) | `us.anthropic.claude-opus-4-8` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | Fast model for the [heartbeat](heartbeat.md) DELIVER/SUPPRESS gate | a Claude Haiku model |
-| `BEDROCK_EMBEDDING_MODEL_ID` | Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
-| `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
+| `BEDROCK_MODEL_ID` | **(Bedrock)** Main model (the agent's reasoning loop) | `us.anthropic.claude-opus-4-8` |
+| `BEDROCK_CLASSIFICATION_MODEL_ID` | **(Bedrock)** Fast model for the [heartbeat](heartbeat.md) DELIVER/SUPPRESS gate | a Claude Haiku model |
+| `BEDROCK_EMBEDDING_MODEL_ID` | **(Bedrock)** Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
+| `AWS_REGION` | **(Bedrock)** AWS region for Bedrock | `us-east-1` |
+| `AZURE_MODEL_ID` | **(Azure)** Main model — a Claude chat deployment name | `claude-opus-4-8` |
+| `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast Claude deployment for the heartbeat gate | `claude-haiku-4-5` |
+| `AZURE_EMBEDDING_MODEL_ID` | **(Azure)** Azure OpenAI embedding deployment (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). The deployment must exist on the resource, else memory embedding fails open (no vector). Set to `''` to skip embeddings entirely. | `text-embedding-3-small` |
+| `AZURE_API_VERSION` | **(Azure)** Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
 
 The main model can also be set per-agent at runtime (Web UI Profile, the TUI
-`/model` command, or by asking the agent), which overrides `BEDROCK_MODEL_ID`.
+`/model` command, or by asking the agent), which overrides the env default. On
+Azure, per-agent overrides are Foundry deployment names.
 
 **Heartbeat and scheduled (cron) runs** can each use their own model, set the
 same ways — the Web UI Profile page or the TUI `/heartbeat-model` /
 `/cron-model` commands. Both default to empty and fall back to the main model
 (which in turn falls back to `BEDROCK_MODEL_ID`), so you can, for example, run
 routine heartbeats on a cheaper model while chat stays on a stronger one. The
-heartbeat DELIVER/SUPPRESS gate always uses `BEDROCK_CLASSIFICATION_MODEL_ID`,
-independent of this.
+heartbeat DELIVER/SUPPRESS gate always uses the active platform's
+classification model (`BEDROCK_CLASSIFICATION_MODEL_ID` on Bedrock,
+`AZURE_CLASSIFICATION_MODEL_ID` on Azure), independent of this.
 
 ### Bootstrap model defaults (`~/.prism/settings.json`)
 
@@ -82,7 +119,7 @@ for that.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `NEXUS_MCP_URL` | Endpoint of an external [MCP server](tools.md#external-tools-mcp). When set, its tools are exposed to the agent. | — (no external tools) |
-| `NEXUS_API_URL` | Base URL of a Nexus instance, used for the LLM proxy and WebSocket authorization. It is **not** a fallback for `NEXUS_MCP_URL`. | — |
+| `NEXUS_API_URL` | Base URL of a Nexus instance, used for the LLM proxy and WebSocket authorization. When set, LLM calls route through Nexus (for either platform). It is **not** a fallback for `NEXUS_MCP_URL`. | — |
 
 ## Observability
 

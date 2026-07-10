@@ -3,7 +3,10 @@
  *
  * Handles vector embedding generation for memory entries. Storage and
  * search are delegated to `memoryEmbeddingStore` (sqlite-vec backed).
- * Bedrock credentials are injected into the sandbox environment.
+ * The embedding model comes from the active LLM provider: Titan on
+ * Bedrock, an Azure OpenAI text-embedding-3 deployment on Azure. On
+ * Azure the deployment is optional — when unset, embedding generation
+ * fail-opens (returns null) and memory search is effectively disabled.
  */
 
 import { embed, embedMany, type EmbeddingModel } from 'ai';
@@ -13,22 +16,35 @@ import { logger } from '../logger';
 import { memoryEmbeddingStore, type SearchOptions } from './memory-store';
 import type { MemorySearchResult } from './memory-manager.service';
 
-const BEDROCK_EMBEDDING_PROVIDER_OPTIONS = {
-  bedrock: { dimensions: 1024 as const },
-};
+// The sqlite-vec index is fixed at 1024 dims (see EMBEDDING_DIM in
+// sqlite-bootstrap.ts), so both vendors must emit exactly that. Titan v2 takes
+// the target under the `bedrock` key; Azure/OpenAI text-embedding-3 models
+// truncate to it under the `openai` key. The provider-option key must match the
+// active vendor or the setting is silently ignored (wrong dimensionality).
+const EMBEDDING_DIMENSIONS = 1024;
+const EMBEDDING_PROVIDER_OPTIONS: Record<string, Record<string, number>> =
+  config.llmProvider === 'azure'
+    ? { openai: { dimensions: EMBEDDING_DIMENSIONS } }
+    : { bedrock: { dimensions: EMBEDDING_DIMENSIONS } };
 
 class EmbeddingService {
   private getEmbeddingModel(): EmbeddingModel {
-    return createProvider().embedding(config.bedrockEmbeddingModelId);
+    return createProvider().embedding(config.embeddingModelId);
   }
 
   /** Generate an embedding vector for the given text. */
   async generateEmbedding(agentId: string, text: string): Promise<number[] | null> {
+    if (!config.embeddingModelId) {
+      // No embedding deployment configured (possible on Azure) — skip the SDK
+      // call entirely instead of failing on a '' deployment name.
+      logger.warn({ agentId }, 'No embedding model configured; skipping embedding generation');
+      return null;
+    }
     try {
       const { embedding } = await embed({
         model: this.getEmbeddingModel(),
         value: text,
-        providerOptions: BEDROCK_EMBEDDING_PROVIDER_OPTIONS,
+        providerOptions: EMBEDDING_PROVIDER_OPTIONS,
         experimental_telemetry: { isEnabled: true, functionId: 'memory-embedding' },
       });
 
@@ -44,18 +60,23 @@ class EmbeddingService {
     if (texts.length === 0) {
       return [];
     }
+    if (!config.embeddingModelId) {
+      logger.warn({ agentId }, 'No embedding model configured; skipping embedding backfill');
+      return null;
+    }
 
     try {
       const { embeddings } = await embedMany({
         model: this.getEmbeddingModel(),
         values: texts,
-        // Serialize requests through the Bedrock proxy. embedMany may
-        // otherwise split a large `values` batch and dispatch in parallel,
-        // which trips Titan v2's per-account rate limit during heavy
-        // backfills. Caller-side BATCH_SIZE keeps the per-call payload
-        // small; this guards the rare case where the SDK still parallelizes.
+        // Serialize requests: embedMany may otherwise split a large `values`
+        // batch and dispatch in parallel, which trips per-account rate limits
+        // during heavy backfills (Titan v2 on Bedrock; Azure OpenAI throttles
+        // per-deployment the same way). Caller-side BATCH_SIZE keeps the
+        // per-call payload small; this guards the rare case where the SDK
+        // still parallelizes.
         maxParallelCalls: 1,
-        providerOptions: BEDROCK_EMBEDDING_PROVIDER_OPTIONS,
+        providerOptions: EMBEDDING_PROVIDER_OPTIONS,
         experimental_telemetry: { isEnabled: true, functionId: 'memory-embedding-backfill' },
       });
 

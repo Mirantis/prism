@@ -30,18 +30,88 @@ const nexusApiUrl = process.env.NEXUS_API_URL;
 const projectId = process.env.PROJECT_ID;
 const awsRegion = process.env.AWS_REGION || 'us-east-1';
 
+// Which vendor the runtime talks to. One provider per container (matching one
+// AGENT_ID per container). Anything other than `azure` falls back to `bedrock`
+// so an unset/typo'd value never silently breaks a Bedrock deployment.
+const rawLlmProvider = (process.env.LLM_PROVIDER || 'bedrock').toLowerCase();
+const llmProvider: 'bedrock' | 'azure' = rawLlmProvider === 'azure' ? 'azure' : 'bedrock';
+
+// Nexus LLM proxy base URLs for Azure. Mirrors the Bedrock route mount below
+// (`nexusLlmBaseUrl`), swapping the vendor segment. Nexus exposes the two
+// Foundry surfaces separately (`…/llm/azure/anthropic/{path}` → the resource's
+// `/anthropic` surface; `…/llm/azure/openai/{path}` → its `/openai` surface):
+//   /projects/{projectId}/llm/azure/…  (explicit project — PROJECT_ID set)
+//   /llm/azure/…                        (auto-resolve project — PROJECT_ID unset)
+// The anthropic SDK appends `/messages` to its base and the azure SDK appends
+// `/embeddings` to a custom base, so both bases end at `/v1` for the proxied
+// URLs to land on `…/anthropic/v1/messages` and `…/openai/v1/embeddings`.
+// null when NEXUS_API_URL is unset (callers talk to Foundry directly).
+const nexusAzureRoot = nexusApiUrl
+  ? (projectId
+      ? `${nexusApiUrl}/projects/${projectId}/llm/azure`
+      : `${nexusApiUrl}/llm/azure`)
+  : null;
+const nexusAzureBaseUrl = nexusAzureRoot ? `${nexusAzureRoot}/anthropic/v1` : null;
+const nexusAzureOpenAiBaseUrl = nexusAzureRoot ? `${nexusAzureRoot}/openai/v1` : null;
+
+// Foundry Anthropic chat endpoint for Azure (Claude via Microsoft Foundry).
+// Explicit override wins; else derived from the resource name. Must end at
+// `/anthropic/v1` — the anthropic SDK appends `/messages`.
+const azureResourceName = process.env.AZURE_RESOURCE_NAME;
+const azureFoundryBaseUrl =
+  process.env.AZURE_FOUNDRY_BASE_URL ||
+  (azureResourceName ? `https://${azureResourceName}.services.ai.azure.com/anthropic/v1` : undefined);
+
+// Resolved once so the vendor-specific fields and the provider-neutral
+// `chatModelId`/`classificationModelId`/`embeddingModelId` share one source.
+const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-4-8';
+const bedrockClassificationModelId =
+  process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+const bedrockEmbeddingModelId = process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0';
+// Azure model IDs are deployment names. Chat/classification default to
+// Foundry's default Claude deployment names; embeddings default to an Azure
+// OpenAI text-embedding-3 deployment (like Bedrock defaults to Titan). The
+// embedding deployment must exist on the resource — if it doesn't, memory
+// embedding fails open (the SDK call errors and is swallowed → no vector);
+// set AZURE_EMBEDDING_MODEL_ID='' to skip embedding entirely.
+const azureModelId = process.env.AZURE_MODEL_ID || 'claude-opus-4-8';
+const azureClassificationModelId = process.env.AZURE_CLASSIFICATION_MODEL_ID || 'claude-haiku-4-5';
+const azureEmbeddingModelId = process.env.AZURE_EMBEDDING_MODEL_ID ?? 'text-embedding-3-small';
+
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
   // via start.sh so the container's mounted /data volume is used.
   databaseUrl: process.env.DATABASE_URL ?? 'file:./agent.db',
-  bedrockModelId: process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-4-8',
-  bedrockClassificationModelId: process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-  bedrockEmbeddingModelId: process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0',
+  bedrockModelId,
+  bedrockClassificationModelId,
+  bedrockEmbeddingModelId,
   awsRegion,
   awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID,
   awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   awsSessionToken: process.env.AWS_SESSION_TOKEN, // Optional, only needed for temporary credentials
+
+  // LLM provider selection. `bedrock` (default) or `azure`. See the neutral
+  // `chatModelId`/`classificationModelId`/`embeddingModelId` below, which the
+  // rest of the runtime reads instead of the vendor-specific fields.
+  llmProvider,
+
+  // Azure — Claude via Microsoft Foundry (used when LLM_PROVIDER=azure).
+  // Chat/classification speak the Anthropic Messages API at
+  // `azureFoundryBaseUrl`; embeddings go to Azure OpenAI (text-embedding-3
+  // deployment) on the same resource. Model IDs are Foundry *deployment
+  // names*. `azureApiKey` is sent as the `x-api-key` header; it may be a
+  // `__nexus_cred:<uuid>__` sentinel the MITM proxy rewrites on the wire
+  // (same mechanism as AWS_BEARER_TOKEN_BEDROCK).
+  azureResourceName,
+  azureFoundryBaseUrl,
+  azureApiKey: process.env.AZURE_API_KEY,
+  azureApiVersion: process.env.AZURE_API_VERSION, // embeddings only; undefined → SDK default ('preview')
+  azureModelId,
+  azureClassificationModelId,
+  azureEmbeddingModelId,
+  nexusAzureBaseUrl,
+  nexusAzureOpenAiBaseUrl,
 
   // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
   // either picks up the existing row via findFirst() or creates a fresh
@@ -115,4 +185,12 @@ export const config = {
   goalDefaultTokenBudget: process.env.GOAL_DEFAULT_TOKEN_BUDGET
     ? parseInt(process.env.GOAL_DEFAULT_TOKEN_BUDGET, 10)
     : null,
+
+  // Provider-neutral model IDs. The runtime (invoke, classification gate,
+  // embeddings, per-agent model fallback) reads these so it never has to know
+  // which vendor is active — they resolve to the selected provider's fields.
+  // For Azure these are deployment names; empty when Azure isn't configured.
+  chatModelId: llmProvider === 'azure' ? azureModelId : bedrockModelId,
+  classificationModelId: llmProvider === 'azure' ? azureClassificationModelId : bedrockClassificationModelId,
+  embeddingModelId: llmProvider === 'azure' ? azureEmbeddingModelId : bedrockEmbeddingModelId,
 };

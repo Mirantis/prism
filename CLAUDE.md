@@ -87,8 +87,25 @@ One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
 `file:/data/agent.db`. Slack creds come from env (`SLACK_BOT_TOKEN`,
 `SLACK_APP_TOKEN`), validated via `auth.test` on boot; may be Nexus
 credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
-proxy. Bedrock via Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the
-SDK auto-selects Bearer over SigV4 when set.
+proxy.
+
+One LLM provider per container, selected by `LLM_PROVIDER` (`bedrock`
+default, or `azure`). Both serve **Claude**. **Bedrock** via Bearer API key
+(`AWS_BEARER_TOKEN_BEDROCK`) — the SDK auto-selects Bearer over SigV4
+when set. **Azure = Claude via Microsoft Foundry**: chat/classification
+speak the Anthropic Messages API at
+`https://{AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic/v1/messages`
+with `AZURE_API_KEY` sent as `x-api-key` (may be a `__nexus_cred:<uuid>__`
+sentinel); model IDs are Foundry deployment names (defaults
+`claude-opus-4-8` / `claude-haiku-4-5`). Azure embeddings come from an
+Azure OpenAI `text-embedding-3` deployment on the same resource
+(default `text-embedding-3-small`; fails open if the deployment is
+absent, or set `AZURE_EMBEDDING_MODEL_ID=''` to skip). Either provider can run
+direct or through the Nexus LLM gateway — routing is automatic when
+`NEXUS_API_URL` is set (`…/llm/bedrock/{region}` for Bedrock; Azure chat
+rides `…/llm/azure/anthropic/v1` and Azure embeddings
+`…/llm/azure/openai/v1`; Nexus holds the platform credentials, so no local
+LLM key is needed on that path).
 
 ## SEA binaries — Node 22 pin
 
@@ -285,7 +302,10 @@ src/
 │   └── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
 ├── lib/
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
-│   ├── bedrock-provider.ts     # AWS Bedrock provider factory
+│   ├── create-provider.ts      # Unified LLM provider factory: picks vendor (bedrock/azure), passes each its optional Nexus baseURL; `isProviderConfigured()`
+│   ├── bedrock-provider.ts     # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or Nexus when baseURL set)
+│   ├── azure-provider.ts       # Azure provider factory (Claude via MS Foundry, Anthropic Messages API; embeddings via Azure OpenAI): `createAzureProvider(baseURL?)`
+│   ├── classification.ts       # Classification-gate model factory (`getClassificationModel()`)
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
 │   └── prisma.ts               # Prisma client singleton (runtime database)
@@ -323,12 +343,18 @@ What the operator sets on `docker run`:
 | `NEXUS_API_URL` | Nexus server URL (LLM proxy + MCP tools) | — |
 | `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
 | `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
+| `LLM_PROVIDER` | LLM vendor: `bedrock` or `azure` (one per container) | `bedrock` |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock Bearer API key; selected over SigV4 when set | — |
 | `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
 | `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
 | `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | — |
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `us.anthropic.claude-opus-4-8` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat DELIVER/SUPPRESS) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
+| `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-4-8` / `claude-haiku-4-5` |
+| `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (fail-open if absent; `''` to skip) | `text-embedding-3-small` |
+| `AZURE_FOUNDRY_BASE_URL` | Override the derived `…/anthropic/v1` Foundry chat endpoint | derived from resource |
+| `AZURE_API_VERSION` | Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |
@@ -431,7 +457,7 @@ When a Slack message arrives in a heartbeat trigger channel, the agent-runtime's
 
 After the main LLM call produces a heartbeat response, a second cheap LLM call acts as a DELIVER/SUPPRESS gate. This replaced the earlier fragile `HEARTBEAT_OK` token parsing.
 
-- **Model**: Haiku via `getClassificationModel()` (from `lib/bedrock-provider.ts`), configured by `BEDROCK_CLASSIFICATION_MODEL_ID`.
+- **Model**: the fast classification model via `getClassificationModel()` (from `lib/classification.ts`, which goes through `createProvider()`), configured by `BEDROCK_CLASSIFICATION_MODEL_ID` (or `AZURE_CLASSIFICATION_MODEL_ID` on Azure).
 - **Input**: The heartbeat response text and the last alert context (text + how long ago it was sent, formatted via `formatTimeAgo`).
 - **Output**: A single word -- `DELIVER` or `SUPPRESS`. Uses `maxOutputTokens: 10` and `temperature: 0` to keep the call fast and deterministic.
 - **Meta-commentary**: The gate prompt explicitly suppresses reports that are meta-commentary about the heartbeat itself (e.g. "no checks configured", "heartbeat config is empty") rather than real findings.

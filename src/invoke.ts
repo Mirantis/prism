@@ -9,8 +9,7 @@
 import { generateText, ModelMessage, SystemModelMessage, Tool, stepCountIs } from 'ai';
 import { config } from './config';
 import { logger } from './logger';
-import { isBedrockConfigured } from './lib/bedrock-provider';
-import { createProvider } from './lib/create-provider';
+import { createProvider, isProviderConfigured } from './lib/create-provider';
 import { getMCPTools } from './lib/mcp-client';
 import { getMemoryTools } from './tools/memory';
 import { getCronTools } from './tools/cron';
@@ -57,10 +56,10 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
   const startTime = Date.now();
 
   // Preflight: short-circuit before any DB call.
-  if (!isBedrockConfigured()) {
-    logger.error('Bedrock not configured, returning placeholder response');
+  if (!isProviderConfigured()) {
+    logger.error(`LLM provider (${config.llmProvider}) not configured, returning placeholder response`);
     yield {
-      text: 'I apologize, but I am not fully configured yet. Please ensure the Bedrock credentials are set up.',
+      text: 'I apologize, but I am not fully configured yet. Please ensure the LLM credentials are set up.',
       toolCalls: [],
     };
     return;
@@ -117,8 +116,8 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           : resolveEffectiveModel(context.model);
     logger.info(`Invoking in ${request.mode} mode with model ${modelId} for agent ${context.agentName}`);
 
-    // 3. Create provider and model — createProvider picks Nexus when
-    // configured, direct Bedrock otherwise.
+    // 3. Create provider and model — createProvider picks the configured
+    // vendor (Bedrock/Azure) and routing (direct vs Nexus).
     const model = createProvider()(modelId);
 
     // 4. Collect tools — built-ins are direct AI SDK tools (no MCP
