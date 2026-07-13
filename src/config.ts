@@ -31,9 +31,17 @@ const projectId = process.env.PROJECT_ID;
 const awsRegion = process.env.AWS_REGION || 'us-east-1';
 
 // Which vendor the runtime talks to. One provider per container (matching one
-// AGENT_ID per container). Anything other than `azure` falls back to `bedrock`
-// so an unset/typo'd value never silently breaks a Bedrock deployment.
-const rawLlmProvider = (process.env.LLM_PROVIDER || 'bedrock').toLowerCase();
+// AGENT_ID per container). Unset defaults to `bedrock`; `bedrock`/`azure` are
+// the only accepted values. A typo (e.g. `azuer`) throws at boot rather than
+// silently serving the wrong vendor — that would violate the operator's
+// provider / data-residency choice.
+const rawLlmProvider = process.env.LLM_PROVIDER?.trim().toLowerCase();
+if (rawLlmProvider && rawLlmProvider !== 'bedrock' && rawLlmProvider !== 'azure') {
+  throw new Error(
+    `Invalid LLM_PROVIDER "${process.env.LLM_PROVIDER}" — must be "bedrock" or "azure" ` +
+      `(leave unset to default to bedrock).`,
+  );
+}
 const llmProvider: 'bedrock' | 'azure' = rawLlmProvider === 'azure' ? 'azure' : 'bedrock';
 
 // Nexus LLM proxy base URLs for Azure. Mirrors the Bedrock route mount below
