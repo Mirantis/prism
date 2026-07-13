@@ -45,6 +45,11 @@ export function initSqliteVec(): Database.Database {
   const version = (db.prepare('SELECT vec_version() AS v').get() as { v: string } | undefined)?.v;
   logger.info({ version }, '[SqliteBootstrap] sqlite-vec loaded');
 
+  // Invalidate stored vectors when the embedding provider/model changes, so a
+  // reused /data volume never compares vectors from different embedding spaces.
+  // Runs before the vec0 rebuild below so the rebuild sees the nulled BLOBs.
+  reconcileEmbeddingSignature(db);
+
   // vec0 is a runtime index — rebuilt from the Prisma-owned
   // `memory_entries.embedding` BLOB column on every boot. The durable
   // BLOBs in `memory_entries` are the source of truth; this is cheap
@@ -78,6 +83,56 @@ export function initSqliteVec(): Database.Database {
 
   handle = db;
   return handle;
+}
+
+/**
+ * Embedding vectors are only comparable within one embedding space. A stored
+ * vector carries no provenance, and the startup backfill only fills rows where
+ * `embedding IS NULL` — so reusing a /data volume across a provider or
+ * embedding-model change would silently compare vectors from different spaces
+ * (both are 1024-dim, so there is no dimension error, just meaningless search).
+ *
+ * We record a signature (`provider:model:dim`) in a tiny meta table on this
+ * same raw handle — like `memory_entry_vec`, it lives outside Prisma's schema
+ * and needs no migration. When the signature changes we null the durable BLOBs
+ * so the vec0 rebuild starts empty and the startup backfill regenerates every
+ * vector with the now-active model.
+ *
+ * First boot (no stored signature) records the signature without wiping: a
+ * volume created before this shipped has valid vectors we must not nuke.
+ */
+function reconcileEmbeddingSignature(db: Database.Database): void {
+  db.exec(
+    `CREATE TABLE IF NOT EXISTS embedding_meta (id INTEGER PRIMARY KEY CHECK (id = 1), signature TEXT)`,
+  );
+
+  const current = `${config.llmProvider}:${config.embeddingModelId || '(none)'}:${EMBEDDING_DIM}`;
+  const stored = (
+    db.prepare(`SELECT signature FROM embedding_meta WHERE id = 1`).get() as
+      | { signature: string | null }
+      | undefined
+  )?.signature;
+
+  if (stored != null && stored !== current) {
+    // Defensive: `memory_entries` exists in a normal boot (migrate deploy runs
+    // first), but guard for bare test setups that bypass start.sh.
+    const hasMemoryEntries = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='memory_entries'`)
+      .get();
+    const invalidated = hasMemoryEntries
+      ? db.prepare(`UPDATE memory_entries SET embedding = NULL WHERE embedding IS NOT NULL`).run()
+          .changes
+      : 0;
+    logger.warn(
+      { from: stored, to: current, invalidated },
+      '[SqliteBootstrap] embedding signature changed — invalidated stored vectors; will rebuild on backfill',
+    );
+  }
+
+  db.prepare(
+    `INSERT INTO embedding_meta (id, signature) VALUES (1, ?)
+     ON CONFLICT(id) DO UPDATE SET signature = excluded.signature`,
+  ).run(current);
 }
 
 function rebuildVec0Index(db: Database.Database): void {

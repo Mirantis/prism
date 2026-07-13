@@ -89,8 +89,9 @@ One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
 credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy.
 
-One LLM provider per container, selected by `LLM_PROVIDER` (`bedrock`
-default, or `azure`). Both serve **Claude**. **Bedrock** via Bearer API key
+One LLM provider per container, selected by `LLM_PROVIDER` (unset →
+`bedrock`; `bedrock` or `azure`; any other value fails startup rather than
+silently serving the wrong vendor). Both serve **Claude**. **Bedrock** via Bearer API key
 (`AWS_BEARER_TOKEN_BEDROCK`) — the SDK auto-selects Bearer over SigV4
 when set. **Azure = Claude via Microsoft Foundry**: chat/classification
 speak the Anthropic Messages API at
@@ -216,6 +217,11 @@ locally.
    (`file:/data/agent.db`) accessed via Prisma. Vector search over
    `memory_entries.embedding` goes through a sibling `better-sqlite3`
    handle that loads the `sqlite-vec` extension (`lib/sqlite-bootstrap.ts`).
+   That bootstrap also records an embedding signature
+   (`provider:model:dim`) in an `embedding_meta` table: when it changes
+   (provider or embedding-model switch on a reused volume), it nulls the
+   stored vectors so the startup backfill rebuilds them with the active
+   model — vectors from two embedding spaces are never compared.
 
 2. **Exposes a Management API** (`/agents/*`) consumed by its local
    clients — the bundled web SPA and `prism-cli` (not a backend): chat and
