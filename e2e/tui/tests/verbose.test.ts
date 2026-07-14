@@ -9,6 +9,8 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
+import { expect } from 'vitest';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
 import { startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, resetThread, runtimeRequest, type RuntimeTestEnv } from '../setup';
@@ -60,6 +62,24 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
     And('the final reply containing {string} is rendered', async (_ctx, final: string) => {
       await session.waitForFrame(new RegExp(final), 120_000);
+    });
+    And('the turn stored exactly 1 agent message', () => {
+      // Authoritative discriminator between concise and verbose delivery:
+      // verbose stores one AGENT row per text-bearing step, concise exactly
+      // one for the whole multi-step turn. The frame assertions above would
+      // pass under either mode (verbose also renders the tool row and the
+      // final sentinel), so without this count the scenario couldn't fail if
+      // the concise gate were removed. The row is stored before delivery, so
+      // once the final frame rendered the count is settled.
+      const db = new Database(env.dbPath, { readonly: true });
+      try {
+        const { n } = db
+          .prepare("SELECT COUNT(*) AS n FROM conversation_messages WHERE role = 'AGENT'")
+          .get() as { n: number };
+        expect(n).toBe(1);
+      } finally {
+        db.close();
+      }
     });
   });
 });
