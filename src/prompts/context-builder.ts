@@ -326,6 +326,50 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
       const toolCalls = parseToolCalls(msg);
 
       if (toolCalls.length > 0) {
+        // Concise delivery folds several sequential tool rounds into ONE
+        // stored message; replaying them as a single round would misrepresent
+        // dependent rounds as one parallel batch happening after the answer
+        // text. When every record carries a `step` tag and more than one round
+        // is present, emit one assistant/tool pair per round (in step order)
+        // followed by the delivered text — restoring the turn's causality.
+        // Single-round, legacy (untagged), and mixed rows keep the historical
+        // single-pair shape so existing threads stay byte-identical for prompt
+        // caching. (A final text step that itself called tools has its calls
+        // emitted before the trailing text — accepted: step order is
+        // preserved and providers don't constrain text/call adjacency.)
+        const allTagged = toolCalls.every((tc) => tc.step !== undefined);
+        const steps = allTagged
+          ? [...new Set(toolCalls.map((tc) => tc.step as number))].sort((a, b) => a - b)
+          : [];
+
+        if (steps.length > 1) {
+          for (const step of steps) {
+            const group = toolCalls.filter((tc) => tc.step === step);
+            messages.push({
+              role: 'assistant',
+              content: group.map((tc) => ({
+                type: 'tool-call' as const,
+                toolCallId: tc.id,
+                toolName: tc.tool,
+                input: tc.parsedInput,
+              })),
+            } satisfies AssistantModelMessage);
+            messages.push({
+              role: 'tool',
+              content: group.map((tc) => ({
+                type: 'tool-result' as const,
+                toolCallId: tc.id,
+                toolName: tc.tool,
+                output: { type: 'text' as const, value: tc.output },
+              })),
+            } satisfies ToolModelMessage);
+          }
+          if (msg.content?.trim()) {
+            messages.push({ role: 'assistant', content: msg.content });
+          }
+          continue;
+        }
+
         // Build assistant message with tool-call content blocks (+ text if present)
         const assistantParts: Array<{ type: 'text'; text: string } | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }> = [];
         if (msg.content?.trim()) {
@@ -408,12 +452,13 @@ function parseToolCalls(msg: ConversationMessage): Array<{
   tool: string;
   parsedInput: unknown;
   output: string;
+  step?: number;
 }> {
   if (!msg.toolCalls || !Array.isArray(msg.toolCalls) || msg.toolCalls.length === 0) {
     return [];
   }
 
-  const results: Array<{ id: string; tool: string; parsedInput: unknown; output: string }> = [];
+  const results: Array<{ id: string; tool: string; parsedInput: unknown; output: string; step?: number }> = [];
 
   for (let i = 0; i < msg.toolCalls.length; i++) {
     const tc = msg.toolCalls[i] as Record<string, unknown> | null | undefined;
@@ -426,11 +471,19 @@ function parseToolCalls(msg: ConversationMessage): Array<{
       parsedInput = {};
     }
 
+    // Generation-step ordinal (see ToolCallRecord.step). Only a non-negative
+    // integer counts as tagged — anything else is treated as a legacy record.
+    const step =
+      typeof tc.step === 'number' && Number.isInteger(tc.step) && tc.step >= 0
+        ? tc.step
+        : undefined;
+
     results.push({
       id: `${msg.id}-tc-${i}`,
       tool: tc.tool,
       parsedInput,
       output: typeof tc.output === 'string' ? tc.output : '',
+      ...(step !== undefined ? { step } : {}),
     });
   }
 

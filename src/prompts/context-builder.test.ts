@@ -512,6 +512,145 @@ describe('buildConversationMessages', () => {
     expect(toolContent[1]).toEqual(expect.objectContaining({ toolCallId: 'msg-multi-tc-1' }));
   });
 
+  it('replays step-tagged multi-round rows as sequential tool rounds with the answer last', () => {
+    // Concise delivery folds several sequential tool rounds into ONE stored
+    // message; the step tags let reconstruction restore the original
+    // causality instead of presenting the calls as one parallel batch after
+    // the answer text.
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-steps',
+          role: 'AGENT',
+          content: 'Final answer.',
+          toolCalls: [
+            { tool: 'find_pod', input: '{"app":"web"}', output: '"pod-1"', success: true, timestamp: '2026-01-01T00:00:00Z', step: 0 },
+            { tool: 'get_logs', input: '{"pod":"pod-1"}', output: '"boom"', success: true, timestamp: '2026-01-01T00:00:01Z', step: 1 },
+          ],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+
+    // assistant[round 0] + tool[round 0] + assistant[round 1] + tool[round 1] + assistant text
+    expect(messages).toHaveLength(5);
+    expect(messages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant', 'tool', 'assistant']);
+
+    const round0Calls = messages[0].content as unknown[];
+    expect(round0Calls).toHaveLength(1);
+    expect(round0Calls[0]).toEqual({
+      type: 'tool-call',
+      toolCallId: 'msg-steps-tc-0',
+      toolName: 'find_pod',
+      input: { app: 'web' },
+    });
+    expect((messages[1].content as unknown[])[0]).toEqual(
+      expect.objectContaining({ type: 'tool-result', toolCallId: 'msg-steps-tc-0' }),
+    );
+
+    const round1Calls = messages[2].content as unknown[];
+    expect(round1Calls[0]).toEqual(expect.objectContaining({ toolCallId: 'msg-steps-tc-1', toolName: 'get_logs' }));
+    expect((messages[3].content as unknown[])[0]).toEqual(
+      expect.objectContaining({ type: 'tool-result', toolCallId: 'msg-steps-tc-1' }),
+    );
+
+    // The delivered answer text trails the tool rounds — it was produced last.
+    expect(messages[4]).toEqual({ role: 'assistant', content: 'Final answer.' });
+  });
+
+  it('groups multiple calls sharing a step into one round', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-par',
+          role: 'AGENT',
+          content: 'Done.',
+          toolCalls: [
+            { tool: 'a', input: '{}', output: '1', success: true, timestamp: 't', step: 0 },
+            { tool: 'b', input: '{}', output: '2', success: true, timestamp: 't', step: 0 },
+            { tool: 'c', input: '{}', output: '3', success: true, timestamp: 't', step: 1 },
+          ],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+
+    expect(messages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant', 'tool', 'assistant']);
+    // Step-0 round holds the two genuinely-parallel calls; step-1 its own.
+    expect((messages[0].content as unknown[])).toHaveLength(2);
+    expect((messages[1].content as unknown[])).toHaveLength(2);
+    expect((messages[2].content as unknown[])).toHaveLength(1);
+  });
+
+  it('omits the trailing text message for a step-tagged row with empty content', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-notext',
+          role: 'AGENT',
+          content: '',
+          toolCalls: [
+            { tool: 'a', input: '{}', output: '1', success: true, timestamp: 't', step: 0 },
+            { tool: 'b', input: '{}', output: '2', success: true, timestamp: 't', step: 1 },
+          ],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+
+    expect(messages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant', 'tool']);
+  });
+
+  it('keeps the legacy single-pair shape when all tagged calls share one step', () => {
+    // Single-round rows (and verbose-mode rows) must stay byte-identical to
+    // the historical shape so cached prompt prefixes aren't invalidated.
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-one',
+          role: 'AGENT',
+          content: 'Answer.',
+          toolCalls: [
+            { tool: 'a', input: '{}', output: '1', success: true, timestamp: 't', step: 0 },
+            { tool: 'b', input: '{}', output: '2', success: true, timestamp: 't', step: 0 },
+          ],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+
+    expect(messages).toHaveLength(2);
+    const assistantContent = messages[0].content as unknown[];
+    // Leading text + both tool calls in ONE assistant message, as before.
+    expect(assistantContent).toHaveLength(3);
+    expect(assistantContent[0]).toEqual({ type: 'text', text: 'Answer.' });
+    expect(messages[1].role).toBe('tool');
+  });
+
+  it('falls back to the legacy single-pair shape when any call lacks a step tag', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-mixed',
+          role: 'AGENT',
+          content: 'Answer.',
+          toolCalls: [
+            { tool: 'a', input: '{}', output: '1', success: true, timestamp: 't', step: 0 },
+            // Legacy record without a tag (or a malformed one) — the row
+            // can't be grouped reliably, so keep the historical shape.
+            { tool: 'b', input: '{}', output: '2', success: true, timestamp: 't' },
+            { tool: 'c', input: '{}', output: '3', success: true, timestamp: 't', step: -1 },
+          ],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+
+    expect(messages).toHaveLength(2);
+    expect((messages[0].content as unknown[])).toHaveLength(4); // text + 3 calls
+    expect(messages[1].role).toBe('tool');
+  });
+
   it('treats null toolCalls as plain text message', () => {
     const context = createTestAgentContext({
       recentMessages: [

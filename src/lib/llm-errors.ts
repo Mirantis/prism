@@ -156,6 +156,10 @@ export function buildErrorStep(error: unknown): InvokeStep {
   return {
     text: `I encountered an error while processing your request: ${errorDetail || message}`,
     toolCalls: [],
+    // Marked so streaming consumers (conversation-engine) can tell a
+    // synthetic error step from ordinary model output — e.g. to avoid letting
+    // a late failure replace the useful output completed in earlier steps.
+    error: { type: 'llm_error' },
   };
 }
 

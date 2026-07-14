@@ -730,7 +730,9 @@ describe('invoke', () => {
       const result = await invoke(createTestInvokeRequest());
 
       expect(result.response).toContain('Too Many Requests');
-      expect(result.error).toBeUndefined();
+      // Generic failures are marked llm_error (not budget_exceeded) so the
+      // budget checks in heartbeat/cron/goal don't match them.
+      expect(result.error).toEqual({ type: 'llm_error' });
     });
   });
 
@@ -772,6 +774,40 @@ describe('invoke', () => {
     expect(result.toolCalls).toHaveLength(1);
   });
 
+  it('tags each tool-call record with its generation-step ordinal', async () => {
+    // The ordinal lets history reconstruction restore sequential tool rounds
+    // when concise delivery folds several steps into one persisted message.
+    mockGenerateText.mockResolvedValue({
+      text: 'Done.',
+      steps: [
+        {
+          text: '',
+          toolCalls: [
+            { toolCallId: 'tc-1', toolName: 'find_pod', input: {} },
+            { toolCallId: 'tc-2', toolName: 'get_ns', input: {} },
+          ],
+          toolResults: [
+            { toolCallId: 'tc-1', output: 'pod-1' },
+            { toolCallId: 'tc-2', output: 'default' },
+          ],
+        },
+        {
+          text: '',
+          toolCalls: [{ toolCallId: 'tc-3', toolName: 'get_logs', input: {} }],
+          toolResults: [{ toolCallId: 'tc-3', output: 'boom' }],
+        },
+        { text: 'Done.', toolCalls: [], toolResults: [] },
+      ],
+    });
+
+    const result = await invoke(createTestInvokeRequest());
+
+    expect(result.steps[0].toolCalls.map((tc) => tc.step)).toEqual([0, 0]);
+    expect(result.steps[1].toolCalls.map((tc) => tc.step)).toEqual([1]);
+    // The flattened trail keeps the ordinals — that's what gets persisted.
+    expect(result.toolCalls.map((tc) => tc.step)).toEqual([0, 0, 1]);
+  });
+
   describe('includeConversation option', () => {
     it('passes includeConversation=false in heartbeat mode', async () => {
       await invoke(createTestInvokeRequest({ mode: 'heartbeat' }));
@@ -809,6 +845,18 @@ describe('invoke', () => {
           threadId: 'thread-xyz',
           includeConversation: true,
         }),
+      );
+    });
+
+    it('forwards the caller verbosity snapshot to context building', async () => {
+      // The chat engine reads `verbose` once (inside the per-thread lock) and
+      // passes it through, so the system-prompt concise instruction and the
+      // delivery gating can never disagree within a turn.
+      await invoke(createTestInvokeRequest({ mode: 'chat', verbose: true }));
+
+      expect(mockGetAgentContext).toHaveBeenCalledWith(
+        'user-test-456',
+        expect.objectContaining({ verbose: true }),
       );
     });
   });

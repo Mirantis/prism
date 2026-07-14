@@ -86,6 +86,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       // turns intentionally restate their objective rather than replay history).
       includeConversation: request.mode === 'chat' || (request.mode === 'cron' && Boolean(request.threadId)),
       agentId: request.agentId,
+      verbose: request.verbose,
     });
   } catch (error) {
     yield buildErrorStep(error);
@@ -247,6 +248,8 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
     // 8. Call generateText and yield steps as they complete
     let wasCanceled = false;
+    // Per-turn generation-step counter — see the onStepFinish tagging below.
+    let stepIndex = 0;
     const channel = new AsyncChannel<InvokeStep>();
 
     generateText({
@@ -281,6 +284,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           );
         }
 
+        // onStepFinish fires in step order; the ordinal tags each tool-call
+        // record so history reconstruction can restore sequential tool rounds
+        // even when concise delivery folds several steps into one message.
+        const stepOrdinal = stepIndex++;
+
         // Convert SDK step to InvokeStep and push to channel
         const stepToolCalls: ToolCallRecord[] = [];
         for (const tc of step.toolCalls) {
@@ -291,6 +299,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
             output: tr ? JSON.stringify(tr.output) : '',
             success: Boolean(tr),
             timestamp: new Date().toISOString(),
+            step: stepOrdinal,
           });
         }
 

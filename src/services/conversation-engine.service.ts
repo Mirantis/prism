@@ -253,9 +253,12 @@ Respond with exactly one word: WORTHY or SKIP`;
     // Concise vs. streaming delivery. When `verbose` is false (the default)
     // only the final result of the turn is published — intermediate text is
     // neither delivered nor persisted; when true, each text-bearing step is
-    // published the moment it arrives. Read once so a mid-turn toggle can't
-    // split delivery across modes.
-    const { verbose } = await agentWorkspaceService.getAgent();
+    // published the moment it arrives. The snapshot is read INSIDE the
+    // per-thread lock (at execution point, not enqueue point) and passed into
+    // invokeStream, so the system-prompt instruction and the delivery gating
+    // can never disagree — even if the user toggles the setting while this
+    // turn is queued behind another.
+    let verbose = false;
 
     // Stream steps from invokeStream. A one-step buffer lets us tag the LAST
     // text step with the accumulated UI blocks and the feedback decision —
@@ -265,6 +268,11 @@ Respond with exactly one word: WORTHY or SKIP`;
     let pendingToolCalls: ToolCallRecord[] = [];
     let bufferedStep: InvokeStep | null = null;
     let bufferedToolCalls: ToolCallRecord[] = [];
+    // A synthetic error step yielded by invokeStream's failure path (tagged
+    // via `step.error`). Held OUT of the ordinary buffer so a late failure
+    // can't replace the useful output completed in earlier steps — it is
+    // appended to the final publish instead.
+    let terminalErrorStep: InvokeStep | null = null;
     const responseTexts: string[] = [];
     const allBlocks: UIBlock[] = [];
     const allToolCalls: ToolCallRecord[] = [];
@@ -279,6 +287,8 @@ Respond with exactly one word: WORTHY or SKIP`;
     // A `create_goal` call made during this turn kicks its loop fire-and-forget;
     // that loop's first turn queues behind this lock and runs once we release.
     await goalService.runExclusive(threadId, async () => {
+      ({ verbose } = await agentWorkspaceService.getAgent());
+
       for await (const step of invokeStream({
         userId,
         agentId,
@@ -286,6 +296,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         prompt: message,
         threadId,
         workspaceRoot,
+        verbose,
         ...channelOrigin,
         originChannel: metadata?.channel,
         originChannelId: metadata?.channelId,
@@ -296,6 +307,15 @@ Respond with exactly one word: WORTHY or SKIP`;
         if (step.blocks) allBlocks.push(...step.blocks);
         if (step.attachmentIds) allAttachmentIds.push(...step.attachmentIds);
         pendingToolCalls.push(...step.toolCalls);
+
+        // Error steps are terminal (invokeStream closes the stream right
+        // after) and never rotate into the buffer — otherwise a late failure
+        // would erase the completed findings held there and, in concise mode,
+        // the turn would deliver ONLY the generic error text.
+        if (step.error) {
+          terminalErrorStep = step;
+          continue;
+        }
 
         if (step.text) {
           responseTexts.push(step.text);
@@ -325,20 +345,29 @@ Respond with exactly one word: WORTHY or SKIP`;
         }
       }
 
-      // Stream is done. The buffered step (if any) is the LAST text step:
-      // attach the accumulated blocks and the feedback decision here. In
-      // concise mode this is the turn's ONLY publish, so fold every step's
+      // Stream is done. The buffered step (if any) is the LAST useful text
+      // step: attach the accumulated blocks and the feedback decision here.
+      // In concise mode this is the turn's ONLY publish, so fold every step's
       // tool calls into it (including trailing tool-only steps) — the
       // tool-call trail survives even though intermediate text doesn't.
-      if (bufferedStep) {
+      // A terminal error is APPENDED to the useful output rather than
+      // replacing it; error-only turns publish just the error text.
+      const finalText = bufferedStep && terminalErrorStep
+        ? `${bufferedStep.text}\n\n${terminalErrorStep.text}`
+        : (bufferedStep?.text ?? terminalErrorStep?.text ?? '');
+
+      if (bufferedStep || terminalErrorStep) {
         const finalToolCalls = verbose ? bufferedToolCalls : allToolCalls;
-        const includeFeedback = await this.shouldShowFeedback(
-          threadId, message, bufferedStep.text, userId, agentId, input.abortSignal,
-        );
+        // Rating an error turn is noise — skip the feedback gate outright.
+        const includeFeedback = terminalErrorStep
+          ? false
+          : await this.shouldShowFeedback(
+              threadId, message, finalText, userId, agentId, input.abortSignal,
+            );
         agentMessage = await messageDeliveryService.publish(
           userId,
           threadId,
-          bufferedStep.text,
+          finalText,
           'USER_INPUT',
           {
             toolCalls: finalToolCalls.length > 0 ? finalToolCalls : undefined,
@@ -351,10 +380,12 @@ Respond with exactly one word: WORTHY or SKIP`;
 
       // `response` (the returned `content` + `chat.response_chars` telemetry)
       // must mirror what was actually delivered: verbose published every text
-      // step, so join them; concise published only the final step, so return
-      // just that — otherwise the suppressed intermediate narration would leak
-      // via the return value / telemetry / POST /agents/chat.
-      response = verbose ? responseTexts.join('\n\n') : (bufferedStep?.text ?? '');
+      // step, so join them (plus any appended error); concise published only
+      // the combined final message — otherwise the suppressed intermediate
+      // narration would leak via the return value / telemetry / POST /agents/chat.
+      response = verbose
+        ? [...responseTexts, ...(terminalErrorStep ? [terminalErrorStep.text] : [])].join('\n\n')
+        : finalText;
 
       // Fallback: the stream produced no text step. Publish only if there's still
       // something to show (tool calls or UI blocks) — e.g. a tool-only turn. When

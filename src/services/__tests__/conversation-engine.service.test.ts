@@ -44,7 +44,7 @@ const {
  * invokeStream returns. Tests can call streamFromSteps([...]) and pass the
  * result to mockInvokeStream.mockReturnValue().
  */
-function streamFromSteps(steps: Array<{ text: string; toolCalls: unknown[]; blocks?: unknown[] }>): AsyncIterable<unknown> {
+function streamFromSteps(steps: Array<{ text: string; toolCalls: unknown[]; blocks?: unknown[]; error?: { type: string } }>): AsyncIterable<unknown> {
   return {
     async *[Symbol.asyncIterator]() {
       for (const s of steps) yield s;
@@ -534,6 +534,20 @@ describe('Requirement: Conversation Engine', () => {
       );
     });
 
+    it('passes the verbosity snapshot through to invokeStream (prompt/delivery consistency)', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-123', verbose: true });
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'hello',
+      });
+
+      expect(mockInvokeStream).toHaveBeenCalledWith(
+        expect.objectContaining({ verbose: true }),
+      );
+    });
+
     it('should fall back to a single publish when the stream yields no text-bearing steps', async () => {
       // Stream yields only a tool-call-only step (no text). With streaming
       // there's nothing to publish per-step, so the fallback at the end
@@ -635,6 +649,7 @@ describe('Requirement: Conversation Engine', () => {
         {
           text: 'I encountered an error while processing your request: Connection refused',
           toolCalls: [],
+          error: { type: 'llm_error' },
         },
       ]));
 
@@ -645,6 +660,117 @@ describe('Requirement: Conversation Engine', () => {
       });
 
       expect(response.content).toContain('error');
+    });
+
+    it('concise: a late error is appended to the completed findings instead of replacing them', async () => {
+      // A generateText failure after useful steps is yielded as a terminal
+      // error step. It must not become the "final" buffered step — otherwise
+      // the concise turn would deliver ONLY the generic error and silently
+      // discard everything the agent already found.
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: 'Found 3 pods failing due to OOM in namespace prod.',
+          toolCalls: [
+            { tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+        {
+          text: 'I encountered an error while processing your request: connection reset',
+          toolCalls: [],
+          error: { type: 'llm_error' },
+        },
+      ]));
+
+      const result = await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'diagnose the cluster',
+      });
+
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+      const publishedText = mockPublish.mock.calls[0][2] as string;
+      expect(publishedText).toContain('Found 3 pods failing due to OOM');
+      expect(publishedText).toContain('I encountered an error');
+      // Findings come first, the error trails them.
+      expect(publishedText.indexOf('Found 3 pods')).toBeLessThan(publishedText.indexOf('I encountered an error'));
+      // The tool trail still folds onto the single published message.
+      expect(mockPublish.mock.calls[0][4]).toEqual(
+        expect.objectContaining({ toolCalls: [expect.objectContaining({ tool: 'kubectl' })] }),
+      );
+      // Returned content mirrors the delivered combination.
+      expect(result.content).toBe(publishedText);
+    });
+
+    it('error-only turn publishes just the error text', async () => {
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'Your organization\'s AI spending limit has been reached.', toolCalls: [], error: { type: 'budget_exceeded' } },
+      ]));
+
+      const result = await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Hello',
+      });
+
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+      expect(mockPublish.mock.calls[0][2]).toBe('Your organization\'s AI spending limit has been reached.');
+      expect(result.content).toContain('spending limit');
+    });
+
+    it('skips the feedback gate on error turns (no classifier call, includeFeedback=false)', async () => {
+      mockIsTelemetryEnabled.mockReturnValue(true);
+      mockCountAgentMessages.mockResolvedValue(1); // cadence would allow feedback
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'Partial findings.', toolCalls: [] },
+        { text: 'I encountered an error: boom', toolCalls: [], error: { type: 'llm_error' } },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'diagnose',
+        metadata: { channel: 'websocket' },
+      });
+
+      // Rating an error turn is noise: the worthiness classifier is never
+      // consulted and the buttons are suppressed outright.
+      expect(mockGenerateText).not.toHaveBeenCalled();
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-123',
+        'thread-123',
+        expect.stringContaining('I encountered an error'),
+        'USER_INPUT',
+        expect.objectContaining({
+          channelContext: expect.objectContaining({ includeFeedback: false }),
+        }),
+      );
+    });
+
+    it('verbose: streams earlier steps normally and appends the error to the final message', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-123', verbose: true });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'Step one findings.', toolCalls: [] },
+        { text: 'Step two findings.', toolCalls: [] },
+        { text: 'I encountered an error: boom', toolCalls: [], error: { type: 'llm_error' } },
+      ]));
+
+      const result = await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'diagnose',
+      });
+
+      // Step one streamed as an intermediate publish; step two (the buffered
+      // useful output) and the error combine into the final publish.
+      expect(mockPublish).toHaveBeenCalledTimes(2);
+      expect(mockPublish.mock.calls[0][2]).toBe('Step one findings.');
+      const finalText = mockPublish.mock.calls[1][2] as string;
+      expect(finalText).toContain('Step two findings.');
+      expect(finalText).toContain('I encountered an error');
+      // Returned content covers everything that was delivered.
+      expect(result.content).toContain('Step one findings.');
+      expect(result.content).toContain('Step two findings.');
+      expect(result.content).toContain('I encountered an error');
     });
   });
 

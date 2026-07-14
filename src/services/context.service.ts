@@ -14,7 +14,16 @@ import type { ConversationMessage as PrismaConversationMessage } from '@prisma/c
 class ContextService {
   async getAgentContext(
     userId: string,
-    options: { agentId: string; threadId?: string; includeConversation?: boolean }
+    options: {
+      agentId: string;
+      threadId?: string;
+      includeConversation?: boolean;
+      /**
+       * Caller's verbosity snapshot for this turn (see InvokeRequestBase.verbose).
+       * Overrides the agent-row value so prompt and delivery can't diverge.
+       */
+      verbose?: boolean;
+    }
   ): Promise<AgentContext> {
     const { threadId, includeConversation = true } = options;
 
@@ -37,7 +46,7 @@ class ContextService {
       model: agent.model ?? null,
       heartbeatModel: agent.heartbeatModel ?? null,
       cronModel: agent.cronModel ?? null,
-      verbose: agent.verbose,
+      verbose: options.verbose ?? agent.verbose,
       isBootstrapPhase,
       conversationSummary: null,
       recentMessages: [],

@@ -69,6 +69,14 @@ interface InvokeRequestBase {
    */
   workspaceRoot?: string;
   /**
+   * The caller's verbosity snapshot for this turn. When set, it overrides the
+   * agent-row read in context building so the system-prompt concise/streaming
+   * instruction always matches the caller's delivery gating (the row can be
+   * toggled while a turn waits on the per-thread lock). Callers that don't
+   * gate delivery (heartbeat/cron/goal/webhook) leave it unset.
+   */
+  verbose?: boolean;
+  /**
    * Originating channel of this turn, threaded through so the `create_goal`
    * tool can record where to deliver a goal's autonomous turns. Defaults to
    * 'websocket' when unset.
@@ -122,10 +130,19 @@ export interface ToolCallRecord {
   output: string;
   success: boolean;
   timestamp: string;
+  /**
+   * 0-based generation-step ordinal within the producing turn (assigned by
+   * invokeStream's onStepFinish). Concise mode folds several steps' tool
+   * calls into one persisted message; this tag lets the context builder
+   * reconstruct the original sequential tool rounds instead of presenting
+   * them as one parallel batch. Absent on rows persisted before the tag
+   * existed — reconstruction falls back to the legacy single-round shape.
+   */
+  step?: number;
 }
 
 export interface InvokeError {
-  type: 'budget_exceeded';
+  type: 'budget_exceeded' | 'llm_error';
   detail?: string | null;
 }
 
