@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -20,14 +21,22 @@ import type { AgentDetails } from '@/types';
  */
 export function VerbosityField({ verbose, agentId }: { verbose: boolean; agentId: string }) {
   const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
 
   const mut = useMutation({
     mutationFn: (next: boolean) => runtimeApi.updateVerbose(next),
-    onSuccess: ({ verbose: saved }) =>
+    onSuccess: ({ verbose: saved }) => {
       queryClient.setQueryData<AgentDetails>(
         ['agent-details', agentId],
         (old) => (old ? { ...old, verbose: saved } : old),
-      ),
+      );
+      setError(null);
+    },
+    // The menu dismisses on selection regardless of the PATCH outcome, so a
+    // silent failure would leave the user thinking the change took. The label
+    // already keeps showing the stored value; surface the failure like the
+    // sibling name/model fields do.
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Update failed'),
   });
 
   return (
@@ -58,6 +67,7 @@ export function VerbosityField({ verbose, agentId }: { verbose: boolean; agentId
             ? 'Streams every step of the agent’s working as it happens.'
             : 'Posts only the final result of each turn.'}
         </span>
+        {error && <span className="basis-full text-xs text-destructive">{error}</span>}
       </span>
     </div>
   );
