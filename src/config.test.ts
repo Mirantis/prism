@@ -134,4 +134,24 @@ describe('config', () => {
       'https://nexus.example.com/projects/proj-42/llm/bedrock/eu-west-1',
     );
   });
+
+  it('defaults llmProvider to bedrock when LLM_PROVIDER is unset', async () => {
+    delete process.env.LLM_PROVIDER;
+    const cfg = await loadConfig();
+    expect(cfg.llmProvider).toBe('bedrock');
+  });
+
+  it('accepts bedrock and azure case-insensitively', async () => {
+    process.env.LLM_PROVIDER = 'BEDROCK';
+    expect((await loadConfig()).llmProvider).toBe('bedrock');
+
+    vi.resetModules();
+    process.env.LLM_PROVIDER = 'Azure';
+    expect((await loadConfig()).llmProvider).toBe('azure');
+  });
+
+  it('throws on an invalid LLM_PROVIDER value instead of silently falling back', async () => {
+    process.env.LLM_PROVIDER = 'azuer';
+    await expect(loadConfig()).rejects.toThrow(/Invalid LLM_PROVIDER "azuer"/);
+  });
 });

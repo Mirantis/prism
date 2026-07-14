@@ -5,12 +5,27 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 vi.mock('../config', () => ({
-  config: { databaseUrl: undefined as string | undefined },
+  config: {
+    databaseUrl: undefined as string | undefined,
+    llmProvider: 'bedrock' as 'bedrock' | 'azure',
+    embeddingModelId: 'amazon.titan-embed-text-v2:0' as string,
+  },
 }));
 
 import { config } from '../config';
+
+type MockConfig = {
+  databaseUrl?: string;
+  llmProvider: 'bedrock' | 'azure';
+  embeddingModelId: string;
+};
+const mockConfig = config as unknown as MockConfig;
 
 async function importFresh() {
   vi.resetModules();
@@ -19,7 +34,9 @@ async function importFresh() {
 
 describe('sqlite-bootstrap', () => {
   beforeEach(() => {
-    (config as { databaseUrl?: string }).databaseUrl = ':memory:';
+    mockConfig.databaseUrl = ':memory:';
+    mockConfig.llmProvider = 'bedrock';
+    mockConfig.embeddingModelId = 'amazon.titan-embed-text-v2:0';
   });
 
   afterEach(async () => {
@@ -112,5 +129,95 @@ describe('sqlite-bootstrap', () => {
     expect(rows[0].id).toBe('close');
     expect(rows[0].distance).toBeCloseTo(0, 5);
     expect(rows[1].id).toBe('right');
+  });
+
+  describe('embedding signature invalidation', () => {
+    // These cross-boot cases need durable state, so they run against a temp
+    // file rather than the module-default :memory: DB (fresh on every open).
+    let tmpDir: string;
+    let dbFile: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-vec-'));
+      dbFile = path.join(tmpDir, 'agent.db');
+      mockConfig.databaseUrl = `file:${dbFile}`;
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    /** Seed a `memory_entries` row with a non-null 1024-dim embedding BLOB. */
+    function seedEmbeddedEntry(): void {
+      const raw = new Database(dbFile);
+      raw.exec(
+        `CREATE TABLE IF NOT EXISTS memory_entries (id TEXT PRIMARY KEY, embedding BLOB)`,
+      );
+      const blob = Buffer.from(new Float32Array(Array.from({ length: 1024 }, () => 0.1)).buffer);
+      raw.prepare(`INSERT INTO memory_entries (id, embedding) VALUES ('m1', ?)`).run(blob);
+      raw.close();
+    }
+
+    async function boot(provider: 'bedrock' | 'azure' = 'bedrock', model = 'amazon.titan-embed-text-v2:0') {
+      const mod = await importFresh();
+      // Set config fields AFTER importFresh — vi.resetModules() re-evaluates the
+      // config mock, so these must be applied to the object the fresh module reads.
+      mockConfig.databaseUrl = `file:${dbFile}`;
+      mockConfig.llmProvider = provider;
+      mockConfig.embeddingModelId = model;
+      const db = mod.initSqliteVec();
+      return { mod, db };
+    }
+
+    it('records the signature on first boot without wiping existing vectors', async () => {
+      seedEmbeddedEntry();
+      const { db } = await boot();
+
+      const sig = db.prepare(`SELECT signature FROM embedding_meta WHERE id = 1`).get() as {
+        signature: string;
+      };
+      expect(sig.signature).toBe('bedrock:amazon.titan-embed-text-v2:0:1024');
+      // Pre-existing vector preserved (a #62 volume has no signature yet).
+      const row = db.prepare(`SELECT embedding FROM memory_entries WHERE id = 'm1'`).get() as {
+        embedding: Buffer | null;
+      };
+      expect(row.embedding).not.toBeNull();
+      const vecCount = db.prepare(`SELECT count(*) AS n FROM memory_entry_vec`).get() as { n: number };
+      expect(vecCount.n).toBe(1);
+    });
+
+    it('invalidates stored vectors when the provider/model changes', async () => {
+      seedEmbeddedEntry();
+      const first = await boot();
+      first.mod.closeSqliteVec();
+
+      // Switch provider — signature changes.
+      const { db } = await boot('azure', 'text-embedding-3-small');
+
+      const row = db.prepare(`SELECT embedding FROM memory_entries WHERE id = 'm1'`).get() as {
+        embedding: Buffer | null;
+      };
+      expect(row.embedding).toBeNull(); // wiped → backfill will regenerate
+      const vecCount = db.prepare(`SELECT count(*) AS n FROM memory_entry_vec`).get() as { n: number };
+      expect(vecCount.n).toBe(0);
+      const sig = db.prepare(`SELECT signature FROM embedding_meta WHERE id = 1`).get() as {
+        signature: string;
+      };
+      expect(sig.signature).toBe('azure:text-embedding-3-small:1024');
+    });
+
+    it('preserves stored vectors when the signature is unchanged', async () => {
+      seedEmbeddedEntry();
+      const first = await boot();
+      first.mod.closeSqliteVec();
+
+      const { db } = await boot(); // same provider/model
+      const row = db.prepare(`SELECT embedding FROM memory_entries WHERE id = 'm1'`).get() as {
+        embedding: Buffer | null;
+      };
+      expect(row.embedding).not.toBeNull();
+      const vecCount = db.prepare(`SELECT count(*) AS n FROM memory_entry_vec`).get() as { n: number };
+      expect(vecCount.n).toBe(1);
+    });
   });
 });

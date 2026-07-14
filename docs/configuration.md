@@ -11,7 +11,7 @@ The runtime talks to one LLM provider per container, chosen by `LLM_PROVIDER`:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS) or `azure` (Claude via Microsoft Foundry). Any other value falls back to `bedrock`. | `bedrock` |
+| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS) or `azure` (Claude via Microsoft Foundry). Leave unset to default to `bedrock`; any other value fails startup with a clear error rather than silently serving the wrong vendor. | `bedrock` |
 
 Both platforms serve **Claude** through the Anthropic Messages API — `azure`
 mode runs the agent on Claude deployed in [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
@@ -20,6 +20,14 @@ memory embeddings come from an Azure OpenAI `text-embedding-3` deployment
 (Anthropic has no embedding model), defaulting to `text-embedding-3-small`;
 if that deployment doesn't exist, memory embedding fails open (search
 degraded, no crash).
+
+Embedding vectors are only comparable within one embedding space. If you
+change the provider or the embedding model on a container that reuses an
+existing `/data` volume, the runtime detects the change on the next boot,
+discards the stored memory vectors, and rebuilds them with the now-active
+model (a `warn` is logged). This prevents silently comparing, say, Titan
+vectors against `text-embedding-3` vectors. The memory *content* is
+untouched — only the derived vectors are regenerated.
 
 Each platform can run **direct** or **through Nexus** (the LLM gateway).
 Routing is automatic for both: set `NEXUS_API_URL` and the runtime routes
