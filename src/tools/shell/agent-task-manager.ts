@@ -16,6 +16,7 @@ import { ChildProcess, spawn } from 'child_process';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import { logger } from '../../logger';
+import { sandboxEnv } from './sandbox-env';
 
 export const MAX_CONCURRENT = 3;
 export const DEFAULT_WAIT_MS = 5_000;
@@ -117,7 +118,7 @@ export class AgentTaskManager {
     const { command, args } = buildCliCommand(params);
     const child = this.spawner(command, args, {
       cwd: params.workdir,
-      env: { ...process.env, ...(params.env ?? {}) } as NodeJS.ProcessEnv,
+      env: { ...sandboxEnv(), ...(params.env ?? {}) } as NodeJS.ProcessEnv,
     });
     entry.child = child;
 

@@ -10,6 +10,7 @@
  */
 import { spawn } from 'child_process';
 import { z } from 'zod';
+import { sandboxEnv } from './sandbox-env';
 import { resolvePath } from './workspace';
 import {
   DEFAULT_EXEC_TIMEOUT_MS,
@@ -103,7 +104,7 @@ export async function runShellExec(
     const child = spawn('/bin/bash', ['-c', input.command], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
+      env: sandboxEnv(),
     });
 
     const stdoutChunks: Buffer[] = [];
