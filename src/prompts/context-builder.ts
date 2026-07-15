@@ -419,12 +419,31 @@ function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
 /**
  * Validate and narrow a persisted `modelTrace` JSON value into replayable
  * ModelMessages. Strict allowlist — roles assistant/tool only, parts limited
- * to the exact shapes this builder emits itself (text, tool-call, tool-result
- * with `output: {type:'text', value}`), which is also what the write-time
- * sanitizer produces — so provider round-trip behavior matches reconstructed
- * history. Returns null on ANY anomaly so the caller falls back to legacy
- * reconstruction instead of sending malformed content to the provider.
+ * to the exact shapes the write-time sanitizer produces
+ * (invoke.ts#sanitizeTraceMessages): text / tool-call assistant parts, and
+ * tool-result parts whose `output` keeps the SDK's portable discriminant
+ * (`text`, `json`, `error-text`, `error-json`, `execution-denied`) so failed
+ * tools replay as failed. Returns null on ANY anomaly so the caller falls
+ * back to legacy reconstruction instead of sending malformed content to the
+ * provider.
  */
+function isValidTraceToolOutput(output: unknown): boolean {
+  if (!output || typeof output !== 'object') return false;
+  const o = output as Record<string, unknown>;
+  switch (o.type) {
+    case 'text':
+    case 'error-text':
+      return typeof o.value === 'string';
+    case 'json':
+    case 'error-json':
+      return 'value' in o;
+    case 'execution-denied':
+      return o.reason === undefined || typeof o.reason === 'string';
+    default:
+      return false;
+  }
+}
+
 function parseModelTrace(msg: ConversationMessage): ModelMessage[] | null {
   const raw = msg.modelTrace;
   if (!Array.isArray(raw) || raw.length === 0) return null;
@@ -460,8 +479,7 @@ function parseModelTrace(msg: ConversationMessage): ModelMessage[] | null {
         const p = part as Record<string, unknown>;
         if (p.type !== 'tool-result') return null;
         if (typeof p.toolCallId !== 'string' || typeof p.toolName !== 'string') return null;
-        const output = p.output as Record<string, unknown> | undefined;
-        if (!output || output.type !== 'text' || typeof output.value !== 'string') return null;
+        if (!isValidTraceToolOutput(p.output)) return null;
       }
       out.push({ role: 'tool', content } as ToolModelMessage);
     } else {

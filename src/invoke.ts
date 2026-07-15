@@ -248,6 +248,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
     // 8. Call generateText and yield steps as they complete
     let wasCanceled = false;
+    // `step.response.messages` is a CUMULATIVE snapshot: the SDK appends each
+    // round to one array and clones it before every onStepFinish. Track how
+    // many entries we've already consumed and sanitize only the new suffix,
+    // so the turn's accumulated trace carries each round exactly once.
+    let seenTraceMessages = 0;
     const channel = new AsyncChannel<InvokeStep>();
 
     generateText({
@@ -298,9 +303,12 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         const blocks = extractBlocks(step.text);
         const attachmentIds = extractAttachmentIds(step.toolCalls, step.toolResults);
         const totalTokens = step.usage?.totalTokens;
-        // Canonical trace: exactly what the model said this step, sanitized
-        // for portable replay. Persisted per turn as `modelTrace`.
-        const modelMessages = sanitizeTraceMessages(step.response?.messages ?? []);
+        // Canonical trace: exactly what the model said THIS step, sanitized
+        // for portable replay. The snapshot is cumulative (see
+        // `seenTraceMessages`), so take only the unseen suffix.
+        const snapshot = step.response?.messages ?? [];
+        const modelMessages = sanitizeTraceMessages(snapshot.slice(seenTraceMessages));
+        seenTraceMessages = snapshot.length;
         channel.push({
           text: step.text,
           toolCalls: stepToolCalls,
@@ -447,23 +455,42 @@ function joinStepTexts(steps: Array<{ text: string }>): string {
  *
  * - assistant: plain string for text-only, else parts limited to
  *   `text` and `tool-call { toolCallId, toolName, input }`
- * - tool: parts limited to
- *   `tool-result { toolCallId, toolName, output: { type: 'text', value } }`
+ * - tool: parts limited to `tool-result { toolCallId, toolName, output }`,
+ *   where `output` keeps the SDK's portable discriminant — `text`, `json`,
+ *   `error-text`, `error-json`, or `execution-denied` — so a FAILED tool
+ *   still replays as failed (the Anthropic converter derives `is_error`
+ *   from the error variants). Rich `content` outputs are flattened to text.
  *
  * Provider-specific parts (reasoning, files) and `providerOptions` are
  * dropped, so a persisted trace replays identically through the Bedrock and
  * Anthropic/Azure converters — exactly like reconstructed history does today.
- * Structured tool outputs are stringified, matching the legacy path.
  */
 export function sanitizeTraceMessages(messages: ModelMessage[]): ModelMessage[] {
   const sanitized: ModelMessage[] = [];
 
-  const toTextValue = (output: unknown): string => {
-    if (output && typeof output === 'object' && 'type' in output && 'value' in output) {
-      const { value } = output as { value: unknown };
-      return typeof value === 'string' ? value : JSON.stringify(value);
+  type SanitizedToolOutput =
+    | { type: 'text' | 'error-text'; value: string }
+    | { type: 'json' | 'error-json'; value: unknown }
+    | { type: 'execution-denied'; reason?: string };
+
+  const sanitizeOutput = (output: unknown): SanitizedToolOutput => {
+    if (output && typeof output === 'object' && 'type' in output) {
+      const o = output as { type: unknown; value?: unknown; reason?: unknown };
+      switch (o.type) {
+        case 'text':
+        case 'error-text':
+          return { type: o.type, value: typeof o.value === 'string' ? o.value : JSON.stringify(o.value ?? '') };
+        case 'json':
+        case 'error-json':
+          return { type: o.type, value: o.value ?? null };
+        case 'execution-denied':
+          return { type: 'execution-denied', ...(typeof o.reason === 'string' ? { reason: o.reason } : {}) };
+        case 'content':
+          // Rich content parts (e.g. images) aren't portable — flatten.
+          return { type: 'text', value: JSON.stringify(o.value ?? '') };
+      }
     }
-    return typeof output === 'string' ? output : JSON.stringify(output ?? '');
+    return { type: 'text', value: typeof output === 'string' ? output : JSON.stringify(output ?? '') };
   };
 
   type AssistantPart =
@@ -473,7 +500,7 @@ export function sanitizeTraceMessages(messages: ModelMessage[]): ModelMessage[] 
     type: 'tool-result';
     toolCallId: string;
     toolName: string;
-    output: { type: 'text'; value: string };
+    output: SanitizedToolOutput;
   };
 
   for (const msg of messages) {
@@ -511,10 +538,10 @@ export function sanitizeTraceMessages(messages: ModelMessage[]): ModelMessage[] 
           type: 'tool-result',
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          output: { type: 'text', value: toTextValue(part.output) },
+          output: sanitizeOutput(part.output),
         });
       }
-      if (parts.length > 0) sanitized.push({ role: 'tool', content: parts });
+      if (parts.length > 0) sanitized.push({ role: 'tool', content: parts } as ModelMessage);
     }
     // Any other role (shouldn't occur in response messages) is dropped.
   }

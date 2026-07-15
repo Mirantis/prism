@@ -775,9 +775,20 @@ describe('invoke', () => {
     expect(result.toolCalls).toHaveLength(1);
   });
 
-  it('carries each step\'s sanitized response messages as modelMessages', async () => {
+  it('carries each step\'s NEW response messages as modelMessages (cumulative snapshots deduplicated)', async () => {
     // The trace is what the chat engine persists as `modelTrace` so later
     // turns replay exactly what the model said — no reconstruction.
+    //
+    // IMPORTANT: `step.response.messages` is a CUMULATIVE snapshot in the
+    // real SDK — each onStepFinish sees ALL messages generated so far (the
+    // SDK clones its growing responseMessages array). The capture must take
+    // only the unseen suffix, or the accumulated trace duplicates every
+    // earlier round and grows quadratically.
+    const round0 = [
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc-1', toolName: 'kubectl', input: { ns: 'prod' } }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'text', value: 'pods' } }] },
+    ];
+    const round1 = [{ role: 'assistant', content: [{ type: 'text', text: 'Done.' }] }];
     mockGenerateText.mockResolvedValue({
       text: 'Done.',
       steps: [
@@ -785,18 +796,14 @@ describe('invoke', () => {
           text: '',
           toolCalls: [{ toolCallId: 'tc-1', toolName: 'kubectl', input: { ns: 'prod' } }],
           toolResults: [{ toolCallId: 'tc-1', output: 'pods' }],
-          response: {
-            messages: [
-              { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc-1', toolName: 'kubectl', input: { ns: 'prod' } }] },
-              { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'text', value: 'pods' } }] },
-            ],
-          },
+          response: { messages: [...round0] },
         },
         {
           text: 'Done.',
           toolCalls: [],
           toolResults: [],
-          response: { messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Done.' }] }] },
+          // Cumulative: the second snapshot REPEATS round 0.
+          response: { messages: [...round0, ...round1] },
         },
       ],
     });
@@ -807,9 +814,13 @@ describe('invoke', () => {
       { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc-1', toolName: 'kubectl', input: { ns: 'prod' } }] },
       { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'text', value: 'pods' } }] },
     ]);
+    // Step 1 carries ONLY the new round — no duplicated call/result pair.
     expect(result.steps[1].modelMessages).toEqual([
       { role: 'assistant', content: 'Done.' },
     ]);
+    // The concatenated turn trace holds each round exactly once.
+    const turnTrace = result.steps.flatMap((s) => s.modelMessages ?? []);
+    expect(turnTrace).toHaveLength(3);
   });
 
   describe('includeConversation option', () => {
@@ -1269,13 +1280,18 @@ describe('sanitizeTraceMessages', () => {
     ]);
   });
 
-  it('normalizes structured tool outputs to text values', () => {
+  it('preserves the tool-output discriminant so failed tools replay as failed', () => {
+    // The Anthropic converter derives `is_error` from the error variants —
+    // collapsing everything to `text` would replay failures as successes.
     const input = [
       {
         role: 'tool',
         content: [
-          { type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'json', value: { pods: 3 } } },
+          { type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'json', value: { pods: 3 }, providerOptions: { anthropic: {} } } },
           { type: 'tool-result', toolCallId: 'tc-2', toolName: 'logs', output: { type: 'text', value: 'boom' } },
+          { type: 'tool-result', toolCallId: 'tc-3', toolName: 'shell_exec', output: { type: 'error-text', value: 'command not found' } },
+          { type: 'tool-result', toolCallId: 'tc-4', toolName: 'kubectl', output: { type: 'error-json', value: { code: 403 } } },
+          { type: 'tool-result', toolCallId: 'tc-5', toolName: 'shell_exec', output: { type: 'execution-denied', reason: 'user declined' } },
         ],
       },
     ] as unknown as ModelMessage[];
@@ -1284,8 +1300,33 @@ describe('sanitizeTraceMessages', () => {
       {
         role: 'tool',
         content: [
-          { type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'text', value: '{"pods":3}' } },
+          { type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'json', value: { pods: 3 } } },
           { type: 'tool-result', toolCallId: 'tc-2', toolName: 'logs', output: { type: 'text', value: 'boom' } },
+          { type: 'tool-result', toolCallId: 'tc-3', toolName: 'shell_exec', output: { type: 'error-text', value: 'command not found' } },
+          { type: 'tool-result', toolCallId: 'tc-4', toolName: 'kubectl', output: { type: 'error-json', value: { code: 403 } } },
+          { type: 'tool-result', toolCallId: 'tc-5', toolName: 'shell_exec', output: { type: 'execution-denied', reason: 'user declined' } },
+        ],
+      },
+    ]);
+  });
+
+  it('flattens rich content outputs to text and stringifies unknown output shapes', () => {
+    const input = [
+      {
+        role: 'tool',
+        content: [
+          { type: 'tool-result', toolCallId: 'tc-1', toolName: 'a', output: { type: 'content', value: [{ type: 'text', text: 'rich' }] } },
+          { type: 'tool-result', toolCallId: 'tc-2', toolName: 'b', output: 'bare string' },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+    expect(sanitizeTraceMessages(input)).toEqual([
+      {
+        role: 'tool',
+        content: [
+          { type: 'tool-result', toolCallId: 'tc-1', toolName: 'a', output: { type: 'text', value: '[{"type":"text","text":"rich"}]' } },
+          { type: 'tool-result', toolCallId: 'tc-2', toolName: 'b', output: { type: 'text', value: 'bare string' } },
         ],
       },
     ]);

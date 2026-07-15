@@ -570,6 +570,25 @@ describe('buildConversationMessages', () => {
     expect(messages[4]).toEqual({ role: 'assistant', content: 'Final answer.' });
   });
 
+  it('replays traces whose tool outputs carry the error/json discriminants', () => {
+    // Failed tools must replay as failed — the provider converters derive
+    // `is_error` from the error variants.
+    const trace = [
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc-1', toolName: 'shell_exec', input: { cmd: 'x' } }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc-1', toolName: 'shell_exec', output: { type: 'error-text', value: 'command not found' } }] },
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc-2', toolName: 'kubectl', input: {} }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc-2', toolName: 'kubectl', output: { type: 'json', value: { pods: 3 } } }] },
+      { role: 'assistant', content: 'Recovered and answered.' },
+    ];
+    const context = createTestAgentContext({
+      recentMessages: [
+        { id: 'msg-err-trace', role: 'AGENT', content: 'Recovered and answered.', modelTrace: trace },
+      ],
+    });
+
+    expect(buildConversationMessages(context)).toEqual(trace);
+  });
+
   it('falls back to legacy reconstruction when the trace is malformed', () => {
     const base = {
       role: 'AGENT' as const,
@@ -583,7 +602,8 @@ describe('buildConversationMessages', () => {
       [],
       [{ role: 'user', content: 'wrong role' }],
       [{ role: 'assistant', content: [{ type: 'reasoning', text: 'disallowed part' }] }],
-      [{ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'x', toolName: 'y', output: { type: 'json', value: {} } }] }],
+      [{ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'x', toolName: 'y', output: { type: 'bogus', value: 'x' } }] }],
+      [{ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'x', toolName: 'y', output: { type: 'error-text', value: 42 } }] }],
     ];
 
     for (const modelTrace of malformedTraces) {
