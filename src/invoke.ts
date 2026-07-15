@@ -248,8 +248,6 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
     // 8. Call generateText and yield steps as they complete
     let wasCanceled = false;
-    // Per-turn generation-step counter — see the onStepFinish tagging below.
-    let stepIndex = 0;
     const channel = new AsyncChannel<InvokeStep>();
 
     generateText({
@@ -284,11 +282,6 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           );
         }
 
-        // onStepFinish fires in step order; the ordinal tags each tool-call
-        // record so history reconstruction can restore sequential tool rounds
-        // even when concise delivery folds several steps into one message.
-        const stepOrdinal = stepIndex++;
-
         // Convert SDK step to InvokeStep and push to channel
         const stepToolCalls: ToolCallRecord[] = [];
         for (const tc of step.toolCalls) {
@@ -299,16 +292,19 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
             output: tr ? JSON.stringify(tr.output) : '',
             success: Boolean(tr),
             timestamp: new Date().toISOString(),
-            step: stepOrdinal,
           });
         }
 
         const blocks = extractBlocks(step.text);
         const attachmentIds = extractAttachmentIds(step.toolCalls, step.toolResults);
         const totalTokens = step.usage?.totalTokens;
+        // Canonical trace: exactly what the model said this step, sanitized
+        // for portable replay. Persisted per turn as `modelTrace`.
+        const modelMessages = sanitizeTraceMessages(step.response?.messages ?? []);
         channel.push({
           text: step.text,
           toolCalls: stepToolCalls,
+          ...(modelMessages.length > 0 ? { modelMessages } : {}),
           ...(typeof totalTokens === 'number' ? { usage: { totalTokens } } : {}),
           blocks,
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
@@ -338,6 +334,10 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         channel.push({
           text: summaryResult.text,
           toolCalls: [],
+          // The summary comes from a separate no-tools call, so it isn't in
+          // the main call's response messages — append it as plain assistant
+          // text so the trace ends with what was actually delivered.
+          modelMessages: [{ role: 'assistant', content: summaryResult.text }],
           ...(typeof summaryTokens === 'number' ? { usage: { totalTokens: summaryTokens } } : {}),
           blocks: earlyStoppingBlocks,
         });
@@ -439,6 +439,87 @@ export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
  */
 function joinStepTexts(steps: Array<{ text: string }>): string {
   return steps.map((s) => s.text).filter(Boolean).join('\n\n');
+}
+
+/**
+ * Sanitize the SDK's per-step `response.messages` into the canonical minimal
+ * shapes the context builder emits when reconstructing history:
+ *
+ * - assistant: plain string for text-only, else parts limited to
+ *   `text` and `tool-call { toolCallId, toolName, input }`
+ * - tool: parts limited to
+ *   `tool-result { toolCallId, toolName, output: { type: 'text', value } }`
+ *
+ * Provider-specific parts (reasoning, files) and `providerOptions` are
+ * dropped, so a persisted trace replays identically through the Bedrock and
+ * Anthropic/Azure converters — exactly like reconstructed history does today.
+ * Structured tool outputs are stringified, matching the legacy path.
+ */
+export function sanitizeTraceMessages(messages: ModelMessage[]): ModelMessage[] {
+  const sanitized: ModelMessage[] = [];
+
+  const toTextValue = (output: unknown): string => {
+    if (output && typeof output === 'object' && 'type' in output && 'value' in output) {
+      const { value } = output as { value: unknown };
+      return typeof value === 'string' ? value : JSON.stringify(value);
+    }
+    return typeof output === 'string' ? output : JSON.stringify(output ?? '');
+  };
+
+  type AssistantPart =
+    | { type: 'text'; text: string }
+    | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown };
+  type ToolResultPart = {
+    type: 'tool-result';
+    toolCallId: string;
+    toolName: string;
+    output: { type: 'text'; value: string };
+  };
+
+  for (const msg of messages) {
+    if (msg.role === 'assistant') {
+      if (typeof msg.content === 'string') {
+        if (msg.content.trim()) sanitized.push({ role: 'assistant', content: msg.content });
+        continue;
+      }
+      const parts: AssistantPart[] = [];
+      for (const part of msg.content) {
+        if (part.type === 'text' && part.text.trim()) {
+          parts.push({ type: 'text', text: part.text });
+        } else if (part.type === 'tool-call') {
+          parts.push({
+            type: 'tool-call',
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            input: part.input,
+          });
+        }
+      }
+      if (parts.length === 0) continue;
+      const [first] = parts;
+      // Collapse a lone text part to the plain-string form the builder uses.
+      if (parts.length === 1 && first.type === 'text') {
+        sanitized.push({ role: 'assistant', content: first.text });
+      } else {
+        sanitized.push({ role: 'assistant', content: parts });
+      }
+    } else if (msg.role === 'tool') {
+      const parts: ToolResultPart[] = [];
+      for (const part of msg.content) {
+        if (part.type !== 'tool-result') continue;
+        parts.push({
+          type: 'tool-result',
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          output: { type: 'text', value: toTextValue(part.output) },
+        });
+      }
+      if (parts.length > 0) sanitized.push({ role: 'tool', content: parts });
+    }
+    // Any other role (shouldn't occur in response messages) is dropped.
+  }
+
+  return sanitized;
 }
 
 /**

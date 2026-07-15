@@ -44,7 +44,7 @@ const {
  * invokeStream returns. Tests can call streamFromSteps([...]) and pass the
  * result to mockInvokeStream.mockReturnValue().
  */
-function streamFromSteps(steps: Array<{ text: string; toolCalls: unknown[]; blocks?: unknown[]; error?: { type: string } }>): AsyncIterable<unknown> {
+function streamFromSteps(steps: Array<{ text: string; toolCalls: unknown[]; blocks?: unknown[]; modelMessages?: unknown[]; error?: { type: string } }>): AsyncIterable<unknown> {
   return {
     async *[Symbol.asyncIterator]() {
       for (const s of steps) yield s;
@@ -530,6 +530,90 @@ describe('Requirement: Conversation Engine', () => {
             expect.objectContaining({ tool: 'tool_a' }),
             expect.objectContaining({ tool: 'tool_b' }),
           ]),
+        }),
+      );
+    });
+
+    it('concise: persists the accumulated model trace on the final publish', async () => {
+      // The trace is the canonical model-facing history — later turns replay
+      // it verbatim instead of reconstructing causality from tool calls.
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: '',
+          toolCalls: [{ tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: 't' }],
+          modelMessages: [
+            { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc-1', toolName: 'kubectl', input: {} }] },
+            { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'text', value: 'pods' } }] },
+          ],
+        },
+        {
+          text: 'Here are the results.',
+          toolCalls: [],
+          modelMessages: [{ role: 'assistant', content: 'Here are the results.' }],
+        },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Show me pods',
+      });
+
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+      expect(mockPublish.mock.calls[0][4]).toEqual(
+        expect.objectContaining({
+          modelTrace: [
+            { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc-1', toolName: 'kubectl', input: {} }] },
+            { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'text', value: 'pods' } }] },
+            { role: 'assistant', content: 'Here are the results.' },
+          ],
+        }),
+      );
+    });
+
+    it('verbose: publishes carry no model trace (per-row legacy replay)', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-123', verbose: true });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'Step one.', toolCalls: [], modelMessages: [{ role: 'assistant', content: 'Step one.' }] },
+        { text: 'Done.', toolCalls: [], modelMessages: [{ role: 'assistant', content: 'Done.' }] },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'hello',
+      });
+
+      expect(mockPublish).toHaveBeenCalledTimes(2);
+      for (const call of mockPublish.mock.calls) {
+        expect((call[4] as { modelTrace?: unknown }).modelTrace).toBeUndefined();
+      }
+    });
+
+    it('concise: an error turn\'s trace ends with the error text', async () => {
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'Partial findings.', toolCalls: [], modelMessages: [{ role: 'assistant', content: 'Partial findings.' }] },
+        {
+          text: 'I encountered an error: boom',
+          toolCalls: [],
+          modelMessages: [{ role: 'assistant', content: 'I encountered an error: boom' }],
+          error: { type: 'llm_error' },
+        },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'diagnose',
+      });
+
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+      expect(mockPublish.mock.calls[0][4]).toEqual(
+        expect.objectContaining({
+          modelTrace: [
+            { role: 'assistant', content: 'Partial findings.' },
+            { role: 'assistant', content: 'I encountered an error: boom' },
+          ],
         }),
       );
     });

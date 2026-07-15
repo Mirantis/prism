@@ -160,6 +160,12 @@ model ConversationMessage {
   triggeredBy MessageTrigger
   toolCalls   Json?
   blocks      Json?
+  // Canonical model-facing trace of the turn that produced this message:
+  // sanitized ModelMessage[] (assistant tool-call rounds + tool results +
+  // final text) captured from the SDK at generation time. When present, the
+  // context builder replays it verbatim instead of reconstructing history
+  // from `toolCalls`. Null on legacy rows and verbose-mode rows.
+  modelTrace  Json?
   tokenCount  Int?
 
   senderExternalId  String?

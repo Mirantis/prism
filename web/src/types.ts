@@ -6,8 +6,6 @@ export interface ToolCallRecord {
   input: string;
   output: string;
   success: boolean;
-  /** 0-based generation-step ordinal within the producing turn (may be absent on old rows). */
-  step?: number;
 }
 
 export type AttachmentCategory = 'image' | 'pdf' | 'text' | 'unreadable';

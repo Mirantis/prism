@@ -144,7 +144,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       thread.externalThreadId
     );
 
-    const [rawMessages, { contentByTs, toolCallsByTs }] = await Promise.all([
+    const [rawMessages, { contentByTs, toolCallsByTs, modelTraceByTs }] = await Promise.all([
       this.fetchAllReplies(channelId, threadTs, teamId),
       this.getAgentMessageMaps(threadId),
     ]);
@@ -155,6 +155,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       teamId,
       contentByTs,
       toolCallsByTs,
+      modelTraceByTs,
     );
   }
 
@@ -249,6 +250,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     teamId: string,
     dbContentByTs: Map<string, string>,
     toolCallsByTs: Map<string, Prisma.JsonValue>,
+    modelTraceByTs: Map<string, Prisma.JsonValue>,
   ): Promise<ConversationMessage[]> {
     // Choose the authoritative body for a message. For the agent's own
     // replies, prefer the lossless stored DB content (which preserves
@@ -313,6 +315,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         content,
         triggeredBy: 'USER_INPUT' as const,
         toolCalls: (isOurAgent && toolCallsByTs.get(msg.ts)) || null,
+        modelTrace: (isOurAgent && modelTraceByTs.get(msg.ts)) || null,
         blocks: null,
         tokenCount: null,
         senderExternalId: msg.user || null,
@@ -340,6 +343,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
   private async getAgentMessageMaps(threadId: string): Promise<{
     contentByTs: Map<string, string>;
     toolCallsByTs: Map<string, Prisma.JsonValue>;
+    modelTraceByTs: Map<string, Prisma.JsonValue>;
   }> {
     const dbMessages = await prisma.conversationMessage.findMany({
       where: {
@@ -351,19 +355,24 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         externalMessageId: true,
         content: true,
         toolCalls: true,
+        modelTrace: true,
       },
     });
 
     const contentByTs = new Map<string, string>();
     const toolCallsByTs = new Map<string, Prisma.JsonValue>();
+    const modelTraceByTs = new Map<string, Prisma.JsonValue>();
     for (const msg of dbMessages) {
       if (!msg.externalMessageId) continue;
       contentByTs.set(msg.externalMessageId, msg.content);
       if (msg.toolCalls != null) {
         toolCallsByTs.set(msg.externalMessageId, msg.toolCalls);
       }
+      if (msg.modelTrace != null) {
+        modelTraceByTs.set(msg.externalMessageId, msg.modelTrace);
+      }
     }
-    return { contentByTs, toolCallsByTs };
+    return { contentByTs, toolCallsByTs, modelTraceByTs };
   }
 
   /**

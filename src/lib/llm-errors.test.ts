@@ -236,6 +236,7 @@ describe('buildErrorStep', () => {
 
     expect(step.error).toEqual({ type: 'budget_exceeded', detail: 'wrapped detail' });
     expect(step.text).toContain('wrapped detail');
+    expect(step.modelMessages).toEqual([{ role: 'assistant', content: step.text }]);
   });
 
   it('produces a generic friendly message for non-budget Error instances', () => {
@@ -247,6 +248,9 @@ describe('buildErrorStep', () => {
     // Generic errors are marked too, so streaming consumers can tell a
     // synthetic error step from ordinary model output.
     expect(step.error).toEqual({ type: 'llm_error' });
+    // Synthetic steps carry their text as a plain assistant message so the
+    // turn's persisted model trace ends with what was actually delivered.
+    expect(step.modelMessages).toEqual([{ role: 'assistant', content: step.text }]);
   });
 
   it('prefers the RFC 7807 detail over the raw error message for non-budget errors', () => {

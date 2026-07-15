@@ -156,7 +156,8 @@ vi.mock('./lib/telemetry', () => ({
 }));
 
 
-import { invoke, withToolsCacheControl, extractAttachmentIds } from './invoke';
+import { invoke, withToolsCacheControl, extractAttachmentIds, sanitizeTraceMessages } from './invoke';
+import type { ModelMessage } from 'ai';
 import { config } from './config';
 import { Tool } from 'ai';
 
@@ -774,38 +775,41 @@ describe('invoke', () => {
     expect(result.toolCalls).toHaveLength(1);
   });
 
-  it('tags each tool-call record with its generation-step ordinal', async () => {
-    // The ordinal lets history reconstruction restore sequential tool rounds
-    // when concise delivery folds several steps into one persisted message.
+  it('carries each step\'s sanitized response messages as modelMessages', async () => {
+    // The trace is what the chat engine persists as `modelTrace` so later
+    // turns replay exactly what the model said — no reconstruction.
     mockGenerateText.mockResolvedValue({
       text: 'Done.',
       steps: [
         {
           text: '',
-          toolCalls: [
-            { toolCallId: 'tc-1', toolName: 'find_pod', input: {} },
-            { toolCallId: 'tc-2', toolName: 'get_ns', input: {} },
-          ],
-          toolResults: [
-            { toolCallId: 'tc-1', output: 'pod-1' },
-            { toolCallId: 'tc-2', output: 'default' },
-          ],
+          toolCalls: [{ toolCallId: 'tc-1', toolName: 'kubectl', input: { ns: 'prod' } }],
+          toolResults: [{ toolCallId: 'tc-1', output: 'pods' }],
+          response: {
+            messages: [
+              { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc-1', toolName: 'kubectl', input: { ns: 'prod' } }] },
+              { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'text', value: 'pods' } }] },
+            ],
+          },
         },
         {
-          text: '',
-          toolCalls: [{ toolCallId: 'tc-3', toolName: 'get_logs', input: {} }],
-          toolResults: [{ toolCallId: 'tc-3', output: 'boom' }],
+          text: 'Done.',
+          toolCalls: [],
+          toolResults: [],
+          response: { messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Done.' }] }] },
         },
-        { text: 'Done.', toolCalls: [], toolResults: [] },
       ],
     });
 
     const result = await invoke(createTestInvokeRequest());
 
-    expect(result.steps[0].toolCalls.map((tc) => tc.step)).toEqual([0, 0]);
-    expect(result.steps[1].toolCalls.map((tc) => tc.step)).toEqual([1]);
-    // The flattened trail keeps the ordinals — that's what gets persisted.
-    expect(result.toolCalls.map((tc) => tc.step)).toEqual([0, 0, 1]);
+    expect(result.steps[0].modelMessages).toEqual([
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc-1', toolName: 'kubectl', input: { ns: 'prod' } }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'text', value: 'pods' } }] },
+    ]);
+    expect(result.steps[1].modelMessages).toEqual([
+      { role: 'assistant', content: 'Done.' },
+    ]);
   });
 
   describe('includeConversation option', () => {
@@ -901,6 +905,15 @@ describe('invoke', () => {
 
       // Response should be the early stopping summary only (no intermediate step text)
       expect(result.response).toBe('Still working...\n\nHere is a summary of what I found.');
+
+      // The summary comes from a separate no-tools call, so it isn't in the
+      // main call's response messages — the synthetic step carries it as a
+      // plain assistant message so the persisted trace ends with what was
+      // actually delivered.
+      const summaryStep = result.steps[result.steps.length - 1];
+      expect(summaryStep.modelMessages).toEqual([
+        { role: 'assistant', content: 'Here is a summary of what I found.' },
+      ]);
     });
 
     it('includes tool calls and results in the assistant context for summary', async () => {
@@ -1228,5 +1241,73 @@ describe('extractAttachmentIds', () => {
 
   it('returns an empty array when there are no share_file calls', () => {
     expect(extractAttachmentIds([{ toolName: 'memory_write', toolCallId: 'x' }], [])).toEqual([]);
+  });
+});
+
+describe('sanitizeTraceMessages', () => {
+  it('keeps text and tool-call parts, dropping reasoning parts and providerOptions', () => {
+    const input = [
+      {
+        role: 'assistant',
+        providerOptions: { anthropic: { cachePoint: true } },
+        content: [
+          { type: 'reasoning', text: 'thinking...' },
+          { type: 'text', text: 'Let me check.', providerOptions: { anthropic: {} } },
+          { type: 'tool-call', toolCallId: 'tc-1', toolName: 'kubectl', input: { ns: 'prod' }, providerExecuted: false },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+    expect(sanitizeTraceMessages(input)).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Let me check.' },
+          { type: 'tool-call', toolCallId: 'tc-1', toolName: 'kubectl', input: { ns: 'prod' } },
+        ],
+      },
+    ]);
+  });
+
+  it('normalizes structured tool outputs to text values', () => {
+    const input = [
+      {
+        role: 'tool',
+        content: [
+          { type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'json', value: { pods: 3 } } },
+          { type: 'tool-result', toolCallId: 'tc-2', toolName: 'logs', output: { type: 'text', value: 'boom' } },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+    expect(sanitizeTraceMessages(input)).toEqual([
+      {
+        role: 'tool',
+        content: [
+          { type: 'tool-result', toolCallId: 'tc-1', toolName: 'kubectl', output: { type: 'text', value: '{"pods":3}' } },
+          { type: 'tool-result', toolCallId: 'tc-2', toolName: 'logs', output: { type: 'text', value: 'boom' } },
+        ],
+      },
+    ]);
+  });
+
+  it('collapses a lone text part to the plain-string assistant form', () => {
+    const input = [
+      { role: 'assistant', content: [{ type: 'text', text: 'Final answer.' }] },
+    ] as unknown as ModelMessage[];
+
+    expect(sanitizeTraceMessages(input)).toEqual([
+      { role: 'assistant', content: 'Final answer.' },
+    ]);
+  });
+
+  it('drops empty assistant messages and non-assistant/tool roles', () => {
+    const input = [
+      { role: 'assistant', content: [{ type: 'reasoning', text: 'only reasoning' }] },
+      { role: 'assistant', content: '   ' },
+      { role: 'system', content: 'should never appear' },
+    ] as unknown as ModelMessage[];
+
+    expect(sanitizeTraceMessages(input)).toEqual([]);
   });
 });

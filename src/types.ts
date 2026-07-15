@@ -4,6 +4,7 @@
  * Request/response contracts for the agent runtime.
  */
 
+import type { ModelMessage } from 'ai';
 import { ConversationMessage } from './prompts/context-builder';
 
 // ============================================================================
@@ -130,15 +131,6 @@ export interface ToolCallRecord {
   output: string;
   success: boolean;
   timestamp: string;
-  /**
-   * 0-based generation-step ordinal within the producing turn (assigned by
-   * invokeStream's onStepFinish). Concise mode folds several steps' tool
-   * calls into one persisted message; this tag lets the context builder
-   * reconstruct the original sequential tool rounds instead of presenting
-   * them as one parallel batch. Absent on rows persisted before the tag
-   * existed — reconstruction falls back to the legacy single-round shape.
-   */
-  step?: number;
 }
 
 export interface InvokeError {
@@ -149,6 +141,16 @@ export interface InvokeError {
 export interface InvokeStep {
   text: string;
   toolCalls: ToolCallRecord[];
+  /**
+   * The model-facing messages this step produced (assistant text/tool-calls
+   * + tool results), sanitized to the canonical minimal part shapes (see
+   * `sanitizeTraceMessages` in invoke.ts). The chat engine accumulates them
+   * into the turn's persisted `modelTrace` so later turns replay exactly
+   * what the model said — no causality reconstruction from flattened tool
+   * calls. Synthetic steps (early-stopping summary, errors) carry their text
+   * as a plain assistant message so the trace ends with what was delivered.
+   */
+  modelMessages?: ModelMessage[];
   // Total tokens (input + output) the model reported for this step, when the
   // provider returns usage. Aggregated by invoke() into InvokeResponse.usage so
   // callers (e.g. the goal loop's per-goal token budget) can meter spend.

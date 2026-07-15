@@ -41,6 +41,12 @@ export interface PublishOptions {
   /** UI blocks for rich rendering */
   blocks?: unknown[];
   /**
+   * Canonical model-facing trace of the turn (sanitized ModelMessage[]).
+   * Opaque pass-through to the message row; the context builder replays it
+   * verbatim on later turns. Set by the chat engine for concise turns only.
+   */
+  modelTrace?: unknown[];
+  /**
    * Ids of files the agent shared (via share_file) to deliver with this
    * message. They're linked to the stored message and rendered/uploaded by
    * each channel adapter. Already-linked or forged ids are ignored at link
@@ -111,6 +117,7 @@ export class MessageDeliveryService {
       triggeredBy,
       toolCalls: options?.toolCalls,
       blocks: options?.blocks,
+      modelTrace: options?.modelTrace,
     });
 
     // 2. Link any agent-shared files to this message and load their metadata

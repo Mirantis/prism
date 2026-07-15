@@ -33,6 +33,8 @@ export interface MessageInput {
   triggeredBy: MessageTrigger;
   toolCalls?: unknown[];
   blocks?: unknown[];
+  /** Canonical model-facing trace of the producing turn (see schema.prisma). */
+  modelTrace?: unknown[];
   tokenCount?: number;
   // Multi-user context (for channel messages)
   senderExternalId?: string; // External user ID (Slack: U..., Discord: snowflake, etc.)
@@ -353,6 +355,7 @@ class ConversationService {
         triggeredBy: input.triggeredBy,
         toolCalls: input.toolCalls as Prisma.InputJsonValue | undefined,
         blocks: input.blocks as Prisma.InputJsonValue | undefined,
+        modelTrace: input.modelTrace as Prisma.InputJsonValue | undefined,
         tokenCount: input.tokenCount,
         senderExternalId: input.senderExternalId,
         senderName: input.senderName,

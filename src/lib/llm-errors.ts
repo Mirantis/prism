@@ -142,20 +142,26 @@ export function buildErrorStep(error: unknown): InvokeStep {
   if (isSpendingLimitError(originalError)) {
     logSpendingLimitWarning(originalError);
     const detail = getSpendingLimitDetail(originalError);
+    const text =
+      `Your organization's AI spending limit has been reached` +
+      `${detail ? `: ${detail}` : ''}. ` +
+      'Please contact your administrator to increase the budget or wait for the limit to reset.';
     return {
-      text:
-        `Your organization's AI spending limit has been reached` +
-        `${detail ? `: ${detail}` : ''}. ` +
-        'Please contact your administrator to increase the budget or wait for the limit to reset.',
+      text,
       toolCalls: [],
+      // Synthetic step — carry its text as a plain assistant message so the
+      // turn's persisted model trace ends with what was actually delivered.
+      modelMessages: [{ role: 'assistant', content: text }],
       error: { type: 'budget_exceeded', detail },
     };
   }
 
   const errorDetail = getErrorDetail(originalError);
+  const text = `I encountered an error while processing your request: ${errorDetail || message}`;
   return {
-    text: `I encountered an error while processing your request: ${errorDetail || message}`,
+    text,
     toolCalls: [],
+    modelMessages: [{ role: 'assistant', content: text }],
     // Marked so streaming consumers (conversation-engine) can tell a
     // synthetic error step from ordinary model output — e.g. to avoid letting
     // a late failure replace the useful output completed in earlier steps.

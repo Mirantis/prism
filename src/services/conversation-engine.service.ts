@@ -6,7 +6,7 @@
  * responses via the local MessageDeliveryService.
  */
 
-import { generateText } from 'ai';
+import { generateText, type ModelMessage } from 'ai';
 import { messageDeliveryService } from './message-delivery.service';
 import { conversationService } from './conversation.service';
 import { agentWorkspaceService } from './agent-workspace.service';
@@ -279,6 +279,11 @@ Respond with exactly one word: WORTHY or SKIP`;
     // Files the agent shared (share_file) accrue across steps and ride out on
     // the final delivered message, so they appear alongside the answer.
     const allAttachmentIds: string[] = [];
+    // Canonical model-facing trace of the turn (sanitized in invokeStream).
+    // Persisted on the concise final message so later turns replay exactly
+    // what the model said instead of reconstructing causality from the
+    // flattened tool-call list.
+    const modelTrace: ModelMessage[] = [];
 
     let response = '';
 
@@ -306,6 +311,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         allToolCalls.push(...step.toolCalls);
         if (step.blocks) allBlocks.push(...step.blocks);
         if (step.attachmentIds) allAttachmentIds.push(...step.attachmentIds);
+        if (step.modelMessages) modelTrace.push(...step.modelMessages);
         pendingToolCalls.push(...step.toolCalls);
 
         // Error steps are terminal (invokeStream closes the stream right
@@ -373,6 +379,11 @@ Respond with exactly one word: WORTHY or SKIP`;
             toolCalls: finalToolCalls.length > 0 ? finalToolCalls : undefined,
             blocks: allBlocks.length > 0 ? allBlocks : undefined,
             attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
+            // Concise folds the whole turn into this one row, so it carries
+            // the canonical trace for later-turn replay. Verbose rows keep
+            // per-row legacy reconstruction (their text co-occurs with their
+            // own calls, which that shape represents correctly).
+            modelTrace: !verbose && modelTrace.length > 0 ? modelTrace : undefined,
             channelContext: channelContext ? { ...channelContext, includeFeedback } : undefined,
           }
         );
@@ -402,6 +413,7 @@ Respond with exactly one word: WORTHY or SKIP`;
             toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
             blocks: allBlocks.length > 0 ? allBlocks : undefined,
             attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
+            modelTrace: !verbose && modelTrace.length > 0 ? modelTrace : undefined,
             channelContext,
           }
         );

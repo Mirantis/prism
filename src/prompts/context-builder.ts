@@ -25,6 +25,10 @@ export interface ConversationMessage {
   role: 'USER' | 'AGENT' | 'SYSTEM';
   content: string;
   toolCalls?: unknown;
+  // Canonical model-facing trace of the producing turn (sanitized
+  // ModelMessage[], see invoke.ts#sanitizeTraceMessages). Validated at
+  // runtime by parseModelTrace(); replayed verbatim when present.
+  modelTrace?: unknown;
   // Files shared by the user (web upload or Slack attachment). Loaded with
   // bytes by the context service so they can be turned into LLM content parts.
   attachments?: AttachmentForLLM[];
@@ -323,53 +327,22 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
         messages.push({ role: 'user', content: parts });
       }
     } else if (msg.role === 'AGENT') {
+      // Canonical replay: a concise turn persists the exact model-facing
+      // trace (sequential tool rounds + final text, sanitized at write time
+      // into the same part shapes this builder emits below). Splicing it
+      // verbatim preserves the turn's true causality — no reconstruction
+      // from the flattened tool-call list, which cannot recover round
+      // boundaries or text placement. Any shape anomaly falls through to the
+      // legacy reconstruction so a corrupt trace can never break the turn.
+      const trace = parseModelTrace(msg);
+      if (trace) {
+        messages.push(...trace);
+        continue;
+      }
+
       const toolCalls = parseToolCalls(msg);
 
       if (toolCalls.length > 0) {
-        // Concise delivery folds several sequential tool rounds into ONE
-        // stored message; replaying them as a single round would misrepresent
-        // dependent rounds as one parallel batch happening after the answer
-        // text. When every record carries a `step` tag and more than one round
-        // is present, emit one assistant/tool pair per round (in step order)
-        // followed by the delivered text — restoring the turn's causality.
-        // Single-round, legacy (untagged), and mixed rows keep the historical
-        // single-pair shape so existing threads stay byte-identical for prompt
-        // caching. (A final text step that itself called tools has its calls
-        // emitted before the trailing text — accepted: step order is
-        // preserved and providers don't constrain text/call adjacency.)
-        const allTagged = toolCalls.every((tc) => tc.step !== undefined);
-        const steps = allTagged
-          ? [...new Set(toolCalls.map((tc) => tc.step as number))].sort((a, b) => a - b)
-          : [];
-
-        if (steps.length > 1) {
-          for (const step of steps) {
-            const group = toolCalls.filter((tc) => tc.step === step);
-            messages.push({
-              role: 'assistant',
-              content: group.map((tc) => ({
-                type: 'tool-call' as const,
-                toolCallId: tc.id,
-                toolName: tc.tool,
-                input: tc.parsedInput,
-              })),
-            } satisfies AssistantModelMessage);
-            messages.push({
-              role: 'tool',
-              content: group.map((tc) => ({
-                type: 'tool-result' as const,
-                toolCallId: tc.id,
-                toolName: tc.tool,
-                output: { type: 'text' as const, value: tc.output },
-              })),
-            } satisfies ToolModelMessage);
-          }
-          if (msg.content?.trim()) {
-            messages.push({ role: 'assistant', content: msg.content });
-          }
-          continue;
-        }
-
         // Build assistant message with tool-call content blocks (+ text if present)
         const assistantParts: Array<{ type: 'text'; text: string } | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }> = [];
         if (msg.content?.trim()) {
@@ -444,6 +417,61 @@ function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
 }
 
 /**
+ * Validate and narrow a persisted `modelTrace` JSON value into replayable
+ * ModelMessages. Strict allowlist — roles assistant/tool only, parts limited
+ * to the exact shapes this builder emits itself (text, tool-call, tool-result
+ * with `output: {type:'text', value}`), which is also what the write-time
+ * sanitizer produces — so provider round-trip behavior matches reconstructed
+ * history. Returns null on ANY anomaly so the caller falls back to legacy
+ * reconstruction instead of sending malformed content to the provider.
+ */
+function parseModelTrace(msg: ConversationMessage): ModelMessage[] | null {
+  const raw = msg.modelTrace;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+
+  const out: ModelMessage[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') return null;
+    const { role, content } = entry as { role?: unknown; content?: unknown };
+
+    if (role === 'assistant') {
+      if (typeof content === 'string') {
+        if (!content.trim()) return null;
+        out.push({ role: 'assistant', content });
+        continue;
+      }
+      if (!Array.isArray(content) || content.length === 0) return null;
+      for (const part of content) {
+        if (!part || typeof part !== 'object') return null;
+        const p = part as Record<string, unknown>;
+        if (p.type === 'text') {
+          if (typeof p.text !== 'string') return null;
+        } else if (p.type === 'tool-call') {
+          if (typeof p.toolCallId !== 'string' || typeof p.toolName !== 'string') return null;
+        } else {
+          return null;
+        }
+      }
+      out.push({ role: 'assistant', content } as AssistantModelMessage);
+    } else if (role === 'tool') {
+      if (!Array.isArray(content) || content.length === 0) return null;
+      for (const part of content) {
+        if (!part || typeof part !== 'object') return null;
+        const p = part as Record<string, unknown>;
+        if (p.type !== 'tool-result') return null;
+        if (typeof p.toolCallId !== 'string' || typeof p.toolName !== 'string') return null;
+        const output = p.output as Record<string, unknown> | undefined;
+        if (!output || output.type !== 'text' || typeof output.value !== 'string') return null;
+      }
+      out.push({ role: 'tool', content } as ToolModelMessage);
+    } else {
+      return null;
+    }
+  }
+  return out;
+}
+
+/**
  * Parse and validate tool calls from a conversation message.
  * Returns an empty array if toolCalls is missing, empty, or malformed.
  */
@@ -452,13 +480,12 @@ function parseToolCalls(msg: ConversationMessage): Array<{
   tool: string;
   parsedInput: unknown;
   output: string;
-  step?: number;
 }> {
   if (!msg.toolCalls || !Array.isArray(msg.toolCalls) || msg.toolCalls.length === 0) {
     return [];
   }
 
-  const results: Array<{ id: string; tool: string; parsedInput: unknown; output: string; step?: number }> = [];
+  const results: Array<{ id: string; tool: string; parsedInput: unknown; output: string }> = [];
 
   for (let i = 0; i < msg.toolCalls.length; i++) {
     const tc = msg.toolCalls[i] as Record<string, unknown> | null | undefined;
@@ -471,19 +498,11 @@ function parseToolCalls(msg: ConversationMessage): Array<{
       parsedInput = {};
     }
 
-    // Generation-step ordinal (see ToolCallRecord.step). Only a non-negative
-    // integer counts as tagged — anything else is treated as a legacy record.
-    const step =
-      typeof tc.step === 'number' && Number.isInteger(tc.step) && tc.step >= 0
-        ? tc.step
-        : undefined;
-
     results.push({
       id: `${msg.id}-tc-${i}`,
       tool: tc.tool,
       parsedInput,
       output: typeof tc.output === 'string' ? tc.output : '',
-      ...(step !== undefined ? { step } : {}),
     });
   }
 
