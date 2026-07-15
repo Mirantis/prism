@@ -70,14 +70,20 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
     ...process.env,
     DATABASE_URL: `file:${dbPath}`,
     PORT: String(port),
-    // Only pass BEDROCK_MODEL_ID through when the surrounding env actually
-    // sets it; otherwise let the runtime's own default (src/config.ts) win.
-    // The Playwright e2e suite does the same, and the CI IAM role is
-    // provisioned around that default.
+    // BEDROCK_MODEL_ID normally arrives via e2e/.env.e2e, loaded into
+    // process.env by vitest.global-setup.ts — the same file (and model) the
+    // Playwright suite loads in playwright.config.ts. A value already present
+    // in the shell/CI env wins over the file. Only when neither sets it does
+    // the runtime's own default (src/config.ts) apply.
     ...(process.env.BEDROCK_MODEL_ID
       ? { BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID }
       : {}),
     NODE_ENV: 'development',
+    // .env.e2e (loaded by vitest.global-setup.ts) points OTEL at the mock
+    // collector the PLAYWRIGHT suite boots; it isn't running during the TUI
+    // phase, so disable telemetry export here (empty = disabled) rather than
+    // let every runtime spam failed OTLP sends at a dead port.
+    OTEL_EXPORTER_OTLP_ENDPOINT: '',
     // AWS creds + region inherited from the surrounding shell / CI.
     // NEXUS_API_URL deliberately not set — createProvider falls back to
     // direct Bedrock when it's unset, which is what the TUI suite wants.
