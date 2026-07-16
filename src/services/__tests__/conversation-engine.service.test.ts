@@ -369,6 +369,54 @@ describe('Requirement: Conversation Engine', () => {
       );
     });
 
+    it('should persist but not deliver intermediate steps when verbose is false', async () => {
+      // Concise mode: only the final text step is delivered to the channel;
+      // intermediate text steps are persisted (addMessage) but never published.
+      mockGetAgent.mockResolvedValue({ verbose: false });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: 'Let me check...',
+          toolCalls: [
+            { tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+        {
+          text: 'Here are the results.',
+          toolCalls: [],
+        },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Show me pods',
+      });
+
+      // Only the final step is delivered to the channel.
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-123',
+        'thread-123',
+        'Here are the results.',
+        'USER_INPUT',
+        expect.objectContaining({}),
+      );
+
+      // The intermediate step is persisted as its own AGENT row (with its tool
+      // calls) — persistence is identical to verbose mode, only delivery differs.
+      expect(mockAddMessage).toHaveBeenCalledWith(
+        'thread-123',
+        expect.objectContaining({
+          role: 'AGENT',
+          content: 'Let me check...',
+          triggeredBy: 'USER_INPUT',
+          toolCalls: expect.arrayContaining([
+            expect.objectContaining({ tool: 'kubectl' }),
+          ]),
+        }),
+      );
+    });
+
     it('should accumulate tool calls from tool-only steps onto the next text message', async () => {
       mockInvokeStream.mockReturnValue(streamFromSteps([
         {

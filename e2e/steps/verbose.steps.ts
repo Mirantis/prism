@@ -6,7 +6,6 @@ import { createBdd } from 'playwright-bdd';
 import { expect } from '@playwright/test';
 import * as dbHelper from '../support/db-helper';
 import { HomePage } from '../pages/home.page';
-import { ProfilePage } from '../pages/profile.page';
 import { DEFAULT_AGENT_ID } from '../fixtures/test-data';
 
 const { Given, When, Then } = createBdd();
