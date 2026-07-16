@@ -70,10 +70,9 @@ Then('the intermediate steps are flagged internal in the database', async () => 
   expect(delivered).toBeGreaterThan(0);
 });
 
-When('I reload the chat page', async ({ page }) => {
-  await page.reload();
-  await page.waitForLoadState('networkidle');
-});
+// Note: the "I reload the chat page" step is defined once in file-sharing.steps.ts
+// and shared across features — don't redefine it here (playwright-bdd errors on
+// duplicate step definitions).
 
 Then('only one agent message is shown', async ({ page }) => {
   const homePage = new HomePage(page);
