@@ -325,6 +325,31 @@ router.patch('/cron-model', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * PATCH /agents/verbose
+ * Set the verbose (per-step delivery) flag.
+ * Body: { verbose: boolean }
+ */
+router.patch('/verbose', async (req: Request, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (!('verbose' in body)) {
+      res.status(400).json({ error: "missing required field 'verbose'" });
+      return;
+    }
+    const verbose = await agentWorkspaceService.updateVerbose(body.verbose);
+    res.json({ verbose });
+  } catch (error: unknown) {
+    if (error instanceof ValidationError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to update verbose for agent: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
 // ============================================================================
 // Backup / restore
 // ============================================================================
