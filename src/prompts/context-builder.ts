@@ -48,6 +48,8 @@ export interface AgentContext {
   agentId: string;
   userId: string;
   model: string | null;
+  /** When false, only the final text step is delivered to the channel. */
+  verbose: boolean;
   isBootstrapPhase: boolean;
   conversationSummary: string | null;
   recentMessages: ConversationMessage[];

@@ -19,6 +19,7 @@ import prisma from '../lib/prisma';
 import { getClassificationModel } from '../lib/classification';
 import { isLangfuseEnabled } from '../lib/langfuse';
 import { isTelemetryEnabled, trackEvent } from '../lib/telemetry';
+import { agentWorkspaceService } from './agent-workspace.service';
 
 // ============================================================================
 // Feedback gate tuning (channel-agnostic)
@@ -235,6 +236,10 @@ Respond with exactly one word: WORTHY or SKIP`;
       ? { isChannelMessage: true, channelName: metadata?.channelName ?? slackChannelId }
       : { isChannelMessage: false };
 
+    // Read the agent once to capture the verbose flag before entering the lock.
+    const agent = await agentWorkspaceService.getAgent();
+    const verbose = agent.verbose;
+
     // Build channel context for delivery — scopes response to the originating channel.
     // For Slack, channelId/threadTs may be undefined (DM case — routing falls back
     // to SlackMapping.dmChannelId lookup in the adapter).
@@ -278,6 +283,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         prompt: message,
         threadId,
         workspaceRoot,
+        verbose,
         ...channelOrigin,
         originChannel: metadata?.channel,
         originChannelId: metadata?.channelId,
@@ -295,18 +301,29 @@ Respond with exactly one word: WORTHY or SKIP`;
           // Flush previously-buffered step now that we know it wasn't last:
           // no blocks, no feedback gate.
           if (bufferedStep) {
-            agentMessage = await messageDeliveryService.publish(
-              userId,
-              threadId,
-              bufferedStep.text,
-              'USER_INPUT',
-              {
+            if (verbose) {
+              agentMessage = await messageDeliveryService.publish(
+                userId,
+                threadId,
+                bufferedStep.text,
+                'USER_INPUT',
+                {
+                  toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
+                  channelContext: channelContext
+                    ? { ...channelContext, includeFeedback: false }
+                    : undefined,
+                }
+              );
+            } else {
+              // Concise mode: persist without delivering to the channel.
+              const { message: persisted } = await conversationService.addMessage(threadId, {
+                content: bufferedStep.text,
+                role: 'AGENT',
+                triggeredBy: 'USER_INPUT',
                 toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
-                channelContext: channelContext
-                  ? { ...channelContext, includeFeedback: false }
-                  : undefined,
-              }
-            );
+              });
+              agentMessage = persisted;
+            }
           }
 
           bufferedStep = step;
@@ -365,6 +382,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       'chat.duration_ms': String(Date.now() - startTime),
       'chat.tool_calls': String(allToolCalls.length),
       'chat.response_chars': String(response.length),
+      'chat.verbose': String(verbose),
     });
 
     return {
