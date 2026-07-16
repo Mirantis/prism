@@ -13,7 +13,7 @@ import { ConversationMessage, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import prisma from '../../lib/prisma';
 import { getSlackConnection } from '../../lib/slack-source';
-import { ThreadMessageProvider } from '../thread-provider.interface';
+import { ThreadMessageProvider, MessageReadOptions } from '../thread-provider.interface';
 import { slackAdapterService } from '../slack-adapter.service';
 import { pollUntil, PollUntilOptions } from '../../utils/poll-until';
 
@@ -33,12 +33,12 @@ interface CachedName {
 export class SlackThreadProvider implements ThreadMessageProvider {
   private userNameCache = new Map<string, CachedName>();
 
-  async getMessages(threadId: string): Promise<ConversationMessage[]> {
-    return this.fetchSlackMessages(threadId);
+  async getMessages(threadId: string, opts?: MessageReadOptions): Promise<ConversationMessage[]> {
+    return this.fetchSlackMessages(threadId, opts);
   }
 
-  async getRecentMessages(threadId: string, limit: number): Promise<ConversationMessage[]> {
-    const allMessages = await this.fetchSlackMessages(threadId);
+  async getRecentMessages(threadId: string, limit: number, opts?: MessageReadOptions): Promise<ConversationMessage[]> {
+    const allMessages = await this.fetchSlackMessages(threadId, opts);
     return allMessages.slice(-limit);
   }
 
@@ -122,8 +122,13 @@ export class SlackThreadProvider implements ThreadMessageProvider {
 
   /**
    * Resolve thread metadata, fetch from Slack API, and map to ConversationMessage format.
+   *
+   * The model-fidelity view (no `excludeInternal`) also merges the thread's
+   * concise-mode internal steps — AGENT rows persisted for replay but never
+   * posted to Slack, so absent from the live `conversations.replies` read. The
+   * client view (`excludeInternal`) skips that merge.
    */
-  private async fetchSlackMessages(threadId: string): Promise<ConversationMessage[]> {
+  private async fetchSlackMessages(threadId: string, opts?: MessageReadOptions): Promise<ConversationMessage[]> {
     const thread = await prisma.conversationThread.findUnique({
       where: { id: threadId },
       select: {
@@ -144,18 +149,52 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       thread.externalThreadId
     );
 
-    const [rawMessages, { contentByTs, toolCallsByTs }] = await Promise.all([
+    const [rawMessages, { contentByTs, toolCallsByTs, createdAtByTs }] = await Promise.all([
       this.fetchAllReplies(channelId, threadTs, teamId),
       this.getAgentMessageMaps(threadId),
     ]);
-    return this.mapToConversationMessages(
+    const slackDerived = await this.mapToConversationMessages(
       threadId,
       rawMessages,
       botUserId,
       teamId,
       contentByTs,
       toolCallsByTs,
+      createdAtByTs,
     );
+
+    if (opts?.excludeInternal) return slackDerived;
+
+    // Model view: interleave the persisted internal steps. Both the internal rows
+    // and (via createdAtByTs) our own delivered replies are ordered by our DB
+    // clock, so an internal step sorts before its turn's delivered final; the
+    // cross-clock comparison (Slack ts vs DB createdAt) only occurs at user↔agent
+    // boundaries, a full LLM round apart. Concat internal-first so a rare exact
+    // timestamp tie keeps the internal step ahead of its final (stable sort).
+    const internal = await this.getInternalStepMessages(threadId);
+    if (internal.length === 0) return slackDerived;
+    return [...internal, ...slackDerived].sort(
+      (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+    );
+  }
+
+  /**
+   * Concise-mode internal steps for this thread: AGENT rows persisted for model
+   * replay but never delivered to Slack (`externalMessageId` is null, so they are
+   * disjoint from the ts-enriched set built in {@link getAgentMessageMaps} — never
+   * set a ts on an internal row or it would replay twice). `isCompacted: false`
+   * mirrors the DatabaseThreadProvider filter.
+   */
+  private async getInternalStepMessages(threadId: string): Promise<ConversationMessage[]> {
+    return prisma.conversationMessage.findMany({
+      where: {
+        threadId,
+        role: 'AGENT',
+        internalStep: true,
+        isCompacted: false,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
   }
 
   /**
@@ -249,6 +288,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     teamId: string,
     dbContentByTs: Map<string, string>,
     toolCallsByTs: Map<string, Prisma.JsonValue>,
+    createdAtByTs: Map<string, Date>,
   ): Promise<ConversationMessage[]> {
     // Choose the authoritative body for a message. For the agent's own
     // replies, prefer the lossless stored DB content (which preserves
@@ -306,6 +346,12 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         content = `<@${msg.user}:${sanitizeName(senderName)}>: ${enrichedText}`;
       }
 
+      // Prefer the stored DB createdAt for our own replies (a single, monotonic
+      // server clock) so persisted internal steps interleave correctly against
+      // them; fall back to the Slack ts for messages we never persisted (pre-join,
+      // non-mention, or user messages).
+      const createdAt = (isOurAgent && createdAtByTs.get(msg.ts)) || new Date(parseFloat(msg.ts) * 1000);
+
       return {
         id: this.deterministicId(threadId, msg.ts),
         threadId,
@@ -319,7 +365,9 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         senderName: isOurAgent ? null : senderName,
         externalMessageId: msg.ts,
         isCompacted: false,
-        createdAt: new Date(parseFloat(msg.ts) * 1000),
+        // Slack-derived rows are always delivered messages, never internal steps.
+        internalStep: false,
+        createdAt,
       };
     });
   }
@@ -340,7 +388,12 @@ export class SlackThreadProvider implements ThreadMessageProvider {
   private async getAgentMessageMaps(threadId: string): Promise<{
     contentByTs: Map<string, string>;
     toolCallsByTs: Map<string, Prisma.JsonValue>;
+    createdAtByTs: Map<string, Date>;
   }> {
+    // Only delivered agent replies carry a ts (`externalMessageId`). This set is
+    // disjoint from the concise internal steps merged in fetchSlackMessages
+    // (those have externalMessageId == null) — keep it that way so no row is
+    // replayed twice.
     const dbMessages = await prisma.conversationMessage.findMany({
       where: {
         threadId,
@@ -351,19 +404,22 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         externalMessageId: true,
         content: true,
         toolCalls: true,
+        createdAt: true,
       },
     });
 
     const contentByTs = new Map<string, string>();
     const toolCallsByTs = new Map<string, Prisma.JsonValue>();
+    const createdAtByTs = new Map<string, Date>();
     for (const msg of dbMessages) {
       if (!msg.externalMessageId) continue;
       contentByTs.set(msg.externalMessageId, msg.content);
+      createdAtByTs.set(msg.externalMessageId, msg.createdAt);
       if (msg.toolCalls != null) {
         toolCallsByTs.set(msg.externalMessageId, msg.toolCalls);
       }
     }
-    return { contentByTs, toolCallsByTs };
+    return { contentByTs, toolCallsByTs, createdAtByTs };
   }
 
   /**
