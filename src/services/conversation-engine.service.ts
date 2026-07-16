@@ -318,12 +318,15 @@ Respond with exactly one word: WORTHY or SKIP`;
                 }
               );
             } else {
-              // Concise mode: persist without delivering to the channel.
+              // Concise mode: persist without delivering to the channel. Marked
+              // internalStep so client history hides it, while the model-context
+              // read still replays it (tool rounds must survive for the model).
               const { message: persisted } = await conversationService.addMessage(threadId, {
                 content: bufferedStep.text,
                 role: 'AGENT',
                 triggeredBy: 'USER_INPUT',
                 toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
+                internalStep: true,
               });
               agentMessage = persisted;
             }

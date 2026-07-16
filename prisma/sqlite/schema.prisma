@@ -172,6 +172,11 @@ model ConversationMessage {
 
   isCompacted Boolean @default(false)
 
+  // Concise mode persists intermediate multi-step text as its own AGENT row but
+  // does not deliver it to the channel. `internalStep` marks such rows so client
+  // history reads hide them, while the model-context read still replays them.
+  internalStep Boolean @default(false)
+
   createdAt DateTime @default(now())
 
   thread      ConversationThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
