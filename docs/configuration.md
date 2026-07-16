@@ -73,7 +73,7 @@ The `verbose` setting controls how multi-step chat turns are delivered:
 
 | Mode | Behavior |
 |------|----------|
-| **Concise** (default, `verbose=false`) | Only the final text step of a turn is delivered to the channel. Intermediate steps are persisted to the database but not shown — the model's final message must be self-contained. |
+| **Concise** (default, `verbose=false`) | Only the final text step of a turn is delivered to the channel. Intermediate steps are still saved, but marked internal so they stay hidden from the conversation — both live and when the thread is reloaded. The model's final message must be self-contained. |
 | **Verbose** (`verbose=true`) | Every text step is delivered as it arrives — the existing streaming behavior. |
 
 This is a per-agent database setting (not an environment variable). Set it via:
@@ -82,9 +82,12 @@ This is a per-agent database setting (not an environment variable). Set it via:
 - `PATCH /agents/verbose` with `{ "verbose": true | false }`
 - Asking the agent to change it (the `update_settings` tool accepts `verbose`)
 
-Because persistence is unchanged (every step is always stored), the model's
-context window is correct regardless of mode — switching between concise and
-verbose has no effect on the agent's memory of past turns.
+Because persistence is unchanged (every step is always stored — concise mode only
+flags the intermediate ones as internal), the model's context window is correct
+regardless of mode: switching between concise and verbose has no effect on the
+agent's memory of past turns. The setting applies to **new** turns only —
+toggling `verbose` does not reveal steps that were already hidden, nor hide steps
+that were already delivered.
 
 ## Models
 
