@@ -7,6 +7,12 @@ Feature: Verbose / concise delivery mode (TUI)
     Then the intermediate narration is not shown in the TUI
     And the database has more than one AGENT message
 
+  Scenario: Concise mode keeps intermediate steps hidden after --resume
+    Given verbose is false
+    When I send a multi-step prompt
+    And I resume the session in a new CLI
+    Then the intermediate narration is not shown after resume
+
   Scenario: Verbose mode delivers the intermediate narration too
     Given verbose is true
     When I send a multi-step prompt

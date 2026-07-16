@@ -421,16 +421,17 @@ describe('ConversationService', () => {
   // ==========================================================================
 
   describe('getRecentMessages', () => {
-    it('should use DatabaseThreadProvider for DATABASE threads', async () => {
+    it('should use DatabaseThreadProvider for DATABASE threads and hide internal steps', async () => {
       const threadId = 'thread-db';
       mockPrisma.conversationThread.findUnique.mockResolvedValue({ threadSource: 'DATABASE' });
       mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
 
       await conversationService.getRecentMessages(threadId, 10);
 
+      // CLIENT (CLI /messages) view: concise internal steps are filtered out.
       expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { threadId, isCompacted: false },
+          where: { threadId, isCompacted: false, internalStep: false },
         })
       );
     });
@@ -443,6 +444,52 @@ describe('ConversationService', () => {
       await conversationService.getRecentMessages(threadId, 5);
 
       expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
+  // Concise-mode visibility: client reads hide internal steps; the model read
+  // (getThreadContext) keeps them so replay fidelity is unchanged.
+  // ==========================================================================
+
+  describe('internal-step visibility (DATABASE threads)', () => {
+    it('getThread hides internal steps from client history', async () => {
+      const threadId = 'thread-db';
+      mockPrisma.conversationThread.findFirst.mockResolvedValue({
+        id: threadId,
+        agentId: 'agent-1',
+        userId: 'user-1',
+        threadSource: 'DATABASE',
+      });
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+
+      await conversationService.getThread('user-1', 'agent-1', threadId);
+
+      expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { threadId, isCompacted: false, internalStep: false },
+        })
+      );
+    });
+
+    it('getThreadContext keeps internal steps for the model (no internalStep filter)', async () => {
+      const threadId = 'thread-db';
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        compactionSummary: null,
+        threadSource: 'DATABASE',
+      });
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+
+      await conversationService.getThreadContext(threadId);
+
+      expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { threadId, isCompacted: false },
+        })
+      );
+      // Explicitly assert the model read does NOT filter internal steps.
+      const call = mockPrisma.conversationMessage.findMany.mock.calls[0][0];
+      expect(call.where).not.toHaveProperty('internalStep');
     });
   });
 

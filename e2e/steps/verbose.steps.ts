@@ -29,7 +29,14 @@ Given('the agent is in verbose mode', async () => {
 When('a multi-step chat turn completes', async ({ page }) => {
   const homePage = new HomePage(page);
   await homePage.navigate();
-  await homePage.typeMessage('Use a tool and then respond with a summary.');
+  // Coerce a genuine intermediate text step: narrate, then use a tool, then a
+  // separate final reply. Without the narration the model may go straight to a
+  // single final step and the "multiple AGENT rows" premise wouldn't hold.
+  await homePage.typeMessage(
+    'First tell me in one short sentence that you are about to run a command. ' +
+      'Then use your shell to run `echo web-e2e-marker`. ' +
+      'Then send a separate final message telling me what it printed.',
+  );
   await homePage.sendMessage();
   await homePage.waitForStreamComplete();
 });
@@ -46,6 +53,34 @@ Then('the database contains multiple AGENT rows for the thread', async () => {
     where: { role: 'AGENT' },
   });
   expect(count).toBeGreaterThan(1);
+});
+
+Then('the intermediate steps are flagged internal in the database', async () => {
+  const prisma = dbHelper.getPrisma();
+  // Fidelity claim: intermediate rows are persisted AND marked internalStep, while
+  // the delivered final row is not — so the model still replays everything but the
+  // client hides the intermediates.
+  const internal = await prisma.conversationMessage.count({
+    where: { role: 'AGENT', internalStep: true },
+  });
+  const delivered = await prisma.conversationMessage.count({
+    where: { role: 'AGENT', internalStep: false },
+  });
+  expect(internal).toBeGreaterThan(0);
+  expect(delivered).toBeGreaterThan(0);
+});
+
+When('I reload the chat page', async ({ page }) => {
+  await page.reload();
+  await page.waitForLoadState('networkidle');
+});
+
+Then('only one agent message is shown', async ({ page }) => {
+  const homePage = new HomePage(page);
+  // The reported bug: after a reload (getThread refetch), suppressed intermediate
+  // rows used to reappear. They must stay hidden.
+  const agentMessages = homePage.getAgentMessages();
+  await expect(agentMessages).toHaveCount(1, { timeout: 15_000 });
 });
 
 Then('multiple agent messages are delivered via the channel', async ({ page }) => {

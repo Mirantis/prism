@@ -403,18 +403,29 @@ describe('Requirement: Conversation Engine', () => {
       );
 
       // The intermediate step is persisted as its own AGENT row (with its tool
-      // calls) — persistence is identical to verbose mode, only delivery differs.
+      // calls) and flagged internalStep so client history hides it while the
+      // model-context read still replays it — persistence stays identical to
+      // verbose mode, only delivery + client visibility differ.
       expect(mockAddMessage).toHaveBeenCalledWith(
         'thread-123',
         expect.objectContaining({
           role: 'AGENT',
           content: 'Let me check...',
           triggeredBy: 'USER_INPUT',
+          internalStep: true,
           toolCalls: expect.arrayContaining([
             expect.objectContaining({ tool: 'kubectl' }),
           ]),
         }),
       );
+
+      // The USER row is never marked internal.
+      expect(mockAddMessage).toHaveBeenCalledWith(
+        'thread-123',
+        expect.objectContaining({ role: 'USER' }),
+      );
+      const userCall = mockAddMessage.mock.calls.find((c: unknown[]) => (c[1] as { role: string }).role === 'USER');
+      expect((userCall?.[1] as { internalStep?: boolean }).internalStep).toBeUndefined();
     });
 
     it('should accumulate tool calls from tool-only steps onto the next text message', async () => {

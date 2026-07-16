@@ -157,6 +157,38 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
   });
 
+  Scenario('Concise mode keeps intermediate steps hidden after --resume', ({ Given, When, Then, And }) => {
+    let phrase = '';
+
+    Given('verbose is false', async () => {
+      await runtimeRequest(env.port, 'PATCH', '/agents/verbose', { verbose: false });
+    });
+
+    When('I send a multi-step prompt', async () => {
+      ({ phrase } = await runMultiStepTurn());
+    });
+
+    And('I resume the session in a new CLI', async () => {
+      // The live session never rendered the intermediate (concise). Resuming in a
+      // fresh CLI reads history from the DB via GET /messages, which must also
+      // hide the internal steps.
+      await session?.stop();
+      session = startPrism({ env: env.prismEnv, runtime: env.runtime, args: ['--resume'] });
+      await session.waitForFrame(/Resume session/, 30_000);
+      session.send(KEYS.ENTER); // newest thread (the turn we just ran) is row 1
+      // History has replayed once the agent reply prefix appears.
+      await session.waitForFrame(/▌\s+Prism\b/, 30_000);
+      await sleep(1_000);
+    });
+
+    Then('the intermediate narration is not shown after resume', async () => {
+      const out = normalize(session!.output());
+      expect(out, `intermediate narration "${phrase}" must stay hidden after --resume`).not.toContain(
+        normalize(phrase),
+      );
+    });
+  });
+
   Scenario('Verbose mode delivers the intermediate narration too', ({ Given, When, Then, And }) => {
     let phrase = '';
 

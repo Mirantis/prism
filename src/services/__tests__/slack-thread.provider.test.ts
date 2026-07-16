@@ -105,6 +105,22 @@ function setupThreadMetadata() {
   });
 }
 
+// `fetchSlackMessages` queries conversationMessage.findMany TWICE with disjoint
+// where-clauses: the ts-enrichment read (externalMessageId != null) and the
+// concise internal-steps read (internalStep: true). These helpers make the mock
+// query-aware so each read gets its own rows.
+function mockDbRows(opts: { agent?: unknown[]; internal?: unknown[] }): void {
+  mockPrisma.conversationMessage.findMany.mockImplementation(
+    async (args?: { where?: { internalStep?: boolean } }) =>
+      args?.where?.internalStep ? (opts.internal ?? []) : (opts.agent ?? []),
+  );
+}
+// Back-compat shim for the pre-existing enrichment tests (they only seed the
+// ts-keyed agent rows; the internal-steps read returns []).
+function mockDbAgentRows(rows: unknown[]): void {
+  mockDbRows({ agent: rows });
+}
+
 describe('Requirement: Slack Thread Provider', () => {
   let provider: SlackThreadProvider;
 
@@ -113,7 +129,7 @@ describe('Requirement: Slack Thread Provider', () => {
     provider = new SlackThreadProvider();
     setupMockApp();
     setupThreadMetadata();
-    mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+    mockDbAgentRows([]);
   });
 
   describe('Scenario: Basic message fetching', () => {
@@ -542,7 +558,7 @@ describe('Requirement: Slack Thread Provider', () => {
       });
       mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
 
-      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      mockDbAgentRows([
         { externalMessageId: '1710000002.000000', toolCalls: sampleToolCalls },
       ]);
 
@@ -561,7 +577,7 @@ describe('Requirement: Slack Thread Provider', () => {
       });
       mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
 
-      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      mockDbAgentRows([
         { externalMessageId: '1710000001.000000', toolCalls: sampleToolCalls },
       ]);
 
@@ -579,7 +595,7 @@ describe('Requirement: Slack Thread Provider', () => {
         response_metadata: {},
       });
 
-      mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+      mockDbAgentRows([]);
 
       const messages = await provider.getMessages(threadId);
 
@@ -595,7 +611,7 @@ describe('Requirement: Slack Thread Provider', () => {
         response_metadata: {},
       });
 
-      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      mockDbAgentRows([
         { externalMessageId: '9999999999.000000', toolCalls: sampleToolCalls },
       ]);
 
@@ -619,7 +635,7 @@ describe('Requirement: Slack Thread Provider', () => {
       });
       mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
 
-      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      mockDbAgentRows([
         { externalMessageId: '1710000002.000000', toolCalls: toolCalls1 },
         { externalMessageId: '1710000004.000000', toolCalls: toolCalls2 },
       ]);
@@ -651,7 +667,7 @@ describe('Requirement: Slack Thread Provider', () => {
       });
       mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
 
-      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      mockDbAgentRows([
         { externalMessageId: '1710000002.000000', content: richContent, toolCalls: null },
       ]);
 
@@ -670,7 +686,7 @@ describe('Requirement: Slack Thread Provider', () => {
         response_metadata: {},
       });
 
-      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      mockDbAgentRows([
         { externalMessageId: '9999999999.999999', content: richContent, toolCalls: null },
       ]);
 
@@ -687,7 +703,7 @@ describe('Requirement: Slack Thread Provider', () => {
         response_metadata: {},
       });
 
-      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      mockDbAgentRows([
         { externalMessageId: '1710000002.000000', content: '   ', toolCalls: null },
       ]);
 
@@ -707,7 +723,7 @@ describe('Requirement: Slack Thread Provider', () => {
 
       // A stray row keyed by the user message ts must be ignored — user bodies
       // always come from Slack (faithful, since users type plain text).
-      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      mockDbAgentRows([
         { externalMessageId: '1710000001.000000', content: 'SHOULD NOT APPEAR', toolCalls: null },
       ]);
 
@@ -729,7 +745,7 @@ describe('Requirement: Slack Thread Provider', () => {
         throw new Error(`unexpected user ${user}`);
       });
 
-      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      mockDbAgentRows([
         { externalMessageId: '1710000002.000000', content: 'pinging <@U200> now', toolCalls: null },
       ]);
 
@@ -738,6 +754,96 @@ describe('Requirement: Slack Thread Provider', () => {
       // The bare token in the stored content is collected for name resolution
       // and enriched to the combined form the outbound rewrite expects.
       expect(messages[0].content).toBe('pinging <@U200:Bob> now');
+    });
+  });
+
+  describe('Scenario: Concise internal steps in the model replay', () => {
+    // A concise turn on a Slack thread: the user posts, the agent runs a tool
+    // (intermediate step — persisted with internalStep:true, NEVER posted to
+    // Slack), then posts a final reply. The intermediate must appear in the
+    // model-fidelity view (default) between the user and the final, and be
+    // absent from the client view (excludeInternal).
+    function internalRow(overrides: Partial<ConversationMessage>): ConversationMessage {
+      return {
+        id: 'internal-1',
+        threadId,
+        role: 'AGENT',
+        content: 'Let me check that.',
+        triggeredBy: 'USER_INPUT',
+        toolCalls: [{ tool: 'shell', input: '{}', output: 'ok', success: true, timestamp: '2024-03-09T16:00:02Z' }],
+        blocks: null,
+        tokenCount: null,
+        senderExternalId: null,
+        senderName: null,
+        externalMessageId: null,
+        isCompacted: false,
+        internalStep: true,
+        createdAt: new Date(1710000002 * 1000),
+        ...overrides,
+      } as ConversationMessage;
+    }
+
+    beforeEach(() => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'do the thing', ts: '1710000001.000000' },
+          { user: botUserId, text: 'Done.', ts: '1710000003.000000' },
+        ],
+        response_metadata: {},
+      });
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+    });
+
+    it('merges internal steps between the user message and the final reply (model view)', async () => {
+      mockDbRows({
+        agent: [{ externalMessageId: '1710000003.000000', content: 'Done.', toolCalls: null, createdAt: new Date(1710000003 * 1000) }],
+        internal: [internalRow({})],
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages.map((m) => m.role)).toEqual(['USER', 'AGENT', 'AGENT']);
+      expect(messages[1].content).toBe('Let me check that.');
+      expect(messages[1].internalStep).toBe(true);
+      expect(messages[1].toolCalls).not.toBeNull();
+      expect(messages[2].content).toBe('Done.');
+      // Delivered final appears exactly once — internal set is disjoint from the
+      // ts-enriched set, so no double-counting.
+      expect(messages.filter((m) => m.content === 'Done.')).toHaveLength(1);
+    });
+
+    it('omits internal steps in the client view (excludeInternal)', async () => {
+      mockDbRows({
+        agent: [{ externalMessageId: '1710000003.000000', content: 'Done.', toolCalls: null, createdAt: new Date(1710000003 * 1000) }],
+        internal: [internalRow({})],
+      });
+
+      const messages = await provider.getMessages(threadId, { excludeInternal: true });
+
+      expect(messages.map((m) => m.role)).toEqual(['USER', 'AGENT']);
+      expect(messages.some((m) => m.content === 'Let me check that.')).toBe(false);
+    });
+
+    it('orders by our DB clock for the bot reply, so an internal step stays before its final even when the Slack ts is earlier (skew)', async () => {
+      // Simulate skew: the final's Slack ts (…001) is EARLIER than the internal
+      // step's DB createdAt (…004). Because the bot reply's createdAt is taken
+      // from the DB (…005) via the enrichment map — not its ts — the internal
+      // step still sorts before the final.
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'do the thing', ts: '1710000000.000000' },
+          { user: botUserId, text: 'Done.', ts: '1710000001.000000' },
+        ],
+        response_metadata: {},
+      });
+      mockDbRows({
+        agent: [{ externalMessageId: '1710000001.000000', content: 'Done.', toolCalls: null, createdAt: new Date(1710000005 * 1000) }],
+        internal: [internalRow({ createdAt: new Date(1710000004 * 1000) })],
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages.map((m) => m.content)).toEqual(['<@U100:Alice>: do the thing', 'Let me check that.', 'Done.']);
     });
   });
 });
