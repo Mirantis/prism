@@ -67,6 +67,26 @@ runtime does not authenticate inbound webhook calls itself (auth is the
 platform's job in front of the container), so don't expose the runtime port
 directly to the internet.
 
+## Chat verbosity
+
+The `verbose` setting controls how multi-step chat turns are delivered:
+
+| Mode | Behavior |
+|------|----------|
+| **Concise** (default, `verbose=false`) | Only the final text step of a turn is delivered to the channel. Intermediate steps are persisted to the database but not shown — the model's final message must be self-contained. |
+| **Verbose** (`verbose=true`) | Every text step is delivered as it arrives — the existing streaming behavior. |
+
+This is a per-agent database setting (not an environment variable). Set it via:
+
+- The **Profile** page toggle in the [Web UI](web-ui.md#profile)
+- `PATCH /agents/verbose` with `{ "verbose": true | false }`
+- Asking the agent to change it (the `update_settings` tool accepts `verbose`)
+- The TUI `/verbose` command (if supported)
+
+Because persistence is unchanged (every step is always stored), the model's
+context window is correct regardless of mode — switching between concise and
+verbose has no effect on the agent's memory of past turns.
+
 ## Models
 
 Which set applies depends on `LLM_PROVIDER`. Bedrock model IDs are Bedrock model
