@@ -67,11 +67,6 @@ Then('the agent details show verbose is false', async ({ page }) => {
   expect(body.agent.verbose).toBe(false);
 });
 
-When('I navigate to the profile page', async ({ page }) => {
-  await page.goto('/profile');
-  await page.waitForLoadState('networkidle');
-});
-
 When('I toggle verbose to true', async ({ page }) => {
   const toggle = page.getByLabel('Verbose delivery');
   await toggle.click();
