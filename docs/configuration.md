@@ -81,7 +81,6 @@ This is a per-agent database setting (not an environment variable). Set it via:
 - The **Profile** page toggle in the [Web UI](web-ui.md#profile)
 - `PATCH /agents/verbose` with `{ "verbose": true | false }`
 - Asking the agent to change it (the `update_settings` tool accepts `verbose`)
-- The TUI `/verbose` command (if supported)
 
 Because persistence is unchanged (every step is always stored), the model's
 context window is correct regardless of mode — switching between concise and
