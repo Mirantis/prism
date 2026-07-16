@@ -87,6 +87,11 @@ model AgentWorkspace {
   // with 403 while disabled.
   webhooksEnabled Boolean @default(false)
 
+  // When false (default), only the final text step of a multi-step chat turn
+  // is delivered to the channel; intermediate steps are persisted but not
+  // published. When true, every text step is delivered as it arrives.
+  verbose Boolean @default(false)
+
   nexusMcpAgentToken String?
   nexusAgentTokenId  String?
 
