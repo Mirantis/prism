@@ -236,10 +236,6 @@ Respond with exactly one word: WORTHY or SKIP`;
       ? { isChannelMessage: true, channelName: metadata?.channelName ?? slackChannelId }
       : { isChannelMessage: false };
 
-    // Read the agent once to capture the verbose flag before entering the lock.
-    const agent = await agentWorkspaceService.getAgent();
-    const verbose = agent.verbose;
-
     // Build channel context for delivery — scopes response to the originating channel.
     // For Slack, channelId/threadTs may be undefined (DM case — routing falls back
     // to SlackMapping.dmChannelId lookup in the adapter).
@@ -270,12 +266,19 @@ Respond with exactly one word: WORTHY or SKIP`;
     const allAttachmentIds: string[] = [];
 
     let response = '';
+    let verbose = false;
 
     // Run the whole turn under the per-thread lock so an interactive user turn
     // and a background goal turn never invoke() the same thread concurrently.
     // A `create_goal` call made during this turn kicks its loop fire-and-forget;
     // that loop's first turn queues behind this lock and runs once we release.
     await goalService.runExclusive(threadId, async () => {
+      // Snapshot the verbose flag once inside the lock and thread it through the
+      // whole turn (InvokeRequest → context → delivery gating below), so prompt
+      // construction and delivery never diverge if the flag is toggled mid-turn.
+      const agent = await agentWorkspaceService.getAgent();
+      verbose = agent.verbose;
+
       for await (const step of invokeStream({
         userId,
         agentId,
