@@ -23,6 +23,7 @@ const {
   mockTrackEvent,
   mockLinkToMessage,
   mockOnFirstUserMessage,
+  mockGetAgent,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
@@ -35,6 +36,7 @@ const {
   mockTrackEvent: vi.fn(),
   mockLinkToMessage: vi.fn(),
   mockOnFirstUserMessage: vi.fn(),
+  mockGetAgent: vi.fn(),
 }));
 
 /**
@@ -105,6 +107,12 @@ vi.mock('../../lib/telemetry', () => ({
   trackEvent: mockTrackEvent,
 }));
 
+vi.mock('../agent-workspace.service', () => ({
+  agentWorkspaceService: {
+    getAgent: mockGetAgent,
+  },
+}));
+
 // Import after mocking
 import { conversationEngineService } from '../conversation-engine.service';
 
@@ -112,6 +120,7 @@ describe('Requirement: Conversation Engine', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
+    mockGetAgent.mockResolvedValue({ verbose: true });
     mockGetOrCreateLatestThread.mockResolvedValue({
       id: 'thread-123',
       userId: 'user-123',
