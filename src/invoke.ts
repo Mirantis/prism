@@ -25,7 +25,7 @@ import {
   resolveScopedModel,
 } from './services/agent-workspace.service';
 import { isLangfuseEnabled } from './lib/langfuse';
-import { buildSystemPromptParts, buildConversationMessages } from './prompts/context-builder';
+import { buildSystemPromptParts, buildConversationMessages, ensureEndsWithUserTurn } from './prompts/context-builder';
 import { getChannelBehaviorInstructions } from './prompts/channel-prompt';
 import { getTaskToolInstructions } from './prompts/task-tool-prompt';
 import { createTaskTool } from './lib/task-tool';
@@ -210,6 +210,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     if (request.mode !== 'chat' || messages.length === 0) {
       messages.push({ role: 'user' as const, content: request.prompt });
     }
+
+    // AGENT-51: guarantee the conversation ends on a user turn before calling
+    // the model. Provider-agnostic invariant enforced at the single boundary
+    // both generateText calls flow through.
+    messages = ensureEndsWithUserTurn(messages, request.prompt);
 
     // Anthropic prompt caching: system prompt parts marked cacheable get cache breakpoints.
     // [0] stable prefix (identity, soul, memory, instructions) — cached across conversations

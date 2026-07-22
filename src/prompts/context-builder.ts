@@ -349,6 +349,29 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
   return messages;
 }
 
+export const SAFE_CONTINUATION_PROMPT = 'Please continue.';
+
+/**
+ * AGENT-51: enforce the model-boundary invariant that a conversation ends on a
+ * user turn. History can end on an assistant/tool turn (a dropped empty user
+ * turn, the slice(-20) window boundary landing on an AGENT turn, or Slack
+ * live-read history ending on the bot's own reply). Bedrock/Anthropic reject a
+ * trailing assistant/tool message ("must end with a user message"). Pure:
+ * never mutates the input; returns a new array.
+ */
+export function ensureEndsWithUserTurn(
+  messages: ModelMessage[],
+  fallbackPrompt: string,
+): ModelMessage[] {
+  const result = [...messages];
+  const last = result[result.length - 1];
+  if (last && last.role === 'user') return result;
+  const trimmed = fallbackPrompt?.trim();
+  const content = trimmed ? fallbackPrompt : SAFE_CONTINUATION_PROMPT;
+  result.push({ role: 'user', content });
+  return result;
+}
+
 /**
  * Turn a USER message + its attachments into AI SDK content parts.
  *

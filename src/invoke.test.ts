@@ -112,6 +112,13 @@ vi.mock('./tools/skills/index', () => ({
 vi.mock('./prompts/context-builder', () => ({
   buildSystemPromptParts: mockBuildSystemPromptParts,
   buildConversationMessages: mockBuildConversationMessages,
+  ensureEndsWithUserTurn: (msgs, fallback) => {
+    const r = [...msgs];
+    const last = r[r.length - 1];
+    if (last && last.role === 'user') return r;
+    r.push({ role: 'user', content: (fallback && fallback.trim()) ? fallback : 'Please continue.' });
+    return r;
+  },
 }));
 
 vi.mock('./prompts/channel-prompt', () => ({
@@ -1082,9 +1089,12 @@ describe('invoke', () => {
     });
 
     it('chat mode does not append prompt when history exists', async () => {
+      // History already ends on a user turn (the conversation engine stores the
+      // user message before invoke), so neither the prompt-append branch nor the
+      // AGENT-51 end-on-user guard should add anything.
       mockBuildConversationMessages.mockReturnValue([
-        { role: 'user', content: 'What pods are running?' },
         { role: 'assistant', content: 'Let me check.' },
+        { role: 'user', content: 'What pods are running?' },
       ]);
 
       await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'What pods are running?' }));
@@ -1092,9 +1102,22 @@ describe('invoke', () => {
       const callArgs = mockGenerateText.mock.calls[0][0];
       // Should only have history, not a duplicate prompt
       expect(callArgs.messages).toMatchObject([
-        { role: 'user', content: 'What pods are running?' },
         { role: 'assistant', content: 'Let me check.' },
+        { role: 'user', content: 'What pods are running?' },
       ]);
+    });
+
+    it('chat mode appends a user turn when history ends on an assistant message (AGENT-51)', async () => {
+      mockBuildConversationMessages.mockReturnValue([
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: 'partial' },
+      ]);
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'q' }));
+
+      const callArgs = mockGenerateText.mock.calls[0][0];
+      const messages = callArgs.messages;
+      expect(messages[messages.length - 1].role).toBe('user');
     });
   });
 

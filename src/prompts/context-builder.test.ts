@@ -14,7 +14,14 @@ vi.mock('../services/memory-manager.service', () => ({
   },
 }));
 
-import { buildSystemPrompt, buildSystemPromptParts, buildConversationMessages } from './context-builder';
+import {
+  buildSystemPrompt,
+  buildSystemPromptParts,
+  buildConversationMessages,
+  ensureEndsWithUserTurn,
+  SAFE_CONTINUATION_PROMPT,
+} from './context-builder';
+import type { ModelMessage } from 'ai';
 import { createTestAgentContext } from '../test-utils/factories';
 import { MAX_INLINE_TEXT_CHARS } from '../constants';
 import type { AttachmentForLLM } from '../services/attachment.service';
@@ -770,5 +777,95 @@ describe('buildConversationMessages with attachments', () => {
     const messages = buildConversationMessages(context);
     expect(messages).toHaveLength(1);
     expect(Array.isArray(messages[0].content)).toBe(true);
+  });
+});
+
+describe('ensureEndsWithUserTurn', () => {
+  it('appends a user turn with the fallback prompt when history ends on an assistant text message', () => {
+    const history: ModelMessage[] = [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: 'partial answer' },
+    ];
+    const result = ensureEndsWithUserTurn(history, 'my fallback');
+    expect(result).toHaveLength(3);
+    const last = result[result.length - 1];
+    expect(last.role).toBe('user');
+    expect(last.content).toBe('my fallback');
+  });
+
+  it('appends a user turn when history ends on a tool-result message', () => {
+    const history: ModelMessage[] = [
+      { role: 'user', content: 'q' },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'x', input: {} }],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 't1',
+            toolName: 'x',
+            output: { type: 'text', value: 'ok' },
+          },
+        ],
+      },
+    ];
+    const result = ensureEndsWithUserTurn(history, 'my fallback');
+    expect(result).toHaveLength(4);
+    const last = result[result.length - 1];
+    expect(last.role).toBe('user');
+    expect(last.content).toBe('my fallback');
+  });
+
+  it('is a no-op when history already ends on a user turn', () => {
+    const history: ModelMessage[] = [
+      { role: 'assistant', content: 'earlier' },
+      { role: 'user', content: 'latest question' },
+    ];
+    const result = ensureEndsWithUserTurn(history, 'my fallback');
+    expect(result).toHaveLength(2);
+    expect(result[result.length - 1].content).toBe('latest question');
+  });
+
+  it('returns a single user turn with the fallback prompt for empty history', () => {
+    const result = ensureEndsWithUserTurn([], 'my fallback');
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe('user');
+    expect(result[0].content).toBe('my fallback');
+  });
+
+  it('does not duplicate when the fallback equals the existing tail user content', () => {
+    const history: ModelMessage[] = [
+      { role: 'assistant', content: 'earlier' },
+      { role: 'user', content: 'same prompt' },
+    ];
+    const result = ensureEndsWithUserTurn(history, 'same prompt');
+    expect(result).toHaveLength(2);
+    expect(result[result.length - 1].content).toBe('same prompt');
+  });
+
+  it('uses SAFE_CONTINUATION_PROMPT when the fallback is empty/whitespace', () => {
+    const history: ModelMessage[] = [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: 'partial' },
+    ];
+    const result = ensureEndsWithUserTurn(history, '   ');
+    expect(result).toHaveLength(3);
+    const last = result[result.length - 1];
+    expect(last.role).toBe('user');
+    expect(last.content).toBe(SAFE_CONTINUATION_PROMPT);
+  });
+
+  it('does not mutate the input array', () => {
+    const history: ModelMessage[] = [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: 'partial' },
+    ];
+    const result = ensureEndsWithUserTurn(history, 'my fallback');
+    expect(result).not.toBe(history);
+    expect(history).toHaveLength(2);
+    expect(history[history.length - 1].role).toBe('assistant');
   });
 });
