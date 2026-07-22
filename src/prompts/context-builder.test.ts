@@ -836,7 +836,7 @@ describe('ensureEndsWithUserTurn', () => {
     expect(result[0].content).toBe('my fallback');
   });
 
-  it('does not duplicate when the fallback equals the existing tail user content', () => {
+  it('returns the array unchanged when it already ends on a user turn (no duplicate)', () => {
     const history: ModelMessage[] = [
       { role: 'assistant', content: 'earlier' },
       { role: 'user', content: 'same prompt' },

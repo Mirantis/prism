@@ -109,17 +109,17 @@ vi.mock('./tools/skills/index', () => ({
   getSkillTools: mockGetSkillTools,
 }));
 
-vi.mock('./prompts/context-builder', () => ({
-  buildSystemPromptParts: mockBuildSystemPromptParts,
-  buildConversationMessages: mockBuildConversationMessages,
-  ensureEndsWithUserTurn: (msgs, fallback) => {
-    const r = [...msgs];
-    const last = r[r.length - 1];
-    if (last && last.role === 'user') return r;
-    r.push({ role: 'user', content: (fallback && fallback.trim()) ? fallback : 'Please continue.' });
-    return r;
-  },
-}));
+vi.mock('./prompts/context-builder', async (importOriginal) => {
+  // Mock only the prompt/message builders; delegate ensureEndsWithUserTurn to
+  // the REAL helper so this test exercises the actual end-on-user invariant
+  // instead of a hand-rolled copy that could silently drift from it.
+  const actual = await importOriginal<typeof import('./prompts/context-builder')>();
+  return {
+    ...actual,
+    buildSystemPromptParts: mockBuildSystemPromptParts,
+    buildConversationMessages: mockBuildConversationMessages,
+  };
+});
 
 vi.mock('./prompts/channel-prompt', () => ({
   getChannelBehaviorInstructions: mockGetChannelBehaviorInstructions,
