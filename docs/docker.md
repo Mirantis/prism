@@ -76,5 +76,16 @@ useful when re-creating a container against an existing data volume — set
 ## What's in the image
 
 The image bundles the tools the agent's shell can reach (`git`, `gh`, `kubectl`,
-`aws`, `jq`, `yq`, `ripgrep`, and Claude Code) so the agent can do real work out
-of the box. It runs as a non-root `node` user and drops privileges after setup.
+`aws`, `jq`, `yq`, `ripgrep`, `python` + `pip`, `pandoc`, `poppler-utils`, and
+`tesseract`, plus Claude Code) so the agent can do real work out of the box. It
+runs as a non-root `node` user and drops privileges after setup.
+
+The `python`/`pandoc`/`poppler`/`tesseract` set — plus the Python libraries the
+Anthropic `pdf`/`docx`/`xlsx`/`pptx` skills import (`openpyxl`, `python-pptx`,
+`pypdf`, `pdfplumber`, `Pillow`, and more; see `requirements.txt`) — is the
+toolchain those document skills need. The image ships the *toolchain*, not the
+skills themselves; skills are installed at runtime into `/data/skills`. Because
+`python` is a node-owned, non-externally-managed interpreter, `pip install`
+works out of the box (against PyPI, which is already reachable — no extra network
+allowances needed). LibreOffice is intentionally not bundled (size), so document
+skills' LibreOffice-backed conversion/recalc/render paths are unavailable.

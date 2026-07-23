@@ -1,0 +1,23 @@
+# Python libraries the Anthropic document skills (pdf/docx/xlsx/pptx) import.
+# Baked into the image's mise-managed Python at build time (see Dockerfile);
+# PyPI is on the agent's egress allowlist, so skills can also `pip install`
+# extra libs at runtime. Direct deps are pinned so image builds don't silently
+# float these libraries (transitive deps still resolve at build time; there are
+# no hash pins). Bump manually when updating — no automated dep bot watches this
+# file; keep an eye on Pillow/lxml for security fixes.
+#
+# NOTE: python-docx is intentionally omitted — the docx skill drives LibreOffice
+# for conversions, it does not import python-docx. LibreOffice itself is not
+# baked (size), so its conversion/recalc/render paths are unavailable.
+openpyxl==3.1.5
+pandas==3.0.5
+python-pptx==1.0.2
+markitdown==0.1.6
+pypdf==6.14.2
+pdfplumber==0.11.10
+reportlab==5.0.0
+pdf2image==1.17.0
+pytesseract==0.3.13
+Pillow==12.3.0
+defusedxml==0.7.1
+lxml==6.1.1

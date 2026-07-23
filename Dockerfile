@@ -69,10 +69,22 @@ ENV CHECKPOINT_DISABLE=1
 # build for it; Debian's package is single-binary and works everywhere.
 # Ships so `shell_exec` from agents has the same toolchain surface as
 # the upstream Nexus-hosted shell sandbox.
+#
+# poppler-utils (pdftoppm/pdftotext/pdfimages), tesseract-ocr, and the
+# fonts stack are the document-skills toolchain — the Anthropic pdf/docx/
+# xlsx/pptx skills shell out to them. Unlike the operator CLIs below they
+# stay on apt (not mise): they're multi-file C/C++ packages with data files
+# and font integration, not the single GitHub-release binaries mise's aqua
+# backend handles (same reason ripgrep is apt). This intentionally diverges
+# from the nexus-shell-sandbox parity set. Python + pandoc, which mise CAN
+# provide, are added to the `mise use -g` line below instead.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openssl wget \
         git ca-certificates curl libatomic1 gcc libc-dev make zstd \
         ripgrep \
+        poppler-utils \
+        tesseract-ocr \
+        fonts-liberation fontconfig \
         iptables \
     && rm -rf /var/lib/apt/lists/*
 
@@ -106,15 +118,26 @@ RUN npm install -g @anthropic-ai/claude-code
 # user so the shims live in /home/node and stay accessible at runtime
 # (the outer Nexus sandbox drops privileges to `node`).
 #
-# Same tool set as upstream. Split between mise and apt:
-#   - mise (below): awscli, kubectl, gh, jq, yq.
+# Same tool set as upstream, plus the document-skills interpreter, split
+# between mise and apt:
+#   - mise (below): awscli, kubectl, gh, jq, yq, python, pandoc.
 #   - apt (earlier RUN): ripgrep — mise's aqua plugin lacks a linux/arm64
-#     ripgrep build, Debian's package works on both arches.
+#     ripgrep build, Debian's package works on both arches — plus
+#     poppler-utils/tesseract-ocr/fonts (not single-binary, apt-only).
+# python + pandoc go through mise (both first-class, both arm64): one
+# consistent mechanism, a newer pandoc 3.x (vs bookworm's 2.17), and a
+# python-build-standalone interpreter that is node-owned and NOT PEP-668
+# externally-managed — so `pip install` works globally with no venv, both
+# for the baked requirements below and for skills installing extra libs at
+# runtime (PyPI is on the egress allowlist).
 # Credentials are out of scope for this image — the outer sandbox's
 # MITM-injection model rewrites `__nexus_cred:<id>__` placeholders on
 # the wire (no creds on disk).
 USER node
-ARG MISE_VERSION=v2026.2.16
+# Bumped from v2026.2.16 → v2026.7.12: the older mise picked a freethreaded
+# stripped python-build-standalone tarball for `python@3.13` that it couldn't
+# lay out ("missing lib directory"); v2026.7.12 selects the correct build.
+ARG MISE_VERSION=v2026.7.12
 # mise's aqua backend resolves each tool's release through the GitHub API.
 # Unauthenticated that's ~60 req/hr/IP — CI runners share IPs and trip a
 # 403 "rate limit exceeded" (e.g. resolving yq's release tag). Mitigated two
@@ -138,7 +161,17 @@ RUN --mount=type=secret,id=github_token,uid=1000,required=false \
         kubectl@latest \
         gh@latest \
         jq@latest \
-        yq@latest
+        yq@latest \
+        python@3.13 \
+        pandoc@latest
+
+# Baked document-skills pip set — a separate layer AFTER the mise tool install
+# so editing the pins doesn't rebuild the CLI-install layer above (which floats
+# the `@latest` tools). Installs into the node-owned mise python: no venv, not
+# PEP-668-managed. pip reaches PyPI (build network / egress allowlist), not the
+# GitHub API, so no token/cache mounts are needed here.
+COPY --chown=node:node requirements.txt ./
+RUN ~/.local/bin/mise exec -- pip install --no-cache-dir -r /app/requirements.txt
 ENV PATH="/home/node/.local/share/mise/shims:/home/node/.local/bin:${PATH}"
 USER root
 
