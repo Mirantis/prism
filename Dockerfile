@@ -133,6 +133,13 @@ RUN npm install -g @anthropic-ai/claude-code
 # Credentials are out of scope for this image — the outer sandbox's
 # MITM-injection model rewrites `__nexus_cred:<id>__` placeholders on
 # the wire (no creds on disk).
+#
+# Pre-create ~/.cache node-owned: mise v2026.7.12 verifies tool downloads via
+# sigstore/cosign, whose TUF client writes a cache dir under ~/.cache. The
+# BuildKit cache mount on the next RUN creates the parent /home/node/.cache as
+# root, so without this the sigstore cache fails with "Permission denied" and
+# the gh/jq/yq installs abort.
+RUN mkdir -p /home/node/.cache && chown node:node /home/node/.cache
 USER node
 # Bumped from v2026.2.16 → v2026.7.12: the older mise picked a freethreaded
 # stripped python-build-standalone tarball for `python@3.13` that it couldn't
