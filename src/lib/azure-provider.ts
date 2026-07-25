@@ -9,7 +9,7 @@
  *
  *  - Chat + classification → `@ai-sdk/anthropic` pointed at the Foundry
  *    Anthropic endpoint. Model IDs are Foundry *deployment names* (which
- *    default to Claude model IDs, e.g. `claude-opus-4-8`).
+ *    default to Claude model IDs, e.g. `claude-opus-5`).
  *  - Embeddings → `@ai-sdk/azure` (Azure OpenAI, a `text-embedding-3`
  *    deployment) — Anthropic has no embedding model. Optional: without an
  *    embedding deployment, memory search fail-opens (embedding.service

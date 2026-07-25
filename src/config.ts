@@ -74,7 +74,7 @@ const bedrockEmbeddingModelId = process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazo
 // embedding deployment must exist on the resource — if it doesn't, memory
 // embedding fails open (the SDK call errors and is swallowed → no vector);
 // set AZURE_EMBEDDING_MODEL_ID='' to skip embedding entirely.
-const azureModelId = process.env.AZURE_MODEL_ID || 'claude-opus-4-8';
+const azureModelId = process.env.AZURE_MODEL_ID || 'claude-opus-5';
 const azureClassificationModelId = process.env.AZURE_CLASSIFICATION_MODEL_ID || 'claude-haiku-4-5';
 const azureEmbeddingModelId = process.env.AZURE_EMBEDDING_MODEL_ID ?? 'text-embedding-3-small';
 
