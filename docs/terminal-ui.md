@@ -118,7 +118,7 @@ conversation (see **[The agent's identity](agent-identity.md)**).
 
 ## Status bar
 
-The bottom status bar shows the current model (pretty-printed, e.g. "Opus 5.0")
+The bottom status bar shows the current model (pretty-printed, e.g. "Opus 5")
 and a red indicator with a message if the connection drops. The TUI reconnects
 to the runtime automatically with backoff, buffering anything you send while
 it's offline.
