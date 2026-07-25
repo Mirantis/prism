@@ -139,7 +139,7 @@ conversations and multi-turn threads.
 
 Default models:
 
-- **Main loop**: Claude Opus 4.8
+- **Main loop**: Claude Opus 5
 - **Classification gate**: Claude Haiku (fast, deterministic)
 - **Embeddings**: Amazon Titan v2
 
@@ -323,7 +323,7 @@ restarts.
 | `AGENT_NAME` | Display name on first boot | `Prism` |
 | `TEAM_NAME` | Team name on first boot | `Local` |
 | `OWNER_USER_ID` | Owner user ID on first boot. The default is a local sentinel — Slack identity linking later overlays the real `lensUserId` per-message | `00000000-0000-0000-0000-000000000001` |
-| `BEDROCK_MODEL_ID` | Main model | `us.anthropic.claude-opus-4-8` |
+| `BEDROCK_MODEL_ID` | Main model | `us.anthropic.claude-opus-5-0` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Heartbeat gate model | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `BEDROCK_EMBEDDING_MODEL_ID` | Embedding model | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | AWS region | `us-east-1` |

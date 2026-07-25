@@ -24,7 +24,7 @@ export interface PrismConfig {
 
 const DEFAULTS: PrismConfig = {
   agentName: 'Prism',
-  modelId: 'us.anthropic.claude-opus-4-8',
+  modelId: 'us.anthropic.claude-opus-5-0',
   hideCursor: false,
   hideStatusBar: false,
   httpUrl: 'http://localhost:3003',
