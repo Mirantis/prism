@@ -75,7 +75,7 @@ Claude model IDs when you deploy without renaming).
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `BEDROCK_MODEL_ID` | **(Bedrock)** Main model (the agent's reasoning loop) | `us.anthropic.claude-opus-4-8` |
+| `BEDROCK_MODEL_ID` | **(Bedrock)** Main model (the agent's reasoning loop) | `us.anthropic.claude-opus-5-0` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | **(Bedrock)** Fast model for the [heartbeat](heartbeat.md) DELIVER/SUPPRESS gate | a Claude Haiku model |
 | `BEDROCK_EMBEDDING_MODEL_ID` | **(Bedrock)** Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | **(Bedrock)** AWS region for Bedrock | `us-east-1` |

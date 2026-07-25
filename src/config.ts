@@ -64,7 +64,7 @@ const azureFoundryBaseUrl =
 
 // Resolved once so the vendor-specific fields and the provider-neutral
 // `chatModelId`/`classificationModelId`/`embeddingModelId` share one source.
-const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-4-8';
+const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-5-0';
 const bedrockClassificationModelId =
   process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 const bedrockEmbeddingModelId = process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0';

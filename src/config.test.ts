@@ -45,7 +45,7 @@ describe('config', () => {
   it('reads BEDROCK_MODEL_ID with default', async () => {
     delete process.env.BEDROCK_MODEL_ID;
     const cfg = await loadConfig();
-    expect(cfg.bedrockModelId).toBe('us.anthropic.claude-opus-4-8');
+    expect(cfg.bedrockModelId).toBe('us.anthropic.claude-opus-5-0');
   });
 
   it('reads BEDROCK_CLASSIFICATION_MODEL_ID with default', async () => {

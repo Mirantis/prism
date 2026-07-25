@@ -348,7 +348,7 @@ What the operator sets on `docker run`:
 | `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
 | `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
 | `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | — |
-| `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `us.anthropic.claude-opus-4-8` |
+| `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `us.anthropic.claude-opus-5-0` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat DELIVER/SUPPRESS) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
 | `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-4-8` / `claude-haiku-4-5` |
@@ -395,7 +395,7 @@ When the step limit is reached, a follow-up `generateText()` call is made **with
 | `STEP_LIMIT` | `100` | Maximum number of tool-use steps before stopping |
 | `MAX_OUTPUT_TOKENS` | `16000` | Max tokens per `generateText()` call |
 
-Opus 4.8 (like 4.7) no longer accepts `temperature`, `top_p`, or `top_k` (per Anthropic's Bedrock migration guide), so the main `invokeStream()`/`invoke()` calls omit them entirely. Haiku-backed classification gates (`heartbeat.service.ts`, `slack-adapter.service.ts`) still use `temperature: 0` — Haiku continues to accept it.
+The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature`, `top_p`, `top_k`) at all — Opus 4.7 and later reject them (per Anthropic's Bedrock migration guide), so the invoke path omits them entirely rather than tracking which model version accepts what. Haiku-backed classification gates (`heartbeat.service.ts`, `slack-adapter.service.ts`) still use `temperature: 0` — Haiku continues to accept it.
 
 ## LLM Error Handling
 
