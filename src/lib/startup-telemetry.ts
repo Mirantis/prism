@@ -19,7 +19,7 @@ import sea from 'node:sea';
 import { AgentWorkspace } from '@prisma/client';
 import { config } from '../config';
 import { logger } from '../logger';
-import { trackEvent } from './telemetry';
+import { trackEvent, isTelemetryEnabled } from './telemetry';
 import { skillCatalogService } from '../services/skill-catalog.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 
@@ -41,6 +41,11 @@ export async function trackAgentStarted(
   agent: Pick<AgentWorkspace, 'id' | 'userId' | 'webhooksEnabled'>,
   opts: { cronTasks: number },
 ): Promise<void> {
+  // Gathering the census costs a skills-dir scan and a DB round-trip, both
+  // pointless when `trackEvent` would no-op anyway (no OTel endpoint) — as in
+  // the local dev loop.
+  if (!isTelemetryEnabled()) return;
+
   try {
     // Same routing expression as the `[Startup] LLM provider` log: 'nexus'
     // when the selected vendor's Nexus base URL is set, else 'direct'.
@@ -74,8 +79,9 @@ export async function trackAgentStarted(
       'agent.subagents': String(subagents.length),
     });
   } catch (error: unknown) {
-    // Best-effort: a census failure must never take down the boot.
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.warn(`[Startup] agent-started telemetry failed: ${msg}`);
+    // Best-effort: a census failure must never take down the boot. Log the
+    // error object so pino serializes the stack — this is the only diagnostic
+    // for a census that silently stops arriving.
+    logger.warn({ err: error }, '[Startup] agent-started telemetry failed');
   }
 }

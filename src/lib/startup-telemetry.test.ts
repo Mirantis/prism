@@ -1,16 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockTrackEvent, mockGetCatalog, mockGetSubagents, mockConfig, mockLogger } = vi.hoisted(
-  () => ({
-    mockTrackEvent: vi.fn(),
-    mockGetCatalog: vi.fn(),
-    mockGetSubagents: vi.fn(),
-    mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-    mockConfig: {} as Record<string, unknown>,
-  }),
-);
+const {
+  mockTrackEvent,
+  mockIsTelemetryEnabled,
+  mockGetCatalog,
+  mockGetSubagents,
+  mockConfig,
+  mockLogger,
+} = vi.hoisted(() => ({
+  mockTrackEvent: vi.fn(),
+  mockIsTelemetryEnabled: vi.fn(),
+  mockGetCatalog: vi.fn(),
+  mockGetSubagents: vi.fn(),
+  mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  mockConfig: {} as Record<string, unknown>,
+}));
 
-vi.mock('./telemetry', () => ({ trackEvent: mockTrackEvent, isTelemetryEnabled: () => false }));
+vi.mock('./telemetry', () => ({
+  trackEvent: mockTrackEvent,
+  isTelemetryEnabled: mockIsTelemetryEnabled,
+}));
 vi.mock('../logger', () => ({ logger: mockLogger }));
 vi.mock('../config', () => ({ config: mockConfig }));
 vi.mock('../services/skill-catalog.service', () => ({
@@ -62,6 +71,7 @@ describe('trackAgentStarted', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setConfig({});
+    mockIsTelemetryEnabled.mockReturnValue(true);
     mockGetCatalog.mockReturnValue([{ name: 'a' }, { name: 'b' }, { name: 'c' }]);
     mockGetSubagents.mockResolvedValue([{ id: 'sub-1' }]);
   });
@@ -165,13 +175,28 @@ describe('trackAgentStarted', () => {
     }
   });
 
+  it('gathers nothing when telemetry is disabled', async () => {
+    mockIsTelemetryEnabled.mockReturnValue(false);
+
+    await trackAgentStarted(AGENT, { cronTasks: 0 });
+
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+    // The skills scan and the subagent query are the expensive part — neither
+    // should run on a boot that isn't reporting.
+    expect(mockGetCatalog).not.toHaveBeenCalled();
+    expect(mockGetSubagents).not.toHaveBeenCalled();
+  });
+
   it('never throws when gathering the census fails', async () => {
-    mockGetSubagents.mockRejectedValue(new Error('db is down'));
+    const err = new Error('db is down');
+    mockGetSubagents.mockRejectedValue(err);
 
     await expect(trackAgentStarted(AGENT, { cronTasks: 0 })).resolves.toBeUndefined();
 
     expect(mockTrackEvent).not.toHaveBeenCalled();
+    // The error object (not just its message) is logged, so pino emits the stack.
     expect(mockLogger.warn).toHaveBeenCalledWith(
+      { err },
       expect.stringContaining('agent-started telemetry failed'),
     );
   });
