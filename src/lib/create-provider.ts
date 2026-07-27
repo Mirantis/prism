@@ -6,9 +6,9 @@
  *  - Routing: each vendor's factory takes an optional Nexus base URL — set →
  *    route through the Nexus gateway, unset → direct to the vendor.
  *
- * Every underlying factory returns the same call shape — a callable
- * `(modelId) => LanguageModel` with `.embedding(modelId)` attached — so callers
- * don't have to care which vendor or route is in use.
+ * Every underlying factory returns the same call shape — `LlmProvider`, a
+ * callable `(modelId) => LanguageModel` with `.embedding(modelId)` attached —
+ * so callers don't have to care which vendor or route is in use.
  *
  * A note on **bedrock-mantle** (AWS's Anthropic/OpenAI-compatible Bedrock
  * endpoint at `bedrock-mantle.{region}.api.aws`; a Nexus managed-inference
@@ -29,8 +29,9 @@
 import { config } from '../config';
 import { createBedrockProvider, isBedrockConfigured } from './bedrock-provider';
 import { createAzureProvider, isAzureConfigured } from './azure-provider';
+import type { LlmProvider } from './llm-provider';
 
-export function createProvider() {
+export function createProvider(): LlmProvider {
   return config.llmProvider === 'azure'
     ? createAzureProvider(config.nexusAzureBaseUrl ?? undefined)
     : createBedrockProvider(config.nexusLlmBaseUrl ?? undefined);

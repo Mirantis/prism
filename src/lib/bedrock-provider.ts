@@ -33,6 +33,7 @@ import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
 import { defaultProvider } from '@aws-sdk/credential-provider-node';
 import { config } from '../config';
 import { logger } from '../logger';
+import type { LlmProvider } from './llm-provider';
 
 function createSharedBedrockOptions() {
   if (config.awsAccessKeyId && config.awsSecretAccessKey) {
@@ -90,7 +91,7 @@ export function isAnthropicModelId(modelId: string): boolean {
  * or the default credential chain); set → the Nexus gateway, which does its own
  * signing (so no local credentials are attached).
  */
-export function createBedrockProvider(baseURL?: string) {
+export function createBedrockProvider(baseURL?: string): LlmProvider {
   logger.info({ routing: baseURL ? 'nexus' : 'direct' }, 'Creating Bedrock provider');
 
   const sharedOptions = baseURL ? { region: config.awsRegion, baseURL } : createSharedBedrockOptions();
