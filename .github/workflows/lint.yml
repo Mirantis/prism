@@ -41,9 +41,23 @@ jobs:
         run: npm run lint
 
       - name: Lint commits
-        uses: wagoid/commitlint-github-action@b948419dd99f3fd78a6548d48f94e3df7f6bf3ed # v6
-        with:
-          # Must point at the .mjs config: the action rejects a .js configFile
-          # and otherwise silently falls back to bare config-conventional,
-          # skipping our signed-off-by rule and Copilot ignore.
-          configFile: commitlint.config.mjs
+        # Run the repo's own pinned commitlint (@commitlint/cli@^21, installed
+        # by `npm ci` above) rather than a Docker action, so the version that
+        # lints in CI is exactly the one pinned here — no bundled-version skew.
+        # For pull_request we lint the PR's own commits using explicit base/head
+        # SHAs (base.sha..head.sha), which ignores the default merge commit
+        # GitHub checks out and never reaches unrelated base-branch history.
+        # For push we lint the pushed range (before..sha), skipping the case
+        # where before is the all-zeroes SHA (a brand-new branch has no range).
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            npx commitlint --config commitlint.config.mjs --verbose \
+              --from "${{ github.event.pull_request.base.sha }}" \
+              --to "${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            echo "New branch push (no prior commit); skipping commit range lint."
+          else
+            npx commitlint --config commitlint.config.mjs --verbose \
+              --from "${{ github.event.before }}" \
+              --to "${{ github.sha }}"
+          fi
