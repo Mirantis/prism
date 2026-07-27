@@ -5,8 +5,8 @@
  * emitted from `index.ts` once the agent row is resolved and cron tasks are
  * registered. It answers fleet-level product questions the Pino startup logs
  * can't: which LLM vendor/models deployments actually run, whether they route
- * through Nexus, which integrations are wired up, what host shape Prism runs
- * on, and how much of the feature surface is configured.
+ * through Nexus, which integrations are wired up, what host Prism runs on, and
+ * how much of the feature surface is configured.
  *
  * Only ids, flags, counts and model identifiers — never tokens, URLs, paths or
  * user content. `deployment.environment.name` / `service.version` are already
@@ -14,7 +14,6 @@
  * properties; heartbeat interval/status are owned by `heartbeat started`.
  */
 
-import fs from 'fs';
 import sea from 'node:sea';
 import { AgentWorkspace } from '@prisma/client';
 import { config } from '../config';
@@ -22,20 +21,6 @@ import { logger } from '../logger';
 import { trackEvent, isTelemetryEnabled } from './telemetry';
 import { skillCatalogService } from '../services/skill-catalog.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
-
-/**
- * How this process was shipped: the packaged `prism-server` binary, the
- * published container image, or a source checkout (dev loop).
- */
-function resolveInstallMode(): 'sea' | 'docker' | 'source' {
-  if (sea.isSea()) return 'sea';
-  try {
-    if (fs.existsSync('/.dockerenv')) return 'docker';
-  } catch {
-    // A sandboxed fs that rejects the probe just means "not docker".
-  }
-  return 'source';
-}
 
 export async function trackAgentStarted(
   agent: Pick<AgentWorkspace, 'id' | 'userId' | 'webhooksEnabled'>,
@@ -69,7 +54,8 @@ export async function trackAgentStarted(
       'nexus.enabled': String(Boolean(config.nexusApiUrl)),
       'nexus.mcp_enabled': String(Boolean(config.nexusMcpUrl)),
       'langfuse.enabled': String(Boolean(config.langfuseSecretKey && config.langfusePublicKey)),
-      'runtime.install_mode': resolveInstallMode(),
+      // The packaged `prism-server` binary vs a container/source run.
+      'runtime.sea': String(sea.isSea()),
       'runtime.node_version': process.version,
       'runtime.platform': process.platform,
       'runtime.arch': process.arch,
