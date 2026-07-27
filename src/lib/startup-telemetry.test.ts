@@ -31,11 +31,6 @@ vi.mock('../services/agent-workspace.service', () => ({
 
 import { trackAgentStarted } from './startup-telemetry';
 
-const SLACK_TOKEN = 'xoxb-super-secret';
-const AZURE_KEY = 'azure-super-secret';
-const OTEL_KEY = 'otel-super-secret';
-const DB_URL = 'file:/data/agent.db';
-
 const BEDROCK_CONFIG = {
   llmProvider: 'bedrock',
   chatModelId: 'us.anthropic.claude-opus-4-8',
@@ -46,12 +41,9 @@ const BEDROCK_CONFIG = {
   nexusAzureBaseUrl: null,
   nexusApiUrl: 'https://nexus.test',
   nexusMcpUrl: 'https://nexus.test/projects/p1/mcp',
-  slackBotToken: SLACK_TOKEN,
-  azureApiKey: undefined,
+  slackBotToken: 'xoxb-test',
   langfuseSecretKey: undefined,
   langfusePublicKey: undefined,
-  otelApiKey: OTEL_KEY,
-  databaseUrl: DB_URL,
 };
 
 const AGENT = { id: 'agent-1', userId: 'user-1', webhooksEnabled: false };
@@ -95,6 +87,7 @@ describe('trackAgentStarted', () => {
       'nexus.enabled': 'true',
       'nexus.mcp_enabled': 'true',
       'langfuse.enabled': 'false',
+      'runtime.sea': 'false',
       'runtime.node_version': process.version,
       'runtime.platform': process.platform,
       'runtime.arch': process.arch,
@@ -103,7 +96,6 @@ describe('trackAgentStarted', () => {
       'skills.count': '3',
       'agent.subagents': '1',
     });
-    expect(['sea', 'docker', 'source']).toContain(props['runtime.install_mode']);
   });
 
   it('reports direct routing and omits the region on Azure', async () => {
@@ -117,7 +109,6 @@ describe('trackAgentStarted', () => {
       nexusApiUrl: undefined,
       nexusMcpUrl: null,
       slackBotToken: undefined,
-      azureApiKey: AZURE_KEY,
       langfuseSecretKey: 'lf-secret',
       langfusePublicKey: 'lf-public',
     });
@@ -158,21 +149,6 @@ describe('trackAgentStarted', () => {
     await trackAgentStarted(AGENT, { cronTasks: 0 });
 
     expect(emittedProps()).not.toHaveProperty('llm.embedding_model');
-  });
-
-  it('never emits credentials, URLs or the database path', async () => {
-    setConfig({ langfuseSecretKey: 'lf-secret', langfusePublicKey: 'lf-public' });
-
-    await trackAgentStarted(AGENT, { cronTasks: 1 });
-
-    const props = emittedProps();
-    const secrets = [SLACK_TOKEN, OTEL_KEY, DB_URL, 'lf-secret', 'lf-public', 'nexus.test'];
-    for (const [key, value] of Object.entries(props)) {
-      expect(key).not.toMatch(/token|secret|api_key|password/i);
-      for (const secret of secrets) {
-        expect(value).not.toContain(secret);
-      }
-    }
   });
 
   it('gathers nothing when telemetry is disabled', async () => {

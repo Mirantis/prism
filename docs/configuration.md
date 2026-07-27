@@ -139,8 +139,9 @@ telemetry to a collector. Structured logs (Pino) are always on.
 With OpenTelemetry enabled, the runtime emits an `agent started` event once per
 boot describing the deployment: the LLM provider, whether calls route through
 Nexus, the model identifiers, on/off flags for Slack, Nexus, the external MCP
-server and Langfuse, the host shape (install mode, Node version, platform,
-architecture), and counts of cron tasks, installed skills and subagents. Like
+server and Langfuse, the host shape (packaged binary or not, Node version,
+platform, architecture), and counts of cron tasks, installed skills and
+subagents. Like
 every other product event, it carries only identifiers, flags and counts — never
 credentials, URLs, file paths, or message content.
 
