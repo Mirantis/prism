@@ -26,6 +26,7 @@ if (dotenvLoadInfo.error) {
 import { createApp } from './server';
 import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
 import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
+import { trackAgentStarted } from './lib/startup-telemetry';
 import { heartbeatService } from './services/heartbeat.service';
 import { cronSchedulerService } from './services/cron-scheduler.service';
 import { goalService } from './services/goal.service';
@@ -138,6 +139,11 @@ const initialize = async () => {
       cronSchedulerService.scheduleTask(task, { source: 'boot' });
     }
     logger.info(`Cron tasks scheduled: ${cronTasks.length}`);
+
+    // Product telemetry: the boot census — the provider/routing logged above
+    // plus the rest of the deployment shape (integrations, host, feature
+    // counts). Best-effort; never throws.
+    await trackAgentStarted(agent, { cronTasks: cronTasks.length });
 
     // Resume any goal that was still active when the process last stopped.
     await goalService.restoreActiveGoals(agent.id);
