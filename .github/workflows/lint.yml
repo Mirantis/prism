@@ -42,3 +42,8 @@ jobs:
 
       - name: Lint commits
         uses: wagoid/commitlint-github-action@b948419dd99f3fd78a6548d48f94e3df7f6bf3ed # v6
+        with:
+          # Must point at the .mjs config: the action rejects a .js configFile
+          # and otherwise silently falls back to bare config-conventional,
+          # skipping our signed-off-by rule and Copilot ignore.
+          configFile: commitlint.config.mjs
