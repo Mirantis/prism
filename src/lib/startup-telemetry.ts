@@ -1,0 +1,81 @@
+/**
+ * Startup Telemetry
+ *
+ * Single owner of the `agent started` product event — one census per boot,
+ * emitted from `index.ts` once the agent row is resolved and cron tasks are
+ * registered. It answers fleet-level product questions the Pino startup logs
+ * can't: which LLM vendor/models deployments actually run, whether they route
+ * through Nexus, which integrations are wired up, what host shape Prism runs
+ * on, and how much of the feature surface is configured.
+ *
+ * Only ids, flags, counts and model identifiers — never tokens, URLs, paths or
+ * user content. `deployment.environment.name` / `service.version` are already
+ * OTel *resource* attributes (see `telemetry.ts`), so they are not repeated as
+ * properties; heartbeat interval/status are owned by `heartbeat started`.
+ */
+
+import fs from 'fs';
+import sea from 'node:sea';
+import { AgentWorkspace } from '@prisma/client';
+import { config } from '../config';
+import { logger } from '../logger';
+import { trackEvent } from './telemetry';
+import { skillCatalogService } from '../services/skill-catalog.service';
+import { agentWorkspaceService } from '../services/agent-workspace.service';
+
+/**
+ * How this process was shipped: the packaged `prism-server` binary, the
+ * published container image, or a source checkout (dev loop).
+ */
+function resolveInstallMode(): 'sea' | 'docker' | 'source' {
+  if (sea.isSea()) return 'sea';
+  try {
+    if (fs.existsSync('/.dockerenv')) return 'docker';
+  } catch {
+    // A sandboxed fs that rejects the probe just means "not docker".
+  }
+  return 'source';
+}
+
+export async function trackAgentStarted(
+  agent: Pick<AgentWorkspace, 'id' | 'userId' | 'webhooksEnabled'>,
+  opts: { cronTasks: number },
+): Promise<void> {
+  try {
+    // Same routing expression as the `[Startup] LLM provider` log: 'nexus'
+    // when the selected vendor's Nexus base URL is set, else 'direct'.
+    const nexusBaseUrl =
+      config.llmProvider === 'azure' ? config.nexusAzureBaseUrl : config.nexusLlmBaseUrl;
+    // No workspaceRoot at boot — this counts the globally installed skills.
+    const skills = skillCatalogService.getCatalog();
+    const subagents = await agentWorkspaceService.getSubagents(agent.id);
+
+    trackEvent('agent started', agent.userId, {
+      'agent.id': agent.id,
+      'llm.provider': config.llmProvider,
+      'llm.routing': nexusBaseUrl ? 'nexus' : 'direct',
+      'llm.chat_model': config.chatModelId,
+      'llm.classification_model': config.classificationModelId,
+      // Empty when embeddings are disabled (AZURE_EMBEDDING_MODEL_ID='').
+      ...(config.embeddingModelId ? { 'llm.embedding_model': config.embeddingModelId } : {}),
+      // Meaningless on Azure, where the resource name pins the region.
+      ...(config.llmProvider === 'bedrock' ? { 'llm.region': config.awsRegion } : {}),
+      'slack.enabled': String(Boolean(config.slackBotToken)),
+      'nexus.enabled': String(Boolean(config.nexusApiUrl)),
+      'nexus.mcp_enabled': String(Boolean(config.nexusMcpUrl)),
+      'langfuse.enabled': String(Boolean(config.langfuseSecretKey && config.langfusePublicKey)),
+      'runtime.install_mode': resolveInstallMode(),
+      'runtime.node_version': process.version,
+      'runtime.platform': process.platform,
+      'runtime.arch': process.arch,
+      'webhook.receiver_enabled': String(agent.webhooksEnabled),
+      'cron.tasks': String(opts.cronTasks),
+      'skills.count': String(skills.length),
+      'agent.subagents': String(subagents.length),
+    });
+  } catch (error: unknown) {
+    // Best-effort: a census failure must never take down the boot.
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.warn(`[Startup] agent-started telemetry failed: ${msg}`);
+  }
+}

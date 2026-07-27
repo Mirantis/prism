@@ -136,6 +136,14 @@ telemetry to a collector. Structured logs (Pino) are always on.
 | `OTEL_EXPORTER_OTLP_API_KEY` | Collector auth, sent as `x-api-key` | — |
 | `DEPLOYMENT_ENVIRONMENT` | Tags OTel records (`production` / `staging` / `development`) | `production` (published images) |
 
+With OpenTelemetry enabled, the runtime emits an `agent started` event once per
+boot describing the deployment: the LLM provider, whether calls route through
+Nexus, the model identifiers, on/off flags for Slack, Nexus, the external MCP
+server and Langfuse, the host shape (install mode, Node version, platform,
+architecture), and counts of cron tasks, installed skills and subagents. Like
+every other product event, it carries only identifiers, flags and counts — never
+credentials, URLs, file paths, or message content.
+
 ## Installer variables
 
 These affect the native [installer](installation.md), not the running agent:
