@@ -302,6 +302,7 @@ src/
 │   └── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
 ├── lib/
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
+│   ├── llm-provider.ts         # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` + `.embedding(modelId)` contract both vendor factories return
 │   ├── create-provider.ts      # Unified LLM provider factory: picks vendor (bedrock/azure), passes each its optional Nexus baseURL; `isProviderConfigured()`
 │   ├── bedrock-provider.ts     # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or Nexus when baseURL set)
 │   ├── azure-provider.ts       # Azure provider factory (Claude via MS Foundry, Anthropic Messages API; embeddings via Azure OpenAI): `createAzureProvider(baseURL?)`

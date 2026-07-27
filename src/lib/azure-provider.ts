@@ -38,16 +38,9 @@
 
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createAzure } from '@ai-sdk/azure';
-import type { LanguageModelV3, EmbeddingModelV3 } from '@ai-sdk/provider';
 import { config } from '../config';
 import { logger } from '../logger';
-
-// The shared provider shape (mirrors bedrock-provider's inferred return). An
-// explicit annotation keeps the return type portable (the SDKs re-export
-// nested `@ai-sdk/provider` copies that would otherwise trip TS2742).
-type LlmProvider = ((modelId: string) => LanguageModelV3) & {
-  embedding: (modelId: string) => EmbeddingModelV3;
-};
+import type { LlmProvider } from './llm-provider';
 
 export function createAzureProvider(baseURL?: string): LlmProvider {
   logger.info(
