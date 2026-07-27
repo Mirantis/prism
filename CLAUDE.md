@@ -16,14 +16,8 @@ common types are `feat`, `fix`, `refactor`, `ci`, `docs`, `chore`, and `test`.
 Every commit must be signed off (DCO): commit with `git commit -s` so a
 `Signed-off-by: Name <email>` trailer is added.
 
-Body prose lines wrap at 100 characters (commitlint `body-max-line-length` /
-`footer-max-line-length`), but **lines containing a URL are exempt** — this is
-config-conventional v21's native behaviour. This matters because the mandatory
-fleet `Agent:` trailer carries a long agent-profile URL emitted verbatim by the
-runtime (~190 chars) that cannot be wrapped or shortened without breaking the
-trailer. Do NOT "fix" a long trailer by mangling or line-wrapping the URL — the
-exemption exists precisely so you don't have to. Only genuinely long prose (no
-URL, >100 chars) is still caught.
+Wrap commit body prose at 100 characters, but never wrap a long URL or an
+attribution trailer line (e.g. the `Agent:` trailer) — leave those intact.
 
 When a PR branch conflicts with `main`, resolve by rebasing the branch
 onto `main` (`git rebase origin/main`, then force-push) — never with a
