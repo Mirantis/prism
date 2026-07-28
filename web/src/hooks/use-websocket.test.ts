@@ -95,4 +95,34 @@ describe('useWebSocket', () => {
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledWith({ threadId: 't9', title: 'Database Schema Migration' });
   });
+
+  it('keeps isTyping set across a verbose turn until the runtime ends it', async () => {
+    const onMessage = vi.fn();
+    const { result, ws } = await renderConnected({ onMessage });
+
+    act(() => ws.deliver({ type: 'status', payload: { processing: true } }));
+    expect(result.current.isTyping).toBe(true);
+
+    // Verbose mode delivers each intermediate step mid-turn. An inbound message
+    // must not be read as the turn ending, or the spinner and STOP button
+    // revert while the agent is still working.
+    act(() => ws.deliver({ type: 'chat', payload: { id: 'm1', content: 'step one' } }));
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(result.current.isTyping).toBe(true);
+
+    act(() => ws.deliver({ type: 'chat', payload: { id: 'm2', content: 'final' } }));
+    expect(result.current.isTyping).toBe(true);
+
+    act(() => ws.deliver({ type: 'status', payload: { processing: false } }));
+    expect(result.current.isTyping).toBe(false);
+  });
+
+  it('ignores the connect handshake status, which carries no processing flag', async () => {
+    const { result, ws } = await renderConnected({ onMessage: vi.fn() });
+
+    act(() => ws.deliver({ type: 'status', payload: { processing: true } }));
+    act(() => ws.deliver({ type: 'status', payload: { connected: true } }));
+
+    expect(result.current.isTyping).toBe(true);
+  });
 });

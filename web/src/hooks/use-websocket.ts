@@ -53,9 +53,12 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
         const data = JSON.parse(event.data) as WebSocketMessage;
         switch (data.type) {
           case 'chat': {
+            // Deliberately does NOT clear isTyping: in verbose mode a turn
+            // delivers every intermediate step, so an inbound message is not
+            // evidence the turn is over. The runtime's `status.processing`
+            // (below) brackets the turn and is the sole source of truth.
             const payload = data.payload as ConversationMessage | undefined;
             if (payload) onMessageRef.current?.(payload);
-            setIsTyping(false);
             break;
           }
           case 'typing': {
@@ -64,11 +67,15 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             break;
           }
           case 'status': {
-            // The runtime broadcasts { processing: false } when a turn ends
-            // (normal completion or cancel), so the STOP button reliably
-            // reverts even when a cancel produced no new message to deliver.
+            // The runtime sends { processing: true } when a turn starts and
+            // broadcasts { processing: false } when it ends (normal completion
+            // or cancel), so the spinner/STOP button track the whole turn —
+            // including every intermediate step in verbose mode — and reliably
+            // revert even when a cancel produced no new message to deliver.
+            // The connect handshake sends { connected: true } with no
+            // `processing` key, hence the boolean guard.
             const p = data.payload as { processing?: boolean } | undefined;
-            if (p?.processing === false) setIsTyping(false);
+            if (typeof p?.processing === 'boolean') setIsTyping(p.processing);
             break;
           }
           case 'thread': {
