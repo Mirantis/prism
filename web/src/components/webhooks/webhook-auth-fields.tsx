@@ -146,7 +146,7 @@ export function WebhookAuthFields({
               aria-invalid={Boolean(fieldErrors.authPrefix) || undefined}
               value={values.authPrefix}
               onChange={(e) => onChange('authPrefix', e.target.value)}
-              placeholder={authType === 'hmac' ? 'sha256=' : 'Bearer '}
+              placeholder={authType === 'hmac' ? 'sha256=' : 'Bearer'}
               className="font-mono"
             />
             {fieldErrors.authPrefix ? (
@@ -154,7 +154,7 @@ export function WebhookAuthFields({
             ) : (
               <FieldDescription>
                 Optional literal in front of the value, e.g. <code>sha256=</code>, <code>v1=</code>{' '}
-                or <code>Bearer </code> (trailing space included). Leave empty for a bare value.
+                or <code>Bearer</code>. Leave empty for a bare value.
               </FieldDescription>
             )}
           </Field>

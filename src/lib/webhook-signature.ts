@@ -8,7 +8,7 @@
  *
  *   'none'  — no verification (default; auth is the platform's job)
  *   'token' — `authHeader` must carry `secret` verbatim, after an optional
- *             literal `authPrefix` ('Bearer ', …)
+ *             literal `authPrefix` ('Bearer', …)
  *   'hmac'  — `authHeader` must carry HMAC(secret, raw body) in `authAlgorithm`
  *             + `authEncoding`, after an optional literal `authPrefix`
  *             ('sha256=', 'v1=', …)

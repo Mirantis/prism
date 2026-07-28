@@ -1037,7 +1037,10 @@ describe('Management Routes', () => {
       expect(res.body.hasSecret).toBe(true);
     });
 
-    it("keeps a prefix's trailing space, which the sender sends verbatim", async () => {
+    // Header and secret are trimmed; the prefix is stored exactly as typed,
+    // since only the operator knows what their sender puts on the wire.
+    // (Matching tolerates the space either way — see webhook-signature.test.ts.)
+    it('stores a prefix verbatim instead of trimming it', async () => {
       mockPrisma.webhookSubscription.create.mockResolvedValue({ id: 'wh-1', name: 'alerts' });
 
       await authedRequest(app).post('/agents/webhook-subscriptions').send({

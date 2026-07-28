@@ -141,6 +141,24 @@ describe("authType 'token'", () => {
     ).toBe('invalid');
   });
 
+  it("matches whether or not the configured prefix ends in a space", () => {
+    // Operators write 'Bearer' as often as 'Bearer '; the space between prefix
+    // and credential is stripped either way, so both configurations work and
+    // the UI doesn't have to teach a whitespace rule.
+    for (const authPrefix of ['Bearer', 'Bearer ']) {
+      expect(
+        verifyWebhookAuth(
+          config({
+            ...base,
+            authHeader: 'Authorization',
+            authPrefix,
+            headers: { authorization: `Bearer ${SECRET}` },
+          }),
+        ),
+      ).toBe('ok');
+    }
+  });
+
   it('does not split on commas, so a secret may contain one', () => {
     const comma = 'part-a,part-b';
     expect(

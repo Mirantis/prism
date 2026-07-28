@@ -651,7 +651,7 @@ model PendingSlackMessage {
 // src/lib/webhook-signature.ts): `authType` picks the scheme ('none' | 'token'
 // | 'hmac'), `authHeader` names the header that carries the credential,
 // `authPrefix` is an optional literal stripped from that value ('sha256=',
-// 'Bearer ', …), and `authAlgorithm`/`authEncoding` shape the HMAC digest.
+// 'Bearer', …), and `authAlgorithm`/`authEncoding` shape the HMAC digest.
 // Every real sender is a configuration recipe, not a code path. The secret is
 // stored plaintext (single-agent mode has no key material) and is never
 // returned by the management API.
