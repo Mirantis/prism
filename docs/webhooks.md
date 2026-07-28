@@ -97,7 +97,7 @@ The parameters:
 | Field | Meaning |
 |-------|---------|
 | **Header** | Header name that carries the credential, e.g. `X-Hub-Signature-256` or `Authorization`. Matched case-insensitively. |
-| **Prefix** | Optional literal stripped from the header value before comparing, e.g. `sha256=`, `v1=`, `Bearer ` (trailing space included). A value that arrives without the prefix is still accepted. |
+| **Prefix** | Optional literal stripped from the header value before comparing, e.g. `sha256=`, `v1=`, `Bearer`. Any space between the prefix and the credential is ignored, and a value that arrives without the prefix at all is still accepted. |
 | **Secret** | The shared secret / HMAC key. Write-only: the API returns whether a secret is set, never the value. |
 | **Algorithm** / **Encoding** | HMAC only: `sha256` (default), `sha1` or `sha512`, encoded as `hex` (default, case-insensitive) or `base64`. |
 
@@ -130,7 +130,7 @@ Behavior worth knowing:
 | GitHub | HMAC | `X-Hub-Signature-256` | `sha256=` | Paste the same value into GitHub's webhook **Secret** field. |
 | GitLab | Shared token | `X-Gitlab-Token` | — | GitLab's **Secret token** field; it sends the token as-is, no HMAC. |
 | PagerDuty | HMAC | `X-PagerDuty-Signature` | `v1=` | Uses the signing secret shown when the v3 webhook subscription is created; sends several `v1=` signatures while rotating. |
-| Alertmanager | Shared token | `Authorization` | `Bearer ` | Configure `http_config.authorization` on the receiver (see below). |
+| Alertmanager | Shared token | `Authorization` | `Bearer` | Configure `http_config.authorization` on the receiver (see below). |
 | Anything with a base64 HMAC | HMAC | (their header) | — | Set Encoding to `base64`. |
 | Custom scripts | Shared token | any header you like | — | Simplest option for internal senders. |
 
@@ -215,7 +215,7 @@ receivers:
       - url: http://<prism-host>/agents/webhooks/alertmanager
         send_resolved: true
         # Matches a subscription with Scheme = shared token in a header,
-        # Header = Authorization, Prefix = "Bearer ".
+        # Header = Authorization, Prefix = Bearer.
         http_config:
           authorization:
             type: Bearer
@@ -253,7 +253,7 @@ curl -X POST http://<prism-host>/agents/webhooks/my-hook \
   -d '{"event_type": "deploy.finished", "service": "api", "version": "1.4.2"}'
 ```
 
-With a shared token (Header = `Authorization`, Prefix = `Bearer `):
+With a shared token (Header = `Authorization`, Prefix = `Bearer`):
 
 ```bash
 curl -X POST http://<prism-host>/agents/webhooks/my-hook \
