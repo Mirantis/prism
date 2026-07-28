@@ -56,6 +56,27 @@ enum AgentType {
   SUBAGENT
 }
 
+// Webhook sender verification (see src/lib/webhook-signature.ts). Members are
+// lowercase, unlike the enums above, because these values are wire tokens: they
+// are what the management API accepts, what the SPA sends, and what the digest
+// names mean to the senders being verified.
+enum WebhookAuthType {
+  none
+  token
+  hmac
+}
+
+enum WebhookAuthAlgorithm {
+  sha256
+  sha1
+  sha512
+}
+
+enum WebhookAuthEncoding {
+  hex
+  base64
+}
+
 // ============================================================================
 // Agent Workspace
 // ============================================================================
@@ -364,17 +385,17 @@ model Goal {
   status String @default("active")
 
   tokenBudget Int?
-  tokensUsed  Int @default(0)
-  turnCount   Int @default(0)
+  tokensUsed  Int  @default(0)
+  turnCount   Int  @default(0)
   maxTurns    Int
 
   // Consecutive zero-progress turns; goal is blocked once this hits GOAL_MAX_STALL_TURNS.
-  stallCount Int @default(0)
+  stallCount Int     @default(0)
   // Latest loop/gate reason (why it continued, blocked, or stopped) — surfaced in status.
   lastReason String?
 
   // Originating channel (REQUIRED) used for scoped delivery of goal-turn output.
-  originChannel String // 'slack' | 'websocket'
+  originChannel   String // 'slack' | 'websocket'
   // Nullable: absent for Slack DMs (delivery falls back to the DM mapping).
   originChannelId String?
 
@@ -667,11 +688,11 @@ model WebhookSubscription {
   deliverOnly Boolean @default(false)
   isActive    Boolean @default(true)
 
-  authType      String  @default("none") // 'none' | 'token' | 'hmac'
+  authType      WebhookAuthType      @default(none)
   authHeader    String? // header carrying the token/signature
   authPrefix    String? // literal stripped before comparing (e.g. 'sha256=')
-  authAlgorithm String  @default("sha256") // hmac only: sha256 | sha1 | sha512
-  authEncoding  String  @default("hex") // hmac only: hex | base64
+  authAlgorithm WebhookAuthAlgorithm @default(sha256) // hmac only
+  authEncoding  WebhookAuthEncoding  @default(hex) // hmac only
   secret        String? // shared token / HMAC key; never leaves the process
 
   createdAt DateTime @default(now())

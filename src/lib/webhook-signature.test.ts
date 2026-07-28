@@ -9,11 +9,14 @@
 
 import { describe, it, expect } from 'vitest';
 import crypto from 'crypto';
+import { $Enums } from '@prisma/client';
 import {
   isValidAuthAlgorithm,
   isValidAuthEncoding,
   isValidAuthType,
   verifyWebhookAuth,
+  WEBHOOK_AUTH_ALGORITHMS,
+  WEBHOOK_AUTH_ENCODINGS,
   WEBHOOK_AUTH_TYPES,
 } from './webhook-signature';
 
@@ -53,6 +56,18 @@ describe('validators', () => {
     expect(isValidAuthAlgorithm('md5')).toBe(false);
     expect(isValidAuthEncoding('base64')).toBe(true);
     expect(isValidAuthEncoding('base64url')).toBe(false);
+  });
+
+  it('stays in step with the schema enums', () => {
+    // The columns are Prisma enums, so a value added on one side only would be
+    // written and then rejected by the client (or vice versa).
+    expect([...WEBHOOK_AUTH_TYPES].sort()).toEqual(Object.values($Enums.WebhookAuthType).sort());
+    expect([...WEBHOOK_AUTH_ALGORITHMS].sort()).toEqual(
+      Object.values($Enums.WebhookAuthAlgorithm).sort(),
+    );
+    expect([...WEBHOOK_AUTH_ENCODINGS].sort()).toEqual(
+      Object.values($Enums.WebhookAuthEncoding).sort(),
+    );
   });
 });
 
