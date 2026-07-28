@@ -49,6 +49,7 @@ import { WebhookAuthDialog } from '@/components/webhooks/webhook-auth-dialog';
 import {
   AUTH_TYPE_LABELS,
   EMPTY_WEBHOOK_AUTH,
+  isWebhookAuthComplete,
   WebhookAuthFields,
 } from '@/components/webhooks/webhook-auth-fields';
 import type { WebhookDeliverTo, WebhookSubscription } from '@/types';
@@ -333,7 +334,9 @@ function WebhooksPage() {
         onSubmit={handleCreate}
         isSubmitting={createMut.isPending}
         submitLabel="Create"
-        submitDisabled={!form.name.trim()}
+        // A chosen scheme without its header + secret can't be created (the
+        // runtime would 400), so keep Create disabled until they're filled in.
+        submitDisabled={!form.name.trim() || !isWebhookAuthComplete(form)}
       >
         <FieldGroup>
           {/* No legend on the first group: the name/description/events fields
@@ -341,7 +344,9 @@ function WebhooksPage() {
               dialog title. */}
           <FieldSet>
             <Field data-invalid={Boolean(fieldErrors.name)}>
-              <FieldLabel htmlFor="webhook-name">Name</FieldLabel>
+              <FieldLabel htmlFor="webhook-name">
+                Name <span aria-hidden="true" className="text-muted-foreground">*</span>
+              </FieldLabel>
               <Input
                 id="webhook-name"
                 aria-invalid={Boolean(fieldErrors.name) || undefined}
