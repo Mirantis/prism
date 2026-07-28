@@ -1185,6 +1185,39 @@ describe('Management Routes', () => {
         expect(res.body.hasSecret).toBe(true);
       });
 
+      it('writes only auth fields, never the rest of the row it just read', async () => {
+        // The handler reads the row to validate the effective result; carrying
+        // that read into the update payload would write back stale values
+        // (clobbering a concurrent isActive toggle, pinning updatedAt).
+        mockPrisma.webhookSubscription.findUnique.mockResolvedValue({
+          ...stored,
+          agentId: 'agent-1',
+          description: 'from the read',
+          events: null,
+          prompt: 'from the read',
+          deliverTo: 'all',
+          deliverOnly: false,
+          isActive: true,
+          createdAt: new Date('2026-01-01'),
+          updatedAt: new Date('2026-01-02'),
+        });
+        mockPrisma.webhookSubscription.update.mockResolvedValue(stored);
+
+        await authedRequest(app)
+          .patch('/agents/webhook-subscriptions/wh-1')
+          .send({ secret: 'new-secret' });
+
+        const { data } = mockPrisma.webhookSubscription.update.mock.calls[0][0];
+        expect(Object.keys(data).sort()).toEqual([
+          'authAlgorithm',
+          'authEncoding',
+          'authHeader',
+          'authPrefix',
+          'authType',
+          'secret',
+        ]);
+      });
+
       it('validates the effective result, not just the patch', async () => {
         // Row currently has no credential; switching it to 'hmac' alone would
         // leave an endpoint that demands verification it cannot perform.

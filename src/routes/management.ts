@@ -944,7 +944,18 @@ function readWebhookAuthFields(
   const fail = (field: string, message: string) =>
     ({ ok: false as const, error: message, fieldErrors: { [field]: message } });
 
-  const values: WebhookAuthFields = { ...current };
+  // Pick the auth fields explicitly rather than spreading `current`: PATCH
+  // passes the whole subscription row, and carrying its other columns into the
+  // update payload would write back stale reads (clobbering a concurrent
+  // isActive toggle, and pinning `updatedAt` to the value we just read).
+  const values: WebhookAuthFields = {
+    authType: current.authType,
+    authHeader: current.authHeader,
+    authPrefix: current.authPrefix,
+    authAlgorithm: current.authAlgorithm,
+    authEncoding: current.authEncoding,
+    secret: current.secret,
+  };
 
   if (body.authType !== undefined) {
     if (!isValidAuthType(body.authType)) {
