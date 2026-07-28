@@ -61,7 +61,9 @@ export function WebhookAuthFields({
   return (
     <>
       <Field data-invalid={Boolean(fieldErrors.authType)}>
-        <FieldLabel htmlFor="webhook-auth-type">Authentication</FieldLabel>
+        {/* "Scheme", not "Authentication" — the surrounding section is already
+            titled Authentication (create modal) or names it (rotate dialog). */}
+        <FieldLabel htmlFor="webhook-auth-type">Scheme</FieldLabel>
         <Select
           value={authType}
           onValueChange={(value) => {

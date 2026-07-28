@@ -197,16 +197,16 @@ Let external systems trigger the agent by POSTing JSON to a named endpoint.
 
 - **Enable Webhooks** turns the inbound receiver on (it starts disabled); the
   toggle applies immediately, no restart.
-- **New subscription** creates a named route (`/agents/webhooks/<name>`) with
-  an optional description, an event-type filter, a delivery target (All
-  channels / Chat / Slack), a **deliver only** mode that posts the rendered
-  payload without running the agent, sender **Authentication**, and an optional
-  prompt template.
-- **Authentication** picks how the sender proves itself — a shared token in a
-  header or an HMAC signature of the body — and reveals the **Header**,
-  **Prefix** and **Secret** fields (plus **Algorithm**/**Encoding** for HMAC).
-  It's generic: you name the header your sender uses, so there's nothing
-  vendor-specific to pick.
+- **New subscription** creates a named route (`/agents/webhooks/<name>`). It
+  starts with the name, description and event-type filter, then two sections:
+  **Delivery** (target — All channels / Chat / Slack — a **deliver only** mode
+  that posts the rendered payload without running the agent, and the prompt
+  template) and **Authentication**.
+- **Authentication** starts with a **Scheme** — a shared token in a header or an
+  HMAC signature of the body — which reveals the **Header**, **Prefix** and
+  **Secret** fields (plus **Algorithm**/**Encoding** for HMAC). It's generic:
+  you name the header your sender uses, so there's nothing vendor-specific to
+  pick.
 - Each row shows the endpoint path with a copy button, the **Auth** scheme
   (`Unverified` when there is none), an **Active** switch (disabled
   subscriptions reject events), a key action to change the scheme or rotate the

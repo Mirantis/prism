@@ -29,6 +29,9 @@ import {
   FieldError,
   FieldGroup,
   FieldLabel,
+  FieldLegend,
+  FieldSeparator,
+  FieldSet,
 } from '@/components/ui/field';
 import { KeyRound, Plus, Trash2, Webhook as WebhookIcon } from 'lucide-react';
 import { Page } from '@/components/layout/page';
@@ -333,113 +336,130 @@ function WebhooksPage() {
         submitDisabled={!form.name.trim()}
       >
         <FieldGroup>
-          <Field data-invalid={Boolean(fieldErrors.name)}>
-            <FieldLabel htmlFor="webhook-name">Name</FieldLabel>
-            <Input
-              id="webhook-name"
-              aria-invalid={Boolean(fieldErrors.name) || undefined}
-              value={form.name}
-              onChange={(e) => setField('name', e.target.value)}
-              placeholder="e.g. github-push"
-              className="font-mono"
-            />
-            {fieldErrors.name ? (
-              <FieldError>{fieldErrors.name}</FieldError>
-            ) : (
-              <FieldDescription>
-                Becomes the endpoint path: <code>/agents/webhooks/&lt;name&gt;</code>
-              </FieldDescription>
-            )}
-          </Field>
-          <Field data-invalid={Boolean(fieldErrors.description)}>
-            <FieldLabel htmlFor="webhook-description">Description</FieldLabel>
-            <Input
-              id="webhook-description"
-              value={form.description}
-              onChange={(e) => setField('description', e.target.value)}
-              placeholder="What this webhook does (optional)"
-            />
-            {fieldErrors.description && <FieldError>{fieldErrors.description}</FieldError>}
-          </Field>
-          <Field data-invalid={Boolean(fieldErrors.events)}>
-            <FieldLabel htmlFor="webhook-events">Events</FieldLabel>
-            <Input
-              id="webhook-events"
-              value={form.events}
-              onChange={(e) => setField('events', e.target.value)}
-              placeholder="comma-separated, leave empty for all"
-              className="font-mono"
-            />
-            {fieldErrors.events ? (
-              <FieldError>{fieldErrors.events}</FieldError>
-            ) : (
-              <FieldDescription>
-                Matched against GitHub/GitLab event headers. Leave empty for sources like
-                Alertmanager or PagerDuty.
-              </FieldDescription>
-            )}
-          </Field>
-          <div className="flex flex-wrap items-start gap-6">
-            <Field data-invalid={Boolean(fieldErrors.deliverTo)} className="w-auto">
-              <FieldLabel htmlFor="webhook-deliver-to">Deliver to</FieldLabel>
-              <Select
-                value={form.deliverTo}
-                onValueChange={(value) => {
-                  if (value) setField('deliverTo', value as WebhookDeliverTo);
-                }}
-              >
-                <SelectTrigger id="webhook-deliver-to" className="min-w-40">
-                  <SelectValue>{DELIVER_LABELS[form.deliverTo]}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All channels</SelectItem>
-                  <SelectItem value="chat">Chat</SelectItem>
-                  <SelectItem value="slack">Slack</SelectItem>
-                  <SelectItem value="teams">Microsoft Teams</SelectItem>
-                </SelectContent>
-              </Select>
-              {fieldErrors.deliverTo && <FieldError>{fieldErrors.deliverTo}</FieldError>}
+          {/* No legend on the first group: the name/description/events fields
+              are self-evident, and a heading above them would just repeat the
+              dialog title. */}
+          <FieldSet>
+            <Field data-invalid={Boolean(fieldErrors.name)}>
+              <FieldLabel htmlFor="webhook-name">Name</FieldLabel>
+              <Input
+                id="webhook-name"
+                aria-invalid={Boolean(fieldErrors.name) || undefined}
+                value={form.name}
+                onChange={(e) => setField('name', e.target.value)}
+                placeholder="e.g. github-push"
+                className="font-mono"
+              />
+              {fieldErrors.name ? (
+                <FieldError>{fieldErrors.name}</FieldError>
+              ) : (
+                <FieldDescription>
+                  Becomes the endpoint path: <code>/agents/webhooks/&lt;name&gt;</code>
+                </FieldDescription>
+              )}
             </Field>
-            <Field className="w-auto">
-              <FieldLabel htmlFor="webhook-deliver-only">Deliver only</FieldLabel>
-              <label className="flex items-center gap-2 text-sm" htmlFor="webhook-deliver-only">
-                <Checkbox
-                  id="webhook-deliver-only"
-                  checked={form.deliverOnly}
-                  onCheckedChange={(checked: boolean) => setField('deliverOnly', checked)}
-                />
-                Skip the agent, deliver payload directly
-              </label>
+            <Field data-invalid={Boolean(fieldErrors.description)}>
+              <FieldLabel htmlFor="webhook-description">Description</FieldLabel>
+              <Input
+                id="webhook-description"
+                value={form.description}
+                onChange={(e) => setField('description', e.target.value)}
+                placeholder="What this webhook does (optional)"
+              />
+              {fieldErrors.description && <FieldError>{fieldErrors.description}</FieldError>}
             </Field>
-          </div>
-          {/* Own setter: the auth field group is keyed on its own value type,
-              which isn't the wider form type `setField` is generic over. */}
-          <WebhookAuthFields
-            values={form}
-            onChange={(key, value) => {
-              setForm((f) => ({ ...f, [key]: value }));
-              clearFieldError(key);
-            }}
-            fieldErrors={fieldErrors}
-          />
-          <Field data-invalid={Boolean(fieldErrors.prompt)}>
-            <FieldLabel htmlFor="webhook-prompt">Prompt</FieldLabel>
-            <Textarea
-              id="webhook-prompt"
-              value={form.prompt}
-              onChange={(e) => setField('prompt', e.target.value)}
-              placeholder="Instructions for the agent when this webhook fires (optional)"
-              rows={3}
+            <Field data-invalid={Boolean(fieldErrors.events)}>
+              <FieldLabel htmlFor="webhook-events">Events</FieldLabel>
+              <Input
+                id="webhook-events"
+                value={form.events}
+                onChange={(e) => setField('events', e.target.value)}
+                placeholder="comma-separated, leave empty for all"
+                className="font-mono"
+              />
+              {fieldErrors.events ? (
+                <FieldError>{fieldErrors.events}</FieldError>
+              ) : (
+                <FieldDescription>
+                  Matched against GitHub/GitLab event headers. Leave empty for sources like
+                  Alertmanager or PagerDuty.
+                </FieldDescription>
+              )}
+            </Field>
+          </FieldSet>
+
+          <FieldSeparator />
+
+          <FieldSet>
+            <FieldLegend>Delivery</FieldLegend>
+            <div className="flex flex-wrap items-start gap-6">
+              <Field data-invalid={Boolean(fieldErrors.deliverTo)} className="w-auto">
+                <FieldLabel htmlFor="webhook-deliver-to">Deliver to</FieldLabel>
+                <Select
+                  value={form.deliverTo}
+                  onValueChange={(value) => {
+                    if (value) setField('deliverTo', value as WebhookDeliverTo);
+                  }}
+                >
+                  <SelectTrigger id="webhook-deliver-to" className="min-w-40">
+                    <SelectValue>{DELIVER_LABELS[form.deliverTo]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All channels</SelectItem>
+                    <SelectItem value="chat">Chat</SelectItem>
+                    <SelectItem value="slack">Slack</SelectItem>
+                    <SelectItem value="teams">Microsoft Teams</SelectItem>
+                  </SelectContent>
+                </Select>
+                {fieldErrors.deliverTo && <FieldError>{fieldErrors.deliverTo}</FieldError>}
+              </Field>
+              <Field className="w-auto">
+                <FieldLabel htmlFor="webhook-deliver-only">Deliver only</FieldLabel>
+                <label className="flex items-center gap-2 text-sm" htmlFor="webhook-deliver-only">
+                  <Checkbox
+                    id="webhook-deliver-only"
+                    checked={form.deliverOnly}
+                    onCheckedChange={(checked: boolean) => setField('deliverOnly', checked)}
+                  />
+                  Skip the agent, deliver payload directly
+                </label>
+              </Field>
+            </div>
+            <Field data-invalid={Boolean(fieldErrors.prompt)}>
+              <FieldLabel htmlFor="webhook-prompt">Prompt</FieldLabel>
+              <Textarea
+                id="webhook-prompt"
+                value={form.prompt}
+                onChange={(e) => setField('prompt', e.target.value)}
+                placeholder="Instructions for the agent when this webhook fires (optional)"
+                rows={3}
+              />
+              {fieldErrors.prompt ? (
+                <FieldError>{fieldErrors.prompt}</FieldError>
+              ) : (
+                <FieldDescription>
+                  Supports <code>{'{field.path}'}</code> payload substitution and{' '}
+                  <code>{'{__raw__}'}</code> for the full payload. Empty = raw payload dump.
+                </FieldDescription>
+              )}
+            </Field>
+          </FieldSet>
+
+          <FieldSeparator />
+
+          <FieldSet>
+            <FieldLegend>Authentication</FieldLegend>
+            {/* Own setter: the auth field group is keyed on its own value type,
+                which isn't the wider form type `setField` is generic over. */}
+            <WebhookAuthFields
+              values={form}
+              onChange={(key, value) => {
+                setForm((f) => ({ ...f, [key]: value }));
+                clearFieldError(key);
+              }}
+              fieldErrors={fieldErrors}
             />
-            {fieldErrors.prompt ? (
-              <FieldError>{fieldErrors.prompt}</FieldError>
-            ) : (
-              <FieldDescription>
-                Supports <code>{'{field.path}'}</code> payload substitution and{' '}
-                <code>{'{__raw__}'}</code> for the full payload. Empty = raw payload dump.
-              </FieldDescription>
-            )}
-          </Field>
+          </FieldSet>
         </FieldGroup>
       </CreateModal>
 

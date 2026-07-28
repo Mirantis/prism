@@ -21,18 +21,19 @@ endpoint answers `403`.
 
 ## Creating a subscription
 
-Click **New subscription** on the Webhooks page:
+Click **New subscription** on the Webhooks page. **Delivery** and
+**Authentication** are separate sections in the form:
 
-| Field | Meaning |
-|-------|---------|
-| **Name** | Lowercase slug (`[a-z0-9][a-z0-9_-]*`); becomes the endpoint path `/agents/webhooks/<name>`. Spaces are normalized to hyphens. |
-| **Description** | What this webhook does (optional, shown in the list). |
-| **Events** | Comma-separated event-type allowlist; empty = accept all. See [Event filtering](#event-filtering). |
-| **Deliver to** | Where results go: **All channels** (default — web chat + Slack, like heartbeat alerts), **Chat** (web chat only), or **Slack** (Slack only — see [Delivery targets & storage](#delivery-targets--storage)). |
-| **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
-| **Authentication** | How the sender proves itself: **None**, **Shared token in a header**, or **HMAC signature of the body**. See [Authentication](#authentication). |
-| **Header** / **Prefix** / **Secret** | Where the credential arrives and what it's compared against (shown once Authentication isn't None). |
-| **Prompt** | Instructions for the agent when this webhook fires (optional). Supports payload substitution — see below. |
+| Section | Field | Meaning |
+|---------|-------|---------|
+| — | **Name** | Lowercase slug (`[a-z0-9][a-z0-9_-]*`); becomes the endpoint path `/agents/webhooks/<name>`. Spaces are normalized to hyphens. |
+| — | **Description** | What this webhook does (optional, shown in the list). |
+| — | **Events** | Comma-separated event-type allowlist; empty = accept all. See [Event filtering](#event-filtering). |
+| Delivery | **Deliver to** | Where results go: **All channels** (default — web chat + Slack, like heartbeat alerts), **Chat** (web chat only), or **Slack** (Slack only — see [Delivery targets & storage](#delivery-targets--storage)). |
+| Delivery | **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
+| Delivery | **Prompt** | Instructions for the agent when this webhook fires (optional). Supports payload substitution — see below. |
+| Authentication | **Scheme** | How the sender proves itself: **None**, **Shared token in a header**, or **HMAC signature of the body**. |
+| Authentication | **Header** / **Prefix** / **Secret** (+ **Algorithm** / **Encoding**) | Where the credential arrives and what it's compared against; shown once Scheme isn't None. See [Authentication](#authentication). |
 
 Each row in the subscriptions list shows the endpoint path with a copy button,
 an **Active** switch (disabled subscriptions answer `403` without running
@@ -85,8 +86,8 @@ Verification is **generic**: instead of a list of supported vendors, you point
 it at the header your sender uses and pick how the credential is compared. Any
 sender is then a matter of configuration.
 
-| Authentication | What must match |
-|----------------|-----------------|
+| Scheme | What must match |
+|--------|-----------------|
 | **None** (default) | Nothing is checked. The subscription list shows it as `Unverified`. |
 | **Shared token in a header** | The chosen header carries the secret verbatim (after an optional prefix). |
 | **HMAC signature of the body** | The chosen header carries `HMAC(secret, raw request body)` in the chosen digest + encoding (after an optional prefix). |
@@ -124,7 +125,7 @@ Behavior worth knowing:
 
 ### Recipes for common senders
 
-| Sender | Authentication | Header | Prefix | Notes |
+| Sender | Scheme | Header | Prefix | Notes |
 |--------|----------------|--------|--------|-------|
 | GitHub | HMAC | `X-Hub-Signature-256` | `sha256=` | Paste the same value into GitHub's webhook **Secret** field. |
 | GitLab | Shared token | `X-Gitlab-Token` | — | GitLab's **Secret token** field; it sends the token as-is, no HMAC. |
@@ -213,7 +214,7 @@ receivers:
     webhook_configs:
       - url: http://<prism-host>/agents/webhooks/alertmanager
         send_resolved: true
-        # Matches a subscription with Authentication = shared token,
+        # Matches a subscription with Scheme = shared token in a header,
         # Header = Authorization, Prefix = "Bearer ".
         http_config:
           authorization:
@@ -234,13 +235,13 @@ Tools → Webhooks) pointing at
 `http://<prism-host>/agents/webhooks/pagerduty`. Events arrive as
 `{"event": {"event_type": "incident.triggered", ...}}`. Copy the signing secret
 shown at creation time into the subscription's Secret field with
-Authentication = HMAC, Header = `X-PagerDuty-Signature`, Prefix = `v1=`.
+Scheme = HMAC, Header = `X-PagerDuty-Signature`, Prefix = `v1=`.
 
 **GitHub** — add a repository webhook (Settings → Webhooks) with content type
 `application/json` pointing at
 `http://<prism-host>/agents/webhooks/github`. Put the same string in GitHub's
 **Secret** field and in the subscription's Secret field with
-Authentication = HMAC, Header = `X-Hub-Signature-256`, Prefix = `sha256=`. Use
+Scheme = HMAC, Header = `X-Hub-Signature-256`, Prefix = `sha256=`. Use
 the Events field (e.g. `pull_request,issues`) to pick the event types you care
 about.
 
