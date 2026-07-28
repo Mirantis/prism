@@ -8,8 +8,10 @@
  * the LLM finishes); deliver-only subscriptions publish the rendered template
  * directly with no LLM call.
  *
- * Auth is terminated by the platform in front of the container — this service
- * never sees secrets or signatures.
+ * Platform routing in front of the container still terminates auth for the
+ * runtime as a whole; on top of that a subscription may require its sender to
+ * prove itself (generic token/HMAC verification via lib/webhook-signature.ts),
+ * checked here before any filtering, delivery or LLM work happens.
  */
 
 import { WebhookSubscription } from '@prisma/client';
@@ -21,6 +23,7 @@ import { slackMappingService } from './slack-mapping.service';
 import { teamsMappingService } from './teams/teams-mapping.service';
 import { prisma } from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
+import { verifyWebhookAuth } from '../lib/webhook-signature';
 import { logger } from '../logger';
 
 // ============================================================================
@@ -38,6 +41,7 @@ export type WebhookInboundResult =
   | { status: 'receiver_disabled' } // 403
   | { status: 'not_found' } // 404
   | { status: 'subscription_disabled' } // 403
+  | { status: 'unauthorized'; authType: string } // 401 — sender not verified
   | { status: 'busy' } // 429 — this subscription's run queue is full
   | { status: 'ignored'; event: string } // 200 — event filter miss
   | { status: 'delivered'; event: string } // 200 — deliver-only, published
@@ -65,6 +69,21 @@ export function normalizeWebhookName(raw: unknown): string {
 
 export function isValidDeliverTo(value: unknown): value is WebhookDeliverTo {
   return typeof value === 'string' && (WEBHOOK_DELIVER_TARGETS as readonly string[]).includes(value);
+}
+
+/** A subscription as the management API exposes it: no secret, ever. */
+export type PublicWebhookSubscription = Omit<WebhookSubscription, 'secret'> & {
+  hasSecret: boolean;
+};
+
+/**
+ * Project a subscription row for the API. The stored secret must never leave
+ * the process, so every response (list, create, update) goes through here and
+ * reports only *whether* a secret is set.
+ */
+export function toPublicSubscription(row: WebhookSubscription): PublicWebhookSubscription {
+  const { secret, ...rest } = row;
+  return { ...rest, hasSecret: Boolean(secret && secret.trim()) };
 }
 
 // ============================================================================
@@ -158,15 +177,20 @@ export class WebhookService {
   private readonly running = new Set<string>();
 
   /**
-   * Process one inbound delivery. Synchronous parts (lookups, event filter,
-   * deliver-only publish) complete before returning; agent-mode runs are
-   * dispatched fire-and-forget so the route can answer 202 immediately.
+   * Process one inbound delivery. Synchronous parts (lookups, sender
+   * verification, event filter, deliver-only publish) complete before
+   * returning; agent-mode runs are dispatched fire-and-forget so the route can
+   * answer 202 immediately.
+   *
+   * `rawBody` is the exact received bytes (lib/raw-body.ts), needed to verify
+   * HMAC signatures.
    */
   async handleInbound(
     name: string,
     payload: Record<string, unknown>,
     headers: Record<string, string | string[] | undefined>,
     runId: string,
+    rawBody?: Buffer,
   ): Promise<WebhookInboundResult> {
     const startTime = Date.now();
     const agent = await agentWorkspaceService.getAgent();
@@ -176,6 +200,30 @@ export class WebhookService {
     const subscription = await prisma.webhookSubscription.findUnique({ where: { name } });
     if (!subscription) return { status: 'not_found' };
     if (!subscription.isActive) return { status: 'subscription_disabled' };
+
+    // Verify the sender before anything else looks at the payload: an unsigned
+    // request must not be able to probe the event allowlist, let alone reach a
+    // delivery or an LLM run.
+    const auth = verifyWebhookAuth({
+      authType: subscription.authType,
+      secret: subscription.secret,
+      authHeader: subscription.authHeader,
+      authPrefix: subscription.authPrefix,
+      authAlgorithm: subscription.authAlgorithm,
+      authEncoding: subscription.authEncoding,
+      headers,
+      rawBody,
+    });
+    if (auth !== 'ok') {
+      // The reason stays in the log; the response is deliberately uniform so
+      // probes learn nothing about the configuration.
+      logger.warn(
+        auth === 'misconfigured'
+          ? `[Webhook] '${name}' requires '${subscription.authType}' auth but is misconfigured (missing secret or header) — rejecting`
+          : `[Webhook] '${name}' rejected an unverified request ('${subscription.authType}' auth)`,
+      );
+      return { status: 'unauthorized', authType: subscription.authType };
+    }
 
     const eventType = resolveEventType(headers, payload);
     const allowedEvents = parseEventsList(subscription.events);

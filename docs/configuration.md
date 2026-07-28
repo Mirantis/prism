@@ -190,11 +190,12 @@ By default the runtime is reachable from this machine only.
   name (`ngrok --host-header=rewrite`) — otherwise its requests, webhook
   deliveries included, are answered with 403.
 
-[Webhooks](webhooks.md) need no environment variables — the receiver toggle and
-subscriptions live in the database, managed from the Web UI. Note that the
-runtime does not authenticate inbound webhook calls itself (auth is the
-platform's job in front of the container), so don't expose the runtime port
-directly to the internet.
+[Webhooks](webhooks.md) need no environment variables — the receiver toggle,
+subscriptions and their sender credentials live in the database, managed from
+the Web UI. Endpoint auth is still the platform's job in front of the container,
+so don't expose the runtime port directly to the internet; on top of that each
+subscription can require a shared token or an HMAC signature from its sender
+(see [Authentication](webhooks.md#authentication)).
 
 ## Tool risk gate
 

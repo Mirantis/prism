@@ -144,8 +144,17 @@ import {
   WEBHOOK_NAME_RE,
   isValidDeliverTo,
   normalizeWebhookName,
+  toPublicSubscription,
   WEBHOOK_DELIVER_TARGETS,
 } from '../services/webhook.service';
+import {
+  isValidAuthAlgorithm,
+  isValidAuthEncoding,
+  isValidAuthType,
+  WEBHOOK_AUTH_ALGORITHMS,
+  WEBHOOK_AUTH_ENCODINGS,
+  WEBHOOK_AUTH_TYPES,
+} from '../lib/webhook-signature';
 
 // 100 MiB cap — agent DBs are tens of MB in practice; this keeps a
 // malformed / oversized upload from filling memory before validation runs.
@@ -884,6 +893,110 @@ router.delete('/cron-tasks/:taskId', async (req: Request<{ taskId: string }>, re
 // CRUD for inbound webhook subscriptions + the receiver master switch,
 // consumed by the Webhooks page in the web SPA. The ingestion endpoint
 // (POST /agents/webhooks/:name) lives in routes/webhook.ts.
+//
+// Responses always go through `toPublicSubscription()`: the stored sender
+// secret must never travel back out, so clients see `hasSecret` instead.
+
+/** The generic sender-auth fields, as stored on a subscription row. */
+interface WebhookAuthFields {
+  authType: string;
+  authHeader: string | null;
+  authPrefix: string | null;
+  authAlgorithm: string;
+  authEncoding: string;
+  secret: string | null;
+}
+
+const WEBHOOK_AUTH_DEFAULTS: WebhookAuthFields = {
+  authType: 'none',
+  authHeader: null,
+  authPrefix: null,
+  authAlgorithm: 'sha256',
+  authEncoding: 'hex',
+  secret: null,
+};
+
+const WEBHOOK_AUTH_KEYS = [
+  'authType',
+  'authHeader',
+  'authPrefix',
+  'authAlgorithm',
+  'authEncoding',
+  'secret',
+] as const;
+
+/**
+ * Read + validate the generic auth fields from a request body against the
+ * subscription's current state, so a PATCH is judged on the **effective**
+ * result (switching an existing row to 'hmac' without a stored secret is a 400,
+ * not a silently unverifiable endpoint).
+ *
+ * Unlike the loosely-typed descriptive fields, a non-string credential is an
+ * explicit error rather than an ignored value — silently dropping a secret
+ * would leave the sender thinking it configured auth when it hasn't.
+ */
+function readWebhookAuthFields(
+  body: Record<string, unknown>,
+  current: WebhookAuthFields,
+):
+  | { ok: false; error: string; fieldErrors: Record<string, string> }
+  | { ok: true; values: WebhookAuthFields } {
+  const fail = (field: string, message: string) =>
+    ({ ok: false as const, error: message, fieldErrors: { [field]: message } });
+
+  const values: WebhookAuthFields = { ...current };
+
+  if (body.authType !== undefined) {
+    if (!isValidAuthType(body.authType)) {
+      return fail('authType', `authType must be one of: ${WEBHOOK_AUTH_TYPES.join(', ')}`);
+    }
+    values.authType = body.authType;
+  }
+  if (body.authAlgorithm !== undefined) {
+    if (!isValidAuthAlgorithm(body.authAlgorithm)) {
+      return fail(
+        'authAlgorithm',
+        `authAlgorithm must be one of: ${WEBHOOK_AUTH_ALGORITHMS.join(', ')}`,
+      );
+    }
+    values.authAlgorithm = body.authAlgorithm;
+  }
+  if (body.authEncoding !== undefined) {
+    if (!isValidAuthEncoding(body.authEncoding)) {
+      return fail('authEncoding', `authEncoding must be one of: ${WEBHOOK_AUTH_ENCODINGS.join(', ')}`);
+    }
+    values.authEncoding = body.authEncoding;
+  }
+  // Header, prefix and secret: '' clears, non-strings are rejected. The prefix
+  // keeps its inner spacing ('Bearer ') — only the credential itself is trimmed.
+  for (const key of ['authHeader', 'authPrefix', 'secret'] as const) {
+    if (body[key] === undefined) continue;
+    if (body[key] !== null && typeof body[key] !== 'string') {
+      return fail(key, `${key} must be a string`);
+    }
+    const raw = body[key] === null ? '' : (body[key] as string);
+    const normalized = key === 'authPrefix' ? raw : raw.trim();
+    values[key] = normalized.length > 0 ? normalized : null;
+  }
+
+  if (values.authType === 'none') {
+    // Don't leave an orphan credential behind when verification is turned off.
+    values.authHeader = null;
+    values.authPrefix = null;
+    values.secret = null;
+    return { ok: true, values };
+  }
+  if (!values.secret) {
+    return fail('secret', `A secret is required for '${values.authType}' authentication`);
+  }
+  if (!values.authHeader) {
+    return fail(
+      'authHeader',
+      `A header name is required for '${values.authType}' authentication (e.g. X-Hub-Signature-256)`,
+    );
+  }
+  return { ok: true, values };
+}
 
 /**
  * GET /agents/webhooks/receiver
@@ -938,7 +1051,7 @@ router.get('/webhook-subscriptions', async (_req: Request, res: Response) => {
     const subscriptions = await prisma.webhookSubscription.findMany({
       orderBy: { createdAt: 'desc' },
     });
-    res.json(subscriptions);
+    res.json(subscriptions.map(toPublicSubscription));
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to list webhook subscriptions: ${msg}`);
@@ -949,7 +1062,9 @@ router.get('/webhook-subscriptions', async (_req: Request, res: Response) => {
 /**
  * POST /agents/webhook-subscriptions
  * Create a webhook subscription.
- * Body: { name, description?, events?, prompt?, deliverTo?, deliverOnly? }
+ * Body: { name, description?, events?, prompt?, deliverTo?, deliverOnly?,
+ *         authType?, authHeader?, authPrefix?, authAlgorithm?, authEncoding?,
+ *         secret? }
  */
 router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
   try {
@@ -975,6 +1090,12 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
       return;
     }
 
+    const auth = readWebhookAuthFields(body, WEBHOOK_AUTH_DEFAULTS);
+    if (!auth.ok) {
+      res.status(400).json({ error: auth.error, fieldErrors: auth.fieldErrors });
+      return;
+    }
+
     const agent = await agentWorkspaceService.getAgent();
     let subscription;
     try {
@@ -987,6 +1108,7 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
           prompt: typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : null,
           deliverTo,
           deliverOnly: body.deliverOnly === true,
+          ...auth.values,
         },
       });
     } catch (err) {
@@ -1006,8 +1128,9 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
       'webhook.subscription_id': subscription.id,
       'webhook.deliver_to': subscription.deliverTo,
       'webhook.deliver_only': String(subscription.deliverOnly),
+      'webhook.auth_type': subscription.authType,
     });
-    res.status(201).json(subscription);
+    res.status(201).json(toPublicSubscription(subscription));
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to create webhook subscription: ${msg}`);
@@ -1018,7 +1141,13 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
 /**
  * PATCH /agents/webhook-subscriptions/:id
  * Update a subscription (isActive toggle and/or editable fields).
- * Body: any of { isActive, description, events, prompt, deliverTo, deliverOnly }
+ * Body: any of { isActive, description, events, prompt, deliverTo, deliverOnly,
+ *                authType, authHeader, authPrefix, authAlgorithm, authEncoding,
+ *                secret }
+ *
+ * Auth fields are validated against the row's current state, so the *result*
+ * of the update has to be verifiable — and switching authType to 'none' clears
+ * the stored credential.
  */
 router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, res: Response) => {
   try {
@@ -1039,6 +1168,22 @@ router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, 
       data.deliverTo = body.deliverTo;
     }
     if (typeof body.deliverOnly === 'boolean') data.deliverOnly = body.deliverOnly;
+
+    // Auth fields need the current row to validate the effective result.
+    if (WEBHOOK_AUTH_KEYS.some((key) => body[key] !== undefined)) {
+      const current = await prisma.webhookSubscription.findUnique({ where: { id: req.params.id } });
+      if (!current) {
+        res.status(404).json({ error: 'Webhook subscription not found' });
+        return;
+      }
+      const auth = readWebhookAuthFields(body, current);
+      if (!auth.ok) {
+        res.status(400).json({ error: auth.error, fieldErrors: auth.fieldErrors });
+        return;
+      }
+      Object.assign(data, auth.values);
+    }
+
     if (Object.keys(data).length === 0) {
       res.status(400).json({ error: 'No updatable fields provided' });
       return;
@@ -1057,7 +1202,7 @@ router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, 
       }
       throw err;
     }
-    res.json(subscription);
+    res.json(toPublicSubscription(subscription));
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to update webhook subscription ${req.params.id}: ${msg}`);

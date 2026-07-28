@@ -42,10 +42,13 @@ vi.mock('../logger', () => ({
 // ---------------------------------------------------------------------------
 
 import { webhookRouter } from './webhook';
+import { captureWebhookRawBody } from '../lib/raw-body';
 
 function createTestApp() {
   const app = express();
-  app.use(express.json());
+  // Same parser configuration as server.ts, so the raw-body plumbing that
+  // signature verification depends on is exercised here too.
+  app.use(express.json({ verify: captureWebhookRawBody }));
   app.use('/agents', webhookRouter);
   return app;
 }
@@ -121,7 +124,30 @@ describe('POST /agents/webhooks/:name', () => {
       { status: 'firing' },
       expect.any(Object),
       res.body.runId,
+      Buffer.from('{"status":"firing"}', 'utf8'),
     );
+  });
+
+  it('401s an unverified sender without revealing why', async () => {
+    mockHandleInbound.mockResolvedValue({ status: 'unauthorized', authType: 'hmac' });
+    const res = await request(createTestApp()).post('/agents/webhooks/alerts').send({ a: 1 });
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'Webhook sender verification failed' });
+    // Nothing about the configured header, prefix or failure reason leaks out.
+    expect(JSON.stringify(res.body)).not.toMatch(/secret|header|signature failed|misconfig/i);
+  });
+
+  it('hands the service the exact received bytes for signature verification', async () => {
+    mockHandleInbound.mockResolvedValue({ status: 'delivered', event: 'unknown' });
+    // Whitespace that JSON.stringify would never reproduce: the verifier has to
+    // hash these bytes, not a re-serialization of the parsed object.
+    const body = '{"a":   1,\n  "b": 2}';
+    await request(createTestApp())
+      .post('/agents/webhooks/alerts')
+      .set('content-type', 'application/json')
+      .send(body);
+    const rawBody = mockHandleInbound.mock.calls[0][4] as Buffer;
+    expect(rawBody.toString('utf8')).toBe(body);
   });
 
   it('emits one webhook received event per delivery with the gate outcome', async () => {
@@ -133,6 +159,28 @@ describe('POST /agents/webhooks/:name', () => {
       null,
       expect.objectContaining({ 'webhook.outcome': 'filtered' }),
     );
+  });
+
+  it('tags rejected-for-auth deliveries with the scheme that turned them away', async () => {
+    mockHandleInbound.mockResolvedValue({ status: 'unauthorized', authType: 'token' });
+    await request(createTestApp()).post('/agents/webhooks/alerts').send({});
+    expect(mockTrackEvent).toHaveBeenCalledTimes(1);
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'webhook received',
+      null,
+      expect.objectContaining({
+        'webhook.outcome': 'unauthorized',
+        'webhook.auth_type': 'token',
+      }),
+    );
+  });
+
+  it('omits the auth_type prop for non-auth outcomes', async () => {
+    mockHandleInbound.mockResolvedValue({ status: 'accepted', event: 'unknown' });
+    await request(createTestApp()).post('/agents/webhooks/alerts').send({});
+    const props = mockTrackEvent.mock.calls[0][2] as Record<string, string>;
+    expect(props['webhook.outcome']).toBe('accepted');
+    expect(props).not.toHaveProperty('webhook.auth_type');
   });
 
   it('500s when the service throws', async () => {

@@ -2,11 +2,12 @@
  * Webhook Service Tests
  *
  * Covers prompt template rendering (hermes semantics), event-type resolution
- * and filtering, deliver-only vs agent-mode handling, scoped vs broadcast
- * delivery, and the budget/error paths.
+ * and filtering, generic sender verification, deliver-only vs agent-mode
+ * handling, scoped vs broadcast delivery, and the budget/error paths.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import crypto from 'crypto';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -134,6 +135,12 @@ function createSubscription(overrides: Record<string, unknown> = {}) {
     deliverTo: 'all',
     deliverOnly: false,
     isActive: true,
+    authType: 'none',
+    authHeader: null,
+    authPrefix: null,
+    authAlgorithm: 'sha256',
+    authEncoding: 'hex',
+    secret: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -298,6 +305,138 @@ describe('handleInbound gates', () => {
       'run-1',
     );
     expect(result).toEqual({ status: 'accepted', event: 'push' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleInbound — sender verification
+// ---------------------------------------------------------------------------
+
+describe('handleInbound sender verification', () => {
+  const BODY = '{"status":"firing"}';
+  const rawBody = Buffer.from(BODY, 'utf8');
+  const signature = crypto.createHmac('sha256', 'shhh').update(rawBody).digest('hex');
+  const hmacSub = (overrides: Record<string, unknown> = {}) =>
+    createSubscription({
+      authType: 'hmac',
+      authHeader: 'X-Signature',
+      secret: 'shhh',
+      ...overrides,
+    });
+
+  it('accepts a correctly signed delivery', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(hmacSub());
+    mockInvoke.mockResolvedValue(invokeResult('done'));
+    const result = await webhookService.handleInbound(
+      'alerts',
+      JSON.parse(BODY),
+      { 'x-signature': signature },
+      'run-1',
+      rawBody,
+    );
+    expect(result).toEqual({ status: 'accepted', event: 'unknown' });
+  });
+
+  it('rejects a tampered signature without invoking or delivering', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(hmacSub());
+    const result = await webhookService.handleInbound(
+      'alerts',
+      JSON.parse(BODY),
+      { 'x-signature': 'sha256-nonsense' },
+      'run-1',
+      rawBody,
+    );
+    expect(result).toEqual({ status: 'unauthorized', authType: 'hmac' });
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsigned delivery', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(hmacSub());
+    const result = await webhookService.handleInbound('alerts', {}, {}, 'run-1', rawBody);
+    expect(result).toEqual({ status: 'unauthorized', authType: 'hmac' });
+  });
+
+  it('rejects when the raw body was not captured, so nothing can be verified', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(hmacSub());
+    const result = await webhookService.handleInbound(
+      'alerts',
+      JSON.parse(BODY),
+      { 'x-signature': signature },
+      'run-1',
+      undefined,
+    );
+    expect(result).toEqual({ status: 'unauthorized', authType: 'hmac' });
+  });
+
+  it('rejects a subscription that demands verification but stores no secret', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(hmacSub({ secret: null }));
+    const result = await webhookService.handleInbound(
+      'alerts',
+      JSON.parse(BODY),
+      { 'x-signature': signature },
+      'run-1',
+      rawBody,
+    );
+    expect(result).toEqual({ status: 'unauthorized', authType: 'hmac' });
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('verifies before the event filter, so probes cannot map the allowlist', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(hmacSub({ events: 'push' }));
+    const result = await webhookService.handleInbound(
+      'alerts',
+      {},
+      { 'x-github-event': 'issues' },
+      'run-1',
+      rawBody,
+    );
+    // 'ignored' would tell the caller its event type was understood.
+    expect(result).toEqual({ status: 'unauthorized', authType: 'hmac' });
+  });
+
+  it('verifies before a deliver-only publish', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(
+      hmacSub({ deliverOnly: true, prompt: 'Alert: {status}' }),
+    );
+    const result = await webhookService.handleInbound(
+      'alerts',
+      JSON.parse(BODY),
+      {},
+      'run-1',
+      rawBody,
+    );
+    expect(result).toEqual({ status: 'unauthorized', authType: 'hmac' });
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+  });
+
+  it('accepts a shared token in the configured header', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(
+      createSubscription({
+        authType: 'token',
+        authHeader: 'Authorization',
+        authPrefix: 'Bearer ',
+        secret: 'shhh',
+        deliverOnly: true,
+        prompt: 'ok',
+      }),
+    );
+    const result = await webhookService.handleInbound(
+      'alerts',
+      {},
+      { authorization: 'Bearer shhh' },
+      'run-1',
+    );
+    expect(result).toEqual({ status: 'delivered', event: 'unknown' });
+  });
+
+  it("leaves authType 'none' subscriptions unverified", async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(
+      createSubscription({ deliverOnly: true, prompt: 'ok' }),
+    );
+    const result = await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    expect(result).toEqual({ status: 'delivered', event: 'unknown' });
   });
 });
 

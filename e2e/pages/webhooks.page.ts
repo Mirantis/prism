@@ -2,7 +2,8 @@
  * Webhooks Page Object — /webhooks.
  *
  * Covers the receiver banner ("Enable Webhooks"), the New-subscription
- * modal, and per-row controls (active toggle, delete).
+ * modal (including the generic sender-verification fields), and per-row
+ * controls (active toggle, delete).
  */
 
 import { Page, Locator } from '@playwright/test';
@@ -14,6 +15,11 @@ export interface NewSubscriptionInput {
   events?: string;
   prompt?: string;
   deliverOnly?: boolean;
+  /** Generic sender verification: 'token' or 'hmac' (default: none). */
+  authType?: 'token' | 'hmac';
+  authHeader?: string;
+  authPrefix?: string;
+  secret?: string;
 }
 
 export class WebhooksPage extends BasePage {
@@ -56,6 +62,27 @@ export class WebhooksPage extends BasePage {
       await this.page
         .locator('[data-slot="dialog-content"] [data-slot="checkbox"]')
         .click();
+    }
+    if (input.authType) {
+      // Base UI Select: open the trigger, pick the option by its label.
+      await this.page.locator('#webhook-auth-type').click();
+      await this.page
+        .getByRole('option', {
+          name:
+            input.authType === 'hmac'
+              ? 'HMAC signature of the body'
+              : 'Shared token in a header',
+        })
+        .click();
+      if (input.authHeader) {
+        await this.page.locator('#webhook-auth-header').fill(input.authHeader);
+      }
+      if (input.authPrefix) {
+        await this.page.locator('#webhook-auth-prefix').fill(input.authPrefix);
+      }
+      if (input.secret) {
+        await this.page.locator('#webhook-secret').fill(input.secret);
+      }
     }
     if (input.prompt) {
       await this.page.locator('#webhook-prompt').fill(input.prompt);

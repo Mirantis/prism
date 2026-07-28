@@ -306,12 +306,37 @@ export const runtimeApi = {
     prompt?: string;
     deliverTo?: WebhookSubscription['deliverTo'];
     deliverOnly?: boolean;
+    authType?: WebhookSubscription['authType'];
+    authHeader?: string;
+    authPrefix?: string;
+    authAlgorithm?: WebhookSubscription['authAlgorithm'];
+    authEncoding?: WebhookSubscription['authEncoding'];
+    /** Write-only: never returned by the API (see `hasSecret`). */
+    secret?: string;
   }) =>
     request<WebhookSubscription>('/agents/webhook-subscriptions', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  updateWebhookSubscription: (id: string, body: Partial<Pick<WebhookSubscription, 'isActive' | 'description' | 'events' | 'prompt' | 'deliverTo' | 'deliverOnly'>>) =>
+  updateWebhookSubscription: (
+    id: string,
+    body: Partial<
+      Pick<
+        WebhookSubscription,
+        | 'isActive'
+        | 'description'
+        | 'events'
+        | 'prompt'
+        | 'deliverTo'
+        | 'deliverOnly'
+        | 'authType'
+        | 'authHeader'
+        | 'authPrefix'
+        | 'authAlgorithm'
+        | 'authEncoding'
+      >
+    > & { secret?: string },
+  ) =>
     request<WebhookSubscription>(`/agents/webhook-subscriptions/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),

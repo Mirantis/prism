@@ -645,8 +645,16 @@ model PendingSlackMessage {
 // (matched against X-GitHub-Event / X-GitLab-Event / payload `event_type`),
 // an optional prompt template ({dot.path} / {__raw__} substitution; empty =
 // raw payload dump), and a delivery target. `deliverOnly` skips the agent and
-// delivers the rendered template directly (no LLM). Auth is terminated by the
-// platform in front of the container — no per-route secrets.
+// delivers the rendered template directly (no LLM).
+//
+// Sender authentication is generic and provider-agnostic (see
+// src/lib/webhook-signature.ts): `authType` picks the scheme ('none' | 'token'
+// | 'hmac'), `authHeader` names the header that carries the credential,
+// `authPrefix` is an optional literal stripped from that value ('sha256=',
+// 'Bearer ', …), and `authAlgorithm`/`authEncoding` shape the HMAC digest.
+// Every real sender is a configuration recipe, not a code path. The secret is
+// stored plaintext (single-agent mode has no key material) and is never
+// returned by the management API.
 
 model WebhookSubscription {
   id          String  @id @default(uuid())
@@ -658,6 +666,13 @@ model WebhookSubscription {
   deliverTo   String  @default("all") // 'all' | 'chat' | 'slack'
   deliverOnly Boolean @default(false)
   isActive    Boolean @default(true)
+
+  authType      String  @default("none") // 'none' | 'token' | 'hmac'
+  authHeader    String? // header carrying the token/signature
+  authPrefix    String? // literal stripped before comparing (e.g. 'sha256=')
+  authAlgorithm String  @default("sha256") // hmac only: sha256 | sha1 | sha512
+  authEncoding  String  @default("hex") // hmac only: hex | base64
+  secret        String? // shared token / HMAC key; never leaves the process
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
