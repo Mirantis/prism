@@ -103,9 +103,6 @@ The parameters:
 
 Behavior worth knowing:
 
-- **The signature is checked against the exact bytes received**, before the
-  event filter, the prompt template, delivery, or any LLM call. A payload that
-  is re-serialized in flight (by a proxy that reformats JSON, say) will fail.
 - **Multiple signatures are supported**: an HMAC header may carry several
   comma-separated candidates and the request passes if any matches — that's how
   senders that emit both an old and a new signature during a secret rotation
@@ -113,15 +110,11 @@ Behavior worth knowing:
   comma.
 - **It fails closed.** A subscription that requires verification but has no
   secret or header configured rejects everything, and every failure answers the
-  same `401 {"error":"Webhook sender verification failed"}` — the reason (wrong
-  credential vs. misconfigured subscription) only goes to the runtime log, so a
-  probe learns nothing.
+  same `401 {"error":"Webhook sender verification failed"}`.
 - **Rotating a secret** doesn't need a new endpoint: use the key icon on the
   subscription row, enter the new secret, and save. Leaving the field empty
   keeps the current one.
-- The secret is stored in the agent's own database in plaintext (single-agent
-  containers have no key material to encrypt it with), so treat the data volume
-  as sensitive.
+- The secret is stored in the agent's own database.
 
 ### Recipes for common senders
 
