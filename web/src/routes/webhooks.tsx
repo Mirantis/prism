@@ -349,6 +349,7 @@ function WebhooksPage() {
               </FieldLabel>
               <Input
                 id="webhook-name"
+                aria-required="true"
                 aria-invalid={Boolean(fieldErrors.name) || undefined}
                 value={form.name}
                 onChange={(e) => setField('name', e.target.value)}
