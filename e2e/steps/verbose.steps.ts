@@ -85,8 +85,11 @@ Then('only one agent message is shown', async ({ page }) => {
 Then('multiple agent messages are delivered via the channel', async ({ page }) => {
   const homePage = new HomePage(page);
   const agentMessages = homePage.getAgentMessages();
-  const count = await agentMessages.count();
-  expect(count).toBeGreaterThan(1);
+  // Poll rather than reading a single count: the steps stream in one at a time,
+  // so a bare count() races the tail of the turn.
+  await expect
+    .poll(() => agentMessages.count(), { timeout: 30_000 })
+    .toBeGreaterThan(1);
 });
 
 Then('the agent details show verbose is true', async ({ page }) => {
@@ -102,13 +105,19 @@ Then('the agent details show verbose is false', async ({ page }) => {
 });
 
 When('I toggle verbose to true', async ({ page }) => {
-  const toggle = page.getByLabel('Verbose delivery');
+  // Match by role+accessible name (as webhooks.page.ts does). Base UI renders
+  // the switch as <span role="switch">, so the aria-label is the accessible
+  // name — not a <label> association.
+  const toggle = page.getByRole('switch', { name: 'Verbose delivery' });
   await toggle.click();
   await page.waitForTimeout(500);
 });
 
 When('I toggle verbose to false', async ({ page }) => {
-  const toggle = page.getByLabel('Verbose delivery');
+  // Match by role+accessible name (as webhooks.page.ts does). Base UI renders
+  // the switch as <span role="switch">, so the aria-label is the accessible
+  // name — not a <label> association.
+  const toggle = page.getByRole('switch', { name: 'Verbose delivery' });
   await toggle.click();
   await page.waitForTimeout(500);
 });

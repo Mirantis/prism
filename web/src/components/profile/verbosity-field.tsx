@@ -31,7 +31,12 @@ export function VerbosityField({ details }: { details: AgentDetails }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-xs text-muted-foreground">Chat delivery</span>
-      <label className="inline-flex items-center gap-2 text-sm">
+      {/* Not a <label> wrapper: Base UI points the switch's aria-labelledby at
+          an enclosing label, and aria-labelledby overrides aria-label — the
+          accessible name would become the adjacent state text ("Concise") in-
+          stead of "Verbose delivery". The text beside it is a state readout,
+          not a name. */}
+      <div className="inline-flex items-center gap-2 text-sm">
         <Switch
           checked={details.verbose}
           onCheckedChange={(checked) => mutation.mutate(checked)}
@@ -39,7 +44,7 @@ export function VerbosityField({ details }: { details: AgentDetails }) {
           aria-label="Verbose delivery"
         />
         <span>{details.verbose ? 'Verbose' : 'Concise'}</span>
-      </label>
+      </div>
       {error && <span className="text-xs text-destructive">{error}</span>}
     </div>
   );
