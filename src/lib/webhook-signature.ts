@@ -2,9 +2,6 @@
  * Webhook Sender Authentication
  *
  * Single owner of "did this inbound webhook really come from its sender?".
- * Deliberately **provider-agnostic**: the runtime knows nothing about GitHub,
- * GitLab, PagerDuty or anyone else, only two generic schemes the operator
- * parameterizes per subscription.
  *
  *   'none'  — no verification (default; auth is the platform's job)
  *   'token' — `authHeader` must carry `secret` verbatim, after an optional
@@ -18,10 +15,6 @@
  * secret rotation work without the code knowing whose convention that is.
  * 'token' mode compares the whole value, so a secret containing a comma is
  * safe.
- *
- * Every real sender is therefore a configuration recipe (documented in
- * docs/webhooks.md), not a code path. Verification fails closed: anything
- * missing or unparseable is a rejection, never a pass.
  */
 
 import crypto from 'crypto';
