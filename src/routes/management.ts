@@ -154,6 +154,9 @@ import {
   WEBHOOK_AUTH_ALGORITHMS,
   WEBHOOK_AUTH_ENCODINGS,
   WEBHOOK_AUTH_TYPES,
+  type WebhookAuthAlgorithm,
+  type WebhookAuthEncoding,
+  type WebhookAuthType,
 } from '../lib/webhook-signature';
 
 // 100 MiB cap — agent DBs are tens of MB in practice; this keeps a
@@ -897,13 +900,18 @@ router.delete('/cron-tasks/:taskId', async (req: Request<{ taskId: string }>, re
 // Responses always go through `toPublicSubscription()`: the stored sender
 // secret must never travel back out, so clients see `hasSecret` instead.
 
-/** The generic sender-auth fields, as stored on a subscription row. */
+/**
+ * The generic sender-auth fields, as stored on a subscription row. The three
+ * enumerated ones are typed by lib/webhook-signature's unions, which are the
+ * same members as the Prisma enums (pinned by a test), so validated values drop
+ * straight into a create/update payload.
+ */
 interface WebhookAuthFields {
-  authType: string;
+  authType: WebhookAuthType;
   authHeader: string | null;
   authPrefix: string | null;
-  authAlgorithm: string;
-  authEncoding: string;
+  authAlgorithm: WebhookAuthAlgorithm;
+  authEncoding: WebhookAuthEncoding;
   secret: string | null;
 }
 
