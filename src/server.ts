@@ -10,11 +10,11 @@
  *      /messages       — thread history replay
  *      /               — Prism Agent Web UI (static SPA bundle from web/dist)
  *
- * Auth is handled by Lens Agents inbound routing in front of the runtime;
- * the container itself trusts every incoming connection, with two exceptions.
- * `originGuard` answers 403 to a browser request that comes from another site
- * (see `lib/origin-guard.ts`), and a webhook subscription can require a signed
- * or token-bearing request from its sender (see `lib/webhook-signature.ts`).
+ * Auth is handled by the routing in front of the runtime; the container itself
+ * trusts every incoming connection, with two exceptions. `originGuard` answers
+ * 403 to a browser request that comes from another site (see
+ * `lib/origin-guard.ts`), and a webhook subscription can require a signed or
+ * token-bearing request from its sender (see `lib/webhook-signature.ts`).
  */
 
 import express from 'express';
