@@ -30,7 +30,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from '@/components/ui/field';
-import { Plus, Trash2, Webhook as WebhookIcon } from 'lucide-react';
+import { KeyRound, Plus, Trash2, Webhook as WebhookIcon } from 'lucide-react';
 import { Page } from '@/components/layout/page';
 import { PageHeader } from '@/components/layout/page-header';
 import { SectionHeader } from '@/components/layout/section-header';
@@ -42,7 +42,13 @@ import { useAgent } from '@/lib/agent-context';
 import { useFormErrors } from '@/hooks/use-form-errors';
 import { CreateModal } from '@/components/shared/create-modal';
 import { DeleteConfirm } from '@/components/shared/delete-confirm';
-import type { WebhookDeliverTo } from '@/types';
+import { WebhookAuthDialog } from '@/components/webhooks/webhook-auth-dialog';
+import {
+  AUTH_TYPE_LABELS,
+  EMPTY_WEBHOOK_AUTH,
+  WebhookAuthFields,
+} from '@/components/webhooks/webhook-auth-fields';
+import type { WebhookDeliverTo, WebhookSubscription } from '@/types';
 
 export const Route = createFileRoute('/webhooks')({
   component: WebhooksPage,
@@ -62,12 +68,14 @@ const EMPTY_FORM = {
   deliverTo: 'all' as WebhookDeliverTo,
   deliverOnly: false,
   prompt: '',
+  ...EMPTY_WEBHOOK_AUTH,
 };
 
 function WebhooksPage() {
   const agent = useAgent();
   const queryClient = useQueryClient();
   const [isCreating, setIsCreating] = useState(false);
+  const [authTarget, setAuthTarget] = useState<WebhookSubscription | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const { fieldErrors, clearFieldError, handleError, reset: resetErrors } = useFormErrors();
@@ -98,6 +106,18 @@ function WebhooksPage() {
         prompt: input.prompt.trim() || undefined,
         deliverTo: input.deliverTo,
         deliverOnly: input.deliverOnly,
+        // Auth fields only travel when verification is actually configured;
+        // 'none' is the server default.
+        ...(input.authType !== 'none'
+          ? {
+              authType: input.authType,
+              authHeader: input.authHeader.trim(),
+              authPrefix: input.authPrefix || undefined,
+              authAlgorithm: input.authAlgorithm,
+              authEncoding: input.authEncoding,
+              secret: input.secret,
+            }
+          : {}),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['webhook-subscriptions', agent.agentId] });
@@ -209,8 +229,9 @@ function WebhooksPage() {
                   <TableHead className="hidden md:table-cell">Events</TableHead>
                   <TableHead>Delivery</TableHead>
                   <TableHead>Endpoint</TableHead>
+                  <TableHead className="hidden md:table-cell">Auth</TableHead>
                   <TableHead className="w-[60px]">Active</TableHead>
-                  <TableHead className="w-[50px]" />
+                  <TableHead className="w-[90px]" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -240,6 +261,16 @@ function WebhooksPage() {
                         <CopyButton text={endpointUrl(s.name)} label="Copy endpoint URL" />
                       </div>
                     </TableCell>
+                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                      {s.authType === 'none' ? (
+                        <span className="text-amber-600 dark:text-amber-500">Unverified</span>
+                      ) : (
+                        <>
+                          {AUTH_TYPE_LABELS[s.authType]}
+                          <code className="block font-mono text-xs">{s.authHeader}</code>
+                        </>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Switch
                         checked={s.isActive}
@@ -250,6 +281,19 @@ function WebhooksPage() {
                       />
                     </TableCell>
                     <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="Sender authentication"
+                        aria-label={`Authentication for ${s.name}`}
+                        className="text-muted-foreground"
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          setAuthTarget(s);
+                        }}
+                      >
+                        <KeyRound className="h-4 w-4" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -368,6 +412,16 @@ function WebhooksPage() {
               </label>
             </Field>
           </div>
+          {/* Own setter: the auth field group is keyed on its own value type,
+              which isn't the wider form type `setField` is generic over. */}
+          <WebhookAuthFields
+            values={form}
+            onChange={(key, value) => {
+              setForm((f) => ({ ...f, [key]: value }));
+              clearFieldError(key);
+            }}
+            fieldErrors={fieldErrors}
+          />
           <Field data-invalid={Boolean(fieldErrors.prompt)}>
             <FieldLabel htmlFor="webhook-prompt">Prompt</FieldLabel>
             <Textarea
@@ -388,6 +442,10 @@ function WebhooksPage() {
           </Field>
         </FieldGroup>
       </CreateModal>
+
+      {authTarget && (
+        <WebhookAuthDialog subscription={authTarget} onClose={() => setAuthTarget(null)} />
+      )}
 
       {deleteTarget && (
         <DeleteConfirm

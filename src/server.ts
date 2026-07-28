@@ -11,9 +11,10 @@
  *      /               — Prism Agent Web UI (static SPA bundle from web/dist)
  *
  * Auth is handled by Lens Agents inbound routing in front of the runtime;
- * the container itself trusts every incoming connection. `originGuard` is the
- * one exception: it answers 403 to a browser request that comes from another
- * site (see `lib/origin-guard.ts`).
+ * the container itself trusts every incoming connection, with two exceptions.
+ * `originGuard` answers 403 to a browser request that comes from another site
+ * (see `lib/origin-guard.ts`), and a webhook subscription can require a signed
+ * or token-bearing request from its sender (see `lib/webhook-signature.ts`).
  */
 
 import express from 'express';
@@ -34,6 +35,7 @@ import { documentRevisionsRouter } from './routes/document-revisions';
 import { updateRouter } from './routes/update';
 import { originGuard } from './lib/origin-guard';
 import { activityRouter } from './routes/activity';
+import { captureWebhookRawBody } from './lib/raw-body';
 
 export function createApp() {
   const app = express();
@@ -41,7 +43,9 @@ export function createApp() {
   // Ahead of the body parser: a refused request costs nothing to read.
   app.use(originGuard);
 
-  app.use(express.json({ limit: '5mb' }));
+  // `verify` keeps the raw bytes of webhook deliveries for HMAC verification;
+  // every other route parses as before (see lib/raw-body.ts).
+  app.use(express.json({ limit: '5mb', verify: captureWebhookRawBody }));
 
   // Health check
   app.get('/health', (_req, res) => {

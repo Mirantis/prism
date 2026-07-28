@@ -7,14 +7,18 @@
  * the agent's response is delivered to the subscription's channels when the
  * run finishes. Deliver-only subscriptions publish synchronously (200).
  *
- * Auth is terminated by the platform in front of the container (same as every
- * other route); subscription CRUD lives in routes/management.ts.
+ * Platform routing in front of the container terminates auth for the runtime as
+ * a whole (same as every other route); on top of that a subscription can
+ * require its sender to prove itself with a token or an HMAC signature, which
+ * the service verifies before doing any work (401 on failure). Subscription
+ * CRUD lives in routes/management.ts.
  */
 
 import { Router, Request, Response } from 'express';
 import { v7 as uuidv7 } from 'uuid';
 import { webhookService } from '../services/webhook.service';
 import { trackEvent } from '../lib/telemetry';
+import { getRawBody } from '../lib/raw-body';
 import { logger } from '../logger';
 
 const router = Router();
@@ -34,6 +38,7 @@ router.post('/webhooks/:name', async (req: Request<{ name: string }>, res: Respo
       payload as Record<string, unknown>,
       req.headers,
       runId,
+      getRawBody(req),
     );
 
     // One owning emitter for 'webhook received' — every delivery attempt is
@@ -45,12 +50,22 @@ router.post('/webhooks/:name', async (req: Request<{ name: string }>, res: Respo
           ? 'accepted'
           : result.status === 'ignored'
             ? 'filtered'
-            : 'rejected',
+            : result.status === 'unauthorized'
+              ? 'unauthorized'
+              : 'rejected',
+      // Which scheme turned it away (generic: 'token' | 'hmac' | 'none'), so a
+      // misconfigured secret is distinguishable from a probe.
+      ...(result.status === 'unauthorized' ? { 'webhook.auth_type': result.authType } : {}),
     });
 
     switch (result.status) {
       case 'receiver_disabled':
         res.status(403).json({ error: 'Webhook receiver is disabled' });
+        return;
+      case 'unauthorized':
+        // Uniform message for every failure reason — a probe must not be able
+        // to tell "wrong signature" from "no secret configured".
+        res.status(401).json({ error: 'Webhook sender verification failed' });
         return;
       case 'not_found':
         res.status(404).json({ error: `Unknown webhook: ${name}` });

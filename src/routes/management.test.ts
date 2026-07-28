@@ -107,6 +107,7 @@ const {
       update: vi.fn(),
       delete: vi.fn(),
       findMany: vi.fn(),
+      findUnique: vi.fn(),
     },
     agentWorkspace: {
       update: vi.fn(),
@@ -987,7 +988,7 @@ describe('Management Routes', () => {
         .send({ name: '  GitHub Push ', description: 'PR reviews' });
 
       expect(res.status).toBe(201);
-      expect(res.body).toEqual(created);
+      expect(res.body).toEqual({ ...created, hasSecret: false });
       expect(mockPrisma.webhookSubscription.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           agentId: 'agent-1',
@@ -995,8 +996,102 @@ describe('Management Routes', () => {
           description: 'PR reviews',
           deliverTo: 'all',
           deliverOnly: false,
+          // Unverified unless the operator opts in.
+          authType: 'none',
+          secret: null,
         }),
       });
+    });
+
+    it('stores the generic auth configuration', async () => {
+      mockPrisma.webhookSubscription.create.mockResolvedValue({
+        id: 'wh-1',
+        name: 'alerts',
+        authType: 'hmac',
+        secret: 'shhh',
+      });
+
+      const res = await authedRequest(app).post('/agents/webhook-subscriptions').send({
+        name: 'alerts',
+        authType: 'hmac',
+        authHeader: '  X-Hub-Signature-256 ',
+        authPrefix: 'sha256=',
+        authAlgorithm: 'sha512',
+        authEncoding: 'base64',
+        secret: '  shhh  ',
+      });
+
+      expect(res.status).toBe(201);
+      expect(mockPrisma.webhookSubscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          authType: 'hmac',
+          authHeader: 'X-Hub-Signature-256',
+          authPrefix: 'sha256=',
+          authAlgorithm: 'sha512',
+          authEncoding: 'base64',
+          secret: 'shhh',
+        }),
+      });
+      // The stored secret never travels back out.
+      expect(res.body).not.toHaveProperty('secret');
+      expect(res.body.hasSecret).toBe(true);
+    });
+
+    it("keeps a prefix's trailing space, which the sender sends verbatim", async () => {
+      mockPrisma.webhookSubscription.create.mockResolvedValue({ id: 'wh-1', name: 'alerts' });
+
+      await authedRequest(app).post('/agents/webhook-subscriptions').send({
+        name: 'alerts',
+        authType: 'token',
+        authHeader: 'Authorization',
+        authPrefix: 'Bearer ',
+        secret: 'shhh',
+      });
+
+      expect(mockPrisma.webhookSubscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ authPrefix: 'Bearer ' }),
+      });
+    });
+
+    it('rejects an unknown authType, algorithm or encoding', async () => {
+      for (const [field, body] of [
+        ['authType', { authType: 'github' }],
+        ['authAlgorithm', { authType: 'hmac', authHeader: 'X-S', secret: 's', authAlgorithm: 'md5' }],
+        ['authEncoding', { authType: 'hmac', authHeader: 'X-S', secret: 's', authEncoding: 'rot13' }],
+      ] as const) {
+        const res = await authedRequest(app)
+          .post('/agents/webhook-subscriptions')
+          .send({ name: 'alerts', ...body });
+        expect(res.status).toBe(400);
+        expect(res.body.fieldErrors[field]).toBeTruthy();
+      }
+      expect(mockPrisma.webhookSubscription.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a scheme without a secret or a header', async () => {
+      const noSecret = await authedRequest(app)
+        .post('/agents/webhook-subscriptions')
+        .send({ name: 'alerts', authType: 'hmac', authHeader: 'X-Signature' });
+      expect(noSecret.status).toBe(400);
+      expect(noSecret.body.fieldErrors.secret).toBeTruthy();
+
+      const noHeader = await authedRequest(app)
+        .post('/agents/webhook-subscriptions')
+        .send({ name: 'alerts', authType: 'token', secret: 'shhh' });
+      expect(noHeader.status).toBe(400);
+      expect(noHeader.body.fieldErrors.authHeader).toBeTruthy();
+
+      expect(mockPrisma.webhookSubscription.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-string secret instead of silently dropping it', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/webhook-subscriptions')
+        .send({ name: 'alerts', authType: 'token', authHeader: 'X-Token', secret: 12345 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.fieldErrors.secret).toBeTruthy();
+      expect(mockPrisma.webhookSubscription.create).not.toHaveBeenCalled();
     });
 
     it('rejects invalid names with a field error', async () => {
@@ -1045,10 +1140,101 @@ describe('Management Routes', () => {
         .send({ isActive: false });
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual(updated);
+      expect(res.body).toEqual({ ...updated, hasSecret: false });
       expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
         where: { id: 'wh-1' },
         data: { isActive: false },
+      });
+      // No auth field in the body → no need to read the row first.
+      expect(mockPrisma.webhookSubscription.findUnique).not.toHaveBeenCalled();
+    });
+
+    describe('auth fields', () => {
+      const stored = {
+        id: 'wh-1',
+        name: 'alerts',
+        authType: 'hmac',
+        authHeader: 'X-Signature',
+        authPrefix: 'sha256=',
+        authAlgorithm: 'sha256',
+        authEncoding: 'hex',
+        secret: 'old-secret',
+      };
+
+      it('rotates the secret while keeping the rest of the configuration', async () => {
+        mockPrisma.webhookSubscription.findUnique.mockResolvedValue(stored);
+        mockPrisma.webhookSubscription.update.mockResolvedValue({ ...stored, secret: 'new-secret' });
+
+        const res = await authedRequest(app)
+          .patch('/agents/webhook-subscriptions/wh-1')
+          .send({ secret: 'new-secret' });
+
+        expect(res.status).toBe(200);
+        expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
+          where: { id: 'wh-1' },
+          data: expect.objectContaining({
+            authType: 'hmac',
+            authHeader: 'X-Signature',
+            secret: 'new-secret',
+          }),
+        });
+        expect(res.body).not.toHaveProperty('secret');
+        expect(res.body.hasSecret).toBe(true);
+      });
+
+      it('validates the effective result, not just the patch', async () => {
+        // Row currently has no credential; switching it to 'hmac' alone would
+        // leave an endpoint that demands verification it cannot perform.
+        mockPrisma.webhookSubscription.findUnique.mockResolvedValue({
+          ...stored,
+          authType: 'none',
+          authHeader: null,
+          secret: null,
+        });
+
+        const res = await authedRequest(app)
+          .patch('/agents/webhook-subscriptions/wh-1')
+          .send({ authType: 'hmac', authHeader: 'X-Signature' });
+
+        expect(res.status).toBe(400);
+        expect(res.body.fieldErrors.secret).toBeTruthy();
+        expect(mockPrisma.webhookSubscription.update).not.toHaveBeenCalled();
+      });
+
+      it('clears the stored credential when verification is switched off', async () => {
+        mockPrisma.webhookSubscription.findUnique.mockResolvedValue(stored);
+        mockPrisma.webhookSubscription.update.mockResolvedValue({
+          ...stored,
+          authType: 'none',
+          secret: null,
+        });
+
+        const res = await authedRequest(app)
+          .patch('/agents/webhook-subscriptions/wh-1')
+          .send({ authType: 'none' });
+
+        expect(res.status).toBe(200);
+        expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
+          where: { id: 'wh-1' },
+          data: expect.objectContaining({
+            authType: 'none',
+            authHeader: null,
+            authPrefix: null,
+            secret: null,
+          }),
+        });
+        expect(res.body.hasSecret).toBe(false);
+      });
+
+      it('404s before validating when the row is gone', async () => {
+        mockPrisma.webhookSubscription.findUnique.mockResolvedValue(null);
+
+        const res = await authedRequest(app)
+          .patch('/agents/webhook-subscriptions/wh-missing')
+          .send({ authType: 'none' });
+
+        expect(res.status).toBe(404);
+        expect(mockPrisma.webhookSubscription.update).not.toHaveBeenCalled();
       });
     });
 

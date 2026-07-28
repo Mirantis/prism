@@ -4,7 +4,10 @@ Feature: Inbound webhooks
   Webhooks page. The receiver starts disabled per scenario (per-scenario DB
   reset), so each scenario enables it first. Deliver-only subscriptions render
   the payload template straight into the conversation with no LLM call; the
-  agent-mode scenario exercises a real Bedrock run end-to-end.
+  agent-mode scenario exercises a real Bedrock run end-to-end. Sender
+  verification is generic — the scenarios configure a header, a prefix and a
+  secret, which is how any real sender (GitHub, PagerDuty, Alertmanager, …) is
+  expressed.
 
   Background:
     Given I am logged in
@@ -55,3 +58,32 @@ Feature: Inbound webhooks
     And I enable the webhook receiver
     When I POST the payload '{"a":1}' to webhook "does-not-exist"
     Then the webhook response status is 404
+
+  Scenario: A signed subscription accepts a correctly signed delivery
+    When I navigate to the webhooks page
+    And I enable the webhook receiver
+    And I create a deliver-only webhook subscription named "signed" verified by HMAC header "X-Hub-Signature-256" prefix "sha256=" with secret "s3cret" and prompt "Signed alert: {status}"
+    Then the stored webhook subscription "signed" has a secret set and never returns it
+    When I POST the payload '{"status":"firing"}' to webhook "signed" signed with secret "s3cret"
+    Then the webhook response status is 200
+    And a webhook-triggered message containing "Signed alert: firing" is stored in the conversation
+
+  Scenario: A signed subscription rejects an unsigned or tampered delivery
+    When I navigate to the webhooks page
+    And I enable the webhook receiver
+    And I create a deliver-only webhook subscription named "guarded" verified by HMAC header "X-Hub-Signature-256" prefix "sha256=" with secret "s3cret" and prompt "Should never appear: {status}"
+    When I POST the payload '{"status":"firing"}' to webhook "guarded"
+    Then the webhook response status is 401
+    When I POST the payload '{"status":"firing"}' to webhook "guarded" signed with secret "wrong-secret"
+    Then the webhook response status is 401
+    And no webhook-triggered message containing "Should never appear" is stored in the conversation
+
+  Scenario: A token-verified subscription accepts the shared token in a header
+    When I navigate to the webhooks page
+    And I enable the webhook receiver
+    And I create a deliver-only webhook subscription named "tokened" verified by token header "Authorization" prefix "Bearer " with secret "s3cret" and prompt "Token alert: {status}"
+    When I POST the payload '{"status":"firing"}' to webhook "tokened" with header "Authorization" set to "Bearer s3cret"
+    Then the webhook response status is 200
+    And a webhook-triggered message containing "Token alert: firing" is stored in the conversation
+    When I POST the payload '{"status":"firing"}' to webhook "tokened" with header "Authorization" set to "Bearer nope"
+    Then the webhook response status is 401

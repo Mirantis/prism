@@ -200,12 +200,21 @@ Let external systems trigger the agent by POSTing JSON to a named endpoint.
 - **New subscription** creates a named route (`/agents/webhooks/<name>`) with
   an optional description, an event-type filter, a delivery target (All
   channels / Chat / Slack), a **deliver only** mode that posts the rendered
-  payload without running the agent, and an optional prompt template.
-- Each row shows the endpoint path with a copy button, an **Active** switch
-  (disabled subscriptions reject events), and a delete action.
+  payload without running the agent, sender **Authentication**, and an optional
+  prompt template.
+- **Authentication** picks how the sender proves itself — a shared token in a
+  header or an HMAC signature of the body — and reveals the **Header**,
+  **Prefix** and **Secret** fields (plus **Algorithm**/**Encoding** for HMAC).
+  It's generic: you name the header your sender uses, so there's nothing
+  vendor-specific to pick.
+- Each row shows the endpoint path with a copy button, the **Auth** scheme
+  (`Unverified` when there is none), an **Active** switch (disabled
+  subscriptions reject events), a key action to change the scheme or rotate the
+  secret, and a delete action. The secret itself is never displayed again.
 
 See **[Webhooks](webhooks.md)** for the endpoint contract, prompt-template
-syntax, and copy-paste Alertmanager/PagerDuty/GitHub configs.
+syntax, the authentication recipes, and copy-paste
+Alertmanager/PagerDuty/GitHub configs.
 
 ## Profile
 

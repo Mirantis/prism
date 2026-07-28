@@ -314,6 +314,14 @@ export interface CronTask {
 
 export type WebhookDeliverTo = 'all' | 'chat' | 'slack' | 'teams';
 
+/**
+ * Sender-verification scheme. Deliberately generic — no provider names: the
+ * operator points `authHeader`/`authPrefix` at whatever the sender uses.
+ */
+export type WebhookAuthType = 'none' | 'token' | 'hmac';
+export type WebhookAuthAlgorithm = 'sha256' | 'sha1' | 'sha512';
+export type WebhookAuthEncoding = 'hex' | 'base64';
+
 export interface WebhookSubscription {
   id: string;
   agentId: string;
@@ -326,6 +334,15 @@ export interface WebhookSubscription {
   deliverTo: WebhookDeliverTo;
   deliverOnly: boolean;
   isActive: boolean;
+  authType: WebhookAuthType;
+  /** Header carrying the token/signature; null when authType is 'none'. */
+  authHeader: string | null;
+  /** Literal stripped from the header value before comparing (e.g. 'sha256='). */
+  authPrefix: string | null;
+  authAlgorithm: WebhookAuthAlgorithm;
+  authEncoding: WebhookAuthEncoding;
+  /** Whether a secret is stored. The secret itself is never returned. */
+  hasSecret: boolean;
   createdAt: string;
   updatedAt: string;
 }

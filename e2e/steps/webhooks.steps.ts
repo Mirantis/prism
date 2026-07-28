@@ -6,10 +6,16 @@
  * subscription list via the management API, and delivered messages via the
  * `conversation_messages` table (triggeredBy = WEBHOOK) — the agent run is
  * asynchronous, so on-screen text alone would race it.
+ *
+ * Sender verification is exercised end-to-end by signing the exact bytes the
+ * POST sends, so a mismatch between what the runtime hashes and what the sender
+ * signed would fail here.
  */
 
 import { createBdd } from 'playwright-bdd';
 import { expect } from '@playwright/test';
+import crypto from 'crypto';
+import type { Page } from '@playwright/test';
 import { WebhooksPage } from '../pages/webhooks.page';
 import * as dbHelper from '../support/db-helper';
 import { getCurrentAgentId } from './common.steps';
@@ -17,6 +23,24 @@ import { getCurrentAgentId } from './common.steps';
 const { When, Then } = createBdd();
 
 let lastWebhookStatus: number | null = null;
+
+/**
+ * POST a webhook body as an exact byte string. Signature verification hashes
+ * what arrives on the wire, so the payload must be sent verbatim (not handed to
+ * Playwright as an object it would re-serialize).
+ */
+async function postWebhookBody(
+  page: Page,
+  name: string,
+  body: string,
+  headers: Record<string, string> = {},
+): Promise<number> {
+  const res = await page.request.post(`/agents/webhooks/${name}`, {
+    headers: { 'content-type': 'application/json', ...headers },
+    data: body,
+  });
+  return res.status();
+}
 
 /** Poll `fn` until `ok` holds or the timeout elapses; returns the last value. */
 async function pollUntil<T>(
@@ -104,10 +128,86 @@ When('I disable the webhook receiver via the API', async ({ page }) => {
 When(
   'I POST the payload {string} to webhook {string}',
   async ({ page }, payload: string, name: string) => {
-    const res = await page.request.post(`/agents/webhooks/${name}`, {
-      data: JSON.parse(payload),
+    lastWebhookStatus = await postWebhookBody(page, name, payload);
+  },
+);
+
+When(
+  'I create a deliver-only webhook subscription named {string} verified by HMAC header {string} prefix {string} with secret {string} and prompt {string}',
+  async (
+    { page },
+    name: string,
+    authHeader: string,
+    authPrefix: string,
+    secret: string,
+    prompt: string,
+  ) => {
+    await new WebhooksPage(page).createSubscription({
+      name,
+      prompt,
+      deliverOnly: true,
+      authType: 'hmac',
+      authHeader,
+      authPrefix,
+      secret,
     });
-    lastWebhookStatus = res.status();
+  },
+);
+
+When(
+  'I create a deliver-only webhook subscription named {string} verified by token header {string} prefix {string} with secret {string} and prompt {string}',
+  async (
+    { page },
+    name: string,
+    authHeader: string,
+    authPrefix: string,
+    secret: string,
+    prompt: string,
+  ) => {
+    await new WebhooksPage(page).createSubscription({
+      name,
+      prompt,
+      deliverOnly: true,
+      authType: 'token',
+      authHeader,
+      authPrefix,
+      secret,
+    });
+  },
+);
+
+Then(
+  'the stored webhook subscription {string} has a secret set and never returns it',
+  async ({ page }, name: string) => {
+    const res = await page.request.get('/agents/webhook-subscriptions');
+    expect(res.ok()).toBe(true);
+    const subscriptions = (await res.json()) as Array<Record<string, unknown>>;
+    const subscription = subscriptions.find((s) => s.name === name);
+    expect(subscription).toBeTruthy();
+    expect(subscription?.hasSecret).toBe(true);
+    expect(subscription).not.toHaveProperty('secret');
+    // Belt and braces: the secret must not surface under any key.
+    expect(JSON.stringify(subscription)).not.toContain('s3cret');
+  },
+);
+
+When(
+  'I POST the payload {string} to webhook {string} signed with secret {string}',
+  async ({ page }, payload: string, name: string, secret: string) => {
+    const signature = crypto
+      .createHmac('sha256', secret)
+      .update(Buffer.from(payload, 'utf8'))
+      .digest('hex');
+    lastWebhookStatus = await postWebhookBody(page, name, payload, {
+      'X-Hub-Signature-256': `sha256=${signature}`,
+    });
+  },
+);
+
+When(
+  'I POST the payload {string} to webhook {string} with header {string} set to {string}',
+  async ({ page }, payload: string, name: string, header: string, value: string) => {
+    lastWebhookStatus = await postWebhookBody(page, name, payload, { [header]: value });
   },
 );
 
@@ -128,5 +228,25 @@ Then(
       120_000,
     );
     expect(messages.some((m) => m.content.includes(text))).toBe(true);
+  },
+);
+
+Then(
+  'no webhook-triggered message containing {string} is stored in the conversation',
+  async ({}, text: string) => {
+    const agentId = getCurrentAgentId();
+    // Rejected deliveries never reach delivery, and deliver-only publishing is
+    // synchronous with the response — a short grace period is enough to catch a
+    // leak without waiting on something that should never arrive.
+    const messages = await pollUntil(
+      () =>
+        dbHelper.getPrisma().conversationMessage.findMany({
+          where: { triggeredBy: 'WEBHOOK', thread: { agentId } },
+        }),
+      (rows) => rows.some((m) => m.content.includes(text)),
+      3_000,
+      500,
+    );
+    expect(messages.some((m) => m.content.includes(text))).toBe(false);
   },
 );

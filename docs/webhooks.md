@@ -30,6 +30,8 @@ Click **New subscription** on the Webhooks page:
 | **Events** | Comma-separated event-type allowlist; empty = accept all. See [Event filtering](#event-filtering). |
 | **Deliver to** | Where results go: **All channels** (default — web chat + Slack, like heartbeat alerts), **Chat** (web chat only), or **Slack** (Slack only — see [Delivery targets & storage](#delivery-targets--storage)). |
 | **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
+| **Authentication** | How the sender proves itself: **None**, **Shared token in a header**, or **HMAC signature of the body**. See [Authentication](#authentication). |
+| **Header** / **Prefix** / **Secret** | Where the credential arrives and what it's compared against (shown once Authentication isn't None). |
 | **Prompt** | Instructions for the agent when this webhook fires (optional). Supports payload substitution — see below. |
 
 Each row in the subscriptions list shows the endpoint path with a copy button,
@@ -51,6 +53,7 @@ see [Event filtering](#event-filtering)):
 | `202 Accepted` | Agent run dispatched: `{"status":"accepted","event":"<type>","runId":"..."}`. The response is delivered to your channels when the run finishes. |
 | `200 OK` | Deliver-only message posted: `{"status":"delivered","event":"<type>"}` — or the event was filtered out by the Events list: `{"status":"ignored","event":"<type>"}`. |
 | `400` | Body was not a JSON object. |
+| `401` | Sender verification failed — see [Authentication](#authentication). |
 | `403` | Receiver disabled, or this subscription is disabled. |
 | `404` | No subscription with that name. |
 | `429` | This subscription's run queue is full — retry later. |
@@ -70,10 +73,65 @@ non-2xx (GitHub never redelivers automatically). The queue is capped
 pathological floods. Deliver-only requests are not queued or limited — they
 cost no LLM tokens.
 
-**Authentication**: the runtime itself does not authenticate webhook calls —
-like every other runtime endpoint, auth is terminated by the platform routing
-in front of the container. Don't expose the runtime port directly to the
-internet.
+## Authentication
+
+Like every other runtime endpoint, the platform routing in front of the
+container terminates auth — so don't expose the runtime port directly to the
+internet. On top of that, **each subscription can require its sender to prove
+itself**, which is what stops anyone who can reach the endpoint (and guess the
+name) from triggering agent runs with a payload they control.
+
+Verification is **generic**: instead of a list of supported vendors, you point
+it at the header your sender uses and pick how the credential is compared. Any
+sender is then a matter of configuration.
+
+| Authentication | What must match |
+|----------------|-----------------|
+| **None** (default) | Nothing is checked. The subscription list shows it as `Unverified`. |
+| **Shared token in a header** | The chosen header carries the secret verbatim (after an optional prefix). |
+| **HMAC signature of the body** | The chosen header carries `HMAC(secret, raw request body)` in the chosen digest + encoding (after an optional prefix). |
+
+The parameters:
+
+| Field | Meaning |
+|-------|---------|
+| **Header** | Header name that carries the credential, e.g. `X-Hub-Signature-256` or `Authorization`. Matched case-insensitively. |
+| **Prefix** | Optional literal stripped from the header value before comparing, e.g. `sha256=`, `v1=`, `Bearer ` (trailing space included). A value that arrives without the prefix is still accepted. |
+| **Secret** | The shared secret / HMAC key. Write-only: the API returns whether a secret is set, never the value. |
+| **Algorithm** / **Encoding** | HMAC only: `sha256` (default), `sha1` or `sha512`, encoded as `hex` (default, case-insensitive) or `base64`. |
+
+Behavior worth knowing:
+
+- **The signature is checked against the exact bytes received**, before the
+  event filter, the prompt template, delivery, or any LLM call. A payload that
+  is re-serialized in flight (by a proxy that reformats JSON, say) will fail.
+- **Multiple signatures are supported**: an HMAC header may carry several
+  comma-separated candidates and the request passes if any matches — that's how
+  senders that emit both an old and a new signature during a secret rotation
+  keep working. Token mode compares the whole value, so a token may contain a
+  comma.
+- **It fails closed.** A subscription that requires verification but has no
+  secret or header configured rejects everything, and every failure answers the
+  same `401 {"error":"Webhook sender verification failed"}` — the reason (wrong
+  credential vs. misconfigured subscription) only goes to the runtime log, so a
+  probe learns nothing.
+- **Rotating a secret** doesn't need a new endpoint: use the key icon on the
+  subscription row, enter the new secret, and save. Leaving the field empty
+  keeps the current one.
+- The secret is stored in the agent's own database in plaintext (single-agent
+  containers have no key material to encrypt it with), so treat the data volume
+  as sensitive.
+
+### Recipes for common senders
+
+| Sender | Authentication | Header | Prefix | Notes |
+|--------|----------------|--------|--------|-------|
+| GitHub | HMAC | `X-Hub-Signature-256` | `sha256=` | Paste the same value into GitHub's webhook **Secret** field. |
+| GitLab | Shared token | `X-Gitlab-Token` | — | GitLab's **Secret token** field; it sends the token as-is, no HMAC. |
+| PagerDuty | HMAC | `X-PagerDuty-Signature` | `v1=` | Uses the signing secret shown when the v3 webhook subscription is created; sends several `v1=` signatures while rotating. |
+| Alertmanager | Shared token | `Authorization` | `Bearer ` | Configure `http_config.authorization` on the receiver (see below). |
+| Anything with a base64 HMAC | HMAC | (their header) | — | Set Encoding to `base64`. |
+| Custom scripts | Shared token | any header you like | — | Simplest option for internal senders. |
 
 ## Delivery targets & storage
 
@@ -155,6 +213,12 @@ receivers:
     webhook_configs:
       - url: http://<prism-host>/agents/webhooks/alertmanager
         send_resolved: true
+        # Matches a subscription with Authentication = shared token,
+        # Header = Authorization, Prefix = "Bearer ".
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /etc/alertmanager/prism-webhook-secret
 route:
   receiver: prism
 ```
@@ -168,17 +232,43 @@ out into concurrent agent runs, without dropping distinct alert groups.
 **PagerDuty** — create a v3 webhook subscription (Integrations → Developer
 Tools → Webhooks) pointing at
 `http://<prism-host>/agents/webhooks/pagerduty`. Events arrive as
-`{"event": {"event_type": "incident.triggered", ...}}`.
+`{"event": {"event_type": "incident.triggered", ...}}`. Copy the signing secret
+shown at creation time into the subscription's Secret field with
+Authentication = HMAC, Header = `X-PagerDuty-Signature`, Prefix = `v1=`.
 
 **GitHub** — add a repository webhook (Settings → Webhooks) with content type
 `application/json` pointing at
-`http://<prism-host>/agents/webhooks/github`. Use the Events field
-(e.g. `pull_request,issues`) to pick the event types you care about.
+`http://<prism-host>/agents/webhooks/github`. Put the same string in GitHub's
+**Secret** field and in the subscription's Secret field with
+Authentication = HMAC, Header = `X-Hub-Signature-256`, Prefix = `sha256=`. Use
+the Events field (e.g. `pull_request,issues`) to pick the event types you care
+about.
 
-**Anything else** — any system that can POST JSON works:
+**Anything else** — any system that can POST JSON works. Unauthenticated:
 
 ```bash
 curl -X POST http://<prism-host>/agents/webhooks/my-hook \
   -H 'Content-Type: application/json' \
   -d '{"event_type": "deploy.finished", "service": "api", "version": "1.4.2"}'
+```
+
+With a shared token (Header = `Authorization`, Prefix = `Bearer `):
+
+```bash
+curl -X POST http://<prism-host>/agents/webhooks/my-hook \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $PRISM_WEBHOOK_SECRET" \
+  -d '{"event_type": "deploy.finished", "service": "api", "version": "1.4.2"}'
+```
+
+With an HMAC signature (Header = `X-Hub-Signature-256`, Prefix = `sha256=`) —
+sign the exact bytes you send:
+
+```bash
+BODY='{"event_type":"deploy.finished","service":"api"}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$PRISM_WEBHOOK_SECRET" | awk '{print $2}')
+curl -X POST http://<prism-host>/agents/webhooks/my-hook \
+  -H 'Content-Type: application/json' \
+  -H "X-Hub-Signature-256: sha256=$SIG" \
+  -d "$BODY"
 ```
