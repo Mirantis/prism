@@ -39,6 +39,32 @@ export const AUTH_TYPE_LABELS: Record<WebhookAuthType, string> = {
   hmac: 'HMAC signature of the body',
 };
 
+/**
+ * Whether the auth configuration is submittable — the same rule the runtime
+ * enforces (a scheme other than 'none' needs both a header and a secret), so
+ * the submit button can be disabled instead of letting the request 400.
+ *
+ * `hasSecret` is for the rotate flow: a subscription that already stores a
+ * secret keeps it when the field is left empty, so the field isn't required
+ * there.
+ */
+export function isWebhookAuthComplete(
+  values: WebhookAuthFormValues,
+  hasSecret = false,
+): boolean {
+  if (values.authType === 'none') return true;
+  return Boolean(values.authHeader.trim()) && (Boolean(values.secret) || hasSecret);
+}
+
+/** Marks a field the submit button waits for. */
+function RequiredMark() {
+  return (
+    <span aria-hidden="true" className="text-muted-foreground">
+      *
+    </span>
+  );
+}
+
 interface WebhookAuthFieldsProps {
   values: WebhookAuthFormValues;
   onChange: <K extends keyof WebhookAuthFormValues>(
@@ -92,9 +118,12 @@ export function WebhookAuthFields({
       {authType !== 'none' && (
         <>
           <Field data-invalid={Boolean(fieldErrors.authHeader)}>
-            <FieldLabel htmlFor="webhook-auth-header">Header</FieldLabel>
+            <FieldLabel htmlFor="webhook-auth-header">
+              Header <RequiredMark />
+            </FieldLabel>
             <Input
               id="webhook-auth-header"
+              aria-required="true"
               aria-invalid={Boolean(fieldErrors.authHeader) || undefined}
               value={values.authHeader}
               onChange={(e) => onChange('authHeader', e.target.value)}
@@ -173,11 +202,14 @@ export function WebhookAuthFields({
           )}
 
           <Field data-invalid={Boolean(fieldErrors.secret)}>
-            <FieldLabel htmlFor="webhook-secret">Secret</FieldLabel>
+            <FieldLabel htmlFor="webhook-secret">
+              Secret {!hasSecret && <RequiredMark />}
+            </FieldLabel>
             <Input
               id="webhook-secret"
               type="password"
               autoComplete="off"
+              aria-required={!hasSecret || undefined}
               aria-invalid={Boolean(fieldErrors.secret) || undefined}
               value={values.secret}
               onChange={(e) => onChange('secret', e.target.value)}

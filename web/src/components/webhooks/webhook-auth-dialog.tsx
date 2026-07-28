@@ -6,6 +6,7 @@ import { runtimeApi } from '@/api/runtime-client';
 import { useFormErrors } from '@/hooks/use-form-errors';
 import {
   EMPTY_WEBHOOK_AUTH,
+  isWebhookAuthComplete,
   WebhookAuthFields,
   type WebhookAuthFormValues,
 } from './webhook-auth-fields';
@@ -73,6 +74,9 @@ export function WebhookAuthDialog({ subscription, onClose }: WebhookAuthDialogPr
       }}
       isSubmitting={saveMut.isPending}
       submitLabel="Save"
+      // Same rule as Create: a scheme needs a header, and a secret unless one
+      // is already stored (an empty field keeps it).
+      submitDisabled={!isWebhookAuthComplete(values, subscription.hasSecret)}
     >
       <FieldGroup>
         <WebhookAuthFields
