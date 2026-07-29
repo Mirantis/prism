@@ -103,6 +103,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iptables \
         chromium xvfb pulseaudio pulseaudio-utils \
         tini \
+        binutils \
+        file \
+        p7zip-full \
+        sqlite3 \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install only production dependencies. Scope to root + cli — the web
