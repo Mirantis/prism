@@ -86,6 +86,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tesseract-ocr \
         fonts-liberation fontconfig \
         iptables \
+        binutils \
+        file \
+        p7zip-full \
+        sqlite3 \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install only production dependencies. Scope to root + cli — the web
