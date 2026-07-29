@@ -315,7 +315,7 @@ describe('ContextService', () => {
     expect(context.recentMessages[1].id).toBe('msg-2');
   });
 
-  it('loads attachment bytes onto messages and keeps a file-only message in the window', async () => {
+  it('attaches metadata (no bytes) onto messages and keeps a file-only message in the window', async () => {
     mockGetAgent.mockResolvedValue(createTestAgentWorkspace());
     mockGetThreadContext.mockResolvedValue({
       compactionSummary: null,
@@ -326,10 +326,8 @@ describe('ContextService', () => {
         createTestMessage({ id: 'msg-2', role: 'USER', content: '' }),
       ],
     });
-    const att = { id: 'a1', filename: 'pic.png', mediaType: 'image/png', category: 'image', sizeBytes: 3, data: Buffer.from([1, 2, 3]) };
-    // Both passes (metadata existence, then bytes) report msg-2's attachment.
-    mockGetMetaByMessageIds.mockResolvedValue(new Map([['msg-2', [att]]]));
-    mockLoadForMessages.mockResolvedValue(new Map([['msg-2', [att]]]));
+    const meta = { id: 'a1', filename: 'pic.png', mediaType: 'image/png', category: 'image', sizeBytes: 3 };
+    mockGetMetaByMessageIds.mockResolvedValue(new Map([['msg-2', [meta]]]));
 
     const context = await contextService.getAgentContext('user-1', {
       agentId: 'agent-1',
@@ -339,13 +337,13 @@ describe('ContextService', () => {
     // msg-2 survives the empty-content filter because it carries an attachment.
     expect(context.recentMessages).toHaveLength(2);
     const fileOnly = context.recentMessages.find((m) => m.id === 'msg-2')!;
-    expect(fileOnly.attachments).toEqual([att]);
-    // DB threads key by messageId, not external ts.
-    expect(mockLoadForMessages).toHaveBeenCalledWith(['msg-1', 'msg-2']);
+    expect(fileOnly.attachments).toEqual([meta]);
+    // BLOB-loading functions should NOT be called — only metadata.
+    expect(mockLoadForMessages).not.toHaveBeenCalled();
     expect(mockLoadByExternalTs).not.toHaveBeenCalled();
   });
 
-  it('re-associates Slack channel attachments by external ts (not messageId)', async () => {
+  it('re-associates Slack channel attachments by external ts (metadata only, no bytes)', async () => {
     mockGetAgent.mockResolvedValue(createTestAgentWorkspace());
     mockGetThreadContext.mockResolvedValue({
       compactionSummary: null,
@@ -355,18 +353,18 @@ describe('ContextService', () => {
         createTestMessage({ id: 'synthetic-1', role: 'USER', content: 'see file', externalMessageId: '1700.0001' } as any),
       ],
     });
-    const att = { id: 'a1', filename: 'doc.pdf', mediaType: 'application/pdf', category: 'pdf', sizeBytes: 9, data: Buffer.from('%PDF') };
-    mockGetMetaByExternalTs.mockResolvedValue(new Map([['1700.0001', [att]]]));
-    mockLoadByExternalTs.mockResolvedValue(new Map([['1700.0001', [att]]]));
+    const meta = { id: 'a1', filename: 'doc.pdf', mediaType: 'application/pdf', category: 'pdf', sizeBytes: 9 };
+    mockGetMetaByExternalTs.mockResolvedValue(new Map([['1700.0001', [meta]]]));
 
     const context = await contextService.getAgentContext('user-1', {
       agentId: 'agent-1',
       threadId: 'thread-slack',
     });
 
-    expect(mockLoadByExternalTs).toHaveBeenCalledWith('thread-slack', ['1700.0001']);
+    // Only metadata queries are used — no BLOB loading.
+    expect(mockLoadByExternalTs).not.toHaveBeenCalled();
     expect(mockLoadForMessages).not.toHaveBeenCalled();
-    expect(context.recentMessages[0].attachments).toEqual([att]);
+    expect(context.recentMessages[0].attachments).toEqual([meta]);
   });
 
   it('keeps every non-compacted message — no count window', async () => {
