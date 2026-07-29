@@ -20,6 +20,7 @@ import { getGoalTools } from '../tools/goals';
 import { getAgentConfigTools } from '../tools/agent-config';
 import { getShellTools } from '../tools/shell/index';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from '../tools/share-file';
+import { getAttachmentTools } from '../tools/attachments';
 import { getSkillTools } from '../tools/skills/index';
 import { getMeetingTools, MEETING_TOOL_NAMES, isMeetingSupported } from '../tools/meeting';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
@@ -85,6 +86,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     ...getAgentConfigTools(),
     ...getShellTools(input.workspaceRoot),
     ...getShareFileTools(),
+    ...getAttachmentTools(input.userId, input.agentId, input.threadId, input.workspaceRoot),
     // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md
     // body on demand. workspaceRoot merges the repo's skills with the global
     // ones. Empty (and omitted) when no skills are available.

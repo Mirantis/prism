@@ -40,6 +40,7 @@ import { messageDeliveryService } from './services/message-delivery.service';
 import { pluginMcpService } from './services/plugin-mcp.service';
 import { pluginCatalogService } from './services/plugin-catalog.service';
 import { attachmentService } from './services/attachment.service';
+import { reapScratchDirs } from './tools/attachments';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
@@ -178,6 +179,12 @@ const initialize = async () => {
         if (deleted > 0) logger.info(`[Attachments] reaped ${deleted} orphaned upload(s)`);
       } catch (err) {
         logger.error({ err }, '[Attachments] orphan cleanup failed');
+      }
+      try {
+        const reaped = await reapScratchDirs(null, ORPHAN_TTL_MS);
+        if (reaped > 0) logger.info(`[Attachments] reaped ${reaped} stale scratch dir(s)`);
+      } catch (err) {
+        logger.error({ err }, '[Attachments] scratch dir cleanup failed');
       }
     };
     await reapOrphanAttachments();
