@@ -1,6 +1,7 @@
 /**
  * Attachment tools — hydrate stored attachments to the workspace so the agent
- * can inspect them with shell tools (file, hexdump, pdftotext, etc.).
+ * can inspect them with shell tools (file, hexdump, pdftotext, etc.), or view
+ * images inline via multimodal tool output.
  *
  * Security: strict RBAC via threadId — an attachment is only accessible if its
  * threadId matches the closed-over threadId of the invocation. This prevents
@@ -11,7 +12,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { Tool, tool } from 'ai';
 import { z } from 'zod';
-import { attachmentService, classifyMediaType } from '../services/attachment.service';
+import { attachmentService, classifyMediaType, isBedrockImageType } from '../services/attachment.service';
 import { resolveWorkspace } from './shell/config';
 import { trackEvent } from '../lib/telemetry';
 
@@ -162,7 +163,94 @@ export async function reapScratchDirs(
   return reaped;
 }
 
-// TODO(AGENT-85): view_attachment in Chunk 3
+// ~3.75 MB Bedrock per-image tool-result ceiling (base64 encoded).
+const IMAGE_SIZE_CEILING_BYTES = 3_750_000;
+
+export interface ViewAttachmentSuccess {
+  success: true;
+  filename: string;
+  mediaType: string;
+  sizeBytes: number;
+  category: 'image';
+  data: string; // base64
+}
+
+export interface ViewAttachmentFailure {
+  success: false;
+  error: string;
+}
+
+export async function runViewAttachment(
+  input: { attachmentId: string },
+  userId: string,
+  agentId: string,
+  threadId: string | undefined,
+): Promise<ViewAttachmentSuccess | ViewAttachmentFailure> {
+  const { attachmentId } = input;
+
+  if (!threadId) {
+    trackEvent('attachment view failed', userId, {
+      'agent.id': agentId,
+      'attachment.id': attachmentId,
+    });
+    return { success: false, error: 'Attachment not found.' };
+  }
+
+  const row = await attachmentService.getById(attachmentId);
+  if (!row || row.threadId !== threadId) {
+    trackEvent('attachment view failed', userId, {
+      'agent.id': agentId,
+      'attachment.id': attachmentId,
+    });
+    return { success: false, error: 'Attachment not found.' };
+  }
+
+  // Only Bedrock-supported image types can be returned as multimodal content.
+  if (!isBedrockImageType(row.mediaType)) {
+    // TODO(AGENT-85): optional provider-split PDF vision on Azure
+    const hint = row.mediaType === 'application/pdf'
+      ? 'PDF files cannot be viewed inline. Use hydrate_attachment to write the file to disk, then inspect with `pdftotext`.'
+      : 'This file type cannot be viewed inline. Use hydrate_attachment to write the file to disk, then inspect with shell tools.';
+
+    trackEvent('attachment view failed', userId, {
+      'agent.id': agentId,
+      'attachment.id': attachmentId,
+    });
+    return { success: false, error: hint };
+  }
+
+  // Size guard: base64 expands ~33%, but we check raw size against the ceiling
+  // since the ceiling accounts for the base64 expansion on Bedrock's side.
+  if (row.sizeBytes > IMAGE_SIZE_CEILING_BYTES) {
+    trackEvent('attachment view failed', userId, {
+      'agent.id': agentId,
+      'attachment.id': attachmentId,
+    });
+    return {
+      success: false,
+      error: `Image exceeds the ${(IMAGE_SIZE_CEILING_BYTES / 1_000_000).toFixed(2)} MB size limit for inline viewing. Use hydrate_attachment to write it to disk and inspect with shell tools.`,
+    };
+  }
+
+  const base64 = Buffer.from(row.data).toString('base64');
+
+  trackEvent('attachment viewed', userId, {
+    'agent.id': agentId,
+    'attachment.id': attachmentId,
+    'attachment.category': 'image',
+    'attachment.media_type': row.mediaType,
+    'attachment.size_bytes': String(row.sizeBytes),
+  });
+
+  return {
+    success: true,
+    filename: row.filename,
+    mediaType: row.mediaType,
+    sizeBytes: row.sizeBytes,
+    category: 'image',
+    data: base64,
+  };
+}
 
 export function getAttachmentTools(
   userId: string,
@@ -185,5 +273,33 @@ export function getAttachmentTools(
       execute: async (input) =>
         runHydrateAttachment(input, userId, agentId, threadId, workspaceRoot),
     }),
+    view_attachment: {
+      ...tool({
+        description:
+          'View an image attachment inline without writing it to disk. ' +
+          'Use this for quick visual inspection of PNG, JPEG, GIF, or WebP images. ' +
+          'For PDFs, large images, or non-image files, use hydrate_attachment instead.',
+        inputSchema: z.object({
+          attachmentId: z
+            .string()
+            .describe('The id of the image attachment to view (from the message metadata).'),
+        }),
+        execute: async (input) =>
+          runViewAttachment(input, userId, agentId, threadId),
+      }),
+      toModelOutput: async ({ output }: { output: unknown }) => {
+        const result = output as ViewAttachmentSuccess | ViewAttachmentFailure;
+        if (!result.success) {
+          return { type: 'text' as const, value: result.error };
+        }
+        return {
+          type: 'content' as const,
+          value: [
+            { type: 'text' as const, text: `[Viewing ${result.filename}]` },
+            { type: 'image-data' as const, data: result.data, mediaType: result.mediaType },
+          ],
+        };
+      },
+    },
   };
 }
