@@ -124,6 +124,10 @@ The agent's identity and runtime controls.
   those on their own model; leave a field empty to inherit the main model (the
   field shows the model it falls back to). See
   **[Configuration → Models](configuration.md#models)**.
+- **Chat delivery.** A toggle switches between **Concise** (default) and
+  **Verbose** mode. In concise mode only the agent's final message is delivered;
+  intermediate steps are persisted but not shown. See
+  **[Configuration → Chat verbosity](configuration.md#chat-verbosity)**.
 - **Identity documents.** Seven tabs show the agent's markdown documents —
   **Agent** (guide), **Soul**, **User**, **Heartbeat**, **Memory**, **Vision**,
   and **Bootstrap**. These are **read-only viewers** in the Web UI: the agent

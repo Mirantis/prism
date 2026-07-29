@@ -87,6 +87,11 @@ model AgentWorkspace {
   // with 403 while disabled.
   webhooksEnabled Boolean @default(false)
 
+  // When false (default), only the final text step of a multi-step chat turn
+  // is delivered to the channel; intermediate steps are persisted but not
+  // published. When true, every text step is delivered as it arrives.
+  verbose Boolean @default(false)
+
   nexusMcpAgentToken String?
   nexusAgentTokenId  String?
 
@@ -166,6 +171,11 @@ model ConversationMessage {
   externalMessageId String?
 
   isCompacted Boolean @default(false)
+
+  // Concise mode persists intermediate multi-step text as its own AGENT row but
+  // does not deliver it to the channel. `internalStep` marks such rows so client
+  // history reads hide them, while the model-context read still replays them.
+  internalStep Boolean @default(false)
 
   createdAt DateTime @default(now())
 

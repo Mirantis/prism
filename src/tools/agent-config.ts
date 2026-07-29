@@ -151,12 +151,27 @@ export function getAgentConfigTools(): Record<string, Tool> {
     }),
 
     update_settings: tool({
-      description: 'Update agent behavioral settings (timezone, heartbeatIntervalMs).',
+      description: 'Update agent behavioral settings (timezone, heartbeatIntervalMs, verbose). verbose controls chat delivery: false (default) delivers only the final message; true streams every intermediate step.',
       inputSchema: z.object({
-        setting: z.enum(['heartbeatIntervalMs', 'timezone']).describe('Which setting'),
-        value: z.union([z.number(), z.string()]).describe('The new value'),
+        setting: z.enum(['heartbeatIntervalMs', 'timezone', 'verbose']).describe('Which setting'),
+        value: z.union([z.number(), z.string(), z.boolean()]).describe('The new value'),
       }),
       execute: async ({ setting, value }) => {
+        if (setting === 'verbose') {
+          let boolVal: boolean;
+          if (typeof value === 'boolean') {
+            boolVal = value;
+          } else if (value === 'true') {
+            boolVal = true;
+          } else if (value === 'false') {
+            boolVal = false;
+          } else {
+            throw new Error('verbose must be a boolean or "true"/"false"');
+          }
+          const result = await agentWorkspaceService.updateVerbose(boolVal);
+          return { success: true, message: `Updated verbose to ${result}` };
+        }
+
         const numericSettings = ['heartbeatIntervalMs'] as const;
         const settingLabels: Record<string, string> = {
           heartbeatIntervalMs: 'Heartbeat interval',

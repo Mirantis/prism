@@ -19,6 +19,7 @@ import prisma from '../lib/prisma';
 import { getClassificationModel } from '../lib/classification';
 import { isLangfuseEnabled } from '../lib/langfuse';
 import { isTelemetryEnabled, trackEvent } from '../lib/telemetry';
+import { agentWorkspaceService } from './agent-workspace.service';
 
 // ============================================================================
 // Feedback gate tuning (channel-agnostic)
@@ -265,12 +266,19 @@ Respond with exactly one word: WORTHY or SKIP`;
     const allAttachmentIds: string[] = [];
 
     let response = '';
+    let verbose = false;
 
     // Run the whole turn under the per-thread lock so an interactive user turn
     // and a background goal turn never invoke() the same thread concurrently.
     // A `create_goal` call made during this turn kicks its loop fire-and-forget;
     // that loop's first turn queues behind this lock and runs once we release.
     await goalService.runExclusive(threadId, async () => {
+      // Snapshot the verbose flag once inside the lock and thread it through the
+      // whole turn (InvokeRequest → context → delivery gating below), so prompt
+      // construction and delivery never diverge if the flag is toggled mid-turn.
+      const agent = await agentWorkspaceService.getAgent();
+      verbose = agent.verbose;
+
       for await (const step of invokeStream({
         userId,
         agentId,
@@ -278,6 +286,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         prompt: message,
         threadId,
         workspaceRoot,
+        verbose,
         ...channelOrigin,
         originChannel: metadata?.channel,
         originChannelId: metadata?.channelId,
@@ -295,18 +304,32 @@ Respond with exactly one word: WORTHY or SKIP`;
           // Flush previously-buffered step now that we know it wasn't last:
           // no blocks, no feedback gate.
           if (bufferedStep) {
-            agentMessage = await messageDeliveryService.publish(
-              userId,
-              threadId,
-              bufferedStep.text,
-              'USER_INPUT',
-              {
+            if (verbose) {
+              agentMessage = await messageDeliveryService.publish(
+                userId,
+                threadId,
+                bufferedStep.text,
+                'USER_INPUT',
+                {
+                  toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
+                  channelContext: channelContext
+                    ? { ...channelContext, includeFeedback: false }
+                    : undefined,
+                }
+              );
+            } else {
+              // Concise mode: persist without delivering to the channel. Marked
+              // internalStep so client history hides it, while the model-context
+              // read still replays it (tool rounds must survive for the model).
+              const { message: persisted } = await conversationService.addMessage(threadId, {
+                content: bufferedStep.text,
+                role: 'AGENT',
+                triggeredBy: 'USER_INPUT',
                 toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
-                channelContext: channelContext
-                  ? { ...channelContext, includeFeedback: false }
-                  : undefined,
-              }
-            );
+                internalStep: true,
+              });
+              agentMessage = persisted;
+            }
           }
 
           bufferedStep = step;
@@ -365,6 +388,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       'chat.duration_ms': String(Date.now() - startTime),
       'chat.tool_calls': String(allToolCalls.length),
       'chat.response_chars': String(response.length),
+      'chat.verbose': String(verbose),
     });
 
     return {

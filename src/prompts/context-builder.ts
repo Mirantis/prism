@@ -48,6 +48,8 @@ export interface AgentContext {
   agentId: string;
   userId: string;
   model: string | null;
+  /** When false, only the final text step is delivered to the channel. */
+  verbose: boolean;
   isBootstrapPhase: boolean;
   conversationSummary: string | null;
   recentMessages: ConversationMessage[];
@@ -130,6 +132,11 @@ export async function buildSystemPromptParts(
   // skills when this turn has a workspaceRoot. Cacheable: stable within a thread
   // (a thread's workspaceRoot is fixed) and rescans only when a skills dir changes.
   stableSections.push(buildSkillsSection(workspaceRoot));
+
+  // Concise delivery instructions (chat only, non-verbose)
+  if (mode === 'chat' && !context.verbose) {
+    stableSections.push(getConciseDeliveryInstructions());
+  }
 
   // Mode-specific instructions
   if (mode === 'heartbeat') {
@@ -548,4 +555,10 @@ function getSubagentInstructions(): string {
   return `# Subagent Mode
 
 You are a subagent invoked by a parent agent. Your task is to execute the specific instruction given to you, report findings, and store important observations in memory. Stay focused on the specific task delegated by the parent agent.`;
+}
+
+function getConciseDeliveryInstructions(): string {
+  return `# Response Delivery (Concise Mode)
+
+Only your **final message** in a multi-step turn is delivered to the user. Intermediate text you produce while using tools is saved but not shown. Therefore your final message must be self-contained: state the outcome of the work you did, include any relevant results, and do not reference earlier narration the user cannot see.`;
 }

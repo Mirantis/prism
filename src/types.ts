@@ -32,6 +32,8 @@ export interface AgentContext {
   heartbeatModel: string | null;
   /** Cron/scheduled-task model override; falls back to `model`, then env default. */
   cronModel: string | null;
+  /** When false, only the final text step is delivered to the channel. */
+  verbose: boolean;
   isBootstrapPhase: boolean;
   conversationSummary: string | null;
   recentMessages: ConversationMessage[];
@@ -57,6 +59,8 @@ interface InvokeRequestBase {
   mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook';
   prompt: string;
   threadId?: string;
+  /** Override the agent's persisted verbose flag for this invocation. */
+  verbose?: boolean;
   /**
    * Optional per-thread workspace root for shell tools' cwd. When unset, shell
    * tools fall back to the global SHELL_WORKSPACE_ROOT (see `resolveWorkspace`).

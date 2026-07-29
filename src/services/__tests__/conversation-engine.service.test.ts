@@ -23,6 +23,7 @@ const {
   mockTrackEvent,
   mockLinkToMessage,
   mockOnFirstUserMessage,
+  mockGetAgent,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
@@ -35,6 +36,7 @@ const {
   mockTrackEvent: vi.fn(),
   mockLinkToMessage: vi.fn(),
   mockOnFirstUserMessage: vi.fn(),
+  mockGetAgent: vi.fn(),
 }));
 
 /**
@@ -105,6 +107,12 @@ vi.mock('../../lib/telemetry', () => ({
   trackEvent: mockTrackEvent,
 }));
 
+vi.mock('../agent-workspace.service', () => ({
+  agentWorkspaceService: {
+    getAgent: mockGetAgent,
+  },
+}));
+
 // Import after mocking
 import { conversationEngineService } from '../conversation-engine.service';
 
@@ -112,6 +120,7 @@ describe('Requirement: Conversation Engine', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
+    mockGetAgent.mockResolvedValue({ verbose: true });
     mockGetOrCreateLatestThread.mockResolvedValue({
       id: 'thread-123',
       userId: 'user-123',
@@ -358,6 +367,65 @@ describe('Requirement: Conversation Engine', () => {
           toolCalls: undefined,
         }),
       );
+    });
+
+    it('should persist but not deliver intermediate steps when verbose is false', async () => {
+      // Concise mode: only the final text step is delivered to the channel;
+      // intermediate text steps are persisted (addMessage) but never published.
+      mockGetAgent.mockResolvedValue({ verbose: false });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: 'Let me check...',
+          toolCalls: [
+            { tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+        {
+          text: 'Here are the results.',
+          toolCalls: [],
+        },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Show me pods',
+      });
+
+      // Only the final step is delivered to the channel.
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-123',
+        'thread-123',
+        'Here are the results.',
+        'USER_INPUT',
+        expect.objectContaining({}),
+      );
+
+      // The intermediate step is persisted as its own AGENT row (with its tool
+      // calls) and flagged internalStep so client history hides it while the
+      // model-context read still replays it — persistence stays identical to
+      // verbose mode, only delivery + client visibility differ.
+      expect(mockAddMessage).toHaveBeenCalledWith(
+        'thread-123',
+        expect.objectContaining({
+          role: 'AGENT',
+          content: 'Let me check...',
+          triggeredBy: 'USER_INPUT',
+          internalStep: true,
+          toolCalls: expect.arrayContaining([
+            expect.objectContaining({ tool: 'kubectl' }),
+          ]),
+        }),
+      );
+
+      // The USER row is never marked internal.
+      expect(mockAddMessage).toHaveBeenCalledWith(
+        'thread-123',
+        expect.objectContaining({ role: 'USER' }),
+      );
+      const userCall = mockAddMessage.mock.calls.find((c: unknown[]) => (c[1] as { role: string }).role === 'USER');
+      expect((userCall?.[1] as { internalStep?: boolean }).internalStep).toBeUndefined();
     });
 
     it('should accumulate tool calls from tool-only steps onto the next text message', async () => {

@@ -37,6 +37,9 @@ export interface MessageInput {
   // Multi-user context (for channel messages)
   senderExternalId?: string; // External user ID (Slack: U..., Discord: snowflake, etc.)
   senderName?: string; // Human-readable display name
+  // Concise-mode intermediate step: persisted for model replay but hidden from
+  // client history. Omit (or false) for normal, user-visible messages.
+  internalStep?: boolean;
 }
 
 export interface MessageWithAttachments extends ConversationMessage {
@@ -281,7 +284,9 @@ class ConversationService {
       ? this.slackProvider
       : this.databaseProvider;
 
-    const messages = await provider.getMessages(threadId);
+    // CLIENT history (web SPA): hide concise-mode internal steps. The model path
+    // (getThreadContext) reads without this option so it still replays them.
+    const messages = await provider.getMessages(threadId, { excludeInternal: true });
 
     // Attach file metadata (no bytes) so the web UI renders chips on history.
     const withAttachments: MessageWithAttachments[] =
@@ -356,6 +361,7 @@ class ConversationService {
         tokenCount: input.tokenCount,
         senderExternalId: input.senderExternalId,
         senderName: input.senderName,
+        internalStep: input.internalStep,
       },
     });
 
@@ -403,14 +409,15 @@ class ConversationService {
   }
 
   /**
-   * Get recent messages from a thread
+   * Get recent messages from a thread for CLIENT history (CLI `/messages`).
+   * Hides concise-mode internal steps — the model path uses getThreadContext.
    */
   async getRecentMessages(
     threadId: string,
     limit: number = 20
   ): Promise<ConversationMessage[]> {
     const provider = await this.resolveProvider(threadId);
-    return provider.getRecentMessages(threadId, limit);
+    return provider.getRecentMessages(threadId, limit, { excludeInternal: true });
   }
 
   /**

@@ -86,6 +86,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       // turns intentionally restate their objective rather than replay history).
       includeConversation: request.mode === 'chat' || (request.mode === 'cron' && Boolean(request.threadId)),
       agentId: request.agentId,
+      verbose: request.verbose,
     });
   } catch (error) {
     yield buildErrorStep(error);

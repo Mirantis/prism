@@ -379,6 +379,28 @@ class AgentWorkspaceService {
     return { override: updated.heartbeatModel, effective };
   }
 
+  /**
+   * Set the verbose (per-step delivery) flag. When false (default), only the
+   * final text step of a multi-step chat turn is delivered to the channel;
+   * intermediate steps are still persisted. When true, every text step is
+   * delivered as it arrives (existing behavior).
+   */
+  async updateVerbose(verbose: unknown): Promise<boolean> {
+    if (typeof verbose !== 'boolean') {
+      throw new ValidationError('verbose must be a boolean');
+    }
+    const agent = await this.getAgent();
+    const updated = await prisma.agentWorkspace.update({
+      where: { id: agent.id },
+      data: { verbose },
+    });
+    trackEvent('agent verbose updated', null, {
+      'agent.id': updated.id,
+      'agent.verbose': String(updated.verbose),
+    });
+    return updated.verbose;
+  }
+
   /** Cron equivalent of {@link updateHeartbeatModel}. */
   async updateCronModel(model: unknown): Promise<ModelOverrideInfo> {
     const normalized = normalizeModelOverride(model);
