@@ -110,6 +110,30 @@ attachment** (up to 10 MB). That's how files it produces — a report, an export
 a generated artifact — reach you in the Web UI, Terminal UI, or Slack. In the
 TUI, save them to disk with [`/save`](terminal-ui.md#attaching-and-saving-files).
 
+## Attachments
+
+When you send the agent a file, it appears as a **metadata stub** in the
+conversation context — the agent sees the filename, MIME type, size, and an
+opaque `id`, but not the raw bytes. This avoids flooding the context window
+with large payloads. The agent then decides how to consume the file using two
+tools:
+
+- **hydrate_attachment** — writes the stored file to a scratch directory on the
+  agent's workspace disk. The agent can then inspect it with any shell tool:
+  `cat`, `head`, `jq`, `unzip -l`, `pdftotext`, `sqlite3`, `strings`, etc.
+  Preferred for text, code, archives, data files, and PDFs. The scratch files
+  are automatically reaped by an hourly janitor. RBAC-scoped: only attachments
+  belonging to the caller's own conversation thread are accessible.
+
+- **view_attachment** — pulls an **image** (PNG, JPEG, GIF, WebP) into the
+  model's context for visual inspection without writing to disk. Not
+  auto-inlined — the agent invokes this on demand when it needs to "look" at a
+  picture. Images larger than ~3.75 MB should be hydrated instead. For PDFs,
+  hydrate + `pdftotext` is the correct path.
+
+> **Untrusted data:** the contents of attachments are treated as untrusted
+> input — they cannot alter the agent's system prompt or escalate privileges.
+
 ## Voice meetings
 
 The agent can join a Google Meet call and take part by voice — see

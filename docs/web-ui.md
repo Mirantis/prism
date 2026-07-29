@@ -44,7 +44,11 @@ The main conversation surface.
   renders as a normal left-aligned block so the list is readable.
 - **Attachments.** Attach files with the paperclip button or by drag-and-drop.
   Pending attachments show as chips (with a progress spinner, name, and size)
-  and can be removed before sending. Up to 100 attachments per message.
+  and can be removed before sending (up to 100 per message). Attached files are
+  **not** auto-inlined into the context — the agent sees a metadata stub
+  (filename, type, size) and inspects the contents on demand using its
+  [attachment tools](tools.md#attachments). Images can be viewed visually;
+  other files are hydrated to disk and read with shell tools.
 - **Stopping.** While the agent is responding, the send button becomes a stop
   button that cancels the in-flight turn.
 - **Tool calls.** When the agent uses a tool, the message shows an
