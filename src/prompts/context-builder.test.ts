@@ -21,17 +21,15 @@ import {
   buildSteeringMessage,
 } from './context-builder';
 import { createTestAgentContext } from '../test-utils/factories';
-import { MAX_INLINE_TEXT_CHARS } from '../constants';
-import type { AttachmentForLLM } from '../services/attachment.service';
+import type { AttachmentMeta } from '../services/attachment.service';
 
-function makeAttachment(overrides: Partial<AttachmentForLLM> = {}): AttachmentForLLM {
+function makeAttachment(overrides: Partial<AttachmentMeta> = {}): AttachmentMeta {
   return {
     id: 'att-1',
     filename: 'file.bin',
     mediaType: 'application/octet-stream',
     category: 'unreadable',
     sizeBytes: 10,
-    data: Buffer.from('data'),
     ...overrides,
   };
 }
@@ -204,7 +202,7 @@ describe('buildSystemPromptParts', () => {
     expect(parts[1].cacheable).toBe(false);
   });
 
-  it('stable part contains identity, soul, user, memory, and mode instructions', async () => {
+  it('stable part contains identity, soul, user, memory, attachments, and mode instructions', async () => {
     const context = createTestAgentContext();
     const parts = await buildSystemPromptParts(context, 'chat');
     const stable = parts[0].text;
@@ -219,6 +217,10 @@ describe('buildSystemPromptParts', () => {
     expect(stable).toContain(context.memoryMd);
     expect(stable).toContain('# Chat Mode');
     expect(stable).toContain('# Connected Infrastructure');
+    expect(stable).toContain('## Attachments');
+    expect(stable).toContain('hydrate_attachment');
+    expect(stable).toContain('view_attachment');
+    expect(stable).toContain('untrusted DATA');
   });
 
   it('dynamic part contains runtime context timestamp', async () => {
@@ -632,7 +634,14 @@ describe('buildConversationMessages', () => {
   });
 });
 
-describe('buildConversationMessages with attachments', () => {
+describe('buildConversationMessages with attachments (metadata stubs)', () => {
+  const textOf = (content: unknown): string =>
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content.map((p) => (p as { text?: string }).text ?? '').join('')
+        : '';
+
   it('keeps plain-string form for a text-only USER message (no attachments)', () => {
     const context = createTestAgentContext({
       recentMessages: [{ id: '1', role: 'USER', content: 'hi' }],
@@ -641,92 +650,70 @@ describe('buildConversationMessages with attachments', () => {
     expect(messages[0]).toEqual({ role: 'user', content: 'hi' });
   });
 
-  it('emits an image content part for an image attachment', () => {
-    const data = Buffer.from([1, 2, 3]);
+  it('emits a text metadata stub (not an image part) for an image attachment', () => {
     const context = createTestAgentContext({
       recentMessages: [
         {
           id: '1',
           role: 'USER',
           content: 'what is this?',
-          attachments: [makeAttachment({ id: 'a', filename: 'pic.png', mediaType: 'image/png', category: 'image', data })],
+          attachments: [makeAttachment({ id: 'a', filename: 'pic.png', mediaType: 'image/png', category: 'image', sizeBytes: 3 })],
         },
       ],
     });
     const messages = buildConversationMessages(context);
     const content = messages[0].content as unknown[];
+    expect(content).toHaveLength(2);
     expect(content[0]).toEqual({ type: 'text', text: 'what is this?' });
-    expect(content[1]).toEqual({ type: 'image', image: data, mediaType: 'image/png' });
+    // Metadata stub — no image bytes
+    expect((content[1] as { type: string }).type).toBe('text');
+    const stub = (content[1] as { text: string }).text;
+    expect(stub).toContain('pic.png');
+    expect(stub).toContain('id=a');
+    expect(stub).toContain('image/png');
+    expect(stub).toContain('hydrate_attachment');
   });
 
-  it('emits a file content part for a PDF attachment', () => {
-    const data = Buffer.from('%PDF-1.7');
+  it('emits a text metadata stub (not a file part) for a PDF attachment', () => {
     const context = createTestAgentContext({
       recentMessages: [
         {
           id: '1',
           role: 'USER',
           content: '',
-          attachments: [makeAttachment({ id: 'a', filename: 'doc.pdf', mediaType: 'application/pdf', category: 'pdf', data })],
-        },
-      ],
-    });
-    const messages = buildConversationMessages(context);
-    const content = messages[0].content as unknown[];
-    // File-only message: just the file part, no leading text.
-    expect(content).toHaveLength(1);
-    expect(content[0]).toEqual({ type: 'file', data, mediaType: 'application/pdf', filename: 'doc.pdf' });
-  });
-
-  // A message whose only part is text (an inlined text file or an unreadable
-  // note, with no typed message text) collapses to a plain string by design.
-  const textOf = (content: unknown): string =>
-    typeof content === 'string'
-      ? content
-      : Array.isArray(content)
-        ? content.map((p) => (p as { text?: string }).text ?? `[${(p as { type: string }).type}]`).join('')
-        : '';
-  const hasPartType = (content: unknown, type: string): boolean =>
-    Array.isArray(content) && content.some((p) => (p as { type: string }).type === type);
-
-  it('inlines a text attachment in a fenced block with its filename', () => {
-    const context = createTestAgentContext({
-      recentMessages: [
-        {
-          id: '1',
-          role: 'USER',
-          content: '',
-          attachments: [makeAttachment({ id: 'a', filename: 'notes.txt', mediaType: 'text/plain', category: 'text', data: Buffer.from('line one\nline two') })],
+          attachments: [makeAttachment({ id: 'a', filename: 'doc.pdf', mediaType: 'application/pdf', category: 'pdf', sizeBytes: 5000 })],
         },
       ],
     });
     const messages = buildConversationMessages(context);
     const text = textOf(messages[0].content);
-    expect(text).toContain('[File: notes.txt]');
-    expect(text).toContain('line one');
-    expect(text).not.toContain('truncated');
+    expect(text).toContain('doc.pdf');
+    expect(text).toContain('id=a');
+    expect(text).toContain('application/pdf');
+    expect(text).toContain('hydrate_attachment');
+    expect(text).not.toContain('[object');
   });
 
-  it('truncates a text attachment longer than MAX_INLINE_TEXT_CHARS', () => {
-    const big = 'x'.repeat(MAX_INLINE_TEXT_CHARS + 100);
+  it('renders a metadata stub for text attachments (no inline content)', () => {
     const context = createTestAgentContext({
       recentMessages: [
         {
           id: '1',
           role: 'USER',
           content: '',
-          attachments: [makeAttachment({ id: 'a', filename: 'big.txt', mediaType: 'text/plain', category: 'text', data: Buffer.from(big) })],
+          attachments: [makeAttachment({ id: 'a', filename: 'notes.txt', mediaType: 'text/plain', category: 'text', sizeBytes: 42 })],
         },
       ],
     });
     const messages = buildConversationMessages(context);
     const text = textOf(messages[0].content);
-    expect(text).toContain('truncated');
-    // The inlined body is capped to the limit (plus markers), not the full size.
-    expect(text).not.toContain('x'.repeat(MAX_INLINE_TEXT_CHARS + 1));
+    expect(text).toContain('notes.txt');
+    expect(text).toContain('id=a');
+    expect(text).toContain('text/plain');
+    expect(text).toContain('42 B');
   });
 
-  it('renders an unreadable note (never a file part) for unsupported binaries', () => {
+  it('renders a metadata stub for unreadable binaries', () => {
     const context = createTestAgentContext({
       recentMessages: [
         {
@@ -738,27 +725,10 @@ describe('buildConversationMessages with attachments', () => {
       ],
     });
     const messages = buildConversationMessages(context);
-    expect(hasPartType(messages[0].content, 'file')).toBe(false);
     const text = textOf(messages[0].content);
     expect(text).toContain('archive.zip');
-    expect(text).toContain('not readable');
-  });
-
-  it('downgrades an image-category attachment with a non-Bedrock media type to a note', () => {
-    const context = createTestAgentContext({
-      recentMessages: [
-        {
-          id: '1',
-          role: 'USER',
-          content: '',
-          // category says image but tiff is not in the Bedrock-safe set — must not become an image part.
-          attachments: [makeAttachment({ id: 'a', filename: 'scan.tiff', mediaType: 'image/tiff', category: 'image' })],
-        },
-      ],
-    });
-    const messages = buildConversationMessages(context);
-    expect(hasPartType(messages[0].content, 'image')).toBe(false);
-    expect(textOf(messages[0].content)).toContain('not readable');
+    expect(text).toContain('id=a');
+    expect(text).toContain('2.0 KB');
   });
 
   it('does not skip a file-only USER message (empty content + attachment)', () => {
@@ -768,13 +738,32 @@ describe('buildConversationMessages with attachments', () => {
           id: '1',
           role: 'USER',
           content: '',
-          attachments: [makeAttachment({ id: 'a', filename: 'pic.png', mediaType: 'image/png', category: 'image' })],
+          attachments: [makeAttachment({ id: 'a', filename: 'pic.png', mediaType: 'image/png', category: 'image', sizeBytes: 100 })],
         },
       ],
     });
     const messages = buildConversationMessages(context);
     expect(messages).toHaveLength(1);
-    expect(Array.isArray(messages[0].content)).toBe(true);
+    // With only text parts and a single stub, it collapses to plain string.
+    const text = textOf(messages[0].content);
+    expect(text).toContain('pic.png');
+    expect(text).toContain('hydrate_attachment');
+  });
+
+  it('includes human-readable size in the stub', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: '1',
+          role: 'USER',
+          content: 'check this',
+          attachments: [makeAttachment({ id: 'b', filename: 'data.csv', mediaType: 'text/csv', category: 'text', sizeBytes: 1536 })],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+    const text = textOf(messages[0].content);
+    expect(text).toContain('1.5 KB');
   });
 });
 
@@ -787,42 +776,46 @@ describe('buildSteeringMessage', () => {
     });
   });
 
-  it('carries an image shared mid-turn as an image part', () => {
-    const data = Buffer.from('png-bytes');
+  it('carries an image shared mid-turn as a metadata stub, not image bytes', () => {
     const message = buildSteeringMessage({
       text: 'look at this',
       attachments: [
-        makeAttachment({ filename: 'shot.png', mediaType: 'image/png', category: 'image', data }),
+        makeAttachment({ id: 'a', filename: 'shot.png', mediaType: 'image/png', category: 'image' }),
       ],
     });
 
     expect(message.role).toBe('user');
-    expect(message.content).toEqual([
-      { type: 'text', text: 'look at this' },
-      { type: 'image', image: data, mediaType: 'image/png' },
-    ]);
+    const content = message.content as Array<{ type: string; text?: string }>;
+    expect(content[0]).toEqual({ type: 'text', text: 'look at this' });
+    // Same hydrate-first treatment as a file shared at the start of a turn.
+    expect(content[1].type).toBe('text');
+    expect(content[1].text).toContain('shot.png');
+    expect(content[1].text).toContain('id=a');
+    expect(content[1].text).toContain('view_attachment');
   });
 
-  it('inlines a text file shared mid-turn', () => {
+  it('stubs a text file shared mid-turn instead of inlining it', () => {
     const message = buildSteeringMessage({
       text: 'here is the failure',
       attachments: [
         makeAttachment({
+          id: 'b',
           filename: 'run.log',
           mediaType: 'text/plain',
           category: 'text',
-          data: Buffer.from('boom'),
+          sizeBytes: 42,
         }),
       ],
     });
 
     const content = message.content as Array<{ type: string; text?: string }>;
     expect(content[0]).toEqual({ type: 'text', text: 'here is the failure' });
-    expect(content[1].text).toContain('[File: run.log]');
-    expect(content[1].text).toContain('boom');
+    expect(content[1].text).toContain('run.log');
+    expect(content[1].text).toContain('id=b');
+    expect(content[1].text).toContain('hydrate_attachment');
   });
 
-  it('notes a file the provider could not read rather than dropping it', () => {
+  it('stubs a binary file rather than dropping it', () => {
     const message = buildSteeringMessage({
       text: 'and this one',
       attachments: [makeAttachment({ filename: 'weird.bin' })],
@@ -830,20 +823,20 @@ describe('buildSteeringMessage', () => {
 
     const content = message.content as Array<{ type: string; text?: string }>;
     expect(content[1].text).toContain('weird.bin');
-    expect(content[1].text).toContain('not readable by the agent');
+    expect(content[1].text).toContain('hydrate_attachment');
   });
 
   it('is a file-only turn when the message carried no text', () => {
-    const data = Buffer.from('%PDF');
     const message = buildSteeringMessage({
       text: '',
       attachments: [
-        makeAttachment({ filename: 'doc.pdf', mediaType: 'application/pdf', category: 'pdf', data }),
+        makeAttachment({ id: 'c', filename: 'doc.pdf', mediaType: 'application/pdf', category: 'pdf' }),
       ],
     });
 
-    expect(message.content).toEqual([
-      { type: 'file', data, mediaType: 'application/pdf', filename: 'doc.pdf' },
-    ]);
+    // A single stub part collapses to the plain-string form, same as history.
+    expect(typeof message.content).toBe('string');
+    expect(message.content as string).toContain('doc.pdf');
+    expect(message.content as string).toContain('id=c');
   });
 });

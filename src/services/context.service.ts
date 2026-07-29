@@ -60,14 +60,12 @@ class ContextService {
   }
 
   /**
-   * Filter to the last-20 LLM window and load shared-file bytes for each
-   * surviving message. Shared files are ALWAYS exposed while they're in the
-   * window. Attachment keys differ by source: DB threads key by messageId,
-   * live-read Slack threads key by the Slack message ts (externalMessageId).
-   *
-   * Two passes keep it cheap: a metadata-only pass (no BLOB reads) decides
-   * which otherwise-empty file-only turns to keep, then bytes load only for
-   * the final ≤20 messages.
+   * Filter to the last-20 LLM window and attach metadata (no bytes) for each
+   * surviving message. Attachment bytes are never loaded into the context
+   * window — the agent pulls content on demand via hydrate_attachment /
+   * view_attachment tools. Attachment keys differ by source: DB threads key
+   * by messageId, live-read Slack threads key by the Slack message ts
+   * (externalMessageId).
    */
   private async attachFiles(
     threadId: string,
@@ -92,20 +90,10 @@ class ContextService {
       )
       .slice(-20);
 
-    // This runs on every chat/heartbeat turn; the meta pass covered every
-    // candidate message, so an empty map means the BLOB query would return
-    // nothing — skip it (the common, attachment-free case).
     if (metaMap.size === 0) return windowed;
 
-    const windowKeys = windowed.map(keyOf).filter((k): k is string => Boolean(k));
-    if (windowKeys.length === 0) return windowed;
-
-    const bytesMap = isSlack
-      ? await attachmentService.loadByExternalTs(threadId, windowKeys)
-      : await attachmentService.loadForMessages(windowKeys);
-
     return windowed.map(m => {
-      const attachments = bytesMap.get(keyOf(m));
+      const attachments = metaMap.get(keyOf(m));
       return attachments && attachments.length > 0 ? { ...m, attachments } : m;
     });
   }
