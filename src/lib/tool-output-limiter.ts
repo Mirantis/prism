@@ -22,6 +22,9 @@ const HEAD_RATIO = 0.8;
  * Wrap each tool with a toModelOutput hook that truncates large outputs
  * using head+tail strategy. The raw output from execute() is preserved
  * for logging — only the model-facing view is truncated.
+ *
+ * Tools that already define their own `toModelOutput` (e.g. multimodal
+ * tools returning image-data) are passed through untouched.
  */
 export function withOutputLimits(
   tools: Record<string, Tool>,
@@ -29,6 +32,10 @@ export function withOutputLimits(
 ): Record<string, Tool> {
   const wrapped: Record<string, Tool> = {};
   for (const [name, tool] of Object.entries(tools)) {
+    if ((tool as { toModelOutput?: unknown }).toModelOutput) {
+      wrapped[name] = tool;
+      continue;
+    }
     wrapped[name] = {
       ...tool,
       toModelOutput: async ({ output }: { output: unknown }): Promise<ToolResultOutput> => {

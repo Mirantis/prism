@@ -158,4 +158,41 @@ describe('withOutputLimits', () => {
       (tools.myTool as Record<string, unknown>).execute
     );
   });
+
+  it('passes through tools that already define their own toModelOutput', async () => {
+    const customToModelOutput = async ({ output }: { output: unknown }) => ({
+      type: 'content' as const,
+      value: [
+        { type: 'text' as const, text: 'custom' },
+        { type: 'image-data' as const, data: 'abc123', mediaType: 'image/png' },
+      ],
+    });
+
+    const tools = {
+      plainTool: {
+        description: 'plain tool',
+        inputSchema: { type: 'object' as const },
+      },
+      multimodalTool: {
+        description: 'multimodal tool',
+        inputSchema: { type: 'object' as const },
+        toModelOutput: customToModelOutput,
+      },
+    };
+
+    const wrapped = withOutputLimits(tools, 1000);
+
+    // multimodalTool should be passed through completely untouched
+    expect((wrapped.multimodalTool as Record<string, unknown>).toModelOutput).toBe(customToModelOutput);
+
+    // plainTool should get the limiter's toModelOutput
+    expect((wrapped.plainTool as Record<string, unknown>).toModelOutput).not.toBeUndefined();
+    expect((wrapped.plainTool as Record<string, unknown>).toModelOutput).not.toBe(customToModelOutput);
+
+    // Verify the passthrough toModelOutput still works
+    const result = await customToModelOutput({ output: {} });
+    expect(result.type).toBe('content');
+    expect(result.value).toHaveLength(2);
+    expect(result.value[1].type).toBe('image-data');
+  });
 });

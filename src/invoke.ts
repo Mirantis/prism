@@ -672,9 +672,9 @@ function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<st
   // Subagents return their result as text to the parent invocation (via the
   // Task tool) — they have no direct channel to the user, so a file they
   // "shared" would never be delivered. Drop share_file. They also don't own a
-  // user thread, so drop goal tools and hydrate_attachment.
+  // user thread, so drop goal tools and attachment tools.
   if (mode === 'subagent') {
-    return omit(new Set([SHARE_FILE_TOOL_NAME, 'hydrate_attachment', ...goalToolNames]));
+    return omit(new Set([SHARE_FILE_TOOL_NAME, 'hydrate_attachment', 'view_attachment', ...goalToolNames]));
   }
 
   // Heartbeat is an autonomous run: full tool access, minus the cron-management

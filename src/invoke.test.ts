@@ -379,13 +379,14 @@ describe('invoke', () => {
 
       const callArgs = mockGenerateText.mock.calls[0][0];
       // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file + 2 goal + 1 skill
-      // + 1 attachment (hydrate_attachment)
-      expect(Object.keys(callArgs.tools)).toHaveLength(13);
+      // + 2 attachment (hydrate_attachment, view_attachment)
+      expect(Object.keys(callArgs.tools)).toHaveLength(14);
       expect(Object.keys(callArgs.tools)).toContain('share_file');
       expect(Object.keys(callArgs.tools)).toContain('create_goal');
       expect(Object.keys(callArgs.tools)).toContain('get_goal');
       expect(Object.keys(callArgs.tools)).toContain('skill');
       expect(Object.keys(callArgs.tools)).toContain('hydrate_attachment');
+      expect(Object.keys(callArgs.tools)).toContain('view_attachment');
     });
 
     it('subagent mode excludes share_file (no channel to the user)', async () => {
