@@ -192,6 +192,15 @@ export class HomePage extends BasePage {
     });
   }
 
+  /** Attach a binary file (zip, image, etc.) via the hidden file input. */
+  async attachFileBuffer(file: { name: string; mimeType: string; buffer: Buffer }) {
+    await this.fileInput.setInputFiles({
+      name: file.name,
+      mimeType: file.mimeType,
+      buffer: file.buffer,
+    });
+  }
+
   /** Composer chips (pending/ready uploads above the textarea). */
   composerAttachment(filename: string) {
     return this.page.getByTestId('composer-attachment').filter({ hasText: filename });

@@ -51,3 +51,20 @@ Feature: Share files with the agent
     And I download the attachment "export.txt"
     Then the downloaded file should be named "export.txt"
     And the downloaded file should contain "PRISMRELOAD7"
+
+  Scenario: The agent hydrates a ZIP and reports its contents
+    When I navigate to the agent chat page
+    And I attach a zip file named "bundle.zip" containing a file "secret.txt" with "PRISMZIP99"
+    And I type "What text file is inside the attached zip archive and what does it contain? Reply with the filename and its exact content." in the chat input
+    And I send the message
+    Then I should see "bundle.zip" as an attachment on my message
+    And the agent response should contain "secret.txt"
+    And the agent response should contain "PRISMZIP99"
+
+  Scenario: The agent views an uploaded image
+    When I navigate to the agent chat page
+    And I attach a small PNG image named "pixel.png"
+    And I type "I attached an image. Use view_attachment to look at it, then confirm you can see it by replying with the word IMAGEVIEWED." in the chat input
+    And I send the message
+    Then I should see "pixel.png" as an attachment on my message
+    And the agent response should contain "IMAGEVIEWED"
