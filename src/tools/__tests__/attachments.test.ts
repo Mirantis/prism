@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { runHydrateAttachment, reapScratchDirs } from '../attachments';
+import { runHydrateAttachment, runViewAttachment, reapScratchDirs, getAttachmentTools } from '../attachments';
 import { attachmentService } from '../../services/attachment.service';
 import { trackEvent } from '../../lib/telemetry';
 
@@ -198,6 +198,188 @@ describe('runHydrateAttachment', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.filename).toBe(ATTACHMENT_ID);
+  });
+});
+
+describe('runViewAttachment', () => {
+  let getByIdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    getByIdSpy = vi.spyOn(attachmentService, 'getById');
+    vi.mocked(trackEvent).mockClear();
+  });
+
+  afterEach(() => {
+    getByIdSpy.mockRestore();
+  });
+
+  it('returns not-found when threadId is undefined', async () => {
+    const result = await runViewAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, undefined,
+    );
+
+    expect(result).toEqual({ success: false, error: 'Attachment not found.' });
+    expect(getByIdSpy).not.toHaveBeenCalled();
+    expect(trackEvent).toHaveBeenCalledWith('attachment view failed', USER_ID, {
+      'agent.id': AGENT_ID,
+      'attachment.id': ATTACHMENT_ID,
+    });
+  });
+
+  it('returns not-found when attachment belongs to a different thread', async () => {
+    getByIdSpy.mockResolvedValue(makeRow({ threadId: 'other-thread' }));
+    const result = await runViewAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, THREAD_ID,
+    );
+
+    expect(result).toEqual({ success: false, error: 'Attachment not found.' });
+    expect(trackEvent).toHaveBeenCalledWith('attachment view failed', USER_ID, {
+      'agent.id': AGENT_ID,
+      'attachment.id': ATTACHMENT_ID,
+    });
+  });
+
+  it('returns success with base64 data for an image attachment (happy path)', async () => {
+    const data = Buffer.from('fake-png-bytes');
+    getByIdSpy.mockResolvedValue(makeRow({
+      data,
+      filename: 'screenshot.png',
+      mediaType: 'image/png',
+      sizeBytes: data.length,
+    }));
+
+    const result = await runViewAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, THREAD_ID,
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect(result.filename).toBe('screenshot.png');
+    expect(result.mediaType).toBe('image/png');
+    expect(result.category).toBe('image');
+    expect(result.sizeBytes).toBe(data.length);
+    expect(result.data).toBe(data.toString('base64'));
+
+    expect(trackEvent).toHaveBeenCalledWith('attachment viewed', USER_ID, {
+      'agent.id': AGENT_ID,
+      'attachment.id': ATTACHMENT_ID,
+      'attachment.category': 'image',
+      'attachment.media_type': 'image/png',
+      'attachment.size_bytes': String(data.length),
+    });
+  });
+
+  it('returns failure for oversize images exceeding the ceiling', async () => {
+    const oversizeBytes = 4_000_000;
+    getByIdSpy.mockResolvedValue(makeRow({
+      data: Buffer.alloc(oversizeBytes),
+      filename: 'huge.png',
+      mediaType: 'image/png',
+      sizeBytes: oversizeBytes,
+    }));
+
+    const result = await runViewAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, THREAD_ID,
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toContain('size limit');
+    expect(result.error).toContain('hydrate_attachment');
+
+    expect(trackEvent).toHaveBeenCalledWith('attachment view failed', USER_ID, {
+      'agent.id': AGENT_ID,
+      'attachment.id': ATTACHMENT_ID,
+    });
+  });
+
+  it('returns failure for PDF attachments directing to hydrate', async () => {
+    getByIdSpy.mockResolvedValue(makeRow({
+      mediaType: 'application/pdf',
+      filename: 'doc.pdf',
+    }));
+
+    const result = await runViewAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, THREAD_ID,
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toContain('pdftotext');
+    expect(result.error).toContain('hydrate_attachment');
+
+    expect(trackEvent).toHaveBeenCalledWith('attachment view failed', USER_ID, {
+      'agent.id': AGENT_ID,
+      'attachment.id': ATTACHMENT_ID,
+    });
+  });
+
+  it('returns failure for non-viewable types (e.g. application/zip)', async () => {
+    getByIdSpy.mockResolvedValue(makeRow({
+      mediaType: 'application/zip',
+      filename: 'archive.zip',
+    }));
+
+    const result = await runViewAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, THREAD_ID,
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toContain('hydrate_attachment');
+
+    expect(trackEvent).toHaveBeenCalledWith('attachment view failed', USER_ID, {
+      'agent.id': AGENT_ID,
+      'attachment.id': ATTACHMENT_ID,
+    });
+  });
+});
+
+describe('view_attachment toModelOutput', () => {
+  it('returns content with image-data part on success', async () => {
+    const tools = getAttachmentTools(USER_ID, AGENT_ID, THREAD_ID, '/tmp');
+    const viewTool = tools.view_attachment as { toModelOutput: (opts: { output: unknown }) => Promise<unknown> };
+
+    const successOutput = {
+      success: true,
+      filename: 'photo.jpg',
+      mediaType: 'image/jpeg',
+      sizeBytes: 100,
+      category: 'image',
+      data: 'aGVsbG8=', // base64 of "hello"
+    };
+
+    const modelOutput = await viewTool.toModelOutput({ output: successOutput });
+    expect(modelOutput).toEqual({
+      type: 'content',
+      value: [
+        { type: 'text', text: '[Viewing photo.jpg]' },
+        { type: 'image-data', data: 'aGVsbG8=', mediaType: 'image/jpeg' },
+      ],
+    });
+  });
+
+  it('returns text on failure', async () => {
+    const tools = getAttachmentTools(USER_ID, AGENT_ID, THREAD_ID, '/tmp');
+    const viewTool = tools.view_attachment as { toModelOutput: (opts: { output: unknown }) => Promise<unknown> };
+
+    const failureOutput = {
+      success: false,
+      error: 'Attachment not found.',
+    };
+
+    const modelOutput = await viewTool.toModelOutput({ output: failureOutput });
+    expect(modelOutput).toEqual({
+      type: 'text',
+      value: 'Attachment not found.',
+    });
   });
 });
 
