@@ -96,9 +96,12 @@ The same `/goal` command is also available in the **[Web UI](web-ui.md#chat)**.
 ### Attaching and saving files
 
 `/attach ./report.pdf` stages a file; it shows above the input with a `/detach`
-hint, and is sent with your next message. When the agent shares files back,
-`/save` writes them to the current directory — or pass a target: `/save ./out/`
-for a directory, or `/save ./out/report.pdf` to name a single file.
+hint, and is sent with your next message. The agent sees the file as a metadata
+stub and inspects it on demand via its [attachment tools](tools.md#attachments)
+— text/code/archives are hydrated to disk and read with shell tools; images can
+be viewed visually inline. When the agent shares files back, `/save` writes them
+to the current directory — or pass a target: `/save ./out/` for a directory, or
+`/save ./out/report.pdf` to name a single file.
 
 ## Panels
 
