@@ -6,6 +6,7 @@
 import { createBdd } from 'playwright-bdd';
 import { expect, type Download } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { deflateRawSync, deflateSync, crc32 } from 'node:zlib';
 import { HomePage } from '../pages/home.page';
 
 const { When, Then } = createBdd();
@@ -89,4 +90,140 @@ Then('the downloaded file should contain {string}', async ({}, expected: string)
   const path = await lastDownload!.path();
   const content = await readFile(path, 'utf8');
   expect(content).toContain(expected);
+});
+
+// ---------------------------------------------------------------------------
+// Helpers for constructing binary test fixtures in memory
+// ---------------------------------------------------------------------------
+
+/** Create a minimal valid ZIP archive containing a single text file. */
+function createMinimalZip(innerFilename: string, innerContent: string): Buffer {
+  const content = Buffer.from(innerContent, 'utf8');
+  const compressed = deflateRawSync(content);
+  const fnameBytes = Buffer.from(innerFilename, 'utf8');
+
+  const now = new Date();
+  const dosTime =
+    ((now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1)) & 0xffff;
+  const dosDate =
+    (((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate()) & 0xffff;
+
+  const fileCrc = crc32(content) >>> 0;
+
+  // Local file header
+  const localHeader = Buffer.alloc(30 + fnameBytes.length);
+  localHeader.writeUInt32LE(0x04034b50, 0); // local file header signature
+  localHeader.writeUInt16LE(20, 4); // version needed to extract
+  localHeader.writeUInt16LE(0, 6); // general purpose bit flag
+  localHeader.writeUInt16LE(8, 8); // compression method: deflate
+  localHeader.writeUInt16LE(dosTime, 10);
+  localHeader.writeUInt16LE(dosDate, 12);
+  localHeader.writeUInt32LE(fileCrc, 14);
+  localHeader.writeUInt32LE(compressed.length, 18); // compressed size
+  localHeader.writeUInt32LE(content.length, 22); // uncompressed size
+  localHeader.writeUInt16LE(fnameBytes.length, 26); // file name length
+  localHeader.writeUInt16LE(0, 28); // extra field length
+  fnameBytes.copy(localHeader, 30);
+
+  const localFileData = Buffer.concat([localHeader, compressed]);
+  const centralDirOffset = localFileData.length;
+
+  // Central directory header
+  const centralHeader = Buffer.alloc(46 + fnameBytes.length);
+  centralHeader.writeUInt32LE(0x02014b50, 0); // central directory signature
+  centralHeader.writeUInt16LE(20, 4); // version made by
+  centralHeader.writeUInt16LE(20, 6); // version needed
+  centralHeader.writeUInt16LE(0, 8); // flags
+  centralHeader.writeUInt16LE(8, 10); // compression: deflate
+  centralHeader.writeUInt16LE(dosTime, 12);
+  centralHeader.writeUInt16LE(dosDate, 14);
+  centralHeader.writeUInt32LE(fileCrc, 16);
+  centralHeader.writeUInt32LE(compressed.length, 20); // compressed size
+  centralHeader.writeUInt32LE(content.length, 24); // uncompressed size
+  centralHeader.writeUInt16LE(fnameBytes.length, 28); // file name length
+  centralHeader.writeUInt16LE(0, 30); // extra field length
+  centralHeader.writeUInt16LE(0, 32); // file comment length
+  centralHeader.writeUInt16LE(0, 34); // disk number start
+  centralHeader.writeUInt16LE(0, 36); // internal file attributes
+  centralHeader.writeUInt32LE(0, 38); // external file attributes
+  centralHeader.writeUInt32LE(0, 42); // relative offset of local header
+  fnameBytes.copy(centralHeader, 46);
+
+  const centralDirSize = centralHeader.length;
+
+  // End of central directory record
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); // EOCD signature
+  eocd.writeUInt16LE(0, 4); // number of this disk
+  eocd.writeUInt16LE(0, 6); // disk where central dir starts
+  eocd.writeUInt16LE(1, 8); // number of entries on this disk
+  eocd.writeUInt16LE(1, 10); // total entries
+  eocd.writeUInt32LE(centralDirSize, 12); // size of central directory
+  eocd.writeUInt32LE(centralDirOffset, 16); // offset of central dir
+  eocd.writeUInt16LE(0, 20); // comment length
+
+  return Buffer.concat([localFileData, centralHeader, eocd]);
+}
+
+/** Create a minimal valid 1x1 red-pixel PNG image. */
+function createMinimalPng(): Buffer {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  // IHDR: 1x1, 8-bit RGB
+  const ihdrData = Buffer.alloc(13);
+  ihdrData.writeUInt32BE(1, 0); // width
+  ihdrData.writeUInt32BE(1, 4); // height
+  ihdrData[8] = 8; // bit depth
+  ihdrData[9] = 2; // color type: RGB
+  ihdrData[10] = 0; // compression
+  ihdrData[11] = 0; // filter
+  ihdrData[12] = 0; // interlace
+  const ihdr = pngChunk('IHDR', ihdrData);
+
+  // IDAT: filter byte (0) + one RGB pixel (red). PNG uses zlib-wrapped deflate.
+  const rawData = Buffer.from([0, 0xff, 0x00, 0x00]);
+  const idat = pngChunk('IDAT', deflateSync(rawData));
+
+  const iend = pngChunk('IEND', Buffer.alloc(0));
+
+  return Buffer.concat([signature, ihdr, idat, iend]);
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const lengthBuf = Buffer.alloc(4);
+  lengthBuf.writeUInt32BE(data.length, 0);
+  const typeBytes = Buffer.from(type, 'ascii');
+  const crcInput = Buffer.concat([typeBytes, data]);
+  const crcBuf = Buffer.alloc(4);
+  crcBuf.writeUInt32BE(crc32(crcInput) >>> 0, 0);
+  return Buffer.concat([lengthBuf, typeBytes, data, crcBuf]);
+}
+
+// ---------------------------------------------------------------------------
+// Step definitions for attachment tools (hydrate_attachment, view_attachment)
+// ---------------------------------------------------------------------------
+
+When(
+  'I attach a zip file named {string} containing a file {string} with {string}',
+  async ({ page }, zipName: string, innerName: string, innerContent: string) => {
+    const homePage = new HomePage(page);
+    const zipBuffer = createMinimalZip(innerName, innerContent);
+    await homePage.attachFileBuffer({
+      name: zipName,
+      mimeType: 'application/zip',
+      buffer: zipBuffer,
+    });
+    await expect(homePage.composerAttachment(zipName)).toBeVisible({ timeout: 10_000 });
+  },
+);
+
+When('I attach a small PNG image named {string}', async ({ page }, name: string) => {
+  const homePage = new HomePage(page);
+  const pngBuffer = createMinimalPng();
+  await homePage.attachFileBuffer({
+    name,
+    mimeType: 'image/png',
+    buffer: pngBuffer,
+  });
+  await expect(homePage.composerAttachment(name)).toBeVisible({ timeout: 10_000 });
 });
