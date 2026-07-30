@@ -192,10 +192,10 @@ and `/api/ws` to `:3003` so the SPA code doesn't know it's not hitting the
 same origin.
 
 The runtime auto-loads `.env` via dotenv. Slack and Bedrock are optional —
-`lib/slack-config.ts` and `lib/bedrock-provider.ts` fail-open when their
-tokens are unset. The SPA shell, navigation, profile, `/agents/me`,
-`/agents/:id/details`, `/agents/:id/cron-tasks` work with zero extra env. Add
-`AWS_BEARER_TOKEN_BEDROCK` (or AWS SigV4) in `.env` for chat;
+`lib/slack-config.ts` and `lib/llm-providers/bedrock/bedrock-provider.ts`
+fail-open when their tokens are unset. The SPA shell, navigation, profile,
+`/agents/me`, `/agents/:id/details`, `/agents/:id/cron-tasks` work with zero
+extra env. Add `AWS_BEARER_TOKEN_BEDROCK` (or AWS SigV4) in `.env` for chat;
 `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` for Slack flows. See `.env.example`
 for the full env block.
 
@@ -339,10 +339,13 @@ src/
 │   └── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
 ├── lib/
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
-│   ├── llm-provider.ts         # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` + `.embedding(modelId)` contract both vendor factories return
-│   ├── create-provider.ts      # Unified LLM provider factory: picks vendor (bedrock/azure), passes each its optional Nexus baseURL; `isProviderConfigured()`
-│   ├── bedrock-provider.ts     # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or Nexus when baseURL set)
-│   ├── azure-provider.ts       # Azure provider factory (Claude via MS Foundry, Anthropic Messages API; embeddings via Azure OpenAI): `createAzureProvider(baseURL?)`
+│   ├── llm-providers/          # One folder per LLM vendor, plus the shared contract and the selector
+│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` + `.embedding(modelId)` contract both vendor factories return
+│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure), passes each its optional Nexus baseURL; `isProviderConfigured()`
+│   │   ├── bedrock/
+│   │   │   └── bedrock-provider.ts # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or Nexus when baseURL set)
+│   │   └── azure/
+│   │       └── azure-provider.ts   # Azure provider factory (Claude via MS Foundry, Anthropic Messages API; embeddings via Azure OpenAI): `createAzureProvider(baseURL?)`
 │   ├── classification.ts       # Classification-gate model factory (`getClassificationModel()`)
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers

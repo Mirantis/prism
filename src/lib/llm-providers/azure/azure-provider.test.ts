@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { config } from '../config';
+import { config } from '../../../config';
 
 const { mockCreateAnthropic, mockAnthropicModel, mockCreateAzure, mockOpenaiEmbeddingFn } =
   vi.hoisted(() => {

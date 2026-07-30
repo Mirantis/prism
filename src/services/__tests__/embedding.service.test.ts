@@ -27,7 +27,7 @@ const {
 
 vi.mock('ai', () => ({ embed: mockEmbed, embedMany: mockEmbedMany }));
 vi.mock('../../lib/prisma', () => ({ default: mockPrisma }));
-vi.mock('../../lib/bedrock-provider', () => ({
+vi.mock('../../lib/llm-providers/bedrock/bedrock-provider', () => ({
   createBedrockProvider: mockCreateBedrockProvider,
 }));
 vi.mock('../../config', () => ({ config: mockConfig }));

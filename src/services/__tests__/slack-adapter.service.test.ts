@@ -59,7 +59,7 @@ vi.mock('../../queues/slack-heartbeat-throttle-queue', () => ({
   getSlackHeartbeatThrottleQueue: vi.fn(),
 }));
 vi.mock('../../queues/channel-learning.queue', () => ({ channelLearningQueue: {} }));
-vi.mock('../../lib/bedrock-provider', () => ({
+vi.mock('../../lib/llm-providers/bedrock/bedrock-provider', () => ({
   isBedrockConfigured: () => false,
   getClassificationModel: vi.fn(),
 }));
