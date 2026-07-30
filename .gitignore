@@ -41,3 +41,7 @@ tmp/
 
 # Database backups
 *.db.next
+
+# Agent exports (`.prism` archives from the export endpoint) — host-local, often
+# large, and full of real conversation data
+*.prism

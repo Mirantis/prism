@@ -6,8 +6,8 @@
  * Tab autocomplete and arrow-key navigation are exercised manually via
  * `npm run dev --workspace=prism-cli` — under the test PTY they run into Ink
  * keystroke parsing quirks that aren't worth chasing here, and the main
- * regression risk (the `swallowNextChangeRef` ordering with Ctrl+O) is covered
- * by tool-calls.feature.
+ * regression risk (a Ctrl+O chord leaking into the composer) is covered by
+ * tool-calls.feature.
  */
 
 import { readFileSync } from 'node:fs';

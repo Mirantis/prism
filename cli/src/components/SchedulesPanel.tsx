@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import TextInput from 'ink-text-input';
+import { TextInput } from './TextInput.js';
 import { ApiClient, ApiError, CronTask } from '../api-client.js';
 import { Spinner } from './Spinner.js';
 

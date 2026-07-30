@@ -6,9 +6,17 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { expect } from 'vitest';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
 import { startPrism, KEYS, type TuiSession } from '../harness';
-import { setupRuntime, resetThread, type RuntimeTestEnv } from '../setup';
+import {
+  setupRuntime,
+  resetThread,
+  countMessages,
+  waitForStoredMessage,
+  waitForMessageCount,
+  type RuntimeTestEnv,
+} from '../setup';
 
 const feature = loadFeatureFromText(
   readFileSync(join(import.meta.dirname, '../features/chat.feature'), 'utf8'),
@@ -69,6 +77,53 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
     Then('the chat shows {string}', async (_ctx, marker: string) => {
       await session.waitForFrame(new RegExp(marker), 15_000);
+    });
+  });
+
+  Scenario('Steers a turn that is already running', ({ When, And, Then }) => {
+    When('I send a prompt that keeps the agent busy', async () => {
+      session.send('Use your shell to run `sleep 15`, then reply ALPHA.');
+      await sleep(200);
+      session.send(KEYS.ENTER);
+      await session.waitForFrame(/thinking/, 15_000);
+    });
+    And(
+      'I send {string} while the agent is responding',
+      async (_ctx, followUp: string) => {
+        // The turn is mid-`sleep`. The runtime hands this message to the running
+        // turn, which picks it up at its next step — no second turn queues up
+        // behind it (which used to leave the history ending on the agent's own
+        // reply, a shape Bedrock rejects as assistant prefill).
+        session.send(followUp);
+        await sleep(200);
+        session.send(KEYS.ENTER);
+      },
+    );
+    Then('the agent reply contains {string}', async (_ctx, sentinel: string) => {
+      // Asserted against a stored AGENT row, not the frame. The composer now
+      // stays live during a turn, so the sentinel is on screen the instant it is
+      // typed — a frame matcher would pass against the user's own draft and prove
+      // nothing about a reply. Whether the message reached the running turn or its
+      // coalesced follow-up, the guarantee is the same: it gets answered, in this
+      // conversation.
+      await waitForStoredMessage(env.dbPath, 'AGENT', sentinel, 120_000);
+      expect(session.output()).not.toMatch(/I encountered an error/i);
+    });
+    And('the thread has {number} user messages', async (_ctx, expected: number) => {
+      // Authoritative: both messages became history, and the mid-turn one was
+      // stored exactly once. Polled, because the row is written by the runtime.
+      await waitForMessageCount(env.dbPath, 'USER', expected, 30_000);
+      expect(countMessages(env.dbPath, 'USER')).toBe(expected);
+    });
+    And('the running turn answered it, rather than a turn of its own', () => {
+      // What makes this a *steering* test: the runtime says it handed the message
+      // to the turn that already owned the thread. Without this the scenario would
+      // also pass on the old queue-behind-the-lock path, which answered the
+      // message late — and produced the assistant-prefill failure this branch
+      // fixes.
+      expect(env.runtime.logTail(200_000)).toMatch(
+        /Handed the message to the turn that owns thread/,
+      );
     });
   });
 });

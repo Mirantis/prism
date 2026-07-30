@@ -3,7 +3,7 @@ import { webSocketUrl } from '@/api/runtime-client';
 import type { ConversationMessage } from '@/types';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
-export type MessageMode = 'steer' | 'followup' | 'collect';
+export type MessageMode = 'followup' | 'collect';
 
 interface ChatMessage {
   mode: MessageMode;

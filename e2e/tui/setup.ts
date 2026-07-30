@@ -143,6 +143,87 @@ export function resetThread(dbPath: string): void {
 }
 
 /**
+ * Count stored conversation rows for a role, straight from SQLite.
+ *
+ * Authoritative check that a message the user sent actually became history —
+ * the frame only shows what was rendered.
+ */
+export function countMessages(dbPath: string, role: 'USER' | 'AGENT'): number {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const row = db
+      .prepare('SELECT COUNT(*) AS n FROM conversation_messages WHERE role = ?')
+      .get(role) as { n: number };
+    return row.n;
+  } finally {
+    db.close();
+  }
+}
+
+/** How many rows of `role` contain `text`. */
+function countMessagesContaining(dbPath: string, role: 'USER' | 'AGENT', text: string): number {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const row = db
+      .prepare('SELECT COUNT(*) AS n FROM conversation_messages WHERE role = ? AND content LIKE ?')
+      .get(role, `%${text}%`) as { n: number };
+    return row.n;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Wait until at least one stored `role` message contains `text`.
+ *
+ * Use this rather than `waitForFrame` when the text also appears in something the
+ * *client* renders — a draft in the composer, or the echo of the user's own
+ * line. Those satisfy a frame matcher the moment they are typed, so a frame
+ * match proves nothing about a reply. A row of the right role does.
+ */
+export async function waitForStoredMessage(
+  dbPath: string,
+  role: 'USER' | 'AGENT',
+  text: string,
+  timeoutMs = 120_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (countMessagesContaining(dbPath, role, text) > 0) return;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `No ${role} message containing "${text}" after ${timeoutMs}ms ` +
+          `(${countMessages(dbPath, role)} ${role} row(s) stored)`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+/**
+ * Wait for the stored count of `role` to reach `expected`.
+ *
+ * A message is stored by the runtime, so sampling the count the instant the
+ * screen changes races the write.
+ */
+export async function waitForMessageCount(
+  dbPath: string,
+  role: 'USER' | 'AGENT',
+  expected: number,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const n = countMessages(dbPath, role);
+    if (n >= expected) return;
+    if (Date.now() > deadline) {
+      throw new Error(`Expected ${expected} ${role} message(s), found ${n} after ${timeoutMs}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+/**
  * Minimal JSON HTTP client for the runtime's management API. Specs use it to
  * seed state (e.g. a cron task) and to assert side effects authoritatively —
  * the on-screen frame shows the SYSTEM reply; this confirms the runtime row.

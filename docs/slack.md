@@ -98,6 +98,12 @@ switching to a DM link, and vice-versa.
   differently across linked channels.
 - **Threads.** Each Slack thread maps to a Prism conversation thread; the agent
   can read the thread's history, including messages from before it joined.
+- **Messages sent mid-reply.** Long tasks post progress as they go, and you can
+  post while one is running. A message that lands mid-task is handed to the work
+  already in flight: the agent picks it up at its next step and adjusts, so
+  "no need to run tests" takes effect during the run instead of after it.
+  Whatever arrives too late for that turn is answered together in one follow-up
+  message rather than one reply per message.
 - **Files.** You can share files with the agent in Slack, and it can share files
   back (uploaded via the Slack API). If a file can't be read (too large, or a
   permissions issue), the agent tells you why.

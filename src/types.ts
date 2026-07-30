@@ -4,7 +4,7 @@
  * Request/response contracts for the agent runtime.
  */
 
-import { ConversationMessage } from './prompts/context-builder';
+import { ConversationMessage, SteeringMessage } from './prompts/context-builder';
 
 // ============================================================================
 // Agent Status
@@ -90,6 +90,25 @@ interface InvokeRequestBase {
    * without surfacing an error step — already-completed steps are preserved.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Mid-turn steering source, awaited at every step boundary. Each message it
+   * returns is appended to the message array as a user turn — text and any files
+   * alike — so a message the user sent while this turn was running reaches the
+   * model on its next step instead of waiting for a turn of its own (see
+   * `threadTurnService`). Async so the source can load attachment bytes.
+   */
+  steering?: () => Promise<SteeringMessage[]>;
+  /**
+   * Append `prompt` as the final user message even in chat mode, where the
+   * prompt normally arrives via history (the conversation engine stores it
+   * before invoking).
+   *
+   * Set by the coalesced follow-up turn, whose prompt restates messages that
+   * already sit *earlier* in history — before the previous turn's replies — so
+   * history alone would leave the array ending on an assistant turn, which
+   * Bedrock/Anthropic reject.
+   */
+  appendPrompt?: boolean;
 }
 
 /**

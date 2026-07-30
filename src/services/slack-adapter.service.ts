@@ -1056,7 +1056,7 @@ class SlackAdapterService implements ChannelAdapter {
           channelId,
           channelName: mapping.slackChannelName ?? undefined,
           slackThreadTs: slackThreadId,
-          senderSlackUserId: slackUserId,
+          senderExternalId: slackUserId,
           senderName,
         },
       });

@@ -9,9 +9,11 @@
  * - Background continuation loop runs in-process, fire-and-forget, per goal.
  * - Completion is decided ONLY by the Haiku gate (no model-facing update tool),
  *   fail → CONTINUE so the loop never completes prematurely; caps bound it.
- * - A per-thread async mutex (shared with conversation-engine's chat()) ensures
- *   a goal turn and an interactive user turn never invoke() the same thread
- *   concurrently. User turns interleave between goal turns.
+ * - Turns run through `threadTurnService.run()`, the per-thread mutex shared
+ *   with conversation-engine's chat(), so a goal turn and an interactive user
+ *   turn never invoke() the same thread concurrently. User turns interleave
+ *   between goal turns. Goal turns never open a steerable window, so a message
+ *   arriving mid-goal-turn is not injected into it.
  * - State of record is the `goals` table; the in-memory runtime map only holds
  *   the abort handle + running flag, so a restart cleanly resumes from the DB.
  */
@@ -22,6 +24,7 @@ import { invoke } from '../invoke';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { messageDeliveryService } from './message-delivery.service';
+import { threadTurnService } from './thread-turn.service';
 import { getClassificationModel } from '../lib/classification';
 import { isLangfuseEnabled } from '../lib/langfuse';
 import { trackEvent } from '../lib/telemetry';
@@ -54,29 +57,6 @@ export interface StartGoalInput {
 class GoalService {
   /** Per-goal runtime handles, keyed by goalId. DB is the source of truth. */
   private runtimes = new Map<string, GoalRuntime>();
-  /** Per-thread lock tails so turns on a thread serialize (shared with chat()). */
-  private threadLocks = new Map<string, Promise<unknown>>();
-
-  // ==========================================================================
-  // Per-thread mutex (shared with conversation-engine.chat())
-  // ==========================================================================
-
-  /**
-   * Run `fn` exclusively per thread: calls for the same threadId run one at a
-   * time, FIFO. Used by the goal loop and by chat() so a background goal turn
-   * never overlaps an interactive user turn on the same thread.
-   */
-  async runExclusive<T>(threadId: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.threadLocks.get(threadId) ?? Promise.resolve();
-    const result = prev.then(() => fn());
-    // Store a non-throwing tail so a failed turn doesn't poison the next waiter.
-    // Note: this map keeps one (settled) entry per thread id for the process
-    // lifetime — never pruned. Each entry is a tiny resolved promise, and a
-    // single-agent runtime sees a bounded set of threads in practice, so the
-    // unbounded-in-theory growth is acceptable rather than worth a cleanup race.
-    this.threadLocks.set(threadId, result.then(() => undefined, () => undefined));
-    return result;
-  }
 
   // ==========================================================================
   // Lifecycle
@@ -401,7 +381,7 @@ class GoalService {
     goal: Goal,
     runtime: GoalRuntime,
   ): Promise<{ text: string; tokens: number; hadToolCalls: boolean; budgetExceeded: boolean } | null> {
-    return this.runExclusive(goal.threadId, async () => {
+    return threadTurnService.run(goal.threadId, async () => {
       if (runtime.aborted) return null;
 
       const result = await invoke({
@@ -465,7 +445,7 @@ class GoalService {
     // Deliver the terminal notice under the per-thread lock so it can't
     // interleave with an in-flight user chat turn's messages (the gate runs
     // between the last turn's delivery and here, outside the lock).
-    await this.runExclusive(goal.threadId, () =>
+    await threadTurnService.run(goal.threadId, () =>
       this.deliver(goal, `**${label}**\n\nObjective: ${goal.objective}\n\n${reason}`),
     );
 

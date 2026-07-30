@@ -312,8 +312,8 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
       const parts = buildUserContentParts(msg);
       // Skip only when there's neither text nor any attachment.
       if (parts.length === 0) continue;
-      // Keep the plain-string form when there's just text — better prompt-cache
-      // behavior and avoids needlessly wrapping every turn in a content array.
+      // Keep the plain-string form when there's just text, rather than wrapping
+      // every turn in a content array of one part.
       if (parts.length === 1 && parts[0].type === 'text') {
         messages.push({ role: 'user', content: parts[0].text });
       } else {
@@ -354,6 +354,39 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
   }
 
   return messages;
+}
+
+/**
+ * A message the user sent while a turn was already running, to be folded into
+ * that turn at its next step boundary (see `threadTurnService`).
+ */
+export interface SteeringMessage {
+  text: string;
+  /** Files it carried, bytes already loaded. */
+  attachments?: AttachmentForLLM[];
+}
+
+/**
+ * Build the user turn for a mid-turn steering message.
+ *
+ * Goes through the same content-part construction as history, so a file shared
+ * mid-turn is presented to the model exactly as one shared at the start of a
+ * turn — same image/PDF handling, same inlining and truncation, same
+ * "unreadable" note for types the provider would reject.
+ */
+export function buildSteeringMessage(msg: SteeringMessage): ModelMessage {
+  const parts = buildUserContentParts({
+    id: 'steering',
+    role: 'USER',
+    content: msg.text,
+    attachments: msg.attachments,
+  });
+
+  // Keep the plain-string form when there's just text, same as history.
+  if (parts.length === 1 && parts[0].type === 'text') {
+    return { role: 'user', content: parts[0].text };
+  }
+  return { role: 'user', content: parts };
 }
 
 /**

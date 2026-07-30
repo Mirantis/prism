@@ -1,37 +1,34 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import TextInput from 'ink-text-input';
-import { Spinner } from './Spinner.js';
+import { TextInput } from './TextInput.js';
 
 interface Props {
   value: string;
   onChange: (v: string) => void;
   onSubmit: (v: string) => void;
-  disabled: boolean;
   hideCursor?: boolean;
 }
 
-export const Input: React.FC<Props> = ({ value, onChange, onSubmit, disabled, hideCursor }) => {
+/**
+ * The composer. Live at all times — including while the agent is responding, so
+ * a message typed mid-turn is handed to that turn and can redirect it (the
+ * runtime decides; see `ThinkingRow` for the in-flight indicator that used to
+ * sit here in the input's place).
+ */
+export const Input: React.FC<Props> = ({ value, onChange, onSubmit, hideCursor }) => {
   return (
-    <Box borderStyle="round" borderColor={disabled ? 'gray' : 'cyan'} paddingX={1}>
+    <Box borderStyle="round" borderColor="cyan" paddingX={1}>
       <Box marginRight={1}>
-        <Text color={disabled ? 'gray' : 'cyan'} bold>
+        <Text color="cyan" bold>
           {'›'}
         </Text>
       </Box>
-      {disabled ? (
-        <Box>
-          <Spinner />
-          <Text dimColor italic> thinking… (esc to stop)</Text>
-        </Box>
-      ) : (
-        <TextInput
-          value={value}
-          onChange={onChange}
-          onSubmit={onSubmit}
-          showCursor={!hideCursor}
-        />
-      )}
+      <TextInput
+        value={value}
+        onChange={onChange}
+        onSubmit={onSubmit}
+        showCursor={!hideCursor}
+      />
     </Box>
   );
 };

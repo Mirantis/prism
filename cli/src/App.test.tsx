@@ -103,7 +103,7 @@ describe('App', () => {
     unmount();
   });
 
-  it('disables the input while status is "thinking"', async () => {
+  it('shows the in-flight row while status is "thinking"', async () => {
     const { lastFrame, unmount } = render(<App {...baseProps} />);
     // Flip status; App listens on the adapter event bus.
     adapterStub.events.emit('status', 'thinking');
@@ -111,6 +111,66 @@ describe('App', () => {
     await new Promise((r) => setImmediate(r));
     expect(lastFrame() ?? '').toContain('thinking');
     unmount();
+  });
+
+  it('keeps the composer live while thinking, so typing still lands in it', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    try {
+      adapterStub.events.emit('status', 'thinking');
+      await new Promise((r) => setImmediate(r));
+
+      stdin.write('wait, not that');
+      await new Promise((r) => setImmediate(r));
+
+      // The draft is visible in the composer even though a turn is running.
+      expect(lastFrame() ?? '').toContain('wait, not that');
+    } finally {
+      unmount();
+    }
+  });
+
+  it('sends a message typed while the agent is responding', async () => {
+    // The whole point of the mid-turn composer: Enter hands the message to the
+    // runtime, which folds it into the turn already running on the thread.
+    const { stdin, unmount } = render(<App {...baseProps} />);
+    try {
+      adapterStub.events.emit('status', 'thinking');
+      await new Promise((r) => setImmediate(r));
+
+      stdin.write('actually, skip the tests');
+      await new Promise((r) => setImmediate(r));
+      stdin.write('\r');
+      await new Promise((r) => setImmediate(r));
+
+      expect(adapterStub.submitUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'actually, skip the tests' }),
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it('does not leak an "o" into the draft on the first Ctrl+O of a session', async () => {
+    // Ink dispatches useInput handlers child-before-parent, so the composer sees
+    // a chord before App does. Our vendored TextInput ignores every Ctrl chord
+    // (components/TextInput.tsx); ink-text-input only filtered Ctrl+C, which put
+    // a literal 'o' in the value — and this is a *fresh* mount, the case no
+    // remount can mask.
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    try {
+      stdin.write('\x0f'); // Ctrl+O
+      await new Promise((r) => setImmediate(r));
+      stdin.write('hi');
+      await new Promise((r) => setImmediate(r));
+
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('hi');
+      // Neither the leaked character nor a swallowed first keystroke.
+      expect(frame).not.toContain('ohi');
+      expect(frame).not.toContain('oi');
+    } finally {
+      unmount();
+    }
   });
 
   // ink holds a lone trailing ESC for ~20ms (pendingInputFlushDelayMilliseconds)
