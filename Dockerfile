@@ -211,8 +211,8 @@ RUN chmod +x ./start.sh
 ENV NODE_ENV=production
 ENV PORT=3003
 
-# OTEL product telemetry — baked at publish time by deploy.yml /
-# release-deploy.yml. Empty defaults keep PR-validation and local builds
+# OTEL product telemetry — baked at publish time by release-canary.yml /
+# release-production.yml. Empty defaults keep PR-validation and local builds
 # telemetry-off (config.ts treats '' as disabled). Operators can override
 # or disable with `docker run -e OTEL_EXPORTER_OTLP_ENDPOINT=`.
 ARG OTEL_EXPORTER_OTLP_ENDPOINT=""
@@ -221,8 +221,8 @@ ENV OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
 ENV DEPLOYMENT_ENVIRONMENT=${DEPLOYMENT_ENVIRONMENT}
 
 # Build identifier surfaced as the OTel `service.version` resource attribute on
-# every product-telemetry event. release-deploy.yml passes the release tag
-# (e.g. v2026.6.18060952); deploy.yml (canary) passes the build commit SHA.
+# every product-telemetry event. release-production.yml passes the release tag
+# (e.g. v2026.6.18060952); release-canary.yml passes the build commit SHA.
 # Empty default keeps PR-validation and local builds from emitting a misleading
 # literal — config.ts treats '' as "omit the attribute".
 ARG SERVICE_VERSION=""

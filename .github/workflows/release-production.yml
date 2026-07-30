@@ -1,4 +1,4 @@
-name: Release Deploy
+name: Release Production
 
 # Manual production build + push, gated by an environment approval.
 
@@ -10,7 +10,7 @@ permissions:
   packages: write # for ghcr.io push
 
 concurrency:
-  group: release-deploy-production
+  group: release-production
   cancel-in-progress: false
 
 jobs:
@@ -95,8 +95,8 @@ jobs:
             OTEL_EXPORTER_OTLP_ENDPOINT=${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
             DEPLOYMENT_ENVIRONMENT=production
             SERVICE_VERSION=${{ needs.prepare.outputs.version }}
-          cache-from: type=gha,scope=deploy-prism-${{ matrix.platform }}
-          cache-to: type=gha,scope=deploy-prism-${{ matrix.platform }},mode=max
+          cache-from: type=gha,scope=release-prism-${{ matrix.platform }}
+          cache-to: type=gha,scope=release-prism-${{ matrix.platform }},mode=max
 
       - if: always()
         run: rm -f "$RUNNER_TEMP/.npmrc-secret" "$RUNNER_TEMP/.gh-token-secret" "$RUNNER_TEMP/.otel-api-key-secret"
