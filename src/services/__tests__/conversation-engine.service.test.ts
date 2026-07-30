@@ -24,6 +24,7 @@ const {
   mockLinkToMessage,
   mockOnFirstUserMessage,
   mockGetAgent,
+  mockLoadByIds,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
@@ -37,6 +38,7 @@ const {
   mockLinkToMessage: vi.fn(),
   mockOnFirstUserMessage: vi.fn(),
   mockGetAgent: vi.fn(),
+  mockLoadByIds: vi.fn(),
 }));
 
 /**
@@ -75,6 +77,7 @@ vi.mock('../thread-title.service', () => ({
 vi.mock('../attachment.service', () => ({
   attachmentService: {
     linkToMessage: mockLinkToMessage,
+    loadByIds: mockLoadByIds,
   },
 }));
 
@@ -113,8 +116,10 @@ vi.mock('../agent-workspace.service', () => ({
   },
 }));
 
-// Import after mocking
+// Import after mocking. `threadTurnService` is the real per-thread primitive —
+// turn ordering is part of what the steering scenarios assert.
 import { conversationEngineService } from '../conversation-engine.service';
+import { threadTurnService } from '../thread-turn.service';
 
 describe('Requirement: Conversation Engine', () => {
   beforeEach(() => {
@@ -142,6 +147,7 @@ describe('Requirement: Conversation Engine', () => {
       { text: 'I am a helpful AI assistant.', toolCalls: [] },
     ]));
     mockCountAgentMessages.mockResolvedValue(0);
+    mockLoadByIds.mockResolvedValue([]);
     // Default: telemetry off so unrelated scenarios don't exercise the classifier.
     mockIsTelemetryEnabled.mockReturnValue(false);
     mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
@@ -510,7 +516,9 @@ describe('Requirement: Conversation Engine', () => {
       });
 
       expect(mockPublish).not.toHaveBeenCalled();
-      expect(response.messageId).toBe('');
+      // No message was published, so there is no id to point at — absent rather
+      // than an empty string a caller could mistake for one.
+      expect(response.messageId).toBeUndefined();
       expect(response.content).toBe('');
     });
   });
@@ -526,7 +534,7 @@ describe('Requirement: Conversation Engine', () => {
           channelId: 'C123',
           slackThreadTs: '1000.2000',
           senderName: 'Alice',
-          senderSlackUserId: 'U123',
+          senderExternalId: 'U123',
         },
       });
 
@@ -593,7 +601,7 @@ describe('Requirement: Conversation Engine', () => {
       channelId: 'C123',
       slackThreadTs: '1000.2000',
       senderName: 'Alice',
-      senderSlackUserId: 'U123',
+      senderExternalId: 'U123',
     };
 
     it('folds includeFeedback=true when telemetry is on, cadence hits, and classifier replies WORTHY', async () => {
@@ -899,6 +907,323 @@ describe('Requirement: Conversation Engine', () => {
       });
 
       expect(mockOnFirstUserMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Scenario: Turn steering (mid-turn messages)', () => {
+    // A message that arrives while a turn is running is handed to that turn
+    // rather than starting a second one, and anything landing after the turn's
+    // last step boundary is answered by exactly one coalesced follow-up.
+    //
+    // Each test gets its own thread id — steering state is per-thread, and a
+    // test that leaves a turn held (never released) keeps that thread's state
+    // alive past the test.
+    let steerThread = '';
+    let steerSeq = 0;
+
+    beforeEach(() => {
+      steerThread = `thread-steering-${++steerSeq}`;
+    });
+
+    /** A turn whose single step is released only when the test says so. */
+    function heldTurn() {
+      let release!: () => void;
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      let started!: () => void;
+      const running = new Promise<void>((r) => {
+        started = r;
+      });
+
+      const requests: Array<{ steering?: () => string[]; prompt: string; appendPrompt?: boolean }> = [];
+      const generator = async function* (request: { steering?: () => string[]; prompt: string }) {
+        requests.push(request);
+        started();
+        await released;
+        yield { text: 'done', toolCalls: [] };
+      };
+
+      return { generator, release, running, requests };
+    }
+
+    /** A turn that completes immediately. */
+    async function* instantTurn() {
+      yield { text: 'ok', toolCalls: [] };
+    }
+
+    function steerInput(message: string, overrides: Record<string, unknown> = {}) {
+      return {
+        userId: 'user-123',
+        agentId: 'agent-123',
+        threadId: steerThread,
+        message,
+        metadata: { channel: 'websocket' as const },
+        ...overrides,
+      };
+    }
+
+    it('hands a message to the live turn instead of starting a second one', async () => {
+      const held = heldTurn();
+      mockInvokeStream.mockImplementation(held.generator);
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+
+      const second = await conversationEngineService.chat(steerInput('no need to run tests'));
+
+      expect(second.steered).toBe(true);
+      expect(second.content).toBe('');
+      // Both messages are stored — the second is real conversation history.
+      expect(mockAddMessage).toHaveBeenCalledTimes(2);
+      // But only one turn was ever invoked.
+      expect(mockInvokeStream).toHaveBeenCalledTimes(1);
+
+      held.release();
+      await first;
+    });
+
+    it('exposes the handed-over message to the running turn as steering', async () => {
+      const held = heldTurn();
+      mockInvokeStream.mockImplementation(held.generator);
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+      await conversationEngineService.chat(steerInput('skip the tests'));
+
+      // The turn's steering source is what invoke.ts awaits at each step boundary.
+      await expect(held.requests[0].steering?.()).resolves.toEqual([
+        { text: 'skip the tests', attachments: undefined },
+      ]);
+
+      held.release();
+      await first;
+    });
+
+    it('withdraws a handed-over message when storing it fails', async () => {
+      // The hand-over reaches the running turn's inbox before the message is
+      // stored — it has to, so the decision is one synchronous act. If the write
+      // then fails, leaving it there would have the turn answer text that never
+      // became history, and the next turn would read a reply to nothing.
+      const held = heldTurn();
+      mockInvokeStream.mockImplementation(held.generator);
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+
+      mockAddMessage.mockRejectedValueOnce(new Error('disk is full'));
+      await expect(
+        conversationEngineService.chat(steerInput('no need to run tests')),
+      ).rejects.toThrow('disk is full');
+
+      // Nothing left for the running turn to inject.
+      expect(threadTurnService.pendingCount(steerThread)).toBe(0);
+      await expect(held.requests[0].steering?.()).resolves.toEqual([]);
+
+      held.release();
+      await first;
+    });
+
+    it('answers a late message with one coalesced follow-up turn', async () => {
+      // Nothing drains the steering source here, standing in for a message that
+      // lands after the turn's final step boundary.
+      const held = heldTurn();
+      mockInvokeStream.mockImplementationOnce(held.generator).mockImplementation(instantTurn);
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+      await conversationEngineService.chat(steerInput('and check CI too'));
+      held.release();
+      await first;
+
+      expect(mockInvokeStream).toHaveBeenCalledTimes(2);
+      const followUp = mockInvokeStream.mock.calls[1][0];
+      expect(followUp.prompt).toBe('and check CI too');
+      // Restated as the trailing user message: the prompt sits earlier in history
+      // than the first turn's replies, so history alone would end on an assistant
+      // turn — the shape the provider rejects as assistant prefill.
+      expect(followUp.appendPrompt).toBe(true);
+    });
+
+    it('coalesces several late messages into a single follow-up', async () => {
+      const held = heldTurn();
+      mockInvokeStream.mockImplementationOnce(held.generator).mockImplementation(instantTurn);
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+      await conversationEngineService.chat(steerInput('wait'));
+      await conversationEngineService.chat(steerInput('why do you not see my messages'));
+      held.release();
+      await first;
+
+      expect(mockInvokeStream).toHaveBeenCalledTimes(2);
+      expect(mockInvokeStream.mock.calls[1][0].prompt).toBe(
+        'wait\n\nwhy do you not see my messages',
+      );
+    });
+
+    it('does not start a follow-up turn after a cancel', async () => {
+      const held = heldTurn();
+      mockInvokeStream.mockImplementationOnce(held.generator).mockImplementation(instantTurn);
+
+      const controller = new AbortController();
+      const first = conversationEngineService.chat(
+        steerInput('review the PR', { abortSignal: controller.signal }),
+      );
+      await held.running;
+      await conversationEngineService.chat(steerInput('never mind'));
+
+      controller.abort();
+      held.release();
+      await first;
+
+      // The user asked to stop, so no follow-up runs.
+      expect(mockInvokeStream).toHaveBeenCalledTimes(1);
+      // The pending copy is discarded — the message is already stored, so the
+      // next turn sees it from history rather than seeing it twice.
+      expect(threadTurnService.pendingCount(steerThread)).toBe(0);
+    });
+
+    it('folds a mid-turn message\'s files into the running turn', async () => {
+      // Files reach the running turn too: their bytes are loaded on the consumer
+      // side, so a screenshot shared mid-work lands on the next step rather than
+      // waiting for a turn of its own.
+      const held = heldTurn();
+      mockInvokeStream.mockImplementation(held.generator);
+      mockLoadByIds.mockResolvedValue([
+        { id: 'att-1', filename: 'run.log', mediaType: 'text/plain', category: 'text', sizeBytes: 4, data: Buffer.from('boom') },
+      ]);
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+      await conversationEngineService.chat(
+        steerInput('look at this log', { attachmentIds: ['att-1'] }),
+      );
+
+      await expect(held.requests[0].steering?.()).resolves.toEqual([
+        {
+          text: 'look at this log',
+          attachments: [expect.objectContaining({ id: 'att-1', filename: 'run.log' })],
+        },
+      ]);
+      expect(mockLoadByIds).toHaveBeenCalledWith(['att-1']);
+
+      held.release();
+      await first;
+
+      // Handed over, so no second turn ran.
+      expect(mockInvokeStream).toHaveBeenCalledTimes(1);
+    });
+
+    it('discards pending messages when the turn throws', async () => {
+      // Reported in review: a throw out of streamTurn (a failed publish or
+      // persist) used to skip both drains, leaving the handed-over message in the
+      // inbox for the *next* turn to inject — on top of the copy already in
+      // history, so the model saw it twice.
+      const held = heldTurn();
+      mockInvokeStream.mockImplementation(held.generator);
+      mockPublish.mockRejectedValueOnce(new Error('publish blew up'));
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+      await conversationEngineService.chat(steerInput('skip the tests'));
+      held.release();
+
+      await expect(first).rejects.toThrow('publish blew up');
+      expect(threadTurnService.pendingCount(steerThread)).toBe(0);
+
+      // And the next turn on the thread has nothing left to inject. Held open so
+      // its handle is still live when we ask — a released handle throws.
+      mockPublish.mockResolvedValue({ id: 'msg-agent-123' });
+      const second = heldTurn();
+      mockInvokeStream.mockImplementation(second.generator);
+      const nextTurn = conversationEngineService.chat(steerInput('what now?'));
+      await second.running;
+
+      await expect(second.requests[0].steering?.()).resolves.toEqual([]);
+
+      second.release();
+      await nextTurn;
+    });
+
+    it('steer-only stores nothing and invokes nothing when no turn is live', async () => {
+      mockInvokeStream.mockImplementation(instantTurn);
+
+      const result = await conversationEngineService.chat(
+        steerInput('hello', { steerOnly: true }),
+      );
+
+      expect(result.steered).toBe(false);
+      expect(mockAddMessage).not.toHaveBeenCalled();
+      expect(mockInvokeStream).not.toHaveBeenCalled();
+    });
+
+    it('steer-only hands over when a turn is live', async () => {
+      const held = heldTurn();
+      mockInvokeStream.mockImplementation(held.generator);
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+
+      const result = await conversationEngineService.chat(
+        steerInput('skip the tests', { steerOnly: true }),
+      );
+
+      expect(result.steered).toBe(true);
+      expect(mockAddMessage).toHaveBeenCalledTimes(2);
+
+      held.release();
+      await first;
+    });
+
+    it('leaves the thread unlocked and clean after a turn', async () => {
+      mockInvokeStream.mockImplementation(instantTurn);
+
+      await conversationEngineService.chat(steerInput('hello'));
+
+      expect(threadTurnService.isClaimed(steerThread)).toBe(false);
+      expect(threadTurnService.pendingCount(steerThread)).toBe(0);
+      // The per-thread mutex is released, so the next turn runs immediately.
+      await expect(threadTurnService.run(steerThread, async () => 'free')).resolves.toBe('free');
+    });
+
+    it('hands over a message that arrives before the turn reaches the model', async () => {
+      // The turn claims the thread synchronously, so the two DB round trips it
+      // makes first (storing the message, reading the agent) are inside the window
+      // where a hand-over works. A message landing there must not start a second
+      // turn: that turn would queue behind this one and then run against a history
+      // ending in its replies — the assistant prefill the provider rejects.
+      let releaseStore!: () => void;
+      const storing = new Promise<void>((r) => {
+        releaseStore = r;
+      });
+      mockAddMessage.mockImplementationOnce(async () => {
+        await storing;
+        return { message: { id: 'msg-slow' }, titleSet: null };
+      });
+      mockInvokeStream.mockImplementation(instantTurn);
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      // The first turn is still inside storeUserMessage — it has not invoked
+      // anything yet, and cannot have.
+      expect(mockInvokeStream).not.toHaveBeenCalled();
+
+      const second = await conversationEngineService.chat(steerInput('no need to run tests'));
+      expect(second.steered).toBe(true);
+
+      releaseStore();
+      await first;
+
+      // The second message never started a turn of its own. This exchange
+      // answered it — here as the coalesced follow-up, because `instantTurn`
+      // never drains the steering source, so the message arrives after the only
+      // step boundary. It is restated as the trailing user message, which is what
+      // keeps history from ending on the first turn's replies.
+      expect(mockInvokeStream).toHaveBeenCalledTimes(2);
+      const followUp = mockInvokeStream.mock.calls[1][0];
+      expect(followUp.prompt).toBe('no need to run tests');
+      expect(followUp.appendPrompt).toBe(true);
+      expect(threadTurnService.pendingCount(steerThread)).toBe(0);
     });
   });
 });

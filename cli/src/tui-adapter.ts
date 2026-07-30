@@ -32,6 +32,12 @@ export interface TuiMessage {
 export interface TuiAdapterEvents {
   message: (msg: TuiMessage) => void;
   status: (status: TuiStatus, detail?: string) => void;
+  /**
+   * The runtime named the thread this session is on. A backstop for a failed
+   * `startNewSession()`: without a threadId a mid-turn message cannot be steered
+   * into the running turn.
+   */
+  thread: (threadId: string) => void;
 }
 
 /** A resumable conversation thread, as listed by the `--resume` picker. */
@@ -261,21 +267,25 @@ class TuiAdapter {
         const msg = coerceMessage(env.payload);
         if (msg) {
           this.events.emit('message', msg);
-          // The runtime doesn't emit a `processing: false` status when it
-          // finishes — the agent reply landing is the signal. Flip back to
-          // idle so the spinner clears.
-          if (msg.role === 'AGENT') this.events.emit('status', 'idle');
+          // Deliberately does NOT flip to idle. A turn publishes each of its
+          // text steps as it arrives, and after a mid-turn message the exchange
+          // runs another turn — so a reply landing is not evidence the work is
+          // over. Treating it as such cleared the spinner (and the "esc to stop"
+          // affordance) while the agent was still going. `status.processing`
+          // brackets the turn and is the only source of truth.
         }
         break;
       }
       case 'status': {
         const payload = env.payload as { connected?: boolean; processing?: boolean } | undefined;
-        if (payload?.processing) {
-          this.events.emit('status', 'thinking');
-        } else if (payload?.processing === false || payload?.connected) {
-          // processing:false is broadcast when a turn ends (completion or
-          // cancel) so the spinner clears even when no AGENT message lands.
-          this.events.emit('status', 'idle');
+        // `true` when a turn starts; `false` from the gateway's `finally` on every
+        // exit — normal end, error and cancel alike. The connect handshake sends
+        // `{ connected: true }` with no `processing` key, and the socket's `open`
+        // handler already emits idle for that; hence the boolean guard rather
+        // than a truthiness test, which would clear the spinner mid-turn if the
+        // handshake were ever re-sent.
+        if (typeof payload?.processing === 'boolean') {
+          this.events.emit('status', payload.processing ? 'thinking' : 'idle');
         }
         break;
       }
@@ -284,7 +294,17 @@ class TuiAdapter {
         this.events.emit('status', 'error', payload?.error ?? 'unknown error');
         break;
       }
-      // thread / typing / heartbeat / pong intentionally ignored
+      case 'thread': {
+        // Only a backstop for a failed `startNewSession()`: a chat message sent
+        // without a threadId cannot be steered into a running turn — the gateway
+        // queues it instead — so learn the id from the runtime when we lack one.
+        const payload = env.payload as { threadId?: unknown } | undefined;
+        if (typeof payload?.threadId === 'string' && payload.threadId) {
+          this.events.emit('thread', payload.threadId);
+        }
+        break;
+      }
+      // typing / heartbeat / pong intentionally ignored
     }
   }
 }

@@ -4,7 +4,7 @@
  * Tests for WebSocketGatewayService covering:
  * - Connection management
  * - Message handling (chat, ping)
- * - Message modes (steer, followup, collect)
+ * - Message modes (followup, collect)
  * - Notification delivery
  * - Authentication (JWT decode, no verification — backend already verified)
  */
@@ -92,8 +92,10 @@ describe('Requirement: WebSocket Gateway', () => {
     service.processingUsers = new Set();
     service.activeRequests = new Map();
 
-    // Default mock responses
-    mockChat.mockResolvedValue(undefined);
+    // Default mock responses. `steered: false` is the engine's answer when no
+    // turn is live on the thread, which is what the gateway checks before
+    // falling back to its own queue.
+    mockChat.mockResolvedValue({ steered: false });
   });
 
   describe('Scenario: Connection tracking', () => {
@@ -382,25 +384,31 @@ describe('Requirement: WebSocket Gateway', () => {
   });
 
   describe('Scenario: Message modes', () => {
-    it('should process steer mode messages', async () => {
+    it('should queue messages if user is processing', async () => {
       const userId = 'user-123';
       const ws = createMockWebSocket();
       ws.userId = userId;
       ws.readyState = 1;
 
       service.connections.set(userId, [ws]);
+      service.processingUsers.add(userId);
 
       await service.handleChatMessage(ws, userId, {
         type: 'chat',
-        mode: 'steer',
-        content: 'Stop!',
+        mode: 'followup',
+        content: 'Queued message',
+        threadId: 'thread-1',
         agentId: 'agent-123',
       });
 
-      expect(mockChat).toHaveBeenCalled();
+      // The live turn is on another thread (the engine reported not-steered), so
+      // the message falls back to this queue.
+      const queue = service.messageQueues.get(userId);
+      expect(queue).toHaveLength(1);
+      expect(queue[0].message.content).toBe('Queued message');
     });
 
-    it('should queue messages if user is processing', async () => {
+    it('queues without offering when the message does not name a thread', async () => {
       const userId = 'user-123';
       const ws = createMockWebSocket();
       ws.userId = userId;
@@ -416,9 +424,67 @@ describe('Requirement: WebSocket Gateway', () => {
         agentId: 'agent-123',
       });
 
-      const queue = service.messageQueues.get(userId);
-      expect(queue).toHaveLength(1);
-      expect(queue[0].message.content).toBe('Queued message');
+      // Nothing to steer without a thread id, and probing anyway would have the
+      // engine resolve one — creating a thread for a message steer-only mode
+      // neither stores nor answers.
+      expect(mockChat).not.toHaveBeenCalled();
+      expect(service.messageQueues.get(userId)).toHaveLength(1);
+    });
+
+    it('hands a message to the live turn instead of queueing it', async () => {
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+      ws.readyState = 1;
+
+      service.connections.set(userId, [ws]);
+      service.processingUsers.add(userId);
+      // The engine folded the message into the turn already running on its
+      // thread, so the user's correction lands mid-work rather than waiting out
+      // the turn in this queue.
+      mockChat.mockResolvedValue({ steered: true });
+
+      await service.handleChatMessage(ws, userId, {
+        type: 'chat',
+        mode: 'followup',
+        content: 'no need to run tests',
+        threadId: 'thread-1',
+        agentId: 'agent-123',
+      });
+
+      expect(mockChat).toHaveBeenCalledWith(
+        expect.objectContaining({ steerOnly: true, threadId: 'thread-1' }),
+      );
+      expect(service.messageQueues.get(userId)).toBeUndefined();
+    });
+
+    it('steers a message that omits agentId, same as one that sends it', async () => {
+      // The prism-cli omits `agentId` on the wire. Reading it off the message
+      // made those clients queue-only, with no steering at all.
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.userId = userId;
+      ws.readyState = 1;
+
+      service.connections.set(userId, [ws]);
+      service.processingUsers.add(userId);
+      mockChat.mockResolvedValue({ steered: true });
+
+      await service.handleChatMessage(ws, userId, {
+        type: 'chat',
+        mode: 'followup',
+        content: 'no need to run tests',
+        threadId: 'thread-1',
+      });
+
+      expect(mockChat).toHaveBeenCalledWith(
+        expect.objectContaining({
+          steerOnly: true,
+          threadId: 'thread-1',
+          agentId: mockConfig.agentId,
+        }),
+      );
+      expect(service.messageQueues.get(userId)).toBeUndefined();
     });
 
     it('should process collect mode messages', async () => {

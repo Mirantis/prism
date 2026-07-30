@@ -10,3 +10,4 @@ Feature: CLI tool-call expansion
     And the tool-call row can be collapsed
     When I press Ctrl+O again
     Then the tool-call row is collapsed again
+    And the composer is still empty

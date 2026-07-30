@@ -71,23 +71,61 @@ if [ -f "$WORKTREE_ENV" ] && grep -q '^DATABASE_URL=file:' "$WORKTREE_ENV"; then
   echo "Pinned DATABASE_URL to file:$WORKTREE_DB"
 fi
 
-# Symlink node_modules from main repo (faster than copy or npm install)
+# Symlink node_modules from main repo (faster than copy or npm install), except
+# the top-level one — see below.
 echo "Linking node_modules..."
 while IFS= read -r -d '' nm_dir; do
   rel="${nm_dir#"$REPO_ROOT/"}"
+  [ "$rel" = "node_modules" ] && continue
   dest="$WORKTREE_DIR/$rel"
   mkdir -p "$(dirname "$dest")"
   ln -s "$nm_dir" "$dest"
   echo "Linked $rel"
 done < <(find "$REPO_ROOT" -name "node_modules" -maxdepth 4 -type d -not -path "*/node_modules/*/node_modules*" -not -path "*/.claude/*" -print0)
 
-# Regenerate the Prisma client against THIS worktree's schema. node_modules
-# (and so the single generated client) is shared via the symlinks above, so a
-# different worktree's last `prisma generate` may leave the client expecting
-# columns this branch doesn't have ("column ... does not exist" at runtime).
-# Re-baking it here aligns the client with the worktree we just created.
+# The top-level node_modules is deliberately NOT symlinked. It is a real
+# directory holding nothing but this worktree's own generated Prisma client, so
+# that `prisma generate` here cannot rewrite any other worktree's client.
+#
+# Why a copy and not a link: the generated client is code with the column list
+# baked in, and `@prisma/client` is a shim that does
+# `require('.prisma/client/default')`. That bare specifier resolves from wherever
+# the shim physically sits, so a symlinked `@prisma/client` resolves straight back
+# to the source repo and the private `.prisma` is ignored. Both have to be real.
+# Sharing them means one worktree's `prisma generate` — run directly, or by
+# `predev` or `prisma migrate dev` — leaves every other worktree's runtime
+# querying a column its database lacks ("The column ... does not exist in the
+# current database").
+#
+# `prisma` (the CLI) is only symlinked: it needs to be *resolvable* or the CLI
+# decides the project is missing its packages and runs a full `npm install` into
+# the worktree — 1.5G and a modified package.json. It does not need to be private.
+#
+# Nothing else is duplicated. The worktree lives inside the repo, so Node
+# resolves anything absent here by walking up to $REPO_ROOT/node_modules, and npm
+# puts each ancestor's node_modules/.bin on PATH. Cost is ~96M per worktree.
+echo "Giving the worktree its own Prisma client..."
+mkdir -p "$WORKTREE_DIR/node_modules/@prisma"
+for prisma_dir in ".prisma" "@prisma/client"; do
+  src="$REPO_ROOT/node_modules/$prisma_dir"
+  if [ -d "$src" ]; then
+    cp -R "$src" "$WORKTREE_DIR/node_modules/$prisma_dir"
+    echo "Copied node_modules/$prisma_dir"
+  else
+    echo "Skipped node_modules/$prisma_dir (not found — run npm install in the source repo)"
+  fi
+done
+if [ -d "$REPO_ROOT/node_modules/prisma" ]; then
+  ln -s "$REPO_ROOT/node_modules/prisma" "$WORKTREE_DIR/node_modules/prisma"
+  echo "Linked node_modules/prisma (CLI)"
+fi
+
+# Bake the private client against THIS worktree's schema — the copy above is a
+# snapshot of whatever the source repo last generated, which may be another
+# branch's shape. Invoked via the source repo's binary rather than `npx`, which
+# would try to install into the worktree.
 echo "Generating Prisma client for this worktree's schema..."
-if ! ( cd "$WORKTREE_DIR" && npx prisma generate --schema=prisma/sqlite/schema.prisma ); then
+if ! ( cd "$WORKTREE_DIR" && "$REPO_ROOT/node_modules/.bin/prisma" generate --schema=prisma/sqlite/schema.prisma ); then
   echo "Warning: prisma generate failed — run it manually in the worktree before \`npm run dev\`."
 fi
 

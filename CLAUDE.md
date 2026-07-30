@@ -25,11 +25,14 @@ merge commit. PR branches stay merge-commit-free.
 
 ## PR descriptions
 
-The Test plan section should describe behavior that was actually exercised
-(local smoke runs, manual UI walks, specific commands, etc.). Never list
-"`<workflow>.yml` green" as a Test plan item — every workflow that gates
-the PR is already a required check on the PR page, so it's self-evident
-and adds noise.
+Never put a Test plan section referring to unit tests or e2e tests in a PR
+description. They are in the diff and run as required checks on the PR
+page, so listing them is self-evident noise. The same goes for
+"`<workflow>.yml` green".
+
+Describe only verification a reader cannot get from the diff or the PR's
+checks: a local smoke run, a manual UI walk, a specific command and what
+it showed.
 
 ## Testing
 
@@ -154,6 +157,35 @@ launching tsx-watch + Vite concurrently. You never run migrate manually.
 The SQLite `DATABASE_URL` comes from `.env`, which the runtime auto-loads
 via dotenv.
 
+Every Prisma command needs `--schema=prisma/sqlite/schema.prisma` — the
+schema is not in a default location, so a bare `prisma …` fails with
+"Could not find Prisma Schema".
+
+**`prisma migrate dev` does not work against a dev database that has
+already run.** It describes the whole database, and once
+`sqliteBootstrap` has created the `sqlite-vec` virtual tables
+(`memory_entry_vec*`) that fails with "Error describing the database" —
+the schema engine has no `vec0` module. Use `migrate deploy` (what
+`dev:single` runs) to apply migrations. To author a new one, point
+`DATABASE_URL` at a throwaway file so `migrate dev` sees a fresh
+database, then commit the generated migration.
+
+A worktree's `node_modules` is a symlink to the repo's, so every worktree
+shares **one** generated Prisma client at `node_modules/.prisma/client`
+(`@prisma/client` is a shim that re-exports it). The client is generated
+code with the column list baked in, so `prisma generate` in a worktree
+whose schema has an extra column — run directly, or implicitly by
+`npm run dev` (`predev`) or `prisma migrate dev` — makes every *other*
+worktree's runtime query a column its database lacks: "The column X does
+not exist in the current database".
+
+Regenerating with this worktree's schema fixes it, and `npm run dev`
+already does that via `predev` — so the failure only bites a runtime that
+was already running when another worktree generated. There is no cheap
+isolation: a custom `generator client { output = … }` stops Prisma wiring
+`@prisma/client`, so every import would have to change. Just don't run
+Prisma commands in two worktrees while a runtime is up.
+
 Browser → `http://localhost:5173`. UI edits hot-reload in <1s, runtime
 TypeScript edits restart the server in ~1s. The Vite proxy forwards `/agents`
 and `/api/ws` to `:3003` so the SPA code doesn't know it's not hitting the
@@ -242,6 +274,7 @@ The runtime hosts one MCP server and connects to another externally:
 | **invoke** | `invoke.ts` | Thin aggregating wrapper around `invokeStream()`: drains the step stream into a single `InvokeResponse`. Used by callers that need the full result before acting (heartbeat, cron, subagent/task tool). |
 | **ConversationEngineService** | `services/conversation-engine.service.ts` | Chat flow orchestration: thread management, iterates `invokeStream()` directly and publishes each text-bearing step the moment it arrives, delivers via local `messageDeliveryService` |
 | **MessageDeliveryService** | `services/message-delivery.service.ts` | Unified message publish: stores via `conversationService`, delivers via channel adapters (channel-scoped for user messages, broadcast for autonomous) |
+| **ThreadTurnService** | `services/thread-turn.service.ts` | The one per-thread primitive: every model invocation on a thread serializes on its mutex (FIFO — chat turns and goal turns alike), and a chat turn *claims* the thread, so a message arriving from the claim until the exchange ends is handed to that turn instead of starting a second one. Channel-agnostic — transports go through the engine, never here directly |
 | **ContextService** | `services/context.service.ts` | Builds agent context from local database: agent data via `agentWorkspaceService.getAgentById()` and conversation history via Prisma |
 | **ConversationService** | `services/conversation.service.ts` | Thread and message CRUD via Prisma, pluggable thread providers (database + Slack) |
 | **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, nexus token management, subagent relationships |
@@ -272,6 +305,7 @@ src/
 ├── services/
 │   ├── conversation-engine.service.ts # Chat flow orchestration: thread mgmt, iterates invokeStream() with per-step publish, local message delivery
 │   ├── message-delivery.service.ts # Unified message publish: store + channel-scoped or broadcast delivery
+│   ├── thread-turn.service.ts  # Per-thread mutex + mid-turn inbox (turn steering, coalesced follow-ups)
 │   ├── agent-workspace.service.ts # Agent CRUD, ownership validation, nexus tokens, subagents
 │   ├── agent-status.service.ts  # Direct Prisma writes for agent fields (heartbeat timestamp/status)
 │   ├── websocket-gateway.service.ts # WebSocket server: JWT decode (backend verifies), connection mgmt, message queuing
@@ -379,6 +413,106 @@ In both cases, `conversationEngineService.chat()` manages the thread, **iterates
 The engine keeps a **one-step buffer**: it can't know a step is the last text step until the next step (or stream end) arrives, so the last publish is the one that carries the accumulated UI `blocks` and the `shouldShowFeedback` decision. Earlier steps publish with `includeFeedback: false` and no blocks.
 
 The management `POST /agents/chat` endpoint remains available for internal/debug use.
+
+### Turn Steering (mid-turn messages)
+
+There is **one live turn per thread**. `chat()` decides offer-vs-own before it
+stores the message (synchronously, so two messages in the same tick can't both
+conclude they own the turn):
+
+`threadTurnService.claimOrOffer(threadId, text, attachmentIds)` is that decision,
+in one synchronous act:
+
+1. **Offer** — it returns `null` when a turn already **claims** the thread. The
+   message is stored (it is real history) and `chat()` returns
+   `{ steered: true }` without calling the LLM. The claiming turn drains it in
+   `invokeStream`'s `prepareStep` and appends it as a user message, so the model
+   sees it on its next step and can change course.
+2. **Own** — otherwise it returns a `ThreadClaim`, taken **before** this call
+   stores anything or waits for the mutex, and the turn runs inside
+   `claim.run(async () => …)`. `claim.run()` and `threadTurnService.run()` share
+   the one per-thread mutex; the goal loop uses the latter, so a goal turn
+   serializes but isn't steerable — an autonomous turn is not redirected by a
+   user message.
+3. **Coalesce** — messages that land after the turn's last step boundary are
+   answered by **one** follow-up turn (not one per message) with
+   `appendPrompt: true`, since their text sits earlier in history than the
+   previous turn's replies. A canceled turn runs no follow-up.
+
+**Why a claim rather than "is it invoking right now".** The claim is what makes
+the decision atomic. A turn that owns a thread does real work before it reaches
+the model — it stores the message and reads the agent, two DB round trips — so any
+"is it busy" signal derived from the invocation itself starts *after* that work,
+and a message landing in between would find the thread free and start a turn of
+its own. Only a marker taken in the same tick as the decision closes that, which
+is what the claim is. The message row is still written before the mutex wait, so
+its arrival order holds; the turn awaits that write inside `claim.run()`, where a
+failed write releases the thread instead of leaving it taken.
+
+Why it matters: without this, a mid-turn message started a second turn that
+queued behind the per-thread lock, and by the time it ran the first turn had
+appended its own replies — leaving the history ending on an assistant turn, which
+Bedrock/Anthropic reject ("This model does not support assistant message prefill.
+The conversation must end with a user message."). Each failed turn's error reply
+then terminated the next queued turn's history, cascading.
+
+The claim is the only route to the inbox and it dies with the exchange, so the
+ordering is encoded in the primitive rather than being something each call site
+has to know. Two guarantees come with it:
+
+- **The exchange ends and the thread frees in one synchronous act.**
+  `claim.drainOrRelease()` is the loop's exit test: it hands back what is pending,
+  or releases when the inbox is empty. No message can be accepted by a claim that
+  is about to end.
+- **Nothing leaks across turns.** Whatever is still pending when a claim releases
+  is cleared — a turn that ends without draining (a cancel, a throw) loses its own
+  leftovers rather than having them injected mid-step into the *next* turn, which
+  reads them from history anyway.
+- **A hand-over is undone if storing it fails.** The message reaches the inbox
+  before it is stored — it has to, so hand-over and decision are one act — so
+  `chat()` calls `threadTurnService.withdraw(threadId, pending)` when the write
+  rejects. Otherwise the running turn would answer text that never became
+  history, and the next turn would read a reply to nothing. Best effort by
+  nature: if the turn already drained the message, `withdraw()` returns false and
+  the engine logs it, because the model has already seen it.
+
+Transports never touch the thread-turn service. The Slack adapter just calls
+`chat()`. The WS gateway, which keeps its own per-user queue, calls `chat()` with
+`steerOnly: true` first: that hands over if a turn owns the thread and otherwise
+stores nothing and claims nothing, so the gateway can fall back to its queue
+unchanged.
+
+Steer-only requires a `threadId` — the gateway's `offerToLiveTurn()` takes a
+`ThreadedMessage`, so the probe can't have `chat()` resolve (and create) a thread
+for a message it then neither stores nor answers. The TUI therefore pins its
+thread id at launch (`startNewSession()`) and adopts one from a `thread` envelope
+as a backstop; without an id a mid-turn message lands in the gateway queue
+instead of steering — answered late rather than reported.
+
+**Reachable from Slack and the terminal UI; not from the web.** The TUI composer
+stays live for the whole turn — the in-flight spinner moved out of the input box
+into `ThinkingRow`, above it — so Enter sends into the running turn. Slack gates
+nothing. The **web** composer still swaps send for a stop button while `isPending`
+(`ChatInput.tsx`), which also gates its Enter path, so a user cannot send
+mid-response there; opening it is its own change, and `docs/web-ui.md` describes
+only what that UI actually does.
+
+Keeping the TUI composer mounted for a whole turn cost one thing worth knowing.
+Ink dispatches `useInput` handlers child-before-parent, so the text input sees a
+Ctrl chord before `App` does, and `ink-text-input` only filtered Ctrl+C — Ctrl+O
+inserted a literal `o`. The old spinner/input swap remounted the child on every
+turn boundary and re-registered it last, which accidentally masked that. The
+composer is now `cli/src/components/TextInput.tsx`, a small vendored fork that
+ignores every Ctrl chord, so the ordering no longer matters.
+
+**Trailing-user tripwire.** `warnOnTrailingAssistant()` (in `invoke.ts`) runs
+before every `generateText` call — initial, per-step, and early-stopping — and
+logs a warning plus a single `invocation trailing assistant` telemetry event per
+invocation when the array does not end on a `user` (or `tool`) message. Detection
+only, deliberately no repair: the point is to prove steering keeps the invariant,
+and a silent fix-up would mask a regression. Note a trailing `tool` message is
+fine — both the Bedrock and Anthropic converters group a run of `tool`/`user`
+messages into one provider-level user turn.
 
 ## Heartbeat/Cron Flow (In-Process)
 

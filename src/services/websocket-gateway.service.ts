@@ -2,9 +2,10 @@
  * WebSocket Gateway Service
  *
  * Provides real-time bidirectional communication for the personal agent.
- * Supports three message modes:
- * - steer: Interrupt agent mid-turn (urgent)
- * - followup: Queued messages, processed in order
+ * Supports two message modes:
+ * - followup: Queued messages, processed in order — or handed to the turn
+ *   already running on the thread, so a message sent mid-response steers it
+ *   (see `threadTurnService`) instead of waiting out the turn
  * - collect: Batched messages before processing
  */
 
@@ -28,7 +29,7 @@ interface AuthenticatedWebSocket extends WebSocket {
 
 interface WebSocketMessage {
   type: 'chat' | 'ping' | 'pong' | 'subscribe' | 'cancel';
-  mode?: 'steer' | 'followup' | 'collect';
+  mode?: 'followup' | 'collect';
   content?: string;
   threadId?: string;
   // Optional: the runtime substitutes `config.agentId` when omitted.
@@ -36,6 +37,18 @@ interface WebSocketMessage {
   // Ids of files already uploaded via POST /agents/attachments.
   attachmentIds?: string[];
 }
+
+/**
+ * A chat message whose thread is already known — the only shape that can be
+ * offered to a live turn.
+ *
+ * Steering asks about one specific thread, so the id has to come from the
+ * client. Letting the engine resolve a missing one would mean
+ * `getOrCreateLatestThread()`, which creates a thread row (and emits
+ * `thread created`) for a message that steer-only mode then neither stores nor
+ * answers — and in the first-message race can mint a duplicate empty thread.
+ */
+type ThreadedMessage = WebSocketMessage & { threadId: string };
 
 interface WebSocketResponse {
   type: 'chat' | 'pong' | 'error' | 'status' | 'thread';
@@ -45,6 +58,11 @@ interface WebSocketResponse {
   toolCalls?: unknown[];
   blocks?: unknown[];
   payload?: unknown;
+}
+
+/** Narrow to a message the gateway may offer to a live turn. */
+function hasThread(message: WebSocketMessage): message is ThreadedMessage {
+  return typeof message.threadId === 'string' && message.threadId.length > 0;
 }
 
 // ============================================================================
@@ -223,10 +241,10 @@ class WebSocketGatewayService {
     const mode = payload.mode || message.mode || 'followup';
     const content = payload.content || message.content || '';
     const threadId = payload.threadId || message.threadId;
-    // The runtime knows the one agent it serves, so the client can omit
-    // `agentId` from the wire (the prism-cli does). Substitute here before
-    // validation so downstream code sees a fully-populated message.
-    const agentId = payload.agentId || message.agentId || config.agentId;
+    // This container serves exactly one agent, so the agent is ours, not the
+    // client's — which is also why the client may omit `agentId` from the wire
+    // (the prism-cli does).
+    const agentId = config.agentId;
     const attachmentIds: string[] = Array.isArray(payload.attachmentIds)
       ? payload.attachmentIds
       : Array.isArray(message.attachmentIds)
@@ -258,23 +276,15 @@ class WebSocketGatewayService {
     message.attachmentIds = attachmentIds;
 
     switch (mode) {
-      case 'steer':
-        // Steer mode: Interrupt agent (for now, treat as followup)
-        // TODO: Implement actual interruption
-        await this.processMessage(ws, userId, message);
-        break;
-
-      case 'followup':
-        // Followup mode: Queue and process in order
-        await this.queueMessage(ws, userId, message);
-        break;
-
       case 'collect':
         // Collect mode: Batch messages (for now, treat as followup)
         // TODO: Implement batching
         await this.queueMessage(ws, userId, message);
         break;
 
+      // 'followup' and anything else: queueMessage hands the message to the turn
+      // already running on its thread when there is one (mid-turn steering) and
+      // otherwise starts or queues a turn.
       default:
         await this.queueMessage(ws, userId, message);
     }
@@ -294,6 +304,21 @@ class WebSocketGatewayService {
       return;
     }
 
+    // A turn is in flight. Offer the message to it first: if it's running on
+    // this message's thread, the engine folds it into that turn so the user's
+    // correction lands while the work is still happening, instead of sitting in
+    // this queue for the rest of the turn and then being answered against a
+    // history that has moved on. A message that doesn't name its thread has
+    // nothing to be offered to and falls straight through to the queue.
+    //
+    // The agent is this container's, never the client's — the client may omit
+    // `agentId` (the prism-cli does). Reading it off the message instead left
+    // those clients silently queue-only, with no steering at all.
+    const agentId = config.agentId;
+    if (agentId && hasThread(message)) {
+      if (await this.offerToLiveTurn(userId, agentId, message)) return;
+    }
+
     // Otherwise queue it
     const queue = this.messageQueues.get(userId) || [];
     queue.push({
@@ -301,6 +326,33 @@ class WebSocketGatewayService {
       resolve: (response) => ws.send(JSON.stringify(response)),
     });
     this.messageQueues.set(userId, queue);
+  }
+
+  /**
+   * Hand a message to the turn already running on its thread. Returns true when
+   * that turn took it — the gateway is then done with the message, the turn
+   * stores and answers it — and false when there was no live turn on the thread,
+   * in which case steer-only mode stored nothing and the caller queues as usual.
+   *
+   * Takes a `ThreadedMessage` so the steer-only contract ("nothing is stored")
+   * holds by construction: the engine only resolves — and creates — a thread
+   * when the caller doesn't name one.
+   */
+  private async offerToLiveTurn(
+    userId: string,
+    agentId: string,
+    message: ThreadedMessage
+  ): Promise<boolean> {
+    const attempt = await conversationEngineService.chat({
+      userId,
+      agentId,
+      message: message.content || '',
+      threadId: message.threadId,
+      attachmentIds: message.attachmentIds,
+      metadata: { channel: 'websocket' },
+      steerOnly: true,
+    });
+    return attempt.steered === true;
   }
 
   /**

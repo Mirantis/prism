@@ -112,6 +112,10 @@ vi.mock('./tools/skills/index', () => ({
 vi.mock('./prompts/context-builder', () => ({
   buildSystemPromptParts: mockBuildSystemPromptParts,
   buildConversationMessages: mockBuildConversationMessages,
+  // Text-only stand-in for the real shaping (content parts for attachments are
+  // covered in context-builder.test.ts); these specs only care that a steering
+  // message becomes a user turn at the right position.
+  buildSteeringMessage: (msg: { text: string }) => ({ role: 'user', content: msg.text }),
 }));
 
 vi.mock('./prompts/channel-prompt', () => ({
@@ -967,7 +971,7 @@ describe('invoke', () => {
         { role: 'user', content: 'msg1' },
         { role: 'assistant', content: 'msg2' },
       ];
-      const result = callArgs.prepareStep({ messages: testMessages });
+      const result = await callArgs.prepareStep({ messages: testMessages });
       expect(result.messages[1].providerOptions).toEqual({
         anthropic: { cacheControl: { type: 'ephemeral' } },
       });
@@ -1096,8 +1100,193 @@ describe('invoke', () => {
         { role: 'assistant', content: 'Let me check.' },
       ]);
     });
+
+    it('chat mode appends the prompt when appendPrompt is set', async () => {
+      // The coalesced steering follow-up: its prompt sits earlier in history
+      // than the previous turn's replies, so history alone would end on an
+      // assistant turn — which the provider rejects as assistant prefill.
+      mockBuildConversationMessages.mockReturnValue([
+        { role: 'user', content: 'no need to run tests' },
+        { role: 'assistant', content: 'Tests are running, continuing.' },
+      ]);
+
+      await invoke(
+        createTestInvokeRequest({
+          mode: 'chat',
+          prompt: 'no need to run tests',
+          appendPrompt: true,
+        }),
+      );
+
+      const messages = mockGenerateText.mock.calls[0][0].messages;
+      expect(messages[messages.length - 1]).toMatchObject({
+        role: 'user',
+        content: 'no need to run tests',
+      });
+    });
   });
 
+  describe('mid-turn steering', () => {
+    it('injects steering messages at the next step boundary', async () => {
+      const steering = vi
+        .fn()
+        .mockResolvedValueOnce([{ text: 'actually, skip the tests' }]);
+
+      await invoke(createTestInvokeRequest({ prompt: 'review the PR', steering }));
+
+      const { prepareStep } = mockGenerateText.mock.calls[0][0];
+      const result = await prepareStep({
+        messages: [
+          { role: 'user', content: 'review the PR' },
+          { role: 'assistant', content: [{ type: 'tool-call' }] },
+          { role: 'tool', content: [{ type: 'tool-result' }] },
+        ],
+      });
+
+      expect(result.messages).toHaveLength(4);
+      expect(result.messages[3]).toMatchObject({
+        role: 'user',
+        content: 'actually, skip the tests',
+      });
+      // The injected turn is the newest message, so it carries the breakpoint.
+      expect(result.messages[3].providerOptions).toEqual({
+        anthropic: { cacheControl: { type: 'ephemeral' } },
+      });
+    });
+
+    it('keeps an injected message in place on later steps', async () => {
+      // prepareStep is handed a freshly built [...history, ...responseMessages]
+      // every step; injections are not part of the SDK's own list, so they have
+      // to be re-spliced at the position they were inserted at.
+      const steering = vi
+        .fn()
+        .mockResolvedValueOnce([{ text: 'skip the tests' }])
+        .mockResolvedValue([]);
+
+      await invoke(createTestInvokeRequest({ steering }));
+      const { prepareStep } = mockGenerateText.mock.calls[0][0];
+
+      await prepareStep({ messages: [{ role: 'user', content: 'go' }] });
+      const later = await prepareStep({
+        messages: [
+          { role: 'user', content: 'go' },
+          { role: 'assistant', content: 'on it' },
+          { role: 'tool', content: [{ type: 'tool-result' }] },
+        ],
+      });
+
+      expect(later.messages.map((m: { role: string }) => m.role)).toEqual([
+        'user', // original prompt
+        'user', // steering message, still at index 1
+        'assistant',
+        'tool',
+      ]);
+      expect(later.messages[1]).toMatchObject({ content: 'skip the tests' });
+    });
+
+    it('carries steering messages into the early-stopping summary call', async () => {
+      // The summary call replays `summarizeSteps`, which only collapses the
+      // model's own steps — without the injections the summary would answer the
+      // original prompt and silently ignore what the user said since.
+      mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'go' }]);
+
+      let calls = 0;
+      mockGenerateText.mockImplementation(async (args: { prepareStep?: (arg: unknown) => Promise<unknown> }) => {
+        calls += 1;
+        if (calls > 1) {
+          return { text: 'summary', steps: [{ text: 'summary', toolCalls: [], toolResults: [] }] };
+        }
+        // Stand in for the SDK's per-step prepareStep call.
+        await args.prepareStep?.({ messages: [{ role: 'user', content: 'go' }] });
+        return {
+          text: '',
+          steps: Array.from({ length: 100 }, () => ({ text: '', toolCalls: [], toolResults: [] })),
+        };
+      });
+
+      await invoke(createTestInvokeRequest({ steering: async () => [{ text: 'stop after this one' }] }));
+
+      expect(mockGenerateText).toHaveBeenCalledTimes(2);
+      const summaryCall = mockGenerateText.mock.calls[1][0];
+      const contents = summaryCall.messages.map((m: { content: unknown }) => m.content);
+      expect(contents).toContain('stop after this one');
+      expect(summaryCall.messages.at(-1)).toMatchObject({ role: 'user' });
+    });
+  });
+
+  describe('trailing-user tripwire', () => {
+    it('warns and reports when the message array ends on an assistant turn', async () => {
+      mockBuildConversationMessages.mockReturnValue([
+        { role: 'user', content: 'what did we deploy?' },
+        { role: 'assistant', content: 'Nothing went to prod.' },
+      ]);
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'what did we deploy?' }));
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'invocation trailing assistant',
+        'user-test-456',
+        expect.objectContaining({
+          'invoke.mode': 'chat',
+          'invoke.stage': 'initial',
+          'messages.count': '2',
+        }),
+      );
+    });
+
+    it('stays quiet when the array ends on a user turn', async () => {
+      mockBuildConversationMessages.mockReturnValue([
+        { role: 'assistant', content: 'Nothing went to prod.' },
+        { role: 'user', content: 'trigger the production deploy' },
+      ]);
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'trigger the production deploy' }));
+
+      expect(mockTrackEvent).not.toHaveBeenCalledWith(
+        'invocation trailing assistant',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('treats a trailing tool message as user-terminated', async () => {
+      // Both the Bedrock and Anthropic converters fold a run of tool/user
+      // messages into one provider-level user turn.
+      await invoke(createTestInvokeRequest());
+      const { prepareStep } = mockGenerateText.mock.calls[0][0];
+
+      await prepareStep({
+        messages: [
+          { role: 'user', content: 'go' },
+          { role: 'assistant', content: [{ type: 'tool-call' }] },
+          { role: 'tool', content: [{ type: 'tool-result' }] },
+        ],
+      });
+
+      expect(mockTrackEvent).not.toHaveBeenCalledWith(
+        'invocation trailing assistant',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('reports at most once per invocation', async () => {
+      mockBuildConversationMessages.mockReturnValue([
+        { role: 'user', content: 'go' },
+        { role: 'assistant', content: 'working' },
+      ]);
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'go' }));
+      const { prepareStep } = mockGenerateText.mock.calls[0][0];
+      await prepareStep({ messages: [{ role: 'assistant', content: 'still working' }] });
+      await prepareStep({ messages: [{ role: 'assistant', content: 'still working' }] });
+
+      const reports = mockTrackEvent.mock.calls.filter(
+        (call) => call[0] === 'invocation trailing assistant',
+      );
+      expect(reports).toHaveLength(1);
+    });
+  });
 });
 
 describe('withToolsCacheControl', () => {

@@ -27,11 +27,19 @@ To switch to a different thread mid-session, exit and relaunch with `--resume`.
 
 ## Chatting
 
-Type your message and press **Enter** to send. While the agent is thinking, the
-input shows a spinner and "thinking… (esc to stop)" — press **Escape** to cancel
-the in-flight response. Each agent message shows which tools it used; press
-**Ctrl+O** to expand the latest message's tool calls and see their inputs and
-outputs.
+Type your message and press **Enter** to send. While the agent is working, a
+spinner above the input reads "thinking… (esc to stop · enter sends)" — press
+**Escape** to cancel the in-flight response. Each agent message shows which tools
+it used; press **Ctrl+O** to expand the latest message's tool calls and see their
+inputs and outputs.
+
+**You can keep typing while the agent works, and Enter sends.** A message sent
+mid-response is handed to the turn already running: the agent picks it up at its
+next step and changes course, so "actually, skip the tests" lands while the tests
+are still running instead of being answered minutes later. Anything that arrives
+too late for the running turn is answered together in one follow-up rather than
+one reply per message. Escape still means "stop the turn" — it never clears what
+you have typed, and a cancelled turn leaves your draft intact.
 
 Use **Up / Down** arrows from an empty input to walk back through your message
 history.

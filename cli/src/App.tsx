@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import { tuiAdapterService, ThreadSummary, TuiMessage, TuiStatus } from './tui-adapter.js';
 import { Header } from './components/Header.js';
 import { MessageList, ChatEntry } from './components/MessageList.js';
 import { Input } from './components/Input.js';
+import { ThinkingRow } from './components/ThinkingRow.js';
 import { StatusBar } from './components/StatusBar.js';
 import { CommandPopup, PopupItem } from './components/CommandPopup.js';
 import { SchedulesPanel } from './components/SchedulesPanel.js';
@@ -73,12 +74,6 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // to older entries; editing the input exits browsing.
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
-  // Swallow the next onChange from <Input>. ink-text-input does not filter
-  // Ctrl-modifier keys other than Ctrl+C, so Ctrl+O would otherwise append
-  // 'o' to the input value via its own useInput → onChange path. We set the
-  // flag in the App-level useInput (which fires first) and consume the
-  // following onChange before it reaches setInputValue.
-  const swallowNextChangeRef = useRef(false);
 
   // Mark adapter connected so any future runtime broadcasts can reach us.
   useEffect(() => {
@@ -110,11 +105,18 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       setStatus(s);
       setStatusDetail(detail);
     };
+    // Only fills a gap: a thread we already pinned (--resume, or the session
+    // created at launch) wins, since an autonomous delivery can name another one.
+    const onThread = (threadId: string) => {
+      setActiveThreadId((cur) => cur ?? threadId);
+    };
     tuiAdapterService.events.on('message', onMessage);
     tuiAdapterService.events.on('status', onStatus);
+    tuiAdapterService.events.on('thread', onThread);
     return () => {
       tuiAdapterService.events.off('message', onMessage);
       tuiAdapterService.events.off('status', onStatus);
+      tuiAdapterService.events.off('thread', onThread);
     };
   }, []);
 
@@ -281,11 +283,8 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     // calls. If a different message is currently expanded, this implicitly
     // collapses it by switching the id.
     if (key.ctrl && input === 'o') {
-      // Block ink-text-input from appending 'o' to the value as it processes
-      // the same keypress, and remount Input so its internal cursor offset
-      // doesn't drift past the (unchanged) value.
-      swallowNextChangeRef.current = true;
-      setInputResetKey((k) => k + 1);
+      // The composer ignores every Ctrl chord (see components/TextInput.tsx), so
+      // this cannot leak an 'o' into the draft and the value is left untouched.
       for (let i = entries.length - 1; i >= 0; i--) {
         const m = entries[i]!.message;
         if (
@@ -428,17 +427,11 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   );
 
   const handleInputChange = useCallback((newValue: string) => {
-    if (swallowNextChangeRef.current) {
-      swallowNextChangeRef.current = false;
-      return;
-    }
     // Real typing exits history browsing — programmatic recalls set the value
     // directly and never route through onChange, so they keep the cursor.
     setHistoryIndex(null);
     setInputValue(newValue);
   }, []);
-
-  const inputDisabled = useMemo(() => status === 'thinking', [status]);
 
   if (shuttingDown) {
     return (
@@ -483,12 +476,12 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
               </Text>
             </Box>
           )}
+          <ThinkingRow active={status === 'thinking'} />
           <Input
             key={inputResetKey}
             value={inputValue}
             onChange={handleInputChange}
             onSubmit={onSubmit}
-            disabled={inputDisabled}
             hideCursor={hideCursor}
           />
           {(slashMode || attachMode) && popupItems.length > 0 && (

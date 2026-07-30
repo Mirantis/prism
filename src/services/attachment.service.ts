@@ -375,6 +375,23 @@ class AttachmentService {
   }
 
   /**
+   * Bytes-loaded attachments by their own ids, in upload order.
+   *
+   * For files that must reach the model *before* they are linked to a message
+   * row: a message handed to a turn already in flight is folded into that turn
+   * directly, so the only handle its files have at that point is the id the
+   * upload returned.
+   */
+  async loadByIds(attachmentIds: string[]): Promise<AttachmentForLLM[]> {
+    if (attachmentIds.length === 0) return [];
+    const rows = await prisma.messageAttachment.findMany({
+      where: { id: { in: attachmentIds } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map(toForLLM);
+  }
+
+  /**
    * Bytes-loaded attachments keyed by Slack message ts — for the live-read
    * Slack channel provider, which never sees our message rows.
    */

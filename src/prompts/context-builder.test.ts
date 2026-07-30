@@ -14,7 +14,12 @@ vi.mock('../services/memory-manager.service', () => ({
   },
 }));
 
-import { buildSystemPrompt, buildSystemPromptParts, buildConversationMessages } from './context-builder';
+import {
+  buildSystemPrompt,
+  buildSystemPromptParts,
+  buildConversationMessages,
+  buildSteeringMessage,
+} from './context-builder';
 import { createTestAgentContext } from '../test-utils/factories';
 import { MAX_INLINE_TEXT_CHARS } from '../constants';
 import type { AttachmentForLLM } from '../services/attachment.service';
@@ -770,5 +775,75 @@ describe('buildConversationMessages with attachments', () => {
     const messages = buildConversationMessages(context);
     expect(messages).toHaveLength(1);
     expect(Array.isArray(messages[0].content)).toBe(true);
+  });
+});
+
+describe('buildSteeringMessage', () => {
+  it('is a plain-string user turn when there is only text', () => {
+    // Same reasoning as history: no needless content array around bare text.
+    expect(buildSteeringMessage({ text: 'skip the tests' })).toEqual({
+      role: 'user',
+      content: 'skip the tests',
+    });
+  });
+
+  it('carries an image shared mid-turn as an image part', () => {
+    const data = Buffer.from('png-bytes');
+    const message = buildSteeringMessage({
+      text: 'look at this',
+      attachments: [
+        makeAttachment({ filename: 'shot.png', mediaType: 'image/png', category: 'image', data }),
+      ],
+    });
+
+    expect(message.role).toBe('user');
+    expect(message.content).toEqual([
+      { type: 'text', text: 'look at this' },
+      { type: 'image', image: data, mediaType: 'image/png' },
+    ]);
+  });
+
+  it('inlines a text file shared mid-turn', () => {
+    const message = buildSteeringMessage({
+      text: 'here is the failure',
+      attachments: [
+        makeAttachment({
+          filename: 'run.log',
+          mediaType: 'text/plain',
+          category: 'text',
+          data: Buffer.from('boom'),
+        }),
+      ],
+    });
+
+    const content = message.content as Array<{ type: string; text?: string }>;
+    expect(content[0]).toEqual({ type: 'text', text: 'here is the failure' });
+    expect(content[1].text).toContain('[File: run.log]');
+    expect(content[1].text).toContain('boom');
+  });
+
+  it('notes a file the provider could not read rather than dropping it', () => {
+    const message = buildSteeringMessage({
+      text: 'and this one',
+      attachments: [makeAttachment({ filename: 'weird.bin' })],
+    });
+
+    const content = message.content as Array<{ type: string; text?: string }>;
+    expect(content[1].text).toContain('weird.bin');
+    expect(content[1].text).toContain('not readable by the agent');
+  });
+
+  it('is a file-only turn when the message carried no text', () => {
+    const data = Buffer.from('%PDF');
+    const message = buildSteeringMessage({
+      text: '',
+      attachments: [
+        makeAttachment({ filename: 'doc.pdf', mediaType: 'application/pdf', category: 'pdf', data }),
+      ],
+    });
+
+    expect(message.content).toEqual([
+      { type: 'file', data, mediaType: 'application/pdf', filename: 'doc.pdf' },
+    ]);
   });
 });

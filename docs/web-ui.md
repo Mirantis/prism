@@ -40,8 +40,8 @@ The main conversation surface.
 - **Attachments.** Attach files with the paperclip button or by drag-and-drop.
   Pending attachments show as chips (with a progress spinner, name, and size)
   and can be removed before sending. Up to 100 attachments per message.
-- **Stopping.** While the agent is responding, a stop button cancels the
-  in-flight turn.
+- **Stopping.** While the agent is responding, the send button becomes a stop
+  button that cancels the in-flight turn.
 - **Tool calls.** When the agent uses a tool, the message shows an
   expandable section with the tool name, its input, and its output — so you can
   see exactly what it did.

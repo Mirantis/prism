@@ -56,8 +56,8 @@ to complete, **Enter** to run.
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Send the message (or run the slash command). |
-| `Esc` | Cancel the in-flight response while the agent is thinking. |
+| `Enter` | Send the message (or run the slash command). Works while the agent is responding — the message is handed to the running turn. |
+| `Esc` | Cancel the in-flight response while the agent is thinking. Leaves what you have typed alone. |
 | `Ctrl+O` | Expand / collapse tool calls in the latest agent message. |
 | `Up` / `Down` | Walk back/forward through your message history (from an empty input). |
 | `Ctrl+C` | Quit. |

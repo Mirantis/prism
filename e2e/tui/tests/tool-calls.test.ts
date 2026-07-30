@@ -2,12 +2,14 @@
  * Ctrl+O tool-call expansion. Prompts the real agent (via prism-cli over WS)
  * to issue a `shell_exec` call against an explicit, identifiable command so we
  * can assert on the input/output blocks once expanded. Also verifies that the
- * Ctrl+O keypress does not leak an `o` into the input field — the
- * `swallowNextChangeRef` race in App.tsx is the regression we care about.
+ * Ctrl+O keypress does not leak an `o` into the composer — Ink hands a Ctrl chord
+ * to the text input before App sees it, so the composer has to ignore chords
+ * itself (`cli/src/components/TextInput.tsx`).
  */
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { expect } from 'vitest';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
 import { startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, resetThread, type RuntimeTestEnv } from '../setup';
@@ -69,6 +71,16 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
     Then('the tool-call row is collapsed again', async () => {
       await session.waitForFrame(/ctrl\+o to expand/, 5_000);
+    });
+    And('the composer is still empty', () => {
+      // Two Ctrl+O presses must leave no trace in the draft. Ink dispatches the
+      // chord to the text input before App's handler, so the composer ignores
+      // Ctrl itself; upstream ink-text-input inserted the bare letter instead.
+      const composer = session
+        .output()
+        .split('\n')
+        .find((line) => line.includes('›'));
+      expect(composer?.replace(/[│╭╮╰╯─›\s]/g, '')).toBe('');
     });
   });
 });
