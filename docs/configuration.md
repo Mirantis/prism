@@ -105,6 +105,8 @@ Claude model IDs when you deploy without renaming).
 | `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast Claude deployment for the heartbeat gate | `claude-haiku-4-5` |
 | `AZURE_EMBEDDING_MODEL_ID` | **(Azure)** Azure OpenAI embedding deployment (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). The deployment must exist on the resource, else memory embedding fails open (no vector). Set to `''` to skip embeddings entirely. | `text-embedding-3-small` |
 | `AZURE_API_VERSION` | **(Azure)** Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
+| `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
+| `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
 
 The main model can also be set per-agent at runtime (Web UI Profile, the TUI
 `/model` command, or by asking the agent), which overrides the env default. On
@@ -118,6 +120,29 @@ routine heartbeats on a cheaper model while chat stays on a stronger one. The
 heartbeat DELIVER/SUPPRESS gate always uses the active platform's
 classification model (`BEDROCK_CLASSIFICATION_MODEL_ID` on Bedrock,
 `AZURE_CLASSIFICATION_MODEL_ID` on Azure), independent of this.
+
+### Context-window size
+
+The **[Web UI](web-ui.md#chat)** and **[Terminal UI](terminal-ui.md#status-bar)**
+show how much of the model's context window a conversation has used. Neither
+Bedrock nor Microsoft Foundry reports a model's window size, so the runtime reads
+it from a bundled catalog of Claude window sizes sourced from
+[models.dev](https://models.dev). That bundled copy needs no network and is the
+only source by default.
+
+Set `MODELS_DEV_URL=https://models.dev/api.json` to also refresh the catalog once
+at startup, so a model released after the build gets a real window. The refresh
+never blocks or fails startup: lookups use the bundled copy until it lands, and
+permanently if it doesn't. A refreshed window wins over a bundled one, but no
+bundled entry is lost. Enable it deliberately — models.dev is community-maintained,
+so a wrong number upstream reaches your deployment on the next boot without review.
+
+When a model is in neither layer the indicator is hidden rather than guessed. That
+is most likely on Azure, where model IDs are deployment names you chose:
+`AZURE_MODEL_ID=my-opus-deploy` can't appear in any catalog. Set
+`CONTEXT_WINDOW_TOKENS` to that model's input-context size (e.g. `1000000`) to
+bring it back. It applies to every model the agent uses, so the main and heartbeat
+models can't be given different windows.
 
 ### Bootstrap model defaults (`~/.prism/settings.json`)
 

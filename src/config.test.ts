@@ -134,4 +134,40 @@ describe('config', () => {
       'https://nexus.example.com/projects/proj-42/llm/bedrock/eu-west-1',
     );
   });
+  describe('MODELS_DEV_URL', () => {
+    it('is null when unset, so the runtime makes no outbound call by default', async () => {
+      delete process.env.MODELS_DEV_URL;
+      const cfg = await loadConfig();
+      expect(cfg.modelsDevUrl).toBeNull();
+    });
+
+    it('is null when explicitly empty', async () => {
+      // The e2e suites and the SEA smoke test pin the refresh off this way, which
+      // matters because they inherit ambient env — a developer's .env must not
+      // leak the feature into them.
+      process.env.MODELS_DEV_URL = '';
+      const cfg = await loadConfig();
+      expect(cfg.modelsDevUrl).toBeNull();
+    });
+
+    it('is null when whitespace-only', async () => {
+      // A blank .env line reads as "off" rather than as an unreachable URL that
+      // would warn on every boot.
+      process.env.MODELS_DEV_URL = '   ';
+      const cfg = await loadConfig();
+      expect(cfg.modelsDevUrl).toBeNull();
+    });
+
+    it('enables the refresh when a URL is named', async () => {
+      process.env.MODELS_DEV_URL = 'https://models.dev/api.json';
+      const cfg = await loadConfig();
+      expect(cfg.modelsDevUrl).toBe('https://models.dev/api.json');
+    });
+
+    it('honours a non-default registry URL', async () => {
+      process.env.MODELS_DEV_URL = 'http://fixture.test/api.json';
+      const cfg = await loadConfig();
+      expect(cfg.modelsDevUrl).toBe('http://fixture.test/api.json');
+    });
+  });
 });

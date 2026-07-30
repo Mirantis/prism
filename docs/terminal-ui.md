@@ -131,5 +131,11 @@ and a red indicator with a message if the connection drops. The TUI reconnects
 to the runtime automatically with backoff, buffering anything you send while
 it's offline.
 
+Next to the model, it shows how much of the model's context window this
+conversation has consumed — e.g. `| context 58%`. It changes colour as the window
+fills. It is hidden if the runtime does not recognize the model's context window —
+see `CONTEXT_WINDOW_TOKENS` in the **[configuration reference](configuration.md)**
+for how to set the window size in that case.
+
 For the complete flag list, settings file, and full keyboard-shortcut tables,
 see the **[CLI reference](cli-reference.md)**.

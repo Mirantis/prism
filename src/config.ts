@@ -78,6 +78,20 @@ const azureModelId = process.env.AZURE_MODEL_ID || 'claude-opus-5';
 const azureClassificationModelId = process.env.AZURE_CLASSIFICATION_MODEL_ID || 'claude-haiku-4-5';
 const azureEmbeddingModelId = process.env.AZURE_EMBEDDING_MODEL_ID ?? 'text-embedding-3-small';
 
+// Parsed defensively: `parseInt` yields NaN for junk, and a zero/negative window
+// would make the context indicator divide by nothing, so both collapse to null
+// (= fall through to the bundled snapshot).
+const rawContextWindowTokens = parseInt(process.env.CONTEXT_WINDOW_TOKENS || '', 10);
+const contextWindowTokensOverride =
+  Number.isFinite(rawContextWindowTokens) && rawContextWindowTokens > 0 ? rawContextWindowTokens : null;
+
+// Opt-in: null unless the operator names a registry URL, so the runtime makes no
+// outbound call of its own by default. Enablement derives from whether a value is
+// set, matching `nexusMcpUrl` and `otelEndpoint` — there is no separate boolean.
+// Whitespace collapses to null so a blank line in a .env file reads as "off"
+// rather than as an unreachable URL that would warn on every boot.
+const modelsDevUrlOverride = (process.env.MODELS_DEV_URL ?? '').trim() || null;
+
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
@@ -193,4 +207,22 @@ export const config = {
   chatModelId: llmProvider === 'azure' ? azureModelId : bedrockModelId,
   classificationModelId: llmProvider === 'azure' ? azureClassificationModelId : bedrockClassificationModelId,
   embeddingModelId: llmProvider === 'azure' ? azureEmbeddingModelId : bedrockEmbeddingModelId,
+
+  // Overrides the input-context window used by the context-window indicator.
+  // Normally derived from the model ID via the models.dev catalog
+  // (`lib/model-catalog.ts`); this is the escape hatch for a model neither the
+  // bundled floor nor the boot-time refresh can know — most often a custom Azure Foundry deployment name, which is
+  // user-chosen and so appears in no registry. Provider-neutral on purpose: the
+  // window is a property of the model, not the vendor. A non-numeric or
+  // non-positive value is ignored rather than fatal, so a typo degrades to the
+  // snapshot instead of breaking the indicator.
+  contextWindowTokens: contextWindowTokensOverride,
+
+  // Registry to refresh the model-window catalog from, once at startup, so a model
+  // released since the last build still gets a real context window. **Opt-in**:
+  // null unless set, and the bundled catalog answers every lookup either way, so
+  // leaving it unset costs nothing but freshness. Set it to
+  // `https://models.dev/api.json` to enable. Same variable
+  // `src/scripts/generate-model-limits.ts` reads, same meaning.
+  modelsDevUrl: modelsDevUrlOverride,
 };

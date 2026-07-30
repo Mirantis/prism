@@ -95,6 +95,94 @@ describe('App', () => {
     unmount();
   });
 
+  describe('context indicator wiring', () => {
+    // The gap these close: StatusBar and the adapter's frame coercion were each
+    // covered in isolation, but nothing exercised adapter event -> App state ->
+    // StatusBar. A bug anywhere in that seam (missed subscription, an over-eager
+    // threadId filter) would have shipped invisible, and the PTY e2e that would
+    // have caught it can't run on every dev machine.
+    const usage = (overrides: Record<string, unknown> = {}) => ({
+      threadId: 'thread-1',
+      modelId: 'us.anthropic.claude-opus-5',
+      usedTokens: 580_000,
+      windowTokens: 1_000_000,
+      usedPercent: 58,
+      ...overrides,
+    });
+
+    /**
+     * Let Ink settle. Two sequential state updates (the resolved session thread,
+     * then a context frame) need more than one macrotask to reach a frame, so
+     * settle a few times rather than guessing one is enough.
+     */
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
+
+    it('shows no percentage until a frame arrives', () => {
+      const { lastFrame, unmount } = render(<App {...baseProps} />);
+      expect(lastFrame() ?? '').not.toContain('context');
+      unmount();
+    });
+
+    it('renders a context frame from the adapter in the status bar', async () => {
+      const { lastFrame, unmount } = render(<App {...baseProps} />);
+      await flush();
+
+      adapterStub.events.emit('contextUsage', usage());
+      await flush();
+
+      expect(lastFrame() ?? '').toContain('| context 58%');
+      unmount();
+    });
+
+    it('accepts the first frames before the session thread id is known', async () => {
+      // startNewSession resolves asynchronously, so activeThreadId is undefined
+      // for the first moments of a launch. Strict equality there would drop the
+      // opening turn's readings entirely.
+      adapterStub.startNewSession.mockResolvedValueOnce(undefined);
+      const { lastFrame, unmount } = render(<App {...baseProps} />);
+
+      adapterStub.events.emit('contextUsage', usage({ threadId: 'whatever', usedPercent: 12 }));
+      await flush();
+
+      expect(lastFrame() ?? '').toContain('| context 12%');
+      unmount();
+    });
+
+    it('ignores a frame for a different thread once the thread is known', async () => {
+      adapterStub.startNewSession.mockResolvedValueOnce('thread-mine');
+      const { lastFrame, unmount } = render(<App {...baseProps} />);
+      await flush();
+      await flush();
+
+      adapterStub.events.emit('contextUsage', usage({ threadId: 'thread-mine', usedPercent: 40 }));
+      await flush();
+      expect(lastFrame() ?? '').toContain('| context 40%');
+
+      // An off-screen heartbeat/cron/goal turn broadcasts for its own thread and
+      // must not overwrite the reading for the one on screen.
+      adapterStub.events.emit('contextUsage', usage({ threadId: 'thread-other', usedPercent: 99 }));
+      await flush();
+      expect(lastFrame() ?? '').toContain('| context 40%');
+      expect(lastFrame() ?? '').not.toContain('99%');
+      unmount();
+    });
+
+    it('prefers the model the runtime reports over the local settings copy', async () => {
+      const { lastFrame, unmount } = render(<App {...baseProps} />);
+      await flush();
+
+      adapterStub.events.emit('contextUsage', usage({ modelId: 'us.anthropic.claude-haiku-4-5' }));
+      await flush();
+
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('Haiku 4.5');
+      expect(frame).not.toContain('Opus 4.7');
+      unmount();
+    });
+  });
+
   it('starts a fresh conversation thread on mount', () => {
     const { unmount } = render(<App {...baseProps} />);
     expect(adapterStub.startNewSession).toHaveBeenCalledTimes(1);
@@ -216,7 +304,14 @@ describe('App', () => {
 
   it('opens the schedules panel when /schedules is submitted', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
-    const flush = () => new Promise((r) => setImmediate(r));
+    /**
+     * Let Ink settle. Two sequential state updates (the resolved session thread,
+     * then a context frame) need more than one macrotask to reach a frame, so
+     * settle a few times rather than guessing one is enough.
+     */
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
     // Type the command, let ink-text-input commit the value into App state,
     // then submit with a carriage return. Splitting the writes (with a flush
     // between) mirrors real typing and ensures onSubmit sees the full value.
@@ -240,7 +335,14 @@ describe('App', () => {
     // id so /goal has a thread immediately, without sending a message first.
     adapterStub.startNewSession.mockResolvedValueOnce('thread-startup');
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
-    const flush = () => new Promise((r) => setImmediate(r));
+    /**
+     * Let Ink settle. Two sequential state updates (the resolved session thread,
+     * then a context frame) need more than one macrotask to reach a frame, so
+     * settle a few times rather than guessing one is enough.
+     */
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
     await flush(); // let startNewSession().then(pin) settle
     await flush();
     stdin.write('/goal make the tests pass');
@@ -272,7 +374,14 @@ describe('App', () => {
 
   it('recalls the last submission when Up is pressed on an empty input', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
-    const flush = () => new Promise((r) => setImmediate(r));
+    /**
+     * Let Ink settle. Two sequential state updates (the resolved session thread,
+     * then a context frame) need more than one macrotask to reach a frame, so
+     * settle a few times rather than guessing one is enough.
+     */
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
     await submitCopy(stdin, flush);
     expect(lastFrame() ?? '').not.toContain('/copy');
 
@@ -284,7 +393,14 @@ describe('App', () => {
 
   it('leaves a half-typed draft untouched when Up is pressed', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
-    const flush = () => new Promise((r) => setImmediate(r));
+    /**
+     * Let Ink settle. Two sequential state updates (the resolved session thread,
+     * then a context frame) need more than one macrotask to reach a frame, so
+     * settle a few times rather than guessing one is enough.
+     */
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
     await submitCopy(stdin, flush);
 
     stdin.write('draft'); // non-empty input, not browsing history
@@ -299,7 +415,14 @@ describe('App', () => {
 
   it('clears the input when Down goes past the newest entry', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
-    const flush = () => new Promise((r) => setImmediate(r));
+    /**
+     * Let Ink settle. Two sequential state updates (the resolved session thread,
+     * then a context frame) need more than one macrotask to reach a frame, so
+     * settle a few times rather than guessing one is enough.
+     */
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
     const count = (s: string, sub: string) => s.split(sub).length - 1;
     // A plain chat message (not a slash command) so recall doesn't open the
     // command popup, which would otherwise capture the Down key.
@@ -320,7 +443,14 @@ describe('App', () => {
 
   it('walks back through multiple entries with repeated Up', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
-    const flush = () => new Promise((r) => setImmediate(r));
+    /**
+     * Let Ink settle. Two sequential state updates (the resolved session thread,
+     * then a context frame) need more than one macrotask to reach a frame, so
+     * settle a few times rather than guessing one is enough.
+     */
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
     const count = (s: string, sub: string) => s.split(sub).length - 1;
     for (const msg of ['alpha-msg', 'beta-msg']) {
       stdin.write(msg);
@@ -416,6 +546,13 @@ describe('App', () => {
       updatedAt: new Date(Date.now() - 60_000).toISOString(),
       workspaceRoot: '/home/me/.claude/worktrees/ability-to-cancel',
       branch: 'worktree/ability-to-cancel',
+      contextUsage: {
+        threadId: 'thread-alpha',
+        modelId: 'us.anthropic.claude-opus-5',
+        usedTokens: 300_000,
+        windowTokens: 1_000_000,
+        usedPercent: 30,
+      },
     },
     {
       id: 'thread-beta',
@@ -423,6 +560,7 @@ describe('App', () => {
       updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
       workspaceRoot: null,
       branch: null,
+      contextUsage: null,
     },
   ];
   const resumeProps = { ...baseProps, resume: { sessions: resumeSessions, cwd: '/home/me/cwd' } };
@@ -453,7 +591,14 @@ describe('App', () => {
       },
     ]);
     const { lastFrame, stdin, unmount } = render(<App {...resumeProps} />);
-    const flush = () => new Promise((r) => setImmediate(r));
+    /**
+     * Let Ink settle. Two sequential state updates (the resolved session thread,
+     * then a context frame) need more than one macrotask to reach a frame, so
+     * settle a few times rather than guessing one is enough.
+     */
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
     stdin.write('\r'); // Enter selects the first (highlighted) session
     await flush();
     await flush();

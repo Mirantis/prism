@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { webSocketUrl } from '@/api/runtime-client';
-import type { ConversationMessage } from '@/types';
+import type { ContextUsage, ConversationMessage } from '@/types';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 export type MessageMode = 'followup' | 'collect';
@@ -14,7 +14,7 @@ interface ChatMessage {
 }
 
 interface WebSocketMessage {
-  type: 'chat' | 'status' | 'error' | 'typing' | 'heartbeat' | 'pong' | 'thread';
+  type: 'chat' | 'status' | 'error' | 'typing' | 'heartbeat' | 'pong' | 'thread' | 'context';
   payload?: unknown;
 }
 
@@ -22,12 +22,24 @@ interface UseWebSocketOptions {
   onMessage?: (msg: ConversationMessage) => void;
   /** A thread's title was (re)set server-side — update cached thread lists. */
   onThreadUpdate?: (update: { threadId: string; title: string }) => void;
+  /**
+   * A thread's context-window occupancy changed. Deliberately a callback rather
+   * than hook state: the frame is thread-scoped and the caller is the only thing
+   * that knows which thread is on screen (see the ref note below).
+   */
+  onContextUsage?: (usage: ContextUsage) => void;
   reconnectInterval?: number;
   maxReconnectAttempts?: number;
 }
 
 export function useWebSocket(opts: UseWebSocketOptions = {}) {
-  const { onMessage, onThreadUpdate, reconnectInterval = 3000, maxReconnectAttempts = 10 } = opts;
+  const {
+    onMessage,
+    onThreadUpdate,
+    onContextUsage,
+    reconnectInterval = 3000,
+    maxReconnectAttempts = 10,
+  } = opts;
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempts = useRef(0);
@@ -41,8 +53,10 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   // every render so the stable handler always invokes the latest callbacks.
   const onMessageRef = useRef(onMessage);
   const onThreadUpdateRef = useRef(onThreadUpdate);
+  const onContextUsageRef = useRef(onContextUsage);
   onMessageRef.current = onMessage;
   onThreadUpdateRef.current = onThreadUpdate;
+  onContextUsageRef.current = onContextUsage;
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [isTyping, setIsTyping] = useState(false);
@@ -82,6 +96,24 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             const p = data.payload as { threadId?: string; title?: string } | undefined;
             if (p?.threadId && typeof p.title === 'string') {
               onThreadUpdateRef.current?.({ threadId: p.threadId, title: p.title });
+            }
+            break;
+          }
+          case 'context': {
+            const p = data.payload as Partial<ContextUsage> | undefined;
+            // Validate before forwarding: a malformed frame must not render as
+            // "NaN% context used". threadId is type-checked rather than merely
+            // truthy — a numeric id would pass a truthiness guard and then never
+            // match the string comparison AgentChat filters on, silently dropping
+            // every reading. Mirrors coerceContextUsage in cli/src/tui-adapter.ts.
+            if (
+              typeof p?.threadId === 'string' &&
+              typeof p.modelId === 'string' &&
+              typeof p.usedTokens === 'number' &&
+              typeof p.windowTokens === 'number' &&
+              typeof p.usedPercent === 'number'
+            ) {
+              onContextUsageRef.current?.(p as ContextUsage);
             }
             break;
           }

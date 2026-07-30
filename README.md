@@ -327,6 +327,8 @@ restarts.
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Heartbeat gate model | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `BEDROCK_EMBEDDING_MODEL_ID` | Embedding model | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | AWS region | `us-east-1` |
+| `CONTEXT_WINDOW_TOKENS` | Context window to assume for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
+| `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry at startup (e.g. `https://models.dev/api.json`); unset means no outbound call, bundled catalog only | — (disabled) |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check on the Slack app identity | — |
 | `LANGFUSE_SECRET_KEY` | Enables Langfuse tracing when set | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |

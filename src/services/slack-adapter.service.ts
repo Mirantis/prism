@@ -47,6 +47,7 @@ import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-sour
 import { attachmentService, detectMediaType, classifyMediaType } from './attachment.service';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
 import { stripBodyToken } from '../lib/slack-web-client';
+import { getProxyDispatcher } from '../lib/proxy-dispatcher';
 import { config } from '../config';
 
 // ============================================================================
@@ -112,33 +113,6 @@ interface SlackFileDownloadResult {
 function describeSharedFiles(files: SlackFileMeta[]): string {
   const names = files.map((f) => f.name || 'file').join(', ');
   return files.length > 1 ? `(shared files: ${names})` : `(shared a file: ${names})`;
-}
-
-// Lazily-built proxy dispatcher for Slack file downloads. The Bolt WebClient's
-// outbound calls already traverse the Nexus sandbox network (transparent MITM
-// that rewrites the `__nexus_cred:…__` bot-token sentinel on the wire), so a
-// plain `fetch` with the Bearer header matches that path. When an EXPLICIT
-// `HTTPS_PROXY` is configured we route through it via undici's ProxyAgent so
-// the header rewrite still applies.
-let proxyDispatcherPromise: Promise<unknown> | undefined;
-async function getProxyDispatcher(): Promise<unknown> {
-  if (!proxyDispatcherPromise) {
-    proxyDispatcherPromise = (async () => {
-      const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
-      if (!proxy) return null;
-      try {
-        const { ProxyAgent } = await import('undici');
-        return new ProxyAgent(proxy);
-      } catch (err) {
-        logger.warn(
-          '[SlackAdapter] HTTPS_PROXY set but undici ProxyAgent unavailable: %s',
-          err instanceof Error ? err.message : String(err),
-        );
-        return null;
-      }
-    })();
-  }
-  return proxyDispatcherPromise;
 }
 
 // ============================================================================

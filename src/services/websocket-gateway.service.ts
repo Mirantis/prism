@@ -16,6 +16,7 @@ import { logger } from '../logger';
 import { config } from '../config';
 import { conversationEngineService } from './conversation-engine.service';
 import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
+import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
 
 // ============================================================================
 // Types
@@ -51,7 +52,7 @@ interface WebSocketMessage {
 type ThreadedMessage = WebSocketMessage & { threadId: string };
 
 interface WebSocketResponse {
-  type: 'chat' | 'pong' | 'error' | 'status' | 'thread';
+  type: 'chat' | 'pong' | 'error' | 'status' | 'thread' | 'context';
   threadId?: string;
   messageId?: string;
   content?: string;
@@ -85,6 +86,11 @@ class WebSocketGatewayService {
     // the gateway is just the WebSocket transport for the notification.
     threadTitleService.events.on('change', ({ userId, threadId, title }: ThreadTitleChange) => {
       this.broadcast(userId, { type: 'thread', payload: { threadId, title } });
+    });
+
+    // Push context-window occupancy so clients can show how full the window is.
+    contextUsageService.events.on('usage', ({ userId, ...payload }: ContextUsageEvent) => {
+      this.broadcast(userId, { type: 'context', payload });
     });
   }
 

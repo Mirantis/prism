@@ -159,6 +159,18 @@ vi.mock('./lib/telemetry', () => ({
   trackEvent: mockTrackEvent,
 }));
 
+const { mockContextUsageRecord, mockContextUsageFinalize } = vi.hoisted(() => ({
+  mockContextUsageRecord: vi.fn(),
+  mockContextUsageFinalize: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('./services/context-usage.service', () => ({
+  contextUsageService: {
+    record: mockContextUsageRecord,
+    finalize: mockContextUsageFinalize,
+  },
+}));
+
 
 import { invoke, withToolsCacheControl, extractAttachmentIds } from './invoke';
 import { config } from './config';
@@ -813,6 +825,116 @@ describe('invoke', () => {
           threadId: 'thread-xyz',
           includeConversation: true,
         }),
+      );
+    });
+  });
+
+  describe('context usage tracking', () => {
+    /** Two steps whose prompt grows, each reporting provider usage. */
+    function twoStepsWithUsage() {
+      mockGenerateText.mockResolvedValue({
+        text: 'done',
+        steps: [
+          {
+            text: 'thinking',
+            toolCalls: [],
+            toolResults: [],
+            usage: { inputTokens: 100_000, outputTokens: 500, totalTokens: 100_500 },
+          },
+          {
+            text: 'done',
+            toolCalls: [],
+            toolResults: [],
+            usage: { inputTokens: 140_000, outputTokens: 800, totalTokens: 140_800 },
+          },
+        ],
+      });
+    }
+
+    it('records every step with the provider-reported prompt size', async () => {
+      twoStepsWithUsage();
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-xyz' }));
+
+      expect(mockContextUsageRecord).toHaveBeenCalledTimes(2);
+      expect(mockContextUsageRecord).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          userId: 'user-test-456',
+          threadId: 'thread-xyz',
+          inputTokens: 100_000,
+          outputTokens: 500,
+        }),
+      );
+      expect(mockContextUsageRecord).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ inputTokens: 140_000, outputTokens: 800 }),
+      );
+    });
+
+    it('records the resolved model, not the request', async () => {
+      twoStepsWithUsage();
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-xyz' }));
+
+      // Whatever resolveEffectiveModel produced must reach the service, so the
+      // window is looked up against the model that actually ran.
+      expect(mockContextUsageRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ modelId: expect.stringContaining('claude') }),
+      );
+    });
+
+    it('finalizes once after the stream drains', async () => {
+      twoStepsWithUsage();
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-xyz' }));
+
+      expect(mockContextUsageFinalize).toHaveBeenCalledTimes(1);
+      expect(mockContextUsageFinalize).toHaveBeenCalledWith({ threadId: 'thread-xyz' });
+    });
+
+    it('surfaces inputTokens and outputTokens on the step', async () => {
+      twoStepsWithUsage();
+
+      const result = await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-xyz' }));
+
+      expect(result.steps[1]?.usage).toEqual({
+        totalTokens: 140_800,
+        inputTokens: 140_000,
+        outputTokens: 800,
+      });
+    });
+
+    it('does not track a heartbeat turn — it has no thread to measure', async () => {
+      twoStepsWithUsage();
+
+      await invoke(createTestInvokeRequest({ mode: 'heartbeat' }));
+
+      expect(mockContextUsageRecord).not.toHaveBeenCalled();
+      expect(mockContextUsageFinalize).not.toHaveBeenCalled();
+    });
+
+    it('does not track a subagent turn — its prompt is not a thread history', async () => {
+      twoStepsWithUsage();
+
+      await invoke(createTestInvokeRequest({ mode: 'subagent' }));
+
+      expect(mockContextUsageRecord).not.toHaveBeenCalled();
+      expect(mockContextUsageFinalize).not.toHaveBeenCalled();
+    });
+
+    it('still records when the provider omits usage, leaving the service to skip', async () => {
+      // invoke.ts must not filter this — the service owns the "no usage means
+      // render nothing" decision, so it needs to see the undefined.
+      mockGenerateText.mockResolvedValue({
+        text: 'done',
+        steps: [{ text: 'done', toolCalls: [], toolResults: [] }],
+      });
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-xyz' }));
+
+      expect(mockContextUsageRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ inputTokens: undefined, outputTokens: undefined }),
       );
     });
   });

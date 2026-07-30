@@ -1,0 +1,270 @@
+{
+  "bedrock": {
+    "anthropic.claude-fable-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "anthropic.claude-haiku-4-5-20251001-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "anthropic.claude-opus-4-1-20250805-v1:0": {
+      "context": 200000,
+      "output": 32000
+    },
+    "anthropic.claude-opus-4-5-20251101-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "anthropic.claude-opus-4-6-v1": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "anthropic.claude-opus-4-7": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "anthropic.claude-opus-4-8": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "anthropic.claude-opus-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "anthropic.claude-sonnet-4-5-20250929-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "anthropic.claude-sonnet-4-6": {
+      "context": 1000000,
+      "output": 64000
+    },
+    "anthropic.claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "au.anthropic.claude-haiku-4-5-20251001-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "au.anthropic.claude-opus-4-6-v1": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "au.anthropic.claude-opus-4-8": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "au.anthropic.claude-opus-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "au.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "au.anthropic.claude-sonnet-4-6": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "au.anthropic.claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "eu.anthropic.claude-fable-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "eu.anthropic.claude-haiku-4-5-20251001-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "eu.anthropic.claude-opus-4-5-20251101-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "eu.anthropic.claude-opus-4-6-v1": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "eu.anthropic.claude-opus-4-7": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "eu.anthropic.claude-opus-4-8": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "eu.anthropic.claude-opus-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "eu.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "eu.anthropic.claude-sonnet-4-6": {
+      "context": 1000000,
+      "output": 64000
+    },
+    "eu.anthropic.claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "global.anthropic.claude-fable-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "global.anthropic.claude-haiku-4-5-20251001-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "global.anthropic.claude-opus-4-5-20251101-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "global.anthropic.claude-opus-4-6-v1": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "global.anthropic.claude-opus-4-7": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "global.anthropic.claude-opus-4-8": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "global.anthropic.claude-opus-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "global.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "global.anthropic.claude-sonnet-4-6": {
+      "context": 1000000,
+      "output": 64000
+    },
+    "global.anthropic.claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "jp.anthropic.claude-haiku-4-5-20251001-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "jp.anthropic.claude-opus-4-7": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "jp.anthropic.claude-opus-4-8": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "jp.anthropic.claude-opus-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "jp.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "jp.anthropic.claude-sonnet-4-6": {
+      "context": 1000000,
+      "output": 64000
+    },
+    "jp.anthropic.claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "us.anthropic.claude-fable-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "us.anthropic.claude-opus-4-1-20250805-v1:0": {
+      "context": 200000,
+      "output": 32000
+    },
+    "us.anthropic.claude-opus-4-5-20251101-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "us.anthropic.claude-opus-4-6-v1": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "us.anthropic.claude-opus-4-7": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "us.anthropic.claude-opus-4-8": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "us.anthropic.claude-opus-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "us.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "us.anthropic.claude-sonnet-4-6": {
+      "context": 1000000,
+      "output": 64000
+    },
+    "us.anthropic.claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    }
+  },
+  "azure": {
+    "claude-fable-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "claude-haiku-4-5": {
+      "context": 200000,
+      "output": 64000
+    },
+    "claude-opus-4-1": {
+      "context": 200000,
+      "output": 32000
+    },
+    "claude-opus-4-5": {
+      "context": 200000,
+      "output": 64000
+    },
+    "claude-opus-4-6": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "claude-opus-4-8": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "claude-opus-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "claude-sonnet-4-5": {
+      "context": 200000,
+      "output": 64000
+    },
+    "claude-sonnet-4-6": {
+      "context": 1000000,
+      "output": 64000
+    },
+    "claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    }
+  }
+}

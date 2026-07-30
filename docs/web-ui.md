@@ -56,6 +56,15 @@ The main conversation surface.
 - **Connection status.** A small indicator shows the live WebSocket connection
   state (connected / connecting / disconnected / error); it reconnects
   automatically.
+- **Context used.** Above the input, the right-hand side shows how much of the
+  model's context window this conversation has consumed — e.g. `58% context
+  used`. Hover it for the exact token counts and the model they were measured
+  against. It updates live as the agent works, and survives a page reload. It is
+  hidden when the agent is set to a model the runtime doesn't recognize — see
+  `CONTEXT_WINDOW_TOKENS` in the **[configuration reference](configuration.md)**.
+
+  The **[Terminal UI](terminal-ui.md#status-bar)** shows the same figure, in a
+  more compact `| context 58%` form.
 
 ## Channels (Slack)
 

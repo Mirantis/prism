@@ -41,12 +41,18 @@ import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
 import { ensureWorkspaceRoot } from './tools/shell/config';
 import { ensureDataDirs } from './lib/data-dir';
+import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
 
 // Initialize Langfuse tracing before any LLM calls
 initLangfuse();
 
 // Initialize product telemetry (OTEL Logs → Collector → S3)
 initTelemetry();
+
+// Refresh the model-window catalog in the background; lookups use the bundle until it lands.
+void refreshModelCatalog().catch((err) => {
+  logger.warn({ err }, '[ModelCatalog] refresh failed; using the bundled catalog');
+});
 
 const app = createApp();
 const httpServer = createServer(app);
@@ -196,6 +202,9 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   goalService.stopAll();
   sessionManagerService.stopAll();
   if (orphanCleanupTimer) clearInterval(orphanCleanupTimer);
+  // A SIGTERM early in boot would otherwise leave the catalog fetch holding a
+  // socket, so server.close() waits and the 5s force-exit below fires.
+  cancelModelCatalogRefresh();
   webSocketGatewayService.closeAll();
   await messageDeliveryService.shutdownAll();
   await getSlackHeartbeatThrottleQueue().stop();

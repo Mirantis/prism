@@ -1,6 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
-import { tuiAdapterService, ThreadSummary, TuiMessage, TuiStatus } from './tui-adapter.js';
+import {
+  tuiAdapterService,
+  ContextUsage,
+  ThreadSummary,
+  TuiMessage,
+  TuiStatus,
+} from './tui-adapter.js';
 import { Header } from './components/Header.js';
 import { MessageList, ChatEntry } from './components/MessageList.js';
 import { Input } from './components/Input.js';
@@ -51,6 +57,12 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   const [activeThreadId, setActiveThreadId] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState<TuiStatus>('idle');
   const [statusDetail, setStatusDetail] = useState<string | undefined>(undefined);
+  // Context-window occupancy for the active thread, pushed by the runtime.
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  // The adapter subscription below is bound once ([] deps), so it can't read
+  // `activeThreadId` directly without freezing the first render's value.
+  const activeThreadIdRef = useRef(activeThreadId);
+  activeThreadIdRef.current = activeThreadId;
   const [shuttingDown, setShuttingDown] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [commandIndex, setCommandIndex] = useState(0);
@@ -110,13 +122,26 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     const onThread = (threadId: string) => {
       setActiveThreadId((cur) => cur ?? threadId);
     };
+    const onContextUsage = (usage: ContextUsage) => {
+      // On a fresh (non-resume) launch activeThreadId is undefined until the
+      // runtime resolves the latest thread (or a `thread` frame names it), so
+      // strict equality would drop the first frames. Accept anything until we
+      // know which thread we're on.
+      setContextUsage((prev) =>
+        activeThreadIdRef.current === undefined || usage.threadId === activeThreadIdRef.current
+          ? usage
+          : prev,
+      );
+    };
     tuiAdapterService.events.on('message', onMessage);
     tuiAdapterService.events.on('status', onStatus);
     tuiAdapterService.events.on('thread', onThread);
+    tuiAdapterService.events.on('contextUsage', onContextUsage);
     return () => {
       tuiAdapterService.events.off('message', onMessage);
       tuiAdapterService.events.off('status', onStatus);
       tuiAdapterService.events.off('thread', onThread);
+      tuiAdapterService.events.off('contextUsage', onContextUsage);
     };
   }, []);
 
@@ -195,11 +220,16 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   const handleResumeSelect = useCallback(
     async (threadId: string) => {
       setActiveThreadId(threadId);
+      // Seed from the picker's own row so the status bar shows a percentage
+      // before the resumed thread's next turn is measured. Looked up here rather
+      // than passed through ResumeList, whose onSelect deliberately only carries
+      // the id.
+      setContextUsage(resume?.sessions.find((s) => s.id === threadId)?.contextUsage ?? null);
       const messages = await tuiAdapterService.loadHistory({ userId, agentId: agent.id, threadId });
       setEntries(messages.map((message) => ({ kind: 'message' as const, message })));
       setResumePhase('chat');
     },
-    [userId, agent.id],
+    [userId, agent.id, resume],
   );
 
   // Escape in the picker exits the CLI (clean shutdown → exit code 0).
@@ -489,7 +519,16 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
           )}
         </>
       )}
-      {!hideStatusBar && <StatusBar modelId={modelId} status={status} detail={statusDetail} />}
+      {!hideStatusBar && (
+        <StatusBar
+          // Prefer the model the runtime actually ran: `modelId` comes from local
+          // ~/.prism/settings.json and can disagree with the agent's real model.
+          modelId={contextUsage?.modelId ?? modelId}
+          status={status}
+          detail={statusDetail}
+          contextUsedPercent={contextUsage?.usedPercent ?? null}
+        />
+      )}
     </Box>
   );
 };

@@ -19,6 +19,7 @@ import { logger } from '../logger';
 import { conversationService } from '../services/conversation.service';
 import { attachmentService } from '../services/attachment.service';
 import { getGitBranch } from '../utils/git-branch';
+import { buildContextSnapshot } from '../lib/context-window';
 
 const router = Router();
 
@@ -117,6 +118,9 @@ router.get('/threads', async (_req: Request, res: Response) => {
       updatedAt: t.updatedAt,
       workspaceRoot: t.workspaceRoot,
       branch: t.workspaceRoot ? branchByRoot.get(t.workspaceRoot) ?? null : null,
+      // Lets a resumed CLI session show its context percentage immediately, instead of
+      // waiting for the first turn of the resumed thread to complete.
+      contextUsage: buildContextSnapshot(t.id, t.contextModel, t.contextTokens),
     }));
     res.json(summaries);
   } catch (err) {

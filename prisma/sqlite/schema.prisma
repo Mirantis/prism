@@ -142,6 +142,15 @@ model ConversationThread {
   compactionSummary String?
   compactedAt       DateTime?
 
+  // Last measured prompt size for this thread, written once per turn: the
+  // provider-reported input tokens (already inclusive of cache reads/writes)
+  // plus that step's output tokens. A per-turn SNAPSHOT, not a running total —
+  // do not sum it. Drives the context-usage indicator, which recomputes the
+  // percentage against `contextModel`'s window on read so a stale number is
+  // never reinterpreted against a different model.
+  contextTokens Int?
+  contextModel  String?
+
   messages  ConversationMessage[]
   goals     Goal[]
   cronTasks CronTask[]

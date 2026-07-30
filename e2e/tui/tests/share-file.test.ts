@@ -82,9 +82,13 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       // ("· 📎 <name> ... · /save to download").
       //
       // Producing the chip takes several Bedrock round-trips (shell_write_file
-      // then share_file). Under Opus 4.8 that multi-tool sequence runs slower,
-      // so the chip wait is generous (was 30s — too tight, timed out in CI).
-      await session.waitForFrame(/▌\s+Prism\b/, 90_000);
+      // then share_file), so this is the slowest turn in the suite — yet its reply
+      // wait was the only one at 90s while every other model-dependent test
+      // allowed 120s. From 2026-07-30 the turn began exceeding 90s consistently
+      // (on main too), so the tightest budget sat on the heaviest turn. 180s to
+      // leave real headroom, since the failure mode is a timeout that says nothing
+      // about the feature.
+      await session.waitForFrame(/▌\s+Prism\b/, 180_000);
       await session.waitForFrame(new RegExp(`📎\\s+${sharedName}`), 120_000);
       await session.waitForFrame(/\/save to download/, 15_000);
     });

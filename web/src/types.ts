@@ -41,6 +41,25 @@ export interface ConversationMessage {
 
 export type ThreadSource = 'DATABASE' | 'SLACK';
 
+/**
+ * How much of the model's context window a thread is using.
+ *
+ * Derived by the runtime, not here: the percentage needs the model's context
+ * window, which comes from a models.dev catalog the runtime owns (this workspace
+ * can't import it), and the token counts only exist in the provider's response.
+ * Absent until the thread's first turn completes, and absent entirely for a model
+ * whose window the runtime doesn't recognize.
+ */
+export interface ContextUsage {
+  threadId: string;
+  /** The model that actually ran, which can differ from the agent's configured model. */
+  modelId: string;
+  usedTokens: number;
+  windowTokens: number;
+  /** Share of the window consumed, as an integer 0-100. */
+  usedPercent: number;
+}
+
 export interface ConversationThread {
   id: string;
   agentId: string;
@@ -54,6 +73,8 @@ export interface ConversationThread {
   createdAt: string;
   updatedAt: string;
   messages?: ConversationMessage[];
+  /** Last recorded context occupancy; null before the thread's first turn. */
+  contextUsage?: ContextUsage | null;
 }
 
 export interface AgentDetails {

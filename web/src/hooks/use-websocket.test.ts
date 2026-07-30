@@ -96,6 +96,57 @@ describe('useWebSocket', () => {
     expect(second).toHaveBeenCalledWith({ threadId: 't9', title: 'Database Schema Migration' });
   });
 
+  describe('context frames', () => {
+    const payload = {
+      threadId: 't1',
+      modelId: 'us.anthropic.claude-opus-5',
+      usedTokens: 580_000,
+      windowTokens: 1_000_000,
+      usedPercent: 58,
+    };
+
+    it('routes a context frame to the latest onContextUsage', async () => {
+      // Same ref-freshness contract as onThreadUpdate: the socket handler is
+      // bound once, so a stale closure would apply the frame to the wrong thread.
+      const first = vi.fn();
+      const { rerender, ws } = await renderConnected({ onContextUsage: first });
+
+      const second = vi.fn();
+      rerender({ onContextUsage: second });
+
+      act(() => ws.deliver({ type: 'context', payload }));
+
+      expect(first).not.toHaveBeenCalled();
+      expect(second).toHaveBeenCalledWith(payload);
+    });
+
+    it('drops a malformed context frame rather than forwarding NaN', async () => {
+      const onContextUsage = vi.fn();
+      const { ws } = await renderConnected({ onContextUsage });
+
+      act(() => ws.deliver({ type: 'context', payload: { threadId: 't1' } }));
+      act(() => ws.deliver({ type: 'context', payload: { ...payload, usedPercent: 'lots' } }));
+      act(() => ws.deliver({ type: 'context' }));
+      // A truthy-but-not-string threadId would pass a truthiness guard and then
+      // never match the string comparison AgentChat filters on, so every reading
+      // would be silently dropped downstream instead of loudly here.
+      act(() => ws.deliver({ type: 'context', payload: { ...payload, threadId: 1 } }));
+
+      expect(onContextUsage).not.toHaveBeenCalled();
+    });
+
+    it('ignores an unknown frame type without throwing', async () => {
+      // Forward compatibility: an older client must survive a newer runtime.
+      const onContextUsage = vi.fn();
+      const { result, ws } = await renderConnected({ onContextUsage });
+
+      act(() => ws.deliver({ type: 'something-new', payload: { a: 1 } }));
+
+      expect(onContextUsage).not.toHaveBeenCalled();
+      expect(result.current.status).toBe('connected');
+    });
+  });
+
   it('keeps isTyping set across a verbose turn until the runtime ends it', async () => {
     const onMessage = vi.fn();
     const { result, ws } = await renderConnected({ onMessage });

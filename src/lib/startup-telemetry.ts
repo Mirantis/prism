@@ -19,6 +19,7 @@ import { AgentWorkspace } from '@prisma/client';
 import { config } from '../config';
 import { logger } from '../logger';
 import { trackEvent, isTelemetryEnabled } from './telemetry';
+import { modelCatalogState } from './model-catalog';
 import { skillCatalogService } from '../services/skill-catalog.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 
@@ -46,6 +47,10 @@ export async function trackAgentStarted(
       'llm.routing': nexusBaseUrl ? 'nexus' : 'direct',
       'llm.chat_model': config.chatModelId,
       'llm.classification_model': config.classificationModelId,
+      // Read synchronously — the boot-time models.dev refresh may not have settled
+      // yet, and 'pending' (i.e. slower than boot) is itself the useful signal.
+      // Deliberately not awaited: the census must never gate on a network call.
+      'model_catalog.state': modelCatalogState(),
       // Empty when embeddings are disabled (AZURE_EMBEDDING_MODEL_ID='').
       ...(config.embeddingModelId ? { 'llm.embedding_model': config.embeddingModelId } : {}),
       // Meaningless on Azure, where the resource name pins the region.
