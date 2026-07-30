@@ -26,9 +26,9 @@
  * on Titan via the native Bedrock provider (mantle's surfaces are chat-only).
  */
 
-import { config } from '../config';
-import { createBedrockProvider, isBedrockConfigured } from './bedrock-provider';
-import { createAzureProvider, isAzureConfigured } from './azure-provider';
+import { config } from '../../config';
+import { createBedrockProvider, isBedrockConfigured } from './bedrock/bedrock-provider';
+import { createAzureProvider, isAzureConfigured } from './azure/azure-provider';
 import type { LlmProvider } from './llm-provider';
 
 export function createProvider(): LlmProvider {

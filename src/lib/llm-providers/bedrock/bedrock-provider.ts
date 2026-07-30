@@ -31,9 +31,9 @@
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
 import { defaultProvider } from '@aws-sdk/credential-provider-node';
-import { config } from '../config';
-import { logger } from '../logger';
-import type { LlmProvider } from './llm-provider';
+import { config } from '../../../config';
+import { logger } from '../../../logger';
+import type { LlmProvider } from '../llm-provider';
 
 function createSharedBedrockOptions() {
   if (config.awsAccessKeyId && config.awsSecretAccessKey) {

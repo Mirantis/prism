@@ -11,7 +11,7 @@
  */
 
 import { config } from '../config';
-import { createProvider } from './create-provider';
+import { createProvider } from './llm-providers/create-provider';
 
 export function getClassificationModel() {
   return createProvider()(config.classificationModelId);

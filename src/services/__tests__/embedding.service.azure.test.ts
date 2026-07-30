@@ -24,7 +24,7 @@ const { mockEmbed, mockEmbedMany, mockCreateAzureProvider, mockEmbeddingFn, mock
   });
 
 vi.mock('ai', () => ({ embed: mockEmbed, embedMany: mockEmbedMany }));
-vi.mock('../../lib/create-provider', () => ({
+vi.mock('../../lib/llm-providers/create-provider', () => ({
   createProvider: mockCreateAzureProvider,
 }));
 vi.mock('../../config', () => ({ config: mockConfig }));

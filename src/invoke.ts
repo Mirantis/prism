@@ -9,7 +9,7 @@
 import { generateText, ModelMessage, SystemModelMessage, Tool, stepCountIs } from 'ai';
 import { config } from './config';
 import { logger } from './logger';
-import { createProvider, isProviderConfigured } from './lib/create-provider';
+import { createProvider, isProviderConfigured } from './lib/llm-providers/create-provider';
 import { getMCPTools } from './lib/mcp-client';
 import { getMemoryTools } from './tools/memory';
 import { getCronTools } from './tools/cron';

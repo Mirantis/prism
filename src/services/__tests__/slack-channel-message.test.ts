@@ -82,7 +82,7 @@ vi.mock('../../lib/backend-client', () => ({
   backendClient: {},
 }));
 
-vi.mock('../../lib/bedrock-provider', () => ({
+vi.mock('../../lib/llm-providers/bedrock/bedrock-provider', () => ({
   isBedrockConfigured: vi.fn().mockReturnValue(false),
 }));
 

@@ -10,7 +10,7 @@
  */
 
 import { embed, embedMany, type EmbeddingModel } from 'ai';
-import { createProvider } from '../lib/create-provider';
+import { createProvider } from '../lib/llm-providers/create-provider';
 import { config } from '../config';
 import { logger } from '../logger';
 import { memoryEmbeddingStore, type SearchOptions } from './memory-store';

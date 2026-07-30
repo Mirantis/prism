@@ -75,7 +75,7 @@ vi.mock('ai', () => ({
   jsonSchema: <T,>(spec: T) => spec,
 }));
 
-vi.mock('./lib/bedrock-provider', () => ({
+vi.mock('./lib/llm-providers/bedrock/bedrock-provider', () => ({
   isBedrockConfigured: mockIsBedrockConfigured,
   createBedrockProvider: mockCreateBedrockProvider,
 }));

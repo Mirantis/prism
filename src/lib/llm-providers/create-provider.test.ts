@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { config } from '../config';
+import { config } from '../../config';
 
 const {
   mockCreateBedrockProvider,
@@ -17,11 +17,11 @@ const {
   mockIsAzureConfigured: vi.fn(() => true),
 }));
 
-vi.mock('./bedrock-provider', () => ({
+vi.mock('./bedrock/bedrock-provider', () => ({
   createBedrockProvider: mockCreateBedrockProvider,
   isBedrockConfigured: mockIsBedrockConfigured,
 }));
-vi.mock('./azure-provider', () => ({
+vi.mock('./azure/azure-provider', () => ({
   createAzureProvider: mockCreateAzureProvider,
   isAzureConfigured: mockIsAzureConfigured,
 }));
