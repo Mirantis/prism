@@ -29,6 +29,24 @@ export interface TuiMessage {
   attachments?: AttachmentMeta[] | null;
 }
 
+/**
+ * How much of the model's context window a thread is using.
+ *
+ * Computed by the runtime, which owns both inputs: the provider-reported prompt
+ * size and the model's context window (from a models.dev catalog this workspace
+ * can't import). Absent for a model whose window the runtime doesn't recognize,
+ * in which case nothing is shown.
+ */
+export interface ContextUsage {
+  threadId: string;
+  /** The model that actually ran — authoritative, unlike the local settings copy. */
+  modelId: string;
+  usedTokens: number;
+  windowTokens: number;
+  /** Share of the window consumed, as an integer 0-100. Rendered as-is. */
+  usedPercent: number;
+}
+
 export interface TuiAdapterEvents {
   message: (msg: TuiMessage) => void;
   status: (status: TuiStatus, detail?: string) => void;
@@ -38,6 +56,7 @@ export interface TuiAdapterEvents {
    * into the running turn.
    */
   thread: (threadId: string) => void;
+  contextUsage: (usage: ContextUsage) => void;
 }
 
 /** A resumable conversation thread, as listed by the `--resume` picker. */
@@ -47,6 +66,11 @@ export interface ThreadSummary {
   updatedAt: string;
   workspaceRoot: string | null;
   branch: string | null;
+  /**
+   * Last recorded context occupancy, so a resumed session shows a percentage
+   * immediately instead of waiting for its first turn to be measured.
+   */
+  contextUsage: ContextUsage | null;
 }
 
 interface RawMessage {
@@ -83,6 +107,7 @@ function coerceThreadSummary(raw: unknown): ThreadSummary | null {
     updatedAt?: unknown;
     workspaceRoot?: unknown;
     branch?: unknown;
+    contextUsage?: unknown;
   };
   if (typeof t.id !== 'string') return null;
   return {
@@ -91,6 +116,7 @@ function coerceThreadSummary(raw: unknown): ThreadSummary | null {
     updatedAt: typeof t.updatedAt === 'string' ? t.updatedAt : new Date().toISOString(),
     workspaceRoot: typeof t.workspaceRoot === 'string' ? t.workspaceRoot : null,
     branch: typeof t.branch === 'string' ? t.branch : null,
+    contextUsage: coerceContextUsage(t.contextUsage),
   };
 }
 
@@ -111,6 +137,28 @@ function coerceMessage(raw: unknown): TuiMessage | null {
     blocks: m.blocks ?? null,
     createdAt: typeof m.createdAt === 'string' ? m.createdAt : new Date().toISOString(),
     attachments: coerceAttachments(m.attachments),
+  };
+}
+
+function coerceContextUsage(raw: unknown): ContextUsage | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const u = raw as Partial<ContextUsage>;
+  // Every field is required: a partial frame would render as "context NaN%".
+  if (
+    typeof u.threadId !== 'string' ||
+    typeof u.modelId !== 'string' ||
+    typeof u.usedTokens !== 'number' ||
+    typeof u.windowTokens !== 'number' ||
+    typeof u.usedPercent !== 'number'
+  ) {
+    return null;
+  }
+  return {
+    threadId: u.threadId,
+    modelId: u.modelId,
+    usedTokens: u.usedTokens,
+    windowTokens: u.windowTokens,
+    usedPercent: u.usedPercent,
   };
 }
 
@@ -302,6 +350,11 @@ class TuiAdapter {
         if (typeof payload?.threadId === 'string' && payload.threadId) {
           this.events.emit('thread', payload.threadId);
         }
+        break;
+      }
+      case 'context': {
+        const usage = coerceContextUsage(env.payload);
+        if (usage) this.events.emit('contextUsage', usage);
         break;
       }
       // typing / heartbeat / pong intentionally ignored

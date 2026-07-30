@@ -22,6 +22,9 @@ import { ThreadMessageProvider } from './thread-provider.interface';
 import { DatabaseThreadProvider } from './providers/database-thread.provider';
 import { SlackThreadProvider } from './providers/slack-thread.provider';
 import { attachmentService, type AttachmentMeta } from './attachment.service';
+// The pure derivation, not contextUsageService — that service imports this
+// module, so depending on it here would be a cycle.
+import { buildContextSnapshot, type ContextUsageSnapshot } from '../lib/context-window';
 
 // ============================================================================
 // Types
@@ -48,6 +51,13 @@ export interface MessageWithAttachments extends ConversationMessage {
 
 export interface ThreadWithMessages extends ConversationThread {
   messages: MessageWithAttachments[];
+  /**
+   * Context occupancy derived from the thread's stored snapshot, so a reload
+   * restores the context-window indicator without waiting for the next turn.
+   * Null before the thread's first turn, or when `contextModel`'s window is
+   * unknown.
+   */
+  contextUsage: ContextUsageSnapshot | null;
 }
 
 // ============================================================================
@@ -292,7 +302,13 @@ class ConversationService {
     const withAttachments: MessageWithAttachments[] =
       await attachmentService.attachMetaToMessages(messages);
 
-    return { ...thread, messages: withAttachments };
+    // Derived here rather than in each client: the percentage needs the model's
+    // context window, which only the runtime has (the models.dev catalog isn't
+    // importable from the web/cli workspaces). Null until the thread's first turn
+    // completes, or when the stored model is unrecognized.
+    const contextUsage = buildContextSnapshot(threadId, thread.contextModel, thread.contextTokens);
+
+    return { ...thread, messages: withAttachments, contextUsage };
   }
 
   /**
@@ -421,20 +437,21 @@ class ConversationService {
   }
 
   /**
-   * Get total token count for a thread
+   * Record this thread's latest context-occupancy snapshot.
+   *
+   * `contextTokens` is a per-turn measurement (the provider-reported prompt size
+   * plus that turn's output), NOT a running total — each call overwrites the
+   * previous value. `contextModel` is stored alongside so the percentage is
+   * recomputed against the right window even after the agent's model changes.
+   *
+   * `updateMany` so a thread deleted mid-turn is a silent no-op rather than a
+   * thrown P2025, matching `updateThreadTitle`.
    */
-  async getThreadTokenCount(threadId: string): Promise<number> {
-    const result = await prisma.conversationMessage.aggregate({
-      where: {
-        threadId,
-        isCompacted: false,
-      },
-      _sum: {
-        tokenCount: true,
-      },
+  async setThreadContextUsage(threadId: string, contextTokens: number, contextModel: string): Promise<void> {
+    await prisma.conversationThread.updateMany({
+      where: { id: threadId },
+      data: { contextTokens, contextModel },
     });
-
-    return result._sum.tokenCount ?? 0;
   }
 
   /**

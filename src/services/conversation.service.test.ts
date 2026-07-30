@@ -539,22 +539,73 @@ describe('ConversationService', () => {
   });
 
   // ==========================================================================
-  // Token count
+  // Context usage
   // ==========================================================================
 
-  describe('getThreadTokenCount', () => {
-    it('should return aggregated token count', async () => {
-      mockPrisma.conversationMessage.aggregate.mockResolvedValue({
-        _sum: { tokenCount: 300 },
-      });
+  describe('setThreadContextUsage', () => {
+    it('overwrites the thread snapshot with the latest measurement', async () => {
+      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 1 });
 
-      const tokenCount = await conversationService.getThreadTokenCount('thread-123');
+      await conversationService.setThreadContextUsage('thread-123', 412_300, 'us.anthropic.claude-opus-5');
 
-      expect(tokenCount).toBe(300);
-      expect(mockPrisma.conversationMessage.aggregate).toHaveBeenCalledWith({
-        where: { threadId: 'thread-123', isCompacted: false },
-        _sum: { tokenCount: true },
+      expect(mockPrisma.conversationThread.updateMany).toHaveBeenCalledWith({
+        where: { id: 'thread-123' },
+        data: { contextTokens: 412_300, contextModel: 'us.anthropic.claude-opus-5' },
       });
+    });
+
+    it('is a no-op when the thread was deleted mid-turn', async () => {
+      // updateMany (not update) so a vanished thread doesn't throw P2025 and
+      // abort the turn that was only trying to record a display metric.
+      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        conversationService.setThreadContextUsage('gone', 100, 'us.anthropic.claude-opus-5')
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('getThread derives contextUsage', () => {
+    function mockThread(contextTokens: number | null, contextModel: string | null) {
+      mockPrisma.conversationThread.findFirst.mockResolvedValue({
+        id: 'thread-db',
+        agentId: 'agent-1',
+        userId: 'user-1',
+        threadSource: 'DATABASE',
+        contextTokens,
+        contextModel,
+      });
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+    }
+
+    it('turns the stored snapshot into a percentage so clients need no window table', async () => {
+      mockThread(250_000, 'us.anthropic.claude-opus-5');
+
+      const thread = await conversationService.getThread('user-1', 'agent-1', 'thread-db');
+
+      expect(thread?.contextUsage).toEqual({
+        threadId: 'thread-db',
+        modelId: 'us.anthropic.claude-opus-5',
+        usedTokens: 250_000,
+        windowTokens: 1_000_000,
+        usedPercent: 25,
+      });
+    });
+
+    it('is null before the thread has run a turn', async () => {
+      mockThread(null, null);
+
+      const thread = await conversationService.getThread('user-1', 'agent-1', 'thread-db');
+
+      expect(thread?.contextUsage).toBeNull();
+    });
+
+    it('is null when the stored model is no longer recognized', async () => {
+      mockThread(250_000, 'some-retired-deployment');
+
+      const thread = await conversationService.getThread('user-1', 'agent-1', 'thread-db');
+
+      expect(thread?.contextUsage).toBeNull();
     });
   });
 

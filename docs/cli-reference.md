@@ -117,7 +117,7 @@ fall back to defaults, and a malformed file is ignored.
 | Key | Purpose | Default |
 |-----|---------|---------|
 | `agentName` | Display name in the header and chat | `Prism` |
-| `modelId` | Model label shown in the status bar; also seeds the main model when the runtime first bootstraps an agent | runtime default |
+| `modelId` | Model label shown in the status bar *until the runtime reports the model it actually ran*, which then takes over; also seeds the main model when the runtime first bootstraps an agent | runtime default |
 | `heartbeatModelId` | Seeds the heartbeat model when the runtime first bootstraps an agent | unset (inherits main model) |
 | `cronModelId` | Seeds the scheduled-task model when the runtime first bootstraps an agent | unset (inherits main model) |
 | `httpUrl` | Runtime base URL | `http://localhost:3003` |

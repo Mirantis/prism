@@ -19,6 +19,7 @@ import { getShellTools } from './tools/shell/index';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from './tools/share-file';
 import { getSkillTools } from './tools/skills/index';
 import { contextService } from './services/context.service';
+import { contextUsageService } from './services/context-usage.service';
 import {
   agentWorkspaceService,
   resolveEffectiveModel,
@@ -341,10 +342,36 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         const blocks = extractBlocks(step.text);
         const attachmentIds = extractAttachmentIds(step.toolCalls, step.toolResults);
         const totalTokens = step.usage?.totalTokens;
+        const inputTokens = step.usage?.inputTokens;
+        const outputTokens = step.usage?.outputTokens;
+
+        // Context occupancy for the context-window indicator. Only for turns
+        // bound to a thread: heartbeat, webhook and subagent runs pass no
+        // threadId, and their prompt is not any thread's history, so a snapshot
+        // would be meaningless. Cheap and synchronous — no I/O here.
+        if (request.threadId) {
+          contextUsageService.record({
+            userId: request.userId,
+            threadId: request.threadId,
+            modelId,
+            inputTokens,
+            outputTokens,
+          });
+        }
+
+        const usage =
+          typeof totalTokens === 'number'
+            ? {
+                totalTokens,
+                ...(typeof inputTokens === 'number' ? { inputTokens } : {}),
+                ...(typeof outputTokens === 'number' ? { outputTokens } : {}),
+              }
+            : undefined;
+
         channel.push({
           text: step.text,
           toolCalls: stepToolCalls,
-          ...(typeof totalTokens === 'number' ? { usage: { totalTokens } } : {}),
+          ...(usage ? { usage } : {}),
           blocks,
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         });
@@ -419,6 +446,13 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       'invoke.mode': request.mode,
       'invocation.duration_ms': String(Date.now() - startTime),
     });
+
+    // Persist the turn's final context measurement and emit its own telemetry —
+    // one write per turn rather than per step. Runs for canceled turns too: the
+    // prompt was still built and sent, so the occupancy reading is real.
+    if (request.threadId) {
+      await contextUsageService.finalize({ threadId: request.threadId });
+    }
   } finally {
     await agentStatusService.setDoneProcessing(request.agentId);
   }

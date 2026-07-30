@@ -210,3 +210,69 @@ describe('TuiAdapter inbound envelopes', () => {
     expect(threads).toEqual([]);
   });
 });
+
+describe('TuiAdapter.listSessions context usage', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function respond(rows: unknown[]) {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => rows } as unknown as Response);
+  }
+
+  const row = {
+    id: 'thread-a',
+    title: 'Refactor',
+    updatedAt: '2026-07-29T10:00:00.000Z',
+    workspaceRoot: null,
+    branch: null,
+  };
+
+  it('carries a thread snapshot through so a resumed session shows a percentage', async () => {
+    const contextUsage = {
+      threadId: 'thread-a',
+      modelId: 'us.anthropic.claude-opus-5',
+      usedTokens: 300_000,
+      windowTokens: 1_000_000,
+      usedPercent: 30,
+    };
+    respond([{ ...row, contextUsage }]);
+
+    const sessions = await tuiAdapterService.listSessions();
+
+    expect(sessions[0]?.contextUsage).toEqual(contextUsage);
+  });
+
+  it('nulls the snapshot for a thread that has not run a turn', async () => {
+    respond([{ ...row, contextUsage: null }]);
+
+    const sessions = await tuiAdapterService.listSessions();
+
+    expect(sessions[0]?.contextUsage).toBeNull();
+  });
+
+  it('nulls a partial snapshot rather than rendering NaN', async () => {
+    // A runtime mid-rollout (or a proxy that drops fields) must not produce
+    // "context NaN%" in the status bar.
+    respond([{ ...row, contextUsage: { threadId: 'thread-a', usedPercent: 30 } }]);
+
+    const sessions = await tuiAdapterService.listSessions();
+
+    expect(sessions[0]?.contextUsage).toBeNull();
+  });
+
+  it('nulls the snapshot when an older runtime omits the field entirely', async () => {
+    respond([row]);
+
+    const sessions = await tuiAdapterService.listSessions();
+
+    expect(sessions[0]).toMatchObject({ id: 'thread-a', contextUsage: null });
+  });
+});

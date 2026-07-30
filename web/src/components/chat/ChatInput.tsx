@@ -17,8 +17,10 @@ import {
 } from '@/components/ui/input-group';
 import { ArrowUp, Paperclip, Square } from 'lucide-react';
 import type { ConnectionStatus } from '@/hooks/use-websocket';
+import type { ContextUsage } from '@/types';
 import { PendingAttachmentChip, type PendingAttachment } from './ChatAttachmentChip';
 import CommandPopup from './CommandPopup';
+import ContextMeter from './context-meter';
 import { filterByPrefix, isSlashMode, type SlashCommand } from './commands';
 
 interface ChatInputProps {
@@ -32,6 +34,8 @@ interface ChatInputProps {
   attachments: PendingAttachment[];
   onFilesSelected: (files: File[]) => void;
   onRemoveAttachment: (localId: string) => void;
+  /** Context-window occupancy for the active thread; null until measured. */
+  contextUsage: ContextUsage | null;
 }
 
 const statusColors: Record<ConnectionStatus, string> = {
@@ -51,6 +55,7 @@ export default function ChatInput({
   attachments,
   onFilesSelected,
   onRemoveAttachment,
+  contextUsage,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -166,10 +171,23 @@ export default function ChatInput({
 
   return (
     <div className="border-t bg-background">
-      {connectionStatus !== 'connected' && (
-        <div className="flex items-center justify-center gap-2 bg-muted/50 px-4 py-1.5 text-xs text-muted-foreground">
-          <span className={`inline-block size-1.5 rounded-full ${statusColors[connectionStatus]}`} />
-          {connectionStatus === 'connecting' ? 'Connecting…' : 'Disconnected'}
+      {/*
+        Meta strip. Previously shown only while disconnected; it now also carries
+        the context-window reading, so it renders when either signal is present.
+        Connection notice on the left, context on the right; when only one is
+        present it still lands on its own side.
+      */}
+      {(connectionStatus !== 'connected' || contextUsage) && (
+        <div className="flex items-center justify-between gap-2 bg-muted/50 px-4 py-1.5 text-xs text-muted-foreground">
+          <span className="flex items-center gap-2">
+            {connectionStatus !== 'connected' && (
+              <>
+                <span className={`inline-block size-1.5 rounded-full ${statusColors[connectionStatus]}`} />
+                {connectionStatus === 'connecting' ? 'Connecting…' : 'Disconnected'}
+              </>
+            )}
+          </span>
+          {contextUsage && <ContextMeter usage={contextUsage} />}
         </div>
       )}
       <div

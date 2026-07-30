@@ -17,6 +17,15 @@ const baseProps = {
   attachments: [],
   onFilesSelected: () => {},
   onRemoveAttachment: () => {},
+  contextUsage: null,
+};
+
+const usage = {
+  threadId: 'thread-1',
+  modelId: 'us.anthropic.claude-opus-5',
+  usedTokens: 580_000,
+  windowTokens: 1_000_000,
+  usedPercent: 58,
 };
 
 describe('ChatInput', () => {
@@ -49,6 +58,28 @@ describe('ChatInput', () => {
     expect(stop).toBeDisabled();
     fireEvent.click(stop);
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  describe('context meter in the meta strip', () => {
+    it('renders nothing when there is no measurement yet', () => {
+      // A fresh thread must show no reading at all — "100%" would be a claim the
+      // runtime hasn't measured.
+      render(<ChatInput {...baseProps} />);
+      expect(screen.queryByTestId('context-meter')).toBeNull();
+    });
+
+    it('shows the remaining percentage once measured, while connected', () => {
+      // The strip used to render only when disconnected; this is the regression
+      // guard that it now appears on a healthy connection too.
+      render(<ChatInput {...baseProps} contextUsage={usage} />);
+      expect(screen.getByTestId('context-meter')).toHaveTextContent('58% context used');
+    });
+
+    it('shows the connection notice and the meter together', () => {
+      render(<ChatInput {...baseProps} connectionStatus="disconnected" contextUsage={usage} />);
+      expect(screen.getByText('Disconnected')).toBeInTheDocument();
+      expect(screen.getByTestId('context-meter')).toBeInTheDocument();
+    });
   });
 });
 

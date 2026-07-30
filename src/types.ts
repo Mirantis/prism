@@ -149,10 +149,18 @@ export interface InvokeError {
 export interface InvokeStep {
   text: string;
   toolCalls: ToolCallRecord[];
-  // Total tokens (input + output) the model reported for this step, when the
-  // provider returns usage. Aggregated by invoke() into InvokeResponse.usage so
-  // callers (e.g. the goal loop's per-goal token budget) can meter spend.
-  usage?: { totalTokens: number };
+  // What the provider reported for this step, when it reports usage at all.
+  //
+  // `totalTokens` is aggregated by invoke() into InvokeResponse.usage so callers
+  // (e.g. the goal loop's per-goal token budget) can meter spend. Summing it
+  // across steps is cumulative BILLED spend, not context size — each agentic
+  // step resends the whole conversation.
+  //
+  // `inputTokens` is this step's full prompt size, already inclusive of cache
+  // reads and writes (the Anthropic provider sets it to
+  // input + cache_creation + cache_read). It is therefore the context-occupancy
+  // measurement — do not add cache token details on top of it.
+  usage?: { totalTokens: number; inputTokens?: number; outputTokens?: number };
   blocks?: UIBlock[];
   // Ids of MessageAttachment rows the agent shared during this step (via the
   // share_file tool). The delivery layer links these to the published message

@@ -14,6 +14,7 @@ function makeSessions(): ThreadSummary[] {
       updatedAt: new Date(Date.now() - 1.5 * MIN).toISOString(),
       workspaceRoot: '/home/me/.claude/worktrees/ability-to-cancel',
       branch: 'worktree/ability-to-cancel',
+      contextUsage: null,
     },
     {
       // No title yet → falls back to the id.
@@ -22,6 +23,7 @@ function makeSessions(): ThreadSummary[] {
       updatedAt: new Date(Date.now() - 53.5 * MIN).toISOString(),
       workspaceRoot: '/home/me/dev/prism-agent',
       branch: null,
+      contextUsage: null,
     },
   ];
 }
@@ -97,6 +99,7 @@ describe('ResumeList', () => {
       updatedAt: new Date(Date.now() - (i + 1) * MIN).toISOString(),
       workspaceRoot: null,
       branch: null,
+      contextUsage: null,
     }));
     const { lastFrame, unmount } = render(
       <ResumeList sessions={many} cwd="/cwd" onSelect={vi.fn()} onCancel={vi.fn()} />,

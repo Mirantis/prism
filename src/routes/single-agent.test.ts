@@ -155,6 +155,9 @@ describe('Single-Agent Routes', () => {
           updatedAt: '2026-06-16T10:00:00.000Z',
           workspaceRoot: '/repo/a',
           branch: 'worktree/feature',
+          // These threads carry no stored context snapshot, so a resumed CLI
+          // shows no percentage for them.
+          contextUsage: null,
         },
         {
           id: 'thread-dup',
@@ -162,6 +165,7 @@ describe('Single-Agent Routes', () => {
           updatedAt: '2026-06-16T09:30:00.000Z',
           workspaceRoot: '/repo/a',
           branch: 'worktree/feature',
+          contextUsage: null,
         },
         {
           id: 'thread-old',
@@ -169,6 +173,7 @@ describe('Single-Agent Routes', () => {
           updatedAt: '2026-06-16T09:00:00.000Z',
           workspaceRoot: null,
           branch: null,
+          contextUsage: null,
         },
       ]);
       // Resumable (web/CLI) threads only via threadSource DATABASE, capped at
@@ -181,6 +186,43 @@ describe('Single-Agent Routes', () => {
       // threads (one lookup) and thread-old has none (no lookup).
       expect(mockGetGitBranch).toHaveBeenCalledTimes(1);
       expect(mockGetGitBranch).toHaveBeenCalledWith('/repo/a');
+    });
+
+    it('includes a derived context percentage for threads that have run a turn', async () => {
+      mockListThreads.mockResolvedValue([
+        {
+          id: 'thread-used',
+          title: 'Big refactor',
+          updatedAt: '2026-06-16T10:00:00.000Z',
+          workspaceRoot: null,
+          contextTokens: 600_000,
+          contextModel: 'us.anthropic.claude-opus-5',
+        },
+      ]);
+
+      const res = await request(makeApp()).get('/threads');
+
+      expect(res.status).toBe(200);
+      expect(res.body[0].contextUsage).toEqual({
+        threadId: 'thread-used',
+        modelId: 'us.anthropic.claude-opus-5',
+        usedTokens: 600_000,
+        windowTokens: 1_000_000,
+        usedPercent: 60,
+      });
+    });
+
+    it('survives rows where the context columns are absent rather than null', async () => {
+      // Regression: a `=== null` guard let undefined through and threw a
+      // TypeError deep in the ID normalizer, turning the whole listing into a 500.
+      mockListThreads.mockResolvedValue([
+        { id: 'thread-bare', title: null, updatedAt: '2026-06-16T10:00:00.000Z', workspaceRoot: null },
+      ]);
+
+      const res = await request(makeApp()).get('/threads');
+
+      expect(res.status).toBe(200);
+      expect(res.body[0].contextUsage).toBeNull();
     });
 
     it('returns 503 when the agent is not initialized', async () => {

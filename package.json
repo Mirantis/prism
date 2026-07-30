@@ -27,6 +27,7 @@
     "docker:run": "docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK --entrypoint /bin/sh prism-agent:local -c './start.sh > /dev/null 2>&1 & exec prism'",
     "postinstall": "npm run prisma:generate",
     "prisma:generate": "prisma generate --schema=prisma/sqlite/schema.prisma",
+    "generate:model-limits": "tsx src/scripts/generate-model-limits.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",

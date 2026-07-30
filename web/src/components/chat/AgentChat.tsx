@@ -5,7 +5,12 @@ import { runtimeApi } from '@/api/runtime-client';
 import { ApiError } from '@/api/errors';
 import { useAgent } from '@/lib/agent-context';
 import { useWebSocket } from '@/hooks/use-websocket';
-import { MAX_ATTACHMENTS_PER_MESSAGE, type Attachment, type ConversationMessage } from '@/types';
+import {
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  type Attachment,
+  type ContextUsage,
+  type ConversationMessage,
+} from '@/types';
 import ChatMessageList from './ChatMessageList';
 import ChatInput from './ChatInput';
 import type { PendingAttachment } from './ChatAttachmentChip';
@@ -21,6 +26,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   const [activeThreadId, setActiveThreadId] = useState<string | undefined>(undefined);
   const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
 
   const { status, isTyping, sendFollowup, cancel } = useWebSocket({
     onMessage: (msg) => {
@@ -41,6 +47,12 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     // the Recents list so a brand-new thread appears (and existing rows pick up
     // their title) immediately, not only after a page reload. A plain in-place
     // patch can't add a thread that wasn't already in the cached list.
+    // Context-window occupancy for a thread. Filtered the same way as messages:
+    // an off-screen goal/cron turn broadcasts for its own thread and must not
+    // overwrite the reading for the thread being viewed.
+    onContextUsage: (usage) => {
+      if (usage.threadId === activeThreadId) setContextUsage(usage);
+    },
     onThreadUpdate: () => {
       queryClient.invalidateQueries({ queryKey: ['threads', agent.agentId, 'recents'] });
     },
@@ -91,6 +103,9 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   // before the new thread's history loads.
   useEffect(() => {
     setLocalMessages([]);
+    // Drop the previous thread's reading too — it belongs to a different
+    // conversation, and the new thread's is seeded from its own query below.
+    setContextUsage(null);
   }, [activeThreadId]);
 
   const { data: thread, isLoading: isLoadingThread, error: threadError } = useQuery({
@@ -110,6 +125,11 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   useEffect(() => {
     if (thread?.messages) {
       setLocalMessages(thread.messages);
+    }
+    // Restore the stored snapshot so a reload shows the last known percentage
+    // rather than waiting for the next turn to measure again.
+    if (thread) {
+      setContextUsage(thread.contextUsage ?? null);
     }
   }, [thread]);
 
@@ -304,6 +324,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         attachments={attachments}
         onFilesSelected={handleFilesSelected}
         onRemoveAttachment={handleRemoveAttachment}
+        contextUsage={contextUsage}
       />
     </div>
   );
