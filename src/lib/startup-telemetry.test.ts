@@ -39,6 +39,10 @@ const BEDROCK_CONFIG = {
   awsRegion: 'us-east-1',
   nexusLlmBaseUrl: 'https://nexus.test/llm/bedrock/us-east-1',
   nexusAzureBaseUrl: null,
+  nexusBedrockMantleBaseUrl: null,
+  // config resolves this to the selected vendor's chat mount; telemetry only
+  // reads this one field.
+  nexusChatBaseUrl: 'https://nexus.test/llm/bedrock/us-east-1',
   nexusApiUrl: 'https://nexus.test',
   nexusMcpUrl: 'https://nexus.test/projects/p1/mcp',
   slackBotToken: 'xoxb-test',
@@ -106,6 +110,7 @@ describe('trackAgentStarted', () => {
       embeddingModelId: 'text-embedding-3-small',
       nexusLlmBaseUrl: null,
       nexusAzureBaseUrl: null,
+      nexusChatBaseUrl: null,
       nexusApiUrl: undefined,
       nexusMcpUrl: null,
       slackBotToken: undefined,
@@ -136,6 +141,42 @@ describe('trackAgentStarted', () => {
       llmProvider: 'azure',
       nexusLlmBaseUrl: null,
       nexusAzureBaseUrl: 'https://nexus.test/llm/azure/anthropic/v1',
+      nexusChatBaseUrl: 'https://nexus.test/llm/azure/anthropic/v1',
+    });
+
+    await trackAgentStarted(AGENT, { cronTasks: 0 });
+
+    expect(emittedProps()['llm.routing']).toBe('nexus');
+  });
+
+  it('reports the region on bedrock-mantle — both AWS endpoints are regional', async () => {
+    setConfig({
+      llmProvider: 'bedrock-mantle',
+      chatModelId: 'anthropic.claude-opus-5',
+      classificationModelId: 'anthropic.claude-haiku-4-5-20251001-v1:0',
+      nexusLlmBaseUrl: null,
+      nexusChatBaseUrl: null,
+      nexusApiUrl: undefined,
+    });
+
+    await trackAgentStarted(AGENT, { cronTasks: 0 });
+
+    expect(emittedProps()).toMatchObject({
+      'llm.provider': 'bedrock-mantle',
+      'llm.routing': 'direct',
+      'llm.chat_model': 'anthropic.claude-opus-5',
+      // Titan on bedrock-runtime — mantle serves no embeddings.
+      'llm.embedding_model': 'amazon.titan-embed-text-v2:0',
+      'llm.region': 'us-east-1',
+    });
+  });
+
+  it('routes through Nexus on bedrock-mantle when the mantle mount is set', async () => {
+    setConfig({
+      llmProvider: 'bedrock-mantle',
+      nexusLlmBaseUrl: null,
+      nexusBedrockMantleBaseUrl: 'https://nexus.test/llm/bedrock-mantle/anthropic/us-east-1/v1',
+      nexusChatBaseUrl: 'https://nexus.test/llm/bedrock-mantle/anthropic/us-east-1/v1',
     });
 
     await trackAgentStarted(AGENT, { cronTasks: 0 });

@@ -31,12 +31,31 @@ const projectId = process.env.PROJECT_ID;
 const awsRegion = process.env.AWS_REGION || 'us-east-1';
 
 // Which vendor the runtime talks to. One provider per container (matching one
-// AGENT_ID per container). Anything other than `azure` falls back to `bedrock`
-// so an unset/typo'd value never silently breaks a Bedrock deployment.
+// AGENT_ID per container). Anything unrecognized falls back to `bedrock` so an
+// unset/typo'd value never silently breaks a Bedrock deployment.
 const rawLlmProvider = (process.env.LLM_PROVIDER || 'bedrock').toLowerCase();
-const llmProvider: 'bedrock' | 'azure' = rawLlmProvider === 'azure' ? 'azure' : 'bedrock';
+const llmProvider: 'bedrock' | 'azure' | 'bedrock-mantle' =
+  rawLlmProvider === 'azure'
+    ? 'azure'
+    : rawLlmProvider === 'bedrock-mantle'
+      ? 'bedrock-mantle'
+      : 'bedrock';
 
-// Nexus LLM proxy base URLs for Azure. Mirrors the Bedrock route mount below
+// Nexus LLM proxy base URL for native Bedrock (bedrock-runtime). Mirrors the
+// Nexus route mounts:
+//   /projects/{projectId}/llm/bedrock/{region}  (explicit project — PROJECT_ID set)
+//   /llm/bedrock/{region}                        (auto-resolve project — PROJECT_ID unset)
+// null when NEXUS_API_URL itself is unset (callers route direct to Bedrock
+// instead of going through Nexus). On `bedrock-mantle` this still carries the
+// *embedding* leg (Titan lives on bedrock-runtime, not on mantle) even though
+// chat rides `nexusBedrockMantleBaseUrl`.
+const nexusLlmBaseUrl = nexusApiUrl
+  ? (projectId
+      ? `${nexusApiUrl}/projects/${projectId}/llm/bedrock/${awsRegion}`
+      : `${nexusApiUrl}/llm/bedrock/${awsRegion}`)
+  : null;
+
+// Nexus LLM proxy base URLs for Azure. Mirrors the Bedrock route mount above
 // (`nexusLlmBaseUrl`), swapping the vendor segment. Nexus exposes the two
 // Foundry surfaces separately (`…/llm/azure/anthropic/{path}` → the resource's
 // `/anthropic` surface; `…/llm/azure/openai/{path}` → its `/openai` surface):
@@ -54,6 +73,30 @@ const nexusAzureRoot = nexusApiUrl
 const nexusAzureBaseUrl = nexusAzureRoot ? `${nexusAzureRoot}/anthropic/v1` : null;
 const nexusAzureOpenAiBaseUrl = nexusAzureRoot ? `${nexusAzureRoot}/openai/v1` : null;
 
+// Nexus LLM proxy base URL for bedrock-mantle's Anthropic surface, mounted as
+// `…/llm/bedrock-mantle/anthropic/{region}/{path}` (nexus-monorepo#414) and
+// forwarded verbatim to `https://bedrock-mantle.{region}.api.aws/anthropic/{path}`.
+// Ends at `/v1` because the anthropic SDK appends `/messages`, so the proxied
+// URL lands on `…/anthropic/v1/messages`. Keyless — the gateway holds the
+// Bedrock credential. Mantle serves no embeddings, so there is no second mount
+// here; those ride `nexusLlmBaseUrl` (bedrock-runtime) instead.
+// null when NEXUS_API_URL is unset (callers talk to mantle directly).
+const nexusBedrockMantleBaseUrl = nexusApiUrl
+  ? (projectId
+      ? `${nexusApiUrl}/projects/${projectId}/llm/bedrock-mantle/anthropic/${awsRegion}/v1`
+      : `${nexusApiUrl}/llm/bedrock-mantle/anthropic/${awsRegion}/v1`)
+  : null;
+
+// The selected vendor's Nexus *chat* mount, resolved once so callers that only
+// need "is chat routed through Nexus?" (the startup log, startup telemetry)
+// don't each re-derive the per-vendor branch. null → chat goes direct.
+const nexusChatBaseUrl =
+  llmProvider === 'azure'
+    ? nexusAzureBaseUrl
+    : llmProvider === 'bedrock-mantle'
+      ? nexusBedrockMantleBaseUrl
+      : nexusLlmBaseUrl;
+
 // Foundry Anthropic chat endpoint for Azure (Claude via Microsoft Foundry).
 // Explicit override wins; else derived from the resource name. Must end at
 // `/anthropic/v1` — the anthropic SDK appends `/messages`.
@@ -61,6 +104,18 @@ const azureResourceName = process.env.AZURE_RESOURCE_NAME;
 const azureFoundryBaseUrl =
   process.env.AZURE_FOUNDRY_BASE_URL ||
   (azureResourceName ? `https://${azureResourceName}.services.ai.azure.com/anthropic/v1` : undefined);
+
+// The Bedrock API key. The @ai-sdk/amazon-bedrock SDK reads this straight from
+// process.env for the native Bedrock path, but mantle's Anthropic surface needs
+// it explicitly (sent as `x-api-key`), so it comes through config too. May be a
+// `__nexus_cred:<uuid>__` sentinel the MITM proxy rewrites on the wire.
+const bedrockApiKey = process.env.AWS_BEARER_TOKEN_BEDROCK;
+
+// Direct bedrock-mantle chat endpoint. Must end at `/anthropic/v1` — the
+// anthropic SDK appends `/messages`. The override mirrors AZURE_FOUNDRY_BASE_URL
+// and, like it, applies to direct mode only (Nexus routing has its own mount).
+const bedrockMantleBaseUrl =
+  process.env.BEDROCK_MANTLE_BASE_URL || `https://bedrock-mantle.${awsRegion}.api.aws/anthropic/v1`;
 
 // Resolved once so the vendor-specific fields and the provider-neutral
 // `chatModelId`/`classificationModelId`/`embeddingModelId` share one source.
@@ -77,6 +132,44 @@ const bedrockEmbeddingModelId = process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazo
 const azureModelId = process.env.AZURE_MODEL_ID || 'claude-opus-5';
 const azureClassificationModelId = process.env.AZURE_CLASSIFICATION_MODEL_ID || 'claude-haiku-4-5';
 const azureEmbeddingModelId = process.env.AZURE_EMBEDDING_MODEL_ID ?? 'text-embedding-3-small';
+// Bedrock Mantle model IDs are plain Bedrock IDs, but *bare*: mantle does not
+// support cross-region inference profiles, so a `us.`/`eu.`/`global.` prefix is
+// rejected with a 400. Hence these deliberately do NOT fall back to the
+// BEDROCK_* vars — that would import a prefixed value mantle can't serve.
+// (The provider also strips the prefix at dispatch, for per-agent overrides.)
+// Mantle serves no embedding models at all, so embeddings stay on Titan over
+// bedrock-runtime and default to the same model as the Bedrock provider;
+// `??` so BEDROCK_MANTLE_EMBEDDING_MODEL_ID='' disables them entirely, matching
+// AZURE_EMBEDDING_MODEL_ID.
+// Note the classification default carries no `-20251001-v1:0` version suffix
+// either: that is a bedrock-runtime convention, and mantle 404s it
+// ("The model 'anthropic.claude-haiku-4-5-20251001-v1:0' does not exist").
+const bedrockMantleModelId = process.env.BEDROCK_MANTLE_MODEL_ID || 'anthropic.claude-opus-5';
+const bedrockMantleClassificationModelId =
+  process.env.BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID || 'anthropic.claude-haiku-4-5';
+const bedrockMantleEmbeddingModelId =
+  process.env.BEDROCK_MANTLE_EMBEDDING_MODEL_ID ?? bedrockEmbeddingModelId;
+
+// Provider-neutral model IDs, resolved once. The runtime (invoke, the
+// classification gate, embeddings, the per-agent model fallback) reads these so
+// it never has to know which vendor is active.
+const modelIds = {
+  bedrock: {
+    chat: bedrockModelId,
+    classification: bedrockClassificationModelId,
+    embedding: bedrockEmbeddingModelId,
+  },
+  azure: {
+    chat: azureModelId,
+    classification: azureClassificationModelId,
+    embedding: azureEmbeddingModelId,
+  },
+  'bedrock-mantle': {
+    chat: bedrockMantleModelId,
+    classification: bedrockMantleClassificationModelId,
+    embedding: bedrockMantleEmbeddingModelId,
+  },
+}[llmProvider];
 
 // Parsed defensively: `parseInt` yields NaN for junk, and a zero/negative window
 // would make the context indicator divide by nothing, so both collapse to null
@@ -105,9 +198,10 @@ export const config = {
   awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   awsSessionToken: process.env.AWS_SESSION_TOKEN, // Optional, only needed for temporary credentials
 
-  // LLM provider selection. `bedrock` (default) or `azure`. See the neutral
-  // `chatModelId`/`classificationModelId`/`embeddingModelId` below, which the
-  // rest of the runtime reads instead of the vendor-specific fields.
+  // LLM provider selection. `bedrock` (default), `azure`, or `bedrock-mantle`.
+  // See the neutral `chatModelId`/`classificationModelId`/`embeddingModelId`
+  // below, which the rest of the runtime reads instead of the vendor-specific
+  // fields.
   llmProvider,
 
   // Azure — Claude via Microsoft Foundry (used when LLM_PROVIDER=azure).
@@ -127,6 +221,21 @@ export const config = {
   nexusAzureBaseUrl,
   nexusAzureOpenAiBaseUrl,
 
+  // Bedrock Mantle — AWS's second inference endpoint (used when
+  // LLM_PROVIDER=bedrock-mantle). Chat/classification speak the Anthropic
+  // Messages API at `bedrockMantleBaseUrl`; there is no embedding surface, so
+  // embeddings stay on Titan over bedrock-runtime (`bedrockEmbeddingModelId`
+  // routing, `nexusLlmBaseUrl` when proxied). Model IDs are *bare* Bedrock IDs
+  // — mantle has no cross-region inference profiles. `bedrockApiKey` is the
+  // same AWS_BEARER_TOKEN_BEDROCK the native Bedrock path uses, sent here as
+  // the `x-api-key` header; required for direct mode (there is no SigV4 path).
+  bedrockApiKey,
+  bedrockMantleBaseUrl,
+  bedrockMantleModelId,
+  bedrockMantleClassificationModelId,
+  bedrockMantleEmbeddingModelId,
+  nexusBedrockMantleBaseUrl,
+
   // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
   // either picks up the existing row via findFirst() or creates a fresh
   // one with a generated UUID.
@@ -145,7 +254,7 @@ export const config = {
   // Per-agent model overrides seeded onto a freshly-bootstrapped agent, read
   // from the shared `~/.prism/settings.json` (`modelId`, `heartbeatModelId`,
   // `cronModelId`). Empty fields leave the column null → the agent resolves to
-  // `bedrockModelId` at invoke time. Read once at startup, same as the rest of
+  // `chatModelId` at invoke time. Read once at startup, same as the rest of
   // config; only consulted by `createAgent`, so a later edit needs a restart.
   agentDefaults: readAgentModelDefaults(),
 
@@ -166,16 +275,12 @@ export const config = {
   langfusePublicKey: process.env.LANGFUSE_PUBLIC_KEY,
   langfuseBaseUrl: process.env.LANGFUSE_BASE_URL || 'http://localhost:3100',
 
-  // Nexus LLM proxy base URL. Mirrors the Nexus route mounts:
-  //   /projects/{projectId}/llm/bedrock/{region}  (explicit project — PROJECT_ID set)
-  //   /llm/bedrock/{region}                        (auto-resolve project — PROJECT_ID unset)
-  // null when NEXUS_API_URL itself is unset (callers route direct Bedrock
-  // instead of going through Nexus).
-  nexusLlmBaseUrl: nexusApiUrl
-    ? (projectId
-        ? `${nexusApiUrl}/projects/${projectId}/llm/bedrock/${awsRegion}`
-        : `${nexusApiUrl}/llm/bedrock/${awsRegion}`)
-    : null,
+  // Nexus LLM proxy base URL for native Bedrock (see the derivation above).
+  // Also carries mantle's embedding leg, since Titan is bedrock-runtime-only.
+  nexusLlmBaseUrl,
+  // The selected vendor's Nexus chat mount — 'routed through Nexus?' in one
+  // field, so callers don't re-derive the per-vendor branch.
+  nexusChatBaseUrl,
 
   // OpenTelemetry (optional — disabled when not set)
   otelEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || '',
@@ -200,13 +305,13 @@ export const config = {
     ? parseInt(process.env.GOAL_DEFAULT_TOKEN_BUDGET, 10)
     : null,
 
-  // Provider-neutral model IDs. The runtime (invoke, classification gate,
-  // embeddings, per-agent model fallback) reads these so it never has to know
-  // which vendor is active — they resolve to the selected provider's fields.
-  // For Azure these are deployment names; empty when Azure isn't configured.
-  chatModelId: llmProvider === 'azure' ? azureModelId : bedrockModelId,
-  classificationModelId: llmProvider === 'azure' ? azureClassificationModelId : bedrockClassificationModelId,
-  embeddingModelId: llmProvider === 'azure' ? azureEmbeddingModelId : bedrockEmbeddingModelId,
+  // Provider-neutral model IDs (see the `modelIds` lookup above). The runtime
+  // (invoke, classification gate, embeddings, per-agent model fallback) reads
+  // these so it never has to know which vendor is active. For Azure these are
+  // deployment names; on bedrock-mantle they are bare Bedrock IDs.
+  chatModelId: modelIds.chat,
+  classificationModelId: modelIds.classification,
+  embeddingModelId: modelIds.embedding,
 
   // Overrides the input-context window used by the context-window indicator.
   // Normally derived from the model ID via the models.dev catalog

@@ -85,10 +85,13 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       // then share_file), so this is the slowest turn in the suite — yet its reply
       // wait was the only one at 90s while every other model-dependent test
       // allowed 120s. From 2026-07-30 the turn began exceeding 90s consistently
-      // (on main too), so the tightest budget sat on the heaviest turn. 180s to
-      // leave real headroom, since the failure mode is a timeout that says nothing
-      // about the feature.
-      await session.waitForFrame(/▌\s+Prism\b/, 180_000);
+      // (on main too), so the tightest budget sat on the heaviest turn. Raised to
+      // 180s then, and to 300s on 2026-08-03 after that ceiling started being hit
+      // too — three runs on main and this branch each burned the full 180s without
+      // the turn ever replying, and the two steps below then failed as collateral.
+      // The failure mode is a timeout that says nothing about the feature, so the
+      // budget is deliberately generous rather than snug.
+      await session.waitForFrame(/▌\s+Prism\b/, 300_000);
       await session.waitForFrame(new RegExp(`📎\\s+${sharedName}`), 120_000);
       await session.waitForFrame(/\/save to download/, 15_000);
     });

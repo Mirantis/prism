@@ -30,7 +30,13 @@ permissions:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The two suites sat at ~12 min before the bedrock-mantle specs, i.e. 3 min
+    # of headroom against the old 15. The new specs measured ~30s together on a
+    # fast run, but their waits are bounded far higher than that — real LLM
+    # turns at 30-60s each put a slow-but-passing run several minutes above the
+    # old baseline. Sized so the timeout catches hangs rather than occasionally
+    # killing a slow green run; re-measure once this has a few runs behind it.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -76,6 +82,18 @@ jobs:
         env:
           CI: true
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          # Slack — only the bedrock-mantle thread-classifier spec uses these,
+          # and it skips itself when they are absent. Deliberately passed under
+          # the SLACK_E2E_* names rather than SLACK_BOT_TOKEN: `setupRuntime`
+          # spreads process.env into every runtime it boots, so the deployed
+          # names would put every TUI spec's runtime on Socket Mode at once.
+          # Runs after the Playwright step, so the two never hold the
+          # (per-token exclusive) Socket Mode connection concurrently.
+          SLACK_APP_TOKEN: ${{ secrets.SLACK_E2E_APP_TOKEN }}
+          SLACK_E2E_BOT_TOKEN: ${{ secrets.SLACK_E2E_BOT_TOKEN }}
+          SLACK_E2E_USER_TOKEN: ${{ secrets.SLACK_E2E_USER_TOKEN }}
+          SLACK_E2E_BOT_USER_ID: ${{ secrets.SLACK_E2E_BOT_USER_ID }}
+          SLACK_E2E_TEAM_ID: ${{ secrets.SLACK_E2E_TEAM_ID }}
 
       - name: Upload test report
         if: ${{ !cancelled() }}

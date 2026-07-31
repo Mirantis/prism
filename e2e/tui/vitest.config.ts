@@ -8,11 +8,12 @@ export default defineConfig({
     // Boot is ~5-10s; real Bedrock chat round-trips ~20-30s; multi-step tool
     // calls (file create+share, `Ctrl+O`) can stretch to minutes under Opus 4.8.
     // Each Gherkin step is its own test, but a single step chains several
-    // waitForFrame waits (e.g. share-file's chip step ~225s), so keep headroom.
+    // waitForFrame waits, so keep headroom.
     // Must exceed the largest sum of sequential waits inside a single step —
-    // share-file's chip step is 180 + 120 + 15s. A ceiling below that turns a
-    // harness timeout (which names the frame it wanted) into a bare vitest one.
-    testTimeout: 360_000,
+    // share-file's chip step is 300 + 120 + 15s = 435s. A ceiling below that
+    // turns a harness timeout (which names the frame it wanted) into a bare
+    // vitest one, which is the less useful of the two failures.
+    testTimeout: 600_000,
     hookTimeout: 60_000,
     // pty + child processes don't parallelize cleanly without explicit
     // isolation; serialize files (each file owns one runtime).

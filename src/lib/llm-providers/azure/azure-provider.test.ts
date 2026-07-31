@@ -108,6 +108,12 @@ describe('createAzureProvider', () => {
     expect(mockAnthropicModel).not.toHaveBeenCalled();
   });
 
+  it('asks for the tool-based JSON path — Foundry rejects native structured output', () => {
+    expect(createAzureProvider().structuredOutputOptions).toEqual({
+      anthropic: { structuredOutputMode: 'jsonTool' },
+    });
+  });
+
   it('forwards apiVersion to the embeddings provider when set', () => {
     config.azureApiVersion = '2024-10-21';
     createAzureProvider();

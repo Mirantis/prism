@@ -2,7 +2,8 @@
  * Unified LLM provider factory.
  *
  * Two orthogonal choices:
- *  - Vendor: `config.llmProvider` (`bedrock` default, or `azure`).
+ *  - Vendor: `config.llmProvider` (`bedrock` default, `azure`, or
+ *    `bedrock-mantle`).
  *  - Routing: each vendor's factory takes an optional Nexus base URL — set →
  *    route through the Nexus gateway, unset → direct to the vendor.
  *
@@ -10,34 +11,51 @@
  * callable `(modelId) => LanguageModel` with `.embedding(modelId)` attached —
  * so callers don't have to care which vendor or route is in use.
  *
- * A note on **bedrock-mantle** (AWS's Anthropic/OpenAI-compatible Bedrock
- * endpoint at `bedrock-mantle.{region}.api.aws`; a Nexus managed-inference
- * backend since nexus-monorepo#414): it is deliberately NOT a provider here.
- * `LLM_PROVIDER=bedrock` already reaches the same models over Bedrock's
- * native protocol (SigV4/Bearer, Converse + InvokeModel). If mantle is ever
- * needed — e.g. Nexus policies steer managed agents to it — it slots in as a
- * third `llmProvider` branch that REUSES the azure-provider pattern, because
- * mantle's `/anthropic` surface speaks the exact same Anthropic Messages API
- * as Claude-on-Foundry: chat = `createAnthropic` with a baseURL of
- * `https://bedrock-mantle.{region}.api.aws/anthropic/v1` (direct; Bedrock API
- * key as `x-api-key`) or `…/llm/bedrock-mantle/anthropic/{region}/v1` (via
- * Nexus, keyless — the gateway reuses its NEXUS_BEDROCK_TOKEN). Model IDs
- * stay Bedrock model IDs (not deployment names), and embeddings would remain
- * on Titan via the native Bedrock provider (mantle's surfaces are chat-only).
+ * **bedrock-mantle** is AWS's second Bedrock inference endpoint
+ * (`bedrock-mantle.{region}.api.aws`; a Nexus managed-inference backend since
+ * nexus-monorepo#414), not a variant of the `bedrock` branch: it serves
+ * neither InvokeModel nor Converse, so it needs its own factory. Of its three
+ * surfaces — OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages
+ * — only `/anthropic/v1` is implemented, which makes the provider a structural
+ * copy of the Azure one (`createAnthropic` at a custom baseURL) rather than of
+ * the native Bedrock one. Neither amazon-bedrock entry point works today:
+ * `createBedrockAnthropic` appends `/model/{id}/invoke`, and
+ * `@ai-sdk/amazon-bedrock/mantle` is OpenAI-compatible-only — re-evaluate if
+ * vercel/ai#17141 lands. Two consequences worth knowing at this seam: model
+ * IDs must be **bare** (mantle has no cross-region inference profiles, so the
+ * mantle dispatcher strips `us.`/`eu.`/… prefixes), and embeddings do not run
+ * on mantle at all — they stay on Titan over bedrock-runtime, so the mantle
+ * provider reaches for `nexusLlmBaseUrl`, not its own route.
  */
 
 import { config } from '../../config';
 import { createBedrockProvider, isBedrockConfigured } from './bedrock/bedrock-provider';
 import { createAzureProvider, isAzureConfigured } from './azure/azure-provider';
+import {
+  createBedrockMantleProvider,
+  isBedrockMantleConfigured,
+} from './bedrock-mantle/bedrock-mantle-provider';
 import type { LlmProvider } from './llm-provider';
 
 export function createProvider(): LlmProvider {
-  return config.llmProvider === 'azure'
-    ? createAzureProvider(config.nexusAzureBaseUrl ?? undefined)
-    : createBedrockProvider(config.nexusLlmBaseUrl ?? undefined);
+  switch (config.llmProvider) {
+    case 'azure':
+      return createAzureProvider(config.nexusAzureBaseUrl ?? undefined);
+    case 'bedrock-mantle':
+      return createBedrockMantleProvider(config.nexusBedrockMantleBaseUrl ?? undefined);
+    default:
+      return createBedrockProvider(config.nexusLlmBaseUrl ?? undefined);
+  }
 }
 
 /** Whether the selected provider has the config it needs to serve requests. */
 export function isProviderConfigured(): boolean {
-  return config.llmProvider === 'azure' ? isAzureConfigured() : isBedrockConfigured();
+  switch (config.llmProvider) {
+    case 'azure':
+      return isAzureConfigured();
+    case 'bedrock-mantle':
+      return isBedrockMantleConfigured();
+    default:
+      return isBedrockConfigured();
+  }
 }

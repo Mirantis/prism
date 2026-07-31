@@ -45,7 +45,7 @@ vi.mock('@aws-sdk/credential-provider-node', () => ({
   defaultProvider: mockDefaultProvider,
 }));
 
-import { createBedrockProvider, isAnthropicModelId, isBedrockConfigured } from './bedrock-provider';
+import { createBedrockProvider, isBedrockConfigured } from './bedrock-provider';
 
 describe('isBedrockConfigured', () => {
   beforeEach(() => {
@@ -153,35 +153,15 @@ describe('createBedrockProvider', () => {
     expect(mockAnthropicModel).not.toHaveBeenCalled();
   });
 
+  it('declares no structured-output options — the SDK default works on bedrock-runtime', () => {
+    expect(createBedrockProvider().structuredOutputOptions).toBeUndefined();
+  });
+
   it('exposes .embedding() that delegates to the generic provider', () => {
     const provider = createBedrockProvider();
     provider.embedding('amazon.titan-embed-text-v2:0');
     expect(mockGenericEmbeddingFn).toHaveBeenCalledWith('amazon.titan-embed-text-v2:0');
     expect(mockGenericModel).not.toHaveBeenCalled();
     expect(mockAnthropicModel).not.toHaveBeenCalled();
-  });
-});
-
-describe('isAnthropicModelId', () => {
-  it('matches bare and region-prefixed Anthropic IDs', () => {
-    expect(isAnthropicModelId('anthropic.claude-3-sonnet')).toBe(true);
-    expect(isAnthropicModelId('us.anthropic.claude-opus-4-7')).toBe(true);
-    expect(isAnthropicModelId('eu.anthropic.claude-3-haiku')).toBe(true);
-    expect(isAnthropicModelId('apac.anthropic.claude-sonnet-4-6-20250929-v1:0')).toBe(true);
-  });
-
-  it('matches Anthropic IDs embedded in an ARN', () => {
-    expect(
-      isAnthropicModelId(
-        'arn:aws:bedrock:us-east-1:123:inference-profile/us.anthropic.claude-opus-4-7',
-      ),
-    ).toBe(true);
-  });
-
-  it('does not match other vendors', () => {
-    expect(isAnthropicModelId('moonshotai.kimi-k2.5')).toBe(false);
-    expect(isAnthropicModelId('moonshot.kimi-k2-thinking')).toBe(false);
-    expect(isAnthropicModelId('meta.llama3-70b-instruct-v1:0')).toBe(false);
-    expect(isAnthropicModelId('mistral.mistral-large-2402-v1:0')).toBe(false);
   });
 });

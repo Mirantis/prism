@@ -34,7 +34,7 @@ import {
   SlackBlock,
 } from '../utils/slack-formatter';
 import { trackEvent } from '../lib/telemetry';
-import { getClassificationModel } from '../lib/classification';
+import { getClassificationRequest } from '../lib/classification';
 import { slackMessageQueueService } from './slack-message-queue.service';
 import { slackHeartbeatTriggerService } from './slack-heartbeat-trigger.service';
 import { heartbeatService } from './heartbeat.service';
@@ -74,6 +74,24 @@ const threadClassificationSchema = z.object({
   action: z.enum(['respond', 'react', 'ignore']),
   emoji: z.string().optional(),
 });
+
+/**
+ * Telemetry-safe description of a thrown value: what kind of failure it was,
+ * and the HTTP status when the AI SDK carries one (`APICallError.statusCode`).
+ *
+ * Deliberately not the message — a provider's error text can quote the request
+ * back, which would put user content into telemetry. The full message is
+ * already in the local log for anyone debugging a specific failure; this is for
+ * counting. The status is the part worth alerting on: a 400 means the request
+ * shape is wrong for the platform, a 404 a missing model, a 429 throttling.
+ */
+function errorShape(error: unknown): Record<string, string> {
+  const status = (error as { statusCode?: unknown } | null)?.statusCode;
+  return {
+    'error.name': error instanceof Error ? error.name : typeof error,
+    ...(typeof status === 'number' ? { 'error.status': String(status) } : {}),
+  };
+}
 
 export interface SlackApp {
   app: App;
@@ -1490,6 +1508,11 @@ class SlackAdapterService implements ChannelAdapter {
    *
    * Second pass after the heuristic. Decides whether the bot should respond,
    * react with an emoji, or ignore the message entirely.
+   *
+   * Owns `slack thread classification failed`. Worth an event because the
+   * failure mode is degradation rather than an outage: the catch below falls
+   * back to `respond`, so a classifier that has stopped working looks exactly
+   * like a chatty bot and shows up nowhere else.
    */
   private async classifyThreadMessage(
     messages: Array<{ user?: string; text?: string }>,
@@ -1505,10 +1528,19 @@ class SlackAdapterService implements ChannelAdapter {
         })
         .join('\n');
 
+      // One provider build for both the model and its structured-output
+      // options — see getClassificationRequest. Whatever the active vendor
+      // needs is forwarded as-is; which platforms reject the SDK's native path
+      // is the provider's business. Getting it wrong is invisible: the catch
+      // below falls back to `respond`, so the bot would answer every threaded
+      // message instead of ever reacting or ignoring.
+      const { model, providerOptions } = getClassificationRequest();
+
       const { object } = await generateObject({
-        model: getClassificationModel(),
+        model,
         schema: threadClassificationSchema,
         temperature: 0,
+        providerOptions,
         system: [
           'You are a Slack thread classifier for an AI assistant bot.',
           'Given the recent messages in a thread, decide what the bot should do with the LAST message.',
@@ -1529,6 +1561,15 @@ class SlackAdapterService implements ChannelAdapter {
       return { action: object.action };
     } catch (error) {
       logger.warn('Thread classification failed, falling back to respond: %s', error instanceof Error ? error.message : String(error));
+      // Sole emitter of `slack thread classification failed`. Props stay to
+      // ids, the active model, and the error's shape — never the transcript or
+      // the message text the classifier ran on.
+      trackEvent('slack thread classification failed', null, {
+        'agent.id': agentId,
+        'llm.provider': config.llmProvider,
+        'llm.classification_model': config.classificationModelId,
+        ...errorShape(error),
+      });
       return { action: 'respond' };
     }
   }

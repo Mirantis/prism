@@ -30,52 +30,10 @@
 
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
-import { defaultProvider } from '@aws-sdk/credential-provider-node';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
+import { createSharedBedrockOptions, isAnthropicModelId } from '../bedrock-shared';
 import type { LlmProvider } from '../llm-provider';
-
-function createSharedBedrockOptions() {
-  if (config.awsAccessKeyId && config.awsSecretAccessKey) {
-    logger.info('Using explicit AWS credentials for Bedrock authentication');
-    return {
-      region: config.awsRegion,
-      accessKeyId: config.awsAccessKeyId,
-      secretAccessKey: config.awsSecretAccessKey,
-      sessionToken: config.awsSessionToken || undefined,
-    };
-  }
-
-  logger.info('Using default AWS credential provider chain for Bedrock authentication (no explicit keys set)');
-
-  // In ECS, use the default credential provider chain (task role -> container metadata)
-  const provider = defaultProvider();
-
-  return {
-    region: config.awsRegion,
-    credentialProvider: async () => {
-      logger.info('Using default AWS credential provider chain for Bedrock authentication');
-      const creds = await provider();
-
-      logger.info(`Credentials expire at ${creds.expiration} with scope ${creds.credentialScope}`);
-
-      return {
-        accessKeyId: creds.accessKeyId,
-        secretAccessKey: creds.secretAccessKey,
-        sessionToken: creds.sessionToken,
-      };
-    },
-  };
-}
-
-/**
- * Returns true when `modelId` is an Anthropic Claude model on Bedrock — bare
- * (`anthropic.claude-…`), regional inference profile (`us.anthropic.…`,
- * `eu.anthropic.…`, …), or an ARN containing `/anthropic.…`.
- */
-export function isAnthropicModelId(modelId: string): boolean {
-  return /^anthropic\.|\.anthropic\./i.test(modelId);
-}
 
 /**
  * Create an Amazon Bedrock provider that dispatches on model family.
