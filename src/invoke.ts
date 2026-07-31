@@ -35,6 +35,7 @@ import { getChannelBehaviorInstructions } from './prompts/channel-prompt';
 import { getTaskToolInstructions } from './prompts/task-tool-prompt';
 import { createTaskTool } from './lib/task-tool';
 import { withOutputLimits } from './lib/tool-output-limiter';
+import { withToolLifecycleEvents } from './lib/tool-lifecycle';
 import { InvokeError, InvokeRequest, InvokeResponse, InvokeStep, ToolCallRecord, UIBlock } from './types';
 import { STEP_LIMIT, MAX_OUTPUT_TOKENS } from './constants';
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
@@ -182,9 +183,10 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       tools['Task'] = createTaskTool(subagents, request.userId, invoke);
     }
 
-    // 5. Wrap tools with output limits and cache control
+    // 5. Wrap tools with output limits, lifecycle events, and cache control
     const limitedTools = withOutputLimits(tools);
-    const cachedTools = withToolsCacheControl(limitedTools);
+    const observedTools = withToolLifecycleEvents(limitedTools, request.onToolEvent);
+    const cachedTools = withToolsCacheControl(observedTools);
 
     // 6. Build system prompt parts (stable vs dynamic for granular caching)
     const systemParts = await buildSystemPromptParts(

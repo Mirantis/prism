@@ -1,0 +1,266 @@
+/**
+ * Tests for the Slack working indicator: eyes-reaction lifecycle, refcounted
+ * assistant-thread status entries, event-driven status pushes (set on begin,
+ * on text change, and after bot posts), and ordered clears. Ops are plain
+ * vi.fn()s; fake timers only flush microtasks.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('../../logger', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+import {
+  SlackWorkingIndicator,
+  WORKING_REACTION,
+  WORKING_STATUS_TEXT,
+  toolStatusText,
+} from '../slack-working-indicator';
+
+const TEAM = 'T001';
+const CHANNEL = 'C001';
+const MSG_TS = '1111.0001';
+const THREAD_TS = '1111.0000';
+
+function makeOps() {
+  return {
+    addReaction: vi.fn().mockResolvedValue(undefined),
+    removeReaction: vi.fn().mockResolvedValue(undefined),
+    setStatus: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+describe('SlackWorkingIndicator', () => {
+  let ops: ReturnType<typeof makeOps>;
+  let indicator: SlackWorkingIndicator;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    ops = makeOps();
+    indicator = new SlackWorkingIndicator(ops);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('begin with a status thread adds the reaction and sets the initial status', async () => {
+    await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+
+    expect(ops.addReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
+    expect(ops.setStatus).toHaveBeenCalledExactlyOnceWith(TEAM, CHANNEL, THREAD_TS, WORKING_STATUS_TEXT);
+  });
+
+  it('begin without a status thread (top-level DM) is reaction-only', async () => {
+    await indicator.begin({ teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS });
+
+    expect(ops.addReaction).toHaveBeenCalledOnce();
+    expect(ops.setStatus).not.toHaveBeenCalled();
+  });
+
+  it('begin without a message ts is status-only', async () => {
+    await indicator.begin({ teamId: TEAM, channelId: CHANNEL, statusThreadTs: THREAD_TS });
+
+    expect(ops.addReaction).not.toHaveBeenCalled();
+    expect(ops.setStatus).toHaveBeenCalledOnce();
+  });
+
+  it('pushes the tool phrase immediately on setText, dedupes repeats, and reverts on null', async () => {
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, statusThreadTs: THREAD_TS,
+    });
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, WORKING_STATUS_TEXT);
+
+    handle.setText(toolStatusText('kubectl'));
+    await vi.advanceTimersByTimeAsync(0); // flush the per-key op chain
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, 'is running kubectl…');
+
+    handle.setText(toolStatusText('kubectl')); // unchanged text — no extra call
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenCalledTimes(2);
+
+    handle.setText(null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, WORKING_STATUS_TEXT);
+    expect(ops.setStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it('ignores setText after end and without a status thread', async () => {
+    const noStatus = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS,
+    });
+    noStatus.setText('is running kubectl…'); // no status thread — must not throw
+    await noStatus.end();
+    expect(ops.setStatus).not.toHaveBeenCalled();
+
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, statusThreadTs: THREAD_TS,
+    });
+    await handle.end();
+    const calls = ops.setStatus.mock.calls.length;
+    handle.setText('is running kubectl…'); // after end — no-op
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenCalledTimes(calls);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+  });
+
+  it('setStatus sets the current status again after a bot post; no-op for idle threads', async () => {
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, statusThreadTs: THREAD_TS,
+    });
+    handle.setText(toolStatusText('kubectl'));
+
+    // A mid-turn bot post cleared the status on Slack's side — setStatus
+    // sends whatever text is current.
+    indicator.setStatus(TEAM, CHANNEL, THREAD_TS);
+    await vi.advanceTimersByTimeAsync(0); // flush the per-key op chain
+    expect(ops.setStatus).toHaveBeenCalledTimes(3); // begin + setText + setStatus
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, 'is running kubectl…');
+
+    await handle.end();
+    const calls = ops.setStatus.mock.calls.length;
+    indicator.setStatus(TEAM, CHANNEL, THREAD_TS); // no live turn — no-op
+    indicator.setStatus(TEAM, CHANNEL, '9999.0000'); // unknown thread — no-op
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenCalledTimes(calls);
+  });
+
+  it('end removes the reaction and clears the status; a second end is a no-op', async () => {
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+
+    await handle.end();
+
+    expect(ops.removeReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+
+    await handle.end();
+    expect(ops.removeReaction).toHaveBeenCalledOnce(); // idempotent
+    expect(ops.setStatus).toHaveBeenCalledTimes(2); // no second clear
+  });
+
+  it('refcounts the status across two turns on the same thread (steered scenario)', async () => {
+    const owning = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    const steered = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: '1111.0002', statusThreadTs: THREAD_TS,
+    });
+
+    expect(ops.setStatus).toHaveBeenCalledOnce(); // one entry, one initial set
+
+    await steered.end();
+    // Steered end removes its own reaction but must not clear the shared status.
+    expect(ops.removeReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, '1111.0002', TEAM, WORKING_REACTION);
+    expect(ops.setStatus).not.toHaveBeenCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+
+    await owning.end();
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+  });
+
+  it('keeps status entries on different threads independent', async () => {
+    const a = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, statusThreadTs: '2222.0000',
+    });
+    await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, statusThreadTs: '3333.0000',
+    });
+
+    await a.end();
+
+    // Only the ended thread was cleared; the other still sets its status.
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, '2222.0000', '');
+    indicator.setStatus(TEAM, CHANNEL, '3333.0000');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, '3333.0000', WORKING_STATUS_TEXT);
+  });
+
+  it('resolves begin and end even when every op rejects', async () => {
+    ops.addReaction.mockRejectedValue(new Error('no scope'));
+    ops.removeReaction.mockRejectedValue(new Error('no_reaction'));
+    ops.setStatus.mockRejectedValue(new Error('not an AI app'));
+
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    await handle.end();
+
+    await vi.runAllTimersAsync(); // let swallowed rejections settle
+  });
+
+  it('stopAll ends every live handle', async () => {
+    await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: '1.1', statusThreadTs: '1.0',
+    });
+    await indicator.begin({
+      teamId: TEAM, channelId: 'C002', messageTs: '2.1',
+    });
+
+    await indicator.stopAll();
+
+    expect(ops.removeReaction).toHaveBeenCalledTimes(2);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, '1.0', '');
+  });
+
+  it('stopAll during an in-flight reaction add still clears both cues, in order', async () => {
+    let resolveAdd!: () => void;
+    ops.addReaction.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveAdd = resolve; }),
+    );
+
+    const beginPromise = indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    const stopPromise = indicator.stopAll();
+    await vi.advanceTimersByTimeAsync(0); // flush microtasks
+
+    // end() must wait for the in-flight add — remove cannot overtake it.
+    expect(ops.removeReaction).not.toHaveBeenCalled();
+
+    resolveAdd();
+    await stopPromise;
+    await beginPromise;
+
+    expect(ops.removeReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+  });
+
+  it('begin after stopAll returns an inert handle', async () => {
+    await indicator.stopAll();
+
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    handle.setText('is running kubectl…');
+    await handle.end();
+
+    expect(ops.addReaction).not.toHaveBeenCalled();
+    expect(ops.setStatus).not.toHaveBeenCalled();
+    expect(ops.removeReaction).not.toHaveBeenCalled();
+  });
+
+  it('serializes status calls per thread so a clear cannot overtake an in-flight set', async () => {
+    let resolveSet!: () => void;
+    ops.setStatus.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveSet = resolve; }),
+    );
+
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, statusThreadTs: THREAD_TS,
+    });
+    const endPromise = handle.end();
+    await vi.advanceTimersByTimeAsync(0); // flush microtasks
+
+    // The initial set is still in flight — the clear must queue behind it.
+    expect(ops.setStatus).toHaveBeenCalledTimes(1);
+
+    resolveSet();
+    await endPromise;
+
+    expect(ops.setStatus).toHaveBeenCalledTimes(2);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+  });
+});

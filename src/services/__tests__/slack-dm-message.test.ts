@@ -203,3 +203,146 @@ describe('Slack DM handler (DM isolation + threading)', () => {
     expect(mockSay).toHaveBeenCalled(); // emits the link-account prompt
   });
 });
+
+describe('Slack DM working indicator', () => {
+  let reactionsAdd: ReturnType<typeof vi.fn>;
+  let reactionsRemove: ReturnType<typeof vi.fn>;
+  let setStatus: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    mockSlackMappingService.findUserMapping.mockResolvedValue({
+      id: 'map-1',
+      lensUserId: LENS_USER,
+      agentId: AGENT_ID,
+      dmChannelId: DM_CHANNEL,
+    });
+    mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-001' });
+    mockConversationEngineService.chat.mockResolvedValue(undefined);
+
+    (slackAdapterService as any).resolveMentions = vi.fn().mockImplementation(async (t: string) => t);
+    (slackAdapterService as any).getUserInfo = vi.fn().mockResolvedValue({ real_name: 'Alice', name: 'alice' });
+    (slackAdapterService as any).downloadSlackFiles = vi.fn().mockResolvedValue({ attachmentIds: [], failures: [] });
+
+    // Fake Bolt client so the indicator's reaction/status calls are observable.
+    reactionsAdd = vi.fn().mockResolvedValue({ ok: true });
+    reactionsRemove = vi.fn().mockResolvedValue({ ok: true });
+    setStatus = vi.fn().mockResolvedValue({ ok: true });
+    (slackAdapterService as any).apps = new Map([
+      [TEAM_ID, {
+        app: {
+          client: {
+            reactions: { add: reactionsAdd, remove: reactionsRemove },
+            assistant: { threads: { setStatus } },
+          },
+        },
+        teamId: TEAM_ID,
+      }],
+    ]);
+  });
+
+  it('adds the eyes reaction before chat() and removes it after; top-level DM never sets a status', async () => {
+    await handleDmMessage(undefined);
+
+    expect(reactionsAdd).toHaveBeenCalledExactlyOnceWith({
+      channel: DM_CHANNEL,
+      timestamp: MESSAGE_TS,
+      name: 'eyes',
+    });
+    expect(reactionsRemove).toHaveBeenCalledExactlyOnceWith({
+      channel: DM_CHANNEL,
+      timestamp: MESSAGE_TS,
+      name: 'eyes',
+    });
+    expect(reactionsAdd.mock.invocationCallOrder[0]).toBeLessThan(
+      mockConversationEngineService.chat.mock.invocationCallOrder[0],
+    );
+    expect(reactionsRemove.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockConversationEngineService.chat.mock.invocationCallOrder[0],
+    );
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it('sets the thread status for a threaded DM and clears it after the turn', async () => {
+    await handleDmMessage(THREAD_TS);
+
+    expect(setStatus).toHaveBeenCalledWith({
+      channel_id: DM_CHANNEL,
+      thread_ts: THREAD_TS,
+      status: 'is thinking…',
+    });
+    expect(setStatus).toHaveBeenLastCalledWith({
+      channel_id: DM_CHANNEL,
+      thread_ts: THREAD_TS,
+      status: '',
+    });
+  });
+
+  it('still removes the reaction and clears the status when chat() rejects', async () => {
+    mockConversationEngineService.chat.mockRejectedValue(new Error('LLM exploded'));
+
+    await handleDmMessage(THREAD_TS);
+
+    expect(mockSay).toHaveBeenCalledWith(expect.stringContaining('I encountered an error'));
+    expect(reactionsRemove).toHaveBeenCalledOnce();
+    expect(setStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: '' }),
+    );
+  });
+
+  it('removes the reaction when the message is steered into a live turn', async () => {
+    mockConversationEngineService.chat.mockResolvedValue({ steered: true });
+
+    await handleDmMessage(undefined);
+
+    expect(reactionsAdd).toHaveBeenCalledOnce();
+    expect(reactionsRemove).toHaveBeenCalledOnce();
+    expect(mockSay).not.toHaveBeenCalled();
+  });
+
+  it('renders the running tool in the status line via onToolEvent', async () => {
+    mockConversationEngineService.chat.mockImplementation(async (input: any) => {
+      input.onToolEvent({ type: 'started', toolName: 'kubectl' });
+      return undefined;
+    });
+
+    await handleDmMessage(THREAD_TS);
+
+    expect(setStatus).toHaveBeenCalledWith({
+      channel_id: DM_CHANNEL,
+      thread_ts: THREAD_TS,
+      status: 'is running kubectl…',
+    });
+    expect(setStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: '' }),
+    );
+  });
+
+  it('sends no loading_messages — Slack rotates its own default phrases', async () => {
+    // Deliberate omission (see setAssistantStatus): with no loading_messages,
+    // Slack's Agents & AI Apps surface rotates its built-in phrases
+    // ("Gathering information…", …). Write-only on Slack's side, so the
+    // payload shape is pinned here.
+    await handleDmMessage(THREAD_TS);
+
+    expect(setStatus).toHaveBeenCalled();
+    for (const [payload] of setStatus.mock.calls) {
+      expect(payload).not.toHaveProperty('loading_messages');
+    }
+  });
+
+  it('never shows the indicator for a verification code or an unlinked user', async () => {
+    (slackAdapterService as any).verifyDmLinkCode = vi
+      .fn()
+      .mockResolvedValue({ success: true, message: 'linked' });
+    (slackAdapterService as any).rebuildUserCache = vi.fn().mockResolvedValue(undefined);
+    await handleDmMessage(undefined, 'ABC123');
+    expect(reactionsAdd).not.toHaveBeenCalled();
+
+    mockSlackMappingService.findUserMapping.mockResolvedValue(null);
+    await handleDmMessage(undefined);
+    expect(reactionsAdd).not.toHaveBeenCalled();
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+});

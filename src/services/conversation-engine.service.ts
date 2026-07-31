@@ -15,6 +15,7 @@ import { attachmentService } from './attachment.service';
 import { invokeStream } from '../invoke';
 import { ToolCallRecord, InvokeStep, UIBlock, ChannelOrigin } from '../types';
 import type { SteeringMessage } from '../prompts/context-builder';
+import type { ToolLifecycleListener } from '../lib/tool-lifecycle';
 import { logger } from '../logger';
 import prisma from '../lib/prisma';
 import { getClassificationModel } from '../lib/classification';
@@ -60,6 +61,7 @@ export interface ChatInput {
   runtimeNotices?: string[];
   /** Aborting this signal stops the in-flight LLM generation mid-turn. */
   abortSignal?: AbortSignal;
+  onToolEvent?: ToolLifecycleListener;
   /**
    * Only hand this message to a turn already running on its thread; never start
    * one. When no turn is live, nothing is stored and nothing is invoked, and the
@@ -368,6 +370,7 @@ Respond with exactly one word: WORTHY or SKIP`;
           metadata,
           runtimeNotices,
           abortSignal: input.abortSignal,
+          onToolEvent: input.onToolEvent,
           // Drained at every step boundary, so a message handed to us — even one
           // that arrived while we were still storing or waiting for the mutex —
           // reaches the model on the next step.
@@ -519,6 +522,7 @@ Respond with exactly one word: WORTHY or SKIP`;
     metadata: ChatInput['metadata'];
     runtimeNotices?: string[];
     abortSignal?: AbortSignal;
+    onToolEvent?: ToolLifecycleListener;
     steering: () => Promise<SteeringMessage[]>;
   }): Promise<StreamedTurn> {
     const { userId, agentId, threadId, prompt, channelContext, metadata } = params;
@@ -548,6 +552,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       originChannelId: metadata?.channelId,
       runtimeNotices: params.runtimeNotices,
       abortSignal: params.abortSignal,
+      onToolEvent: params.onToolEvent,
       steering: params.steering,
     })) {
       allToolCalls.push(...step.toolCalls);

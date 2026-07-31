@@ -49,6 +49,12 @@ import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE } fr
 import { stripBodyToken } from '../lib/slack-web-client';
 import { getProxyDispatcher } from '../lib/proxy-dispatcher';
 import { config } from '../config';
+import {
+  SlackWorkingIndicator,
+  WorkingIndicatorHandle,
+  toolStatusText,
+} from './slack-working-indicator';
+import type { ToolLifecycleEvent } from '../lib/tool-lifecycle';
 
 // ============================================================================
 // Tunables
@@ -150,6 +156,20 @@ class SlackAdapterService implements ChannelAdapter {
   private _slackThreadProvider?: SlackThreadProvider;
   private get slackThreadProvider(): SlackThreadProvider {
     return (this._slackThreadProvider ??= new SlackThreadProvider());
+  }
+
+  // Working indicator (eyes reaction + best-effort thread status) shown while
+  // a user-initiated turn runs.
+  private _workingIndicator?: SlackWorkingIndicator;
+  private get workingIndicator(): SlackWorkingIndicator {
+    return (this._workingIndicator ??= new SlackWorkingIndicator({
+      addReaction: (channelId, messageTs, teamId, emoji) =>
+        this.addReaction(channelId, messageTs, teamId, emoji),
+      removeReaction: (channelId, messageTs, teamId, emoji) =>
+        this.removeReaction(channelId, messageTs, teamId, emoji),
+      setStatus: (teamId, channelId, threadTs, status) =>
+        this.setAssistantStatus(teamId, channelId, threadTs, status),
+    }));
   }
 
   /**
@@ -290,6 +310,17 @@ class SlackAdapterService implements ChannelAdapter {
             attachments,
           );
 
+          // Slack clears the assistant status on any bot post — set it again.
+          // The indicator itself no-ops unless a turn is live on this DM
+          // thread; the guard here only ensures there is a thread to target.
+          if (channelContext?.threadTs) {
+            this.workingIndicator.setStatus(
+              connection.teamId,
+              mapping.dmChannelId,
+              channelContext.threadTs,
+            );
+          }
+
           logger.info('Delivered message to Slack DM %s for user %s', connection.teamName, userId);
         } catch (error: unknown) {
           const errMsg = error instanceof Error ? error.message : String(error);
@@ -394,6 +425,13 @@ class SlackAdapterService implements ChannelAdapter {
         typeof response.ts === 'string' ? response.ts : threadTs,
         attachments,
       );
+
+      // Slack clears the assistant status on any bot post — set it again.
+      // The indicator itself no-ops unless a turn is live on this thread;
+      // the guard here only ensures there is a thread to target.
+      if (threadTs) {
+        this.workingIndicator.setStatus(teamId, channelId, threadTs);
+      }
 
       logger.info('Delivered message to Slack channel %s', mapping?.slackChannelName || channelId);
     } catch (error: unknown) {
@@ -508,6 +546,14 @@ class SlackAdapterService implements ChannelAdapter {
    */
   async shutdown(): Promise<void> {
     logger.info('Shutting down Slack adapter...');
+
+    // Clear working indicators while the Bolt clients are still up, so the
+    // best-effort reaction removals / status clears can reach Slack.
+    await this._workingIndicator?.stopAll();
+    // A stopped indicator refuses new turns for good — drop the instance so
+    // a later initialize()/add-connection in the same process (management
+    // API restart, not just process exit) gets a fresh one from the getter.
+    this._workingIndicator = undefined;
 
     for (const [teamId, slackApp] of this.apps) {
       try {
@@ -728,6 +774,7 @@ class SlackAdapterService implements ChannelAdapter {
   ): Promise<void> {
     logger.info('Slack DM from %s', slackUserId);
 
+    let indicator: WorkingIndicatorHandle | null = null;
     try {
       // Check if this looks like a verification code (6 hex chars, possibly with formatting)
       // Strip common Slack formatting: *bold*, _italic_, ~strike~
@@ -762,6 +809,16 @@ class SlackAdapterService implements ChannelAdapter {
         );
         return;
       }
+
+      // Working cue for the whole turn. No statusThreadTs for a top-level DM
+      // (never synthesized from eventTs — that could activate a Slack
+      // assistant thread prematurely); the eyes reaction covers it.
+      indicator = await this.workingIndicator.begin({
+        teamId,
+        channelId: dmChannelId,
+        messageTs: eventTs,
+        statusThreadTs: threadTs,
+      });
 
       // Store DM channel ID if not already stored
       if (!mapping.dmChannelId) {
@@ -820,6 +877,8 @@ class SlackAdapterService implements ChannelAdapter {
         message: taggedText,
         attachmentIds,
         runtimeNotices: failures.length ? [this.buildAttachmentFailureNote(failures)] : undefined,
+        onToolEvent: (event: ToolLifecycleEvent) =>
+          indicator?.setText(event.type === 'started' ? toolStatusText(event.toolName) : null),
         metadata: { channel: 'slack', slackThreadTs: threadTs },
       });
     } catch (error: unknown) {
@@ -836,6 +895,8 @@ class SlackAdapterService implements ChannelAdapter {
         'Slack DM processing error'
       );
       await say(`Sorry, I encountered an error processing your message: ${errMsg}`);
+    } finally {
+      await indicator?.end();
     }
   }
 
@@ -998,9 +1059,21 @@ class SlackAdapterService implements ChannelAdapter {
     }
 
     // Bot should respond - process through conversation engine
+    const slackThreadId = threadTs || messageTs;
+    let indicator: WorkingIndicatorHandle | null = null;
     try {
+      // Working cue for the whole turn — started before the (possibly slow)
+      // read-consistency wait below so the user sees it immediately. The
+      // reply always lands in slackThreadId's thread, so the status line
+      // attaches there.
+      indicator = await this.workingIndicator.begin({
+        teamId: mapping.connection.teamId,
+        channelId,
+        messageTs,
+        statusThreadTs: slackThreadId,
+      });
+
       // Get or create thread bound to this Slack thread
-      const slackThreadId = threadTs || messageTs;
       const thread = await conversationService.getOrCreateThreadByExternalId(
         userId, mapping.agentId, slackThreadId, { channelId }
       );
@@ -1043,6 +1116,8 @@ class SlackAdapterService implements ChannelAdapter {
         message: taggedText,
         attachmentIds,
         runtimeNotices: failures.length ? [this.buildAttachmentFailureNote(failures)] : undefined,
+        onToolEvent: (event: ToolLifecycleEvent) =>
+          indicator?.setText(event.type === 'started' ? toolStatusText(event.toolName) : null),
         metadata: {
           channel: 'slack',
           channelId,
@@ -1068,8 +1143,10 @@ class SlackAdapterService implements ChannelAdapter {
       );
       await say({
         text: `Sorry, I encountered an error: ${errMsg}`,
-        thread_ts: threadTs || messageTs,
+        thread_ts: slackThreadId,
       });
+    } finally {
+      await indicator?.end();
     }
   }
 
@@ -1596,6 +1673,63 @@ class SlackAdapterService implements ChannelAdapter {
       });
     } catch (error) {
       logger.warn('Failed to add reaction %s: %s', emoji, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /**
+   * Remove a reaction emoji from a Slack message (best-effort, awaited).
+   *
+   * `no_reaction` is the expected error when the earlier add failed —
+   * swallowed like every other failure here.
+   */
+  private async removeReaction(
+    channelId: string,
+    messageTs: string,
+    teamId: string,
+    emoji: string,
+  ): Promise<void> {
+    const slackApp = this.apps.get(teamId);
+    if (!slackApp) return;
+
+    try {
+      await slackApp.app.client.reactions.remove({
+        channel: channelId,
+        timestamp: messageTs,
+        name: emoji,
+      });
+    } catch (error) {
+      logger.warn('Failed to remove reaction %s: %s', emoji, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /**
+   * Best-effort assistant thread status ("is thinking…" next to the bot name).
+   *
+   * Routinely fails when the app lacks the `assistant:write` scope, is not
+   * configured as a Slack AI app, or the target thread does not render
+   * statuses — all expected, so log at debug only.
+   */
+  private async setAssistantStatus(
+    teamId: string,
+    channelId: string,
+    threadTs: string,
+    status: string,
+  ): Promise<void> {
+    const slackApp = this.apps.get(teamId);
+    if (!slackApp) return;
+
+    try {
+      // `loading_messages` (optional, ≤10 strings) would replace the rotating
+      // shimmer phrases Slack displays while the status is active. We omit it
+      // deliberately, so Slack rotates its own default list ("Gathering
+      // information…", "Reviewing findings…", …).
+      await slackApp.app.client.assistant.threads.setStatus({
+        channel_id: channelId,
+        thread_ts: threadTs,
+        status,
+      });
+    } catch (error) {
+      logger.debug('assistant.threads.setStatus failed (best-effort): %s', error instanceof Error ? error.message : String(error));
     }
   }
 

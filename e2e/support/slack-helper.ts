@@ -54,6 +54,39 @@ export async function waitForBotReply(
   return null;
 }
 
+/**
+ * Poll a message's reactions until the given emoji is present (or absent).
+ * Reads via conversations.replies — the same scope waitForBotReply already
+ * uses; reactions come inline on the parent message, so no extra user scope
+ * is needed. Returns true when the desired state was observed, false on
+ * timeout.
+ */
+export async function waitForReactionState(
+  client: WebClient,
+  channel: string,
+  messageTs: string,
+  emoji: string,
+  present: boolean,
+  timeoutMs = 20_000,
+  intervalMs = 1_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const result = await client.conversations.replies({
+      channel,
+      ts: messageTs,
+      limit: 1,
+    });
+    const reactions = result.messages?.[0]?.reactions ?? [];
+    const hasEmoji = reactions.some((r) => r.name === emoji);
+    if (hasEmoji === present) return true;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+
+  return false;
+}
+
 /** A file as it appears on a Slack message (subset we assert against). */
 export interface SlackSharedFile {
   id?: string;

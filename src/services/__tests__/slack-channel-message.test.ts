@@ -448,4 +448,148 @@ describe('Requirement: Channel message mention detection', () => {
       expect(mockSay).not.toHaveBeenCalled();
     });
   });
+
+  describe('Scenario: Working indicator', () => {
+    let reactionsAdd: ReturnType<typeof vi.fn>;
+    let reactionsRemove: ReturnType<typeof vi.fn>;
+    let setStatus: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      mockSlackMappingService.findByChannelId.mockResolvedValue(makeMapping());
+      mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-001' });
+      mockConversationEngineService.chat.mockResolvedValue(undefined);
+      vi.spyOn(SlackThreadProvider.prototype, 'waitForExternalMessage').mockResolvedValue(undefined);
+
+      // Fake Bolt client so the indicator's reaction/status calls are observable.
+      reactionsAdd = vi.fn().mockResolvedValue({ ok: true });
+      reactionsRemove = vi.fn().mockResolvedValue({ ok: true });
+      setStatus = vi.fn().mockResolvedValue({ ok: true });
+      (slackAdapterService as any).apps = new Map([
+        [TEAM_ID, {
+          app: {
+            client: {
+              reactions: { add: reactionsAdd, remove: reactionsRemove },
+              assistant: { threads: { setStatus } },
+            },
+          },
+          teamId: TEAM_ID,
+        }],
+      ]);
+    });
+
+    it('adds the eyes reaction before the consistency wait and chat(); removes it after', async () => {
+      const waitSpy = vi
+        .spyOn(SlackThreadProvider.prototype, 'waitForExternalMessage')
+        .mockResolvedValue(undefined);
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> hello`,
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect(reactionsAdd).toHaveBeenCalledExactlyOnceWith({
+        channel: CHANNEL_ID,
+        timestamp: MESSAGE_TS,
+        name: 'eyes',
+      });
+      expect(reactionsAdd.mock.invocationCallOrder[0]).toBeLessThan(
+        waitSpy.mock.invocationCallOrder[0],
+      );
+      expect(reactionsAdd.mock.invocationCallOrder[0]).toBeLessThan(
+        mockConversationEngineService.chat.mock.invocationCallOrder[0],
+      );
+      expect(reactionsRemove).toHaveBeenCalledExactlyOnceWith({
+        channel: CHANNEL_ID,
+        timestamp: MESSAGE_TS,
+        name: 'eyes',
+      });
+      expect(reactionsRemove.mock.invocationCallOrder[0]).toBeGreaterThan(
+        mockConversationEngineService.chat.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('attaches the status to the message ts for a top-level mention and clears it after', async () => {
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> hello`,
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect(setStatus).toHaveBeenCalledWith({
+        channel_id: CHANNEL_ID,
+        thread_ts: MESSAGE_TS,
+        status: 'is thinking…',
+      });
+      expect(setStatus).toHaveBeenLastCalledWith({
+        channel_id: CHANNEL_ID,
+        thread_ts: MESSAGE_TS,
+        status: '',
+      });
+    });
+
+    it('attaches the status to the existing thread for a threaded mention', async () => {
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> thoughts?`,
+        THREAD_TS, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect(setStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ thread_ts: THREAD_TS, status: 'is thinking…' }),
+      );
+    });
+
+    it('still removes the reaction and clears the status when chat() rejects', async () => {
+      mockConversationEngineService.chat.mockRejectedValue(new Error('LLM exploded'));
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> hello`,
+        THREAD_TS, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect(mockSay).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('I encountered an error') }),
+      );
+      expect(reactionsRemove).toHaveBeenCalledOnce();
+      expect(setStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: '' }),
+      );
+    });
+
+    it('shows no indicator on the classifier ignore path', async () => {
+      (slackAdapterService as any).isBotInThread = vi.fn().mockResolvedValue({
+        result: { action: 'ignore' },
+        messages: [],
+      });
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        'just a follow-up',
+        THREAD_TS, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect(reactionsAdd).not.toHaveBeenCalled();
+      expect(setStatus).not.toHaveBeenCalled();
+    });
+
+    it('shows no indicator in a heartbeat trigger channel', async () => {
+      mockSlackHeartbeatTriggerService.isHeartbeatTriggerChannel.mockResolvedValue({
+        isTrigger: true,
+        agentId: 'agent-001',
+      });
+      (slackAdapterService as any).throttledNotify = vi.fn().mockResolvedValue(undefined);
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> heartbeat please`,
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect(mockSlackMessageQueueService.enqueue).toHaveBeenCalled();
+      expect(reactionsAdd).not.toHaveBeenCalled();
+      expect(setStatus).not.toHaveBeenCalled();
+    });
+  });
 });

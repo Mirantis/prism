@@ -14,6 +14,7 @@ import {
   createSlackUserClient,
   getBotUserId,
   waitForBotReply,
+  waitForReactionState,
 } from '../support/slack-helper';
 import { getSlackState, resetSlackState } from '../support/slack-state';
 import { ChannelsPage } from '../pages/channels.page';
@@ -246,6 +247,38 @@ Then("the bot's reply should not be empty", async () => {
   expect(botReplyText).toBeTruthy();
   expect(botReplyText!.trim().length).toBeGreaterThan(0);
 });
+
+Then(
+  'my message gets an {string} reaction within {int} seconds',
+  async ({}, emoji: string, timeoutSeconds: number) => {
+    const slack = getSlackState();
+    const appeared = await waitForReactionState(
+      slack.userClient!,
+      slack.channelId,
+      slack.messageTs,
+      emoji,
+      true,
+      timeoutSeconds * 1_000,
+    );
+    expect(appeared).toBe(true);
+  },
+);
+
+Then(
+  'the {string} reaction is removed from my message within {int} seconds',
+  async ({}, emoji: string, timeoutSeconds: number) => {
+    const slack = getSlackState();
+    const removed = await waitForReactionState(
+      slack.userClient!,
+      slack.channelId,
+      slack.messageTs,
+      emoji,
+      false,
+      timeoutSeconds * 1_000,
+    );
+    expect(removed).toBe(true);
+  },
+);
 
 Then('the linked channel is still listed', async ({ page }) => {
   const slack = getSlackState();
