@@ -137,6 +137,18 @@ permanently if it doesn't. A refreshed window wins over a bundled one, but no
 bundled entry is lost. Enable it deliberately — models.dev is community-maintained,
 so a wrong number upstream reaches your deployment on the next boot without review.
 
+**In a sandboxed or egress-filtered deployment, this is more than a runtime flag.**
+Enabling it means allow-listing `models.dev`, and an allow-list is not per-process:
+once the domain is reachable, it is reachable by the **agent's own tools** too, not
+just by the startup refresh. So treat it as adding a domain of untrusted,
+community-edited content to the web the agent can reach and act on — the same
+review any other reachable domain would get.
+
+In policy-governed deployments, leave `MODELS_DEV_URL` unset. Refresh the bundled
+catalog instead by running `npm run generate:model-limits` and committing the
+result: the windows still get current, the diff is reviewed by a person before it
+ships, and no new domain becomes reachable at runtime.
+
 When a model is in neither layer the indicator is hidden rather than guessed. That
 is most likely on Azure, where model IDs are deployment names you chose:
 `AZURE_MODEL_ID=my-opus-deploy` can't appear in any catalog. Set
