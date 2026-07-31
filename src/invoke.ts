@@ -447,13 +447,20 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       'invocation.duration_ms': String(Date.now() - startTime),
     });
 
-    // Persist the turn's final context measurement and emit its own telemetry —
-    // one write per turn rather than per step. Runs for canceled turns too: the
-    // prompt was still built and sent, so the occupancy reading is real.
+  } finally {
+    // Persist the turn's final context measurement — one write per turn rather
+    // than per step. Runs for canceled turns too: the prompt was still built and
+    // sent, so the reading is real.
+    //
+    // In the `finally` so no exit path can leak the service's tracked entry. A
+    // consumer that breaks out of the `for await` triggers the generator's
+    // return(), which skips everything after `yield* channel` but still runs this
+    // block; error and abort paths reach it either way, since both close the
+    // channel. finalize() swallows its own persistence failures, so it cannot
+    // mask whatever brought us here.
     if (request.threadId) {
       await contextUsageService.finalize({ threadId: request.threadId });
     }
-  } finally {
     await agentStatusService.setDoneProcessing(request.agentId);
   }
 }
