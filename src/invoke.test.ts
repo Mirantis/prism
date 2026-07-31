@@ -172,7 +172,7 @@ vi.mock('./services/context-usage.service', () => ({
 }));
 
 
-import { invoke, withToolsCacheControl, extractAttachmentIds } from './invoke';
+import { invoke, invokeStream, withToolsCacheControl, extractAttachmentIds } from './invoke';
 import { config } from './config';
 import { Tool } from 'ai';
 
@@ -890,6 +890,23 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-xyz' }));
 
       expect(mockContextUsageFinalize).toHaveBeenCalledTimes(1);
+      expect(mockContextUsageFinalize).toHaveBeenCalledWith({ threadId: 'thread-xyz' });
+    });
+
+    it('finalizes even when the consumer breaks out of the stream early', async () => {
+      // Breaking out of a `for await` runs the generator's return(), which skips
+      // everything after `yield* channel`. With finalize() there instead of in the
+      // finally, the service's tracked entry for this thread would leak until the
+      // thread's next turn. No shipped consumer breaks early today — this pins the
+      // guarantee so one can be added safely.
+      twoStepsWithUsage();
+
+      for await (const _step of invokeStream(
+        createTestInvokeRequest({ mode: 'chat', threadId: 'thread-xyz' }),
+      )) {
+        break;
+      }
+
       expect(mockContextUsageFinalize).toHaveBeenCalledWith({ threadId: 'thread-xyz' });
     });
 
