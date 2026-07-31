@@ -11,9 +11,9 @@ The runtime talks to one LLM provider per container, chosen by `LLM_PROVIDER`:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS) or `azure` (Claude via Microsoft Foundry). Any other value falls back to `bedrock`. | `bedrock` |
+| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS), `azure` (Claude via Microsoft Foundry), or `bedrock-mantle` (AWS's second Bedrock inference endpoint). Any other value falls back to `bedrock`. | `bedrock` |
 
-Both platforms serve **Claude** through the Anthropic Messages API — `azure`
+All three serve **Claude** through the Anthropic Messages API — `azure`
 mode runs the agent on Claude deployed in [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
 (`https://{resource}.services.ai.azure.com/anthropic/v1/messages`). On Azure,
 memory embeddings come from an Azure OpenAI `text-embedding-3` deployment
@@ -21,20 +21,42 @@ memory embeddings come from an Azure OpenAI `text-embedding-3` deployment
 if that deployment doesn't exist, memory embedding fails open (search
 degraded, no crash).
 
+`bedrock-mantle` targets [Amazon Bedrock's mantle endpoint](https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html)
+(`https://bedrock-mantle.{region}.api.aws/anthropic/v1/messages`), which AWS
+runs alongside `bedrock-runtime` and recommends for new applications. Two
+differences from `bedrock` matter in practice:
+
+- **Model IDs must be bare.** Mantle has no cross-region inference profiles, so
+  `anthropic.claude-opus-5` works and `us.anthropic.claude-opus-5` is rejected.
+  A prefix on a per-agent override is stripped automatically, so switching an
+  existing deployment over doesn't break it. Version suffixes are rejected too:
+  use `anthropic.claude-haiku-4-5`, not
+  `anthropic.claude-haiku-4-5-20251001-v1:0`.
+- **Mantle serves no embedding models.** Memory embeddings stay on Titan over
+  `bedrock-runtime`, which means AWS credentials (or Nexus) still have to reach
+  regular Bedrock for that leg; set `BEDROCK_MANTLE_EMBEDDING_MODEL_ID=''` to
+  skip embeddings instead.
+
+Mantle also rejects structured outputs, Guardrails, and prompt routing, and it
+draws on a separate quota pool at the same per-token price.
+
 Each platform can run **direct** or **through Nexus** (the LLM gateway).
-Routing is automatic for both: set `NEXUS_API_URL` and the runtime routes
+Routing is automatic for all three: set `NEXUS_API_URL` and the runtime routes
 through Nexus (`…/llm/bedrock/{region}` for Bedrock; for Azure, chat rides
-`…/llm/azure/anthropic/v1` and embeddings `…/llm/azure/openai/v1`), otherwise
-it talks to the platform directly. Through Nexus the gateway holds the
-platform credentials, so no local LLM credential is needed. The credentials
-and model IDs below are grouped per platform.
+`…/llm/azure/anthropic/v1` and embeddings `…/llm/azure/openai/v1`; for mantle,
+chat rides `…/llm/bedrock-mantle/anthropic/{region}/v1` while embeddings stay
+on the `…/llm/bedrock/{region}` mount), otherwise it talks to the platform
+directly. Through Nexus the gateway holds the platform credentials, so no local
+LLM credential is needed. The credentials and model IDs below are grouped per
+platform.
 
 ## Credentials
 
 | Variable | Purpose |
 |----------|---------|
-| `AWS_BEARER_TOKEN_BEDROCK` | **(Bedrock)** Bedrock API key. The AI SDK auto-selects bearer auth when this is set. This is the one credential required for chat on Bedrock. |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | **(Bedrock)** AWS SigV4 credentials, as an alternative to the bearer token. |
+| `AWS_BEARER_TOKEN_BEDROCK` | **(Bedrock, Mantle)** Bedrock API key — one credential for both AWS endpoints. On Bedrock the AI SDK auto-selects bearer auth when this is set; on mantle it is sent as the `x-api-key` header and is **required** for direct mode, which has no SigV4 path. Not needed when routing through Nexus. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | **(Bedrock)** AWS SigV4 credentials, as an alternative to the bearer token. Mantle chat cannot use these, but they still serve the Titan embedding leg under `bedrock-mantle`. |
+| `BEDROCK_MANTLE_BASE_URL` | **(Mantle)** Override the derived mantle chat endpoint (must end at `/anthropic/v1`). Applies to direct mode only. |
 | `AZURE_API_KEY` | **(Azure)** Foundry resource key, sent as the `x-api-key` header. Required for direct mode only — when routing through Nexus the gateway holds the key for both chat and embeddings. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `AZURE_RESOURCE_NAME` | **(Azure, direct)** Foundry resource name — derives the chat endpoint `https://{resource}.services.ai.azure.com/anthropic/v1` and the embeddings endpoint `https://{resource}.openai.azure.com`. |
 | `AZURE_FOUNDRY_BASE_URL` | **(Azure)** Override the derived Foundry Anthropic chat endpoint (must end at `/anthropic/v1`). |
@@ -93,7 +115,8 @@ that were already delivered.
 
 Which set applies depends on `LLM_PROVIDER`. Bedrock model IDs are Bedrock model
 identifiers; **Azure model IDs are Foundry deployment names** (which default to
-Claude model IDs when you deploy without renaming).
+Claude model IDs when you deploy without renaming); **mantle model IDs are bare
+Bedrock identifiers** — same names, no `us.`/`eu.`/`global.` prefix.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -105,21 +128,34 @@ Claude model IDs when you deploy without renaming).
 | `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast Claude deployment for the heartbeat gate | `claude-haiku-4-5` |
 | `AZURE_EMBEDDING_MODEL_ID` | **(Azure)** Azure OpenAI embedding deployment (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). The deployment must exist on the resource, else memory embedding fails open (no vector). Set to `''` to skip embeddings entirely. | `text-embedding-3-small` |
 | `AZURE_API_VERSION` | **(Azure)** Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
+| `BEDROCK_MANTLE_MODEL_ID` | **(Mantle)** Main model — a **bare** Bedrock ID | `anthropic.claude-opus-5` |
+| `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` | **(Mantle)** Fast **bare** Bedrock ID for the heartbeat gate. Unversioned — mantle 404s the `…-20251001-v1:0` shape `bedrock-runtime` uses. | `anthropic.claude-haiku-4-5` |
+| `BEDROCK_MANTLE_EMBEDDING_MODEL_ID` | **(Mantle)** Embedding model, served by Titan on `bedrock-runtime` — mantle has none of its own. Set to `''` to skip embeddings entirely. | `amazon.titan-embed-text-v2:0` |
+| `AWS_REGION` | **(Mantle)** Region for both the mantle host and the Titan embedding leg | `us-east-1` |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
 
+The mantle **chat and classification** variables deliberately do **not** fall
+back to their `BEDROCK_*` counterparts, since those carry a cross-region prefix
+mantle rejects. `BEDROCK_MANTLE_EMBEDDING_MODEL_ID` *does* inherit
+`BEDROCK_EMBEDDING_MODEL_ID`: that leg runs on `bedrock-runtime` regardless of
+provider, and Titan IDs carry no prefix.
+
 The main model can also be set per-agent at runtime (Web UI Profile, the TUI
 `/model` command, or by asking the agent), which overrides the env default. On
-Azure, per-agent overrides are Foundry deployment names.
+Azure, per-agent overrides are Foundry deployment names. On mantle, a stored
+override that carries a `us.`/`eu.`/`global.` prefix has it stripped at request
+time, so the same value keeps working if you switch back to `bedrock`.
 
 **Heartbeat and scheduled (cron) runs** can each use their own model, set the
 same ways — the Web UI Profile page or the TUI `/heartbeat-model` /
 `/cron-model` commands. Both default to empty and fall back to the main model
-(which in turn falls back to `BEDROCK_MODEL_ID`), so you can, for example, run
+(which in turn falls back to the active platform's main model), so you can run
 routine heartbeats on a cheaper model while chat stays on a stronger one. The
 heartbeat DELIVER/SUPPRESS gate always uses the active platform's
 classification model (`BEDROCK_CLASSIFICATION_MODEL_ID` on Bedrock,
-`AZURE_CLASSIFICATION_MODEL_ID` on Azure), independent of this.
+`AZURE_CLASSIFICATION_MODEL_ID` on Azure,
+`BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` on mantle), independent of this.
 
 ### Context-window size
 

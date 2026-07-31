@@ -1,5 +1,6 @@
 /**
- * create-provider switch tests: vendor (bedrock/azure) x routing (direct/nexus).
+ * create-provider switch tests: vendor (bedrock/azure/bedrock-mantle) x
+ * routing (direct/nexus).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -8,13 +9,17 @@ import { config } from '../../config';
 const {
   mockCreateBedrockProvider,
   mockCreateAzureProvider,
+  mockCreateBedrockMantleProvider,
   mockIsBedrockConfigured,
   mockIsAzureConfigured,
+  mockIsBedrockMantleConfigured,
 } = vi.hoisted(() => ({
   mockCreateBedrockProvider: vi.fn(() => 'bedrock-provider'),
   mockCreateAzureProvider: vi.fn(() => 'azure-provider'),
+  mockCreateBedrockMantleProvider: vi.fn(() => 'bedrock-mantle-provider'),
   mockIsBedrockConfigured: vi.fn(() => true),
   mockIsAzureConfigured: vi.fn(() => true),
+  mockIsBedrockMantleConfigured: vi.fn(() => true),
 }));
 
 vi.mock('./bedrock/bedrock-provider', () => ({
@@ -25,6 +30,10 @@ vi.mock('./azure/azure-provider', () => ({
   createAzureProvider: mockCreateAzureProvider,
   isAzureConfigured: mockIsAzureConfigured,
 }));
+vi.mock('./bedrock-mantle/bedrock-mantle-provider', () => ({
+  createBedrockMantleProvider: mockCreateBedrockMantleProvider,
+  isBedrockMantleConfigured: mockIsBedrockMantleConfigured,
+}));
 
 import { createProvider, isProviderConfigured } from './create-provider';
 
@@ -33,6 +42,7 @@ describe('createProvider', () => {
     config.llmProvider = 'bedrock';
     config.nexusLlmBaseUrl = null;
     config.nexusAzureBaseUrl = null;
+    config.nexusBedrockMantleBaseUrl = null;
     vi.clearAllMocks();
   });
 
@@ -61,6 +71,31 @@ describe('createProvider', () => {
     expect(createProvider()).toBe('azure-provider');
     expect(mockCreateAzureProvider).toHaveBeenCalledWith('https://nexus.example/llm/azure/anthropic/v1');
   });
+
+  it('bedrock-mantle + no nexus URL → direct mantle (undefined baseURL)', () => {
+    config.llmProvider = 'bedrock-mantle';
+    expect(createProvider()).toBe('bedrock-mantle-provider');
+    expect(mockCreateBedrockMantleProvider).toHaveBeenCalledWith(undefined);
+    expect(mockCreateBedrockProvider).not.toHaveBeenCalled();
+    expect(mockCreateAzureProvider).not.toHaveBeenCalled();
+  });
+
+  it('bedrock-mantle + nexus mantle URL → Nexus-routed mantle', () => {
+    config.llmProvider = 'bedrock-mantle';
+    config.nexusBedrockMantleBaseUrl =
+      'https://nexus.example/llm/bedrock-mantle/anthropic/us-east-1/v1';
+    expect(createProvider()).toBe('bedrock-mantle-provider');
+    expect(mockCreateBedrockMantleProvider).toHaveBeenCalledWith(
+      'https://nexus.example/llm/bedrock-mantle/anthropic/us-east-1/v1',
+    );
+  });
+
+  it('bedrock-mantle ignores the bedrock-runtime Nexus mount for chat', () => {
+    config.llmProvider = 'bedrock-mantle';
+    config.nexusLlmBaseUrl = 'https://nexus.example/llm/bedrock/us-east-1';
+    createProvider();
+    expect(mockCreateBedrockMantleProvider).toHaveBeenCalledWith(undefined);
+  });
 });
 
 describe('isProviderConfigured', () => {
@@ -73,6 +108,7 @@ describe('isProviderConfigured', () => {
     mockIsBedrockConfigured.mockReturnValue(false);
     expect(isProviderConfigured()).toBe(false);
     expect(mockIsAzureConfigured).not.toHaveBeenCalled();
+    expect(mockIsBedrockMantleConfigured).not.toHaveBeenCalled();
   });
 
   it('delegates to isAzureConfigured for azure', () => {
@@ -80,5 +116,14 @@ describe('isProviderConfigured', () => {
     mockIsAzureConfigured.mockReturnValue(true);
     expect(isProviderConfigured()).toBe(true);
     expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
+    expect(mockIsBedrockMantleConfigured).not.toHaveBeenCalled();
+  });
+
+  it('delegates to isBedrockMantleConfigured for bedrock-mantle', () => {
+    config.llmProvider = 'bedrock-mantle';
+    mockIsBedrockMantleConfigured.mockReturnValue(false);
+    expect(isProviderConfigured()).toBe(false);
+    expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
+    expect(mockIsAzureConfigured).not.toHaveBeenCalled();
   });
 });

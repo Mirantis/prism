@@ -4,8 +4,10 @@
  * Handles vector embedding generation for memory entries. Storage and
  * search are delegated to `memoryEmbeddingStore` (sqlite-vec backed).
  * The embedding model comes from the active LLM provider: Titan on
- * Bedrock, an Azure OpenAI text-embedding-3 deployment on Azure. On
- * Azure the deployment is optional — when unset, embedding generation
+ * Bedrock, an Azure OpenAI text-embedding-3 deployment on Azure, and Titan
+ * again on bedrock-mantle (which serves no embedding models of its own, so
+ * its provider reaches bedrock-runtime for this leg). On Azure and
+ * bedrock-mantle the model is optional — when unset, embedding generation
  * fail-opens (returns null) and memory search is effectively disabled.
  */
 
@@ -17,10 +19,12 @@ import { memoryEmbeddingStore, type SearchOptions } from './memory-store';
 import type { MemorySearchResult } from './memory-manager.service';
 
 // The sqlite-vec index is fixed at 1024 dims (see EMBEDDING_DIM in
-// sqlite-bootstrap.ts), so both vendors must emit exactly that. Titan v2 takes
+// sqlite-bootstrap.ts), so every vendor must emit exactly that. Titan v2 takes
 // the target under the `bedrock` key; Azure/OpenAI text-embedding-3 models
 // truncate to it under the `openai` key. The provider-option key must match the
-// active vendor or the setting is silently ignored (wrong dimensionality).
+// SDK actually serving embeddings or the setting is silently ignored (wrong
+// dimensionality) — which is why `bedrock-mantle` belongs on the `bedrock` arm
+// rather than getting one of its own: its embeddings are Titan.
 const EMBEDDING_DIMENSIONS = 1024;
 const EMBEDDING_PROVIDER_OPTIONS: Record<string, Record<string, number>> =
   config.llmProvider === 'azure'

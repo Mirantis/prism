@@ -96,9 +96,10 @@ credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy.
 
 One LLM provider per container, selected by `LLM_PROVIDER` (`bedrock`
-default, or `azure`). Both serve **Claude**. **Bedrock** via Bearer API key
-(`AWS_BEARER_TOKEN_BEDROCK`) — the SDK auto-selects Bearer over SigV4
-when set. **Azure = Claude via Microsoft Foundry**: chat/classification
+default, `azure`, or `bedrock-mantle`). All three serve **Claude**.
+**Bedrock** via Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the SDK
+auto-selects Bearer over SigV4 when set. **Azure = Claude via Microsoft
+Foundry**: chat/classification
 speak the Anthropic Messages API at
 `https://{AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic/v1/messages`
 with `AZURE_API_KEY` sent as `x-api-key` (may be a `__nexus_cred:<uuid>__`
@@ -106,11 +107,24 @@ sentinel); model IDs are Foundry deployment names (defaults
 `claude-opus-5` / `claude-haiku-4-5`). Azure embeddings come from an
 Azure OpenAI `text-embedding-3` deployment on the same resource
 (default `text-embedding-3-small`; fails open if the deployment is
-absent, or set `AZURE_EMBEDDING_MODEL_ID=''` to skip). Either provider can run
-direct or through the Nexus LLM gateway — routing is automatic when
+absent, or set `AZURE_EMBEDDING_MODEL_ID=''` to skip).
+**Bedrock Mantle** is AWS's second inference endpoint, a *separate provider*
+rather than a Bedrock variant because it serves neither InvokeModel nor
+Converse: chat/classification speak the Anthropic Messages API at
+`https://bedrock-mantle.{AWS_REGION}.api.aws/anthropic/v1/messages`, reusing
+`AWS_BEARER_TOKEN_BEDROCK` as `x-api-key` (**required** direct — there is no
+SigV4 path on that surface). Its model IDs are **bare** Bedrock IDs (defaults
+`anthropic.claude-opus-5` / `anthropic.claude-haiku-4-5`) since
+mantle has no cross-region inference profiles; the provider strips a `us.`/
+`eu.`/`global.` prefix off per-agent overrides rather than 400ing. Mantle
+serves no embedding models, so memory embeddings stay on Titan over
+bedrock-runtime (`BEDROCK_MANTLE_EMBEDDING_MODEL_ID=''` to skip). Any provider
+can run direct or through the Nexus LLM gateway — routing is automatic when
 `NEXUS_API_URL` is set (`…/llm/bedrock/{region}` for Bedrock; Azure chat
 rides `…/llm/azure/anthropic/v1` and Azure embeddings
-`…/llm/azure/openai/v1`; Nexus holds the platform credentials, so no local
+`…/llm/azure/openai/v1`; mantle chat rides
+`…/llm/bedrock-mantle/anthropic/{region}/v1` while its embeddings stay on the
+bedrock mount; Nexus holds the platform credentials, so no local
 LLM key is needed on that path).
 
 ## SEA binaries — Node 22 pin
@@ -340,13 +354,16 @@ src/
 ├── lib/
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
 │   ├── llm-providers/          # One folder per LLM vendor, plus the shared contract and the selector
-│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` + `.embedding(modelId)` contract both vendor factories return
-│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure), passes each its optional Nexus baseURL; `isProviderConfigured()`
+│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` + `.embedding(modelId)` contract every vendor factory returns, plus the optional `structuredOutputOptions` each vendor declares for `generateObject` calls
+│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle), passes each its optional Nexus baseURL; `isProviderConfigured()`
+│   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors need: AWS credential resolution, the generic Converse/embeddings provider (mantle's Titan leg), `isAnthropicModelId()`
 │   │   ├── bedrock/
 │   │   │   └── bedrock-provider.ts # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or Nexus when baseURL set)
-│   │   └── azure/
-│   │       └── azure-provider.ts   # Azure provider factory (Claude via MS Foundry, Anthropic Messages API; embeddings via Azure OpenAI): `createAzureProvider(baseURL?)`
-│   ├── classification.ts       # Classification-gate model factory (`getClassificationModel()`)
+│   │   ├── azure/
+│   │   │   └── azure-provider.ts   # Azure provider factory (Claude via MS Foundry, Anthropic Messages API; embeddings via Azure OpenAI): `createAzureProvider(baseURL?)`
+│   │   └── bedrock-mantle/
+│   │       └── bedrock-mantle-provider.ts # Bedrock Mantle factory (Anthropic Messages surface only; bare model IDs, embeddings borrowed from bedrock-runtime): `createBedrockMantleProvider(baseURL?)`
+│   ├── classification.ts       # Classification-gate model factory (`getClassificationModel()`) + `getStructuredOutputOptions()`, the active vendor's `providerOptions` for `generateObject`
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
 │   └── prisma.ts               # Prisma client singleton (runtime database)
@@ -384,9 +401,9 @@ What the operator sets on `docker run`:
 | `NEXUS_API_URL` | Nexus server URL (LLM proxy + MCP tools) | — |
 | `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
 | `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
-| `LLM_PROVIDER` | LLM vendor: `bedrock` or `azure` (one per container) | `bedrock` |
-| `AWS_BEARER_TOKEN_BEDROCK` | Bedrock Bearer API key; selected over SigV4 when set | — |
-| `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
+| `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, or `bedrock-mantle` (one per container) | `bedrock` |
+| `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key; on Bedrock selected over SigV4 when set, on mantle sent as `x-api-key` and **required** direct | — |
+| `AWS_REGION` | AWS region for Bedrock and for the mantle host | `us-east-1` |
 | `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
 | `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | — |
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `us.anthropic.claude-opus-5` |
@@ -396,6 +413,9 @@ What the operator sets on `docker run`:
 | `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (fail-open if absent; `''` to skip) | `text-embedding-3-small` |
 | `AZURE_FOUNDRY_BASE_URL` | Override the derived `…/anthropic/v1` Foundry chat endpoint | derived from resource |
 | `AZURE_API_VERSION` | Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
+| `BEDROCK_MANTLE_MODEL_ID` / `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` | **Bare** Bedrock IDs for mantle (chat / classification gate); no fallback to the prefixed `BEDROCK_*` vars | `anthropic.claude-opus-5` / `anthropic.claude-haiku-4-5` |
+| `BEDROCK_MANTLE_EMBEDDING_MODEL_ID` | Memory embeddings under mantle — Titan on bedrock-runtime, since mantle serves none (`''` to skip) | `amazon.titan-embed-text-v2:0` |
+| `BEDROCK_MANTLE_BASE_URL` | Override the derived `…/anthropic/v1` mantle chat endpoint | derived from region |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window assumed for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
@@ -600,7 +620,7 @@ When a Slack message arrives in a heartbeat trigger channel, the agent-runtime's
 
 After the main LLM call produces a heartbeat response, a second cheap LLM call acts as a DELIVER/SUPPRESS gate. This replaced the earlier fragile `HEARTBEAT_OK` token parsing.
 
-- **Model**: the fast classification model via `getClassificationModel()` (from `lib/classification.ts`, which goes through `createProvider()`), configured by `BEDROCK_CLASSIFICATION_MODEL_ID` (or `AZURE_CLASSIFICATION_MODEL_ID` on Azure).
+- **Model**: the fast classification model via `getClassificationModel()` (from `lib/classification.ts`, which goes through `createProvider()`), configured by `BEDROCK_CLASSIFICATION_MODEL_ID` (or `AZURE_CLASSIFICATION_MODEL_ID` on Azure, `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` on bedrock-mantle).
 - **Input**: The heartbeat response text and the last alert context (text + how long ago it was sent, formatted via `formatTimeAgo`).
 - **Output**: A single word -- `DELIVER` or `SUPPRESS`. Uses `maxOutputTokens: 10` and `temperature: 0` to keep the call fast and deterministic.
 - **Meta-commentary**: The gate prompt explicitly suppresses reports that are meta-commentary about the heartbeat itself (e.g. "no checks configured", "heartbeat config is empty") rather than real findings.

@@ -104,15 +104,12 @@ const initialize = async () => {
     );
 
     // Active LLM provider + routing, so the deployed vendor is observable in
-    // logs. `routing` is 'nexus' when the selected vendor's Nexus base URL is
+    // logs. `routing` is 'nexus' when the selected vendor's Nexus chat mount is
     // set, else 'direct'.
     logger.info(
       {
         provider: config.llmProvider,
-        routing:
-          (config.llmProvider === 'azure' ? config.nexusAzureBaseUrl : config.nexusLlmBaseUrl)
-            ? 'nexus'
-            : 'direct',
+        routing: config.nexusChatBaseUrl ? 'nexus' : 'direct',
         chatModel: config.chatModelId,
       },
       '[Startup] LLM provider',
