@@ -11,7 +11,7 @@ vi.mock('../config', () => ({
 }));
 
 import { config } from '../config';
-import { claudeFamilyOf, contextWindowFor } from './context-window';
+import { contextWindowFor } from './context-window';
 
 // The four IDs `src/config.ts` actually defaults to. If the models.dev snapshot
 // ever stops covering these, the indicator silently disappears for every default
@@ -29,21 +29,21 @@ describe('contextWindowFor', () => {
 
   describe('the runtime defaults resolve', () => {
     it('resolves the Bedrock chat default', () => {
-      expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000, source: 'snapshot' });
+      expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000 });
     });
 
     it('resolves the Bedrock classification default', () => {
-      expect(contextWindowFor(BEDROCK_CLASSIFICATION_DEFAULT)).toEqual({ tokens: 200_000, source: 'snapshot' });
+      expect(contextWindowFor(BEDROCK_CLASSIFICATION_DEFAULT)).toEqual({ tokens: 200_000 });
     });
 
     it('resolves the Azure chat default', () => {
       config.llmProvider = 'azure';
-      expect(contextWindowFor(AZURE_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000, source: 'snapshot' });
+      expect(contextWindowFor(AZURE_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000 });
     });
 
     it('resolves the Azure classification default', () => {
       config.llmProvider = 'azure';
-      expect(contextWindowFor(AZURE_CLASSIFICATION_DEFAULT)).toEqual({ tokens: 200_000, source: 'snapshot' });
+      expect(contextWindowFor(AZURE_CLASSIFICATION_DEFAULT)).toEqual({ tokens: 200_000 });
     });
   });
 
@@ -107,38 +107,21 @@ describe('contextWindowFor', () => {
   describe('CONTEXT_WINDOW_TOKENS override', () => {
     it('wins over the snapshot and is tagged as env-sourced', () => {
       config.contextWindowTokens = 50_000;
-      expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 50_000, source: 'env' });
+      expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 50_000 });
     });
 
     it('rescues an otherwise-unknown model', () => {
       config.llmProvider = 'azure';
       config.contextWindowTokens = 400_000;
-      expect(contextWindowFor('my-opus-deploy')).toEqual({ tokens: 400_000, source: 'env' });
+      expect(contextWindowFor('my-opus-deploy')).toEqual({ tokens: 400_000 });
     });
 
     it('falls through to the snapshot when config parsed the env var away', () => {
       // config.ts collapses junk / non-positive values to null; this asserts the
       // lookup treats that as "no override" rather than as a zero-token window.
       config.contextWindowTokens = null;
-      expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)?.source).toBe('snapshot');
+      expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000 });
     });
   });
 });
 
-describe('claudeFamilyOf', () => {
-  it.each([
-    ['us.anthropic.claude-opus-5', 'opus'],
-    ['claude-sonnet-4-6', 'sonnet'],
-    ['us.anthropic.claude-haiku-4-5-20251001-v1:0', 'haiku'],
-    ['anthropic.claude-fable-5', 'fable'],
-    ['claude-mythos-5', 'mythos'],
-  ])('extracts the family from %s', (modelId, expected) => {
-    expect(claudeFamilyOf(modelId)).toBe(expected);
-  });
-
-  it('returns null for a name with no family segment', () => {
-    // Guards the telemetry path: a user-chosen deployment name must never be
-    // emitted as a family value.
-    expect(claudeFamilyOf('my-opus-deploy')).toBeNull();
-  });
-});
