@@ -21,8 +21,18 @@
  * - **The overlay merges, never replaces.** A degraded payload can add or update
  *   an entry but can never lose one, per provider.
  * - **The imported JSON is never mutated.** It's a module singleton shared with
- *   anything else that imports it (the e2e steps do), so every tag and merge
+ *   anything else that imports it (the e2e steps do), so every copy and merge
  *   allocates fresh objects.
+ *
+ * One boundary worth stating, because the safety analysis rests on it: a window
+ * size from here reaches a percentage on a screen and a column in the database,
+ * and **never a prompt**. That is what keeps a wrong or hostile number a display
+ * bug rather than an instruction — the registry is community-maintained, and its
+ * model IDs are lookup keys only, never echoed into model input. If anyone later
+ * feeds occupancy back to the agent (a "you're at 90%, compact now" hint is the
+ * obvious temptation), a poisoned window starts steering behaviour instead of
+ * merely misreporting it, and this module's filters do not defend against that.
+ * Don't cross that boundary without revisiting it here.
  */
 import { config } from '../config';
 import { logger } from '../logger';
