@@ -18,14 +18,18 @@ You provide the agent with credentials for a Slack app you create:
 
 On the Slack side, create an app, **enable Socket Mode**, and grant the bot the
 scopes it needs to do its job — posting and reading messages, handling DMs and
-mentions, uploading/reading files, reading user and channel info, and adding
-reactions. A working set of bot scopes:
+mentions, uploading/reading files, reading user and channel info, adding
+reactions, and showing its working status. A working set of bot scopes:
 
 ```
 app_mentions:read   chat:write        im:history        im:read
 channels:history    groups:history    files:read        files:write
-users:read          reactions:write   conversations.connections:write
+users:read          reactions:write   assistant:write   conversations.connections:write
 ```
+
+`assistant:write` powers the "is thinking…" status line while the agent works
+(see below); rendering it also requires the Slack app's **Agents & AI Apps**
+feature to be enabled.
 
 Subscribe to the bot events the agent handles: `message.im`,
 `message.channels` (and `message.groups` for private channels),
@@ -98,6 +102,12 @@ switching to a DM link, and vice-versa.
   differently across linked channels.
 - **Threads.** Each Slack thread maps to a Prism conversation thread; the agent
   can read the thread's history, including messages from before it joined.
+- **Working cue.** While the agent works on your message it reacts to it with
+  👀, and — where Slack supports it (the `assistant:write` scope plus the
+  app's Agents & AI Apps feature) — shows a live status in the reply thread:
+  "is thinking…" while the model reasons, and the current tool while one runs
+  (e.g. "is running kubectl…"). Both cues disappear when the reply lands, or
+  on error. Heartbeats and scheduled runs never show them.
 - **Messages sent mid-reply.** Long tasks post progress as they go, and you can
   post while one is running. A message that lands mid-task is handed to the work
   already in flight: the agent picks it up at its next step and adjusts, so

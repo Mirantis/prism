@@ -91,6 +91,7 @@ vi.mock('../../config', () => ({ config: {} }));
 
 import { slackAdapterService } from '../slack-adapter.service';
 import { attachmentService } from '../attachment.service';
+import { conversationService } from '../conversation.service';
 
 describe('Requirement: disconnectAndDeactivate cleans up connection rows', () => {
   beforeEach(() => {
@@ -379,6 +380,28 @@ describe('Requirement: Adapter telemetry', () => {
     );
   });
 
+  it('clears working indicators before stopping the Bolt apps on shutdown', async () => {
+    const appStop = vi.fn().mockResolvedValue(undefined);
+    adapter.apps.set('T001', {
+      app: { stop: appStop },
+      teamId: 'T001',
+      teamName: 'Test Workspace',
+      isSocketMode: true,
+      botUserId: 'U_BOT',
+    });
+    const stopAll = vi.fn().mockResolvedValue(undefined);
+    adapter._workingIndicator = { stopAll };
+
+    await slackAdapterService.shutdown();
+
+    expect(stopAll).toHaveBeenCalledOnce();
+    // Indicator cleanup must run while the clients are still up.
+    expect(stopAll.mock.invocationCallOrder[0]).toBeLessThan(appStop.mock.invocationCallOrder[0]);
+    // The stopped instance is dropped so a management-API restart
+    // (shutdown → initialize in the same process) gets a working one.
+    expect(adapter._workingIndicator).toBeUndefined();
+  });
+
   it('emits "slack connection added" when initializeConnection registers an app', async () => {
     mockGetSlackConnection.mockResolvedValue({
       id: 'conn-001',
@@ -555,5 +578,66 @@ describe('deliverToChannel — DM channel fallback', () => {
     await adapter.deliverToChannel('D07ERBJA69M', 'hi', 'thr-1');
 
     expect(postMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('deliverToChannel — working status after posting', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adapter = slackAdapterService as any;
+  const postMessage = vi.fn();
+  const setStatus = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    postMessage.mockResolvedValue({ ts: '1700000000.000300' });
+    setStatus.mockResolvedValue({ ok: true });
+    adapter.apps = new Map([
+      ['T001', {
+        app: { client: { chat: { postMessage }, assistant: { threads: { setStatus } } } },
+        teamId: 'T001',
+      }],
+    ]);
+    adapter.prepareOutboundMessage = vi.fn().mockResolvedValue({ text: 'hi', blocks: undefined });
+    adapter.uploadAttachmentsToSlack = vi.fn().mockResolvedValue(undefined);
+    mockSlackMappingService.findByChannelId.mockResolvedValue({
+      slackChannelName: 'general',
+      connection: { teamId: 'T001' },
+    });
+    // The module-level conversationService mock is a bare {} — a threaded
+    // delivery calls setExternalId, which must resolve for the post-send
+    // hooks to run.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (conversationService as any).setExternalId = vi.fn().mockResolvedValue(undefined);
+  });
+
+  it('sets the current status again after posting into a thread with a live turn', async () => {
+    const handle = await adapter.workingIndicator.begin({
+      teamId: 'T001',
+      channelId: 'C_CHAN',
+      statusThreadTs: '123.000',
+    });
+    setStatus.mockClear(); // drop the initial set
+
+    // A mid-turn post into the thread — Slack cleared the status server-side.
+    await adapter.deliverToChannel('C_CHAN', 'hi', 'thr-1', '123.000');
+    await new Promise((r) => setTimeout(r, 0)); // flush the indicator's op chain
+
+    expect(setStatus).toHaveBeenCalledExactlyOnceWith({
+      channel_id: 'C_CHAN',
+      thread_ts: '123.000',
+      status: 'is thinking…',
+    });
+    expect(setStatus.mock.invocationCallOrder[0]).toBeGreaterThan(
+      postMessage.mock.invocationCallOrder[0],
+    );
+
+    await handle.end();
+  });
+
+  it('does not touch the status when no turn is live on the thread', async () => {
+    await adapter.deliverToChannel('C_CHAN', 'hi', 'thr-1', '123.000');
+
+    expect(postMessage).toHaveBeenCalledOnce();
+    expect(setStatus).not.toHaveBeenCalled();
   });
 });

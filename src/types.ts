@@ -5,6 +5,7 @@
  */
 
 import { ConversationMessage, SteeringMessage } from './prompts/context-builder';
+import { ToolLifecycleListener } from './lib/tool-lifecycle';
 
 // ============================================================================
 // Agent Status
@@ -98,6 +99,11 @@ interface InvokeRequestBase {
    * `threadTurnService`). Async so the source can load attachment bytes.
    */
   steering?: () => Promise<SteeringMessage[]>;
+  /**
+   * Fired around each tool execution (started/completed).
+   * Purely observational; listener errors never affect the turn.
+   */
+  onToolEvent?: ToolLifecycleListener;
   /**
    * Append `prompt` as the final user message even in chat mode, where the
    * prompt normally arrives via history (the conversation engine stores it

@@ -64,6 +64,10 @@ the feature is observable in production. Rules:
 
 - **One owning emitter per event** — callers delegate, never re-emit (a duplicate
   count silently corrupts the metric). Keep events lean.
+- **Not excessive** — instrument durable lifecycle outcomes, not every cosmetic
+  cue or per-step detail. A high-volume decoration (e.g. a per-message typing
+  indicator) is noise; the turn-level event (`chat message handled`) already
+  covers that activity.
 - **No PII in props** — never include free-text user content (e.g. a goal
   objective, message body, file contents). Emit ids, statuses, counts, and
   durations (e.g. `goal.turns`, `goal.elapsed_ms`) instead.
@@ -86,6 +90,10 @@ slash command, or UI surface, update the relevant doc page (and the root
   lives in its own file named for the component (kebab-case, e.g.
   `model-field.tsx`), not several components sharing a module. A component's
   small private helpers may stay in its file; shared ones move to a module.
+- **No Jira issue keys in code.** Never reference Jira tickets (e.g.
+  `AGENT-96`) in source files, comments, or tests. Ticket references belong
+  in commit messages and PR descriptions, where they stay linked to the
+  change; a comment must explain the behavior on its own.
 
 ## Deployment shape
 
