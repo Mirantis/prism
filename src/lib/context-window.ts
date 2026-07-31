@@ -24,18 +24,7 @@ import { modelCatalog } from './model-catalog';
 export interface ContextWindow {
   /** Max input tokens the model accepts. */
   tokens: number;
-  /**
-   * Where the number came from — surfaced in telemetry.
-   *
-   * `env` = the CONTEXT_WINDOW_TOKENS override. `snapshot` = the bundled floor.
-   * `remote` = an entry installed by the opt-in boot-time refresh. The
-   * bundled layer keeps the name `snapshot` so the existing telemetry series
-   * doesn't change meaning.
-   */
-  source: 'env' | 'snapshot' | 'remote';
 }
-
-export type ClaudeFamily = 'opus' | 'sonnet' | 'haiku' | 'fable' | 'mythos';
 
 /** One thread's context occupancy, as measured by a single turn. */
 export interface ContextUsageSnapshot {
@@ -97,16 +86,6 @@ const REGION_PREFIX = /^(?:us|eu|apac|au|jp|ca|sa|global)\./;
 /** Bedrock version suffixes (`-v1:0`, `-v2:1`, `-v1`) that some ID spellings omit. */
 const VERSION_SUFFIX = /-v\d+(?::\d+)?$/;
 
-const FAMILY_PATTERN = /claude-(opus|sonnet|haiku|fable|mythos)-/;
-
-/**
- * The enum-valued family for telemetry. Deliberately not the raw model ID: on
- * Azure that's a user-typed deployment name, i.e. free-text we must not emit.
- */
-export function claudeFamilyOf(modelId: string): ClaudeFamily | null {
-  return (FAMILY_PATTERN.exec(modelId)?.[1] as ClaudeFamily | undefined) ?? null;
-}
-
 /**
  * The input-context window for `modelId`, or `null` when it can't be determined.
  *
@@ -123,7 +102,7 @@ export function contextWindowFor(modelId: string): ContextWindow | null {
   // caller shape.
   const override = config.contextWindowTokens;
   if (typeof override === 'number' && Number.isFinite(override) && override > 0) {
-    return { tokens: override, source: 'env' };
+    return { tokens: override };
   }
 
   // Read the catalog once: it's the bundled floor plus any overlay the boot-time
@@ -149,7 +128,7 @@ export function contextWindowFor(modelId: string): ContextWindow | null {
       // Source comes from the entry, not from a global "did the fetch work" flag:
       // after a successful refresh a model present only in the bundle must still
       // honestly report `snapshot`.
-      if (hit) return { tokens: hit.context, source: hit.origin === 'remote' ? 'remote' : 'snapshot' };
+      if (hit) return { tokens: hit.context };
     }
   }
 

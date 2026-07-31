@@ -66,14 +66,13 @@ describe('model catalog', () => {
       expect(modelCatalogState()).toBe('bundled');
     });
 
-    it('resolves the runtime defaults with every entry tagged bundled', () => {
+    it('resolves the runtime defaults from the bundled floor', () => {
       expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({
         tokens: 1_000_000,
-        source: 'snapshot',
       });
       const entries = Object.values(bundledModelCatalog().bedrock ?? {});
       expect(entries.length).toBeGreaterThan(0);
-      expect(entries.every((e) => e?.origin === 'bundled')).toBe(true);
+      expect(entries.every((e) => typeof e?.context === 'number')).toBe(true);
     });
   });
 
@@ -115,10 +114,10 @@ describe('model catalog', () => {
 
       expect(reshaped).toEqual({
         bedrock: {
-          'us.anthropic.claude-opus-5': { context: 1_000_000, output: 128_000, origin: 'remote' },
+          'us.anthropic.claude-opus-5': { context: 1_000_000, output: 128_000 },
         },
         azure: {
-          'claude-opus-5': { context: 1_000_000, output: null, origin: 'remote' },
+          'claude-opus-5': { context: 1_000_000, output: null },
         },
       });
     });
@@ -157,24 +156,23 @@ describe('model catalog', () => {
   describe('installRemoteCatalog', () => {
     it('lets the overlay win for an entry the bundle already had', () => {
       const before = contextWindowFor(BEDROCK_CHAT_DEFAULT);
-      expect(before).toEqual({ tokens: 1_000_000, source: 'snapshot' });
+      expect(before).toEqual({ tokens: 1_000_000 });
 
       installRemoteCatalog({
         bedrock: {
-          [BEDROCK_CHAT_DEFAULT]: { context: 2_000_000, output: 128_000, origin: 'remote' },
+          [BEDROCK_CHAT_DEFAULT]: { context: 2_000_000, output: 128_000 },
         },
       });
 
       expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({
         tokens: 2_000_000,
-        source: 'remote',
       });
     });
 
     it('preserves bundle-only entries and keeps reporting them as snapshot', () => {
       installRemoteCatalog({
         bedrock: {
-          [BEDROCK_CHAT_DEFAULT]: { context: 2_000_000, output: 128_000, origin: 'remote' },
+          [BEDROCK_CHAT_DEFAULT]: { context: 2_000_000, output: 128_000 },
         },
       });
 
@@ -182,7 +180,6 @@ describe('model catalog', () => {
       config.llmProvider = 'azure';
       expect(contextWindowFor(AZURE_CHAT_DEFAULT)).toEqual({
         tokens: 1_000_000,
-        source: 'snapshot',
       });
     });
 
@@ -191,7 +188,7 @@ describe('model catalog', () => {
 
       const result = installRemoteCatalog({
         bedrock: {
-          'us.anthropic.claude-brandnew-9': { context: 5_000_000, output: 64_000, origin: 'remote' },
+          'us.anthropic.claude-brandnew-9': { context: 5_000_000, output: 64_000 },
         },
       });
 
@@ -199,7 +196,6 @@ describe('model catalog', () => {
       expect(result.changed).toBe(0);
       expect(contextWindowFor('us.anthropic.claude-brandnew-9')).toEqual({
         tokens: 5_000_000,
-        source: 'remote',
       });
     });
 
@@ -211,8 +207,8 @@ describe('model catalog', () => {
 
       installRemoteCatalog({
         bedrock: {
-          [BEDROCK_CHAT_DEFAULT]: { context: 2_000_000, output: 128_000, origin: 'remote' },
-          'us.anthropic.claude-brandnew-9': { context: 5_000_000, output: null, origin: 'remote' },
+          [BEDROCK_CHAT_DEFAULT]: { context: 2_000_000, output: 128_000 },
+          'us.anthropic.claude-brandnew-9': { context: 5_000_000, output: null },
         },
       });
 
@@ -224,7 +220,7 @@ describe('model catalog', () => {
 
       installRemoteCatalog({
         bedrock: {
-          [BEDROCK_CHAT_DEFAULT]: { context: 2_000_000, output: 128_000, origin: 'remote' },
+          [BEDROCK_CHAT_DEFAULT]: { context: 2_000_000, output: 128_000 },
         },
       });
 
@@ -236,12 +232,11 @@ describe('model catalog', () => {
       const result = installRemoteCatalog({
         bedrock: {
           // 1M -> 900k: a real change, but within the noise band.
-          [BEDROCK_CHAT_DEFAULT]: { context: 900_000, output: 128_000, origin: 'remote' },
+          [BEDROCK_CHAT_DEFAULT]: { context: 900_000, output: 128_000 },
           // 200k -> 20k: an order of magnitude down, worth a human look.
           'us.anthropic.claude-haiku-4-5-20251001-v1:0': {
             context: 20_000,
             output: 64_000,
-            origin: 'remote',
           },
         },
       });
@@ -253,7 +248,7 @@ describe('model catalog', () => {
     it('does not count an identical value as changed', () => {
       const result = installRemoteCatalog({
         bedrock: {
-          [BEDROCK_CHAT_DEFAULT]: { context: 1_000_000, output: 128_000, origin: 'remote' },
+          [BEDROCK_CHAT_DEFAULT]: { context: 1_000_000, output: 128_000 },
         },
       });
       expect(result).toEqual({ added: 0, changed: 0, diverged: 0 });
@@ -264,12 +259,12 @@ describe('model catalog', () => {
     it('beats an installed overlay', () => {
       installRemoteCatalog({
         bedrock: {
-          [BEDROCK_CHAT_DEFAULT]: { context: 2_000_000, output: 128_000, origin: 'remote' },
+          [BEDROCK_CHAT_DEFAULT]: { context: 2_000_000, output: 128_000 },
         },
       });
       config.contextWindowTokens = 50_000;
 
-      expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 50_000, source: 'env' });
+      expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 50_000 });
     });
   });
 });
@@ -338,7 +333,7 @@ describe('refreshModelCatalog', () => {
     await refreshModelCatalog();
 
     expect(modelCatalogState()).toBe('remote');
-    expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 2_000_000, source: 'remote' });
+    expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 2_000_000 });
     expect(outcome()).toMatchObject({
       'catalog.outcome': 'remote',
       'catalog.new_entries': '1',
@@ -375,7 +370,7 @@ describe('refreshModelCatalog', () => {
 
     expect(modelCatalogState()).toBe('failed');
     expect(modelCatalog()).toEqual(bundledModelCatalog());
-    expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000, source: 'snapshot' });
+    expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000 });
     expect(outcome()).toMatchObject({ 'catalog.outcome': reported, 'catalog.failure_kind': kind });
     expect(mockLogger.warn).toHaveBeenCalled();
   });
@@ -416,7 +411,7 @@ describe('refreshModelCatalog', () => {
 
     expect(modelCatalogState()).toBe('pending');
     expect(modelCatalog()).toEqual(bundledModelCatalog());
-    expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000, source: 'snapshot' });
+    expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000 });
 
     release(
       jsonResponse(
@@ -430,7 +425,7 @@ describe('refreshModelCatalog', () => {
     await pending;
 
     expect(modelCatalogState()).toBe('remote');
-    expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 2_000_000, source: 'remote' });
+    expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 2_000_000 });
   });
 
   it('aborts the in-flight request on cancellation without reporting an outcome', async () => {
@@ -474,7 +469,7 @@ describe('refreshModelCatalog', () => {
     expect(outcome()).toMatchObject({ 'catalog.diverged_entries': '1' });
     expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('diverge'));
     // Installed anyway: a rejection band would block a legitimate 200k -> 1M jump.
-    expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 100_000, source: 'remote' });
+    expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 100_000 });
   });
 
   it('rejects a body that declares more than the size cap', async () => {

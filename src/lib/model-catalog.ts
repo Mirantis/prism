@@ -34,8 +34,6 @@ export interface CatalogEntry {
   /** Max input tokens the model accepts. */
   context: number;
   output: number | null;
-  /** Which layer produced this entry — drives `ContextWindow.source`. */
-  origin: 'bundled' | 'remote';
 }
 
 /** Provider (`bedrock` | `azure`) -> model ID -> limits. */
@@ -87,24 +85,27 @@ export function isUsableRegistryEntry(id: string, model: RegistryModel): boolean
   return typeof context === 'number' && Number.isFinite(context) && context >= MIN_PLAUSIBLE_CONTEXT;
 }
 
-/** Tag a raw `{context, output}` map with its origin, allocating fresh objects. */
-function tag(
+/**
+ * Copy the imported JSON into our own objects. A plain reference would hand the
+ * module singleton to every caller of `bundledModelCatalog()`, and the merge in
+ * `installRemoteCatalog` must not be able to reach it.
+ */
+function copy(
   raw: Record<string, Record<string, { context: number; output: number | null }> | undefined>,
-  origin: CatalogEntry['origin'],
 ): ModelCatalog {
   const out: ModelCatalog = {};
   for (const [provider, models] of Object.entries(raw)) {
     if (!models) continue;
-    const tagged: Record<string, CatalogEntry> = {};
+    const copied: Record<string, CatalogEntry> = {};
     for (const [id, limits] of Object.entries(models)) {
-      tagged[id] = { context: limits.context, output: limits.output, origin };
+      copied[id] = { context: limits.context, output: limits.output };
     }
-    out[provider] = tagged;
+    out[provider] = copied;
   }
   return out;
 }
 
-const bundledCatalog: ModelCatalog = tag(bundled, 'bundled');
+const bundledCatalog: ModelCatalog = copy(bundled);
 
 let effective: ModelCatalog = bundledCatalog;
 let state: CatalogState = 'bundled';
@@ -150,11 +151,7 @@ export function reshapeRegistry(raw: unknown): ModelCatalog | null {
     for (const [id, model] of Object.entries(models)) {
       if (!model || typeof model !== 'object') continue;
       if (!isUsableRegistryEntry(id, model)) continue;
-      entries[id] = {
-        context: model.limit!.context!,
-        output: model.limit?.output ?? null,
-        origin: 'remote',
-      };
+      entries[id] = { context: model.limit!.context!, output: model.limit?.output ?? null };
       total++;
     }
 
