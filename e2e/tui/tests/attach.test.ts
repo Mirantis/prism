@@ -92,7 +92,7 @@ function createZipBuffer(innerFilename: string, innerContent: string): Buffer {
   return Buffer.concat([localFileData, central, eocd]);
 }
 
-describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachScenario, AfterEachScenario, Scenario }) => {
+describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachScenario, AfterEachScenario, Scenario, defineSteps }) => {
   BeforeAllScenarios(async () => {
     env = await setupRuntime();
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-attach-e2e-'));
@@ -110,28 +110,34 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     await session.stop();
   });
 
-  Scenario('Attaching a file lets the agent read its contents', ({ Given, When, And, Then }) => {
-    Given('a local file containing {string}', (_ctx, content: string) => {
+  // Shared step definitions: the zip scenario asserts on the reply twice, and a
+  // per-Scenario registration only binds a repeated step title once.
+  defineSteps(({ Step }) => {
+    Step('a local file containing {string}', (_ctx, content: string) => {
       filePath = path.join(dir, 'report.txt');
       fs.writeFileSync(filePath, `${content}\n`);
     });
-    When('I attach the file', async () => {
+    Step('a local zip file containing a text file {string} with {string}', (_ctx, innerFile: string, innerContent: string) => {
+      filePath = path.join(dir, 'bundle.zip');
+      fs.writeFileSync(filePath, createZipBuffer(innerFile, innerContent));
+    });
+    Step('I attach the file', async () => {
       // The confirmation line proves the multipart upload succeeded and the
-      // chip is staged.
+      // chip is staged, for whichever file the Given step wrote.
       session.send(`/attach ${filePath}`);
       await sleep(200);
       session.send(KEYS.ENTER);
-      await session.waitForFrame(/Staged.*report\.txt/, 15_000);
+      await session.waitForFrame(new RegExp(`Staged.*${path.basename(filePath)}`), 15_000);
     });
-    And('I ask {string}', async (_ctx, prompt: string) => {
+    Step('I ask {string}', async (_ctx, prompt: string) => {
       session.send(prompt);
       await sleep(200);
       session.send(KEYS.ENTER);
     });
-    Then('my message appears in the chat', async () => {
+    Step('my message appears in the chat', async () => {
       await session.waitForFrame(/▌ You/, 5_000);
     });
-    And('the agent reply contains {string}', async (_ctx, sentinel: string) => {
+    Step('the agent reply contains {string}', async (_ctx, sentinel: string) => {
       // The reply must contain the sentinel from the file body — proof the
       // attachment flowed WS → chat() → context builder → Bedrock.
       //
@@ -143,29 +149,11 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
   });
 
-  Scenario('Attaching a zip file lets the agent inspect its contents', ({ Given, When, And, Then }) => {
-    Given('a local zip file containing a text file {string} with {string}', (_ctx, innerFile: string, innerContent: string) => {
-      filePath = path.join(dir, 'bundle.zip');
-      const zipBuf = createZipBuffer(innerFile, innerContent);
-      fs.writeFileSync(filePath, zipBuf);
-    });
-    When('I attach the file', async () => {
-      session.send(`/attach ${filePath}`);
-      await sleep(200);
-      session.send(KEYS.ENTER);
-      await session.waitForFrame(/Staged.*bundle\.zip/, 15_000);
-    });
-    And('I ask {string}', async (_ctx, prompt: string) => {
-      session.send(prompt);
-      await sleep(200);
-      session.send(KEYS.ENTER);
-    });
-    Then('my message appears in the chat', async () => {
-      await session.waitForFrame(/▌ You/, 5_000);
-    });
-    And('the agent reply contains {string}', async (_ctx, sentinel: string) => {
-      await session.waitForFrame(/▌\s+Prism\b/, 120_000);
-      await session.waitForFrame(new RegExp(sentinel), 60_000);
-    });
+  Scenario('Attaching a file lets the agent read its contents', () => {
+    // Covered by the shared steps.
+  });
+
+  Scenario('Attaching a zip file lets the agent inspect its contents', () => {
+    // Covered by the shared steps.
   });
 });
