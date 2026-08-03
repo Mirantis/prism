@@ -29,4 +29,5 @@ Feature: Skills slash command (web)
     When I navigate to the agent chat page
     And I type "/skills run echo-marker" in the chat input
     And I send the message
+    And I wait for the agent to finish responding
     Then I should see the message "SKILL_RAN_OK" in the conversation
