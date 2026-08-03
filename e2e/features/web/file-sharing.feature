@@ -52,6 +52,15 @@ Feature: Share files with the agent
     Then the downloaded file should be named "export.txt"
     And the downloaded file should contain "PRISMRELOAD7"
 
+  # @slow (playwright-bdd → test.slow(), i.e. 3× the configured timeout): the
+  # hydrate-first flow costs ~3 inference round-trips (metadata stub →
+  # hydrate_attachment → shell read → final text) where auto-inlining cost one.
+  # ~26s locally, so nothing here is near the 120s scenario cap today; the
+  # headroom is because that cap applies to the *sum* of the steps while each
+  # individual wait is already capped at 60s. On a slow CI run that makes the
+  # difference between reporting the failing assertion and reporting a
+  # scenario-level timeout, which says nothing about what broke.
+  @slow
   Scenario: The agent hydrates a ZIP and reports its contents
     When I navigate to the agent chat page
     And I attach a zip file named "bundle.zip" containing a file "secret.txt" with "PRISMZIP99"
@@ -61,6 +70,8 @@ Feature: Share files with the agent
     And the agent response should contain "secret.txt"
     And the agent response should contain "PRISMZIP99"
 
+  # Two round-trips (stub → view_attachment → final text); same reasoning as above.
+  @slow
   Scenario: The agent views an uploaded image
     When I navigate to the agent chat page
     And I attach a small PNG image named "pixel.png"
