@@ -8,6 +8,22 @@
 import { Page, Locator, Download } from '@playwright/test';
 import { BasePage } from './base.page';
 
+/**
+ * Agent-bubble count at the moment the current turn's message was sent.
+ *
+ * The reply is "arrived" once the count exceeds this baseline. Anchoring to
+ * send time rather than to each call makes the wait idempotent: two
+ * consecutive content assertions about the same reply both pass, instead of
+ * the second one demanding a *further* bubble. In concise mode (the e2e
+ * default — `verbose` defaults to false and db-helper never sets it) the
+ * runtime delivers exactly one bubble per turn, so a snapshot-at-call-time
+ * wait could only ever time out.
+ *
+ * Keyed by Page and held in a WeakMap because step definitions construct a
+ * fresh `HomePage` per step, so instance state would not survive.
+ */
+const sendBaseline = new WeakMap<Page, number>();
+
 export class HomePage extends BasePage {
   readonly chatInput: Locator;
   readonly sendButton: Locator;
@@ -112,6 +128,15 @@ export class HomePage extends BasePage {
    */
   async sendMessage(turnStartTimeout = 30_000) {
     const staged = (await this.chatInput.inputValue()).trim();
+    // Wait for the composer to be sendable *before* snapshotting. ChatInput
+    // swaps submit for STOP while a turn is in flight, so click() would
+    // auto-wait — and a count taken ahead of that wait would predate the
+    // previous turn's reply, letting waitForAgentResponse() return on that
+    // stale bubble.
+    await this.sendButton.waitFor({ state: 'visible' });
+    // Snapshot the bubble count *before* the click so waitForAgentResponse()
+    // can tell "this turn's reply landed" from "a further bubble arrived".
+    sendBaseline.set(this.page, await this.getAgentMessages().count());
     await this.sendButton.click();
     if (staged.startsWith('/')) return;
     await this.typingIndicator.waitFor({ state: 'visible', timeout: turnStartTimeout });
@@ -148,16 +173,30 @@ export class HomePage extends BasePage {
   }
 
   /**
-   * Wait for an agent response to appear after sending a message.
+   * Wait for the current turn's agent response to appear.
+   *
+   * Idempotent: it waits for the bubble count to exceed the baseline taken in
+   * `sendMessage()`, so calling it again after the reply has landed returns
+   * immediately rather than waiting for another bubble. That is what lets a
+   * scenario assert several things about one reply — concise mode delivers a
+   * single bubble per turn, so a "count must increase from now" wait would
+   * hang for the full timeout on the second assertion.
+   *
+   * With no recorded baseline (a turn not started via `sendMessage()`, e.g.
+   * an autonomous message) it falls back to "at least one agent bubble".
+   *
+   * The baseline is a bubble *count*, so `navigate()` and `page.reload()`
+   * invalidate it — both change the count out from under it, after which this
+   * wait can return immediately. Assert a reply before reloading, never after.
    */
   async waitForAgentResponse(timeout = 60_000) {
     const selector = '.group.flex.gap-3:not(.justify-end)';
-    const initialCount = await this.getAgentMessages().count();
+    const baseline = sendBaseline.get(this.page) ?? 0;
     await this.page.waitForFunction(
       ({ sel, prevCount }) => {
         return document.querySelectorAll(sel).length > prevCount;
       },
-      { sel: selector, prevCount: initialCount },
+      { sel: selector, prevCount: baseline },
       { timeout },
     );
   }
