@@ -90,16 +90,18 @@
   "overrides": {
     "form-data": "^4.0.6",
     "vite": "7.3.5",
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.12",
     "undici": "^7.28.0",
-    "hono": "^4.12.25",
-    "protobufjs": "^7.6.3",
+    "hono": "^4.12.27",
+    "@hono/node-server": "^2.0.5",
+    "protobufjs": "^7.6.5",
     "markdown-it": "^14.2.0",
-    "shell-quote": "^1.8.4",
+    "shell-quote": "^1.9.0",
     "esbuild": "$esbuild",
-    "js-yaml": "^4.2.0",
+    "js-yaml": "^4.3.0",
     "@babel/core": "^7.29.6",
     "@opentelemetry/core": "^2.8.0",
+    "@opentelemetry/propagator-jaeger": "^2.9.0",
     "@cucumber/messages": {
       "uuid": "^11.1.1"
     }
