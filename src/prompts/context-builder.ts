@@ -387,12 +387,17 @@ export interface SteeringMessage {
  * "unreadable" note for types the provider would reject.
  */
 export function buildSteeringMessage(msg: SteeringMessage): ModelMessage {
-  const parts = buildUserContentParts({
+  const item: ConversationMessage = {
     id: 'steering',
     role: 'USER',
     content: msg.text,
     attachments: msg.attachments,
-  });
+  };
+  // Budget this message too. It is injected into a running turn and then re-sent
+  // on every remaining step, so without a cap a mid-turn share is exactly the
+  // hole the aggregate budget exists to close. Its files are the newest in the
+  // conversation, so they get the whole budget — but no more than it.
+  const parts = buildUserContentParts(item, selectInlinableTextAttachments([item]));
 
   // Keep the plain-string form when there's just text, same as history.
   if (parts.length === 1 && parts[0].type === 'text') {
@@ -401,14 +406,6 @@ export function buildSteeringMessage(msg: SteeringMessage): ModelMessage {
   return { role: 'user', content: parts };
 }
 
-/**
- * Turn a USER message + its attachments into AI SDK content parts.
- *
- * Allowlist-driven on purpose: the Bedrock converter throws on an unknown
- * mediaType in an image/file part (killing the whole generateText call), so
- * only confidently-readable images and PDFs become image/file parts. Text/code
- * is inlined (truncated). Everything else becomes a plain "unreadable" note.
- */
 /**
  * Choose which text attachments may be inlined, within the aggregate budget.
  *
@@ -453,6 +450,20 @@ export function selectInlinableTextAttachments(
   return allowed;
 }
 
+/**
+ * Turn a USER message + its attachments into AI SDK content parts.
+ *
+ * Allowlist-driven on purpose: the Bedrock converter throws on an unknown
+ * mediaType in an image/file part (killing the whole generateText call), so
+ * only confidently-readable images and PDFs become image/file parts. Text/code
+ * becomes a text/plain file part, which the converter renders as a document
+ * block. Everything else becomes a plain "unreadable" note.
+ *
+ * `inlinable` is the set of text-attachment ids allowed to carry their contents
+ * (see selectInlinableTextAttachments); anything absent from it is stubbed.
+ * Omitting it inlines every text attachment, so callers that build a message
+ * outside the history walk must still pass one — see buildSteeringMessage.
+ */
 function buildUserContentParts(
   msg: ConversationMessage,
   inlinable?: Set<string>,

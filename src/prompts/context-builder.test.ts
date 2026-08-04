@@ -979,6 +979,32 @@ describe('buildSteeringMessage', () => {
     expect(content[1].data).toContain('boom');
   });
 
+  it('applies the aggregate budget to a mid-turn share too', () => {
+    // A steering message is injected into a running turn and then re-sent on
+    // every remaining step. Exempting it would leave the exact hole the budget
+    // exists to close — a mid-turn share could carry unbounded inlined text.
+    const bodyChars = MAX_INLINE_TEXT_CHARS;
+    const count = Math.floor(MAX_INLINE_TEXT_CHARS_TOTAL / bodyChars) + 1;
+
+    const message = buildSteeringMessage({
+      text: 'take these too',
+      attachments: Array.from({ length: count }, (_, i) =>
+        makeAttachment({
+          id: `s${i}`,
+          filename: `s${i}.txt`,
+          mediaType: 'text/plain',
+          category: 'text',
+          sizeBytes: bodyChars,
+          data: Buffer.from('x'.repeat(bodyChars)),
+        }),
+      ),
+    });
+
+    const parts = message.content as Array<{ type: string; text?: string }>;
+    const stubs = parts.filter((p) => p.text?.includes('contents not shown here'));
+    expect(stubs.length).toBeGreaterThan(0);
+  });
+
   it('notes a file the provider could not read rather than dropping it', () => {
     const message = buildSteeringMessage({
       text: 'and this one',

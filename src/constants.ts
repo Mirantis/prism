@@ -20,7 +20,12 @@ export const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
 export const MAX_INLINE_TEXT_CHARS = 100_000;
 
 /**
- * Max characters of text attachments inlined across a whole context build.
+ * Max size of text attachments inlined across a whole context build.
+ *
+ * Spent in `sizeBytes`, not decoded characters — the byte count is already
+ * known without reading the file, and for multi-byte text it over-estimates,
+ * which errs toward inlining less. The two are equal for the ASCII source and
+ * log files this mostly guards.
  *
  * MAX_INLINE_TEXT_CHARS bounds one attachment; this bounds their sum. Without
  * it the caps multiply — 100 attachments of 100k chars is 10M characters in a
