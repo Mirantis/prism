@@ -129,6 +129,38 @@ class ContextUsageService {
     this.tracked.delete(threadId);
   }
 
+  /**
+   * Apply a post-compaction occupancy estimate: emit a usage frame so the
+   * clients' meters drop immediately, and persist it as the thread's stored
+   * snapshot so a reload shows the same number. The estimate (chars/4 over the
+   * rebuilt context) undershoots the real prompt — it ignores the system prompt
+   * and tools — and self-corrects on the next turn's provider-reported usage.
+   *
+   * Deliberately does not touch the per-turn `tracked` map: compaction runs
+   * under the thread mutex, so no turn is in flight for this thread and there
+   * is no entry to reconcile.
+   *
+   * Returns null (and does nothing) when the model's window is unknown — never
+   * a made-up percent.
+   */
+  applyEstimate(input: {
+    userId: string;
+    threadId: string;
+    modelId: string;
+    usedTokens: number;
+  }): ContextUsageSnapshot | null {
+    const snapshot = buildContextSnapshot(input.threadId, input.modelId, input.usedTokens);
+    if (!snapshot) return null;
+
+    this.events.emit('usage', { userId: input.userId, ...snapshot } satisfies ContextUsageEvent);
+    void conversationService
+      .setThreadContextUsage(snapshot.threadId, snapshot.usedTokens, snapshot.modelId)
+      .catch((err) => {
+        logger.error({ err, threadId: snapshot.threadId }, '[ContextUsage] failed to persist estimate');
+      });
+
+    return snapshot;
+  }
 }
 
 export const contextUsageService = new ContextUsageService();

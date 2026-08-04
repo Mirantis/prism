@@ -60,14 +60,16 @@ class ContextService {
   }
 
   /**
-   * Filter to the last-20 LLM window and load shared-file bytes for each
-   * surviving message. Shared files are ALWAYS exposed while they're in the
-   * window. Attachment keys differ by source: DB threads key by messageId,
-   * live-read Slack threads key by the Slack message ts (externalMessageId).
+   * Load shared-file bytes for every message in the model window. The window
+   * is every non-compacted message — compaction (compaction.service.ts) bounds
+   * it in steady state by folding older history into the thread's summary, so
+   * there is deliberately no count-based slice here anymore. Attachment keys
+   * differ by source: DB threads key by messageId, live-read Slack threads key
+   * by the Slack message ts (externalMessageId).
    *
    * Two passes keep it cheap: a metadata-only pass (no BLOB reads) decides
    * which otherwise-empty file-only turns to keep, then bytes load only for
-   * the final ≤20 messages.
+   * the surviving messages.
    */
   private async attachFiles(
     threadId: string,
@@ -84,13 +86,11 @@ class ContextService {
         )
       : await attachmentService.getMetaByMessageIds(messages.map(m => m.id));
 
-    const windowed = messages
-      .filter(m =>
-        m.content.trim().length > 0 ||
-        (m.role === 'AGENT' && Boolean(m.toolCalls)) ||
-        metaMap.has(keyOf(m)),
-      )
-      .slice(-20);
+    const windowed = messages.filter(m =>
+      m.content.trim().length > 0 ||
+      (m.role === 'AGENT' && Boolean(m.toolCalls)) ||
+      metaMap.has(keyOf(m)),
+    );
 
     // This runs on every chat/heartbeat turn; the meta pass covered every
     // candidate message, so an empty map means the BLOB query would return

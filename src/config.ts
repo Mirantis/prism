@@ -1,7 +1,7 @@
 import path from 'path';
 import sea from 'node:sea';
 import dotenv from 'dotenv';
-import { GOAL_MAX_TURNS } from './constants';
+import { COMPACTION_TAIL_MESSAGES, COMPACTION_THRESHOLD_PERCENT, GOAL_MAX_TURNS } from './constants';
 import { readAgentModelDefaults } from './lib/prism-settings';
 
 // In SEA (the packaged prism-server binary), the source tree is gone — the
@@ -185,6 +185,23 @@ const contextWindowTokensOverride =
 // rather than as an unreachable URL that would warn on every boot.
 const modelsDevUrlOverride = (process.env.MODELS_DEV_URL ?? '').trim() || null;
 
+// Compaction threshold: 0 explicitly disables auto-compaction (null); 1–100 is
+// a valid percent; junk or out-of-range values fall back to the default rather
+// than silently disabling a safety feature or firing on every turn.
+const rawCompactionThreshold = parseInt(process.env.COMPACTION_THRESHOLD_PERCENT ?? '', 10);
+const compactionThresholdPercent: number | null =
+  rawCompactionThreshold === 0
+    ? null
+    : Number.isFinite(rawCompactionThreshold) && rawCompactionThreshold >= 1 && rawCompactionThreshold <= 100
+      ? rawCompactionThreshold
+      : COMPACTION_THRESHOLD_PERCENT;
+
+// Tail size: 0 is legal (compact everything; the rebuilt context is just the
+// summary pair plus the next user message); junk/negative falls back.
+const rawCompactionTail = parseInt(process.env.COMPACTION_TAIL_MESSAGES ?? '', 10);
+const compactionTailMessages =
+  Number.isFinite(rawCompactionTail) && rawCompactionTail >= 0 ? rawCompactionTail : COMPACTION_TAIL_MESSAGES;
+
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
@@ -330,4 +347,16 @@ export const config = {
   // `https://models.dev/api.json` to enable. Same variable
   // `src/scripts/generate-model-limits.ts` reads, same meaning.
   modelsDevUrl: modelsDevUrlOverride,
+
+  // Auto-compaction trigger, as a percent of the model's context window. null
+  // means disabled (COMPACTION_THRESHOLD_PERCENT=0); otherwise 1–100, default
+  // COMPACTION_THRESHOLD_PERCENT (90). Consumed programmatically by
+  // `compactionService.maybeAutoCompact` — see the trust note in
+  // `lib/model-catalog.ts` for why the window value itself is never echoed
+  // into a prompt.
+  compactionThresholdPercent,
+
+  // Newest messages excluded from compaction and kept verbatim in the context.
+  // COMPACTION_TAIL_MESSAGES, default COMPACTION_TAIL_MESSAGES (6); 0 is legal.
+  compactionTailMessages,
 };

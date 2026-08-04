@@ -48,6 +48,9 @@ const emissionListeners: ((event: ContextUsageEvent) => void)[] = [];
 describe('contextUsageService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks wipes the hoisted default; applyEstimate chains .catch()
+    // onto the returned promise, so the stub must keep resolving.
+    mockSetThreadContextUsage.mockResolvedValue(undefined);
     for (const listener of emissionListeners.splice(0)) {
       contextUsageService.events.off('usage', listener);
     }
@@ -194,6 +197,69 @@ describe('contextUsageService', () => {
 
       await contextUsageService.finalize({ threadId: 'thread-1' });
       expect(mockSetThreadContextUsage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('applyEstimate', () => {
+    it('emits a usage frame and persists it', async () => {
+      const seen = captureEmissions();
+
+      const snapshot = contextUsageService.applyEstimate({
+        userId: 'user-1',
+        threadId: 'thread-1',
+        modelId: MODEL,
+        usedTokens: 50_000,
+      });
+
+      expect(snapshot).toMatchObject({ usedTokens: 50_000, usedPercent: 5 });
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({ userId: 'user-1', usedTokens: 50_000 });
+      // The fire-and-forget persistence has been dispatched.
+      expect(mockSetThreadContextUsage).toHaveBeenCalledWith('thread-1', 50_000, MODEL);
+    });
+
+    it('returns null and does nothing when the window is unknown', () => {
+      const seen = captureEmissions();
+      const snapshot = contextUsageService.applyEstimate({
+        userId: 'user-1',
+        threadId: 'thread-1',
+        modelId: 'my-custom-deploy',
+        usedTokens: 50_000,
+      });
+      expect(snapshot).toBeNull();
+      expect(seen).toHaveLength(0);
+      expect(mockSetThreadContextUsage).not.toHaveBeenCalled();
+    });
+
+    it('does not disturb per-turn tracked state', async () => {
+      // Compaction holds the thread mutex, so no turn is in flight — but a
+      // stale tracked entry from a *different* code path must survive intact.
+      contextUsageService.record(baseInput({ inputTokens: 400_000 }));
+      contextUsageService.applyEstimate({
+        userId: 'user-1',
+        threadId: 'thread-1',
+        modelId: MODEL,
+        usedTokens: 10,
+      });
+
+      await contextUsageService.finalize({ threadId: 'thread-1' });
+      // finalize persists the recorded turn measurement, not the estimate.
+      expect(mockSetThreadContextUsage).toHaveBeenLastCalledWith('thread-1', 400_000, MODEL);
+    });
+
+    it('swallows a persistence failure', async () => {
+      mockSetThreadContextUsage.mockRejectedValueOnce(new Error('gone'));
+      expect(() =>
+        contextUsageService.applyEstimate({
+          userId: 'user-1',
+          threadId: 'thread-1',
+          modelId: MODEL,
+          usedTokens: 10,
+        }),
+      ).not.toThrow();
+      // Let the rejected fire-and-forget promise settle through its catch.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(mockLogger.error).toHaveBeenCalled();
     });
   });
 });

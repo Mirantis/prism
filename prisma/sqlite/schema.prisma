@@ -142,6 +142,15 @@ model ConversationThread {
   compactionSummary String?
   compactedAt       DateTime?
 
+  // Provider-native compaction watermark: the position up to which this
+  // thread's history is folded into `compactionSummary`. SLACK threads store
+  // the Slack ts of the newest compacted reply — the live conversations.replies
+  // read passes it as `oldest`. DATABASE threads store the newest compacted
+  // row's createdAt as ISO text (informational; the per-row isCompacted flag
+  // is authoritative there). A string because Slack ts and wall-clock DateTime
+  // don't share a clock.
+  compactedThroughTs String?
+
   // Last measured prompt size for this thread, written once per turn: the
   // provider-reported input tokens (already inclusive of cache reads/writes)
   // plus that step's output tokens. A per-turn SNAPSHOT, not a running total —

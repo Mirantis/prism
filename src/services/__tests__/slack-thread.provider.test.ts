@@ -846,5 +846,71 @@ describe('Requirement: Slack Thread Provider', () => {
       expect(messages.map((m) => m.content)).toEqual(['<@U100:Alice>: do the thing', 'Let me check that.', 'Done.']);
     });
   });
+
+  describe('Scenario: Compaction watermark', () => {
+    const watermark = '1710000002.000000';
+
+    function setupCompactedThread() {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalChannelId: channelId,
+        externalThreadId: threadTs,
+        compactedThroughTs: watermark,
+      });
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice', name: 'alice' } });
+    }
+
+    it('windows the model view with `oldest` and drops the always-returned parent', async () => {
+      setupCompactedThread();
+      // conversations.replies always returns the thread parent regardless of
+      // `oldest`; the reply at the watermark is already in the summary too.
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'thread parent', ts: threadTs },
+          { user: 'U100', text: 'at the watermark', ts: watermark },
+          { user: 'U100', text: 'after the watermark', ts: '1710000003.000000' },
+        ],
+        response_metadata: {},
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(mockConversationsReplies).toHaveBeenCalledWith({
+        channel: channelId,
+        ts: threadTs,
+        limit: 200,
+        oldest: watermark,
+      });
+      expect(messages.map((m) => m.content)).toEqual(['<@U100:Alice>: after the watermark']);
+    });
+
+    it('does not window the client view — compaction only changes what the model sees', async () => {
+      setupCompactedThread();
+      mockConversationsReplies.mockResolvedValue({
+        messages: [{ user: 'U100', text: 'thread parent', ts: threadTs }],
+        response_metadata: {},
+      });
+
+      const messages = await provider.getMessages(threadId, { excludeInternal: true });
+
+      expect(mockConversationsReplies).toHaveBeenCalledWith({
+        channel: channelId,
+        ts: threadTs,
+        limit: 200,
+      });
+      expect(messages).toHaveLength(1);
+    });
+
+    it('sends no `oldest` when the thread was never compacted', async () => {
+      mockConversationsReplies.mockResolvedValue({ messages: [], response_metadata: {} });
+
+      await provider.getMessages(threadId);
+
+      expect(mockConversationsReplies).toHaveBeenCalledWith({
+        channel: channelId,
+        ts: threadTs,
+        limit: 200,
+      });
+    });
+  });
 });
 

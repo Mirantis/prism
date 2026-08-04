@@ -36,6 +36,8 @@ interface ChatInputProps {
   onRemoveAttachment: (localId: string) => void;
   /** Context-window occupancy for the active thread; null until measured. */
   contextUsage: ContextUsage | null;
+  /** A compaction is running for the active thread — show a note in the meta strip. */
+  isCompacting?: boolean;
 }
 
 const statusColors: Record<ConnectionStatus, string> = {
@@ -56,6 +58,7 @@ export default function ChatInput({
   onFilesSelected,
   onRemoveAttachment,
   contextUsage,
+  isCompacting = false,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -177,7 +180,7 @@ export default function ChatInput({
         Connection notice on the left, context on the right; when only one is
         present it still lands on its own side.
       */}
-      {(connectionStatus !== 'connected' || contextUsage) && (
+      {(connectionStatus !== 'connected' || contextUsage || isCompacting) && (
         <div className="flex items-center justify-between gap-2 bg-muted/50 px-4 py-1.5 text-xs text-muted-foreground">
           <span className="flex items-center gap-2">
             {connectionStatus !== 'connected' && (
@@ -185,6 +188,12 @@ export default function ChatInput({
                 <span className={`inline-block size-1.5 rounded-full ${statusColors[connectionStatus]}`} />
                 {connectionStatus === 'connecting' ? 'Connecting…' : 'Disconnected'}
               </>
+            )}
+            {isCompacting && (
+              <span data-testid="compacting-indicator" className="flex items-center gap-1.5">
+                <span className="inline-block size-1.5 animate-pulse rounded-full bg-yellow-500" />
+                Compacting conversation…
+              </span>
             )}
           </span>
           {contextUsage && <ContextMeter usage={contextUsage} />}

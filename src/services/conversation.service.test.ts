@@ -507,10 +507,11 @@ describe('ConversationService', () => {
 
       await conversationService.getRecentMessages(threadId, 10);
 
-      // CLIENT (CLI /messages) view: concise internal steps are filtered out.
+      // CLIENT (CLI /messages) view: concise internal steps are filtered out,
+      // but compacted rows stay visible — compaction only changes the model view.
       expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { threadId, isCompacted: false, internalStep: false },
+          where: { threadId, internalStep: false },
         })
       );
     });
@@ -544,9 +545,10 @@ describe('ConversationService', () => {
 
       await conversationService.getThread('user-1', 'agent-1', threadId);
 
+      // Client view: internal steps hidden, compacted rows kept (full scrollback).
       expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { threadId, isCompacted: false, internalStep: false },
+          where: { threadId, internalStep: false },
         })
       );
     });

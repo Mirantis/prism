@@ -19,7 +19,8 @@ import { getShellTools } from './tools/shell/index';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from './tools/share-file';
 import { getSkillTools } from './tools/skills/index';
 import { contextService } from './services/context.service';
-import { contextUsageService } from './services/context-usage.service';
+import { contextUsageService, type ContextUsageSnapshot } from './services/context-usage.service';
+import { compactionService } from './services/compaction.service';
 import {
   agentWorkspaceService,
   resolveEffectiveModel,
@@ -259,6 +260,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     let wasCanceled = false;
     const channel = new AsyncChannel<InvokeStep>();
 
+    // The turn's latest occupancy snapshot, kept for the auto-compaction check
+    // after the turn completes — `finalize()` drops the service's tracked entry,
+    // so this local is the only post-turn copy.
+    let lastSnapshot: ContextUsageSnapshot | null = null;
+
     // Tripwire state: report an assistant-terminated request at most once per
     // invocation so a 100-step turn can't flood the metric.
     const guard = { reported: false };
@@ -352,13 +358,14 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         // threadId, and their prompt is not any thread's history, so a snapshot
         // would be meaningless. Cheap and synchronous — no I/O here.
         if (request.threadId) {
-          contextUsageService.record({
-            userId: request.userId,
-            threadId: request.threadId,
-            modelId,
-            inputTokens,
-            outputTokens,
-          });
+          lastSnapshot =
+            contextUsageService.record({
+              userId: request.userId,
+              threadId: request.threadId,
+              modelId,
+              inputTokens,
+              outputTokens,
+            }) ?? lastSnapshot;
         }
 
         const usage =
@@ -379,6 +386,8 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         });
       },
    }).then(async (result) => {
+      let earlyStoppingText: string | undefined;
+
       // 9. If the step limit was reached, make a follow-up call to get a final summary
       if (result.steps.length >= STEP_LIMIT) {
         const assistantText = summarizeSteps(result.steps);
@@ -407,6 +416,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
         const earlyStoppingBlocks = extractBlocks(summaryResult.text);
         const summaryTokens = summaryResult.usage?.totalTokens;
+        earlyStoppingText = summaryResult.text;
         channel.push({
           text: summaryResult.text,
           toolCalls: [],
@@ -415,7 +425,40 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         });
       }
 
-       channel.close();
+      // 10. Auto-compaction fork: hand this turn's request ingredients to the
+      // compaction service so its summarize call reuses the cached
+      // tools+system+history prefix. All trigger policy (threshold, enabled,
+      // window plausibility, tail, once-per-exchange) lives in the service —
+      // this only fires for thread-bound turns that completed with a
+      // measurement and real history. Goal turns are history-less by design
+      // (empty recentMessages), and heartbeat/webhook/subagent runs pass no
+      // threadId, so both skip here; canceled and errored turns reject before
+      // this point.
+      if (request.threadId && lastSnapshot && context.recentMessages.length > 0) {
+        compactionService.maybeAutoCompact({
+          userId: request.userId,
+          agentId,
+          threadId: request.threadId,
+          modelId,
+          model,
+          system: cachedSystem,
+          tools: cachedTools,
+          messages,
+          injections: injections.map((i) => i.message),
+          finalAssistantText: [summarizeSteps(result.steps), earlyStoppingText ?? '']
+            .filter(Boolean)
+            .join('\n\n'),
+          contextRows: context.recentMessages.map((m) => ({
+            id: m.id,
+            externalMessageId: m.externalMessageId ?? null,
+            internalStep: m.internalStep ?? false,
+            contentChars: m.content.length,
+          })),
+          snapshot: lastSnapshot,
+        });
+      }
+
+      channel.close();
     }).catch((error) => {
       // User-initiated cancellation: the caller aborted our signal, so
       // generateText rejected with an AbortError. Close the stream quietly —

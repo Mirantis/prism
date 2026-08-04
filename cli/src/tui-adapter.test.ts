@@ -209,6 +209,45 @@ describe('TuiAdapter inbound envelopes', () => {
 
     expect(threads).toEqual([]);
   });
+
+  describe('compaction envelopes', () => {
+    it('emits a validated compaction event', () => {
+      const seen: unknown[] = [];
+      tuiAdapterService.events.on('compaction', (e) => seen.push(e));
+
+      emit('compaction', {
+        threadId: 'thread-1',
+        status: 'completed',
+        trigger: 'manual',
+        tokensBefore: 190_000,
+        tokensAfter: 1_200,
+        messagesCompacted: 12,
+      });
+
+      expect(seen).toEqual([
+        {
+          threadId: 'thread-1',
+          status: 'completed',
+          trigger: 'manual',
+          tokensBefore: 190_000,
+          tokensAfter: 1_200,
+          messagesCompacted: 12,
+          error: undefined,
+        },
+      ]);
+    });
+
+    it('drops malformed frames — a bad frame must not toggle an indicator it cannot clear', () => {
+      const seen: unknown[] = [];
+      tuiAdapterService.events.on('compaction', (e) => seen.push(e));
+
+      emit('compaction', { threadId: 'thread-1' }); // no status/trigger
+      emit('compaction', { threadId: 'thread-1', status: 'running', trigger: 'manual' });
+      emit('compaction', { status: 'started', trigger: 'auto' }); // no threadId
+
+      expect(seen).toEqual([]);
+    });
+  });
 });
 
 describe('TuiAdapter.listSessions context usage', () => {

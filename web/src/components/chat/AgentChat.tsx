@@ -8,6 +8,7 @@ import { useWebSocket } from '@/hooks/use-websocket';
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   type Attachment,
+  type CompactionEvent,
   type ContextUsage,
   type ConversationMessage,
 } from '@/types';
@@ -27,6 +28,11 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  const [isCompacting, setIsCompacting] = useState(false);
+  // Terminal compaction frame pending a SYSTEM note. Staged as state (not
+  // appended directly in the WS callback) so the note goes through
+  // appendSystemMessage, which is declared further down.
+  const [compactionNotice, setCompactionNotice] = useState<CompactionEvent | null>(null);
 
   const { status, isTyping, sendFollowup, cancel } = useWebSocket({
     onMessage: (msg) => {
@@ -52,6 +58,13 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     // overwrite the reading for the thread being viewed.
     onContextUsage: (usage) => {
       if (usage.threadId === activeThreadId) setContextUsage(usage);
+    },
+    // Compaction progress for the on-screen thread: an indicator while it runs,
+    // a SYSTEM note when it ends (auto compactions of other threads stay quiet).
+    onCompaction: (event) => {
+      if (event.threadId !== activeThreadId) return;
+      setIsCompacting(event.status === 'started');
+      if (event.status !== 'started') setCompactionNotice(event);
     },
     onThreadUpdate: () => {
       queryClient.invalidateQueries({ queryKey: ['threads', agent.agentId, 'recents'] });
@@ -106,6 +119,8 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     // Drop the previous thread's reading too — it belongs to a different
     // conversation, and the new thread's is seeded from its own query below.
     setContextUsage(null);
+    setIsCompacting(false);
+    setCompactionNotice(null);
   }, [activeThreadId]);
 
   const { data: thread, isLoading: isLoadingThread, error: threadError } = useQuery({
@@ -235,6 +250,20 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     [activeThreadId],
   );
 
+  // Surface the pending compaction result as a SYSTEM note. Auto-compaction
+  // failures stay silent (server logs carry them) — the user never asked, so
+  // there is nothing actionable to show.
+  useEffect(() => {
+    if (!compactionNotice) return;
+    setCompactionNotice(null);
+    if (compactionNotice.status === 'completed') {
+      const n = compactionNotice.messagesCompacted ?? 0;
+      appendSystemMessage(`Conversation compacted — ${n} older message${n === 1 ? '' : 's'} summarized.`);
+    } else if (compactionNotice.trigger === 'manual') {
+      appendSystemMessage(`Compaction failed: ${compactionNotice.error ?? 'unknown error'}`);
+    }
+  }, [compactionNotice, appendSystemMessage]);
+
   // Run a slash command locally and surface its result as a SYSTEM message. The
   // command itself calls the runtime's REST endpoints (e.g. /skills run streams
   // the agent's reply back over WebSocket); we never send the slash text to the
@@ -325,6 +354,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         onFilesSelected={handleFilesSelected}
         onRemoveAttachment={handleRemoveAttachment}
         contextUsage={contextUsage}
+        isCompacting={isCompacting}
       />
     </div>
   );

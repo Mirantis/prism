@@ -135,12 +135,22 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
 /**
  * Wipe conversation rows so subsequent tests in the same file see a clean
  * thread without rebooting the runtime. The thread row itself is preserved
- * so `getOrCreateLatestThread()` keeps the same id.
+ * so `getOrCreateLatestThread()` keeps the same id — but its per-conversation
+ * state columns (compaction summary/watermark, context-usage snapshot) are
+ * cleared, or a compaction from one test would leak its summary into the next.
  */
 export function resetThread(dbPath: string): void {
   const db = new Database(dbPath);
   try {
     db.exec('DELETE FROM conversation_messages;');
+    db.exec(
+      `UPDATE conversation_threads SET
+         compactionSummary = NULL,
+         compactedAt = NULL,
+         compactedThroughTs = NULL,
+         contextTokens = NULL,
+         contextModel = NULL;`,
+    );
   } finally {
     db.close();
   }

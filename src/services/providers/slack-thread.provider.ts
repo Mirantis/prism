@@ -134,6 +134,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       select: {
         externalChannelId: true,
         externalThreadId: true,
+        compactedThroughTs: true,
       },
     });
 
@@ -149,8 +150,14 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       thread.externalThreadId
     );
 
+    // Compaction watermark, model view only: replies at or before it are folded
+    // into the thread's compaction summary, so the live read skips them (and
+    // usually collapses to a single page). The client view stays unwindowed —
+    // compaction only changes what the model sees.
+    const compactedThroughTs = opts?.excludeInternal ? null : thread.compactedThroughTs;
+
     const [rawMessages, { contentByTs, toolCallsByTs, createdAtByTs }] = await Promise.all([
-      this.fetchAllReplies(channelId, threadTs, teamId),
+      this.fetchAllReplies(channelId, threadTs, teamId, compactedThroughTs ?? undefined),
       this.getAgentMessageMaps(threadId),
     ]);
     const slackDerived = await this.mapToConversationMessages(
@@ -240,11 +247,18 @@ export class SlackThreadProvider implements ThreadMessageProvider {
 
   /**
    * Fetch all replies from Slack's conversations.replies API using local Bolt app.
+   *
+   * `oldest` windows the read to replies strictly after the compaction
+   * watermark (no `inclusive`, so the watermark message itself is excluded).
+   * The thread parent is always returned by the API regardless of `oldest`, so
+   * a ts post-filter drops it — without that, a compacted thread would replay
+   * its root message forever.
    */
   private async fetchAllReplies(
     channelId: string,
     threadTs: string,
-    teamId: string
+    teamId: string,
+    oldest?: string
   ): Promise<SlackMessage[]> {
     const app = slackAdapterService.getAppForTeam(teamId);
     if (!app) {
@@ -260,6 +274,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         channel: channelId,
         ts: threadTs,
         limit: 200,
+        ...(oldest && { oldest }),
         ...(cursor && { cursor }),
       });
 
@@ -270,7 +285,9 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       if (!cursor) break;
     }
 
-    return allMessages;
+    if (!oldest) return allMessages;
+    const cutoff = parseFloat(oldest);
+    return allMessages.filter((m) => parseFloat(m.ts) > cutoff);
   }
 
   /**

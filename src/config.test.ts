@@ -172,6 +172,7 @@ describe('config', () => {
     });
   });
 
+<<<<<<< HEAD
   describe('LLM_PROVIDER selection', () => {
     // These assert built-in defaults, so any model-id var the developer happens
     // to have exported would otherwise leak in through `originalEnv`.
@@ -319,6 +320,53 @@ describe('config', () => {
       process.env.LLM_PROVIDER = 'bedrock-mantle';
       const cfg = await loadConfig();
       expect(cfg.nexusChatBaseUrl).toBeNull();
+    });
+  });
+
+  describe('compaction', () => {
+    it('defaults the threshold to 90 and the tail to 6', async () => {
+      delete process.env.COMPACTION_THRESHOLD_PERCENT;
+      delete process.env.COMPACTION_TAIL_MESSAGES;
+      const cfg = await loadConfig();
+      expect(cfg.compactionThresholdPercent).toBe(90);
+      expect(cfg.compactionTailMessages).toBe(6);
+    });
+
+    it('reads a threshold override', async () => {
+      process.env.COMPACTION_THRESHOLD_PERCENT = '75';
+      const cfg = await loadConfig();
+      expect(cfg.compactionThresholdPercent).toBe(75);
+    });
+
+    it('treats 0 as "auto-compaction disabled"', async () => {
+      process.env.COMPACTION_THRESHOLD_PERCENT = '0';
+      const cfg = await loadConfig();
+      expect(cfg.compactionThresholdPercent).toBeNull();
+    });
+
+    it('falls back to the default on junk or out-of-range thresholds', async () => {
+      // Junk must not silently disable a safety feature, and >100 can never fire.
+      for (const bad of ['nonsense', '-5', '101']) {
+        process.env.COMPACTION_THRESHOLD_PERCENT = bad;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.compactionThresholdPercent).toBe(90);
+      }
+    });
+
+    it('reads the tail override, allowing 0', async () => {
+      process.env.COMPACTION_TAIL_MESSAGES = '0';
+      const cfg = await loadConfig();
+      expect(cfg.compactionTailMessages).toBe(0);
+    });
+
+    it('falls back to the default tail on junk or negative values', async () => {
+      for (const bad of ['nope', '-1']) {
+        process.env.COMPACTION_TAIL_MESSAGES = bad;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.compactionTailMessages).toBe(6);
+      }
     });
   });
 });

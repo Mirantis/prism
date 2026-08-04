@@ -9,6 +9,7 @@ const {
   mockStopGoal,
   mockPauseGoal,
   mockResumeGoal,
+  mockCompactThread,
 } = vi.hoisted(() => ({
   mockListSkills: vi.fn(),
   mockRunSkill: vi.fn(),
@@ -18,6 +19,7 @@ const {
   mockStopGoal: vi.fn(),
   mockPauseGoal: vi.fn(),
   mockResumeGoal: vi.fn(),
+  mockCompactThread: vi.fn(),
 }));
 
 vi.mock('@/api/runtime-client', () => ({
@@ -30,6 +32,7 @@ vi.mock('@/api/runtime-client', () => ({
     stopGoal: mockStopGoal,
     pauseGoal: mockPauseGoal,
     resumeGoal: mockResumeGoal,
+    compactThread: mockCompactThread,
   },
 }));
 
@@ -133,6 +136,27 @@ describe('/skills command', () => {
     mockRunSkill.mockRejectedValue(new ApiError('No available skill named "nope".'));
     const out = await cmd('/skills').run({ args: ['run', 'nope'], rawArgs: 'run nope' });
     expect(out).toContain('No available skill named');
+  });
+});
+
+describe('/compact command', () => {
+  it('fires the compaction and stays quiet — progress arrives over the WS', async () => {
+    mockCompactThread.mockResolvedValue({ threadId: 't1' });
+    const out = await cmd('/compact').run({ args: [], rawArgs: '', threadId: 't1' });
+    expect(mockCompactThread).toHaveBeenCalledWith('t1');
+    expect(out).toBe('');
+  });
+
+  it('requires an active thread', async () => {
+    const out = await cmd('/compact').run({ args: [], rawArgs: '' });
+    expect(mockCompactThread).not.toHaveBeenCalled();
+    expect(out).toBe('No active conversation to compact.');
+  });
+
+  it('surfaces the runtime reason (e.g. the 409 nothing-to-compact)', async () => {
+    mockCompactThread.mockRejectedValue(new ApiError('Nothing to compact yet.'));
+    const out = await cmd('/compact').run({ args: [], rawArgs: '', threadId: 't1' });
+    expect(out).toBe('Nothing to compact yet.');
   });
 });
 
