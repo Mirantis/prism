@@ -255,6 +255,14 @@ export const runtimeApi = {
       { method: 'POST', body: JSON.stringify(threadId ? { threadId } : {}) },
     ),
 
+  // Compaction (fold older history into the thread's summary). 202 + WS
+  // `compaction` frames carry the progress; 409 when there's nothing to compact.
+  compactThread: (threadId: string) =>
+    request<{ threadId: string }>(
+      `/agents/threads/${encodeURIComponent(threadId)}/compact`,
+      { method: 'POST' },
+    ),
+
   // Goals (background objectives the agent works toward across turns). Goal-turn
   // output streams back over the WebSocket channel, so create tags originChannel.
   createGoal: (input: { threadId: string; objective: string; tokenBudget?: number }) =>

@@ -25,6 +25,12 @@ export interface ConversationMessage {
   role: 'USER' | 'AGENT' | 'SYSTEM';
   content: string;
   toolCalls?: unknown;
+  // Provenance fields the compaction fork records so its commit can mark
+  // exactly the rows that were in this context (Slack rows are watermarked by
+  // ts, internal-step rows are flag-flipped). Optional because synthetic
+  // messages don't carry them; real rows from the context service always do.
+  externalMessageId?: string | null;
+  internalStep?: boolean;
   // Files shared by the user (web upload or Slack attachment). Loaded with
   // bytes by the context service so they can be turned into LLM content parts.
   attachments?: AttachmentForLLM[];

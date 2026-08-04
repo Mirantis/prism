@@ -47,6 +47,21 @@ export interface ContextUsage {
   usedPercent: number;
 }
 
+/**
+ * Compaction progress frame (WS `compaction` envelope): older history was (or
+ * is being) folded into the thread's summary so the model's context shrinks.
+ */
+export interface CompactionEvent {
+  threadId: string;
+  status: 'started' | 'completed' | 'failed';
+  trigger: 'auto' | 'manual';
+  tokensBefore?: number | null;
+  tokensAfter?: number | null;
+  messagesCompacted?: number;
+  /** Failed only — short reason, shown for manual compactions. */
+  error?: string;
+}
+
 export interface TuiAdapterEvents {
   message: (msg: TuiMessage) => void;
   status: (status: TuiStatus, detail?: string) => void;
@@ -57,6 +72,7 @@ export interface TuiAdapterEvents {
    */
   thread: (threadId: string) => void;
   contextUsage: (usage: ContextUsage) => void;
+  compaction: (event: CompactionEvent) => void;
 }
 
 /** A resumable conversation thread, as listed by the `--resume` picker. */
@@ -159,6 +175,29 @@ function coerceContextUsage(raw: unknown): ContextUsage | null {
     usedTokens: u.usedTokens,
     windowTokens: u.windowTokens,
     usedPercent: u.usedPercent,
+  };
+}
+
+function coerceCompactionEvent(raw: unknown): CompactionEvent | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const e = raw as Partial<CompactionEvent>;
+  // Same strictness as coerceContextUsage: a malformed frame must not toggle a
+  // "compacting…" indicator it can never clear.
+  if (
+    typeof e.threadId !== 'string' ||
+    (e.status !== 'started' && e.status !== 'completed' && e.status !== 'failed') ||
+    (e.trigger !== 'auto' && e.trigger !== 'manual')
+  ) {
+    return null;
+  }
+  return {
+    threadId: e.threadId,
+    status: e.status,
+    trigger: e.trigger,
+    tokensBefore: typeof e.tokensBefore === 'number' ? e.tokensBefore : null,
+    tokensAfter: typeof e.tokensAfter === 'number' ? e.tokensAfter : null,
+    messagesCompacted: typeof e.messagesCompacted === 'number' ? e.messagesCompacted : undefined,
+    error: typeof e.error === 'string' ? e.error : undefined,
   };
 }
 
@@ -355,6 +394,11 @@ class TuiAdapter {
       case 'context': {
         const usage = coerceContextUsage(env.payload);
         if (usage) this.events.emit('contextUsage', usage);
+        break;
+      }
+      case 'compaction': {
+        const event = coerceCompactionEvent(env.payload);
+        if (event) this.events.emit('compaction', event);
         break;
       }
       // typing / heartbeat / pong intentionally ignored

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { webSocketUrl } from '@/api/runtime-client';
-import type { ContextUsage, ConversationMessage } from '@/types';
+import type { CompactionEvent, ContextUsage, ConversationMessage } from '@/types';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 export type MessageMode = 'followup' | 'collect';
@@ -14,7 +14,7 @@ interface ChatMessage {
 }
 
 interface WebSocketMessage {
-  type: 'chat' | 'status' | 'error' | 'typing' | 'heartbeat' | 'pong' | 'thread' | 'context';
+  type: 'chat' | 'status' | 'error' | 'typing' | 'heartbeat' | 'pong' | 'thread' | 'context' | 'compaction';
   payload?: unknown;
 }
 
@@ -28,6 +28,12 @@ interface UseWebSocketOptions {
    * that knows which thread is on screen (see the ref note below).
    */
   onContextUsage?: (usage: ContextUsage) => void;
+  /**
+   * Compaction progress for a thread (started/completed/failed). A callback for
+   * the same reason as onContextUsage: the frame is thread-scoped and only the
+   * caller knows which thread is on screen.
+   */
+  onCompaction?: (event: CompactionEvent) => void;
   reconnectInterval?: number;
   maxReconnectAttempts?: number;
 }
@@ -37,6 +43,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     onMessage,
     onThreadUpdate,
     onContextUsage,
+    onCompaction,
     reconnectInterval = 3000,
     maxReconnectAttempts = 10,
   } = opts;
@@ -54,9 +61,11 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const onMessageRef = useRef(onMessage);
   const onThreadUpdateRef = useRef(onThreadUpdate);
   const onContextUsageRef = useRef(onContextUsage);
+  const onCompactionRef = useRef(onCompaction);
   onMessageRef.current = onMessage;
   onThreadUpdateRef.current = onThreadUpdate;
   onContextUsageRef.current = onContextUsage;
+  onCompactionRef.current = onCompaction;
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [isTyping, setIsTyping] = useState(false);
@@ -114,6 +123,19 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
               typeof p.usedPercent === 'number'
             ) {
               onContextUsageRef.current?.(p as ContextUsage);
+            }
+            break;
+          }
+          case 'compaction': {
+            const p = data.payload as Partial<CompactionEvent> | undefined;
+            // Same strictness as the context case: a malformed frame must not
+            // toggle a "compacting…" indicator it can never clear.
+            if (
+              typeof p?.threadId === 'string' &&
+              (p.status === 'started' || p.status === 'completed' || p.status === 'failed') &&
+              (p.trigger === 'auto' || p.trigger === 'manual')
+            ) {
+              onCompactionRef.current?.(p as CompactionEvent);
             }
             break;
           }

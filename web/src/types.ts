@@ -60,6 +60,21 @@ export interface ContextUsage {
   usedPercent: number;
 }
 
+/**
+ * Compaction progress frame (WS `compaction` envelope): older history was (or
+ * is being) folded into the thread's summary so the model's context shrinks.
+ */
+export interface CompactionEvent {
+  threadId: string;
+  status: 'started' | 'completed' | 'failed';
+  trigger: 'auto' | 'manual';
+  tokensBefore?: number | null;
+  tokensAfter?: number | null;
+  messagesCompacted?: number;
+  /** Failed only — short reason, shown for manual compactions. */
+  error?: string;
+}
+
 export interface ConversationThread {
   id: string;
   agentId: string;

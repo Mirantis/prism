@@ -17,6 +17,7 @@ import { config } from '../config';
 import { conversationEngineService } from './conversation-engine.service';
 import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
+import { compactionService, type CompactionEvent } from './compaction.service';
 
 // ============================================================================
 // Types
@@ -52,7 +53,7 @@ interface WebSocketMessage {
 type ThreadedMessage = WebSocketMessage & { threadId: string };
 
 interface WebSocketResponse {
-  type: 'chat' | 'pong' | 'error' | 'status' | 'thread' | 'context';
+  type: 'chat' | 'pong' | 'error' | 'status' | 'thread' | 'context' | 'compaction';
   threadId?: string;
   messageId?: string;
   content?: string;
@@ -91,6 +92,13 @@ class WebSocketGatewayService {
     // Push context-window occupancy so clients can show how full the window is.
     contextUsageService.events.on('usage', ({ userId, ...payload }: ContextUsageEvent) => {
       this.broadcast(userId, { type: 'context', payload });
+    });
+
+    // Push compaction progress (started/completed/failed) so clients can show
+    // a "compacting…" indicator and a completion note. Compaction itself is
+    // owned by compactionService (channel-agnostic).
+    compactionService.events.on('compaction', ({ userId, ...payload }: CompactionEvent) => {
+      this.broadcast(userId, { type: 'compaction', payload });
     });
   }
 

@@ -108,6 +108,7 @@ import { slackMappingService } from '../services/slack-mapping.service';
 import { conversationService, type MessageInput } from '../services/conversation.service';
 import { conversationEngineService, type ChatInput } from '../services/conversation-engine.service';
 import { skillCatalogService } from '../services/skill-catalog.service';
+import { compactionService } from '../services/compaction.service';
 import { slackAdapterService } from '../services/slack-adapter.service';
 import { attachmentService, detectMediaType, classifyMediaType } from '../services/attachment.service';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, GOAL_MAX_OBJECTIVE_CHARS } from '../constants';
@@ -2418,6 +2419,50 @@ router.post('/skills/:name/run', async (req: Request, res: Response) => {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] POST /skills/:name/run failed: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * POST /agents/threads/:threadId/compact — manually compact a thread (the
+ * `/compact` command in the web/CLI). The UI parses the slash command and calls
+ * this REST endpoint (we never parse a slash command in the conversation
+ * engine). Fire-and-forget: we return 202 immediately; progress and the result
+ * ride out as `compaction` frames on the WebSocket channel the client is
+ * already on.
+ */
+router.post('/threads/:threadId/compact', async (req: Request, res: Response) => {
+  try {
+    if (!config.agentId) {
+      res.status(503).json({ error: 'Agent not initialized (agentId unset)' });
+      return;
+    }
+    const rawThreadId = req.params.threadId;
+    const requested = Array.isArray(rawThreadId) ? rawThreadId[0] : rawThreadId;
+
+    const threadId = await conversationService.getOwnedThreadId(
+      config.ownerUserId,
+      config.agentId,
+      requested,
+    );
+    if (!threadId) {
+      res.status(404).json({ error: 'Thread not found' });
+      return;
+    }
+
+    if (!(await compactionService.hasCompactableHistory(threadId))) {
+      res.status(409).json({ error: 'Nothing to compact yet.' });
+      return;
+    }
+
+    void compactionService
+      .compactNow({ userId: config.ownerUserId, agentId: config.agentId, threadId })
+      .catch((err) => logger.error({ err, threadId }, '[Management] compact failed'));
+
+    res.status(202).json({ threadId });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] POST /threads/:threadId/compact failed: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });

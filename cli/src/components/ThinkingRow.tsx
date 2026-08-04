@@ -5,6 +5,8 @@ import { Spinner } from './Spinner.js';
 interface Props {
   /** True while a turn is in flight. */
   active: boolean;
+  /** Overrides the default "thinking…" text (e.g. "compacting conversation…"). */
+  label?: string;
 }
 
 /**
@@ -19,13 +21,13 @@ interface Props {
  * chat surface rather than the status bar because `--no-status-bar` would
  * otherwise hide both the spinner and the only "esc to stop" affordance.
  */
-export const ThinkingRow: React.FC<Props> = ({ active }) => {
+export const ThinkingRow: React.FC<Props> = ({ active, label }) => {
   return (
     <Box paddingX={2} minHeight={1}>
       {active && (
         <>
           <Spinner />
-          <Text dimColor italic> thinking… (esc to stop · enter sends)</Text>
+          <Text dimColor italic> {label ?? 'thinking… (esc to stop · enter sends)'}</Text>
         </>
       )}
     </Box>

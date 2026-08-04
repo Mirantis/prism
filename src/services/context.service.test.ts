@@ -369,7 +369,10 @@ describe('ContextService', () => {
     expect(context.recentMessages[0].attachments).toEqual([att]);
   });
 
-  it('keeps only the last 20 messages', async () => {
+  it('keeps every non-compacted message — no count window', async () => {
+    // The old last-20 slice is gone: compaction (compaction.service.ts) bounds
+    // the context in steady state, and everything the provider returned (it
+    // already filters compacted rows) reaches the model.
     const messages = Array.from({ length: 25 }, (_, i) =>
       createTestMessage({ id: `msg-${i}`, content: `Message ${i}` })
     );
@@ -385,8 +388,8 @@ describe('ContextService', () => {
       threadId: 'thread-1',
     });
 
-    expect(context.recentMessages).toHaveLength(20);
-    expect(context.recentMessages[0].content).toBe('Message 5');
-    expect(context.recentMessages[19].content).toBe('Message 24');
+    expect(context.recentMessages).toHaveLength(25);
+    expect(context.recentMessages[0].content).toBe('Message 0');
+    expect(context.recentMessages[24].content).toBe('Message 24');
   });
 });

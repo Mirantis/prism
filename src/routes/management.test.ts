@@ -141,6 +141,22 @@ vi.mock('../services/conversation.service', () => ({
   },
 }));
 
+const { mockHasCompactableHistory, mockCompactNow } = vi.hoisted(() => ({
+  mockHasCompactableHistory: vi.fn(),
+  mockCompactNow: vi.fn(),
+}));
+
+// Mocked for route control AND because the WS gateway (pulled in via
+// createApp) subscribes to `compactionService.events` in its constructor.
+vi.mock('../services/compaction.service', () => ({
+  compactionService: {
+    hasCompactableHistory: mockHasCompactableHistory,
+    compactNow: mockCompactNow,
+    maybeAutoCompact: vi.fn(),
+    events: { on: vi.fn(), off: vi.fn() },
+  },
+}));
+
 vi.mock('../services/skill-catalog.service', () => ({
   skillCatalogService: { getCatalog: mockGetCatalog, find: mockFind },
 }));
@@ -2530,6 +2546,63 @@ describe('Management Routes', () => {
       expect(res.status).toBe(503);
       expect(mockFind).not.toHaveBeenCalled();
       expect(mockChatEngine).not.toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
+  // POST /threads/:threadId/compact
+  // ==========================================================================
+
+  describe('POST /threads/:threadId/compact', () => {
+    beforeEach(() => {
+      config.agentId = 'test-agent-id';
+      (config as unknown as { ownerUserId: string }).ownerUserId = 'owner-user-id';
+      mockCompactNow.mockResolvedValue(undefined);
+    });
+
+    it('returns 202 and fires compactNow for an owned thread', async () => {
+      mockGetOwnedThreadId.mockResolvedValue('thread-x');
+      mockHasCompactableHistory.mockResolvedValue(true);
+
+      const res = await authedRequest(app).post('/agents/threads/thread-x/compact');
+
+      expect(res.status).toBe(202);
+      expect(res.body).toEqual({ threadId: 'thread-x' });
+      expect(mockGetOwnedThreadId).toHaveBeenCalledWith('owner-user-id', 'test-agent-id', 'thread-x');
+      expect(mockCompactNow).toHaveBeenCalledWith({
+        userId: 'owner-user-id',
+        agentId: 'test-agent-id',
+        threadId: 'thread-x',
+      });
+    });
+
+    it('returns 404 for a thread the agent does not own', async () => {
+      mockGetOwnedThreadId.mockResolvedValue(null);
+
+      const res = await authedRequest(app).post('/agents/threads/nope/compact');
+
+      expect(res.status).toBe(404);
+      expect(mockCompactNow).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when there is nothing to compact', async () => {
+      mockGetOwnedThreadId.mockResolvedValue('thread-x');
+      mockHasCompactableHistory.mockResolvedValue(false);
+
+      const res = await authedRequest(app).post('/agents/threads/thread-x/compact');
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('Nothing to compact yet.');
+      expect(mockCompactNow).not.toHaveBeenCalled();
+    });
+
+    it('returns 503 when the agent is not initialized', async () => {
+      config.agentId = undefined as unknown as string;
+
+      const res = await authedRequest(app).post('/agents/threads/thread-x/compact');
+
+      expect(res.status).toBe(503);
+      expect(mockCompactNow).not.toHaveBeenCalled();
     });
   });
 });

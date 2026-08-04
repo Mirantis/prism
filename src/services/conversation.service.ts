@@ -470,50 +470,8 @@ class ConversationService {
   }
 
   /**
-   * Compact old messages in a thread
-   * This is called when the thread is approaching the context limit.
-   */
-  async compactThread(
-    threadId: string,
-    summary: string,
-    preserveLastN: number = 10
-  ): Promise<void> {
-    // Get all uncompacted messages
-    const messages = await prisma.conversationMessage.findMany({
-      where: {
-        threadId,
-        isCompacted: false,
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    if (messages.length <= preserveLastN) {
-      return; // Nothing to compact
-    }
-
-    // Mark older messages as compacted
-    const messagesToCompact = messages.slice(0, -preserveLastN);
-    const messageIds = messagesToCompact.map(m => m.id);
-
-    await prisma.conversationMessage.updateMany({
-      where: { id: { in: messageIds } },
-      data: { isCompacted: true },
-    });
-
-    // Store the summary
-    await prisma.conversationThread.update({
-      where: { id: threadId },
-      data: {
-        compactionSummary: summary,
-        compactedAt: new Date(),
-      },
-    });
-
-    logger.info('Compacted %d messages in thread %s', messagesToCompact.length, threadId);
-  }
-
-  /**
-   * Get thread with compaction summary (for context building)
+   * Get thread with compaction summary (for context building).
+   * Compaction itself (summarize + mark rows) lives in `compaction.service.ts`.
    */
   async getThreadContext(threadId: string): Promise<{
     compactionSummary: string | null;

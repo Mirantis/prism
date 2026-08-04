@@ -171,6 +171,12 @@ vi.mock('./services/context-usage.service', () => ({
   },
 }));
 
+const { mockMaybeAutoCompact } = vi.hoisted(() => ({ mockMaybeAutoCompact: vi.fn() }));
+
+vi.mock('./services/compaction.service', () => ({
+  compactionService: { maybeAutoCompact: mockMaybeAutoCompact },
+}));
+
 
 import { invoke, invokeStream, withToolsCacheControl, extractAttachmentIds } from './invoke';
 import { config } from './config';
@@ -241,6 +247,76 @@ describe('invoke', () => {
         maxOutputTokens: 16000,
       })
     );
+  });
+
+  describe('auto-compaction fork hook', () => {
+    const SNAPSHOT = {
+      threadId: 'thread-1',
+      modelId: 'model-x',
+      usedTokens: 190_000,
+      windowTokens: 200_000,
+      usedPercent: 95,
+    };
+
+    function contextWithHistory() {
+      return createTestAgentContext({
+        recentMessages: [
+          { id: 'm1', role: 'USER', content: 'hello', externalMessageId: null, internalStep: false },
+          { id: 'm2', role: 'AGENT', content: 'hi', externalMessageId: null, internalStep: false },
+        ],
+      });
+    }
+
+    it('hands the turn ingredients to the compaction service after a thread-bound turn', async () => {
+      mockGetAgentContext.mockResolvedValue(contextWithHistory());
+      mockContextUsageRecord.mockReturnValue(SNAPSHOT);
+
+      await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
+
+      expect(mockMaybeAutoCompact).toHaveBeenCalledTimes(1);
+      const fork = mockMaybeAutoCompact.mock.calls[0][0];
+      expect(fork).toMatchObject({
+        threadId: 'thread-1',
+        finalAssistantText: 'Here are your pods.',
+        snapshot: SNAPSHOT,
+        contextRows: [
+          { id: 'm1', externalMessageId: null, internalStep: false, contentChars: 5 },
+          { id: 'm2', externalMessageId: null, internalStep: false, contentChars: 2 },
+        ],
+      });
+      // The fork carries the live request ingredients — same references the
+      // turn's own generateText call used, so the summarize call hits the cache.
+      const turnRequest = mockGenerateText.mock.calls[0][0];
+      expect(fork.system).toBe(turnRequest.system);
+      expect(fork.messages).toBe(turnRequest.messages);
+    });
+
+    it('does not fire without a threadId', async () => {
+      mockGetAgentContext.mockResolvedValue(contextWithHistory());
+      mockContextUsageRecord.mockReturnValue(SNAPSHOT);
+
+      await invoke(createTestInvokeRequest({ threadId: undefined }));
+
+      expect(mockMaybeAutoCompact).not.toHaveBeenCalled();
+    });
+
+    it('does not fire when no step produced a usable measurement', async () => {
+      mockGetAgentContext.mockResolvedValue(contextWithHistory());
+      mockContextUsageRecord.mockReturnValue(null);
+
+      await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
+
+      expect(mockMaybeAutoCompact).not.toHaveBeenCalled();
+    });
+
+    it('does not fire for history-less turns (goal-style contexts)', async () => {
+      mockGetAgentContext.mockResolvedValue(createTestAgentContext({ recentMessages: [] }));
+      mockContextUsageRecord.mockReturnValue(SNAPSHOT);
+
+      await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
+
+      expect(mockMaybeAutoCompact).not.toHaveBeenCalled();
+    });
   });
 
   describe('model selection by mode', () => {

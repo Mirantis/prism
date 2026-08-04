@@ -426,6 +426,8 @@ What the operator sets on `docker run`:
 | `BEDROCK_MANTLE_BASE_URL` | Override the derived `…/anthropic/v1` mantle chat endpoint | derived from region |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window assumed for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
+| `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
+| `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction (sent verbatim) | `6` |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |

@@ -33,8 +33,10 @@ The main conversation surface.
   **[Terminal UI](terminal-ui.md#slash-commands)**: filter by typing, **Tab** to
   complete, arrow keys to move the selection, **Enter** to run. The web supports
   `/help`, **`/skills`** (list installed [skills](skills.md), or `/skills run
-  <name>`), and **`/goal`** (set or manage a background goal — `/goal
-  <objective>`, `status`, `list`, `pause`, `resume`, `stop`). Commands run
+  <name>`), **`/goal`** (set or manage a background goal — `/goal
+  <objective>`, `status`, `list`, `pause`, `resume`, `stop`), and **`/compact`**
+  (summarize older history to free up context — see
+  **[Compaction](compaction.md)**). Commands run
   locally and call the runtime directly; their output appears as a system note
   in the conversation, and `/goal`/`/skills run` stream the agent's reply in.
 - **Attachments.** Attach files with the paperclip button or by drag-and-drop.
@@ -65,6 +67,13 @@ The main conversation surface.
 
   The **[Terminal UI](terminal-ui.md#status-bar)** shows the same figure, in a
   more compact `| context 58%` form.
+
+  When the window fills up, the runtime **[compacts](compaction.md)** the
+  conversation: older history is folded into a summary and the meter drops.
+  While that runs, a `Compacting conversation…` note appears in the strip above
+  the input, and a system note (`Conversation compacted — N older messages
+  summarized.`) lands in the chat when it finishes. `/compact` triggers the same
+  thing manually.
 
 ## Channels (Slack)
 

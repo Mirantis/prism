@@ -25,14 +25,21 @@
  *   allocates fresh objects.
  *
  * One boundary worth stating, because the safety analysis rests on it: a window
- * size from here reaches a percentage on a screen and a column in the database,
- * and **never a prompt**. That is what keeps a wrong or hostile number a display
- * bug rather than an instruction — the registry is community-maintained, and its
- * model IDs are lookup keys only, never echoed into model input. If anyone later
- * feeds occupancy back to the agent (a "you're at 90%, compact now" hint is the
- * obvious temptation), a poisoned window starts steering behaviour instead of
- * merely misreporting it, and this module's filters do not defend against that.
- * Don't cross that boundary without revisiting it here.
+ * size from here reaches a percentage on a screen, a column in the database, and
+ * exactly one programmatic consumer — the auto-compaction trigger
+ * (`compactionService.maybeAutoCompact`, which fires when occupancy ≥
+ * COMPACTION_THRESHOLD_PERCENT of the window) — and **never a prompt**. The
+ * registry is community-maintained and its model IDs are lookup keys only, never
+ * echoed into model input; the compaction prompt is fixed text, so a wrong or
+ * hostile window still cannot *steer* the model. What it can now do is cause
+ * spurious or suppressed compactions, and that blast radius is deliberately
+ * bounded: `CONTEXT_WINDOW_TOKENS` (operator-set) wins over the registry;
+ * windows under `MIN_PLAUSIBLE_CONTEXT` are rejected outright (a tiny window
+ * would otherwise force compaction on every turn); the newest tail messages are
+ * always preserved and nothing is deleted (originals stay in the DB); and the
+ * nothing-to-compact + once-per-exchange guards cap the damage at wasted
+ * summarize calls. Feeding the number (or the percentage) into any prompt
+ * remains off the table — don't cross that line without revisiting this note.
  */
 import { config } from '../config';
 import { logger } from '../logger';

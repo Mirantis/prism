@@ -51,3 +51,21 @@ export const GOAL_MAX_STALL_TURNS = 2;
 
 /** Pause between goal turns so the background loop never hot-spins. */
 export const GOAL_TURN_DELAY_MS = 200;
+
+// ============================================================================
+// Compaction
+// ============================================================================
+
+/**
+ * Auto-compact a thread when its context occupancy reaches this percent of the
+ * model's window. Env-overridable via `config.compactionThresholdPercent`
+ * (COMPACTION_THRESHOLD_PERCENT); 0 disables auto-compaction.
+ */
+export const COMPACTION_THRESHOLD_PERCENT = 90;
+
+/**
+ * Newest messages kept out of compaction — they stay in the context verbatim
+ * so the conversation keeps its immediate continuity. Env-overridable via
+ * `config.compactionTailMessages` (COMPACTION_TAIL_MESSAGES).
+ */
+export const COMPACTION_TAIL_MESSAGES = 6;

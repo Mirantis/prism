@@ -48,6 +48,7 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     downloadAttachment: vi.fn(),
     listSkills: vi.fn(),
     runSkill: vi.fn(),
+    compactThread: vi.fn(),
   };
 }
 
@@ -456,6 +457,36 @@ describe('/skills', () => {
       makeCtx({ args: ['run', 'nope'], api: api as unknown as ApiClient }),
     );
     expect(out).toContain('No available skill named');
+  });
+});
+
+describe('/compact', () => {
+  it('fires the compaction and stays quiet — progress arrives over the WS', async () => {
+    const api = stubApi();
+    api.compactThread.mockResolvedValue({ threadId: 't1' });
+    const out = await cmd('/compact').run(
+      makeCtx({ threadId: 't1', api: api as unknown as ApiClient }),
+    );
+    expect(api.compactThread).toHaveBeenCalledWith('t1');
+    expect(out).toBe('');
+  });
+
+  it('requires an active thread', async () => {
+    const api = stubApi();
+    const out = await cmd('/compact').run(
+      makeCtx({ threadId: null, api: api as unknown as ApiClient }),
+    );
+    expect(api.compactThread).not.toHaveBeenCalled();
+    expect(out).toBe('No active conversation to compact.');
+  });
+
+  it('surfaces the runtime reason (e.g. the 409 nothing-to-compact)', async () => {
+    const api = stubApi();
+    api.compactThread.mockRejectedValue(new ApiError('Nothing to compact yet.', 409));
+    const out = await cmd('/compact').run(
+      makeCtx({ threadId: 't1', api: api as unknown as ApiClient }),
+    );
+    expect(out).toBe('Nothing to compact yet.');
   });
 });
 

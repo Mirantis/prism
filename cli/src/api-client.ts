@@ -135,6 +135,7 @@ export interface ApiClient {
   downloadAttachment(id: string): Promise<Buffer>;
   listSkills(threadId?: string): Promise<SkillSummary[]>;
   runSkill(name: string, threadId?: string): Promise<{ threadId: string; skill: string }>;
+  compactThread(threadId: string): Promise<{ threadId: string }>;
 }
 
 export class HttpApiClient implements ApiClient {
@@ -326,6 +327,12 @@ export class HttpApiClient implements ApiClient {
 
   runSkill(name: string, threadId?: string): Promise<{ threadId: string; skill: string }> {
     return this.request('POST', `/agents/skills/${encodeURIComponent(name)}/run`, threadId ? { threadId } : {});
+  }
+
+  // Compaction (fold older history into the thread's summary). 202 + WS
+  // `compaction` frames carry the progress; 409 when there's nothing to compact.
+  compactThread(threadId: string): Promise<{ threadId: string }> {
+    return this.request('POST', `/agents/threads/${encodeURIComponent(threadId)}/compact`);
   }
 
   /**

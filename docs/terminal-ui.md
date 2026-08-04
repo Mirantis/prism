@@ -65,6 +65,7 @@ Type `/` to open a command popup; keep typing to filter, **Tab** to complete,
 | `/heartbeat <…>` | Control the heartbeat — see below |
 | `/goal <…>` | Set or manage a background [goal](#goal) — see below |
 | `/skills [list\|run <name>]` | List installed [skills](skills.md), or run one |
+| `/compact` | Summarize older history to free up context — see [Compaction](compaction.md) |
 | `/schedules` | Open the scheduled-tasks panel |
 | `/config` | Open the identity/config viewer panel |
 | `/exit` | Shut down the TUI |
@@ -136,6 +137,12 @@ conversation has consumed — e.g. `| context 58%`. It changes colour as the win
 fills. It is hidden if the runtime does not recognize the model's context window —
 see `CONTEXT_WINDOW_TOKENS` in the **[configuration reference](configuration.md)**
 for how to set the window size in that case.
+
+When the window fills up, the runtime **[compacts](compaction.md)** the
+conversation and the percentage drops. While that runs, the spinner row above
+the composer reads `compacting conversation…`, and a system line
+(`Conversation compacted — N older messages summarized.`) appears in the chat
+when it finishes. `/compact` triggers the same thing manually.
 
 For the complete flag list, settings file, and full keyboard-shortcut tables,
 see the **[CLI reference](cli-reference.md)**.

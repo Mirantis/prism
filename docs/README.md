@@ -50,6 +50,9 @@ What the agent can do.
   Bootstrap.
 - **[Memory](memory.md)** — the two-layer memory system: curated long-term
   memory plus an embedding-indexed searchable store.
+- **[Compaction](compaction.md)** — how long conversations stay inside the
+  model's context window: older history is folded into a summary automatically
+  (or with `/compact`) while the newest messages stay verbatim.
 - **[Heartbeat](heartbeat.md)** — the always-on monitoring loop, its
   DELIVER/SUPPRESS gate and Slack triggers.
 - **[Scheduled tasks](scheduled-tasks.md)** — putting one-shot and recurring

@@ -134,6 +134,8 @@ Bedrock identifiers** — same names, no `us.`/`eu.`/`global.` prefix.
 | `AWS_REGION` | **(Mantle)** Region for both the mantle host and the Titan embedding leg | `us-east-1` |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
+| `COMPACTION_THRESHOLD_PERCENT` | Auto-[compact](compaction.md) a conversation when its context occupancy reaches this percent of the model's window. `0` disables auto-compaction; out-of-range values fall back to the default. | `90` |
+| `COMPACTION_TAIL_MESSAGES` | How many of the newest messages stay out of compaction and remain in the context verbatim. `0` is allowed. | `6` |
 
 The mantle **chat and classification** variables deliberately do **not** fall
 back to their `BEDROCK_*` counterparts, since those carry a cross-region prefix
@@ -191,6 +193,12 @@ is most likely on Azure, where model IDs are deployment names you chose:
 `CONTEXT_WINDOW_TOKENS` to that model's input-context size (e.g. `1000000`) to
 bring it back. It applies to every model the agent uses, so the main and heartbeat
 models can't be given different windows.
+
+The same window size drives **[automatic compaction](compaction.md)**: when a
+conversation's measured occupancy reaches `COMPACTION_THRESHOLD_PERCENT` of the
+window, the runtime folds older history into a summary. A model with an unknown
+window never auto-compacts (there is no percentage to trigger on) — manual
+`/compact` still works.
 
 ### Bootstrap model defaults (`~/.prism/settings.json`)
 
