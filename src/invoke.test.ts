@@ -375,7 +375,7 @@ describe('invoke', () => {
     });
 
     it('chat mode gets all tools', async () => {
-      await invoke(createTestInvokeRequest({ mode: 'chat' }));
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-1' }));
 
       const callArgs = mockGenerateText.mock.calls[0][0];
       // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file
@@ -388,6 +388,16 @@ describe('invoke', () => {
       expect(Object.keys(callArgs.tools)).toContain('create_goal');
       expect(Object.keys(callArgs.tools)).toContain('get_goal');
       expect(Object.keys(callArgs.tools)).toContain('skill');
+    });
+
+    it('withholds read_attachment from a turn with no thread', async () => {
+      // The tool scopes its lookup to the calling thread, so a turn without one
+      // (heartbeat, cron) gets no tool rather than an unscoped one that could
+      // read any attachment in the database.
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: undefined }));
+
+      const callArgs = mockGenerateText.mock.calls[0][0];
+      expect(Object.keys(callArgs.tools)).not.toContain('read_attachment');
     });
 
     it('subagent mode excludes share_file (no channel to the user)', async () => {

@@ -392,6 +392,25 @@ class AttachmentService {
   }
 
   /**
+   * One attachment, but only if it belongs to `threadId`.
+   *
+   * The scoped counterpart to loadByIds. loadByIds resolves an id the caller
+   * already holds — an upload it just performed — so an id IS the authority
+   * there. That is not true of an id the MODEL supplies: a uuid can arrive from
+   * a prompt-injected page or another conversation, so `read_attachment` has to
+   * prove the file belongs to the thread asking for it before returning bytes.
+   *
+   * A row with no threadId (an agent-shared file, stored unlinked by
+   * share_file) belongs to no conversation and is never readable this way.
+   */
+  async loadByIdForThread(attachmentId: string, threadId: string): Promise<AttachmentForLLM | null> {
+    const row = await prisma.messageAttachment.findFirst({
+      where: { id: attachmentId, threadId },
+    });
+    return row ? toForLLM(row) : null;
+  }
+
+  /**
    * Bytes-loaded attachments keyed by Slack message ts — for the live-read
    * Slack channel provider, which never sees our message rows.
    */

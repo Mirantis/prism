@@ -153,7 +153,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         ...getShareFileTools(),
         // Inbound counterpart: history shows older text attachments as stubs, so
         // the agent needs a way to read one back when it actually needs it.
-        ...getReadAttachmentTools(),
+        ...getReadAttachmentTools(request.threadId),
         // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md
         // body on demand. workspaceRoot merges the repo's skills with the global
         // ones. Empty (and omitted) when no skills are available.
