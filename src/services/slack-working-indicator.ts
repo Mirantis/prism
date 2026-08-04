@@ -20,6 +20,7 @@
  */
 
 import { logger } from '../logger';
+import type { ToolLifecycleListener } from '../lib/tool-lifecycle';
 
 export const WORKING_REACTION = 'eyes';
 export const WORKING_STATUS_TEXT = 'is thinking…';
@@ -55,9 +56,39 @@ export interface WorkingIndicatorHandle {
   setText(text: string | null): void;
 }
 
-/** The live phrase for a running tool, e.g. `is running kubectl…`. */
-export function toolStatusText(toolName: string): string {
-  return `is running ${toolName}…`;
+/**
+ * The live phrase for the running tools: `is running kubectl…`,
+ * `is running kubectl and pwd…`, `is running x, y and z…`. Parallel calls of
+ * the same tool collapse into one name. Expects at least one name — the
+ * caller reverts to the default text (via `setText(null)`) when none runs.
+ */
+export function toolStatusText(toolNames: readonly string[]): string {
+  const names = [...new Set(toolNames)];
+  const list = names.length <= 1
+    ? (names[0] ?? '')
+    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `is running ${list}…`;
+}
+
+/**
+ * Mirror a turn's running tools into its status line. The AI SDK executes a
+ * step's tool calls concurrently (Promise.all), so mapping each `completed`
+ * straight to `setText(null)` would revert the text to the default while a
+ * sibling tool is still in flight. The listener instead tracks the running
+ * names (a multiset — the same tool can run twice in one step) and always
+ * shows every tool still running, reverting only when none is.
+ */
+export function createToolStatusListener(handle: WorkingIndicatorHandle): ToolLifecycleListener {
+  const running: string[] = [];
+  return (event) => {
+    if (event.type === 'started') {
+      running.push(event.toolName);
+    } else {
+      const index = running.indexOf(event.toolName);
+      if (index !== -1) running.splice(index, 1);
+    }
+    handle.setText(running.length > 0 ? toolStatusText(running) : null);
+  };
 }
 
 /**

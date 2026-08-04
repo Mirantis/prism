@@ -14,6 +14,7 @@ import {
   SlackWorkingIndicator,
   WORKING_REACTION,
   WORKING_STATUS_TEXT,
+  createToolStatusListener,
   toolStatusText,
 } from '../slack-working-indicator';
 
@@ -73,11 +74,11 @@ describe('SlackWorkingIndicator', () => {
     });
     expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, WORKING_STATUS_TEXT);
 
-    handle.setText(toolStatusText('kubectl'));
+    handle.setText(toolStatusText(['kubectl']));
     await vi.advanceTimersByTimeAsync(0); // flush the per-key op chain
     expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, 'is running kubectl…');
 
-    handle.setText(toolStatusText('kubectl')); // unchanged text — no extra call
+    handle.setText(toolStatusText(['kubectl'])); // unchanged text — no extra call
     await vi.advanceTimersByTimeAsync(0);
     expect(ops.setStatus).toHaveBeenCalledTimes(2);
 
@@ -110,7 +111,7 @@ describe('SlackWorkingIndicator', () => {
     const handle = await indicator.begin({
       teamId: TEAM, channelId: CHANNEL, statusThreadTs: THREAD_TS,
     });
-    handle.setText(toolStatusText('kubectl'));
+    handle.setText(toolStatusText(['kubectl']));
 
     // A mid-turn bot post cleared the status on Slack's side — setStatus
     // sends whatever text is current.
@@ -262,5 +263,90 @@ describe('SlackWorkingIndicator', () => {
 
     expect(ops.setStatus).toHaveBeenCalledTimes(2);
     expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+  });
+});
+
+describe('toolStatusText', () => {
+  it('formats one, two, and three names', () => {
+    expect(toolStatusText(['kubectl'])).toBe('is running kubectl…');
+    expect(toolStatusText(['kubectl', 'pwd'])).toBe('is running kubectl and pwd…');
+    expect(toolStatusText(['x', 'y', 'z'])).toBe('is running x, y and z…');
+  });
+
+  it('collapses parallel calls of the same tool into one name', () => {
+    expect(toolStatusText(['shell', 'shell'])).toBe('is running shell…');
+    expect(toolStatusText(['shell', 'kubectl', 'shell'])).toBe('is running shell and kubectl…');
+  });
+});
+
+describe('createToolStatusListener', () => {
+  let ops: ReturnType<typeof makeOps>;
+  let indicator: SlackWorkingIndicator;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    ops = makeOps();
+    indicator = new SlackWorkingIndicator(ops);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('lists every running tool and keeps the survivor visible when an overlapping tool finishes', async () => {
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, statusThreadTs: THREAD_TS,
+    });
+    const listener = createToolStatusListener(handle);
+
+    listener({ type: 'started', toolName: 'kubectl' });
+    listener({ type: 'started', toolName: 'pwd' });
+    listener({ type: 'completed', toolName: 'kubectl' }); // pwd still runs
+    await vi.advanceTimersByTimeAsync(0); // flush the per-key op chain
+
+    expect(ops.setStatus.mock.calls.map((c) => c[3])).toEqual([
+      WORKING_STATUS_TEXT,
+      'is running kubectl…',
+      'is running kubectl and pwd…',
+      'is running pwd…',
+    ]);
+
+    listener({ type: 'completed', toolName: 'pwd' }); // none left — default text
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, WORKING_STATUS_TEXT);
+  });
+
+  it('tracks two parallel calls of the same tool as a multiset', async () => {
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, statusThreadTs: THREAD_TS,
+    });
+    const listener = createToolStatusListener(handle);
+
+    listener({ type: 'started', toolName: 'shell' });
+    listener({ type: 'started', toolName: 'shell' }); // same text — deduped push
+    listener({ type: 'completed', toolName: 'shell' }); // one still runs — text unchanged
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(ops.setStatus.mock.calls.map((c) => c[3])).toEqual([
+      WORKING_STATUS_TEXT,
+      'is running shell…',
+    ]);
+
+    listener({ type: 'completed', toolName: 'shell' }); // last one — default text
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, WORKING_STATUS_TEXT);
+  });
+
+  it('ignores a completed event with no matching start', async () => {
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, statusThreadTs: THREAD_TS,
+    });
+    const listener = createToolStatusListener(handle);
+
+    listener({ type: 'completed', toolName: 'kubectl' }); // stray — must not throw
+    listener({ type: 'started', toolName: 'pwd' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, 'is running pwd…');
   });
 });
