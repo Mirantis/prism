@@ -21,7 +21,7 @@ import {
   buildSteeringMessage,
 } from './context-builder';
 import { createTestAgentContext } from '../test-utils/factories';
-import { MAX_INLINE_TEXT_CHARS } from '../constants';
+import { MAX_INLINE_TEXT_CHARS, MAX_INLINE_TEXT_CHARS_TOTAL } from '../constants';
 import type { AttachmentForLLM } from '../services/attachment.service';
 
 function makeAttachment(overrides: Partial<AttachmentForLLM> = {}): AttachmentForLLM {
@@ -724,6 +724,75 @@ describe('buildConversationMessages with attachments', () => {
     expect(text).toContain('truncated');
     // The inlined body is capped to the limit (plus markers), not the full size.
     expect(text).not.toContain('x'.repeat(MAX_INLINE_TEXT_CHARS + 1));
+  });
+
+  it('inlines text attachments only up to the aggregate budget', () => {
+    // MAX_INLINE_TEXT_CHARS bounds one file; without an aggregate bound the
+    // caps multiply, and history is rebuilt on every step of a turn — so the
+    // whole sum is re-sent, re-tokenized, and re-scanned for PII each time.
+    const bodyChars = MAX_INLINE_TEXT_CHARS;
+    const overBudget = Math.floor(MAX_INLINE_TEXT_CHARS_TOTAL / bodyChars) + 1;
+
+    const context = createTestAgentContext({
+      recentMessages: Array.from({ length: overBudget }, (_, i) => ({
+        id: String(i),
+        role: 'USER' as const,
+        content: '',
+        attachments: [
+          makeAttachment({
+            id: `a${i}`,
+            filename: `f${i}.txt`,
+            mediaType: 'text/plain',
+            category: 'text',
+            sizeBytes: bodyChars,
+            data: Buffer.from('x'.repeat(bodyChars)),
+          }),
+        ],
+      })),
+    });
+
+    const rendered = buildConversationMessages(context).map((m) => textOf(m.content));
+    const omitted = rendered.filter((t) => t.includes('filled the context budget'));
+
+    // At least one had to be dropped, and a dropped file is still named so the
+    // model can ask for it rather than silently seeing nothing.
+    expect(omitted.length).toBeGreaterThan(0);
+    expect(omitted[0]).toContain('.txt');
+  });
+
+  it('spends the aggregate budget on the newest attachments first', () => {
+    // History is rebuilt every step, so an oldest-first spend would let stale
+    // files crowd out the file the user just shared — which is the one they are
+    // asking about. This is the behaviour that makes the budget safe to impose.
+    // Each file costs a full MAX_INLINE_TEXT_CHARS against the budget, so one
+    // more than fits guarantees the oldest is the one squeezed out.
+    const bodyChars = MAX_INLINE_TEXT_CHARS;
+    const count = Math.floor(MAX_INLINE_TEXT_CHARS_TOTAL / bodyChars) + 1;
+
+    const context = createTestAgentContext({
+      recentMessages: Array.from({ length: count }, (_, i) => ({
+        id: String(i),
+        role: 'USER' as const,
+        content: '',
+        attachments: [
+          makeAttachment({
+            id: `a${i}`,
+            filename: `f${i}.txt`,
+            mediaType: 'text/plain',
+            category: 'text',
+            sizeBytes: bodyChars,
+            data: Buffer.from(`body-${i}-` + 'x'.repeat(bodyChars)),
+          }),
+        ],
+      })),
+    });
+
+    const rendered = buildConversationMessages(context).map((m) => textOf(m.content));
+
+    // Newest survives with its contents; oldest is the one dropped.
+    expect(rendered[count - 1]).toContain(`body-${count - 1}-`);
+    expect(rendered[0]).toContain('filled the context budget');
+    expect(rendered[0]).not.toContain('body-0-');
   });
 
   it('renders an unreadable note (never a file part) for unsupported binaries', () => {

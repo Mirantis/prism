@@ -20,6 +20,24 @@ export const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
 export const MAX_INLINE_TEXT_CHARS = 100_000;
 
 /**
+ * Max characters of text attachments inlined across a whole context build.
+ *
+ * MAX_INLINE_TEXT_CHARS bounds one attachment; this bounds their sum. Without
+ * it the caps multiply — 100 attachments of 100k chars is 10M characters in a
+ * single request, re-sent on every one of the STEP_LIMIT steps a turn may take,
+ * since history is rebuilt from scratch each step.
+ *
+ * That is not theoretical. A conversation carrying eight ~99k-char attachments
+ * put enough text through the Nexus PII masker to exceed its request budget,
+ * and every step of every turn paid it again.
+ *
+ * The budget is spent newest-first (see selectInlinableTextAttachments): the
+ * file the user just shared is the one they are asking about, so it must never
+ * be the one dropped to make room for an older one.
+ */
+export const MAX_INLINE_TEXT_CHARS_TOTAL = 300_000;
+
+/**
  * Max attachments linked to a single message. Bounds aggregate memory at
  * context-build time — every windowed attachment's bytes are loaded and
  * base64-expanded for the model on each turn, before the budget gate runs —

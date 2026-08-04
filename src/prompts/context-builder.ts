@@ -13,7 +13,7 @@ import {
   humanFileSize,
   isBedrockImageType,
 } from '../services/attachment.service';
-import { MAX_INLINE_TEXT_CHARS } from '../constants';
+import { MAX_INLINE_TEXT_CHARS, MAX_INLINE_TEXT_CHARS_TOTAL } from '../constants';
 import { SlackTriggerMessage } from '../types';
 import { skillCatalogService } from '../services/skill-catalog.service';
 import { resolveSkillsDir } from '../lib/data-dir';
@@ -306,10 +306,15 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
     });
   }
 
+  // Decide up front which text attachments fit the aggregate budget, so the
+  // choice is made across the whole history rather than per message — the sum
+  // is what reaches the model and the PII masker, not any single file.
+  const inlinable = selectInlinableTextAttachments(context.recentMessages);
+
   // Add recent messages (only user and assistant, skip system and empty messages)
   for (const msg of context.recentMessages) {
     if (msg.role === 'USER') {
-      const parts = buildUserContentParts(msg);
+      const parts = buildUserContentParts(msg, inlinable);
       // Skip only when there's neither text nor any attachment.
       if (parts.length === 0) continue;
       // Keep the plain-string form when there's just text, rather than wrapping
@@ -397,7 +402,43 @@ export function buildSteeringMessage(msg: SteeringMessage): ModelMessage {
  * only confidently-readable images and PDFs become image/file parts. Text/code
  * is inlined (truncated). Everything else becomes a plain "unreadable" note.
  */
-function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
+/**
+ * Choose which text attachments may be inlined, within the aggregate budget.
+ *
+ * Walks **newest first** on purpose. History is rebuilt every step, so an
+ * oldest-first spend would let stale files crowd out the one the user just
+ * shared — the single worst thing this budget could do. An attachment that does
+ * not fit is skipped rather than ending the walk, so a large old file does not
+ * block smaller ones behind it.
+ *
+ * `sizeBytes` is the yardstick rather than decoded length: it is already known,
+ * and for multi-byte text it over-estimates, which errs toward inlining less.
+ */
+export function selectInlinableTextAttachments(
+  messages: Array<{ role: string; attachments?: AttachmentForLLM[] }>,
+): Set<string> {
+  const allowed = new Set<string>();
+  let remaining = MAX_INLINE_TEXT_CHARS_TOTAL;
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== 'USER') continue;
+    for (const att of msg.attachments ?? []) {
+      if (att.category !== 'text') continue;
+      const cost = Math.min(att.sizeBytes, MAX_INLINE_TEXT_CHARS);
+      if (cost > remaining) continue;
+      remaining -= cost;
+      allowed.add(att.id);
+    }
+  }
+
+  return allowed;
+}
+
+function buildUserContentParts(
+  msg: ConversationMessage,
+  inlinable?: Set<string>,
+): UserContentPart[] {
   const parts: UserContentPart[] = [];
 
   if (msg.content?.trim()) {
@@ -409,6 +450,13 @@ function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
       parts.push({ type: 'image', image: att.data, mediaType: att.mediaType });
     } else if (att.category === 'pdf' && att.mediaType === 'application/pdf') {
       parts.push({ type: 'file', data: att.data, mediaType: 'application/pdf', filename: att.filename });
+    } else if (att.category === 'text' && inlinable && !inlinable.has(att.id)) {
+      // Over the aggregate budget. Name it so the model knows the file exists
+      // and can ask for it, rather than silently seeing nothing.
+      parts.push({
+        type: 'text',
+        text: `[Attached file: ${att.filename} (${humanFileSize(att.sizeBytes)}) — not shown here because earlier files in this conversation filled the context budget; stored and downloadable.]`,
+      });
     } else if (att.category === 'text') {
       const raw = att.data.toString('utf8');
       const truncated = raw.length > MAX_INLINE_TEXT_CHARS;
