@@ -105,8 +105,9 @@ switching to a DM link, and vice-versa.
 - **Working cue.** While the agent works on your message it reacts to it with
   👀, and — where Slack supports it (the `assistant:write` scope plus the
   app's Agents & AI Apps feature) — shows a live status in the reply thread:
-  "is thinking…" while the model reasons, and the current tool while one runs
-  (e.g. "is running kubectl…"). Both cues disappear when the reply lands, or
+  "is thinking…" while the model reasons, and the running tools while any are
+  in flight — "is running kubectl…", or "is running kubectl and pwd…" when the
+  agent runs tools in parallel. Both cues disappear when the reply lands, or
   on error. Heartbeats and scheduled runs never show them.
 - **Messages sent mid-reply.** Long tasks post progress as they go, and you can
   post while one is running. A message that lands mid-task is handed to the work

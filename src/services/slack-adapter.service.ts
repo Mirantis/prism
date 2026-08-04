@@ -52,9 +52,8 @@ import { config } from '../config';
 import {
   SlackWorkingIndicator,
   WorkingIndicatorHandle,
-  toolStatusText,
+  createToolStatusListener,
 } from './slack-working-indicator';
-import type { ToolLifecycleEvent } from '../lib/tool-lifecycle';
 
 // ============================================================================
 // Tunables
@@ -877,8 +876,7 @@ class SlackAdapterService implements ChannelAdapter {
         message: taggedText,
         attachmentIds,
         runtimeNotices: failures.length ? [this.buildAttachmentFailureNote(failures)] : undefined,
-        onToolEvent: (event: ToolLifecycleEvent) =>
-          indicator?.setText(event.type === 'started' ? toolStatusText(event.toolName) : null),
+        onToolEvent: indicator ? createToolStatusListener(indicator) : undefined,
         metadata: { channel: 'slack', slackThreadTs: threadTs },
       });
     } catch (error: unknown) {
@@ -1116,8 +1114,7 @@ class SlackAdapterService implements ChannelAdapter {
         message: taggedText,
         attachmentIds,
         runtimeNotices: failures.length ? [this.buildAttachmentFailureNote(failures)] : undefined,
-        onToolEvent: (event: ToolLifecycleEvent) =>
-          indicator?.setText(event.type === 'started' ? toolStatusText(event.toolName) : null),
+        onToolEvent: indicator ? createToolStatusListener(indicator) : undefined,
         metadata: {
           channel: 'slack',
           channelId,
