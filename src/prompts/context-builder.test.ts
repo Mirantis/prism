@@ -694,8 +694,8 @@ describe('buildConversationMessages with attachments', () => {
             .map((p) => {
               const part = p as { type: string; text?: string; data?: unknown; filename?: string };
               if (part.text !== undefined) return part.text;
-              if (part.type === 'file' && typeof part.data === 'string') {
-                return `[File: ${part.filename}]\n${part.data}`;
+              if (part.type === 'file' && Buffer.isBuffer(part.data)) {
+                return `[File: ${part.filename}]\n${part.data.toString('utf8')}`;
               }
               return `[${part.type}]`;
             })
@@ -810,6 +810,45 @@ describe('buildConversationMessages with attachments', () => {
     expect(rendered[count - 1]).toContain(`body-${count - 1}-`);
     expect(rendered[0]).toContain('contents not shown here');
     expect(rendered[0]).not.toContain('body-0-');
+  });
+
+  it('sends a text attachment as bytes, not a string, in a text/plain file part', () => {
+    // The AI SDK reads a string `data` as base64 (convertToString ->
+    // convertBase64ToUint8Array), so raw text there fails the entire
+    // generateText call with "Invalid character" — every turn carrying a file,
+    // not just the attachment. Caught by e2e, so it gets a unit test.
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: '1',
+          role: 'USER',
+          content: '',
+          attachments: [
+            makeAttachment({
+              id: 'a',
+              filename: 'notes.txt',
+              mediaType: 'text/plain',
+              category: 'text',
+              data: Buffer.from('line one'),
+            }),
+          ],
+        },
+      ],
+    });
+
+    const parts = buildConversationMessages(context)[0].content as Array<{
+      type: string;
+      data?: Buffer;
+      mediaType?: string;
+      filename?: string;
+    }>;
+    const file = parts.find((p) => p.type === 'file');
+
+    expect(file).toBeDefined();
+    expect(file?.mediaType).toBe('text/plain');
+    expect(file?.filename).toBe('notes.txt');
+    expect(Buffer.isBuffer(file?.data)).toBe(true);
+    expect(file?.data?.toString('utf8')).toContain('line one');
   });
 
   it('stubs a text attachment once newer files push it out of the window', () => {
@@ -968,7 +1007,7 @@ describe('buildSteeringMessage', () => {
     const content = message.content as Array<{
       type: string;
       text?: string;
-      data?: string;
+      data?: Buffer;
       mediaType?: string;
       filename?: string;
     }>;
@@ -976,7 +1015,10 @@ describe('buildSteeringMessage', () => {
     expect(content[1].type).toBe('file');
     expect(content[1].mediaType).toBe('text/plain');
     expect(content[1].filename).toBe('run.log');
-    expect(content[1].data).toContain('boom');
+    // Bytes, not a string: the AI SDK base64-decodes a string `data`, so raw
+    // text there fails the whole call with "Invalid character".
+    expect(Buffer.isBuffer(content[1].data)).toBe(true);
+    expect(content[1].data?.toString('utf8')).toContain('boom');
   });
 
   it('applies the aggregate budget to a mid-turn share too', () => {

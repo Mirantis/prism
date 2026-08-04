@@ -38,10 +38,7 @@ export interface ConversationMessage {
 type UserContentPart =
   | { type: 'text'; text: string }
   | { type: 'image'; image: Buffer; mediaType: string }
-  // `data` is a string for text documents and a Buffer for PDFs: the Anthropic
-  // converter emits a `text` document source for the former and base64 for the
-  // latter, so handing it a string avoids a pointless encode/decode round trip.
-  | { type: 'file'; data: Buffer | string; mediaType: string; filename: string };
+  | { type: 'file'; data: Buffer; mediaType: string; filename: string };
 
 export interface AgentContext {
   soulMd: string;
@@ -500,7 +497,11 @@ function buildUserContentParts(
       // request — the Nexus PII masker, for one — to guess from the bytes.
       parts.push({
         type: 'file',
-        data: `${body}${suffix}`,
+        // Bytes, never a string: the AI SDK reads a string `data` as base64
+        // (convertToString -> convertBase64ToUint8Array), so passing raw text
+        // makes the whole call fail with "Invalid character". A Uint8Array is
+        // decoded as-is.
+        data: Buffer.from(`${body}${suffix}`, 'utf8'),
         mediaType: 'text/plain',
         filename: att.filename,
       });
