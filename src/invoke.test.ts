@@ -378,9 +378,13 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ mode: 'chat' }));
 
       const callArgs = mockGenerateText.mock.calls[0][0];
-      // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file + 2 goal + 1 skill
-      expect(Object.keys(callArgs.tools)).toHaveLength(12);
+      // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file
+      // + 1 read_attachment + 2 goal + 1 skill
+      expect(Object.keys(callArgs.tools)).toHaveLength(13);
       expect(Object.keys(callArgs.tools)).toContain('share_file');
+      // Inbound counterpart to share_file: history stubs older text
+      // attachments, so the agent needs a way to read one back.
+      expect(Object.keys(callArgs.tools)).toContain('read_attachment');
       expect(Object.keys(callArgs.tools)).toContain('create_goal');
       expect(Object.keys(callArgs.tools)).toContain('get_goal');
       expect(Object.keys(callArgs.tools)).toContain('skill');

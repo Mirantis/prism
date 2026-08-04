@@ -13,7 +13,11 @@ import {
   humanFileSize,
   isBedrockImageType,
 } from '../services/attachment.service';
-import { MAX_INLINE_TEXT_CHARS, MAX_INLINE_TEXT_CHARS_TOTAL } from '../constants';
+import {
+  INLINE_TEXT_RECENT_FILE_TURNS,
+  MAX_INLINE_TEXT_CHARS,
+  MAX_INLINE_TEXT_CHARS_TOTAL,
+} from '../constants';
 import { SlackTriggerMessage } from '../types';
 import { skillCatalogService } from '../services/skill-catalog.service';
 import { resolveSkillsDir } from '../lib/data-dir';
@@ -34,7 +38,10 @@ export interface ConversationMessage {
 type UserContentPart =
   | { type: 'text'; text: string }
   | { type: 'image'; image: Buffer; mediaType: string }
-  | { type: 'file'; data: Buffer; mediaType: string; filename: string };
+  // `data` is a string for text documents and a Buffer for PDFs: the Anthropic
+  // converter emits a `text` document source for the former and base64 for the
+  // latter, so handing it a string avoids a pointless encode/decode round trip.
+  | { type: 'file'; data: Buffer | string; mediaType: string; filename: string };
 
 export interface AgentContext {
   soulMd: string;
@@ -419,10 +426,21 @@ export function selectInlinableTextAttachments(
 ): Set<string> {
   const allowed = new Set<string>();
   let remaining = MAX_INLINE_TEXT_CHARS_TOTAL;
+  let fileTurnsSeen = 0;
 
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg.role !== 'USER') continue;
+
+    // Only turns that carried a file advance the window — see the constant.
+    const hasText = (msg.attachments ?? []).some((a) => a.category === 'text');
+    if (hasText) fileTurnsSeen++;
+    // Past the window a file is stubbed regardless of budget. This is what
+    // actually removes the cost: a conversation whose files all fit the budget
+    // would otherwise re-send every one of them on every step, forever.
+    // read_attachment is what keeps that non-lossy.
+    if (fileTurnsSeen > INLINE_TEXT_RECENT_FILE_TURNS) break;
+
     for (const att of msg.attachments ?? []) {
       if (att.category !== 'text') continue;
       const cost = Math.min(att.sizeBytes, MAX_INLINE_TEXT_CHARS);
@@ -451,11 +469,11 @@ function buildUserContentParts(
     } else if (att.category === 'pdf' && att.mediaType === 'application/pdf') {
       parts.push({ type: 'file', data: att.data, mediaType: 'application/pdf', filename: att.filename });
     } else if (att.category === 'text' && inlinable && !inlinable.has(att.id)) {
-      // Over the aggregate budget. Name it so the model knows the file exists
-      // and can ask for it, rather than silently seeing nothing.
+      // Not inlined this turn. Name it AND give its id, so the model can pull
+      // the text back with read_attachment instead of silently seeing nothing.
       parts.push({
         type: 'text',
-        text: `[Attached file: ${att.filename} (${humanFileSize(att.sizeBytes)}) — not shown here because earlier files in this conversation filled the context budget; stored and downloadable.]`,
+        text: `[Attached file: ${att.filename} (${humanFileSize(att.sizeBytes)}, id: ${att.id}) — shared earlier, contents not shown here. Use read_attachment with that id to read it.]`,
       });
     } else if (att.category === 'text') {
       const raw = att.data.toString('utf8');
@@ -464,7 +482,17 @@ function buildUserContentParts(
       const suffix = truncated
         ? `\n…[truncated — showing first ${MAX_INLINE_TEXT_CHARS} of ${raw.length} chars]`
         : '';
-      parts.push({ type: 'text', text: `\n\n[File: ${att.filename}]\n\`\`\`\n${body}${suffix}\n\`\`\`` });
+      // A file part, not a fenced text block: the Anthropic converter turns
+      // mediaType 'text/plain' into a `document` content block, which is
+      // structurally identifiable downstream. A text part is indistinguishable
+      // from something the user typed, which forces anything inspecting the
+      // request — the Nexus PII masker, for one — to guess from the bytes.
+      parts.push({
+        type: 'file',
+        data: `${body}${suffix}`,
+        mediaType: 'text/plain',
+        filename: att.filename,
+      });
     } else {
       // Unreadable binary (or an image/pdf whose type isn't Bedrock-safe).
       parts.push({

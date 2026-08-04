@@ -40,13 +40,13 @@ The main conversation surface.
 - **Attachments.** Attach files with the paperclip button or by drag-and-drop.
   Pending attachments show as chips (with a progress spinner, name, and size)
   and can be removed before sending. Up to 100 attachments per message.
-  Text and code files are shown to the agent inline, and the whole conversation
-  has a budget for how much of that text it can hold. The newest files always
-  get it first, so once a long conversation has accumulated several large files,
-  the agent sees the recent ones in full and is told the name and size of the
-  older ones instead of their contents. Every file stays stored and
-  downloadable either way, and you can always re-share one to bring it back
-  into view.
+  Text and code files are shown to the agent inline for the turn you share them
+  and the one after, which covers sharing a file and then asking about it. Older
+  files are listed by name and size instead, and the agent reads one back on
+  demand when it needs the contents — so a long conversation does not carry
+  every file ever shared in every request. There is also a total budget for
+  inlined text, spent newest-first, so a burst of large files cannot crowd out
+  the one you just sent. Every file stays stored and downloadable throughout.
 - **Stopping.** While the agent is responding, the send button becomes a stop
   button that cancels the in-flight turn.
 - **Tool calls.** When the agent uses a tool, the message shows an

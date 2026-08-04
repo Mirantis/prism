@@ -21,7 +21,11 @@ import {
   buildSteeringMessage,
 } from './context-builder';
 import { createTestAgentContext } from '../test-utils/factories';
-import { MAX_INLINE_TEXT_CHARS, MAX_INLINE_TEXT_CHARS_TOTAL } from '../constants';
+import {
+  INLINE_TEXT_RECENT_FILE_TURNS,
+  MAX_INLINE_TEXT_CHARS,
+  MAX_INLINE_TEXT_CHARS_TOTAL,
+} from '../constants';
 import type { AttachmentForLLM } from '../services/attachment.service';
 
 function makeAttachment(overrides: Partial<AttachmentForLLM> = {}): AttachmentForLLM {
@@ -680,11 +684,22 @@ describe('buildConversationMessages with attachments', () => {
 
   // A message whose only part is text (an inlined text file or an unreadable
   // note, with no typed message text) collapses to a plain string by design.
+  // Text attachments are `file` parts (document blocks), not fenced text, so
+  // their body lives in `data` rather than `text`.
   const textOf = (content: unknown): string =>
     typeof content === 'string'
       ? content
       : Array.isArray(content)
-        ? content.map((p) => (p as { text?: string }).text ?? `[${(p as { type: string }).type}]`).join('')
+        ? content
+            .map((p) => {
+              const part = p as { type: string; text?: string; data?: unknown; filename?: string };
+              if (part.text !== undefined) return part.text;
+              if (part.type === 'file' && typeof part.data === 'string') {
+                return `[File: ${part.filename}]\n${part.data}`;
+              }
+              return `[${part.type}]`;
+            })
+            .join('')
         : '';
   const hasPartType = (content: unknown, type: string): boolean =>
     Array.isArray(content) && content.some((p) => (p as { type: string }).type === type);
@@ -752,12 +767,14 @@ describe('buildConversationMessages with attachments', () => {
     });
 
     const rendered = buildConversationMessages(context).map((m) => textOf(m.content));
-    const omitted = rendered.filter((t) => t.includes('filled the context budget'));
+    const omitted = rendered.filter((t) => t.includes('contents not shown here'));
 
     // At least one had to be dropped, and a dropped file is still named so the
     // model can ask for it rather than silently seeing nothing.
     expect(omitted.length).toBeGreaterThan(0);
     expect(omitted[0]).toContain('.txt');
+    // The stub must carry the id, or read_attachment cannot be called for it.
+    expect(omitted[0]).toMatch(/id: a\d+/);
   });
 
   it('spends the aggregate budget on the newest attachments first', () => {
@@ -791,8 +808,69 @@ describe('buildConversationMessages with attachments', () => {
 
     // Newest survives with its contents; oldest is the one dropped.
     expect(rendered[count - 1]).toContain(`body-${count - 1}-`);
-    expect(rendered[0]).toContain('filled the context budget');
+    expect(rendered[0]).toContain('contents not shown here');
     expect(rendered[0]).not.toContain('body-0-');
+  });
+
+  it('stubs a text attachment once newer files push it out of the window', () => {
+    // The aggregate budget bounds the worst case; this removes the ordinary
+    // one. Without it a small file that fits the budget is re-sent on every
+    // step of every later turn for the life of the conversation.
+    const turns = INLINE_TEXT_RECENT_FILE_TURNS + 1;
+    const context = createTestAgentContext({
+      recentMessages: Array.from({ length: turns }, (_, i) => ({
+        id: String(i),
+        role: 'USER' as const,
+        content: '',
+        attachments: [
+          makeAttachment({
+            id: `a${i}`,
+            filename: `f${i}.txt`,
+            mediaType: 'text/plain',
+            category: 'text',
+            sizeBytes: 100,
+            data: Buffer.from(`body-${i}`),
+          }),
+        ],
+      })),
+    });
+
+    const rendered = buildConversationMessages(context).map((m) => textOf(m.content));
+
+    // Oldest is stubbed even though it is nowhere near the byte budget.
+    expect(rendered[0]).toContain('contents not shown here');
+    expect(rendered[0]).not.toContain('body-0');
+    // The most recent turns keep their contents.
+    expect(rendered[turns - 1]).toContain(`body-${turns - 1}`);
+  });
+
+  it('keeps a file readable across one follow-up question', () => {
+    // Share a file, then ask about it — the most common shape there is. If the
+    // window were one turn, this would force a tool call for something the
+    // model should simply still be able to see.
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: '0',
+          role: 'USER',
+          content: 'here is the log',
+          attachments: [
+            makeAttachment({
+              id: 'a0',
+              filename: 'run.log',
+              mediaType: 'text/plain',
+              category: 'text',
+              sizeBytes: 100,
+              data: Buffer.from('stack trace here'),
+            }),
+          ],
+        },
+        { id: '1', role: 'USER', content: 'what went wrong?' },
+      ],
+    });
+
+    const rendered = buildConversationMessages(context).map((m) => textOf(m.content));
+    expect(rendered[0]).toContain('stack trace here');
   });
 
   it('renders an unreadable note (never a file part) for unsupported binaries', () => {
@@ -885,10 +963,20 @@ describe('buildSteeringMessage', () => {
       ],
     });
 
-    const content = message.content as Array<{ type: string; text?: string }>;
+    // A text attachment is a `file` part, which the Anthropic converter turns
+    // into a document block — structurally distinguishable from typed text.
+    const content = message.content as Array<{
+      type: string;
+      text?: string;
+      data?: string;
+      mediaType?: string;
+      filename?: string;
+    }>;
     expect(content[0]).toEqual({ type: 'text', text: 'here is the failure' });
-    expect(content[1].text).toContain('[File: run.log]');
-    expect(content[1].text).toContain('boom');
+    expect(content[1].type).toBe('file');
+    expect(content[1].mediaType).toBe('text/plain');
+    expect(content[1].filename).toBe('run.log');
+    expect(content[1].data).toContain('boom');
   });
 
   it('notes a file the provider could not read rather than dropping it', () => {

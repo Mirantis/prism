@@ -38,6 +38,33 @@ export const MAX_INLINE_TEXT_CHARS = 100_000;
 export const MAX_INLINE_TEXT_CHARS_TOTAL = 300_000;
 
 /**
+ * How many of the most recent file-sharing turns keep their text attachments
+ * inlined in full.
+ *
+ * Counted in turns that actually carried a text file, NOT in messages: a file
+ * stays visible while it is among the last few shared, however much unrelated
+ * conversation has happened since. Counting plain messages would make a file
+ * vanish two replies after it arrived, mid-analysis, which is worse than the
+ * cost it saves.
+ *
+ * The aggregate budget bounds the worst case; this removes the ordinary one. A
+ * file that fits the budget would otherwise be re-sent on every step of every
+ * later turn for the life of the conversation — at STEP_LIMIT steps per turn,
+ * a 100k-character file is roughly 25k tokens paid over and over for a question
+ * that has long since moved on.
+ *
+ * Two rather than one so the common shape still works without a tool call:
+ * share a file, then share another and refer back to the first. Older files are
+ * stubbed with their id and read back via `read_attachment`, which is what makes
+ * stubbing non-lossy rather than a quiet truncation.
+ *
+ * Consequence worth knowing: a conversation that only ever shares one or two
+ * files keeps them inlined throughout. The budget still caps the damage, and
+ * the pathological case this exists for is the conversation carrying many.
+ */
+export const INLINE_TEXT_RECENT_FILE_TURNS = 2;
+
+/**
  * Max attachments linked to a single message. Bounds aggregate memory at
  * context-build time — every windowed attachment's bytes are loaded and
  * base64-expanded for the model on each turn, before the budget gate runs —

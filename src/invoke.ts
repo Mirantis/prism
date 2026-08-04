@@ -17,6 +17,7 @@ import { getGoalTools } from './tools/goals';
 import { getAgentConfigTools } from './tools/agent-config';
 import { getShellTools } from './tools/shell/index';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from './tools/share-file';
+import { getReadAttachmentTools } from './tools/read-attachment';
 import { getSkillTools } from './tools/skills/index';
 import { contextService } from './services/context.service';
 import { contextUsageService } from './services/context-usage.service';
@@ -150,6 +151,9 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         ...getAgentConfigTools(),
         ...getShellTools(request.workspaceRoot),
         ...getShareFileTools(),
+        // Inbound counterpart: history shows older text attachments as stubs, so
+        // the agent needs a way to read one back when it actually needs it.
+        ...getReadAttachmentTools(),
         // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md
         // body on demand. workspaceRoot merges the repo's skills with the global
         // ones. Empty (and omitted) when no skills are available.
