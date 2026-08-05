@@ -172,7 +172,6 @@ describe('config', () => {
     });
   });
 
-<<<<<<< HEAD
   describe('LLM_PROVIDER selection', () => {
     // These assert built-in defaults, so any model-id var the developer happens
     // to have exported would otherwise leak in through `originalEnv`.
