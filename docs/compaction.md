@@ -25,22 +25,17 @@ scrollback; compaction only changes what the model sees.
   every following turn failing the same way.
 
 While a compaction runs, the web UI shows `Compacting conversation…` above the
-input and the TUI shows it on the spinner row. When it finishes, a system note —
-`Conversation compacted — N older messages summarized.` — appears in the chat
-and the context meter drops. A failed manual compaction reports its reason the
-same way; failed automatic ones only log server-side.
+input and the TUI shows it on the spinner row. When it finishes, a system note
+appears in the chat and the context meter drops.
 
 ## What survives
 
-- The newest `COMPACTION_TAIL_MESSAGES` messages (default **6**) are never
-  compacted — they stay in the context word-for-word, so the conversation keeps
-  its immediate continuity.
+- The newest messages (default **6**) are never compacted — they stay in the
+  context word-for-word, so the conversation keeps its immediate continuity.
 - The summary is structured (goal, important details, current state, next
   steps, relevant files) and instructed to preserve exact paths, commands,
   error strings, and identifiers, and to capture what tool calls did and
   returned — the compacted context contains no raw tool calls.
-- The agent's identity documents, memory, and skills live in the system prompt
-  and are untouched by compaction.
 
 ## Repeated compactions
 
