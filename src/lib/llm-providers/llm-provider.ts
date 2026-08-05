@@ -31,8 +31,24 @@ import type { EmbeddingModel, LanguageModel } from 'ai';
  */
 export type ProviderOptionsFragment = Record<string, Record<string, string | number | boolean>>;
 
+/**
+ * A `providerOptions` fragment that marks a prompt-cache breakpoint on
+ * whatever element carries it (a system message, a chat message, the last
+ * tool). Every current vendor serves Claude, so each declares Anthropic's
+ * ephemeral cacheControl — the point of routing it through the provider is
+ * that callers never hardcode a vendor namespace.
+ */
+export type CachePointFragment = { anthropic: { cacheControl: { type: 'ephemeral' } } };
+
+/** The fragment all Claude-serving vendors declare as their `cachePoint`. */
+export const ANTHROPIC_CACHE_POINT: CachePointFragment = {
+  anthropic: { cacheControl: { type: 'ephemeral' } },
+};
+
 export type LlmProvider = ((modelId: string) => LanguageModel) & {
   embedding: (modelId: string) => EmbeddingModel;
+  /** The vendor's prompt-cache breakpoint fragment; see CachePointFragment. */
+  cachePoint: CachePointFragment;
   /**
    * `providerOptions` to merge into structured-output (`generateObject`) calls
    * on this vendor, or undefined when the SDK's default path already works.

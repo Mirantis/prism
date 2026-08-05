@@ -52,6 +52,7 @@ import { MAX_OUTPUT_TOKENS } from '../constants';
 import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
 import { MIN_PLAUSIBLE_CONTEXT } from '../lib/model-catalog';
 import { createProvider } from '../lib/llm-providers/create-provider';
+import type { CachePointFragment } from '../lib/llm-providers/llm-provider';
 import { isLangfuseEnabled } from '../lib/langfuse';
 import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withOutputLimits } from '../lib/tool-output-limiter';
@@ -90,6 +91,8 @@ export interface CompactionFork {
   modelId: string;
   /** The exact model instance the turn used. */
   model: LanguageModel;
+  /** The provider's prompt-cache breakpoint fragment. */
+  cachePoint: CachePointFragment;
   /** cachedSystem — cache breakpoints included. */
   system: SystemModelMessage[];
   /** cachedTools — sent with toolChoice 'none' to keep the tools cache segment. */
@@ -245,7 +248,9 @@ class CompactionService {
         }
 
         const modelId = resolveEffectiveModel(context.model);
-        const model = createProvider()(modelId);
+        const provider = createProvider();
+        const model = provider(modelId);
+        const cachePoint = provider.cachePoint;
 
         // Same tool set as a chat turn, sent with toolChoice 'none': the tools
         // block must match byte-for-byte or the request misses the
@@ -259,7 +264,7 @@ class CompactionService {
           workspaceRoot: thread?.workspaceRoot ?? undefined,
           taskInvoker: neverInvoke,
         });
-        const cachedTools = withToolsCacheControl(withOutputLimits(tools));
+        const cachedTools = withToolsCacheControl(withOutputLimits(tools), cachePoint);
 
         const systemParts = await buildSystemPromptParts(
           context,
@@ -277,15 +282,14 @@ class CompactionService {
             subagents.map((s) => ({ name: s.name, description: s.description })),
           );
         }
-        const anthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
         const system: SystemModelMessage[] = systemParts.map((part) => ({
           role: 'system' as const,
           content: part.text,
-          ...(part.cacheable ? { providerOptions: anthropicCachePoint } : {}),
+          ...(part.cacheable ? { providerOptions: cachePoint } : {}),
         }));
         const messages: ModelMessage[] = [
           ...buildConversationMessages(context),
-          { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: anthropicCachePoint },
+          { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: cachePoint },
         ];
 
         const result = await generateText({
@@ -361,7 +365,6 @@ class CompactionService {
       // prefix would hit but the history — the bulk of the prompt — would be
       // re-prefilled at full price. Budget: 2 system + 1 tools + this = 4,
       // exactly Bedrock's breakpoint limit.
-      const anthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
       const messages: ModelMessage[] = [
         ...fork.messages,
         ...fork.injections,
@@ -369,7 +372,7 @@ class CompactionService {
         // can end with no visible text (rare), in which case the last real
         // message already closes the exchange.
         ...(assistantText ? [{ role: 'assistant' as const, content: assistantText }] : []),
-        { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: anthropicCachePoint },
+        { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: fork.cachePoint },
       ];
 
       const result = await generateText({
@@ -428,7 +431,6 @@ class CompactionService {
     try {
       this.start(userId, agentId, threadId, 'auto');
 
-      const anthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
       let history: ModelMessage[] = [...fork.messages, ...fork.injections];
       let summary = '';
       const MAX_ATTEMPTS = 5;
@@ -439,7 +441,7 @@ class CompactionService {
             system: fork.system,
             messages: [
               ...history,
-              { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: anthropicCachePoint },
+              { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: fork.cachePoint },
             ],
             tools: Object.keys(fork.tools).length > 0 ? fork.tools : undefined,
             toolChoice: 'none',

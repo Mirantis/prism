@@ -9,6 +9,7 @@
  */
 
 import type { Tool } from 'ai';
+import type { CachePointFragment } from './llm-providers/llm-provider';
 import { config } from '../config';
 import { logger } from '../logger';
 import { getMCPTools } from './mcp-client';
@@ -92,15 +93,17 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
 }
 
 /**
- * Mark the last tool with an Anthropic cache breakpoint so the entire tools
+ * Mark the last tool with the provider's cache breakpoint so the entire tools
  * block is cached across requests. Tools are stable per agent, so this yields
  * near-100% cache hit rates after the first request.
  */
-export function withToolsCacheControl(tools: Record<string, Tool>): Record<string, Tool> {
+export function withToolsCacheControl(
+  tools: Record<string, Tool>,
+  cachePoint: CachePointFragment,
+): Record<string, Tool> {
   const keys = Object.keys(tools);
   if (keys.length === 0) return tools;
 
-  const cachePoint = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
   const lastKey = keys[keys.length - 1];
   const result: Record<string, Tool> = {};
 

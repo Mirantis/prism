@@ -205,7 +205,7 @@ describe('invoke', () => {
     mockGetSkillTools.mockReturnValue({});
 
     mockIsBedrockConfigured.mockReturnValue(true);
-    mockCreateBedrockProvider.mockReturnValue(() => 'model-instance');
+    mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', { cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' } } } }));
     mockGetMCPTools.mockResolvedValue({});
     mockBuildSystemPromptParts.mockResolvedValue([
       { text: 'stable system prompt', cacheable: true },
@@ -411,7 +411,7 @@ describe('invoke', () => {
     // The mocked provider is `(modelId) => LanguageModel`; capture the modelId
     // it's called with to assert which model each mode resolves to.
     function captureModelId() {
-      const modelFn = vi.fn(() => 'model-instance');
+      const modelFn = Object.assign(vi.fn(() => 'model-instance'), { cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' } } } });
       mockCreateBedrockProvider.mockReturnValue(modelFn);
       return modelFn;
     }
@@ -1593,15 +1593,15 @@ describe('invoke', () => {
 });
 
 describe('withToolsCacheControl', () => {
-  const cachePoint = { anthropic: { cacheControl: { type: 'ephemeral' } } };
+  const cachePoint = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
 
   it('returns empty object for empty tools', () => {
-    expect(withToolsCacheControl({})).toEqual({});
+    expect(withToolsCacheControl({}, cachePoint)).toEqual({});
   });
 
   it('marks the only tool with cache control when there is one tool', () => {
     const tools = { search: { description: 'search' } };
-    const result = withToolsCacheControl(tools as any as Record<string, Tool>);
+    const result = withToolsCacheControl(tools as any as Record<string, Tool>, cachePoint);
 
     expect(result.search).toEqual(
       expect.objectContaining({ providerOptions: cachePoint }),
@@ -1614,7 +1614,7 @@ describe('withToolsCacheControl', () => {
       beta: { description: 'b' },
       gamma: { description: 'c' },
     };
-    const result = withToolsCacheControl(tools as any as Record<string, Tool>);
+    const result = withToolsCacheControl(tools as any as Record<string, Tool>, cachePoint);
 
     expect((result.alpha as Record<string, unknown>).providerOptions).toBeUndefined();
     expect((result.beta as Record<string, unknown>).providerOptions).toBeUndefined();
@@ -1626,7 +1626,7 @@ describe('withToolsCacheControl', () => {
     const tools = {
       myTool: { description: 'test', inputSchema: { type: 'object' }, execute },
     };
-    const result = withToolsCacheControl(tools as any as Record<string, Tool>);
+    const result = withToolsCacheControl(tools as any as Record<string, Tool>, cachePoint);
 
     expect((result.myTool as Record<string, unknown>).description).toBe('test');
     expect((result.myTool as Record<string, unknown>).execute).toBe(execute);
@@ -1635,7 +1635,7 @@ describe('withToolsCacheControl', () => {
 
   it('does not mutate the original tools object', () => {
     const tools = { a: { description: 'a' }, b: { description: 'b' } };
-    const result = withToolsCacheControl(tools as any as Record<string, Tool>);
+    const result = withToolsCacheControl(tools as any as Record<string, Tool>, cachePoint);
 
     expect((tools.a as Record<string, unknown>).providerOptions).toBeUndefined();
     expect((tools.b as Record<string, unknown>).providerOptions).toBeUndefined();

@@ -119,7 +119,9 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
     // 3. Create provider and model — createProvider picks the configured
     // vendor (Bedrock/Azure) and routing (direct vs Nexus).
-    const model = createProvider()(modelId);
+    const provider = createProvider();
+    const model = provider(modelId);
+    const cachePoint = provider.cachePoint;
 
     // 4. Collect tools (see lib/tool-collection.ts).
     const { tools, subagents } = await collectTools({
@@ -136,7 +138,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // 5. Wrap tools with output limits, lifecycle events, and cache control
     const limitedTools = withOutputLimits(tools);
     const observedTools = withToolLifecycleEvents(limitedTools, request.onToolEvent);
-    const cachedTools = withToolsCacheControl(observedTools);
+    const cachedTools = withToolsCacheControl(observedTools, cachePoint);
 
     // 6. Build system prompt parts (stable vs dynamic for granular caching)
     const systemParts = await buildSystemPromptParts(
@@ -171,15 +173,14 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       messages.push({ role: 'user' as const, content: request.prompt });
     }
 
-    // Anthropic prompt caching: system prompt parts marked cacheable get cache breakpoints.
+    // Prompt caching: system prompt parts marked cacheable get cache breakpoints.
     // [0] stable prefix (identity, soul, memory, instructions) — cached across conversations
     // [1] recalled memories + timestamp — cached within multi-step invocations
     // Bedrock allows max 4 breakpoints: 2 system + last message (via prepareStep) + last tool.
-    const anthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
     const cachedSystem: SystemModelMessage[] = systemParts.map((part) => ({
       role: 'system' as const,
       content: part.text,
-      ...(part.cacheable ? { providerOptions: anthropicCachePoint } : {}),
+      ...(part.cacheable ? { providerOptions: cachePoint } : {}),
     }));
     // Last message breakpoint is handled by prepareStep below (re-applied each step
     // as messages grow during tool use). No need to set it here — that would leave a
@@ -237,6 +238,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       threadId,
       modelId,
       model,
+      cachePoint,
       system: cachedSystem,
       tools: cachedTools,
       messages,
@@ -290,7 +292,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           const lastIdx = merged.length - 1;
           merged[lastIdx] = {
             ...merged[lastIdx],
-            providerOptions: anthropicCachePoint,
+            providerOptions: cachePoint,
           } as ModelMessage;
         }
 
