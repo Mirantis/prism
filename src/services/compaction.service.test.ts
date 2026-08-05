@@ -80,6 +80,19 @@ vi.mock('../prompts/context-builder', () => ({
   buildSystemPromptParts: mockBuildSystemPromptParts,
   buildConversationMessages: mockBuildConversationMessages,
 }));
+vi.mock('../prompts/task-tool-prompt', () => ({
+  getTaskToolInstructions: (subs: { name: string }[]) => `TASK TOOLS: ${subs.map((s) => s.name).join(',')}`,
+}));
+
+const { mockCollectTools } = vi.hoisted(() => ({ mockCollectTools: vi.fn() }));
+vi.mock('../lib/tool-collection', () => ({
+  collectTools: mockCollectTools,
+  // Real semantics matter here: the last tool must gain the cache breakpoint.
+  withToolsCacheControl: (tools: Record<string, unknown>) => tools,
+}));
+vi.mock('../lib/tool-output-limiter', () => ({
+  withOutputLimits: (tools: Record<string, unknown>) => tools,
+}));
 vi.mock('./agent-workspace.service', () => ({
   resolveEffectiveModel: (stored: string | null | undefined) => stored ?? 'default-model',
 }));
@@ -166,6 +179,7 @@ beforeEach(() => {
   mockGenerateText.mockResolvedValue({ text: 'THE SUMMARY' });
   mockBuildSystemPromptParts.mockResolvedValue([{ text: 'system prompt', cacheable: true }]);
   mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'hello' }]);
+  mockCollectTools.mockResolvedValue({ tools: { shell: { description: 'sh' } }, subagents: [] });
   mockPrisma.conversationThread.update.mockResolvedValue({});
   mockPrisma.conversationMessage.updateMany.mockResolvedValue({ count: 0 });
   mockPrisma.conversationThread.findUnique.mockResolvedValue({
@@ -537,18 +551,35 @@ describe('compactNow (manual)', () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  it('rebuilds the context fresh: no tools, stored model, thread workspace', async () => {
+  it('rebuilds the context with chat parity: same tools, toolChoice none, cache breakpoints', async () => {
     mockGetAgentContext.mockResolvedValue(makeContext(8));
     const events = captureEvents();
 
     await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
 
     const request = mockGenerateText.mock.calls[0][0];
-    expect(request.tools).toBeUndefined();
-    expect(request.toolChoice).toBeUndefined();
+    // The chat tool set rides along so the request shares the tools+system
+    // cache prefix chat turns keep warm; 'none' forbids actually calling them.
+    expect(mockCollectTools).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD, mode: 'chat' }),
+    );
+    expect(request.tools).toEqual({ shell: { description: 'sh' } });
+    expect(request.toolChoice).toBe('none');
+    // Cacheable system parts carry the Anthropic breakpoint, like invoke.ts.
+    expect(request.system).toEqual([
+      {
+        role: 'system',
+        content: 'system prompt',
+        providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      },
+    ]);
     expect(request.messages).toEqual([
       { role: 'user', content: 'hello' },
-      { role: 'user', content: COMPACTION_PROMPT },
+      {
+        role: 'user',
+        content: COMPACTION_PROMPT,
+        providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      },
     ]);
     expect(mockBuildSystemPromptParts).toHaveBeenCalledWith(
       expect.anything(),
@@ -564,6 +595,30 @@ describe('compactNow (manual)', () => {
       tokensBefore: 12_345,
       messagesCompacted: 2,
     });
+  });
+
+  it('appends the task-tool instructions to the stable system part when subagents exist', async () => {
+    mockGetAgentContext.mockResolvedValue(makeContext(8));
+    mockCollectTools.mockResolvedValue({
+      tools: { shell: {}, Task: {} },
+      subagents: [{ name: 'helper', description: 'helps' }],
+    });
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
+
+    const request = mockGenerateText.mock.calls[0][0];
+    expect(request.system[0].content).toBe('system prompt\n\nTASK TOOLS: helper');
+  });
+
+  it('omits tools and toolChoice when the chat tool set is empty', async () => {
+    mockGetAgentContext.mockResolvedValue(makeContext(8));
+    mockCollectTools.mockResolvedValue({ tools: {}, subagents: [] });
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
+
+    const request = mockGenerateText.mock.calls[0][0];
+    expect(request.tools).toBeUndefined();
+    expect(request.toolChoice).toBeUndefined();
   });
 
   it('emits failed (never throws) when the summarize call rejects', async () => {

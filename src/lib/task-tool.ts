@@ -8,7 +8,7 @@ export type Subagent = {
   description: string;
 }
 
-type Invoker = (request: InvokeRequest) => Promise<InvokeResponse>;
+export type Invoker = (request: InvokeRequest) => Promise<InvokeResponse>;
 
 const taskToolSchema = jsonSchema({
   type: 'object',

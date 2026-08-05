@@ -16,10 +16,11 @@
  *   "forked request": the provider's prompt cache already holds the
  *   tools+system+history prefix, so the fork is mostly a cache read.
  * - `compactNow()` — the manual `/compact` path (REST). Rebuilds the context
- *   from stored rows the way a chat turn would. The provider cache outlives a
- *   turn, but this request attaches no tools, so its shape diverges from chat
- *   requests at the tools block and typically misses the cached prefix — an
- *   accepted cost for a user-initiated one-off.
+ *   from stored rows and attaches the same tool set a chat turn sends (with
+ *   toolChoice 'none'), so the request shares the tools+stable-system cache
+ *   prefix chat turns keep warm. The history block still re-prefills — the
+ *   dynamic system part carries a per-invocation timestamp, so history never
+ *   cache-hits across invocations; that matches chat turns' own economics.
  *
  * Both serialize on the per-thread mutex (`threadTurnService.run`) so a
  * compaction never rewrites thread state while a turn is building its context.
@@ -52,7 +53,11 @@ import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
 import { MIN_PLAUSIBLE_CONTEXT } from '../lib/model-catalog';
 import { createProvider } from '../lib/llm-providers/create-provider';
 import { isLangfuseEnabled } from '../lib/langfuse';
+import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
+import { withOutputLimits } from '../lib/tool-output-limiter';
+import type { Invoker } from '../lib/task-tool';
 import { buildSystemPromptParts, buildConversationMessages } from '../prompts/context-builder';
+import { getTaskToolInstructions } from '../prompts/task-tool-prompt';
 import { isContextOverflowError } from '../lib/llm-errors';
 import { resolveEffectiveModel } from './agent-workspace.service';
 import { contextService } from './context.service';
@@ -235,6 +240,21 @@ class CompactionService {
 
         const modelId = resolveEffectiveModel(context.model);
         const model = createProvider()(modelId);
+
+        // Same tool set as a chat turn, sent with toolChoice 'none': the tools
+        // block must match byte-for-byte or the request misses the
+        // tools+stable-system cache prefix chat turns keep warm. The Task
+        // invoker can never run under toolChoice 'none'.
+        const { tools, subagents } = await collectTools({
+          userId,
+          agentId,
+          threadId,
+          mode: 'chat',
+          workspaceRoot: thread?.workspaceRoot ?? undefined,
+          taskInvoker: neverInvoke,
+        });
+        const cachedTools = withToolsCacheControl(withOutputLimits(tools));
+
         const systemParts = await buildSystemPromptParts(
           context,
           'chat',
@@ -242,19 +262,33 @@ class CompactionService {
           '',
           thread?.workspaceRoot ?? undefined,
         );
+        // Mirror invoke.ts: task-tool instructions ride the stable part, and
+        // cacheable parts carry the Anthropic breakpoints — without them this
+        // request neither reads nor refreshes the shared prefix.
+        const stablePart = systemParts.find((p) => p.cacheable);
+        if (subagents.length > 0 && stablePart) {
+          stablePart.text += '\n\n' + getTaskToolInstructions(
+            subagents.map((s) => ({ name: s.name, description: s.description })),
+          );
+        }
+        const anthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
         const system: SystemModelMessage[] = systemParts.map((part) => ({
           role: 'system' as const,
           content: part.text,
+          ...(part.cacheable ? { providerOptions: anthropicCachePoint } : {}),
         }));
         const messages: ModelMessage[] = [
           ...buildConversationMessages(context),
-          { role: 'user' as const, content: COMPACTION_PROMPT },
+          { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: anthropicCachePoint },
         ];
 
         const result = await generateText({
           model,
           system,
           messages,
+          ...(Object.keys(cachedTools).length > 0
+            ? { tools: cachedTools, toolChoice: 'none' as const }
+            : {}),
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           ...this.langfuseTelemetry(userId, threadId),
         });
@@ -625,6 +659,15 @@ function toForkRows(
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
+/**
+ * Task-tool invoker for compaction requests. They send toolChoice 'none', so
+ * the tool's execute can never run; this exists only so the tool's wire schema
+ * matches a chat turn's.
+ */
+const neverInvoke: Invoker = async () => {
+  throw new Error('Subagent tasks cannot run during compaction');
+};
 
 /**
  * Drop the oldest quarter of a summarize history that did not fit, then

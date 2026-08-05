@@ -184,7 +184,8 @@ vi.mock('./services/compaction.service', () => ({
 }));
 
 
-import { invoke, invokeStream, withToolsCacheControl, extractAttachmentIds } from './invoke';
+import { invoke, invokeStream, extractAttachmentIds } from './invoke';
+import { withToolsCacheControl } from './lib/tool-collection';
 import { config } from './config';
 import { Tool } from 'ai';
 

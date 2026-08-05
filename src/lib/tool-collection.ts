@@ -1,0 +1,177 @@
+/**
+ * Chat-turn tool assembly, shared by invokeStream() and the compaction
+ * service.
+ *
+ * The share matters for prompt-cache economics: a manual compaction sends the
+ * same tool set as a chat turn (with toolChoice 'none') so its request shares
+ * the tools+stable-system cache prefix chat turns keep warm — a mismatched or
+ * absent tools block changes the prefix hash and misses the provider cache
+ * entirely. The subagent Task invoker is injected (the same pattern
+ * createTaskTool itself uses) so this module never imports invoke.ts; the
+ * compaction service passes a stub that a toolChoice-'none' request can never
+ * call.
+ */
+
+import type { Tool } from 'ai';
+import { config } from '../config';
+import { logger } from '../logger';
+import { getMCPTools } from './mcp-client';
+import { createTaskTool, type Invoker } from './task-tool';
+import { getMemoryTools } from '../tools/memory';
+import { getCronTools } from '../tools/cron';
+import { getGoalTools } from '../tools/goals';
+import { getAgentConfigTools } from '../tools/agent-config';
+import { getShellTools } from '../tools/shell/index';
+import { getShareFileTools, SHARE_FILE_TOOL_NAME } from '../tools/share-file';
+import { getSkillTools } from '../tools/skills/index';
+import { agentWorkspaceService } from '../services/agent-workspace.service';
+
+export interface CollectToolsInput {
+  userId: string;
+  agentId: string;
+  threadId?: string;
+  mode: string;
+  originChannel?: Parameters<typeof getCronTools>[3];
+  originChannelId?: string;
+  workspaceRoot?: string;
+  /** Runs a subagent Task; injected so this module never imports invoke.ts. */
+  taskInvoker: Invoker;
+}
+
+export interface CollectedTools {
+  tools: Record<string, Tool>;
+  /** Returned so callers can also render the task-tool system instructions. */
+  subagents: Awaited<ReturnType<typeof agentWorkspaceService.getSubagents>>;
+}
+
+/**
+ * Collect the tools an invocation of `mode` sends: built-ins (direct AI SDK
+ * tools, no MCP round trip) filtered by mode, every tool the Nexus MCP
+ * endpoint exposes, and the Task tool when subagents are configured.
+ */
+export async function collectTools(input: CollectToolsInput): Promise<CollectedTools> {
+  const originChannel = input.originChannel ?? 'websocket';
+  const builtInTools = filterToolsByMode(
+    {
+      ...getMemoryTools(input.userId, input.agentId),
+      ...getCronTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
+      ...getGoalTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
+      ...getAgentConfigTools(),
+      ...getShellTools(input.workspaceRoot),
+      ...getShareFileTools(),
+      // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md
+      // body on demand. workspaceRoot merges the repo's skills with the global
+      // ones. Empty (and omitted) when no skills are available.
+      ...getSkillTools(input.workspaceRoot),
+    },
+    input.mode,
+  );
+
+  // Register every tool the Nexus MCP endpoint exposes. In the sandbox this
+  // is the project-scoped endpoint, which already excludes first-party shell
+  // tools by design (those are local built-ins above), so no tool allowlist
+  // is sent — we want the full surface it serves.
+  const nexusTools: Record<string, Tool> = config.nexusMcpUrl
+    ? await getMCPTools({ url: config.nexusMcpUrl })
+    : {};
+
+  const tools: Record<string, Tool> = { ...builtInTools, ...nexusTools };
+
+  // Fetch subagents (skip for subagent invocations to prevent recursion)
+  const subagents = input.mode === 'subagent'
+    ? []
+    : await agentWorkspaceService.getSubagents(input.agentId);
+
+  logger.info(
+    `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} Nexus MCP tool(s); ${subagents.length} subagent(s)`,
+  );
+
+  // Add task tool if subagents are configured
+  if (subagents.length > 0 && input.mode !== 'subagent') {
+    logger.info(`Adding Task tool for ${subagents.length} subagent(s)`);
+    tools['Task'] = createTaskTool(subagents, input.userId, input.taskInvoker);
+  }
+
+  return { tools, subagents };
+}
+
+/**
+ * Mark the last tool with an Anthropic cache breakpoint so the entire tools
+ * block is cached across requests. Tools are stable per agent, so this yields
+ * near-100% cache hit rates after the first request.
+ */
+export function withToolsCacheControl(tools: Record<string, Tool>): Record<string, Tool> {
+  const keys = Object.keys(tools);
+  if (keys.length === 0) return tools;
+
+  const cachePoint = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
+  const lastKey = keys[keys.length - 1];
+  const result: Record<string, Tool> = {};
+
+  for (const [name, tool] of Object.entries(tools)) {
+    result[name] = name === lastKey
+      ? { ...tool, providerOptions: cachePoint }
+      : tool;
+  }
+  return result;
+}
+
+/**
+ * Filter built-in tools by invocation mode.
+ *
+ * - chat: All tools
+ * - heartbeat: minus cron-management AND goal tools (no schedule/goal reshaping)
+ * - cron: minus list/delete-task AND goal tools, but KEEPS schedule_task so a
+ *   thread-bound "continue in this conversation" run can re-`wait` (poll in-thread)
+ * - webhook: same as cron — an event-triggered run keeps schedule_task for
+ *   "check again later" follow-ups
+ * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
+ * - goal: minus create_goal (no nested goals) and cron-management; get_goal stays
+ */
+function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<string, Tool> {
+  // Goal-management tools are chat-only entry points; a goal turn keeps only
+  // get_goal so it can introspect its own progress.
+  const goalToolNames = new Set(['create_goal', 'get_goal']);
+  const cronToolNames = new Set(['schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task']);
+
+  const omit = (names: Set<string>): Record<string, Tool> => {
+    const result: Record<string, Tool> = {};
+    for (const [name, tool] of Object.entries(tools)) {
+      if (!names.has(name)) result[name] = tool;
+    }
+    return result;
+  };
+
+  if (mode === 'chat') {
+    return tools;
+  }
+
+  // Subagents return their result as text to the parent invocation (via the
+  // Task tool) — they have no direct channel to the user, so a file they
+  // "shared" would never be delivered. Drop share_file. They also don't own a
+  // user thread, so drop goal tools.
+  if (mode === 'subagent') {
+    return omit(new Set([SHARE_FILE_TOOL_NAME, ...goalToolNames]));
+  }
+
+  // Heartbeat is an autonomous run: full tool access, minus the cron-management
+  // and goal tools so it can't reshape the schedule or spawn goals.
+  if (mode === 'heartbeat') {
+    return omit(new Set([...cronToolNames, ...goalToolNames]));
+  }
+
+  // Cron keeps `schedule_task` so a thread-bound "continue in this conversation"
+  // run can re-`wait` (schedule a follow-up) and keep polling in-thread, but
+  // still can't enumerate/delete the whole schedule or create/nest goals.
+  if (mode === 'cron' || mode === 'webhook') {
+    return omit(new Set(['list_scheduled_tasks', 'delete_scheduled_task', ...goalToolNames]));
+  }
+
+  // A goal turn does real work but must not create/nest a goal or reshape the
+  // schedule.
+  if (mode === 'goal') {
+    return omit(new Set(['create_goal', ...cronToolNames]));
+  }
+
+  return tools;
+}
