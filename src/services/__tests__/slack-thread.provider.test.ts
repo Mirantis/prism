@@ -762,7 +762,7 @@ describe('Requirement: Slack Thread Provider', () => {
     // (intermediate step — persisted with internalStep:true, NEVER posted to
     // Slack), then posts a final reply. The intermediate must appear in the
     // model-fidelity view (default) between the user and the final, and be
-    // absent from the client view (excludeInternal).
+    // absent from the client view.
     function internalRow(overrides: Partial<ConversationMessage>): ConversationMessage {
       return {
         id: 'internal-1',
@@ -812,13 +812,13 @@ describe('Requirement: Slack Thread Provider', () => {
       expect(messages.filter((m) => m.content === 'Done.')).toHaveLength(1);
     });
 
-    it('omits internal steps in the client view (excludeInternal)', async () => {
+    it('omits internal steps in the client view', async () => {
       mockDbRows({
         agent: [{ externalMessageId: '1710000003.000000', content: 'Done.', toolCalls: null, createdAt: new Date(1710000003 * 1000) }],
         internal: [internalRow({})],
       });
 
-      const messages = await provider.getMessages(threadId, { excludeInternal: true });
+      const messages = await provider.getMessages(threadId, { view: 'client' });
 
       expect(messages.map((m) => m.role)).toEqual(['USER', 'AGENT']);
       expect(messages.some((m) => m.content === 'Let me check that.')).toBe(false);
@@ -890,7 +890,7 @@ describe('Requirement: Slack Thread Provider', () => {
         response_metadata: {},
       });
 
-      const messages = await provider.getMessages(threadId, { excludeInternal: true });
+      const messages = await provider.getMessages(threadId, { view: 'client' });
 
       expect(mockConversationsReplies).toHaveBeenCalledWith({
         channel: channelId,

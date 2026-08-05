@@ -12,14 +12,12 @@ import { ThreadMessageProvider, MessageReadOptions } from '../thread-provider.in
 export class DatabaseThreadProvider implements ThreadMessageProvider {
   async getMessages(threadId: string, opts?: MessageReadOptions): Promise<ConversationMessage[]> {
     return prisma.conversationMessage.findMany({
-      // Two views on purpose: the model view hides compacted rows (their
-      // content lives in the thread's compaction summary) but keeps internal
-      // steps; the client view keeps compacted rows (users scroll the full
-      // thread — compaction only changes what the model sees) but hides
-      // concise-mode internal steps.
+      // See MessageView: the model view hides compacted rows (their content
+      // lives in the thread's compaction summary) but keeps internal steps;
+      // the client view keeps compacted rows but hides internal steps.
       where: {
         threadId,
-        ...(opts?.excludeInternal ? { internalStep: false } : { isCompacted: false }),
+        ...(opts?.view === 'client' ? { internalStep: false } : { isCompacted: false }),
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -32,7 +30,7 @@ export class DatabaseThreadProvider implements ThreadMessageProvider {
     const messages = await prisma.conversationMessage.findMany({
       where: {
         threadId,
-        ...(opts?.excludeInternal ? { internalStep: false } : { isCompacted: false }),
+        ...(opts?.view === 'client' ? { internalStep: false } : { isCompacted: false }),
       },
       orderBy: { createdAt: 'desc' },
       take: limit,

@@ -327,7 +327,7 @@ class ConversationService {
 
     // CLIENT history (web SPA): hide concise-mode internal steps. The model path
     // (getThreadContext) reads without this option so it still replays them.
-    const messages = await provider.getMessages(threadId, { excludeInternal: true });
+    const messages = await provider.getMessages(threadId, { view: 'client' });
 
     // Attach file metadata (no bytes) so the web UI renders chips on history.
     const withAttachments: MessageWithAttachments[] =
@@ -464,7 +464,7 @@ class ConversationService {
     limit: number = 20
   ): Promise<ConversationMessage[]> {
     const provider = await this.resolveProvider(threadId);
-    return provider.getRecentMessages(threadId, limit, { excludeInternal: true });
+    return provider.getRecentMessages(threadId, limit, { view: 'client' });
   }
 
   /**

@@ -13,15 +13,16 @@
 import { ConversationMessage } from '@prisma/client';
 
 /**
- * Read options shared by both providers.
+ * Which projection of a thread a read returns.
  *
- * The default (option absent) is the **model** view: every persisted step is
- * returned so the LLM replays the full turn, but compacted history is hidden —
- * its content lives in the thread's compaction summary. `excludeInternal`
- * switches to the **client** view: compacted rows stay visible (users scroll
- * the full thread; compaction only changes what the model sees) while
- * concise-mode intermediate steps are dropped. The mechanics differ per
- * provider for the same semantic:
+ * - `'model'` (the default): what the LLM replays. Every persisted step is
+ *   returned — concise-mode internal steps included — but compacted history is
+ *   hidden, since its content lives in the thread's compaction summary.
+ * - `'client'`: what users scroll. Compacted rows stay visible (compaction
+ *   only changes what the model sees) while concise-mode internal steps are
+ *   dropped.
+ *
+ * The mechanics differ per provider for the same semantic:
  * - DatabaseThreadProvider: WHERE-clause filters on `isCompacted` (model view)
  *   vs `internalStep` (client view).
  * - SlackThreadProvider: the model view fetches only replies after the
@@ -29,9 +30,12 @@ import { ConversationMessage } from '@prisma/client';
  *   Slack messages); the client view does NOT merge the persisted internal
  *   rows into the Slack-derived replay (they were never posted to Slack).
  */
+export type MessageView = 'model' | 'client';
+
+/** Read options shared by both providers. */
 export interface MessageReadOptions {
-  /** Drop concise-mode internal steps (client history view). Default: keep them. */
-  excludeInternal?: boolean;
+  /** Which projection to read; see {@link MessageView}. Default: `'model'`. */
+  view?: MessageView;
 }
 
 export interface ThreadMessageProvider {
