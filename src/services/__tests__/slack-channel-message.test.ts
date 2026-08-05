@@ -477,10 +477,28 @@ describe('Requirement: Channel message mention detection', () => {
       ]);
     });
 
-    it('adds the eyes reaction before the consistency wait and chat(); removes it after', async () => {
+    it('sets the status before the consistency wait and never reacts when it renders', async () => {
       const waitSpy = vi
         .spyOn(SlackThreadProvider.prototype, 'waitForExternalMessage')
         .mockResolvedValue(undefined);
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> hello`,
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      // The immediate cue is the status call, issued before the (possibly
+      // slow) read-consistency wait.
+      expect(setStatus.mock.invocationCallOrder[0]).toBeLessThan(
+        waitSpy.mock.invocationCallOrder[0],
+      );
+      expect(reactionsAdd).not.toHaveBeenCalled();
+      expect(reactionsRemove).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the eyes reaction when the status cannot be set; removes it after', async () => {
+      setStatus.mockRejectedValue(new Error('feature_not_enabled'));
 
       await handleChannelMessage(
         CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
@@ -493,12 +511,6 @@ describe('Requirement: Channel message mention detection', () => {
         timestamp: MESSAGE_TS,
         name: 'eyes',
       });
-      expect(reactionsAdd.mock.invocationCallOrder[0]).toBeLessThan(
-        waitSpy.mock.invocationCallOrder[0],
-      );
-      expect(reactionsAdd.mock.invocationCallOrder[0]).toBeLessThan(
-        mockConversationEngineService.chat.mock.invocationCallOrder[0],
-      );
       expect(reactionsRemove).toHaveBeenCalledExactlyOnceWith({
         channel: CHANNEL_ID,
         timestamp: MESSAGE_TS,
@@ -506,6 +518,9 @@ describe('Requirement: Channel message mention detection', () => {
       });
       expect(reactionsRemove.mock.invocationCallOrder[0]).toBeGreaterThan(
         mockConversationEngineService.chat.mock.invocationCallOrder[0],
+      );
+      expect(reactionsRemove.mock.invocationCallOrder[0]).toBeGreaterThan(
+        reactionsAdd.mock.invocationCallOrder[0],
       );
     });
 
@@ -540,7 +555,7 @@ describe('Requirement: Channel message mention detection', () => {
       );
     });
 
-    it('still removes the reaction and clears the status when chat() rejects', async () => {
+    it('still clears the status when chat() rejects', async () => {
       mockConversationEngineService.chat.mockRejectedValue(new Error('LLM exploded'));
 
       await handleChannelMessage(
@@ -552,10 +567,28 @@ describe('Requirement: Channel message mention detection', () => {
       expect(mockSay).toHaveBeenCalledWith(
         expect.objectContaining({ text: expect.stringContaining('I encountered an error') }),
       );
-      expect(reactionsRemove).toHaveBeenCalledOnce();
       expect(setStatus).toHaveBeenLastCalledWith(
         expect.objectContaining({ status: '' }),
       );
+      expect(reactionsAdd).not.toHaveBeenCalled();
+      expect(reactionsRemove).not.toHaveBeenCalled();
+    });
+
+    it('still removes the fallback reaction when chat() rejects', async () => {
+      mockConversationEngineService.chat.mockRejectedValue(new Error('LLM exploded'));
+      setStatus.mockRejectedValue(new Error('feature_not_enabled'));
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> hello`,
+        THREAD_TS, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect(mockSay).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('I encountered an error') }),
+      );
+      expect(reactionsAdd).toHaveBeenCalledOnce();
+      expect(reactionsRemove).toHaveBeenCalledOnce();
     });
 
     it('shows no indicator on the classifier ignore path', async () => {

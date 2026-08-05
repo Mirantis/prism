@@ -1,8 +1,11 @@
 /**
- * Tests for the Slack working indicator: eyes-reaction lifecycle, refcounted
- * assistant-thread status entries, event-driven status pushes (set on begin,
- * on text change, and after bot posts), and ordered clears. Ops are plain
- * vi.fn()s; fake timers only flush microtasks.
+ * Tests for the Slack working indicator: refcounted assistant-thread status
+ * entries (the primary cue), the eyes-reaction fallback (added only when the
+ * initial status set fails, or right away for turns without a status thread),
+ * event-driven status pushes (set on begin, on text change, and after bot
+ * posts), and ordered clears. Ops are plain vi.fn()s — a resolving setStatus
+ * is the success regime, a rejecting one drives the fallback; fake timers
+ * only flush microtasks.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -45,13 +48,31 @@ describe('SlackWorkingIndicator', () => {
     vi.useRealTimers();
   });
 
-  it('begin with a status thread adds the reaction and sets the initial status', async () => {
+  it('begin with a status thread sets the initial status and suppresses the reaction', async () => {
     await indicator.begin({
       teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
     });
+    await vi.advanceTimersByTimeAsync(0); // let the fallback decision resolve
 
-    expect(ops.addReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
     expect(ops.setStatus).toHaveBeenCalledExactlyOnceWith(TEAM, CHANNEL, THREAD_TS, WORKING_STATUS_TEXT);
+    expect(ops.addReaction).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the reaction when the initial status set fails', async () => {
+    ops.setStatus.mockRejectedValueOnce(new Error('not an AI app'));
+
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    await vi.advanceTimersByTimeAsync(0); // let the fallback decision resolve
+
+    // The add waits for the set's outcome, so it always trails the attempt.
+    expect(ops.addReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
+    expect(ops.addReaction.mock.invocationCallOrder[0])
+      .toBeGreaterThan(ops.setStatus.mock.invocationCallOrder[0]);
+
+    await handle.end();
+    expect(ops.removeReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
   });
 
   it('begin without a status thread (top-level DM) is reaction-only', async () => {
@@ -128,18 +149,19 @@ describe('SlackWorkingIndicator', () => {
     expect(ops.setStatus).toHaveBeenCalledTimes(calls);
   });
 
-  it('end removes the reaction and clears the status; a second end is a no-op', async () => {
+  it('end clears the status; a second end is a no-op', async () => {
     const handle = await indicator.begin({
       teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
     });
 
     await handle.end();
 
-    expect(ops.removeReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
     expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+    // The status rendered, so no reaction was ever added — nothing to remove.
+    expect(ops.addReaction).not.toHaveBeenCalled();
+    expect(ops.removeReaction).not.toHaveBeenCalled();
 
     await handle.end();
-    expect(ops.removeReaction).toHaveBeenCalledOnce(); // idempotent
     expect(ops.setStatus).toHaveBeenCalledTimes(2); // no second clear
   });
 
@@ -154,12 +176,37 @@ describe('SlackWorkingIndicator', () => {
     expect(ops.setStatus).toHaveBeenCalledOnce(); // one entry, one initial set
 
     await steered.end();
-    // Steered end removes its own reaction but must not clear the shared status.
-    expect(ops.removeReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, '1111.0002', TEAM, WORKING_REACTION);
+    // Steered end must not clear the shared status the owning turn still needs.
     expect(ops.setStatus).not.toHaveBeenCalledWith(TEAM, CHANNEL, THREAD_TS, '');
 
     await owning.end();
     expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+    // The shared status rendered — neither turn added a reaction.
+    expect(ops.addReaction).not.toHaveBeenCalled();
+  });
+
+  it('shares the failed-status decision across turns on the same thread', async () => {
+    ops.setStatus.mockRejectedValue(new Error('not an AI app'));
+
+    const owning = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    const steered = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: '1111.0002', statusThreadTs: THREAD_TS,
+    });
+    await vi.advanceTimersByTimeAsync(0); // let the fallback decisions resolve
+
+    // One initial set decides for both turns; each reacts to its own message.
+    expect(ops.setStatus).toHaveBeenCalledOnce();
+    expect(ops.addReaction).toHaveBeenCalledTimes(2);
+    expect(ops.addReaction).toHaveBeenCalledWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
+    expect(ops.addReaction).toHaveBeenCalledWith(CHANNEL, '1111.0002', TEAM, WORKING_REACTION);
+
+    await steered.end();
+    expect(ops.removeReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, '1111.0002', TEAM, WORKING_REACTION);
+
+    await owning.end();
+    expect(ops.removeReaction).toHaveBeenCalledWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
   });
 
   it('keeps status entries on different threads independent', async () => {
@@ -179,7 +226,7 @@ describe('SlackWorkingIndicator', () => {
     expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, '3333.0000', WORKING_STATUS_TEXT);
   });
 
-  it('resolves begin and end even when every op rejects', async () => {
+  it('resolves begin and end even when every op rejects — the fallback path', async () => {
     ops.addReaction.mockRejectedValue(new Error('no scope'));
     ops.removeReaction.mockRejectedValue(new Error('no_reaction'));
     ops.setStatus.mockRejectedValue(new Error('not an AI app'));
@@ -187,7 +234,13 @@ describe('SlackWorkingIndicator', () => {
     const handle = await indicator.begin({
       teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
     });
+    await vi.advanceTimersByTimeAsync(0);
+    // Failed set → fallback fires; its own failure is swallowed too.
+    expect(ops.addReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
+
     await handle.end();
+    // The add was attempted, so end still tries the remove.
+    expect(ops.removeReaction).toHaveBeenCalledOnce();
 
     await vi.runAllTimersAsync(); // let swallowed rejections settle
   });
@@ -202,18 +255,19 @@ describe('SlackWorkingIndicator', () => {
 
     await indicator.stopAll();
 
-    expect(ops.removeReaction).toHaveBeenCalledTimes(2);
+    // Only the status-less handle reacted; the other turn's status rendered.
+    expect(ops.removeReaction).toHaveBeenCalledExactlyOnceWith('C002', '2.1', TEAM, WORKING_REACTION);
     expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, '1.0', '');
   });
 
-  it('stopAll during an in-flight reaction add still clears both cues, in order', async () => {
+  it('stopAll during an in-flight reaction add still removes it, in order', async () => {
     let resolveAdd!: () => void;
     ops.addReaction.mockImplementationOnce(
       () => new Promise<void>((resolve) => { resolveAdd = resolve; }),
     );
 
     const beginPromise = indicator.begin({
-      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS,
     });
     const stopPromise = indicator.stopAll();
     await vi.advanceTimersByTimeAsync(0); // flush microtasks
@@ -226,6 +280,62 @@ describe('SlackWorkingIndicator', () => {
     await beginPromise;
 
     expect(ops.removeReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
+  });
+
+  it('skips the fallback reaction when the turn ends before the status outcome', async () => {
+    let rejectSet!: (error: Error) => void;
+    ops.setStatus.mockImplementationOnce(
+      () => new Promise<void>((_resolve, reject) => { rejectSet = reject; }),
+    );
+
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    const endPromise = handle.end();
+    rejectSet(new Error('not an AI app'));
+    await endPromise;
+
+    // The set failed, but the turn had already ended — the cue could never be
+    // seen, so no add-then-remove flash.
+    expect(ops.addReaction).not.toHaveBeenCalled();
+    expect(ops.removeReaction).not.toHaveBeenCalled();
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+  });
+
+  it('a steered end does not wait for the in-flight status outcome', async () => {
+    // The initial set never settles — a stuck Slack call. The steered turn's
+    // end() has nothing to clear (the owning turn still holds the entry) and
+    // its add is off the table once ended, so it must resolve regardless.
+    ops.setStatus.mockImplementationOnce(() => new Promise<void>(() => {}));
+
+    await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    const steered = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: '1111.0002', statusThreadTs: THREAD_TS,
+    });
+
+    await steered.end();
+
+    expect(ops.addReaction).not.toHaveBeenCalled();
+    expect(ops.removeReaction).not.toHaveBeenCalled();
+  });
+
+  it('adds no reaction flash when stopAll fires before the status outcome', async () => {
+    let rejectSet!: (error: Error) => void;
+    ops.setStatus.mockImplementationOnce(
+      () => new Promise<void>((_resolve, reject) => { rejectSet = reject; }),
+    );
+
+    await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    const stopPromise = indicator.stopAll();
+    rejectSet(new Error('not an AI app'));
+    await stopPromise;
+
+    expect(ops.addReaction).not.toHaveBeenCalled();
+    expect(ops.removeReaction).not.toHaveBeenCalled();
     expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
   });
 

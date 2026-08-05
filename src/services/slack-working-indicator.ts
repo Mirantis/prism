@@ -3,20 +3,26 @@
  *
  * Visible "working" cue while a user-initiated Slack turn runs:
  *
- *  - an `eyes` reaction on the triggering user message, added when processing
- *    starts and removed when the turn ends (never swapped for a success or
- *    failure emoji), and
- *  - a best-effort assistant-thread status line on the reply thread, pushed
- *    event-driven: set at begin, set again whenever the text changes (a tool
- *    starts or finishes) and after each message the adapter posts into the
- *    thread (Slack clears the status on any bot post), and cleared when the
- *    turn ends — Slack never expires it otherwise, so every exit path must
- *    clear it explicitly or it sticks forever.
+ *  - an assistant-thread status line on the reply thread — the primary cue —
+ *    pushed event-driven: set at begin, set again whenever the text changes
+ *    (a tool starts or finishes) and after each message the adapter posts
+ *    into the thread (Slack clears the status on any bot post), and cleared
+ *    when the turn ends — Slack never expires it otherwise, so every exit
+ *    path must clear it explicitly or it sticks forever; and
+ *  - an `eyes` reaction on the triggering user message — the fallback cue:
+ *    added only when the thread's initial setStatus fails, or right away
+ *    when the turn has no status thread at all (a top-level DM). The
+ *    fallback decision is made once per status entry, so a steered turn
+ *    sharing the thread shares the outcome and a re-set failing later never
+ *    adds a late reaction. The reaction is removed when the turn ends — only
+ *    if it was added, and never swapped for a success or failure emoji. On
+ *    the fallback path it appears one Slack round trip after the turn starts.
  *
- * The Slack API calls are injected as {@link SlackIndicatorOps}. The injected
- * ops are expected to swallow their own errors; this module still guards
- * every call so a misbehaving op can neither fail a turn nor produce an
- * unhandled rejection.
+ * The Slack API calls are injected as {@link SlackIndicatorOps}. setStatus
+ * is expected to reject when the status cannot be set — that rejection is
+ * the fallback signal; the reaction ops are expected to swallow their own
+ * errors. This module still guards every call so a misbehaving op can
+ * neither fail a turn nor produce an unhandled rejection.
  */
 
 import { logger } from '../logger';
@@ -28,13 +34,17 @@ export const WORKING_STATUS_TEXT = 'is thinking…';
 export interface SlackIndicatorOps {
   addReaction(channelId: string, messageTs: string, teamId: string, emoji: string): Promise<void>;
   removeReaction(channelId: string, messageTs: string, teamId: string, emoji: string): Promise<void>;
+  /** Must reject when the status cannot be set — the reaction-fallback signal. */
   setStatus(teamId: string, channelId: string, threadTs: string, status: string): Promise<void>;
 }
 
 export interface WorkingIndicatorTarget {
   teamId: string;
   channelId: string;
-  /** ts of the triggering user message — reaction target. Absent → no reaction. */
+  /**
+   * ts of the triggering user message — reaction target: the fallback cue,
+   * or the only cue when statusThreadTs is absent. Absent → no reaction.
+   */
   messageTs?: string;
   /**
    * Reply-thread ts for the status line. Absent (top-level DM) → no status;
@@ -100,6 +110,13 @@ interface StatusEntry {
   refCount: number;
   /** The current status text (default, or a live tool phrase). */
   text: string;
+  /**
+   * Outcome of this entry's initial setStatus — the fallback decision, made
+   * once per entry: turns sharing the entry (a steered message) gate their
+   * reaction on the same result, and later re-sets never revisit it. Never
+   * rejects.
+   */
+  statusOk: Promise<boolean>;
 }
 
 /** Returned by begin() after stopAll(): shows nothing, ends as a no-op. */
@@ -112,7 +129,7 @@ export class SlackWorkingIndicator {
   private statusEntries = new Map<string, StatusEntry>();
   private activeHandles = new Set<WorkingIndicatorHandle>();
   /** In-flight status call per thread key; ops chain onto it (see runStatusOp). */
-  private statusOpChains = new Map<string, Promise<void>>();
+  private statusOpChains = new Map<string, Promise<boolean>>();
   /** Set by stopAll(); from then on begin() returns INERT_HANDLE. */
   private stopped = false;
 
@@ -128,17 +145,39 @@ export class SlackWorkingIndicator {
       ? this.acquireStatus(teamId, channelId, statusThreadTs)
       : null;
 
-    // Fire-and-forget from begin()'s point of view — the turn is not delayed
-    // by a Slack round trip. end() awaits this before removing, so the remove
-    // can never overtake the add; and the handle is registered synchronously
-    // below, so a stopAll() firing while the add is in flight still finds and
-    // ends this turn.
-    const reactionAdded = messageTs
-      ? this.safely('reactions.add', () =>
-          this.ops.addReaction(channelId, messageTs, teamId, WORKING_REACTION))
-      : Promise.resolve();
-
     let ended = false;
+    // Ending the turn takes the add off the table, so the decision below
+    // races the status outcome against this signal — end() must not sit out
+    // a slow or stuck setStatus round trip just to learn nothing will be
+    // added.
+    let signalEnded!: () => void;
+    const endedSignal = new Promise<'ended'>((resolve) => {
+      signalEnded = () => resolve('ended');
+    });
+
+    // Reaction decision — fire-and-forget from begin()'s point of view, so
+    // the turn is not delayed by a Slack round trip. Without a status entry
+    // (a top-level DM) the add is issued synchronously right here, as the
+    // only cue; with one, the add waits for the entry's initial setStatus
+    // and fires only when that failed — unless the turn already ended, where
+    // the cue could never be seen and would only have to be removed again.
+    // Resolves true iff the add was attempted, and never rejects (safely()).
+    // end() awaits it before removing, so the remove can never overtake the
+    // add; and the handle is registered synchronously below, so a stopAll()
+    // firing while the decision is in flight still finds and ends this turn.
+    const reactionAdded: Promise<boolean> = (async () => {
+      if (!messageTs) return false;
+      if (entry) {
+        const outcome = await Promise.race([entry.statusOk, endedSignal]);
+        // Skip on success ('true'), on end-before-outcome ('ended'), and on
+        // an end that lands after the outcome but before this continuation.
+        if (outcome !== false || ended) return false;
+      }
+      await this.safely('reactions.add', () =>
+        this.ops.addReaction(channelId, messageTs, teamId, WORKING_REACTION));
+      return true;
+    })();
+
     const handle: WorkingIndicatorHandle = {
       setText: (text: string | null) => {
         // Identity check: a stale handle must not write into a newer turn's entry.
@@ -154,12 +193,13 @@ export class SlackWorkingIndicator {
       end: async () => {
         if (ended) return;
         ended = true;
+        signalEnded();
         this.activeHandles.delete(handle);
-        await reactionAdded; // never rejects (safely)
+        const added = await reactionAdded; // never rejects (safely)
         if (entry) {
           await this.releaseStatus(teamId, channelId, statusThreadTs!, entry);
         }
-        if (messageTs) {
+        if (added && messageTs) {
           await this.safely('reactions.remove', () =>
             this.ops.removeReaction(channelId, messageTs, teamId, WORKING_REACTION));
         }
@@ -202,10 +242,10 @@ export class SlackWorkingIndicator {
    * still in flight when the next one is issued can land after it on Slack's
    * side — a stale clear wiping the status a newer turn just set, or worse, a
    * set landing after the final clear and leaving a stuck "is thinking…"
-   * behind.
+   * behind. Resolves with the op's outcome (true = the op resolved).
    */
-  private runStatusOp(key: string, what: string, op: () => Promise<void>): Promise<void> {
-    const prev = this.statusOpChains.get(key) ?? Promise.resolve();
+  private runStatusOp(key: string, what: string, op: () => Promise<void>): Promise<boolean> {
+    const prev = this.statusOpChains.get(key) ?? Promise.resolve(true);
     const next = prev.then(() => this.safely(what, op)); // safely() never rejects
     this.statusOpChains.set(key, next);
     void next.then(() => {
@@ -221,13 +261,19 @@ export class SlackWorkingIndicator {
       existing.refCount++;
       return existing;
     }
+    // The initial set doubles as the fallback decision: its outcome is cached
+    // on the entry for every turn that shares it. It deliberately sends
+    // WORKING_STATUS_TEXT rather than entry.text — the entry does not exist
+    // yet, and a setText racing in behind just queues a correctly-ordered
+    // second op.
+    const statusOk = this.runStatusOp(key, 'assistant.threads.setStatus', () =>
+      this.ops.setStatus(teamId, channelId, threadTs, WORKING_STATUS_TEXT));
     const entry: StatusEntry = {
       refCount: 1,
       text: WORKING_STATUS_TEXT,
+      statusOk,
     };
     this.statusEntries.set(key, entry);
-    void this.runStatusOp(key, 'assistant.threads.setStatus', () =>
-      this.ops.setStatus(teamId, channelId, threadTs, entry.text));
     return entry;
   }
 
@@ -247,15 +293,22 @@ export class SlackWorkingIndicator {
       this.ops.setStatus(teamId, channelId, threadTs, ''));
   }
 
-  private async safely(what: string, op: () => Promise<void>): Promise<void> {
+  /**
+   * Run an op, swallowing (and debug-logging) any rejection. Resolves true
+   * when the op resolved and false when it threw — for setStatus, the
+   * reaction-fallback signal.
+   */
+  private async safely(what: string, op: () => Promise<void>): Promise<boolean> {
     try {
       await op();
+      return true;
     } catch (error) {
       logger.debug(
         'Slack working indicator %s failed: %s',
         what,
         error instanceof Error ? error.message : String(error),
       );
+      return false;
     }
   }
 }

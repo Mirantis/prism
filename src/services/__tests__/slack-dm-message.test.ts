@@ -277,15 +277,51 @@ describe('Slack DM working indicator', () => {
       thread_ts: THREAD_TS,
       status: '',
     });
+    // The status rendered, so the fallback reaction never fires.
+    expect(reactionsAdd).not.toHaveBeenCalled();
+    expect(reactionsRemove).not.toHaveBeenCalled();
   });
 
-  it('still removes the reaction and clears the status when chat() rejects', async () => {
+  it('falls back to the eyes reaction in a threaded DM when the status cannot be set', async () => {
+    setStatus.mockRejectedValue(new Error('feature_not_enabled'));
+
+    await handleDmMessage(THREAD_TS);
+
+    expect(reactionsAdd).toHaveBeenCalledExactlyOnceWith({
+      channel: DM_CHANNEL,
+      timestamp: MESSAGE_TS,
+      name: 'eyes',
+    });
+    expect(reactionsRemove).toHaveBeenCalledExactlyOnceWith({
+      channel: DM_CHANNEL,
+      timestamp: MESSAGE_TS,
+      name: 'eyes',
+    });
+  });
+
+  it('still clears the status when chat() rejects', async () => {
     mockConversationEngineService.chat.mockRejectedValue(new Error('LLM exploded'));
 
     await handleDmMessage(THREAD_TS);
 
     expect(mockSay).toHaveBeenCalledWith(expect.stringContaining('I encountered an error'));
+    expect(setStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: '' }),
+    );
+    expect(reactionsAdd).not.toHaveBeenCalled();
+    expect(reactionsRemove).not.toHaveBeenCalled();
+  });
+
+  it('still removes the fallback reaction when chat() rejects', async () => {
+    mockConversationEngineService.chat.mockRejectedValue(new Error('LLM exploded'));
+    setStatus.mockRejectedValue(new Error('feature_not_enabled'));
+
+    await handleDmMessage(THREAD_TS);
+
+    expect(mockSay).toHaveBeenCalledWith(expect.stringContaining('I encountered an error'));
+    expect(reactionsAdd).toHaveBeenCalledOnce();
     expect(reactionsRemove).toHaveBeenCalledOnce();
+    // The clear is still attempted, even though setStatus keeps failing.
     expect(setStatus).toHaveBeenLastCalledWith(
       expect.objectContaining({ status: '' }),
     );
