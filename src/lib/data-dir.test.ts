@@ -7,6 +7,7 @@ import {
   resolveSkillsDir,
   resolvePluginsDir,
   resolvePluginDataDir,
+  resolveMediaDir,
   resolveClaudeConfigDir,
   ensureDataDirs,
 } from './data-dir';
@@ -51,6 +52,7 @@ describe('resolveSkillsDir / resolveClaudeConfigDir', () => {
   it('derive from the data dir', () => {
     process.env.PRISM_DATA_DIR = tmp;
     expect(resolveSkillsDir()).toBe(path.join(tmp, 'skills'));
+    expect(resolveMediaDir()).toBe(path.join(tmp, 'media'));
     expect(resolveClaudeConfigDir()).toBe(path.join(tmp, '.claude'));
   });
 
@@ -96,8 +98,10 @@ describe('ensureDataDirs', () => {
     expect(r.fellBackFrom).toBeNull();
     expect(r.skillsDir).toBe(path.join(tmp, 'skills'));
     expect(r.pluginsDir).toBe(path.join(tmp, 'plugins'));
+    expect(r.mediaDir).toBe(path.join(tmp, 'media'));
     expect(fs.statSync(r.skillsDir).isDirectory()).toBe(true);
     expect(fs.statSync(r.pluginsDir).isDirectory()).toBe(true);
+    expect(fs.statSync(r.mediaDir).isDirectory()).toBe(true);
     expect(fs.statSync(r.claudeConfigDir).isDirectory()).toBe(true);
 
     // Only skills are exposed to Claude Code — its plugin layout differs from
