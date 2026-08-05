@@ -171,10 +171,16 @@ vi.mock('./services/context-usage.service', () => ({
   },
 }));
 
-const { mockMaybeAutoCompact } = vi.hoisted(() => ({ mockMaybeAutoCompact: vi.fn() }));
+const { mockMaybeAutoCompact, mockMaybeCompactAfterOverflow } = vi.hoisted(() => ({
+  mockMaybeAutoCompact: vi.fn(),
+  mockMaybeCompactAfterOverflow: vi.fn(),
+}));
 
 vi.mock('./services/compaction.service', () => ({
-  compactionService: { maybeAutoCompact: mockMaybeAutoCompact },
+  compactionService: {
+    maybeAutoCompact: mockMaybeAutoCompact,
+    maybeCompactAfterOverflow: mockMaybeCompactAfterOverflow,
+  },
 }));
 
 
@@ -316,6 +322,58 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
 
       expect(mockMaybeAutoCompact).not.toHaveBeenCalled();
+    });
+
+  });
+
+  describe('overflow-recovery hook', () => {
+    const OVERFLOW = new Error('prompt is too long: 250000 tokens > 200000 maximum');
+
+    function contextWithHistory() {
+      return createTestAgentContext({
+        recentMessages: [
+          { id: 'm1', role: 'USER', content: 'hello', externalMessageId: null, internalStep: false },
+          { id: 'm2', role: 'AGENT', content: 'hi', externalMessageId: null, internalStep: false },
+        ],
+      });
+    }
+
+    it('fires when a thread-bound turn rejects with a context overflow', async () => {
+      mockGetAgentContext.mockResolvedValue(contextWithHistory());
+      mockGenerateText.mockRejectedValue(OVERFLOW);
+
+      const result = await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
+
+      // The friendly error step still delivers.
+      expect(result.response).toContain('I encountered an error');
+      expect(mockMaybeCompactAfterOverflow).toHaveBeenCalledTimes(1);
+      expect(mockMaybeCompactAfterOverflow.mock.calls[0][0]).toMatchObject({
+        threadId: 'thread-1',
+        contextRows: [
+          expect.objectContaining({ id: 'm1' }),
+          expect.objectContaining({ id: 'm2' }),
+        ],
+      });
+      // The success hook never ran — the turn failed.
+      expect(mockMaybeAutoCompact).not.toHaveBeenCalled();
+    });
+
+    it('does not fire on a non-overflow failure', async () => {
+      mockGetAgentContext.mockResolvedValue(contextWithHistory());
+      mockGenerateText.mockRejectedValue(new Error('rate limited'));
+
+      await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
+
+      expect(mockMaybeCompactAfterOverflow).not.toHaveBeenCalled();
+    });
+
+    it('does not fire without a threadId', async () => {
+      mockGetAgentContext.mockResolvedValue(contextWithHistory());
+      mockGenerateText.mockRejectedValue(OVERFLOW);
+
+      await invoke(createTestInvokeRequest({ threadId: undefined }));
+
+      expect(mockMaybeCompactAfterOverflow).not.toHaveBeenCalled();
     });
   });
 

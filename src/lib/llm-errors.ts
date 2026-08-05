@@ -115,6 +115,60 @@ export function getErrorDetail(error: unknown): string | null {
 }
 
 /**
+ * Message patterns the providers use for "the request does not fit the
+ * model's context window". Anthropic direct says "prompt is too long:
+ * 213456 tokens > 200000 maximum"; Bedrock's ValidationException says
+ * "Input is too long for requested model"; OpenAI-compatible gateways use
+ * the `context_length_exceeded` code. Deliberately narrow — a generic
+ * "too long"/"context" match would misfire on unrelated validation text.
+ */
+const CONTEXT_OVERFLOW_PATTERNS = [
+  /prompt is too long/i,
+  /input is too long/i,
+  /context[_ ]length[_ ]exceeded/i,
+  /exceeds? (the )?(maximum )?context/i,
+  /too many (input )?tokens/i,
+];
+
+/**
+ * Check if an error means the request outgrew the model's context window.
+ *
+ * Consumed by the compaction overflow-recovery path: a turn that fails this
+ * way will fail identically on every retry until the thread is compacted, so
+ * it is the one error class where acting on the failure is correct. Unwraps
+ * the SDK's `lastError` retry wrapper like `buildErrorStep` does.
+ */
+export function isContextOverflowError(error: unknown): boolean {
+  const unwrapped = (error && typeof error === 'object' && 'lastError' in error)
+    ? (error as { lastError: unknown }).lastError
+    : error;
+  if (!unwrapped || typeof unwrapped !== 'object') return false;
+
+  const err = unwrapped as Record<string, unknown>;
+  if (getStatusCode(err) === 413) return true;
+
+  const texts: string[] = [];
+  if (unwrapped instanceof Error) texts.push(unwrapped.message);
+  const detail = getErrorDetail(unwrapped);
+  if (detail) texts.push(detail);
+  const body = getResponseBody(err);
+  if (typeof body === 'string') texts.push(body);
+  else if (body && typeof body === 'object') {
+    const message = (body as Record<string, unknown>).message;
+    if (typeof message === 'string') texts.push(message);
+    const errObj = (body as Record<string, unknown>).error;
+    if (errObj && typeof errObj === 'object') {
+      const m = (errObj as Record<string, unknown>).message;
+      if (typeof m === 'string') texts.push(m);
+      const code = (errObj as Record<string, unknown>).code;
+      if (typeof code === 'string') texts.push(code);
+    }
+  }
+
+  return texts.some((text) => CONTEXT_OVERFLOW_PATTERNS.some((p) => p.test(text)));
+}
+
+/**
  * Build a friendly InvokeStep from a runtime error.
  *
  * The single place that turns an LLM/runtime error into user-facing text.
