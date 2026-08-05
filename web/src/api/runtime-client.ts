@@ -121,6 +121,13 @@ export const runtimeApi = {
       method: 'POST',
       body: JSON.stringify({ agentId, userId }),
     }),
+  // Start a fresh conversation; the server reuses the newest thread when it
+  // is still untouched, so repeated clicks don't pile up empty threads.
+  createThread: (agentId: string, userId: string) =>
+    request<ConversationThread>('/agents/threads', {
+      method: 'POST',
+      body: JSON.stringify({ agentId, userId }),
+    }),
   listThreads: (
     agentId: string,
     userId: string,

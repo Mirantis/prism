@@ -25,6 +25,7 @@ const {
   mockListThreads,
   mockAddMessage,
   mockGetOrCreateLatestThread,
+  mockGetOrCreateFreshThread,
   mockGetLatestThread,
   mockGetOwnedThreadId,
   mockGetThreadWorkspaceRoot,
@@ -48,6 +49,7 @@ const {
   mockListThreads: vi.fn(),
   mockAddMessage: vi.fn(),
   mockGetOrCreateLatestThread: vi.fn(),
+  mockGetOrCreateFreshThread: vi.fn(),
   mockGetLatestThread: vi.fn(),
   mockGetOwnedThreadId: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
@@ -133,6 +135,7 @@ vi.mock('../services/conversation.service', () => ({
     listThreads: mockListThreads,
     addMessage: mockAddMessage,
     getOrCreateLatestThread: mockGetOrCreateLatestThread,
+    getOrCreateFreshThread: mockGetOrCreateFreshThread,
     getLatestThread: mockGetLatestThread,
     getOwnedThreadId: mockGetOwnedThreadId,
     getThreadWorkspaceRoot: mockGetThreadWorkspaceRoot,
@@ -1485,6 +1488,54 @@ describe('Management Routes', () => {
 
       const res = await authedRequest(app)
         .post('/agents/threads/get-or-create-latest')
+        .send({ agentId: 'agent-1', userId: 'user-1' });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // POST /threads
+  // ==========================================================================
+
+  describe('POST /threads', () => {
+    it('returns the thread on success', async () => {
+      const thread = { id: 'thread-1', agentId: 'agent-1', userId: 'user-1' };
+      mockGetOrCreateFreshThread.mockResolvedValue(thread);
+
+      const res = await authedRequest(app)
+        .post('/agents/threads')
+        .send({ agentId: 'agent-1', userId: 'user-1' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe('thread-1');
+      expect(mockGetOrCreateFreshThread).toHaveBeenCalledWith('agent-1', 'user-1');
+    });
+
+    it('returns 400 when agentId is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/threads')
+        .send({ userId: 'user-1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('agentId');
+    });
+
+    it('returns 400 when userId is missing', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/threads')
+        .send({ agentId: 'agent-1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('userId');
+    });
+
+    it('returns 500 when getOrCreateFreshThread throws', async () => {
+      mockGetOrCreateFreshThread.mockRejectedValue(new Error('DB error'));
+
+      const res = await authedRequest(app)
+        .post('/agents/threads')
         .send({ agentId: 'agent-1', userId: 'user-1' });
 
       expect(res.status).toBe(500);

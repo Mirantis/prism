@@ -58,6 +58,7 @@
  *   POST   /agents/slack-heartbeat-trigger/claim              - Try claim trigger
  *
  * Conversation threads:
+ *   POST   /agents/threads                                    - Create a thread (reuses an untouched one)
  *   POST   /agents/threads/get-or-create-latest               - Get or create latest thread
  *   GET    /agents/threads                                    - List threads
  *   GET    /agents/threads/:threadId                          - Fetch thread + messages
@@ -1338,6 +1339,28 @@ router.post('/threads/get-or-create-latest', async (req: Request, res: Response)
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to get or create latest thread: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * POST /agents/threads
+ * Start a fresh conversation (web "new conversation" button). Reuses the
+ * newest thread when it is still untouched instead of creating another.
+ * Body: { agentId, userId }
+ */
+router.post('/threads', async (req: Request, res: Response) => {
+  try {
+    const { agentId, userId } = req.body;
+    if (!agentId || !userId) {
+      res.status(400).json({ error: 'Missing required fields: agentId, userId' });
+      return;
+    }
+    const thread = await conversationService.getOrCreateFreshThread(agentId, userId);
+    res.json(thread);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] Failed to create thread: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });

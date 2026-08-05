@@ -3,6 +3,7 @@ import { expect } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
 import * as dbHelper from '../support/db-helper';
 import { getCurrentAgentId } from './common.steps';
+import { TEST_USER } from '../fixtures/test-data';
 
 const { Given, When, Then } = createBdd();
 
@@ -90,9 +91,23 @@ Then('the {string} conversation is not highlighted', async ({ page }, name: stri
   await expect(home.recentThreads.filter({ hasText: name })).not.toHaveAttribute('data-active', 'true');
 });
 
-Then('the Recents list has {int} conversation', async ({ page }, count: number) => {
+Then('the Recents list has {int} conversation(s)', async ({ page }, count: number) => {
   const home = new HomePage(page);
   await expect(home.recentThreads).toHaveCount(count);
+});
+
+When('I click the new conversation button', async ({ page }) => {
+  await new HomePage(page).newThreadButton.click();
+});
+
+// Authoritative check against the management API rather than the rendered
+// sidebar — counts the thread rows the runtime actually stored.
+Then('the agent has {int} stored conversation thread(s)', async ({ page }, count: number) => {
+  const res = await page.request.get(
+    `/agents/threads?userId=${TEST_USER.id}&agentId=${getCurrentAgentId()}&threadSource=DATABASE`,
+  );
+  expect(res.ok()).toBe(true);
+  expect((await res.json()) as unknown[]).toHaveLength(count);
 });
 
 Then('the Recents header is visible', async ({ page }) => {
