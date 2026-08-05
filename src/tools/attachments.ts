@@ -13,24 +13,9 @@ import * as path from 'path';
 import { Tool, tool } from 'ai';
 import { z } from 'zod';
 import { attachmentService, classifyMediaType, isBedrockImageType } from '../services/attachment.service';
+import { sanitizeFilename } from '../lib/media-store';
 import { resolveWorkspace } from './shell/config';
 import { trackEvent } from '../lib/telemetry';
-
-const MAX_FILENAME_BYTES = 255;
-
-function sanitizeFilename(raw: string, fallback: string): string {
-  let name = path.basename(raw);
-  // Strip control chars and path separators that snuck past basename
-  name = name.replace(/[\x00-\x1f\x7f/\\]/g, '_');
-  // Reject directory traversal remnants
-  name = name.replace(/\.\./g, '_');
-  // Cap length in bytes (UTF-8 aware)
-  const buf = Buffer.from(name, 'utf8');
-  if (buf.length > MAX_FILENAME_BYTES) {
-    name = buf.subarray(0, MAX_FILENAME_BYTES).toString('utf8');
-  }
-  return name.trim() || fallback;
-}
 
 export interface HydrateAttachmentSuccess {
   success: true;
