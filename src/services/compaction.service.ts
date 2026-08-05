@@ -269,6 +269,15 @@ class CompactionService {
       this.start(userId, agentId, threadId, 'auto');
 
       const assistantText = fork.finalAssistantText.trim();
+      // The cache breakpoint on the final message is what makes this a cheap
+      // forked request: Anthropic/Bedrock only cache-READ at explicit
+      // breakpoints, and the longest-prefix lookup reaches back past the few
+      // appended blocks to the cache entry the turn's own last step wrote
+      // (prepareStep marks its last message). Without it the tools+system
+      // prefix would hit but the history — the bulk of the prompt — would be
+      // re-prefilled at full price. Budget: 2 system + 1 tools + this = 4,
+      // exactly Bedrock's breakpoint limit.
+      const anthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
       const messages: ModelMessage[] = [
         ...fork.messages,
         ...fork.injections,
@@ -276,7 +285,7 @@ class CompactionService {
         // can end with no visible text (rare), in which case the last real
         // message already closes the exchange.
         ...(assistantText ? [{ role: 'assistant' as const, content: assistantText }] : []),
-        { role: 'user' as const, content: COMPACTION_PROMPT },
+        { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: anthropicCachePoint },
       ];
 
       const result = await generateText({
