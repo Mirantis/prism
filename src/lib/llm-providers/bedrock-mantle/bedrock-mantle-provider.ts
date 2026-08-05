@@ -49,7 +49,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { createBedrockEmbeddingProvider, isAnthropicModelId } from '../bedrock-shared';
-import type { LlmProvider } from '../llm-provider';
+import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
 
 /**
  * Cross-region inference profile prefixes (`us.`, `eu.`, `global.`, …). These
@@ -147,6 +147,7 @@ export function createBedrockMantleProvider(baseURL?: string): LlmProvider {
     // ("output_config.format: Extra inputs are not permitted"), so ask the SDK
     // for the tool-based JSON path instead.
     structuredOutputOptions: { anthropic: { structuredOutputMode: 'jsonTool' } },
+    cachePoint: ANTHROPIC_CACHE_POINT,
   });
 }
 

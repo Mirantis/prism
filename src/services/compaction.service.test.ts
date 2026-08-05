@@ -71,7 +71,11 @@ vi.mock('../lib/langfuse', () => ({ isLangfuseEnabled: () => false }));
 // beforeEach — the vitest config resets them between tests (only vi.fn(impl)
 // arguments survive a reset).
 const { mockCreateProvider, mockBuildSystemPromptParts, mockBuildConversationMessages } = vi.hoisted(() => ({
-  mockCreateProvider: vi.fn(() => (modelId: string) => ({ modelId })),
+  mockCreateProvider: vi.fn(() =>
+    Object.assign((modelId: string) => ({ modelId }), {
+      cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+    }),
+  ),
   mockBuildSystemPromptParts: vi.fn(),
   mockBuildConversationMessages: vi.fn(),
 }));
@@ -130,6 +134,7 @@ function makeFork(overrides: Partial<AutoCompactFork> = {}): AutoCompactFork {
     threadId: THREAD,
     modelId: 'model-x',
     model: { modelId: 'model-x' } as never,
+    cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' as const } } },
     system: [{ role: 'system', content: 'system prompt' }] as never,
     tools: { shell: {} as never },
     messages: [

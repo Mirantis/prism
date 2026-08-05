@@ -33,7 +33,7 @@ import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { createSharedBedrockOptions, isAnthropicModelId } from '../bedrock-shared';
-import type { LlmProvider } from '../llm-provider';
+import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
 
 /**
  * Create an Amazon Bedrock provider that dispatches on model family.
@@ -60,6 +60,7 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
     isAnthropicModelId(modelId) ? anthropic(modelId) : generic(modelId);
   return Object.assign(dispatcher, {
     embedding: (modelId: string) => generic.embedding(modelId),
+    cachePoint: ANTHROPIC_CACHE_POINT,
   });
 }
 
