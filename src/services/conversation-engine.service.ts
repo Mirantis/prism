@@ -472,9 +472,10 @@ Respond with exactly one word: WORTHY or SKIP`;
   }
 
   /**
-   * Load the bytes for messages handed to a running turn, so the turn can fold
-   * them in as full user turns — a screenshot shared mid-work reaches the model
-   * on the next step, exactly as it would had it been sent at the turn's start.
+   * Load attachment metadata for messages handed to a running turn, so the
+   * turn can fold them in as full user turns — a screenshot shared mid-work
+   * reaches the model as a stub on the next step, exactly as it would had it
+   * been sent at the turn's start.
    *
    * Runs on the consumer side because `offer()` is synchronous: the ids are
    * queued without an await, and only whoever takes them pays for the read.
@@ -484,7 +485,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       pending.map(async (p) => ({
         text: p.text,
         attachments: p.attachmentIds.length
-          ? await attachmentService.loadByIds(p.attachmentIds)
+          ? await attachmentService.getMetaByIds(p.attachmentIds)
           : undefined,
       })),
     );

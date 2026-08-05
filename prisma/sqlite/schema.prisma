@@ -218,7 +218,12 @@ model MessageAttachment {
   mediaType   String
   sizeBytes   Int
   category    String
-  data        Bytes
+  // Legacy BLOB storage. New rows keep bytes on disk (storagePath below) and
+  // leave this null; a boot-time backfill migrates old rows. Both null =
+  // content expired (the 168h TTL sweep) — the metadata row stays for history.
+  data        Bytes?
+  // Basename of the content file under <dataDir>/media (see lib/media-store.ts).
+  storagePath String?
   source      String
   // Unique so concurrent Slack event redeliveries (at-least-once) can't insert
   // the same file twice — the existsBySlackFileId() pre-check is a TOCTOU

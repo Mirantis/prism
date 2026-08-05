@@ -98,6 +98,22 @@ describe('runHydrateAttachment', () => {
     });
   });
 
+  it('returns an expired error when the content is gone (row without file or BLOB)', async () => {
+    getByIdSpy.mockResolvedValue(makeRow({ data: null as unknown as Buffer }));
+    const result = await runHydrateAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, THREAD_ID, workspace,
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toContain('expired');
+    expect(trackEvent).toHaveBeenCalledWith('attachment hydrate failed', USER_ID, {
+      'agent.id': AGENT_ID,
+      'attachment.id': ATTACHMENT_ID,
+    });
+  });
+
   it('writes file to correct scratch path and returns metadata (happy path)', async () => {
     const data = Buffer.from('hello world');
     getByIdSpy.mockResolvedValue(makeRow({
@@ -270,6 +286,27 @@ describe('runViewAttachment', () => {
       'attachment.category': 'image',
       'attachment.media_type': 'image/png',
       'attachment.size_bytes': String(data.length),
+    });
+  });
+
+  it('returns an expired error when the image content is gone', async () => {
+    getByIdSpy.mockResolvedValue(makeRow({
+      filename: 'screenshot.png',
+      mediaType: 'image/png',
+      data: null as unknown as Buffer,
+    }));
+
+    const result = await runViewAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, THREAD_ID,
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toContain('expired');
+    expect(trackEvent).toHaveBeenCalledWith('attachment view failed', USER_ID, {
+      'agent.id': AGENT_ID,
+      'attachment.id': ATTACHMENT_ID,
     });
   });
 

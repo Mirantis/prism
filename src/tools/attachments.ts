@@ -57,6 +57,18 @@ export async function runHydrateAttachment(
     return { success: false, error: 'Attachment not found.' };
   }
 
+  const bytes = await attachmentService.loadBytes(row);
+  if (!bytes) {
+    trackEvent('attachment hydrate failed', userId, {
+      'agent.id': agentId,
+      'attachment.id': attachmentId,
+    });
+    return {
+      success: false,
+      error: `The content of "${row.filename}" has expired (attachments are kept for 7 days). Ask the user to share the file again if you need it.`,
+    };
+  }
+
   const ws = resolveWorkspace(workspaceRoot);
   const scratchDir = path.join(ws, '.attachments', threadId, attachmentId);
   await fs.mkdir(scratchDir, { recursive: true });
@@ -73,7 +85,7 @@ export async function runHydrateAttachment(
     return { success: false, error: 'Attachment not found.' };
   }
 
-  await fs.writeFile(destPath, Buffer.from(row.data));
+  await fs.writeFile(destPath, bytes);
 
   const category = classifyMediaType(row.mediaType);
   trackEvent('attachment hydrated', userId, {
@@ -217,7 +229,18 @@ export async function runViewAttachment(
     };
   }
 
-  const base64 = Buffer.from(row.data).toString('base64');
+  const bytes = await attachmentService.loadBytes(row);
+  if (!bytes) {
+    trackEvent('attachment view failed', userId, {
+      'agent.id': agentId,
+      'attachment.id': attachmentId,
+    });
+    return {
+      success: false,
+      error: `The content of "${row.filename}" has expired (attachments are kept for 7 days). Ask the user to share the file again if you need it.`,
+    };
+  }
+  const base64 = bytes.toString('base64');
 
   trackEvent('attachment viewed', userId, {
     'agent.id': agentId,
