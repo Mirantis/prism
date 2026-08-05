@@ -48,7 +48,9 @@ The main conversation surface.
   **not** auto-inlined into the context — the agent sees a metadata stub
   (filename, type, size) and inspects the contents on demand using its
   [attachment tools](tools.md#attachments). Images can be viewed visually;
-  other files are hydrated to disk and read with shell tools.
+  other files are hydrated to disk and read with shell tools. File content is
+  kept for 7 days; after that the chip shows **Expired** and the file can no
+  longer be downloaded — share it again if needed.
 - **Stopping.** While the agent is responding, the send button becomes a stop
   button that cancels the in-flight turn.
 - **Tool calls.** When the agent uses a tool, the message shows an

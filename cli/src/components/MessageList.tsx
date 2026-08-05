@@ -77,7 +77,10 @@ const MessageRow: React.FC<MessageRowProps> = ({ agentName, message, expanded })
         {Array.isArray(message.attachments) && message.attachments.length > 0 && (
           <Text dimColor>
             {message.attachments
-              .map((a) => `· 📎 ${a.filename} (${formatFileSize(a.sizeBytes)})`)
+              .map(
+                (a) =>
+                  `· 📎 ${a.filename} (${a.expired ? 'expired' : formatFileSize(a.sizeBytes)})`,
+              )
               .join(' ')}
             {isAgent ? '  · /save to download' : ''}
           </Text>

@@ -1,7 +1,12 @@
 import path from 'path';
 import sea from 'node:sea';
 import dotenv from 'dotenv';
-import { COMPACTION_TAIL_MESSAGES, COMPACTION_THRESHOLD_PERCENT, GOAL_MAX_TURNS } from './constants';
+import {
+  ATTACHMENT_CONTENT_TTL_HOURS,
+  COMPACTION_TAIL_MESSAGES,
+  COMPACTION_THRESHOLD_PERCENT,
+  GOAL_MAX_TURNS,
+} from './constants';
 import { readAgentModelDefaults } from './lib/prism-settings';
 
 // In SEA (the packaged prism-server binary), the source tree is gone — the
@@ -483,6 +488,17 @@ export const config = {
   // budget applied when the caller doesn't specify one — null means unbounded
   // (only the turn/stall caps bound the goal).
   goalMaxTurns: process.env.GOAL_MAX_TURNS ? parseInt(process.env.GOAL_MAX_TURNS, 10) : GOAL_MAX_TURNS,
+
+  // How long attachment content (the media file) is kept before the hourly
+  // sweep deletes it. The metadata row survives, so conversation history keeps
+  // its stubs. ATTACHMENT_TTL_HOURS overrides the 168 h (7 day) default.
+  attachmentContentTtlMs:
+    (process.env.ATTACHMENT_TTL_HOURS
+      ? parseFloat(process.env.ATTACHMENT_TTL_HOURS)
+      : ATTACHMENT_CONTENT_TTL_HOURS) *
+    60 *
+    60 *
+    1000,
   goalDefaultTokenBudget: process.env.GOAL_DEFAULT_TOKEN_BUDGET
     ? parseInt(process.env.GOAL_DEFAULT_TOKEN_BUDGET, 10)
     : null,

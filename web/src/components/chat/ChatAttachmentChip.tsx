@@ -70,6 +70,25 @@ const CHIP_CLASS =
 
 /** Read-only chip rendered on a sent/historical message — click to download. */
 export function MessageAttachmentChip({ attachment }: { attachment: Attachment }) {
+  if (attachment.expired) {
+    // Content was deleted by the retention sweep; only metadata remains, so
+    // there is nothing to download.
+    return (
+      <div
+        data-testid="message-attachment"
+        className={`${CHIP_CLASS} opacity-60`}
+        title={`${attachment.filename} — expired (files are kept for 7 days)`}
+      >
+        <ChipBody
+          filename={attachment.filename}
+          sizeBytes={attachment.sizeBytes}
+          category={attachment.category}
+          status="error"
+          error="Expired"
+        />
+      </div>
+    );
+  }
   return (
     <a
       href={attachmentUrl(attachment.id)}
