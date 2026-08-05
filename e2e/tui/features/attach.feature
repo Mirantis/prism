@@ -15,3 +15,10 @@ Feature: CLI inbound file sharing (/attach)
     Then my message appears in the chat
     And the agent reply contains "manifest.txt"
     And the agent reply contains "PRISMZIPTUI55"
+
+  Scenario: Attaching a PDF lets the agent read it as a document
+    Given a local PDF file containing the text "PRISMPDFTUI88"
+    When I attach the file
+    And I ask "Use view_attachment on the attached PDF and reply with the exact code word printed in it, nothing else."
+    Then my message appears in the chat
+    And the agent reply contains "PRISMPDFTUI88"
