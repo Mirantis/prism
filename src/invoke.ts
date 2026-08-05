@@ -38,7 +38,7 @@ import { createTaskTool } from './lib/task-tool';
 import { withOutputLimits } from './lib/tool-output-limiter';
 import { withToolLifecycleEvents } from './lib/tool-lifecycle';
 import { InvokeError, InvokeRequest, InvokeResponse, InvokeStep, ToolCallRecord, UIBlock } from './types';
-import { STEP_LIMIT, MAX_OUTPUT_TOKENS } from './constants';
+import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from './constants';
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
 import { buildErrorStep, isContextOverflowError } from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
@@ -262,8 +262,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
     // The turn's latest occupancy snapshot, kept for the auto-compaction check
     // after the turn completes — `finalize()` drops the service's tracked entry,
-    // so this local is the only post-turn copy.
+    // so this local is the only post-turn copy. When the model's window is
+    // unknown, `record()` returns null (nothing renders); the raw token count is
+    // kept separately so the trigger can still fall back to an assumed window.
     let lastSnapshot: ContextUsageSnapshot | null = null;
+    let lastMeasuredTokens: number | null = null;
 
     // Tripwire state: report an assistant-terminated request at most once per
     // invocation so a 100-step turn can't flood the metric.
@@ -387,6 +390,9 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
               inputTokens,
               outputTokens,
             }) ?? lastSnapshot;
+          if (typeof inputTokens === 'number') {
+            lastMeasuredTokens = inputTokens + (outputTokens ?? 0);
+          }
         }
 
         const usage =
@@ -453,14 +459,31 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       // this only fires for thread-bound turns that completed with a
       // measurement and real history. Goal turns are history-less by design
       // (empty recentMessages), and heartbeat/webhook/subagent runs pass no
-      // threadId, so both skip here.
-      if (request.threadId && lastSnapshot && context.recentMessages.length > 0) {
+      // threadId, so both skip here. When the model's window is unknown, a
+      // trigger-only fallback window stands in — the meter shows nothing for
+      // such models, but the thread must still compact eventually rather than
+      // grow until the provider hard-rejects it.
+      const triggerSnapshot =
+        lastSnapshot ??
+        (request.threadId && lastMeasuredTokens !== null
+          ? {
+              threadId: request.threadId,
+              modelId,
+              usedTokens: lastMeasuredTokens,
+              windowTokens: COMPACTION_FALLBACK_WINDOW_TOKENS,
+              usedPercent: Math.min(
+                100,
+                Math.round((100 * lastMeasuredTokens) / COMPACTION_FALLBACK_WINDOW_TOKENS),
+              ),
+            }
+          : null);
+      if (request.threadId && triggerSnapshot && context.recentMessages.length > 0) {
         compactionService.maybeAutoCompact({
           ...compactionForkBase(request.threadId),
           finalAssistantText: [summarizeSteps(result.steps), earlyStoppingText ?? '']
             .filter(Boolean)
             .join('\n\n'),
-          snapshot: lastSnapshot,
+          snapshot: triggerSnapshot,
         });
       }
 

@@ -324,6 +324,35 @@ describe('invoke', () => {
       expect(mockMaybeAutoCompact).not.toHaveBeenCalled();
     });
 
+    it('falls back to the assumed 1M window when the model is unknown to the meter', async () => {
+      // record() returns null for unknown windows (nothing renders), but the
+      // trigger must still see the raw measurement or such threads grow until
+      // the provider hard-rejects them.
+      mockGetAgentContext.mockResolvedValue(contextWithHistory());
+      mockContextUsageRecord.mockReturnValue(null);
+      mockGenerateText.mockResolvedValue({
+        text: 'ok',
+        steps: [
+          {
+            text: 'ok',
+            toolCalls: [],
+            toolResults: [],
+            usage: { inputTokens: 950_000, outputTokens: 100, totalTokens: 950_100 },
+          },
+        ],
+      });
+
+      await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
+
+      expect(mockMaybeAutoCompact).toHaveBeenCalledTimes(1);
+      expect(mockMaybeAutoCompact.mock.calls[0][0].snapshot).toEqual({
+        threadId: 'thread-1',
+        modelId: expect.any(String),
+        usedTokens: 950_100,
+        windowTokens: 1_000_000,
+        usedPercent: 95,
+      });
+    });
   });
 
   describe('overflow-recovery hook', () => {
