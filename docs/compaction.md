@@ -63,7 +63,11 @@ newer replies afterwards. The Slack channel itself is never modified.
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact at this percent of the model's window; `0` disables auto-compaction | `90` |
 | `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction | `6` |
 
-Auto-compaction needs to know the model's context window; see
-**[Context-window size](configuration.md#context-window-size)**. A model whose
-window the runtime doesn't recognize never auto-compacts — set
-`CONTEXT_WINDOW_TOKENS` to enable it, or use `/compact` manually.
+Auto-compaction works best when the model's context window is known; see
+**[Context-window size](configuration.md#context-window-size)**. For a model
+whose window the runtime doesn't recognize, the trigger assumes a conservative
+1,000,000-token window instead of leaving the thread unbounded — that
+assumption is trigger-only, so the on-screen context meter stays hidden rather
+than showing a guessed percentage. Overflow recovery works regardless of
+whether the window is known. Set `CONTEXT_WINDOW_TOKENS` to get accurate
+triggering and a visible meter.

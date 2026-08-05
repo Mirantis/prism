@@ -69,3 +69,14 @@ export const COMPACTION_THRESHOLD_PERCENT = 90;
  * `config.compactionTailMessages` (COMPACTION_TAIL_MESSAGES).
  */
 export const COMPACTION_TAIL_MESSAGES = 6;
+
+/**
+ * Context window assumed by the auto-compaction trigger when the model's real
+ * window is unknown (no catalog entry, no CONTEXT_WINDOW_TOKENS override).
+ * Deliberately generous — no current Claude window is larger, so this only
+ * fires when the thread is genuinely enormous, and a wrong small guess would
+ * compact constantly. Trigger-only by design: the context meter never renders
+ * a percentage derived from this guess (an invented number on screen is worse
+ * than none; see context-usage.service.ts).
+ */
+export const COMPACTION_FALLBACK_WINDOW_TOKENS = 1_000_000;

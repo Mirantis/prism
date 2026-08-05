@@ -197,8 +197,10 @@ models can't be given different windows.
 The same window size drives **[automatic compaction](compaction.md)**: when a
 conversation's measured occupancy reaches `COMPACTION_THRESHOLD_PERCENT` of the
 window, the runtime folds older history into a summary. A model with an unknown
-window never auto-compacts (there is no percentage to trigger on) — manual
-`/compact` still works.
+window auto-compacts against a conservative 1,000,000-token assumption (and a
+context-overflow rejection triggers compaction directly); the indicator still
+stays hidden for such models — it never renders a guessed percentage. Set
+`CONTEXT_WINDOW_TOKENS` for accurate triggering and a visible meter.
 
 ### Bootstrap model defaults (`~/.prism/settings.json`)
 
