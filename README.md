@@ -219,7 +219,10 @@ The agent puts work on its own calendar. Tasks can be one-shot or recurring,
 specified in natural language or cron syntax, and survive restarts. One-shot
 tasks delete themselves after running; recurring tasks track their last run,
 their next run, and consecutive errors. The agent can list, run-now, or
-cancel its own tasks. Scheduled runs use the main model by default, or a
+cancel its own tasks. Scheduled runs pass the same DELIVER/SUPPRESS gate as
+heartbeats — instruction-aware, so an unconditional "send me X" task always
+delivers while a conditional check with nothing to report stays silent.
+Scheduled runs use the main model by default, or a
 scheduled-task-specific model if one is set. A one-shot task can also
 **continue in the current conversation** when it fires — so the agent can
 "wait" for something and resume in the same thread (the same Slack thread,
@@ -252,9 +255,11 @@ context from compounding indefinitely.
 - **Output cap** — 16,000 tokens per generation.
 - **Per-tool output limits** — large tool responses are truncated before
   reaching the model, so a single tool call can't flood context.
-- **Heartbeat classification gate** — programmatic checks (empty response,
-  exact 24-hour duplicate) run first; the LLM gate only runs if those pass;
-  if the gate itself errors, the message is delivered (fail-open).
+- **Delivery classification gate** — heartbeat and scheduled-task results
+  pass programmatic checks first (empty responses are dropped; heartbeats
+  also suppress exact 24-hour duplicates; scheduled-run error messages
+  always deliver); the LLM gate only runs if those pass; if the gate itself
+  errors, the message is delivered (fail-open).
 
 ### Observability
 

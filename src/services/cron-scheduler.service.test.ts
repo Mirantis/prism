@@ -2,7 +2,7 @@
  * Cron Scheduler Service Tests
  *
  * Tests for CronSchedulerService: scheduleTask (recurring + one-shot),
- * unscheduleTask, executeTask, stopAll.
+ * unscheduleTask, executeTask, delivery gate suppression, stopAll.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -22,6 +22,8 @@ const {
   mockCronTaskFindMany,
   mockCronSchedule,
   mockCronValidate,
+  mockGenerateText,
+  mockGetClassificationModel,
   mockLoggerError,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -34,6 +36,8 @@ const {
   mockCronTaskFindMany: vi.fn(),
   mockCronSchedule: vi.fn(),
   mockCronValidate: vi.fn(),
+  mockGenerateText: vi.fn(),
+  mockGetClassificationModel: vi.fn(),
   mockLoggerError: vi.fn(),
 }));
 
@@ -70,6 +74,14 @@ vi.mock('../lib/prisma', () => ({
 vi.mock('node-cron', () => ({
   schedule: mockCronSchedule,
   validate: mockCronValidate,
+}));
+
+vi.mock('ai', () => ({
+  generateText: mockGenerateText,
+}));
+
+vi.mock('../lib/classification', () => ({
+  getClassificationModel: mockGetClassificationModel,
 }));
 
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
@@ -138,6 +150,9 @@ describe('CronSchedulerService', () => {
     mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
     mockCronTaskUpdate.mockResolvedValue({});
     mockCronTaskDelete.mockResolvedValue({});
+    // Default: gate delivers (the suppression suite overrides this)
+    mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+    mockGetClassificationModel.mockReturnValue('classification-model');
   });
 
   afterEach(() => {
@@ -504,6 +519,252 @@ describe('CronSchedulerService', () => {
 
       expect(mockInvoke).toHaveBeenCalled();
       expect(mockCronTaskDelete).toHaveBeenCalledWith({ where: { id: 'oneshot-del-fail' } });
+    });
+  });
+
+  // ==========================================================================
+  // Delivery gate (suppression)
+  // ==========================================================================
+
+  describe('delivery gate', () => {
+    /** Schedule a recurring task and return the captured cron callback. */
+    function scheduleAndCapture(overrides: Partial<BackendCronTask> = {}): () => Promise<void> {
+      let cronCallback: (() => Promise<void>) | undefined;
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
+        cronCallback = cb;
+        return { stop: vi.fn() };
+      });
+      cronSchedulerService.scheduleTask(createCronTask(overrides));
+      return cronCallback!;
+    }
+
+    it('suppresses delivery when the gate says SUPPRESS, but still records the run', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+
+      const run = scheduleAndCapture();
+      await run();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockPublish).not.toHaveBeenCalled();
+      // Bookkeeping is unaffected by suppression
+      expect(mockCronTaskUpdate).toHaveBeenCalledWith({
+        where: { id: 'task-1' },
+        data: { lastRunAt: expect.any(Date) },
+      });
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.result': 'suppressed' }),
+      );
+    });
+
+    it('delivers when the gate says DELIVER', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+
+      const run = scheduleAndCapture();
+      await run();
+
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails open and delivers when the gate call throws', async () => {
+      mockGenerateText.mockRejectedValue(new Error('model unavailable'));
+
+      const run = scheduleAndCapture();
+      await run();
+
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.result': 'completed' }),
+      );
+    });
+
+    it('suppresses an empty result without calling the gate', async () => {
+      mockInvoke.mockResolvedValue({ response: '', toolCalls: [], steps: [] });
+
+      const run = scheduleAndCapture();
+      await run();
+
+      expect(mockGenerateText).not.toHaveBeenCalled();
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.result': 'suppressed' }),
+      );
+    });
+
+    it('consults the gate for every run — repeated text is not short-circuited', async () => {
+      const run = scheduleAndCapture();
+
+      await run(); // delivers, records the baseline
+      await run(); // identical text — an unconditional task must still deliver
+
+      // No programmatic duplicate suppression for cron: the gate decides both
+      // times (with the last delivered result as context on the second run).
+      expect(mockGenerateText).toHaveBeenCalledTimes(2);
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('delivers an error result without consulting the gate', async () => {
+      mockInvoke.mockResolvedValue({
+        response: 'I encountered an error while processing your request: model timeout',
+        toolCalls: [],
+        steps: [{ text: 'I encountered an error while processing your request: model timeout', toolCalls: [] }],
+        error: { type: 'generic', detail: 'model timeout' },
+      });
+
+      const run = scheduleAndCapture();
+      await run();
+
+      expect(mockGenerateText).not.toHaveBeenCalled();
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.result': 'completed' }),
+      );
+    });
+
+    it('clears the baseline when a suppressed run observes a different situation', async () => {
+      const outage = { response: 'Database is down.', toolCalls: [], steps: [{ text: 'Database is down.', toolCalls: [] }] };
+      const allClear = { response: 'All clear.', toolCalls: [], steps: [{ text: 'All clear.', toolCalls: [] }] };
+      const run = scheduleAndCapture({ instruction: 'Only tell me if the database is down.' });
+
+      mockInvoke.mockResolvedValue(outage);
+      await run(); // incident delivered → baseline = outage
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+
+      mockInvoke.mockResolvedValue(allClear);
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      await run(); // recovery stays quiet — but the situation changed
+
+      mockInvoke.mockResolvedValue(outage);
+      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+      await run(); // the SAME outage recurs
+
+      // The recurrence must not be framed as a repeat of the stale incident:
+      // the suppressed all-clear dropped the baseline.
+      const thirdCall = mockGenerateText.mock.calls[2][0];
+      expect(thirdCall.messages[0].content).toContain('No previous result has been delivered');
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the baseline when a suppressed run repeats the delivered text', async () => {
+      const outage = { response: 'Database is down.', toolCalls: [], steps: [{ text: 'Database is down.', toolCalls: [] }] };
+      const run = scheduleAndCapture({ instruction: 'Only tell me if the database is down.' });
+
+      mockInvoke.mockResolvedValue(outage);
+      await run(); // incident delivered → baseline = outage
+
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      await run(); // ongoing incident, same text — suppressed, baseline stays
+
+      await run();
+      const thirdCall = mockGenerateText.mock.calls[2][0];
+      expect(thirdCall.messages[0].content).toContain('## Last Delivered Result');
+      expect(thirdCall.messages[0].content).toContain('Database is down.');
+    });
+
+    it('skips a tick that overlaps a still-running execution of the same task', async () => {
+      let resolveInvoke!: (value: unknown) => void;
+      mockInvoke.mockImplementationOnce(() => new Promise((resolve) => { resolveInvoke = resolve; }));
+
+      const run = scheduleAndCapture();
+      const firstRun = run(); // blocks inside invoke
+      await run(); // overlapping tick — must skip without invoking
+
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+      resolveInvoke({ response: 'Task completed.', toolCalls: [], steps: [{ text: 'Task completed.', toolCalls: [] }] });
+      await firstRun;
+
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+
+      await run(); // after completion the task runs again normally
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not advance the baseline on a suppressed run', async () => {
+      const run = scheduleAndCapture();
+
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      await run(); // suppressed — baseline stays empty
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+
+      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+      await run();
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+      // The second gate call still sees no baseline: the suppressed run's text
+      // was never delivered, so it must not become "the last delivered result".
+      const secondCall = mockGenerateText.mock.calls[1][0];
+      expect(secondCall.messages[0].content).toContain('No previous result has been delivered');
+    });
+
+    it('gives the gate the task instruction and the last delivered result as context', async () => {
+      const run = scheduleAndCapture({ instruction: 'Only tell me if the build breaks.' });
+
+      await run();
+
+      const firstCall = mockGenerateText.mock.calls[0][0];
+      expect(firstCall.system).toContain('Respond with exactly one word: DELIVER or SUPPRESS');
+      expect(firstCall.system).toContain('UNCONDITIONAL: the user asked to receive a message on every run');
+      expect(firstCall.system).toContain("Only a CONDITIONAL task's result may be suppressed");
+      expect(firstCall.messages[0].content).toContain('## Task Instruction\nOnly tell me if the build breaks.');
+      expect(firstCall.messages[0].content).toContain('No previous result has been delivered for this task.');
+      expect(firstCall.messages[0].content).toContain('## New Task Result\nTask completed.');
+
+      // Second run with different text sees the last delivered result
+      mockInvoke.mockResolvedValue({
+        response: 'The build broke.',
+        toolCalls: [],
+        steps: [{ text: 'The build broke.', toolCalls: [] }],
+      });
+      await run();
+
+      const secondCall = mockGenerateText.mock.calls[1][0];
+      expect(secondCall.messages[0].content).toContain('## Last Delivered Result');
+      expect(secondCall.messages[0].content).toContain('Task completed.');
+    });
+
+    it('suppresses a thread-bound task without publishing to the thread', async () => {
+      mockCronValidate.mockReturnValue(false);
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({
+          id: 'wait-quiet',
+          schedule: 'in 1 minute',
+          nextRunAt: new Date(Date.now() + 60_000).toISOString(),
+          threadId: 'thread-bound',
+          originChannel: 'websocket',
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(mockInvoke).toHaveBeenCalled();
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+    });
+
+    it('still auto-deletes a suppressed one-shot task', async () => {
+      mockCronValidate.mockReturnValue(false);
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({
+          id: 'oneshot-quiet',
+          schedule: 'in 1 minute',
+          nextRunAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockCronTaskDelete).toHaveBeenCalledWith({ where: { id: 'oneshot-quiet' } });
     });
   });
 

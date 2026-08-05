@@ -56,7 +56,8 @@ What the agent can do.
 - **[Heartbeat](heartbeat.md)** — the always-on monitoring loop, its
   DELIVER/SUPPRESS gate and Slack triggers.
 - **[Scheduled tasks](scheduled-tasks.md)** — putting one-shot and recurring
-  work on the agent's calendar with natural language or cron.
+  work on the agent's calendar with natural language or cron; runs pass the
+  same DELIVER/SUPPRESS gate, so a check with nothing to report stays quiet.
 - **[Webhooks](webhooks.md)** — named HTTP endpoints external systems
   (Alertmanager, PagerDuty, GitHub, …) POST events to, triggering an agent run
   or a direct notification.

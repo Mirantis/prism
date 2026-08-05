@@ -17,6 +17,8 @@ import { messageDeliveryService } from './message-delivery.service';
 import { conversationService } from './conversation.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
+import { runClassificationGate } from '../lib/classification-gate';
+import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 
@@ -59,6 +61,22 @@ interface ScheduledJob {
 
 class CronSchedulerService {
   private scheduledJobs: Map<string, ScheduledJob> = new Map();
+
+  /**
+   * Per-task delivery baseline for the suppression gate (heartbeat parity:
+   * in-memory only, resets on restart). Advanced only when a run actually
+   * delivers, so suppressed runs keep comparing against the last text the
+   * user saw.
+   */
+  private lastDelivered: Map<string, { text: string; at: number }> = new Map();
+
+  /**
+   * Tasks with a run currently in flight. node-cron fires ticks regardless of
+   * whether the previous run finished, so a run outlasting its interval would
+   * otherwise overlap itself — double-delivering and racing the delivery
+   * baseline. An overlapping tick is skipped, not queued.
+   */
+  private runningTasks: Set<string> = new Set();
 
   /**
    * List active cron tasks from the database.
@@ -127,6 +145,7 @@ class CronSchedulerService {
             logger.error({ err }, `[CronScheduler] Failed to delete one-shot task ${task.id}`);
           }
           this.scheduledJobs.delete(task.id);
+          this.lastDelivered.delete(task.id);
         }, delay);
 
         this.scheduledJobs.set(task.id, {
@@ -145,6 +164,7 @@ class CronSchedulerService {
           } catch (err) {
             logger.error({ err }, `[CronScheduler] Failed to delete one-shot task ${task.id}`);
           }
+          this.lastDelivered.delete(task.id);
         });
       }
     } else {
@@ -189,6 +209,9 @@ class CronSchedulerService {
       scheduled.job.stop();
       this.scheduledJobs.delete(taskId);
     }
+    // Re-scheduling may change the instruction, so the delivery baseline
+    // must not carry over.
+    this.lastDelivered.delete(taskId);
   }
 
   private async updateCronTaskRun(taskId: string, lastRunAt: string): Promise<void> {
@@ -203,12 +226,18 @@ class CronSchedulerService {
   }
 
   private async executeTask(task: BackendCronTask): Promise<void> {
+    if (this.runningTasks.has(task.id)) {
+      logger.warn(`[CronScheduler] "${task.name}" is still running — skipping overlapping run`);
+      return;
+    }
+    this.runningTasks.add(task.id);
+
     const startTime = Date.now();
     const boundThreadId = task.threadId;
 
     logger.info(`[CronScheduler] Executing "${task.name}" for user ${task.userId}`);
 
-    const trackRun = (result: 'completed' | 'budget_exceeded' | 'error') =>
+    const trackRun = (result: 'completed' | 'suppressed' | 'budget_exceeded' | 'error') =>
       trackEvent('cron task executed', task.userId, {
         'agent.id': task.agentId,
         'cron.task.id': task.id,
@@ -281,6 +310,49 @@ class CronSchedulerService {
       const responseText = (lastStep?.text ?? '').trim();
       const body = responseText || result.response;
 
+      // Suppression ladder: an empty result is suppressed outright; a run that
+      // ended in an error message is always delivered (an error is never
+      // "nothing to report"); the classification gate decides the rest. The
+      // gate sees the task instruction — so unconditional "send me X" tasks
+      // always deliver, even when the text repeats — and the last delivered
+      // result, so a conditional check that merely repeats it stays quiet.
+      // No pre-gate duplicate short-circuit here (unlike the heartbeat):
+      // it would silence unconditional tasks whose output is legitimately
+      // identical run after run, e.g. an hourly fixed-text reminder.
+      const prior = this.lastDelivered.get(task.id) ?? null;
+      let shouldDeliver: boolean;
+      if (!body.trim()) {
+        shouldDeliver = false;
+      } else if (result.error) {
+        shouldDeliver = true;
+      } else {
+        shouldDeliver = await runClassificationGate({
+          system: CRON_TASK_GATE_PROMPT,
+          user: buildCronGateUserMessage({
+            instruction: task.instruction,
+            resultText: body,
+            lastDeliveredText: prior?.text ?? null,
+            lastDeliveredAt: prior?.at ?? null,
+          }),
+          functionId: 'cron-gate',
+          userId: task.userId,
+          logLabel: 'CronScheduler:Gate',
+        });
+      }
+
+      if (!shouldDeliver) {
+        // A suppressed run whose text no longer matches the delivered baseline
+        // means the situation changed while we stayed quiet (e.g. the incident
+        // resolved into an all-clear). Drop the baseline so a later recurrence
+        // reads as a new finding, not as a repeat of the stale one.
+        if (prior && body.trim() !== prior.text) {
+          this.lastDelivered.delete(task.id);
+        }
+        logger.info(`[CronScheduler] "${task.name}" suppressed — nothing new to report`);
+        trackRun('suppressed');
+        return;
+      }
+
       if (boundThreadId) {
         // Thread-bound: deliver as a natural continuation of the conversation
         // (no "Scheduled Task" header), scoped to the originating channel/thread.
@@ -302,12 +374,19 @@ class CronSchedulerService {
         );
       }
 
+      // Advance the delivery baseline only on an actual delivery (heartbeat
+      // recordAlert parity), keyed on the un-headered body so the unbound
+      // "**Scheduled Task: …**" header can't defeat the comparison.
+      this.lastDelivered.set(task.id, { text: body.trim(), at: Date.now() });
+
       logger.info(`[CronScheduler] "${task.name}" completed in ${Date.now() - startTime}ms`);
       trackRun('completed');
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[CronScheduler] "${task.name}" failed: ${errMsg}`);
       trackRun('error');
+    } finally {
+      this.runningTasks.delete(task.id);
     }
   }
 
@@ -318,6 +397,7 @@ class CronSchedulerService {
       }
     }
     this.scheduledJobs.clear();
+    this.lastDelivered.clear();
     logger.info('[CronScheduler] All cron tasks stopped');
   }
 }

@@ -148,7 +148,7 @@ export interface ToolCallRecord {
 }
 
 export interface InvokeError {
-  type: 'budget_exceeded';
+  type: 'budget_exceeded' | 'generic';
   detail?: string | null;
 }
 
