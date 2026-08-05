@@ -8,11 +8,13 @@ import { expect, type Download } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { deflateRawSync, deflateSync, crc32 } from 'node:zlib';
 import { HomePage } from '../pages/home.page';
+import { expireAttachmentContent } from '../support/db-helper';
 
 const { When, Then } = createBdd();
 
 // Tests run sequentially (workers: 1), so a module-level handle is safe.
 let lastDownload: Download | undefined;
+let lastExpiredAttachmentId: string | undefined;
 
 When(
   'I attach a text file named {string} containing {string}',
@@ -227,3 +229,78 @@ When('I attach a small PNG image named {string}', async ({ page }, name: string)
   });
   await expect(homePage.composerAttachment(name)).toBeVisible({ timeout: 10_000 });
 });
+
+/**
+ * Create a minimal single-page PDF whose page shows `text` in Helvetica.
+ * All content is ASCII, so string length == byte offset for the xref table.
+ */
+function createMinimalPdf(text: string): Buffer {
+  const escaped = text.replace(/[\\()]/g, (c) => `\\${c}`);
+  const stream = `BT /F1 24 Tf 72 700 Td (${escaped}) Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objects.forEach((obj, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+  });
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf, 'latin1');
+}
+
+When(
+  'I attach a small PDF named {string} containing the text {string}',
+  async ({ page }, name: string, text: string) => {
+    const homePage = new HomePage(page);
+    await homePage.attachFileBuffer({
+      name,
+      mimeType: 'application/pdf',
+      buffer: createMinimalPdf(text),
+    });
+    await expect(homePage.composerAttachment(name)).toBeVisible({ timeout: 10_000 });
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Expired-content (retention sweep) steps
+// ---------------------------------------------------------------------------
+
+When(
+  'the content of the attachment {string} is expired by the retention sweep',
+  async ({}, filename: string) => {
+    lastExpiredAttachmentId = await expireAttachmentContent(filename);
+  },
+);
+
+Then(
+  'the attachment {string} on my message should be marked expired',
+  async ({ page }, filename: string) => {
+    const homePage = new HomePage(page);
+    const chip = homePage.messageAttachment(filename).first();
+    await expect(chip).toBeVisible({ timeout: 10_000 });
+    await expect(chip).toContainText('Expired');
+  },
+);
+
+Then(
+  'requesting the attachment {string} over HTTP should answer 410',
+  async ({ page }, filename: string) => {
+    expect(
+      lastExpiredAttachmentId,
+      `no expired attachment id captured for ${filename} — run the expire step first`,
+    ).toBeDefined();
+    const res = await page.request.get(
+      `http://localhost:3003/agents/attachments/${lastExpiredAttachmentId}`,
+    );
+    expect(res.status()).toBe(410);
+  },
+);

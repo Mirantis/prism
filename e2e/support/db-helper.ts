@@ -284,6 +284,23 @@ export async function createThread(
 }
 
 /**
+ * Put an attachment into the state the retention sweep leaves behind: both
+ * storage columns cleared, metadata row intact. Emulates `expireContent()`
+ * (which runs on the runtime's hourly timer — not triggerable from a test)
+ * so the expired UX can be asserted deterministically. Returns the row id.
+ */
+export async function expireAttachmentContent(filename: string): Promise<string> {
+  const db = getPrisma();
+  const row = await db.messageAttachment.findFirst({ where: { filename } });
+  if (!row) throw new Error(`no attachment row with filename ${filename}`);
+  await db.messageAttachment.update({
+    where: { id: row.id },
+    data: { storagePath: null, data: null },
+  });
+  return row.id;
+}
+
+/**
  * Disconnect the Prisma client. Call in global teardown.
  */
 export async function disconnect(): Promise<void> {

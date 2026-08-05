@@ -79,3 +79,24 @@ Feature: Share files with the agent
     And I send the message
     Then I should see "pixel.png" as an attachment on my message
     And the agent response should contain "IMAGEVIEWED"
+
+  # Two round-trips (stub → view_attachment, which attaches the PDF as a
+  # document → final text); same reasoning as the zip scenario above.
+  @slow
+  Scenario: The agent reads an uploaded PDF via view_attachment
+    When I navigate to the agent chat page
+    And I attach a small PDF named "brief.pdf" containing the text "PRISMPDF77"
+    And I type "Use view_attachment on the attached PDF and reply with the exact code word printed in it, nothing else." in the chat input
+    And I send the message
+    Then I should see "brief.pdf" as an attachment on my message
+    And the agent response should contain "PRISMPDF77"
+
+  Scenario: An expired attachment is marked expired and no longer downloads
+    When I navigate to the agent chat page
+    And I attach a text file named "old-report.txt" containing "stale payload PRISMOLD1"
+    And I send the message
+    And I wait for the agent to finish responding
+    When the content of the attachment "old-report.txt" is expired by the retention sweep
+    And I reload the chat page
+    Then the attachment "old-report.txt" on my message should be marked expired
+    And requesting the attachment "old-report.txt" over HTTP should answer 410

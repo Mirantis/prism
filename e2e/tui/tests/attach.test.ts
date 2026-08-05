@@ -92,6 +92,33 @@ function createZipBuffer(innerFilename: string, innerContent: string): Buffer {
   return Buffer.concat([localFileData, central, eocd]);
 }
 
+/**
+ * Build a minimal single-page PDF showing `text` in Helvetica. All-ASCII, so
+ * string length == byte offset for the xref table.
+ */
+function createPdfBuffer(text: string): Buffer {
+  const escaped = text.replace(/[\\()]/g, (c) => `\\${c}`);
+  const stream = `BT /F1 24 Tf 72 700 Td (${escaped}) Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objects.forEach((obj, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+  });
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf, 'latin1');
+}
+
 describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachScenario, AfterEachScenario, Scenario, defineSteps }) => {
   BeforeAllScenarios(async () => {
     env = await setupRuntime();
@@ -120,6 +147,10 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     Step('a local zip file containing a text file {string} with {string}', (_ctx, innerFile: string, innerContent: string) => {
       filePath = path.join(dir, 'bundle.zip');
       fs.writeFileSync(filePath, createZipBuffer(innerFile, innerContent));
+    });
+    Step('a local PDF file containing the text {string}', (_ctx, text: string) => {
+      filePath = path.join(dir, 'brief.pdf');
+      fs.writeFileSync(filePath, createPdfBuffer(text));
     });
     Step('I attach the file', async () => {
       // The confirmation line proves the multipart upload succeeded and the
@@ -154,6 +185,10 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
   });
 
   Scenario('Attaching a zip file lets the agent inspect its contents', () => {
+    // Covered by the shared steps.
+  });
+
+  Scenario('Attaching a PDF lets the agent read it as a document', () => {
     // Covered by the shared steps.
   });
 });
