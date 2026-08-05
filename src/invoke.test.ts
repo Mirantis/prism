@@ -905,13 +905,13 @@ describe('invoke', () => {
       expect(result.error?.detail).toBe('Monthly org budget exceeded');
     });
 
-    it('returns generic error for non-budget 429', async () => {
+    it('returns generic error metadata for non-budget 429', async () => {
       mockGenerateText.mockRejectedValue(Object.assign(new Error('Too Many Requests'), { status: 429 }));
 
       const result = await invoke(createTestInvokeRequest());
 
       expect(result.response).toContain('Too Many Requests');
-      expect(result.error).toBeUndefined();
+      expect(result.error).toEqual({ type: 'generic', detail: null });
     });
   });
 

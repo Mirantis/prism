@@ -166,6 +166,14 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('# Scheduled Task Mode');
   });
 
+  it('cron mode steers conditional tasks toward a brief all-clear, never meta-commentary', async () => {
+    const context = createTestAgentContext();
+    const prompt = await buildSystemPrompt(context, 'cron');
+    expect(prompt).toContain('always produce the requested output');
+    expect(prompt).toContain('reply with a brief all-clear (e.g. "Nothing to report")');
+    expect(prompt).toContain('Never comment on the task or its configuration itself');
+  });
+
   it('webhook mode includes webhook instructions and no chat/bootstrap sections', async () => {
     const context = createTestAgentContext({ isBootstrapPhase: true });
     const prompt = await buildSystemPrompt(context, 'webhook');

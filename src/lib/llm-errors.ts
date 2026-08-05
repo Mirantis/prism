@@ -210,6 +210,7 @@ export function buildErrorStep(error: unknown): InvokeStep {
   return {
     text: `I encountered an error while processing your request: ${errorDetail || message}`,
     toolCalls: [],
+    error: { type: 'generic', detail: errorDetail },
   };
 }
 

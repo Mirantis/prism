@@ -55,7 +55,9 @@ Schedules run in the agent's configured **timezone** (see
 Each task has a **name**, a **schedule**, and an **instruction** — the prompt the
 agent runs on each tick. When a task fires, the agent executes that instruction
 with its full toolset and delivers the result to your active conversation (and
-to connected channels, labeled as a scheduled-task result).
+to connected channels, labeled as a scheduled-task result) — unless there is
+nothing worth reporting (see
+[Quiet when there's nothing to report](#quiet-when-theres-nothing-to-report)).
 
 Scheduled runs use the agent's main model by default, but you can give them
 their own model from the **[Web UI → Profile](web-ui.md#profile)** or the
@@ -75,7 +77,35 @@ conversation — with its full history — and replies right where you left off:
 
 A regular scheduled task (without continuation) still behaves as before: its
 result is delivered to your latest conversation, labeled as a scheduled-task
-result.
+result. Continuations pass through the same suppression gate as any other run —
+a conditional wait with nothing new stays quiet.
+
+## Quiet when there's nothing to report
+
+Every scheduled run passes through the same
+**[DELIVER / SUPPRESS gate](heartbeat.md#the-deliver--suppress-gate)** as the
+heartbeat: after the run produces its result, a small, fast model (Claude
+Haiku) decides whether it's worth your attention. The gate is
+**instruction-aware** — it reads the task's instruction alongside the result:
+
+- A task that asks for output **unconditionally** ("send me a daily summary,"
+  "remind me at 3pm") always delivers, even when the result says nothing has
+  changed. You asked to hear from it on every run.
+- A **conditional** task ("check the deploy queue and only tell me if something
+  is stuck") stays silent when the condition isn't met — no "nothing to report"
+  noise.
+- The gate also sees the **last result the task delivered**, so a conditional
+  check that merely repeats an already-reported finding stays quiet until
+  something changes. When a quiet run observes a *different* situation (e.g.
+  the incident resolved), that memory is cleared — so if the same condition
+  later recurs, it alerts again instead of being mistaken for a repeat. (This
+  memory is in-process only and resets when the runtime restarts.)
+
+The gate is **fail-open**: if the classification call errors, the result is
+delivered rather than dropped — and a run that ends in an error message skips
+the gate entirely, so failures are never silently swallowed. A suppressed run
+is still a full run — the task's last-run timestamp advances and a one-shot
+still deletes itself; only the message is withheld.
 
 ## Reliability
 
@@ -83,13 +113,19 @@ result.
   restarts** — on boot, the runtime reloads all active tasks and reschedules
   them.
 - One-shot tasks are removed once they run.
+- A run that is still executing when the task's next tick fires is not
+  overlapped: the new tick is skipped (and logged), never queued or run
+  concurrently.
 - Recurring tasks keep a consecutive-error count so a repeatedly failing task is
   visible rather than silently spinning.
 
 ## Heartbeat vs. scheduled task — which to use?
 
-- Use the **[heartbeat](heartbeat.md)** for ongoing *monitoring* where you only
-  want to hear about it when something's worth reporting — it has a built-in
-  DELIVER/SUPPRESS gate.
-- Use a **scheduled task** for *specific work at specific times* whose output you
-  always want — reports, reminders, periodic actions.
+Both stay quiet when there's nothing worth saying — they share the same
+DELIVER/SUPPRESS gate.
+
+- Use the **[heartbeat](heartbeat.md)** for the single standing *monitoring*
+  loop with its own configured checks and cadence.
+- Use a **scheduled task** for *specific work at specific times* — reports,
+  reminders, periodic actions. A task that asks for output unconditionally
+  always delivers.

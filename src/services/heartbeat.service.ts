@@ -11,15 +11,13 @@
  * - Fail-open: if the gate call fails, deliver the message
  */
 
-import { generateText } from 'ai';
 import { invoke } from '../invoke';
 import { AgentWorkspace } from '@prisma/client';
 import { messageDeliveryService } from './message-delivery.service';
-import { getClassificationModel } from '../lib/classification';
+import { runClassificationGate, isRecentDuplicate } from '../lib/classification-gate';
 import { agentStatusService } from './agent-status.service';
 import { slackMessageQueueService } from './slack-message-queue.service';
-
-import { trackEvent, langfuseTelemetry } from '../lib/telemetry';
+import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { formatTimeAgo } from '../prompts/context-builder';
 import { InvokeStep, SlackTriggerMessage } from '../types';
@@ -44,8 +42,6 @@ interface HeartbeatResult {
   shouldSkip: boolean;
   text: string;
 }
-
-const DUPLICATE_SUPPRESSION_HOURS = 24;
 
 // ============================================================================
 // Heartbeat Service
@@ -451,29 +447,18 @@ SUPPRESS if it:
 
 Respond with exactly one word: DELIVER or SUPPRESS`;
 
-    try {
-      const result = await generateText({
-        model: getClassificationModel(),
-        system: systemPrompt,
-        messages: [{ role: 'user' as const, content: `${lastAlertContext}\n\n## New Heartbeat Report\n${heartbeatResponse}` }],
-        maxOutputTokens: 10,
-        temperature: 0,
-        ...langfuseTelemetry('heartbeat-gate', { userId }),
-      });
-      const shouldDeliver = result.text.trim().toUpperCase().startsWith('DELIVER');
-      logger.info(`[Heartbeat:Gate] Decision: ${result.text.trim()} (deliver=${shouldDeliver})`);
-      return shouldDeliver;
-    } catch (error) {
-      logger.error({ err: error }, '[Heartbeat:Gate] Gate call failed, defaulting to deliver');
-      return true; // fail-open
-    }
+    return runClassificationGate({
+      system: systemPrompt,
+      user: `${lastAlertContext}\n\n## New Heartbeat Report\n${heartbeatResponse}`,
+      functionId: 'heartbeat-gate',
+      userId,
+      logLabel: 'Heartbeat:Gate',
+    });
   }
 
   private isDuplicate(state: HeartbeatState | undefined, alertText: string): boolean {
     if (!state?.lastAlertText || !state.lastAlertAt) return false;
-    const hoursSinceLast = (Date.now() - state.lastAlertAt) / (1000 * 60 * 60);
-    if (hoursSinceLast >= DUPLICATE_SUPPRESSION_HOURS) return false;
-    return alertText.trim() === state.lastAlertText.trim();
+    return isRecentDuplicate({ text: state.lastAlertText, at: state.lastAlertAt }, alertText);
   }
 
   private recordAlert(state: HeartbeatState | undefined, alertText: string): void {

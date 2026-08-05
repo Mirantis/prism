@@ -121,7 +121,7 @@ Bedrock identifiers** — same names, no `us.`/`eu.`/`global.` prefix.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `BEDROCK_MODEL_ID` | **(Bedrock)** Main model (the agent's reasoning loop) | `us.anthropic.claude-opus-5` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | **(Bedrock)** Fast model for the [heartbeat](heartbeat.md) DELIVER/SUPPRESS gate | a Claude Haiku model |
+| `BEDROCK_CLASSIFICATION_MODEL_ID` | **(Bedrock)** Fast model for the [heartbeat](heartbeat.md) and [scheduled-task](scheduled-tasks.md) DELIVER/SUPPRESS gate | a Claude Haiku model |
 | `BEDROCK_EMBEDDING_MODEL_ID` | **(Bedrock)** Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | **(Bedrock)** AWS region for Bedrock | `us-east-1` |
 | `AZURE_MODEL_ID` | **(Azure)** Main model — a Claude chat deployment name | `claude-opus-5` |
@@ -154,8 +154,8 @@ same ways — the Web UI Profile page or the TUI `/heartbeat-model` /
 `/cron-model` commands. Both default to empty and fall back to the main model
 (which in turn falls back to the active platform's main model), so you can run
 routine heartbeats on a cheaper model while chat stays on a stronger one. The
-heartbeat DELIVER/SUPPRESS gate always uses the active platform's
-classification model (`BEDROCK_CLASSIFICATION_MODEL_ID` on Bedrock,
+DELIVER/SUPPRESS gate (heartbeat and scheduled tasks) always uses the active
+platform's classification model (`BEDROCK_CLASSIFICATION_MODEL_ID` on Bedrock,
 `AZURE_CLASSIFICATION_MODEL_ID` on Azure,
 `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` on mantle), independent of this.
 

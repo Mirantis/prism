@@ -302,7 +302,7 @@ The runtime hosts one MCP server and connects to another externally:
 | **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, nexus token management, subagent relationships |
 | **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat timestamp, heartbeat status) |
 | **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats |
-| **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; manages cron task state directly via Prisma (list, update run timestamps, delete) |
+| **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; manages cron task state directly via Prisma (list, update run timestamps, delete); skips a tick that would overlap a still-running execution of the same task; runs each result through the instruction-aware DELIVER/SUPPRESS gate before delivering (empty results suppressed, error results bypass the gate and always deliver, in-memory per-task last-delivered baseline fed to the gate as context — cleared when a suppressed run observes a different situation so a recurrence re-alerts — fail-open) |
 | **SlackAdapterService** | `services/slack-adapter.service.ts` | Full Slack implementation: Bolt apps, Socket Mode, message handling, verification codes |
 | **SlackMappingService** | `services/slack-mapping.service.ts` | SlackMapping CRUD for user and channel mappings via Prisma |
 | **SlackMessageQueueService** | `services/slack-message-queue.service.ts` | Direct Prisma drain of pending Slack messages for heartbeat triggers |
@@ -372,6 +372,7 @@ src/
 │   │   └── bedrock-mantle/
 │   │       └── bedrock-mantle-provider.ts # Bedrock Mantle factory (Anthropic Messages surface only; bare model IDs, embeddings borrowed from bedrock-runtime): `createBedrockMantleProvider(baseURL?)`
 │   ├── classification.ts       # Classification-gate model factory (`getClassificationModel()`) + `getStructuredOutputOptions()`, the active vendor's `providerOptions` for `generateObject`
+│   ├── classification-gate.ts  # Shared one-word-verdict gate call (`runClassificationGate`) + `isRecentDuplicate`, used by the heartbeat and cron DELIVER/SUPPRESS gates
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
 │   └── prisma.ts               # Prisma client singleton (runtime database)
@@ -380,6 +381,7 @@ src/
 └── prompts/
     ├── context-builder.ts      # System prompt and message construction
     ├── channel-prompt.ts       # Channel-specific behavior instructions
+    ├── cron-prompt.ts          # Scheduled-task DELIVER/SUPPRESS gate prompt (instruction-aware) + gate user-message builder
     └── early-stopping-prompt.ts # Prompt for summarizing when step limit is reached
 ```
 
@@ -415,7 +417,7 @@ What the operator sets on `docker run`:
 | `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
 | `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | — |
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `us.anthropic.claude-opus-5` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat DELIVER/SUPPRESS) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat & scheduled-task DELIVER/SUPPRESS) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
 | `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-5` / `claude-haiku-4-5` |
 | `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (fail-open if absent; `''` to skip) | `text-embedding-3-small` |
@@ -551,7 +553,7 @@ messages into one provider-level user turn.
 
 ## Heartbeat/Cron Flow (In-Process)
 
-Heartbeat and cron services call `invoke()` (the drain wrapper) directly in-process, no HTTP. They need the **full aggregated response** before they can act — heartbeat runs its DELIVER/SUPPRESS classification gate over the complete text, and cron classifies the run outcome — so per-step streaming would not buy anything here. Structured budget metadata flows through as `InvokeResponse.error` (populated when any step carried `error: { type: 'budget_exceeded' }`).
+Heartbeat and cron services call `invoke()` (the drain wrapper) directly in-process, no HTTP. They need the **full aggregated response** before they can act — both run a DELIVER/SUPPRESS classification gate over the complete text (`lib/classification-gate.ts`; the cron gate is instruction-aware, see `prompts/cron-prompt.ts`) — so per-step streaming would not buy anything here. Structured budget metadata flows through as `InvokeResponse.error` (populated when any step carried `error: { type: 'budget_exceeded' }`).
 
 Results are delivered to users via local `messageDeliveryService.publishToActiveThread()`.
 
@@ -572,7 +574,7 @@ The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature
 
 ## LLM Error Handling
 
-`lib/llm-errors.ts#buildErrorStep(error)` is the **single owner** of LLM/runtime error → user-facing text. It distinguishes Nexus RFC 7807 `budget-exceeded` 429s (returns a friendly "spending limit reached" message and tags the step with `error: { type: 'budget_exceeded', detail }`) from generic errors (returns a "I encountered an error…" step with the response body's `detail` field when present). The SDK wraps retried failures with a `lastError` field — `buildErrorStep` unwraps it before classifying.
+`lib/llm-errors.ts#buildErrorStep(error)` is the **single owner** of LLM/runtime error → user-facing text. It distinguishes Nexus RFC 7807 `budget-exceeded` 429s (returns a friendly "spending limit reached" message and tags the step with `error: { type: 'budget_exceeded', detail }`) from generic errors (returns a "I encountered an error…" step tagged `error: { type: 'generic', detail }`, with the response body's `detail` field when present). The SDK wraps retried failures with a `lastError` field — `buildErrorStep` unwraps it before classifying. The cron scheduler uses the tag to route error results **around** the DELIVER/SUPPRESS gate: an error message is never "nothing to report", so it always delivers.
 
 It's used only inside `invokeStream()`'s catch paths (context-fetch failure, `generateText` rejection). Errors are pushed onto the step channel rather than thrown, so consumers don't need a separate error-handling path: chat just sees a final friendly step and delivers it; `invoke()` aggregates the text and surfaces the structured `error` field on `InvokeResponse` so heartbeat/cron can detect budget exhaustion programmatically.
 

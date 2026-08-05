@@ -245,7 +245,7 @@ describe('buildErrorStep', () => {
     expect(step.text).toContain('I encountered an error while processing your request');
     expect(step.text).toContain('Model timeout');
     expect(step.toolCalls).toEqual([]);
-    expect(step.error).toBeUndefined();
+    expect(step.error).toEqual({ type: 'generic', detail: null });
   });
 
   it('prefers the RFC 7807 detail over the raw error message for non-budget errors', () => {
@@ -264,7 +264,7 @@ describe('buildErrorStep', () => {
     const step = buildErrorStep('a string was thrown');
 
     expect(step.text).toContain('Unknown error');
-    expect(step.error).toBeUndefined();
+    expect(step.error).toEqual({ type: 'generic', detail: null });
   });
 
   it('logs the error message and responseBody on failure', () => {

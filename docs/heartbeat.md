@@ -52,6 +52,9 @@ The gate is **fail-open**: if the classification call itself errors, the message
 is delivered rather than dropped, so a transient failure never hides a real
 alert.
 
+[Scheduled tasks](scheduled-tasks.md#quiet-when-theres-nothing-to-report) run
+through the same gate, with the task's instruction as added context.
+
 ## Controlling the heartbeat
 
 | Where | How |
