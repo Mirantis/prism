@@ -3,14 +3,16 @@ import { Box, Text } from 'ink';
 import { Spinner } from './Spinner.js';
 
 interface Props {
-  /** True while a turn is in flight. */
+  /** True while an activity is in flight. */
   active: boolean;
-  /** Overrides the default "thinking…" text (e.g. "compacting conversation…"). */
-  label?: string;
+  /** What the spinner is doing, e.g. "thinking…" — the caller owns the wording. */
+  label: string;
 }
 
 /**
- * The in-flight indicator, on its own line above the composer.
+ * The in-flight indicator, on its own line above the composer: a spinner plus
+ * whatever activity label the caller passes (a chat turn thinking, a
+ * compaction running, …).
  *
  * It used to render *inside* the input box, in place of the text field — which is
  * what stopped a user from typing while the agent worked. It lives here so the
@@ -21,13 +23,13 @@ interface Props {
  * chat surface rather than the status bar because `--no-status-bar` would
  * otherwise hide both the spinner and the only "esc to stop" affordance.
  */
-export const ThinkingRow: React.FC<Props> = ({ active, label }) => {
+export const SpinnerRow: React.FC<Props> = ({ active, label }) => {
   return (
     <Box paddingX={2} minHeight={1}>
       {active && (
         <>
           <Spinner />
-          <Text dimColor italic> {label ?? 'thinking… (esc to stop · enter sends)'}</Text>
+          <Text dimColor italic> {label}</Text>
         </>
       )}
     </Box>

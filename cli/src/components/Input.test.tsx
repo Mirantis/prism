@@ -16,7 +16,7 @@ describe('Input', () => {
   it('stays live while the agent is responding', () => {
     // The composer has no disabled state: a draft typed mid-turn has to reach the
     // running turn, which is what makes steering possible from the terminal. The
-    // in-flight spinner lives in ThinkingRow, above this box.
+    // in-flight spinner lives in SpinnerRow, above this box.
     const { lastFrame, stdin } = render(
       <Input value="mid-turn" onChange={vi.fn()} onSubmit={vi.fn()} />,
     );

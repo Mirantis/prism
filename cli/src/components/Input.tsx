@@ -12,7 +12,7 @@ interface Props {
 /**
  * The composer. Live at all times — including while the agent is responding, so
  * a message typed mid-turn is handed to that turn and can redirect it (the
- * runtime decides; see `ThinkingRow` for the in-flight indicator that used to
+ * runtime decides; see `SpinnerRow` for the in-flight indicator that used to
  * sit here in the input's place).
  */
 export const Input: React.FC<Props> = ({ value, onChange, onSubmit, hideCursor }) => {

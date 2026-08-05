@@ -1,11 +1,13 @@
 import React from 'react';
 import { describe, it, expect } from 'vitest';
 import { render } from 'ink-testing-library';
-import { ThinkingRow } from './ThinkingRow.js';
+import { SpinnerRow } from './SpinnerRow.js';
 
-describe('ThinkingRow', () => {
-  it('shows the in-flight hint while a turn is running', () => {
-    const { lastFrame } = render(<ThinkingRow active />);
+describe('SpinnerRow', () => {
+  it('shows the caller-provided label while active', () => {
+    const { lastFrame } = render(
+      <SpinnerRow active label="thinking… (esc to stop · enter sends)" />,
+    );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('thinking');
     expect(frame).toContain('esc to stop');
@@ -14,7 +16,7 @@ describe('ThinkingRow', () => {
   });
 
   it('keeps its line when idle so the composer does not jump', () => {
-    const { lastFrame } = render(<ThinkingRow active={false} />);
+    const { lastFrame } = render(<SpinnerRow active={false} label="thinking…" />);
     const frame = lastFrame() ?? '';
     expect(frame).not.toContain('thinking');
     // One reserved (blank) line rather than nothing at all.

@@ -2,16 +2,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Text, useApp, useInput } from 'ink';
 import {
   tuiAdapterService,
-  CompactionEvent,
   ContextUsage,
   ThreadSummary,
   TuiMessage,
   TuiStatus,
 } from './tui-adapter.js';
+import { useCompaction } from './hooks/use-compaction.js';
 import { Header } from './components/Header.js';
 import { MessageList, ChatEntry } from './components/MessageList.js';
 import { Input } from './components/Input.js';
-import { ThinkingRow } from './components/ThinkingRow.js';
+import { SpinnerRow } from './components/SpinnerRow.js';
 import { StatusBar } from './components/StatusBar.js';
 import { CommandPopup, PopupItem } from './components/CommandPopup.js';
 import { SchedulesPanel } from './components/SchedulesPanel.js';
@@ -60,10 +60,6 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   const [statusDetail, setStatusDetail] = useState<string | undefined>(undefined);
   // Context-window occupancy for the active thread, pushed by the runtime.
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
-  // A compaction is running for the active thread (auto post-turn or /compact).
-  // Shown as a label on the ThinkingRow — compaction runs outside a chat turn,
-  // so the ordinary thinking spinner is idle while it works.
-  const [compacting, setCompacting] = useState(false);
   // The adapter subscription below is bound once ([] deps), so it can't read
   // `activeThreadId` directly without freezing the first render's value.
   const activeThreadIdRef = useRef(activeThreadId);
@@ -210,28 +206,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     ]);
   }, []);
 
-  // Compaction progress for the session's thread: spinner label while it runs,
-  // a SYSTEM line when it ends. Same thread-filter posture as onContextUsage —
-  // accept frames until the active thread id is known. Auto-compaction failures
-  // stay silent (the user never asked; server logs carry them).
-  useEffect(() => {
-    const onCompaction = (event: CompactionEvent) => {
-      if (activeThreadIdRef.current !== undefined && event.threadId !== activeThreadIdRef.current) {
-        return;
-      }
-      setCompacting(event.status === 'started');
-      if (event.status === 'completed') {
-        const n = event.messagesCompacted ?? 0;
-        appendSystemMessage(`Conversation compacted — ${n} older message${n === 1 ? '' : 's'} summarized.`);
-      } else if (event.status === 'failed' && event.trigger === 'manual') {
-        appendSystemMessage(`Compaction failed: ${event.error ?? 'unknown error'}`);
-      }
-    };
-    tuiAdapterService.events.on('compaction', onCompaction);
-    return () => {
-      tuiAdapterService.events.off('compaction', onCompaction);
-    };
-  }, [appendSystemMessage]);
+  // A compaction is running for the active thread (auto post-turn or /compact).
+  // Shown as the spinner-row label — compaction runs outside a chat turn, so
+  // the ordinary thinking spinner is idle while it works.
+  const compacting = useCompaction(activeThreadId, appendSystemMessage);
 
   // Centralized shutdown trigger shared by Ctrl+C and the /exit command.
   // Only flips state here; the effect below calls Ink's `exit()` AFTER the
@@ -534,9 +512,13 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
               </Text>
             </Box>
           )}
-          <ThinkingRow
+          <SpinnerRow
             active={status === 'thinking' || compacting}
-            label={status === 'thinking' ? undefined : 'compacting conversation…'}
+            label={
+              status === 'thinking'
+                ? 'thinking… (esc to stop · enter sends)'
+                : 'compacting conversation…'
+            }
           />
           <Input
             key={inputResetKey}
