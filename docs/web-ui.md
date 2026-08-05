@@ -49,10 +49,12 @@ The main conversation surface.
   code blocks with highlighting, links). Files the agent shares back appear as
   downloadable chips.
 - **Threads.** Each conversation is a thread. Recent threads are listed in the
-  sidebar under **Chat** (newest first); click one to reopen it. The thread ID
-  is in the URL (`/chat/<threadId>`), so conversations are deep-linkable. A new
-  thread is created automatically on your first message, and gets an
-  auto-generated title once it has content.
+  sidebar under **Chat** (newest first); click one to reopen it. Start a fresh
+  conversation with the pen button next to the **Recents** heading — clicking
+  it again while the new thread is still empty reuses that thread instead of
+  piling up empty ones. The thread ID is in the URL (`/chat/<threadId>`), so
+  conversations are deep-linkable. A new thread is also created automatically
+  on your first message, and gets an auto-generated title once it has content.
 - **Connection status.** A small indicator shows the live WebSocket connection
   state (connected / connecting / disconnected / error); it reconnects
   automatically.

@@ -57,3 +57,22 @@ Feature: Recents conversation list
     Then the Recents header is visible
     When I navigate to the profile page
     Then the Recents header is hidden
+
+  Scenario: The new conversation button creates a fresh thread and opens it
+    Given an older conversation thread rooted at "/work/project-one" containing "hello from project one"
+    When I navigate to the agent chat page
+    Then I should see the message "hello from project one" in the conversation
+    When I click the new conversation button
+    Then the URL is a chat thread URL
+    And I should not see the message "hello from project one" in the conversation
+    And the agent has 2 stored conversation threads
+    And the Recents list has 2 conversations
+
+  Scenario: The new conversation button does not stack empty threads
+    Given an older conversation thread rooted at "/work/project-one" containing "hello from project one"
+    When I navigate to the agent chat page
+    And I click the new conversation button
+    # Wait for the first thread to land in Recents before clicking again.
+    And the Recents list has 2 conversations
+    And I click the new conversation button
+    Then the agent has 2 stored conversation threads

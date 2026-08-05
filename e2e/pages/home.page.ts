@@ -17,6 +17,8 @@ export class HomePage extends BasePage {
   readonly recentsSection: Locator;
   /** Each conversation row in the Recents list. */
   readonly recentThreads: Locator;
+  /** "New conversation" pen icon button next to the Recents label. */
+  readonly newThreadButton: Locator;
   /** Slash-command suggestion popup shown above the composer when "/" is typed. */
   readonly commandPopup: Locator;
   /** Individual rows in the command popup. */
@@ -32,6 +34,7 @@ export class HomePage extends BasePage {
     this.fileInput = page.locator('input[type="file"]');
     this.recentsSection = page.getByTestId('recents');
     this.recentThreads = page.getByTestId('recent-thread');
+    this.newThreadButton = page.getByTestId('new-thread');
     this.commandPopup = page.getByTestId('command-popup');
     this.commandPopupItems = page.getByTestId('command-popup-item');
   }

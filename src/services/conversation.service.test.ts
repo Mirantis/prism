@@ -25,6 +25,7 @@ const { mockPrisma } = vi.hoisted(() => ({
       create: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      count: vi.fn(),
       upsert: vi.fn(),
     },
     conversationMessage: {
@@ -32,6 +33,7 @@ const { mockPrisma } = vi.hoisted(() => ({
       create: vi.fn(),
       aggregate: vi.fn(),
       updateMany: vi.fn(),
+      count: vi.fn(),
     },
     slackMapping: {
       findFirst: vi.fn(),
@@ -223,6 +225,83 @@ describe('ConversationService', () => {
       expect(mockPrisma.conversationThread.create).toHaveBeenCalledWith({
         data: { agentId: 'agent-123', userId: 'user-123' },
       });
+    });
+  });
+
+  // ==========================================================================
+  // Get or create a fresh thread (web "new conversation" button)
+  // ==========================================================================
+
+  // Reuse is gated on `conversationMessage.count` — the thread row itself
+  // carries no message count, so that mock is what decides these cases.
+  describe('getOrCreateFreshThread', () => {
+    it('reuses the newest thread when it is untouched', async () => {
+      const untouched = createTestThread({ id: 'thread-empty', workspaceRoot: null });
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(untouched);
+      mockPrisma.conversationMessage.count.mockResolvedValue(0);
+
+      const result = await conversationService.getOrCreateFreshThread('agent-123', 'user-123');
+
+      expect(result.id).toBe('thread-empty');
+      expect(mockPrisma.conversationThread.findFirst).toHaveBeenCalledWith({
+        where: {
+          agentId: 'agent-123',
+          userId: 'user-123',
+          externalThreadId: null,
+          threadSource: 'DATABASE',
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(mockPrisma.conversationMessage.count).toHaveBeenCalledWith({
+        where: { threadId: 'thread-empty' },
+      });
+      expect(mockPrisma.conversationThread.create).not.toHaveBeenCalled();
+    });
+
+    it('creates a new thread when the newest one has messages', async () => {
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(
+        createTestThread({ workspaceRoot: null }),
+      );
+      mockPrisma.conversationMessage.count.mockResolvedValue(3);
+      mockPrisma.conversationThread.create.mockResolvedValue(
+        createTestThread({ id: 'thread-new' }),
+      );
+
+      const result = await conversationService.getOrCreateFreshThread('agent-123', 'user-123');
+
+      expect(result.id).toBe('thread-new');
+      expect(mockPrisma.conversationThread.create).toHaveBeenCalledWith({
+        data: { agentId: 'agent-123', userId: 'user-123' },
+      });
+    });
+
+    it('never reuses a workspace-rooted thread, even an empty one', async () => {
+      // The CLI creates a workspace-rooted thread on every launch; handing that
+      // session's thread to the web would make them share it. The guard
+      // short-circuits, so the count is never even queried.
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(
+        createTestThread({ workspaceRoot: '/home/me/project' }),
+      );
+      mockPrisma.conversationMessage.count.mockResolvedValue(0);
+      mockPrisma.conversationThread.create.mockResolvedValue(
+        createTestThread({ id: 'thread-new' }),
+      );
+
+      const result = await conversationService.getOrCreateFreshThread('agent-123', 'user-123');
+
+      expect(result.id).toBe('thread-new');
+      expect(mockPrisma.conversationMessage.count).not.toHaveBeenCalled();
+    });
+
+    it('creates a new thread when none exists', async () => {
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
+      mockPrisma.conversationThread.create.mockResolvedValue(
+        createTestThread({ id: 'thread-new' }),
+      );
+
+      const result = await conversationService.getOrCreateFreshThread('agent-123', 'user-123');
+
+      expect(result.id).toBe('thread-new');
     });
   });
 

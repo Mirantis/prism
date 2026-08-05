@@ -151,6 +151,37 @@ class ConversationService {
   }
 
   /**
+   * Start a fresh conversation, reusing the newest thread when it is still
+   * untouched (zero messages) so repeated "new conversation" clicks don't pile
+   * up empty threads. Threads rooted in a workspace are never reused — the CLI
+   * creates one (with a workspaceRoot) on every launch, and handing that
+   * session's thread to the web would make them share it.
+   */
+  async getOrCreateFreshThread(agentId: string, userId: string): Promise<ConversationThread> {
+    const newest = await prisma.conversationThread.findFirst({
+      where: {
+        agentId,
+        userId,
+        externalThreadId: null,
+        threadSource: ThreadSource.DATABASE,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Counted separately rather than via `include: { _count: … }` on the query
+    // above: that would attach a `_count` field to the returned row, so a reused
+    // thread and a newly created one would serialize to different shapes.
+    if (newest && !newest.workspaceRoot) {
+      const messageCount = await prisma.conversationMessage.count({
+        where: { threadId: newest.id },
+      });
+      if (messageCount === 0) return newest;
+    }
+
+    return this.startNewThread(agentId, userId);
+  }
+
+  /**
    * Read a thread's persisted workspace root (the directory it's rooted in),
    * or null if unset. Used by the conversation engine to scope shell tools to
    * the thread's workspace when one was recorded at creation.
