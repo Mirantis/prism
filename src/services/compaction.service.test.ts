@@ -248,7 +248,12 @@ describe('the forked summarize request', () => {
       ...fork.messages,
       { role: 'user', content: 'mid-turn steer' },
       { role: 'assistant', content: 'final answer' },
-      { role: 'user', content: COMPACTION_PROMPT },
+      {
+        role: 'user',
+        content: COMPACTION_PROMPT,
+        // The final-message breakpoint is what cache-reads the turn's history.
+        providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      },
     ]);
   });
 
@@ -264,7 +269,14 @@ describe('the forked summarize request', () => {
     compactionService.maybeAutoCompact(fork);
     await flushAuto();
     const { messages } = mockGenerateText.mock.calls[0][0];
-    expect(messages).toEqual([...fork.messages, { role: 'user', content: COMPACTION_PROMPT }]);
+    expect(messages).toEqual([
+      ...fork.messages,
+      {
+        role: 'user',
+        content: COMPACTION_PROMPT,
+        providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      },
+    ]);
   });
 });
 
