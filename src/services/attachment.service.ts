@@ -455,6 +455,43 @@ class AttachmentService {
     return result.count;
   }
 
+  /**
+   * One-time (idempotent) migration of legacy BLOB rows to media files. Runs
+   * at every boot; a fully-migrated database matches zero rows and no-ops.
+   *
+   * One row at a time on purpose — bounds memory at one file (≤10 MB) instead
+   * of loading every BLOB at once. Per row: write the file, then a single
+   * UPDATE sets storagePath and clears the BLOB (atomic in SQLite, so there is
+   * no state with the content in neither place). A failed row keeps its BLOB —
+   * it still serves through loadBytes() and retries next boot. Never throws:
+   * an unmigrated row is fully functional, just legacy-shaped.
+   */
+  async backfillBlobsToFiles(): Promise<{ migrated: number; failed: number }> {
+    const candidates = await prisma.messageAttachment.findMany({
+      where: { storagePath: null, data: { not: null } },
+      select: { id: true },
+    });
+    let migrated = 0;
+    let failed = 0;
+    for (const { id } of candidates) {
+      try {
+        const row = await prisma.messageAttachment.findUnique({ where: { id } });
+        if (!row?.data) continue; // raced away (deleted or already migrated)
+        const bytes = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
+        const storagePath = await writeMediaFile(id, row.filename, bytes);
+        await prisma.messageAttachment.update({
+          where: { id },
+          data: { storagePath, data: null },
+        });
+        migrated++;
+      } catch (err) {
+        failed++;
+        logger.error({ err }, `[Attachments] backfill failed for ${id}; BLOB kept`);
+      }
+    }
+    return { migrated, failed };
+  }
+
   /** Reap abandoned pre-send uploads that never got linked to a message. */
   async deleteOrphans(olderThanMs: number): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanMs);
