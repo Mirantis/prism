@@ -126,11 +126,13 @@ decides how to consume the file using two tools:
   are automatically reaped by an hourly janitor. RBAC-scoped: only attachments
   belonging to the caller's own conversation thread are accessible.
 
-- **view_attachment** — pulls an **image** (PNG, JPEG, GIF, WebP) into the
-  model's context for visual inspection without writing to disk. Not
-  auto-inlined — the agent invokes this on demand when it needs to "look" at a
-  picture. Images larger than ~3.75 MB should be hydrated instead. For PDFs,
-  hydrate + `pdftotext` is the correct path.
+- **view_attachment** — pulls an **image** (PNG, JPEG, GIF, WebP) or a **PDF**
+  into the model's context without writing to disk: images for visual
+  inspection, PDFs as documents the model reads directly (layout, tables, and
+  embedded images included — richer than a `pdftotext` dump). Not auto-inlined
+  — the agent invokes this on demand. Images larger than ~3.75 MB should be
+  hydrated instead; `pdftotext` via hydrate remains the fallback for oversized
+  PDFs.
 
 **Retention:** attachment content is kept for **7 days** (168 hours,
 configurable via `ATTACHMENT_TTL_HOURS` — see

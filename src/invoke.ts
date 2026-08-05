@@ -123,6 +123,14 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     const model = provider(modelId);
     const cachePoint = provider.cachePoint;
 
+    // Messages a tool asked to append to the running conversation — today
+    // only view_attachment on a PDF, whose document block is only legal in a
+    // user message (the Bedrock Converse converter throws on file content in
+    // a tool result). Queued here, drained into `injections` at the next step
+    // boundary (prepareStep below), so the document lands right after the
+    // tool result that requested it.
+    const pendingAttachmentInjections: ModelMessage[] = [];
+
     // 4. Collect tools (see lib/tool-collection.ts).
     const { tools, subagents } = await collectTools({
       userId: request.userId,
@@ -133,6 +141,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       originChannelId: request.originChannelId,
       workspaceRoot: request.workspaceRoot,
       taskInvoker: invoke,
+      registerAttachmentInjection: (message) => pendingAttachmentInjections.push(message),
     });
 
     // 5. Wrap tools with output limits, lifecycle events, and cache control
@@ -273,6 +282,14 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           });
         }
 
+        // Documents view_attachment registered since the last step boundary —
+        // pinned at this step's tail so each lands right after the tool
+        // result that attached it, then re-spliced every later step like any
+        // other injection.
+        for (const message of pendingAttachmentInjections.splice(0)) {
+          injections.push({ at: stepMessages.length, message });
+        }
+
         // Splice highest index first so each injection lands before the
         // step-message it was recorded against, unshifted by the others.
         const merged = [...stepMessages];
@@ -365,10 +382,14 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         // Mid-turn steering messages ride along in arrival order: they were
         // part of this turn's conversation, but `summarizeSteps` only collapses
         // the model's own steps, so without this the summary would answer the
-        // original prompt and silently ignore what the user said since.
+        // original prompt and silently ignore what the user said since. The
+        // pending-injection drain covers a document viewed on the very step
+        // that hit the limit — no prepareStep ran after it, so it would
+        // otherwise vanish from the summary call.
         const summaryMessages: ModelMessage[] = [
           ...messages,
           ...injections.map((i) => i.message),
+          ...pendingAttachmentInjections.splice(0),
           { role: 'assistant' as const, content: assistantText },
           { role: 'user' as const, content: EARLY_STOPPING_PROMPT },
         ];

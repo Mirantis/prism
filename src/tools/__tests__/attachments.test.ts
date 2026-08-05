@@ -257,7 +257,7 @@ describe('runViewAttachment', () => {
     });
   });
 
-  it('returns success with base64 data for an image attachment (happy path)', async () => {
+  it('returns metadata (never bytes) for an image attachment (happy path)', async () => {
     const data = Buffer.from('fake-png-bytes');
     getByIdSpy.mockResolvedValue(makeRow({
       data,
@@ -274,11 +274,15 @@ describe('runViewAttachment', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
 
+    expect(result.attachmentId).toBe(ATTACHMENT_ID);
     expect(result.filename).toBe('screenshot.png');
     expect(result.mediaType).toBe('image/png');
     expect(result.category).toBe('image');
     expect(result.sizeBytes).toBe(data.length);
-    expect(result.data).toBe(data.toString('base64'));
+    expect(result.note).toContain('screenshot.png');
+    // Bytes stay out of the execute() result — it's persisted verbatim into
+    // the ToolCallRecord; the image rides toModelOutput instead.
+    expect(result).not.toHaveProperty('data');
 
     expect(trackEvent).toHaveBeenCalledWith('attachment viewed', USER_ID, {
       'agent.id': AGENT_ID,
@@ -335,7 +339,7 @@ describe('runViewAttachment', () => {
     });
   });
 
-  it('returns failure for PDF attachments directing to hydrate', async () => {
+  it('directs PDFs to hydrate when no injection registrar is available', async () => {
     getByIdSpy.mockResolvedValue(makeRow({
       mediaType: 'application/pdf',
       filename: 'doc.pdf',
@@ -348,13 +352,123 @@ describe('runViewAttachment', () => {
 
     expect(result.success).toBe(false);
     if (result.success) return;
-    expect(result.error).toContain('pdftotext');
     expect(result.error).toContain('hydrate_attachment');
 
     expect(trackEvent).toHaveBeenCalledWith('attachment view failed', USER_ID, {
       'agent.id': AGENT_ID,
       'attachment.id': ATTACHMENT_ID,
     });
+  });
+
+  it('attaches a PDF as a user-message document via the injection registrar', async () => {
+    const data = Buffer.from('%PDF-1.7 fake');
+    getByIdSpy.mockResolvedValue(makeRow({
+      mediaType: 'application/pdf',
+      filename: 'report.pdf',
+      data,
+      sizeBytes: data.length,
+    }));
+    const registered: unknown[] = [];
+    const ctx = {
+      registerInjection: (m: unknown) => registered.push(m),
+      injectedDocumentIds: new Set<string>(),
+    };
+
+    const result = await runViewAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, THREAD_ID, ctx,
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.category).toBe('pdf');
+    expect(result.note).toContain('report.pdf');
+    expect(result).not.toHaveProperty('data');
+
+    expect(registered).toHaveLength(1);
+    expect(registered[0]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'file', data, mediaType: 'application/pdf', filename: 'report.pdf' },
+        { type: 'text', text: expect.stringContaining('report.pdf') },
+      ],
+    });
+
+    expect(trackEvent).toHaveBeenCalledWith('attachment viewed', USER_ID, {
+      'agent.id': AGENT_ID,
+      'attachment.id': ATTACHMENT_ID,
+      'attachment.category': 'pdf',
+      'attachment.media_type': 'application/pdf',
+      'attachment.size_bytes': String(data.length),
+    });
+  });
+
+  it('does not re-inject a PDF already attached in this invocation', async () => {
+    const data = Buffer.from('%PDF-1.7 fake');
+    getByIdSpy.mockResolvedValue(makeRow({
+      mediaType: 'application/pdf',
+      filename: 'report.pdf',
+      data,
+      sizeBytes: data.length,
+    }));
+    const registered: unknown[] = [];
+    const ctx = {
+      registerInjection: (m: unknown) => registered.push(m),
+      injectedDocumentIds: new Set<string>(),
+    };
+
+    const first = await runViewAttachment({ attachmentId: ATTACHMENT_ID }, USER_ID, AGENT_ID, THREAD_ID, ctx);
+    const second = await runViewAttachment({ attachmentId: ATTACHMENT_ID }, USER_ID, AGENT_ID, THREAD_ID, ctx);
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    if (!second.success) return;
+    expect(second.note).toContain('already attached');
+    // Only the first call injected — the document is re-spliced every step
+    // anyway, so a second copy would just burn tokens.
+    expect(registered).toHaveLength(1);
+  });
+
+  it('rejects an oversized PDF with a hydrate hint', async () => {
+    getByIdSpy.mockResolvedValue(makeRow({
+      mediaType: 'application/pdf',
+      filename: 'huge.pdf',
+      sizeBytes: 11 * 1024 * 1024,
+    }));
+    const ctx = { registerInjection: () => {}, injectedDocumentIds: new Set<string>() };
+
+    const result = await runViewAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, THREAD_ID, ctx,
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toContain('size limit');
+    expect(result.error).toContain('pdftotext');
+  });
+
+  it('returns an expired error for a PDF whose content is gone', async () => {
+    getByIdSpy.mockResolvedValue(makeRow({
+      mediaType: 'application/pdf',
+      filename: 'gone.pdf',
+      data: null as unknown as Buffer,
+    }));
+    const registered: unknown[] = [];
+    const ctx = {
+      registerInjection: (m: unknown) => registered.push(m),
+      injectedDocumentIds: new Set<string>(),
+    };
+
+    const result = await runViewAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, THREAD_ID, ctx,
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toContain('expired');
+    expect(registered).toHaveLength(0);
   });
 
   it('returns failure for non-viewable types (e.g. application/zip)', async () => {
@@ -380,39 +494,72 @@ describe('runViewAttachment', () => {
 });
 
 describe('view_attachment toModelOutput', () => {
-  it('returns content with image-data part on success', async () => {
+  let getByIdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    getByIdSpy = vi.spyOn(attachmentService, 'getById');
+  });
+
+  afterEach(() => {
+    getByIdSpy.mockRestore();
+  });
+
+  function viewTool() {
     const tools = getAttachmentTools(USER_ID, AGENT_ID, THREAD_ID, '/tmp');
-    const viewTool = tools.view_attachment as { toModelOutput: (opts: { output: unknown }) => Promise<unknown> };
+    return tools.view_attachment as { toModelOutput: (opts: { output: unknown }) => Promise<unknown> };
+  }
 
-    const successOutput = {
-      success: true,
-      filename: 'photo.jpg',
-      mediaType: 'image/jpeg',
-      sizeBytes: 100,
-      category: 'image',
-      data: 'aGVsbG8=', // base64 of "hello"
-    };
+  const imageOutput = {
+    success: true,
+    attachmentId: ATTACHMENT_ID,
+    filename: 'photo.jpg',
+    mediaType: 'image/jpeg',
+    sizeBytes: 5,
+    category: 'image',
+    note: 'Image "photo.jpg" is attached to this tool result.',
+  };
 
-    const modelOutput = await viewTool.toModelOutput({ output: successOutput });
+  it('loads the bytes at conversion time and returns an image-data part', async () => {
+    getByIdSpy.mockResolvedValue(makeRow({ mediaType: 'image/jpeg', data: Buffer.from('hello') }));
+
+    const modelOutput = await viewTool().toModelOutput({ output: imageOutput });
     expect(modelOutput).toEqual({
       type: 'content',
       value: [
         { type: 'text', text: '[Viewing photo.jpg]' },
-        { type: 'image-data', data: 'aGVsbG8=', mediaType: 'image/jpeg' },
+        { type: 'image-data', data: Buffer.from('hello').toString('base64'), mediaType: 'image/jpeg' },
       ],
     });
   });
 
-  it('returns text on failure', async () => {
-    const tools = getAttachmentTools(USER_ID, AGENT_ID, THREAD_ID, '/tmp');
-    const viewTool = tools.view_attachment as { toModelOutput: (opts: { output: unknown }) => Promise<unknown> };
+  it('degrades to text when the content expired between call and conversion', async () => {
+    getByIdSpy.mockResolvedValue(makeRow({ mediaType: 'image/jpeg', data: null as unknown as Buffer }));
 
+    const modelOutput = await viewTool().toModelOutput({ output: imageOutput });
+    expect(modelOutput).toEqual({
+      type: 'text',
+      value: 'The content of "photo.jpg" is no longer available (expired).',
+    });
+  });
+
+  it('returns the note as text for a PDF result (document rode the injection)', async () => {
+    const modelOutput = await viewTool().toModelOutput({
+      output: { ...imageOutput, category: 'pdf', note: 'Attached "photo.jpg" to the conversation.' },
+    });
+    expect(modelOutput).toEqual({
+      type: 'text',
+      value: 'Attached "photo.jpg" to the conversation.',
+    });
+    expect(getByIdSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns text on failure', async () => {
     const failureOutput = {
       success: false,
       error: 'Attachment not found.',
     };
 
-    const modelOutput = await viewTool.toModelOutput({ output: failureOutput });
+    const modelOutput = await viewTool().toModelOutput({ output: failureOutput });
     expect(modelOutput).toEqual({
       type: 'text',
       value: 'Attachment not found.',

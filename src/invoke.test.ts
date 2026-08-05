@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createTestInvokeRequest, createTestAgentContext } from './test-utils/factories';
+import { attachmentService } from './services/attachment.service';
 
 const {
   mockGenerateText,
@@ -1568,6 +1569,108 @@ describe('invoke', () => {
       const contents = summaryCall.messages.map((m: { content: unknown }) => m.content);
       expect(contents).toContain('stop after this one');
       expect(summaryCall.messages.at(-1)).toMatchObject({ role: 'user' });
+    });
+  });
+
+  describe('view_attachment document injection', () => {
+    const pdfBytes = Buffer.from('%PDF-1.7 test');
+    const pdfRow = {
+      id: 'att-9',
+      messageId: 'msg-1',
+      threadId: 'thread-1',
+      filename: 'spec.pdf',
+      mediaType: 'application/pdf',
+      sizeBytes: pdfBytes.length,
+      category: 'pdf',
+      data: pdfBytes,
+      storagePath: null,
+      source: 'web',
+      slackFileId: null,
+      externalTs: null,
+      createdAt: new Date(),
+    };
+
+    it('lands a viewed PDF as a user message at the next step boundary and keeps it there', async () => {
+      const getByIdSpy = vi.spyOn(attachmentService, 'getById').mockResolvedValue(pdfRow);
+      try {
+        await invoke(createTestInvokeRequest({ prompt: 'read the doc', threadId: 'thread-1' }));
+
+        const callArgs = mockGenerateText.mock.calls[0][0];
+        const viewResult = await callArgs.tools.view_attachment.execute(
+          { attachmentId: 'att-9' },
+          { toolCallId: 't1', messages: [] },
+        );
+        expect(viewResult).toMatchObject({ success: true, category: 'pdf' });
+
+        const step = [
+          { role: 'user', content: 'read the doc' },
+          { role: 'assistant', content: [{ type: 'tool-call' }] },
+          { role: 'tool', content: [{ type: 'tool-result' }] },
+        ];
+        const result = await callArgs.prepareStep({ messages: step });
+
+        // The document rides a user message right after the tool result that
+        // requested it — Bedrock's Converse converter rejects file content
+        // inside tool results, so this is the only provider-safe placement.
+        expect(result.messages).toHaveLength(4);
+        expect(result.messages[3].role).toBe('user');
+        expect(result.messages[3].content[0]).toMatchObject({
+          type: 'file',
+          mediaType: 'application/pdf',
+          filename: 'spec.pdf',
+        });
+
+        // Re-spliced at the same position on later steps, like steering.
+        const later = await callArgs.prepareStep({
+          messages: [...step, { role: 'assistant', content: 'reading' }],
+        });
+        expect(later.messages[3].content[0]).toMatchObject({ type: 'file' });
+        expect(later.messages[4]).toMatchObject({ role: 'assistant' });
+      } finally {
+        getByIdSpy.mockRestore();
+      }
+    });
+
+    it('carries a document viewed on the limit-hitting step into the summary call', async () => {
+      const getByIdSpy = vi.spyOn(attachmentService, 'getById').mockResolvedValue(pdfRow);
+      mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'go' }]);
+
+      let calls = 0;
+      mockGenerateText.mockImplementation(async (args: {
+        tools?: Record<string, { execute: (input: unknown, opts: unknown) => Promise<unknown> }>;
+      }) => {
+        calls += 1;
+        if (calls > 1) {
+          return { text: 'summary', steps: [{ text: 'summary', toolCalls: [], toolResults: [] }] };
+        }
+        // The tool fires on the very last step — no prepareStep runs after it,
+        // so only the summary-path drain can pick the document up.
+        await args.tools!.view_attachment.execute(
+          { attachmentId: 'att-9' },
+          { toolCallId: 't1', messages: [] },
+        );
+        return {
+          text: '',
+          steps: Array.from({ length: 100 }, () => ({ text: '', toolCalls: [], toolResults: [] })),
+        };
+      });
+
+      try {
+        await invoke(createTestInvokeRequest({ prompt: 'go', threadId: 'thread-1' }));
+
+        expect(mockGenerateText).toHaveBeenCalledTimes(2);
+        const summaryCall = mockGenerateText.mock.calls[1][0];
+        const fileCarrier = summaryCall.messages.find(
+          (m: { role: string; content: unknown }) =>
+            Array.isArray(m.content) &&
+            (m.content as Array<{ type?: string }>).some((p) => p.type === 'file'),
+        );
+        expect(fileCarrier).toBeDefined();
+        expect(fileCarrier.role).toBe('user');
+        expect(summaryCall.messages.at(-1)).toMatchObject({ role: 'user' });
+      } finally {
+        getByIdSpy.mockRestore();
+      }
     });
   });
 
