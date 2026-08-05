@@ -123,10 +123,10 @@ export class SlackThreadProvider implements ThreadMessageProvider {
   /**
    * Resolve thread metadata, fetch from Slack API, and map to ConversationMessage format.
    *
-   * The model-fidelity view (no `excludeInternal`) also merges the thread's
-   * concise-mode internal steps — AGENT rows persisted for replay but never
-   * posted to Slack, so absent from the live `conversations.replies` read. The
-   * client view (`excludeInternal`) skips that merge.
+   * The model view (the default) also merges the thread's concise-mode
+   * internal steps — AGENT rows persisted for replay but never posted to
+   * Slack, so absent from the live `conversations.replies` read. The client
+   * view (`view: 'client'`) skips that merge.
    */
   private async fetchSlackMessages(threadId: string, opts?: MessageReadOptions): Promise<ConversationMessage[]> {
     const thread = await prisma.conversationThread.findUnique({
@@ -154,7 +154,8 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     // into the thread's compaction summary, so the live read skips them (and
     // usually collapses to a single page). The client view stays unwindowed —
     // compaction only changes what the model sees.
-    const compactedThroughTs = opts?.excludeInternal ? null : thread.compactedThroughTs;
+    const clientView = opts?.view === 'client';
+    const compactedThroughTs = clientView ? null : thread.compactedThroughTs;
 
     const [rawMessages, { contentByTs, toolCallsByTs, createdAtByTs }] = await Promise.all([
       this.fetchAllReplies(channelId, threadTs, teamId, compactedThroughTs ?? undefined),
@@ -170,7 +171,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       createdAtByTs,
     );
 
-    if (opts?.excludeInternal) return slackDerived;
+    if (clientView) return slackDerived;
 
     // Model view: interleave the persisted internal steps. Both the internal rows
     // and (via createdAtByTs) our own delivered replies are ordered by our DB

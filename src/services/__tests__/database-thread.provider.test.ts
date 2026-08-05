@@ -34,7 +34,7 @@ describe('DatabaseThreadProvider views', () => {
   });
 
   it('client view keeps compacted rows and hides internal steps', async () => {
-    await provider.getMessages('t1', { excludeInternal: true });
+    await provider.getMessages('t1', { view: 'client' });
 
     expect(mockFindMany).toHaveBeenCalledWith({
       where: { threadId: 't1', internalStep: false },
@@ -50,7 +50,7 @@ describe('DatabaseThreadProvider views', () => {
       take: 5,
     });
 
-    await provider.getRecentMessages('t1', 5, { excludeInternal: true });
+    await provider.getRecentMessages('t1', 5, { view: 'client' });
     expect(mockFindMany).toHaveBeenLastCalledWith({
       where: { threadId: 't1', internalStep: false },
       orderBy: { createdAt: 'desc' },
