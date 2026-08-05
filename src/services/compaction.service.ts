@@ -173,7 +173,10 @@ class CompactionService {
       void threadTurnService
         .run(fork.threadId, () => this.runAutoCompaction(fork))
         .catch((err) => {
+          // The runner handles its own failures; this catch only sees
+          // mutex-level ones, so the failed event has no other emitter.
           logger.error({ err, threadId: fork.threadId }, '[Compaction] auto-compaction failed');
+          this.fail(fork.userId, fork.agentId, fork.threadId, 'auto', errorText(err));
         })
         .finally(() => this.inFlight.delete(fork.threadId));
     } catch (err) {
@@ -201,7 +204,10 @@ class CompactionService {
       void threadTurnService
         .run(fork.threadId, () => this.runOverflowCompaction(fork))
         .catch((err) => {
+          // The runner handles its own failures; this catch only sees
+          // mutex-level ones, so the failed event has no other emitter.
           logger.error({ err, threadId: fork.threadId }, '[Compaction] overflow compaction failed');
+          this.fail(fork.userId, fork.agentId, fork.threadId, 'auto', errorText(err));
         })
         .finally(() => this.inFlight.delete(fork.threadId));
     } catch (err) {
@@ -331,7 +337,9 @@ class CompactionService {
       where: { id: threadId },
       select: { threadSource: true },
     });
-    if (thread?.threadSource === 'SLACK') return true;
+    // Channel-backed threads pass through — their history lives in the
+    // channel, not in DB rows, so a row count says nothing about them.
+    if (thread?.threadSource !== 'DATABASE') return true;
     const uncompacted = await prisma.conversationMessage.count({
       where: { threadId, isCompacted: false },
     });
@@ -505,12 +513,12 @@ class CompactionService {
       select: { threadSource: true },
     });
 
-    if (thread?.threadSource === 'SLACK') {
-      const slackTs = compactable
+    if (thread?.threadSource !== 'DATABASE') {
+      const externalMessageIds = compactable
         .map((r) => r.externalMessageId)
         .filter((ts): ts is string => Boolean(ts));
-      const watermark = slackTs.length
-        ? slackTs.reduce((max, ts) => (parseFloat(ts) > parseFloat(max) ? ts : max))
+      const watermark = externalMessageIds.length
+        ? externalMessageIds.reduce((max, ts) => (parseFloat(ts) > parseFloat(max) ? ts : max))
         : null;
       const internalIds = compactable.filter((r) => r.internalStep).map((r) => r.id);
       await prisma.$transaction([
