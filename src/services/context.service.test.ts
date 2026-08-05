@@ -19,16 +19,12 @@ const {
   mockGetThreadContext,
   mockGetMetaByMessageIds,
   mockGetMetaByExternalTs,
-  mockLoadForMessages,
-  mockLoadByExternalTs,
 } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockGetLatestThread: vi.fn(),
   mockGetThreadContext: vi.fn(),
   mockGetMetaByMessageIds: vi.fn(),
   mockGetMetaByExternalTs: vi.fn(),
-  mockLoadForMessages: vi.fn(),
-  mockLoadByExternalTs: vi.fn(),
 }));
 
 vi.mock('./agent-workspace.service', () => ({
@@ -48,8 +44,6 @@ vi.mock('./attachment.service', () => ({
   attachmentService: {
     getMetaByMessageIds: mockGetMetaByMessageIds,
     getMetaByExternalTs: mockGetMetaByExternalTs,
-    loadForMessages: mockLoadForMessages,
-    loadByExternalTs: mockLoadByExternalTs,
   },
 }));
 
@@ -104,8 +98,6 @@ describe('ContextService', () => {
     // Default: no attachments anywhere (empty maps).
     mockGetMetaByMessageIds.mockReset().mockResolvedValue(new Map());
     mockGetMetaByExternalTs.mockReset().mockResolvedValue(new Map());
-    mockLoadForMessages.mockReset().mockResolvedValue(new Map());
-    mockLoadByExternalTs.mockReset().mockResolvedValue(new Map());
   });
 
   // ==========================================================================
@@ -338,9 +330,6 @@ describe('ContextService', () => {
     expect(context.recentMessages).toHaveLength(2);
     const fileOnly = context.recentMessages.find((m) => m.id === 'msg-2')!;
     expect(fileOnly.attachments).toEqual([meta]);
-    // BLOB-loading functions should NOT be called — only metadata.
-    expect(mockLoadForMessages).not.toHaveBeenCalled();
-    expect(mockLoadByExternalTs).not.toHaveBeenCalled();
   });
 
   it('re-associates Slack channel attachments by external ts (metadata only, no bytes)', async () => {
@@ -361,9 +350,6 @@ describe('ContextService', () => {
       threadId: 'thread-slack',
     });
 
-    // Only metadata queries are used — no BLOB loading.
-    expect(mockLoadByExternalTs).not.toHaveBeenCalled();
-    expect(mockLoadForMessages).not.toHaveBeenCalled();
     expect(context.recentMessages[0].attachments).toEqual([meta]);
   });
 

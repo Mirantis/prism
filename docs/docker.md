@@ -58,9 +58,13 @@ docker exec -it prism prism
 
 Everything the agent knows — identity, conversation history, memory, scheduled
 tasks, and Slack mappings — lives in the single SQLite database at
-`/data/agent.db`. Mount a volume at `/data` (named volume or host bind mount) so
-it survives container restarts and image upgrades. Back up the agent by backing
-up that volume, or export a `.prism` snapshot from the **[Web UI](web-ui.md)**.
+`/data/agent.db`. Shared file content (chat uploads, Slack attachments) lives
+next to it as plain files under `/data/media`, kept for 7 days (see
+**[Tools](tools.md#attachments)**). Mount a volume at `/data` (named volume or
+host bind mount) so both survive container restarts and image upgrades. Back up
+the agent by backing up that volume, or export a `.prism` snapshot from the
+**[Web UI](web-ui.md)** (the snapshot carries the database, not the media
+files).
 
 `start.sh` defaults `DATABASE_URL` to `file:/data/agent.db`; you generally don't
 need to set it. See **[Configuration](configuration.md)** for the rest of the

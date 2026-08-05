@@ -547,11 +547,17 @@ router.get('/attachments/:id', async (req: Request<{ id: string }>, res: Respons
       res.status(404).json({ error: 'Attachment not found' });
       return;
     }
+    const bytes = await attachmentService.loadBytes(att);
+    if (!bytes) {
+      // Metadata row outlives its content (168h TTL) — Gone, not Not Found.
+      res.status(410).json({ error: 'Attachment content expired' });
+      return;
+    }
     const isPreviewable = att.mediaType.startsWith('image/') || att.mediaType === 'application/pdf';
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', isPreviewable ? att.mediaType : 'application/octet-stream');
     res.setHeader('Content-Disposition', contentDisposition(isPreviewable ? 'inline' : 'attachment', att.filename));
-    res.send(Buffer.from(att.data));
+    res.send(bytes);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to fetch attachment ${req.params.id}: ${msg}`);

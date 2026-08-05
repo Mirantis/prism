@@ -3,8 +3,11 @@
  *
  * Owns all `MessageAttachment` DB access plus the media-type detection and
  * classification used by both the upload route (web) and the Slack ingest
- * path. Files are persisted as BLOBs in the runtime SQLite DB — never on
- * disk — and surfaced to the LLM by the context builder.
+ * path. Content lives as files under `<dataDir>/media` (`lib/media-store.ts`);
+ * the DB row keeps metadata plus the file's basename (`storagePath`). Legacy
+ * rows may still carry a `data` BLOB until the boot-time backfill moves them —
+ * `loadBytes()` is the one accessor that hides which of the two holds the
+ * content, and returns null when neither does (content expired).
  *
  * Detection is allowlist-based on purpose: the Bedrock message converter
  * THROWS on an unknown mediaType in an image/file content part, which would
@@ -13,9 +16,11 @@
  * (see `prompts/context-builder.ts`).
  */
 
+import { randomUUID } from 'crypto';
 import { MessageAttachment } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { config } from '../config';
+import { readMediaFile, removeMediaFile, writeMediaFile } from '../lib/media-store';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
@@ -29,11 +34,6 @@ export interface AttachmentMeta {
   mediaType: string;
   sizeBytes: number;
   category: AttachmentCategory;
-}
-
-/** Full attachment with bytes loaded, for building LLM content parts. */
-export interface AttachmentForLLM extends AttachmentMeta {
-  data: Buffer;
 }
 
 export interface CreateAttachmentInput {
@@ -233,13 +233,6 @@ function toMeta(row: Pick<MessageAttachment, 'id' | 'filename' | 'mediaType' | '
   };
 }
 
-function toForLLM(row: MessageAttachment): AttachmentForLLM {
-  return {
-    ...toMeta(row),
-    data: Buffer.from(row.data),
-  };
-}
-
 const META_SELECT = {
   id: true,
   filename: true,
@@ -249,24 +242,37 @@ const META_SELECT = {
 } as const;
 
 class AttachmentService {
-  /** Persist an uploaded/downloaded file. */
+  /** Persist an uploaded/downloaded file: bytes to the media dir, metadata to the DB. */
   async create(input: CreateAttachmentInput): Promise<MessageAttachment> {
-    const row = await prisma.messageAttachment.create({
-      data: {
-        filename: input.filename,
-        mediaType: input.mediaType,
-        sizeBytes: input.sizeBytes,
-        category: input.category,
-        // Copy into a plain ArrayBuffer-backed view: Prisma's Bytes input is
-        // `Uint8Array<ArrayBuffer>`, but `Buffer` is now `Buffer<ArrayBufferLike>`.
-        data: Uint8Array.from(input.data),
-        source: input.source,
-        threadId: input.threadId,
-        messageId: input.messageId,
-        slackFileId: input.slackFileId,
-        externalTs: input.externalTs,
-      },
-    });
+    // Id first so the content file exists before the row that references it —
+    // a reader that sees the row can always read the file. The reverse order
+    // would leave a window where the row points at nothing.
+    const id = randomUUID();
+    const storagePath = await writeMediaFile(id, input.filename, input.data);
+    let row: MessageAttachment;
+    try {
+      row = await prisma.messageAttachment.create({
+        data: {
+          id,
+          filename: input.filename,
+          mediaType: input.mediaType,
+          sizeBytes: input.sizeBytes,
+          category: input.category,
+          storagePath,
+          source: input.source,
+          threadId: input.threadId,
+          messageId: input.messageId,
+          slackFileId: input.slackFileId,
+          externalTs: input.externalTs,
+        },
+      });
+    } catch (err) {
+      // Row never landed (e.g. a Slack redelivery losing the slackFileId
+      // unique race) — the content file is unreachable, remove it now rather
+      // than leaving it to the stray-file reaper.
+      await removeMediaFile(storagePath);
+      throw err;
+    }
     // No filename in telemetry — it can reveal private information.
     trackEvent('attachment uploaded', null, {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
@@ -299,9 +305,23 @@ class AttachmentService {
     }
   }
 
-  /** Full row including bytes — used by the download route. */
+  /** Full row (metadata + storage handles) — bytes come from `loadBytes()`. */
   async getById(id: string): Promise<MessageAttachment | null> {
     return prisma.messageAttachment.findUnique({ where: { id } });
+  }
+
+  /**
+   * The one content accessor. Prefers the media file, falls back to the
+   * legacy BLOB (rows the boot backfill hasn't migrated), and returns null
+   * when neither exists — content expired, only metadata remains.
+   */
+  async loadBytes(row: Pick<MessageAttachment, 'storagePath' | 'data'>): Promise<Buffer | null> {
+    if (row.storagePath) {
+      const bytes = await readMediaFile(row.storagePath);
+      if (bytes) return bytes;
+    }
+    if (row.data) return Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
+    return null;
   }
 
   /** Metadata only (no bytes) for the given message ids — for thread reads. */
@@ -357,69 +377,32 @@ class AttachmentService {
     return map;
   }
 
-  /** Bytes-loaded attachments keyed by messageId — for LLM context. */
-  async loadForMessages(messageIds: string[]): Promise<Map<string, AttachmentForLLM[]>> {
-    const map = new Map<string, AttachmentForLLM[]>();
-    if (messageIds.length === 0) return map;
-    const rows = await prisma.messageAttachment.findMany({
-      where: { messageId: { in: messageIds } },
-      orderBy: { createdAt: 'asc' },
-    });
-    for (const row of rows) {
-      if (!row.messageId) continue;
-      const list = map.get(row.messageId) ?? [];
-      list.push(toForLLM(row));
-      map.set(row.messageId, list);
-    }
-    return map;
-  }
-
   /**
-   * Bytes-loaded attachments by their own ids, in upload order.
+   * Metadata by attachment ids, in upload order.
    *
    * For files that must reach the model *before* they are linked to a message
    * row: a message handed to a turn already in flight is folded into that turn
    * directly, so the only handle its files have at that point is the id the
    * upload returned.
    */
-  async loadByIds(attachmentIds: string[]): Promise<AttachmentForLLM[]> {
+  async getMetaByIds(attachmentIds: string[]): Promise<AttachmentMeta[]> {
     if (attachmentIds.length === 0) return [];
     const rows = await prisma.messageAttachment.findMany({
       where: { id: { in: attachmentIds } },
+      select: META_SELECT,
       orderBy: { createdAt: 'asc' },
     });
-    return rows.map(toForLLM);
-  }
-
-  /**
-   * Bytes-loaded attachments keyed by Slack message ts — for the live-read
-   * Slack channel provider, which never sees our message rows.
-   */
-  async loadByExternalTs(threadId: string, tsList: string[]): Promise<Map<string, AttachmentForLLM[]>> {
-    const map = new Map<string, AttachmentForLLM[]>();
-    if (tsList.length === 0) return map;
-    const rows = await prisma.messageAttachment.findMany({
-      where: { threadId, externalTs: { in: tsList } },
-      orderBy: { createdAt: 'asc' },
-    });
-    for (const row of rows) {
-      if (!row.externalTs) continue;
-      const list = map.get(row.externalTs) ?? [];
-      list.push(toForLLM(row));
-      map.set(row.externalTs, list);
-    }
-    return map;
+    return rows.map(toMeta);
   }
 
   /** Link pre-uploaded (web) attachments to the message that carries them. */
   async linkToMessage(attachmentIds: string[], messageId: string, threadId: string): Promise<void> {
     if (attachmentIds.length === 0) return;
     // Authoritative count cap (both web and Slack funnel through here). Bounds
-    // context-build memory — every windowed attachment is loaded and
-    // base64-expanded for the model each turn — so an unbounded id list can't
-    // OOM the container. Excess ids stay unlinked and the orphan janitor reaps
-    // them. attachmentIds is client-controlled, so this can't be trusted to the
-    // UI caps alone.
+    // the per-message stub count in the LLM context and the media-dir write
+    // volume a single message can cause. Excess ids stay unlinked and the
+    // orphan janitor reaps them. attachmentIds is client-controlled, so this
+    // can't be trusted to the UI caps alone.
     const capped =
       attachmentIds.length > MAX_ATTACHMENTS_PER_MESSAGE
         ? attachmentIds.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
@@ -453,10 +436,17 @@ class AttachmentService {
 
   /** Delete an unlinked (pre-send) attachment — used by chip removal. Returns deleted count. */
   async deleteUnlinked(id: string): Promise<number> {
+    // Capture the file handle before the row goes — after deleteMany nothing
+    // references it and only the slow stray-file reaper would find it.
+    const victim = await prisma.messageAttachment.findFirst({
+      where: { id, messageId: null },
+      select: { storagePath: true },
+    });
     const result = await prisma.messageAttachment.deleteMany({
       where: { id, messageId: null },
     });
     if (result.count > 0) {
+      if (victim?.storagePath) await removeMediaFile(victim.storagePath);
       trackEvent('attachment deleted', null, {
         ...(config.agentId ? { 'agent.id': config.agentId } : {}),
         'attachment.id': id,
@@ -468,9 +458,17 @@ class AttachmentService {
   /** Reap abandoned pre-send uploads that never got linked to a message. */
   async deleteOrphans(olderThanMs: number): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanMs);
-    const result = await prisma.messageAttachment.deleteMany({
+    const victims = await prisma.messageAttachment.findMany({
       where: { messageId: null, createdAt: { lt: cutoff } },
+      select: { id: true, storagePath: true },
     });
+    if (victims.length === 0) return 0;
+    const result = await prisma.messageAttachment.deleteMany({
+      where: { id: { in: victims.map((v) => v.id) } },
+    });
+    for (const v of victims) {
+      if (v.storagePath) await removeMediaFile(v.storagePath);
+    }
     return result.count;
   }
 }

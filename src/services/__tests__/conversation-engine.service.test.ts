@@ -24,7 +24,7 @@ const {
   mockLinkToMessage,
   mockOnFirstUserMessage,
   mockGetAgent,
-  mockLoadByIds,
+  mockGetMetaByIds,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
@@ -38,7 +38,7 @@ const {
   mockLinkToMessage: vi.fn(),
   mockOnFirstUserMessage: vi.fn(),
   mockGetAgent: vi.fn(),
-  mockLoadByIds: vi.fn(),
+  mockGetMetaByIds: vi.fn(),
 }));
 
 /**
@@ -77,7 +77,7 @@ vi.mock('../thread-title.service', () => ({
 vi.mock('../attachment.service', () => ({
   attachmentService: {
     linkToMessage: mockLinkToMessage,
-    loadByIds: mockLoadByIds,
+    getMetaByIds: mockGetMetaByIds,
   },
 }));
 
@@ -148,7 +148,7 @@ describe('Requirement: Conversation Engine', () => {
       { text: 'I am a helpful AI assistant.', toolCalls: [] },
     ]));
     mockCountAgentMessages.mockResolvedValue(0);
-    mockLoadByIds.mockResolvedValue([]);
+    mockGetMetaByIds.mockResolvedValue([]);
     // Default: telemetry off so unrelated scenarios don't exercise the classifier.
     mockIsTelemetryEnabled.mockReturnValue(false);
     mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
@@ -1086,13 +1086,13 @@ describe('Requirement: Conversation Engine', () => {
     });
 
     it('folds a mid-turn message\'s files into the running turn', async () => {
-      // Files reach the running turn too: their bytes are loaded on the consumer
-      // side, so a screenshot shared mid-work lands on the next step rather than
-      // waiting for a turn of its own.
+      // Files reach the running turn too: their metadata is loaded on the
+      // consumer side, so a screenshot shared mid-work lands on the next step
+      // as a stub rather than waiting for a turn of its own.
       const held = heldTurn();
       mockInvokeStream.mockImplementation(held.generator);
-      mockLoadByIds.mockResolvedValue([
-        { id: 'att-1', filename: 'run.log', mediaType: 'text/plain', category: 'text', sizeBytes: 4, data: Buffer.from('boom') },
+      mockGetMetaByIds.mockResolvedValue([
+        { id: 'att-1', filename: 'run.log', mediaType: 'text/plain', category: 'text', sizeBytes: 4 },
       ]);
 
       const first = conversationEngineService.chat(steerInput('review the PR'));
@@ -1107,7 +1107,7 @@ describe('Requirement: Conversation Engine', () => {
           attachments: [expect.objectContaining({ id: 'att-1', filename: 'run.log' })],
         },
       ]);
-      expect(mockLoadByIds).toHaveBeenCalledWith(['att-1']);
+      expect(mockGetMetaByIds).toHaveBeenCalledWith(['att-1']);
 
       held.release();
       await first;
