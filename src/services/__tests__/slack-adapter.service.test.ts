@@ -642,3 +642,43 @@ describe('deliverToChannel — working status after posting', () => {
     expect(setStatus).not.toHaveBeenCalled();
   });
 });
+
+describe('setAssistantStatus — rejects when the status cannot be set', () => {
+  // The rejection is the working indicator's fallback signal, so the contract
+  // is pinned here: resolve = Slack accepted, reject = show the reaction.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adapter = slackAdapterService as any;
+  const setStatus = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    adapter.apps = new Map([
+      ['T001', {
+        app: { client: { assistant: { threads: { setStatus } } } },
+        teamId: 'T001',
+      }],
+    ]);
+  });
+
+  it('resolves when the Slack call succeeds', async () => {
+    setStatus.mockResolvedValue({ ok: true });
+
+    await expect(
+      adapter.setAssistantStatus('T001', 'C001', '123.000', 'is thinking…'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects when the Slack call fails', async () => {
+    setStatus.mockRejectedValue(new Error('feature_not_enabled'));
+
+    await expect(
+      adapter.setAssistantStatus('T001', 'C001', '123.000', 'is thinking…'),
+    ).rejects.toThrow('feature_not_enabled');
+  });
+
+  it('rejects when there is no Bolt app for the team', async () => {
+    await expect(
+      adapter.setAssistantStatus('T999', 'C001', '123.000', 'is thinking…'),
+    ).rejects.toThrow('no Slack app for team T999');
+  });
+});

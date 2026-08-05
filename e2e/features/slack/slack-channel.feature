@@ -11,18 +11,11 @@ Feature: Slack Channel Integration
     Then the bot should reply in the thread within 60 seconds
     And the bot's reply should not be empty
 
-  # The bot reacts to the triggering message with eyes while it processes the
-  # turn, and removes the reaction when the reply has been delivered. The
-  # thread status line is write-only on the Slack API and is covered by unit
-  # tests instead.
-  Scenario: Bot shows a working reaction while processing a mention
-    Given a test Slack channel exists
-    And the bot is invited to the channel
-    And I link the channel to the agent via the UI
-    When I send a message mentioning the bot "Please describe your capabilities in detail"
-    Then my message gets an "eyes" reaction within 20 seconds
-    And the bot should reply in the thread within 60 seconds
-    And the "eyes" reaction is removed from my message within 20 seconds
+  # The working cue in a channel is the assistant-thread status line, which
+  # Slack accepts on regular channel threads (verified by direct probe) but
+  # keeps write-only on the API — so it is covered by unit tests instead. The
+  # eyes reaction is only a fallback for when setStatus fails, so no reaction
+  # is expected (or asserted) here.
 
   # Multiple channels can be linked to one agent, and one is the "main"
   # channel (where heartbeat alerts post). The first-linked channel is main by

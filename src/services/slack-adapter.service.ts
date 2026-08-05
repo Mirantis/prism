@@ -157,8 +157,8 @@ class SlackAdapterService implements ChannelAdapter {
     return (this._slackThreadProvider ??= new SlackThreadProvider());
   }
 
-  // Working indicator (eyes reaction + best-effort thread status) shown while
-  // a user-initiated turn runs.
+  // Working indicator (thread status, with an eyes-reaction fallback) shown
+  // while a user-initiated turn runs.
   private _workingIndicator?: SlackWorkingIndicator;
   private get workingIndicator(): SlackWorkingIndicator {
     return (this._workingIndicator ??= new SlackWorkingIndicator({
@@ -1084,7 +1084,8 @@ class SlackAdapterService implements ChannelAdapter {
       // Working cue for the whole turn — started before the (possibly slow)
       // read-consistency wait below so the user sees it immediately. The
       // reply always lands in slackThreadId's thread, so the status line
-      // attaches there.
+      // attaches there; the fallback reaction, when the status cannot be
+      // set, trails it by one Slack round trip.
       indicator = await this.workingIndicator.begin({
         teamId: mapping.connection.teamId,
         channelId,
@@ -1721,11 +1722,12 @@ class SlackAdapterService implements ChannelAdapter {
   }
 
   /**
-   * Best-effort assistant thread status ("is thinking…" next to the bot name).
+   * Assistant thread status ("is thinking…" next to the bot name).
    *
-   * Routinely fails when the app lacks the `assistant:write` scope, is not
-   * configured as a Slack AI app, or the target thread does not render
-   * statuses — all expected, so log at debug only.
+   * Rejects when the status cannot be set — routine when the app lacks the
+   * `assistant:write` scope, is not configured as a Slack AI app, or the
+   * target thread does not render statuses. The working indicator catches
+   * the rejection, logs it at debug, and falls back to the eyes reaction.
    */
   private async setAssistantStatus(
     teamId: string,
@@ -1734,21 +1736,17 @@ class SlackAdapterService implements ChannelAdapter {
     status: string,
   ): Promise<void> {
     const slackApp = this.apps.get(teamId);
-    if (!slackApp) return;
+    if (!slackApp) throw new Error(`no Slack app for team ${teamId}`);
 
-    try {
-      // `loading_messages` (optional, ≤10 strings) would replace the rotating
-      // shimmer phrases Slack displays while the status is active. We omit it
-      // deliberately, so Slack rotates its own default list ("Gathering
-      // information…", "Reviewing findings…", …).
-      await slackApp.app.client.assistant.threads.setStatus({
-        channel_id: channelId,
-        thread_ts: threadTs,
-        status,
-      });
-    } catch (error) {
-      logger.debug('assistant.threads.setStatus failed (best-effort): %s', error instanceof Error ? error.message : String(error));
-    }
+    // `loading_messages` (optional, ≤10 strings) would replace the rotating
+    // shimmer phrases Slack displays while the status is active. We omit it
+    // deliberately, so Slack rotates its own default list ("Gathering
+    // information…", "Reviewing findings…", …).
+    await slackApp.app.client.assistant.threads.setStatus({
+      channel_id: channelId,
+      thread_ts: threadTs,
+      status,
+    });
   }
 
   /**
