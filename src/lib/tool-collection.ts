@@ -8,7 +8,7 @@
  * imports invoke.ts.
  */
 
-import type { Tool } from 'ai';
+import type { ModelMessage, Tool } from 'ai';
 import type { CachePointFragment } from './llm-providers/llm-provider';
 import { config } from '../config';
 import { logger } from '../logger';
@@ -36,6 +36,13 @@ export interface CollectToolsInput {
   workspaceRoot?: string;
   /** Runs a subagent Task; injected so this module never imports invoke.ts. */
   taskInvoker: Invoker;
+  /**
+   * Queues a message for injection into the running invocation at the next
+   * step boundary (invoke.ts prepareStep). view_attachment uses it to attach
+   * a PDF as a user-message document — the only placement Bedrock's Converse
+   * converter accepts for file content.
+   */
+  registerAttachmentInjection?: (message: ModelMessage) => void;
 }
 
 /**
@@ -86,7 +93,13 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     ...getAgentConfigTools(),
     ...getShellTools(input.workspaceRoot),
     ...getShareFileTools(),
-    ...getAttachmentTools(input.userId, input.agentId, input.threadId, input.workspaceRoot),
+    ...getAttachmentTools(
+      input.userId,
+      input.agentId,
+      input.threadId,
+      input.workspaceRoot,
+      input.registerAttachmentInjection,
+    ),
     // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md
     // body on demand. workspaceRoot merges the repo's skills with the global
     // ones. Empty (and omitted) when no skills are available.

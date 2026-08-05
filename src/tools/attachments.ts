@@ -10,10 +10,11 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { Tool, tool } from 'ai';
+import { ModelMessage, Tool, tool } from 'ai';
 import { z } from 'zod';
 import { attachmentService, classifyMediaType, isBedrockImageType } from '../services/attachment.service';
 import { sanitizeFilename } from '../lib/media-store';
+import { MAX_FILE_SIZE_BYTES } from '../constants';
 import { resolveWorkspace } from './shell/config';
 import { trackEvent } from '../lib/telemetry';
 
@@ -165,11 +166,19 @@ const IMAGE_SIZE_CEILING_BYTES = 3_750_000;
 
 export interface ViewAttachmentSuccess {
   success: true;
+  attachmentId: string;
   filename: string;
   mediaType: string;
   sizeBytes: number;
-  category: 'image';
-  data: string; // base64
+  category: 'image' | 'pdf';
+  /**
+   * What actually happened, for the model. Bytes deliberately stay out of the
+   * tool's `execute` result — `onStepFinish` JSON.stringifies it into the
+   * persisted ToolCallRecord, so a base64 payload here would write megabytes
+   * into the message row. Images ride `toModelOutput` (which loads bytes at
+   * prompt-conversion time); PDFs ride a registered user-message injection.
+   */
+  note: string;
 }
 
 export interface ViewAttachmentFailure {
@@ -177,11 +186,29 @@ export interface ViewAttachmentFailure {
   error: string;
 }
 
+export interface ViewAttachmentContext {
+  /**
+   * Queues a message for injection into the running invocation at the next
+   * step boundary (invoke.ts prepareStep). PDFs need this: on Bedrock's
+   * Converse surface a document block is only legal in a *user* message —
+   * the converter throws on `file-data` inside a tool result — so the tool
+   * result stays text and the document follows as a user message.
+   */
+  registerInjection?: (message: ModelMessage) => void;
+  /**
+   * Documents already injected in this invocation. An injection is re-spliced
+   * into every later step, so viewing the same PDF twice must not attach a
+   * second multi-MB copy.
+   */
+  injectedDocumentIds?: Set<string>;
+}
+
 export async function runViewAttachment(
   input: { attachmentId: string },
   userId: string,
   agentId: string,
   threadId: string | undefined,
+  ctx: ViewAttachmentContext = {},
 ): Promise<ViewAttachmentSuccess | ViewAttachmentFailure> {
   const { attachmentId } = input;
 
@@ -202,45 +229,90 @@ export async function runViewAttachment(
     return { success: false, error: 'Attachment not found.' };
   }
 
-  // Only Bedrock-supported image types can be returned as multimodal content.
-  if (!isBedrockImageType(row.mediaType)) {
-    // TODO(AGENT-85): optional provider-split PDF vision on Azure
-    const hint = row.mediaType === 'application/pdf'
-      ? 'PDF files cannot be viewed inline. Use hydrate_attachment to write the file to disk, then inspect with `pdftotext`.'
-      : 'This file type cannot be viewed inline. Use hydrate_attachment to write the file to disk, then inspect with shell tools.';
+  const isPdf = row.mediaType === 'application/pdf' && Boolean(ctx.registerInjection);
 
-    trackEvent('attachment view failed', userId, {
-      'agent.id': agentId,
-      'attachment.id': attachmentId,
-    });
-    return { success: false, error: hint };
-  }
-
-  // Size guard: base64 expands ~33%, but we check raw size against the ceiling
-  // since the ceiling accounts for the base64 expansion on Bedrock's side.
-  if (row.sizeBytes > IMAGE_SIZE_CEILING_BYTES) {
+  // Everything that is neither a Bedrock-safe image nor an injectable PDF
+  // goes to hydrate_attachment + shell tools.
+  if (!isBedrockImageType(row.mediaType) && !isPdf) {
     trackEvent('attachment view failed', userId, {
       'agent.id': agentId,
       'attachment.id': attachmentId,
     });
     return {
       success: false,
-      error: `Image exceeds the ${(IMAGE_SIZE_CEILING_BYTES / 1_000_000).toFixed(2)} MB size limit for inline viewing. Use hydrate_attachment to write it to disk and inspect with shell tools.`,
+      error: 'This file type cannot be viewed inline. Use hydrate_attachment to write the file to disk, then inspect with shell tools.',
     };
   }
 
+  // Size guards. Images: base64 expands ~33%, but we check raw size against
+  // the ceiling since it accounts for the expansion on Bedrock's side. PDFs:
+  // the upload cap is the proven bound for user-message file parts.
+  const sizeCeiling = isPdf ? MAX_FILE_SIZE_BYTES : IMAGE_SIZE_CEILING_BYTES;
+  if (row.sizeBytes > sizeCeiling) {
+    trackEvent('attachment view failed', userId, {
+      'agent.id': agentId,
+      'attachment.id': attachmentId,
+    });
+    return {
+      success: false,
+      error: `${isPdf ? 'Document' : 'Image'} exceeds the ${(sizeCeiling / 1_000_000).toFixed(2)} MB size limit for inline viewing. Use hydrate_attachment to write it to disk and inspect with shell tools${isPdf ? ' (e.g. pdftotext)' : ''}.`,
+    };
+  }
+
+  const meta = {
+    attachmentId,
+    filename: row.filename,
+    mediaType: row.mediaType,
+    sizeBytes: row.sizeBytes,
+  };
+
+  if (isPdf) {
+    // Idempotent per invocation — the injected document is re-spliced into
+    // every subsequent step, so it is still in view.
+    if (ctx.injectedDocumentIds?.has(attachmentId)) {
+      return {
+        success: true,
+        ...meta,
+        category: 'pdf',
+        note: `"${row.filename}" is already attached to this conversation from an earlier view_attachment call — its content is still visible above.`,
+      };
+    }
+
+    const bytes = await attachmentService.loadBytes(row);
+    if (!bytes) return viewExpiredFailure(row.filename, userId, agentId, attachmentId);
+
+    ctx.registerInjection!({
+      role: 'user',
+      content: [
+        { type: 'file', data: bytes, mediaType: 'application/pdf', filename: row.filename },
+        {
+          type: 'text',
+          text: `[Document "${row.filename}" (id=${attachmentId}) attached for analysis via view_attachment]`,
+        },
+      ],
+    });
+    ctx.injectedDocumentIds?.add(attachmentId);
+
+    trackEvent('attachment viewed', userId, {
+      'agent.id': agentId,
+      'attachment.id': attachmentId,
+      'attachment.category': 'pdf',
+      'attachment.media_type': row.mediaType,
+      'attachment.size_bytes': String(row.sizeBytes),
+    });
+
+    return {
+      success: true,
+      ...meta,
+      category: 'pdf',
+      note: `Attached "${row.filename}" to the conversation — its full content follows this tool result as a document.`,
+    };
+  }
+
+  // Image: verify the content is still there so the failure is a clear tool
+  // error; the bytes themselves are loaded again in toModelOutput.
   const bytes = await attachmentService.loadBytes(row);
-  if (!bytes) {
-    trackEvent('attachment view failed', userId, {
-      'agent.id': agentId,
-      'attachment.id': attachmentId,
-    });
-    return {
-      success: false,
-      error: `The content of "${row.filename}" has expired (attachments are kept for 7 days). Ask the user to share the file again if you need it.`,
-    };
-  }
-  const base64 = bytes.toString('base64');
+  if (!bytes) return viewExpiredFailure(row.filename, userId, agentId, attachmentId);
 
   trackEvent('attachment viewed', userId, {
     'agent.id': agentId,
@@ -252,11 +324,25 @@ export async function runViewAttachment(
 
   return {
     success: true,
-    filename: row.filename,
-    mediaType: row.mediaType,
-    sizeBytes: row.sizeBytes,
+    ...meta,
     category: 'image',
-    data: base64,
+    note: `Image "${row.filename}" is attached to this tool result.`,
+  };
+}
+
+function viewExpiredFailure(
+  filename: string,
+  userId: string,
+  agentId: string,
+  attachmentId: string,
+): ViewAttachmentFailure {
+  trackEvent('attachment view failed', userId, {
+    'agent.id': agentId,
+    'attachment.id': attachmentId,
+  });
+  return {
+    success: false,
+    error: `The content of "${filename}" has expired (attachments are kept for 7 days). Ask the user to share the file again if you need it.`,
   };
 }
 
@@ -265,7 +351,11 @@ export function getAttachmentTools(
   agentId: string,
   threadId: string | undefined,
   workspaceRoot?: string | null,
+  registerInjection?: (message: ModelMessage) => void,
 ): Record<string, Tool> {
+  // One invocation = one tool set (built per invokeStream call), so this set
+  // is exactly the "already attached this turn" dedupe scope PDFs need.
+  const injectedDocumentIds = new Set<string>();
   return {
     hydrate_attachment: tool({
       description:
@@ -284,27 +374,51 @@ export function getAttachmentTools(
     view_attachment: {
       ...tool({
         description:
-          'View an image attachment inline without writing it to disk. ' +
-          'Use this for quick visual inspection of PNG, JPEG, GIF, or WebP images. ' +
-          'For PDFs, large images, or non-image files, use hydrate_attachment instead.',
+          'Look at an image or read a PDF attachment without writing it to disk. ' +
+          'Images (PNG, JPEG, GIF, WebP) are returned inline for visual inspection; ' +
+          'a PDF is attached to the conversation as a document you can read directly. ' +
+          'For other file types or oversized files, use hydrate_attachment instead.',
         inputSchema: z.object({
           attachmentId: z
             .string()
-            .describe('The id of the image attachment to view (from the message metadata).'),
+            .describe('The id of the image or PDF attachment to view (from the message metadata).'),
         }),
         execute: async (input) =>
-          runViewAttachment(input, userId, agentId, threadId),
+          runViewAttachment(input, userId, agentId, threadId, {
+            registerInjection,
+            injectedDocumentIds,
+          }),
       }),
+      // Images ride the tool result as multimodal content; bytes are loaded
+      // here — at prompt-conversion time — so the (persisted, UI-visible)
+      // execute() result above stays metadata-sized. PDFs already went out as
+      // a user-message injection, so their result is the plain note.
       toModelOutput: async ({ output }: { output: unknown }) => {
         const result = output as ViewAttachmentSuccess | ViewAttachmentFailure;
         if (!result.success) {
           return { type: 'text' as const, value: result.error };
         }
+        if (result.category !== 'image') {
+          return { type: 'text' as const, value: result.note };
+        }
+        const row = await attachmentService.getById(result.attachmentId);
+        const bytes = row ? await attachmentService.loadBytes(row) : null;
+        if (!bytes) {
+          // Expired between the tool call and this conversion — rare, benign.
+          return {
+            type: 'text' as const,
+            value: `The content of "${result.filename}" is no longer available (expired).`,
+          };
+        }
         return {
           type: 'content' as const,
           value: [
             { type: 'text' as const, text: `[Viewing ${result.filename}]` },
-            { type: 'image-data' as const, data: result.data, mediaType: result.mediaType },
+            {
+              type: 'image-data' as const,
+              data: bytes.toString('base64'),
+              mediaType: result.mediaType,
+            },
           ],
         };
       },
