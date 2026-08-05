@@ -18,6 +18,11 @@ scrollback; compaction only changes what the model sees.
 - **Manually.** Run **`/compact`** in the web chat or the terminal UI to
   compact the current conversation at any time. If there is nothing to compact
   yet, the command says so.
+- **On overflow.** A single turn can outgrow the window outright (the provider
+  rejects the request as too long). That rejection triggers a recovery
+  compaction immediately: the runtime summarizes the history — shrinking the
+  summarized input until it fits — so the next message works again instead of
+  every following turn failing the same way.
 
 While a compaction runs, the web UI shows `Compacting conversation…` above the
 input and the TUI shows it on the spinner row. When it finishes, a system note —

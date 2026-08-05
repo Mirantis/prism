@@ -94,6 +94,7 @@ import {
   compactionService,
   type AutoCompactFork,
   type CompactionEvent,
+  type CompactionFork,
   type ForkRow,
 } from './compaction.service';
 
@@ -427,6 +428,87 @@ describe('finish', () => {
     await flushAuto();
 
     expect(events.at(-1)).toMatchObject({ status: 'completed', tokensAfter: null });
+  });
+});
+
+describe('maybeCompactAfterOverflow', () => {
+  const OVERFLOW = new Error('prompt is too long: 250000 tokens > 200000 maximum');
+
+  function makeOverflowFork(overrides: Partial<CompactionFork> = {}): CompactionFork {
+    const { snapshot: _s, finalAssistantText: _f, ...base } = makeFork();
+    return { ...base, ...overrides };
+  }
+
+  it('skips when the operator disabled auto-compaction', () => {
+    mockConfig.compactionThresholdPercent = null;
+    compactionService.maybeCompactAfterOverflow(makeOverflowFork());
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it('skips when the context has no more rows than the tail', () => {
+    compactionService.maybeCompactAfterOverflow(makeOverflowFork({ contextRows: makeRows(6) }));
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it('compacts without any threshold or window check — the rejection is the evidence', async () => {
+    const events = captureEvents();
+    compactionService.maybeCompactAfterOverflow(makeOverflowFork());
+    await flushAuto();
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.conversationMessage.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['m0', 'm1'] } },
+      data: { isCompacted: true },
+    });
+    expect(events.map((e) => e.status)).toEqual(['started', 'completed']);
+    expect(events.at(-1)).toMatchObject({ trigger: 'auto' });
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'compaction finished',
+      'user-1',
+      expect.objectContaining({ 'compaction.reason': 'overflow' }),
+    );
+  });
+
+  it('shrinks the history head and retries when the summarize call itself overflows', async () => {
+    mockGenerateText
+      .mockRejectedValueOnce(OVERFLOW)
+      .mockResolvedValueOnce({ text: 'THE SUMMARY' });
+    compactionService.maybeCompactAfterOverflow(makeOverflowFork());
+    await flushAuto();
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(2);
+    const first = mockGenerateText.mock.calls[0][0].messages;
+    const second = mockGenerateText.mock.calls[1][0].messages;
+    expect(second.length).toBeLessThan(first.length);
+    // Re-anchored on a user message so tool-call pairs never split.
+    expect(second[0].role).toBe('user');
+    // The commit still covers every fork row minus the tail.
+    expect(mockPrisma.conversationMessage.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['m0', 'm1'] } },
+      data: { isCompacted: true },
+    });
+  });
+
+  it('gives up when the history cannot shrink further', async () => {
+    mockGenerateText.mockRejectedValue(OVERFLOW);
+    const events = captureEvents();
+    compactionService.maybeCompactAfterOverflow(makeOverflowFork());
+    await flushAuto();
+
+    // fork.messages has 3 entries: full → 1 message → nothing left to drop.
+    expect(mockGenerateText.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(events.at(-1)).toMatchObject({ status: 'failed', trigger: 'auto' });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('fails without retrying on a non-overflow summarize error', async () => {
+    mockGenerateText.mockRejectedValue(new Error('model unavailable'));
+    const events = captureEvents();
+    compactionService.maybeCompactAfterOverflow(makeOverflowFork());
+    await flushAuto();
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(events.at(-1)).toMatchObject({ status: 'failed', error: 'model unavailable' });
   });
 });
 

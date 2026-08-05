@@ -40,7 +40,7 @@ import { withToolLifecycleEvents } from './lib/tool-lifecycle';
 import { InvokeError, InvokeRequest, InvokeResponse, InvokeStep, ToolCallRecord, UIBlock } from './types';
 import { STEP_LIMIT, MAX_OUTPUT_TOKENS } from './constants';
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
-import { buildErrorStep } from './lib/llm-errors';
+import { buildErrorStep, isContextOverflowError } from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
 import { trackEvent } from './lib/telemetry';
 import { AsyncChannel } from './utils/async-channel';
@@ -277,6 +277,27 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // to stay in the conversation at a stable position.
     const injections: Array<{ at: number; message: ModelMessage }> = [];
 
+    // The turn's request ingredients as a compaction fork (see
+    // compaction.service.ts). Shared by the success hook (threshold trigger)
+    // and the error hook (overflow recovery), which extend it differently.
+    const compactionForkBase = (threadId: string) => ({
+      userId: request.userId,
+      agentId,
+      threadId,
+      modelId,
+      model,
+      system: cachedSystem,
+      tools: cachedTools,
+      messages,
+      injections: injections.map((i) => i.message),
+      contextRows: context.recentMessages.map((m) => ({
+        id: m.id,
+        externalMessageId: m.externalMessageId ?? null,
+        internalStep: m.internalStep ?? false,
+        contentChars: m.content.length,
+      })),
+    });
+
     warnOnTrailingAssistant(messages, { ...guardContext, stage: 'initial' });
 
     generateText({
@@ -432,28 +453,13 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       // this only fires for thread-bound turns that completed with a
       // measurement and real history. Goal turns are history-less by design
       // (empty recentMessages), and heartbeat/webhook/subagent runs pass no
-      // threadId, so both skip here; canceled and errored turns reject before
-      // this point.
+      // threadId, so both skip here.
       if (request.threadId && lastSnapshot && context.recentMessages.length > 0) {
         compactionService.maybeAutoCompact({
-          userId: request.userId,
-          agentId,
-          threadId: request.threadId,
-          modelId,
-          model,
-          system: cachedSystem,
-          tools: cachedTools,
-          messages,
-          injections: injections.map((i) => i.message),
+          ...compactionForkBase(request.threadId),
           finalAssistantText: [summarizeSteps(result.steps), earlyStoppingText ?? '']
             .filter(Boolean)
             .join('\n\n'),
-          contextRows: context.recentMessages.map((m) => ({
-            id: m.id,
-            externalMessageId: m.externalMessageId ?? null,
-            internalStep: m.internalStep ?? false,
-            contentChars: m.content.length,
-          })),
           snapshot: lastSnapshot,
         });
       }
@@ -469,6 +475,17 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         wasCanceled = true;
         channel.close();
         return;
+      }
+      // Overflow recovery: a turn that outgrew the window never reaches the
+      // success hook above, and every later turn rebuilds the same oversized
+      // context and rejects again — so this one error class triggers
+      // compaction directly. The service shrinks the summarize input until it
+      // fits; the friendly error step below still delivers as usual.
+      if (request.threadId && context.recentMessages.length > 0 && isContextOverflowError(error)) {
+        logger.warn(
+          `[Compaction] turn overflowed the context window for thread ${request.threadId}; triggering recovery compaction`,
+        );
+        compactionService.maybeCompactAfterOverflow(compactionForkBase(request.threadId));
       }
       // Surface the error as a friendly step so consumers don't need a
       // separate error-handling path. buildErrorStep is the single

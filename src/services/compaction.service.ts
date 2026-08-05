@@ -50,6 +50,7 @@ import { MIN_PLAUSIBLE_CONTEXT } from '../lib/model-catalog';
 import { createProvider } from '../lib/llm-providers/create-provider';
 import { isLangfuseEnabled } from '../lib/langfuse';
 import { buildSystemPromptParts, buildConversationMessages } from '../prompts/context-builder';
+import { isContextOverflowError } from '../lib/llm-errors';
 import { resolveEffectiveModel } from './agent-workspace.service';
 import { contextService } from './context.service';
 import { contextUsageService, type ContextUsageSnapshot } from './context-usage.service';
@@ -70,8 +71,8 @@ export interface ForkRow {
   contentChars: number;
 }
 
-/** The just-finished turn's request ingredients, handed over by invokeStream. */
-export interface AutoCompactFork {
+/** A turn's request ingredients, handed over by invokeStream. */
+export interface CompactionFork {
   userId: string;
   agentId: string;
   threadId: string;
@@ -86,11 +87,15 @@ export interface AutoCompactFork {
   messages: ModelMessage[];
   /** Mid-turn steering messages, in arrival order. */
   injections: ModelMessage[];
-  /** This turn's collapsed assistant text (tool calls + results included). */
-  finalAssistantText: string;
   /** context.recentMessages at fork time. */
   contextRows: ForkRow[];
-  /** The turn's last per-step occupancy snapshot. */
+}
+
+/** The successful-turn variant: carries the reply and the trigger measurement. */
+export interface AutoCompactFork extends CompactionFork {
+  /** This turn's collapsed assistant text (tool calls + results included). */
+  finalAssistantText: string;
+  /** The turn's last per-step occupancy snapshot (a trigger-only fallback is legal). */
   snapshot: ContextUsageSnapshot;
 }
 
@@ -113,6 +118,8 @@ interface FinishInput {
   agentId: string;
   threadId: string;
   trigger: 'auto' | 'manual';
+  /** Telemetry-only refinement of `trigger`: what actually fired the job. */
+  reason: 'threshold' | 'overflow' | 'manual';
   modelId: string;
   threadSource: string;
   tokensBefore: number | null;
@@ -161,6 +168,34 @@ class CompactionService {
     } catch (err) {
       this.inFlight.delete(fork.threadId);
       logger.error({ err, threadId: fork.threadId }, '[Compaction] auto-compaction enqueue failed');
+    }
+  }
+
+  /**
+   * Overflow recovery. Called by invokeStream's error path when a turn's
+   * request outgrew the model's context window: that turn never reaches the
+   * threshold hook (it only runs on success), and every later turn rebuilds
+   * the same oversized context — without this, the thread is stuck rejecting
+   * forever. No threshold or window guard on purpose: the provider's own
+   * rejection is stronger evidence than any measured percentage, and it also
+   * covers models whose window we don't know. Synchronous, never throws.
+   */
+  maybeCompactAfterOverflow(fork: CompactionFork): void {
+    try {
+      if (config.compactionThresholdPercent === null) return; // operator disabled auto-compaction
+      if (fork.contextRows.length <= config.compactionTailMessages) return;
+      if (this.inFlight.has(fork.threadId)) return;
+
+      this.inFlight.add(fork.threadId);
+      void threadTurnService
+        .run(fork.threadId, () => this.runOverflowCompaction(fork))
+        .catch((err) => {
+          logger.error({ err, threadId: fork.threadId }, '[Compaction] overflow compaction failed');
+        })
+        .finally(() => this.inFlight.delete(fork.threadId));
+    } catch (err) {
+      this.inFlight.delete(fork.threadId);
+      logger.error({ err, threadId: fork.threadId }, '[Compaction] overflow compaction enqueue failed');
     }
   }
 
@@ -229,6 +264,7 @@ class CompactionService {
           agentId,
           threadId,
           trigger: 'manual',
+          reason: 'manual',
           modelId,
           threadSource: thread?.threadSource ?? 'DATABASE',
           tokensBefore: thread?.contextTokens ?? null,
@@ -315,6 +351,7 @@ class CompactionService {
         agentId,
         threadId,
         trigger: 'auto',
+        reason: 'threshold',
         modelId: fork.modelId,
         threadSource: thread?.threadSource ?? 'DATABASE',
         tokensBefore: fork.snapshot.usedTokens,
@@ -324,6 +361,80 @@ class CompactionService {
       });
     } catch (err) {
       logger.error({ err, threadId }, '[Compaction] auto-compaction failed');
+      this.fail(userId, agentId, threadId, 'auto', errorText(err));
+    }
+  }
+
+  /**
+   * Overflow-recovery summarize: like the threshold fork, but the request that
+   * just failed proves the full history + prompt does NOT fit — so on a
+   * context-overflow rejection of the summarize call itself, the oldest
+   * quarter of the history is dropped and the call retried (the array is
+   * re-anchored on a user message so tool-call pairs never split). The commit
+   * still marks every fork row minus the tail: rows whose content fell out of
+   * the shrunken summarize input lose their detail, which is the accepted
+   * price of unsticking a thread that otherwise rejects forever.
+   */
+  private async runOverflowCompaction(fork: CompactionFork): Promise<void> {
+    const { userId, agentId, threadId } = fork;
+    try {
+      this.start(userId, agentId, threadId, 'auto');
+
+      const anthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
+      let history: ModelMessage[] = [...fork.messages, ...fork.injections];
+      let summary = '';
+      const MAX_ATTEMPTS = 5;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const result = await generateText({
+            model: fork.model,
+            system: fork.system,
+            messages: [
+              ...history,
+              { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: anthropicCachePoint },
+            ],
+            tools: Object.keys(fork.tools).length > 0 ? fork.tools : undefined,
+            toolChoice: 'none',
+            maxOutputTokens: MAX_OUTPUT_TOKENS,
+            ...this.langfuseTelemetry(userId, threadId),
+          });
+          summary = result.text.trim();
+          break;
+        } catch (err) {
+          if (attempt >= MAX_ATTEMPTS - 1 || !isContextOverflowError(err)) throw err;
+          const shrunk = shrinkHistoryHead(history);
+          if (!shrunk) throw err;
+          logger.info(
+            `[Compaction] summarize overflowed for thread ${threadId}; retrying with ${shrunk.length}/${history.length} messages`,
+          );
+          history = shrunk;
+        }
+      }
+      if (!summary) {
+        this.fail(userId, agentId, threadId, 'auto', 'The model returned an empty summary.');
+        return;
+      }
+
+      const thread = await prisma.conversationThread.findUnique({
+        where: { id: threadId },
+        select: { threadSource: true, contextTokens: true },
+      });
+      const { messagesCompacted } = await this.commit(threadId, summary, fork.contextRows);
+      await this.finish({
+        userId,
+        agentId,
+        threadId,
+        trigger: 'auto',
+        reason: 'overflow',
+        modelId: fork.modelId,
+        threadSource: thread?.threadSource ?? 'DATABASE',
+        tokensBefore: thread?.contextTokens ?? null,
+        summary,
+        rows: fork.contextRows,
+        messagesCompacted,
+      });
+    } catch (err) {
+      logger.error({ err, threadId }, '[Compaction] overflow compaction failed');
       this.fail(userId, agentId, threadId, 'auto', errorText(err));
     }
   }
@@ -437,6 +548,7 @@ class CompactionService {
       'thread.id': input.threadId,
       'thread.source': input.threadSource,
       'compaction.trigger': input.trigger,
+      'compaction.reason': input.reason,
       'compaction.messages_compacted': String(input.messagesCompacted),
       ...(input.tokensBefore != null ? { 'context.tokens_before': String(input.tokensBefore) } : {}),
       ...(snapshot ? { 'context.tokens_after': String(estimatedTokens) } : {}),
@@ -506,6 +618,19 @@ function toForkRows(
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Drop the oldest quarter of a summarize history that did not fit, then
+ * re-anchor on a user message: an array sliced mid tool-exchange could start
+ * on an assistant tool-call or a dangling tool result, both of which the
+ * providers reject. Returns null when nothing meaningful would remain.
+ */
+function shrinkHistoryHead(history: ModelMessage[]): ModelMessage[] | null {
+  const drop = Math.max(1, Math.ceil(history.length / 4));
+  const shrunk = history.slice(drop);
+  while (shrunk.length > 0 && shrunk[0].role !== 'user') shrunk.shift();
+  return shrunk.length >= 1 && shrunk.length < history.length ? shrunk : null;
 }
 
 export const compactionService = new CompactionService();

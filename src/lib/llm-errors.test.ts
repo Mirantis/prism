@@ -14,6 +14,7 @@ import {
   isSpendingLimitError,
   getSpendingLimitDetail,
   getErrorDetail,
+  isContextOverflowError,
   logSpendingLimitWarning,
   buildErrorStep,
 } from './llm-errors';
@@ -272,5 +273,51 @@ describe('buildErrorStep', () => {
 
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('boom'));
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('{"x":1}'));
+  });
+});
+
+describe('isContextOverflowError', () => {
+  it('matches the Anthropic direct message', () => {
+    expect(
+      isContextOverflowError(new Error('prompt is too long: 213456 tokens > 200000 maximum')),
+    ).toBe(true);
+  });
+
+  it('matches the Bedrock ValidationException message', () => {
+    expect(isContextOverflowError(new Error('Input is too long for requested model.'))).toBe(true);
+  });
+
+  it('matches the context_length_exceeded code in a response body', () => {
+    expect(
+      isContextOverflowError({
+        statusCode: 400,
+        responseBody: JSON.stringify({
+          error: { code: 'context_length_exceeded', message: 'too big' },
+        }),
+      }),
+    ).toBe(true);
+  });
+
+  it('treats HTTP 413 as overflow', () => {
+    expect(isContextOverflowError({ statusCode: 413 })).toBe(true);
+  });
+
+  it('unwraps the SDK retry wrapper (lastError)', () => {
+    expect(
+      isContextOverflowError({ lastError: new Error('prompt is too long: 9 tokens > 1 maximum') }),
+    ).toBe(true);
+  });
+
+  it('rejects unrelated errors — a generic failure must not trigger compaction', () => {
+    expect(isContextOverflowError(new Error('rate limited'))).toBe(false);
+    expect(isContextOverflowError(new Error('The security token is invalid'))).toBe(false);
+    expect(
+      isContextOverflowError({
+        status: 429,
+        responseBody: JSON.stringify({ type: 'budget-exceeded', detail: 'x' }),
+      }),
+    ).toBe(false);
+    expect(isContextOverflowError(null)).toBe(false);
+    expect(isContextOverflowError('prompt is too long')).toBe(false);
   });
 });
