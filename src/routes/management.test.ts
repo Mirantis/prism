@@ -181,9 +181,10 @@ const { mockExportAgent, mockImportAgent } = vi.hoisted(() => ({
   mockImportAgent: vi.fn(),
 }));
 
-const { mockAttachmentCreate, mockAttachmentGetById, mockAttachmentDeleteUnlinked } = vi.hoisted(() => ({
+const { mockAttachmentCreate, mockAttachmentGetById, mockAttachmentLoadBytes, mockAttachmentDeleteUnlinked } = vi.hoisted(() => ({
   mockAttachmentCreate: vi.fn(),
   mockAttachmentGetById: vi.fn(),
+  mockAttachmentLoadBytes: vi.fn(),
   mockAttachmentDeleteUnlinked: vi.fn(),
 }));
 
@@ -199,6 +200,7 @@ vi.mock('../services/attachment.service', async () => {
       ...actual.attachmentService,
       create: mockAttachmentCreate,
       getById: mockAttachmentGetById,
+      loadBytes: mockAttachmentLoadBytes,
       deleteUnlinked: mockAttachmentDeleteUnlinked,
     },
   };
@@ -2262,8 +2264,9 @@ describe('Management Routes', () => {
         id: 'att-1',
         filename: 'pic.png',
         mediaType: 'image/png',
-        data: bytes,
+        storagePath: 'att-1-pic.png',
       });
+      mockAttachmentLoadBytes.mockResolvedValue(bytes);
 
       const res = await authedRequest(app).get('/agents/attachments/att-1');
 
@@ -2279,6 +2282,22 @@ describe('Management Routes', () => {
       expect(res.status).toBe(404);
     });
 
+    it('GET /agents/attachments/:id returns 410 when the content has expired', async () => {
+      mockAttachmentGetById.mockResolvedValue({
+        id: 'att-1',
+        filename: 'old.pdf',
+        mediaType: 'application/pdf',
+        storagePath: null,
+        data: null,
+      });
+      mockAttachmentLoadBytes.mockResolvedValue(null);
+
+      const res = await authedRequest(app).get('/agents/attachments/att-1');
+
+      expect(res.status).toBe(410);
+      expect(res.body.error).toContain('expired');
+    });
+
     it('GET /agents/attachments/:id survives non-latin1 filenames (RFC 5987)', async () => {
       // Node's setHeader throws ERR_INVALID_CHAR for header values outside
       // latin-1, so a raw unicode filename= would 500 the download.
@@ -2286,8 +2305,9 @@ describe('Management Routes', () => {
         id: 'att-1',
         filename: '日本語 (1).pdf',
         mediaType: 'application/pdf',
-        data: Buffer.from('%PDF'),
+        storagePath: 'att-1-file.pdf',
       });
+      mockAttachmentLoadBytes.mockResolvedValue(Buffer.from('%PDF'));
 
       const res = await authedRequest(app).get('/agents/attachments/att-1');
 
