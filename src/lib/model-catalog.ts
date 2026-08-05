@@ -38,8 +38,7 @@
  * would otherwise force compaction on every turn); the newest tail messages are
  * always preserved and nothing is deleted (originals stay in the DB); and the
  * nothing-to-compact + once-per-exchange guards cap the damage at wasted
- * summarize calls. Feeding the number (or the percentage) into any prompt
- * remains off the table — don't cross that line without revisiting this note.
+ * summarize calls.
  */
 import { config } from '../config';
 import { logger } from '../logger';
