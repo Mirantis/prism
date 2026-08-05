@@ -121,9 +121,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // vendor (Bedrock/Azure) and routing (direct vs Nexus).
     const model = createProvider()(modelId);
 
-    // 4. Collect tools — shared with the compaction service so a manual
-    // compaction's tools block matches a chat turn's byte-for-byte (the
-    // prefix-cache hash covers it). See lib/tool-collection.ts.
+    // 4. Collect tools (see lib/tool-collection.ts).
     const { tools, subagents } = await collectTools({
       userId: request.userId,
       agentId: request.agentId,
@@ -211,11 +209,10 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     let wasCanceled = false;
     const channel = new AsyncChannel<InvokeStep>();
 
-    // The turn's latest occupancy snapshot, kept for the auto-compaction check
-    // after the turn completes — `finalize()` drops the service's tracked entry,
-    // so this local is the only post-turn copy. When the model's window is
-    // unknown, `record()` returns null (nothing renders); the raw token count is
-    // kept separately so the trigger can still fall back to an assumed window.
+    // The turn's latest occupancy snapshot and raw token count — `finalize()`
+    // drops the service's tracked entry, so these locals are the only
+    // post-turn copies. When the model's window is unknown, `record()` returns
+    // null (nothing renders) while the raw count is still kept.
     let lastSnapshot: ContextUsageSnapshot | null = null;
     let lastMeasuredTokens: number | null = null;
 

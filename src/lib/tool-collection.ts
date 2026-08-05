@@ -1,15 +1,11 @@
 /**
- * Chat-turn tool assembly, shared by invokeStream() and the compaction
- * service.
+ * Tool assembly for model invocations.
  *
- * The share matters for prompt-cache economics: a manual compaction sends the
- * same tool set as a chat turn (with toolChoice 'none') so its request shares
- * the tools+stable-system cache prefix chat turns keep warm — a mismatched or
- * absent tools block changes the prefix hash and misses the provider cache
- * entirely. The subagent Task invoker is injected (the same pattern
- * createTaskTool itself uses) so this module never imports invoke.ts; the
- * compaction service passes a stub that a toolChoice-'none' request can never
- * call.
+ * Kept in one place so every request that sends the agent's tool set builds a
+ * byte-identical tools block — the provider's prompt-cache prefix hash covers
+ * it, and any divergence misses the cache. The subagent Task invoker is
+ * injected (the same pattern createTaskTool itself uses) so this module never
+ * imports invoke.ts.
  */
 
 import type { Tool } from 'ai';
