@@ -34,6 +34,14 @@ export interface AttachmentMeta {
   mediaType: string;
   sizeBytes: number;
   category: AttachmentCategory;
+  /**
+   * Content no longer stored (168h TTL passed) — only metadata remains.
+   * Derived from `storagePath === null`; deliberately does NOT null-check the
+   * legacy BLOB (selecting it would reload every byte on each thread read), so
+   * a backfill-failed row reads as expired in the UI while `loadBytes()` still
+   * serves its BLOB — a mismatch that self-heals at the next boot's backfill.
+   */
+  expired: boolean;
 }
 
 export interface CreateAttachmentInput {
@@ -223,13 +231,16 @@ export function humanFileSize(bytes: number): string {
   return `${value.toFixed(1)} ${units[i]}`;
 }
 
-function toMeta(row: Pick<MessageAttachment, 'id' | 'filename' | 'mediaType' | 'sizeBytes' | 'category'>): AttachmentMeta {
+function toMeta(
+  row: Pick<MessageAttachment, 'id' | 'filename' | 'mediaType' | 'sizeBytes' | 'category' | 'storagePath'>,
+): AttachmentMeta {
   return {
     id: row.id,
     filename: row.filename,
     mediaType: row.mediaType,
     sizeBytes: row.sizeBytes,
     category: row.category as AttachmentCategory,
+    expired: row.storagePath === null,
   };
 }
 
@@ -239,6 +250,7 @@ const META_SELECT = {
   mediaType: true,
   sizeBytes: true,
   category: true,
+  storagePath: true,
 } as const;
 
 class AttachmentService {
@@ -490,6 +502,50 @@ class AttachmentService {
       }
     }
     return { migrated, failed };
+  }
+
+  /**
+   * Expire attachment content older than the TTL: delete the media file and
+   * clear both storage columns in one UPDATE. The metadata row survives so
+   * the conversation keeps its stub; `loadBytes()` then returns null and every
+   * consumer (download route, hydrate/view tools) reports "content expired".
+   * Also expires never-backfilled legacy BLOB rows. Returns the expired count.
+   */
+  async expireContent(olderThanMs: number): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanMs);
+    const victims = await prisma.messageAttachment.findMany({
+      where: {
+        createdAt: { lt: cutoff },
+        OR: [{ storagePath: { not: null } }, { data: { not: null } }],
+      },
+      select: { id: true, storagePath: true },
+    });
+    let expired = 0;
+    for (const v of victims) {
+      try {
+        await prisma.messageAttachment.update({
+          where: { id: v.id },
+          data: { storagePath: null, data: null },
+        });
+        if (v.storagePath) await removeMediaFile(v.storagePath);
+        expired++;
+      } catch (err) {
+        logger.error({ err }, `[Attachments] failed to expire content of ${v.id}`);
+      }
+    }
+    return expired;
+  }
+
+  /**
+   * The set of media-file basenames the database still references — everything
+   * else in the media dir is stray and eligible for `reapStrayMediaFiles`.
+   */
+  async listLiveStoragePaths(): Promise<Set<string>> {
+    const rows = await prisma.messageAttachment.findMany({
+      where: { storagePath: { not: null } },
+      select: { storagePath: true },
+    });
+    return new Set(rows.map((r) => r.storagePath).filter((p): p is string => p !== null));
   }
 
   /** Reap abandoned pre-send uploads that never got linked to a message. */

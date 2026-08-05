@@ -95,6 +95,7 @@ See **[Slack](slack.md)** for how the tokens are used.
 | `PRISM_DATA_DIR` | Persistent data dir for [skills](skills.md), [plugins](plugins.md), attachment media (`<data dir>/media`) and the Claude Code config. The Docker image sets this to the `/data` volume. | `/data` (Docker), else `~/.prism` |
 | `PRISM_SKILLS_DIR` | Override the [skills](skills.md) directory specifically. | `<data dir>/skills` |
 | `PRISM_PLUGINS_DIR` | Override the [plugins](plugins.md) directory specifically. | `<data dir>/plugins` |
+| `ATTACHMENT_TTL_HOURS` | How long shared-file content is kept before the hourly sweep deletes it. The conversation keeps a *content expired* stub. See [Tools](tools.md#attachments). | `168` (7 days) |
 
 `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID` only matter on the **first** boot
 with an empty database; later boots reuse the stored workspace.

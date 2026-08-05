@@ -109,11 +109,12 @@ TUI, save them to disk with [`/save`](terminal-ui.md#attaching-and-saving-files)
 
 ## Attachments
 
-When you send the agent a file, it appears as a **metadata stub** in the
-conversation context — the agent sees the filename, MIME type, size, and an
-opaque `id`, but not the raw bytes. This avoids flooding the context window
-with large payloads. The agent then decides how to consume the file using two
-tools:
+When you send the agent a file, its content is stored as a plain file under
+the data dir's `media/` folder (`/data/media` in the container) and the file
+appears as a **metadata stub** in the conversation context — the agent sees
+the filename, MIME type, size, and an opaque `id`, but not the raw bytes.
+This avoids flooding the context window with large payloads. The agent then
+decides how to consume the file using two tools:
 
 - **hydrate_attachment** — writes the stored file to a scratch directory on the
   agent's workspace disk. The agent can then inspect it with any shell tool:
@@ -127,6 +128,13 @@ tools:
   auto-inlined — the agent invokes this on demand when it needs to "look" at a
   picture. Images larger than ~3.75 MB should be hydrated instead. For PDFs,
   hydrate + `pdftotext` is the correct path.
+
+**Retention:** attachment content is kept for **7 days** (168 hours,
+configurable via `ATTACHMENT_TTL_HOURS` — see
+[Configuration](configuration.md)). An hourly sweep deletes older media files;
+the metadata stub stays in the conversation, marked *content expired*, and
+downloads answer **410 Gone**. Share the file again if the agent still needs
+it.
 
 > **Untrusted data:** the contents of attachments are treated as untrusted
 > input — they cannot alter the agent's system prompt or escalate privileges.

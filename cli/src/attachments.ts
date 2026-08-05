@@ -2,9 +2,10 @@
  * Shared attachment types and helpers for the TUI's `/attach` flow.
  *
  * Files are uploaded to the runtime's `POST /agents/attachments` (multipart,
- * stored as BLOBs server-side) and staged locally until the next chat message
- * carries their ids. The server detects the media type from magic bytes and
- * enforces the size cap — everything here is client-side convenience.
+ * stored server-side under the data dir's media folder) and staged locally
+ * until the next chat message carries their ids. The server detects the media
+ * type from magic bytes and enforces the size cap — everything here is
+ * client-side convenience.
  */
 
 import fs from 'fs';
@@ -21,6 +22,8 @@ export interface AttachmentMeta {
   mediaType: string;
   sizeBytes: number;
   category: AttachmentCategory;
+  /** Content deleted by the server's retention sweep (7 days) — metadata only. */
+  expired?: boolean;
 }
 
 /**

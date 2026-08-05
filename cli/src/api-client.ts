@@ -358,8 +358,9 @@ export class HttpApiClient implements ApiClient {
   }
 
   /**
-   * Download a stored attachment's raw bytes (GET streams the BLOB). Used by
-   * `/save` to write a file the agent shared to local disk. Non-2xx → ApiError.
+   * Download a stored attachment's raw bytes. Used by `/save` to write a file
+   * the agent shared to local disk. Non-2xx → ApiError (410 when the content
+   * has expired — files are kept for 7 days).
    */
   async downloadAttachment(id: string): Promise<Buffer> {
     const res = await fetch(`${this.baseUrl}/agents/attachments/${id}`);

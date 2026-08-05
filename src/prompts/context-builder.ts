@@ -489,9 +489,14 @@ function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
   }
 
   for (const att of msg.attachments ?? []) {
+    const head = `[Attachment: ${att.filename} · id=${att.id} · ${att.mediaType} · ${humanFileSize(att.sizeBytes)}`;
     parts.push({
       type: 'text',
-      text: `[Attachment: ${att.filename} · id=${att.id} · ${att.mediaType} · ${humanFileSize(att.sizeBytes)}] — use hydrate_attachment to extract it to disk (inspect with shell tools), or view_attachment for images.`,
+      // No tool hint on an expired stub — the content is gone, so the model
+      // shouldn't burn a tool call discovering that.
+      text: att.expired
+        ? `${head} · content expired] — no longer stored; ask the user to share it again if needed.`
+        : `${head}] — use hydrate_attachment to extract it to disk (inspect with shell tools), or view_attachment for images.`,
     });
   }
 

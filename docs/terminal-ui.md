@@ -103,7 +103,9 @@ stub and inspects it on demand via its [attachment tools](tools.md#attachments)
 — text/code/archives are hydrated to disk and read with shell tools; images can
 be viewed visually inline. When the agent shares files back, `/save` writes them
 to the current directory — or pass a target: `/save ./out/` for a directory, or
-`/save ./out/report.pdf` to name a single file.
+`/save ./out/report.pdf` to name a single file. File content is kept for 7
+days; expired attachments show `(expired)` in the history and `/save` reports
+that the content is gone.
 
 ## Panels
 

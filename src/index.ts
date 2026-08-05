@@ -41,6 +41,7 @@ import { pluginMcpService } from './services/plugin-mcp.service';
 import { pluginCatalogService } from './services/plugin-catalog.service';
 import { attachmentService } from './services/attachment.service';
 import { reapScratchDirs } from './tools/attachments';
+import { reapStrayMediaFiles } from './lib/media-store';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
@@ -183,9 +184,13 @@ const initialize = async () => {
 
     await getSlackHeartbeatThrottleQueue().start();
 
-    // Reap abandoned pre-send file uploads (chip added but never sent).
-    // Linked attachments are untouched. Run on boot, then hourly.
+    // Hourly attachment janitor: reap abandoned pre-send uploads (chip added
+    // but never sent), stale hydrate scratch dirs, content past its TTL, and
+    // stray media files no row references (cascade-deleted messages, imports).
     const ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
+    // Grace before a stray media file may be reaped — covers the window
+    // between the file write and its row insert. Never shorten below 1 h.
+    const STRAY_MEDIA_GRACE_MS = 60 * 60 * 1000;
     const reapOrphanAttachments = async () => {
       try {
         const deleted = await attachmentService.deleteOrphans(ORPHAN_TTL_MS);
@@ -198,6 +203,19 @@ const initialize = async () => {
         if (reaped > 0) logger.info(`[Attachments] reaped ${reaped} stale scratch dir(s)`);
       } catch (err) {
         logger.error({ err }, '[Attachments] scratch dir cleanup failed');
+      }
+      try {
+        const expired = await attachmentService.expireContent(config.attachmentContentTtlMs);
+        if (expired > 0) logger.info(`[Attachments] expired content of ${expired} attachment(s)`);
+      } catch (err) {
+        logger.error({ err }, '[Attachments] content expiry failed');
+      }
+      try {
+        const live = await attachmentService.listLiveStoragePaths();
+        const strays = await reapStrayMediaFiles(live, STRAY_MEDIA_GRACE_MS);
+        if (strays > 0) logger.info(`[Attachments] reaped ${strays} stray media file(s)`);
+      } catch (err) {
+        logger.error({ err }, '[Attachments] stray media cleanup failed');
       }
     };
     await reapOrphanAttachments();

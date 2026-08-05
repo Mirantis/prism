@@ -23,6 +23,8 @@ export interface Attachment {
   mediaType: string;
   sizeBytes: number;
   category: AttachmentCategory;
+  /** Content deleted by the retention sweep (7 days) — metadata only. */
+  expired?: boolean;
 }
 
 export interface ConversationMessage {
