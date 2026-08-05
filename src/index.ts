@@ -115,6 +115,19 @@ const initialize = async () => {
       pluginCatalogService.getPlugins().length,
     );
 
+    // Migrate legacy BLOB attachments to media files (idempotent; a migrated
+    // database matches nothing). Failures keep their BLOB and retry next boot,
+    // so this never blocks startup.
+    const backfill = await attachmentService.backfillBlobsToFiles();
+    if (backfill.migrated > 0 || backfill.failed > 0) {
+      logger.info(
+        '[Attachments] backfilled %d BLOB row(s) to %s (%d failed)',
+        backfill.migrated,
+        dirs.mediaDir,
+        backfill.failed,
+      );
+    }
+
     // Active LLM provider + routing, so the deployed vendor is observable in
     // logs. `routing` is 'nexus' when the selected vendor's Nexus chat mount is
     // set, else 'direct'.
