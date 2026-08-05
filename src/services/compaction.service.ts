@@ -15,8 +15,11 @@
  *   cached tools, live message array). Reusing them makes the summarize call a
  *   "forked request": the provider's prompt cache already holds the
  *   tools+system+history prefix, so the fork is mostly a cache read.
- * - `compactNow()` — the manual `/compact` path (REST). No live turn to fork
- *   from, so it rebuilds the context fresh and accepts the cache miss.
+ * - `compactNow()` — the manual `/compact` path (REST). Rebuilds the context
+ *   from stored rows the way a chat turn would. The provider cache outlives a
+ *   turn, but this request attaches no tools, so its shape diverges from chat
+ *   requests at the tools block and typically misses the cached prefix — an
+ *   accepted cost for a user-initiated one-off.
  *
  * Both serialize on the per-thread mutex (`threadTurnService.run`) so a
  * compaction never rewrites thread state while a turn is building its context.
@@ -63,9 +66,12 @@ import { trackEvent } from '../lib/telemetry';
  */
 export interface ForkRow {
   id: string;
-  /** Slack ts for Slack-derived rows; null for DB-native rows. */
+  /**
+   * Channel-native message id for rows read live from an external channel
+   * (e.g. a message timestamp); null for DB-native rows.
+   */
   externalMessageId: string | null;
-  /** Concise-mode internal steps are real DB rows even in Slack threads. */
+  /** Concise-mode internal steps are real DB rows. */
   internalStep: boolean;
   /** For the post-compaction size estimate (~4 chars/token). */
   contentChars: number;
