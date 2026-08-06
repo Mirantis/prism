@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { ModelMessage } from 'ai';
 
 const { mockGenerateText } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
@@ -523,6 +524,33 @@ describe('maybeCompactAfterOverflow', () => {
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it('recovers a history far larger than the window instead of exhausting the retries', async () => {
+    // The upgrade case: a thread whose full history was never compacted, so the
+    // first turn carries many times the window. Each attempt drops a quarter,
+    // so the budget has to reach ~7% for a 10x-oversized history — at the old
+    // 5-attempt cap this bottomed out near 32% and the thread was lost.
+    const huge: ModelMessage[] = Array.from({ length: 400 }, (_, i) => ({
+      role: i % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      content: `m${i}`,
+    }));
+    // Overflow until the history is under a tenth of what it started as.
+    mockGenerateText.mockImplementation(async (req: { messages: ModelMessage[] }) => {
+      if (req.messages.length > 40) throw OVERFLOW;
+      return { text: 'THE SUMMARY' };
+    });
+    const events = captureEvents();
+
+    compactionService.maybeCompactAfterOverflow(
+      makeOverflowFork({ messages: huge, contextRows: makeRows(20) }),
+    );
+    await flushAuto();
+
+    expect(events.at(-1)).toMatchObject({ status: 'completed', trigger: 'auto' });
+    expect(mockPrisma.conversationThread.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ compactionSummary: 'THE SUMMARY' }) }),
+    );
+  });
+
   it('fails without retrying on a non-overflow summarize error', async () => {
     mockGenerateText.mockRejectedValue(new Error('model unavailable'));
     const events = captureEvents();
@@ -548,15 +576,24 @@ describe('compactNow (manual)', () => {
     };
   }
 
-  it('emits started then failed when there is nothing to compact', async () => {
+  it('emits skipped — not failed — when there is nothing to compact', async () => {
     mockGetAgentContext.mockResolvedValue(makeContext(3));
     const events = captureEvents();
 
     await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
 
-    expect(events.map((e) => e.status)).toEqual(['started', 'failed']);
-    expect(events[1]).toMatchObject({ trigger: 'manual', error: 'Nothing to compact yet.' });
+    // A no-op must not read as an error in the UI, nor inflate the failure
+    // metric: distinct status, and `compaction failed` is never emitted.
+    expect(events.map((e) => e.status)).toEqual(['started', 'skipped']);
+    expect(events[1]).toMatchObject({ trigger: 'manual', detail: 'Nothing to compact yet.' });
+    expect(events[1].error).toBeUndefined();
     expect(mockGenerateText).not.toHaveBeenCalled();
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'compaction skipped',
+      'user-1',
+      expect.objectContaining({ 'compaction.trigger': 'manual' }),
+    );
+    expect(mockTrackEvent).not.toHaveBeenCalledWith('compaction failed', expect.anything(), expect.anything());
   });
 
   it('rebuilds the context with chat parity: same tools, toolChoice none, cache breakpoints', async () => {
