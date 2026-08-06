@@ -186,8 +186,7 @@ const contextWindowTokensOverride =
 const modelsDevUrlOverride = (process.env.MODELS_DEV_URL ?? '').trim() || null;
 
 // Compaction threshold: 0 explicitly disables auto-compaction (null); 1–100 is
-// a valid percent; junk or out-of-range values fall back to the default rather
-// than silently disabling a safety feature or firing on every turn.
+// a valid percent; anything else falls back to the default.
 const rawCompactionThreshold = parseInt(process.env.COMPACTION_THRESHOLD_PERCENT ?? '', 10);
 const compactionThresholdPercent: number | null =
   rawCompactionThreshold === 0
@@ -350,10 +349,7 @@ export const config = {
 
   // Auto-compaction trigger, as a percent of the model's context window. null
   // means disabled (COMPACTION_THRESHOLD_PERCENT=0); otherwise 1–100, default
-  // COMPACTION_THRESHOLD_PERCENT (90). Consumed programmatically by
-  // `compactionService.maybeAutoCompact` — see the trust note in
-  // `lib/model-catalog.ts` for why the window value itself is never echoed
-  // into a prompt.
+  // COMPACTION_THRESHOLD_PERCENT (90).
   compactionThresholdPercent,
 
   // Newest messages excluded from compaction and kept verbatim in the context.
