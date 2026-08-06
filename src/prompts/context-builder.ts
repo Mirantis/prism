@@ -87,8 +87,13 @@ export async function buildSystemPromptParts(
   const stableSections: string[] = [];
   const dynamicSections: string[] = [];
 
-  // Bootstrap phase — dynamic (only during onboarding, chat mode only)
-  if (context.isBootstrapPhase && mode === 'chat') {
+  // Bootstrap phase — dynamic (only during onboarding, chat mode only).
+  // Suppressed while locked in: onboarding's whole script is to write the soul
+  // and user profile then call `clear_bootstrap`, all three refused while
+  // locked, so showing it would send the model at the guard every turn.
+  // `bootstrapMd` is left intact, so onboarding resumes where it left off if the
+  // lock is lifted.
+  if (context.isBootstrapPhase && mode === 'chat' && !context.lockedIn) {
     dynamicSections.push(`# Bootstrap Phase\n\n${context.bootstrapMd}`);
   }
 
@@ -155,13 +160,6 @@ export async function buildSystemPromptParts(
     stableSections.push(getConciseDeliveryInstructions());
   }
 
-  // Locked-in mode: the workspace-markdown writers are absent from the tool set,
-  // so say why. Without this the model sees no `update_soul` and is left to
-  // guess whether it's broken or forbidden.
-  if (context.lockedIn) {
-    stableSections.push(getLockedInInstructions());
-  }
-
   // Mode-specific instructions
   if (mode === 'heartbeat') {
     stableSections.push(getHeartbeatBaseInstructions(context.heartbeatMd));
@@ -189,6 +187,15 @@ export async function buildSystemPromptParts(
   // These are in addition to chat instructions, which are also relevant for subagents.
   if (mode === 'subagent') {
     stableSections.push(getSubagentInstructions());
+  }
+
+  // Locked-in mode: the workspace-markdown writers are absent from the tool set,
+  // so say why. Without this the model sees no `update_soul` and is left to guess
+  // whether it's broken or forbidden. Last of the stable sections deliberately —
+  // the mode instructions above it tell the model to record things with
+  // `update_memory`, so the constraint has to be what it reads afterwards.
+  if (context.lockedIn) {
+    stableSections.push(getLockedInInstructions());
   }
 
   // Recalled memories — auto-retrieved from memory_entries via embedding search.
@@ -275,20 +282,19 @@ function buildSkillsSection(workspaceRoot?: string, lockedIn = false): string {
   // at its own config directory with the shell tools, which is the drift the
   // lock exists to discourage. The catalog itself stays — installed skills
   // remain listed and usable, only the "go install more" guidance goes away.
-  const install = lockedIn
-    ? ''
-    : `Global skills are installed in \`${skillsDir}\` — each is a \`<name>/SKILL.md\` bundle ` +
-      `(the agentskills.io standard, optionally with \`scripts/\`/\`references/\`/\`assets/\`). ` +
-      `Repository skills come from the workspace's \`.claude/skills/\` or \`.agents/skills/\`. ` +
-      `To add a global skill, use your shell tools to land a bundle there: copy or clone a ` +
-      `\`SKILL.md\` folder into \`${skillsDir}/<name>/\`, or fetch one from the ecosystem ` +
-      `with \`npx skills add <source> --copy\` (browse at https://skills.sh; \`<source>\` is a ` +
-      `GitHub repo like \`owner/repo\`, a skill URL, or a local path) and copy the resulting ` +
-      `\`<name>/\` folder into \`${skillsDir}\`. Newly added skills are detected automatically — ` +
-      `no restart needed.`;
+  const install =
+    `Global skills are installed in \`${skillsDir}\` — each is a \`<name>/SKILL.md\` bundle ` +
+    `(the agentskills.io standard, optionally with \`scripts/\`/\`references/\`/\`assets/\`). ` +
+    `Repository skills come from the workspace's \`.claude/skills/\` or \`.agents/skills/\`. ` +
+    `To add a global skill, use your shell tools to land a bundle there: copy or clone a ` +
+    `\`SKILL.md\` folder into \`${skillsDir}/<name>/\`, or fetch one from the ecosystem ` +
+    `with \`npx skills add <source> --copy\` (browse at https://skills.sh; \`<source>\` is a ` +
+    `GitHub repo like \`owner/repo\`, a skill URL, or a local path) and copy the resulting ` +
+    `\`<name>/\` folder into \`${skillsDir}\`. Newly added skills are detected automatically — ` +
+    `no restart needed.`;
 
-  // Trailing block, present only when the install guidance is.
-  const installSuffix = install === '' ? '' : `\n\n${install}`;
+  // Trailing block, dropped entirely while locked in.
+  const installSuffix = lockedIn ? '' : `\n\n${install}`;
 
   if (skills.length === 0) {
     return `# Skills\n\nNo Agent Skills are available yet.${installSuffix}`;
@@ -729,9 +735,9 @@ Only your **final message** in a multi-step turn is delivered to the user. Inter
 function getLockedInInstructions(): string {
   return `# Locked-In Mode
 
-Locked-in mode is **on**, so your workspace files — soul, memory summary, user profile, vision, heartbeat config, and bootstrap notes — are read-only for this turn. The tools that edit them are unavailable, and any such edit would be refused.
+Locked-in mode is **on**, so your workspace files — soul, memory summary, user profile, vision, heartbeat config, and bootstrap notes — are read-only. This is a persistent setting, not a limit on this turn: the tools that edit those files are unavailable, and any such edit would be refused.
 
-This is the user's deliberate choice, not a fault. When you notice something you would normally have written to one of those files, say so in your reply — describe the change you would have made and why — and note that the user can turn locked-in mode off on the Profile page. Do not try to work around it by editing files through the shell.
+This is the user's deliberate choice, not a fault. When you notice something you would normally have written to one of those files, say so in your reply — describe the change you would have made and why — and note that the user can turn locked-in mode off in their agent settings. Do not try to work around it by editing files through the shell.
 
 Everything else is unaffected: you can still search and write long-term memories, run tools, and change behavioural settings such as your heartbeat interval or timezone.`;
 }

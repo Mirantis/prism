@@ -42,7 +42,7 @@ type WorkspaceFileField = 'soulMd' | 'memoryMd' | 'userMd' | 'heartbeatMd' | 'vi
  */
 const LOCKED_IN_REFUSAL =
   'Locked-in mode is on, so your workspace files are read-only and this change was not saved. ' +
-  'Tell the user what you would have changed and that they can turn locked-in mode off on the Profile page.';
+  'Tell the user what you would have changed and that they can turn locked-in mode off in their agent settings.';
 
 /**
  * Resolve the final content for a workspace-file update, then persist it.
