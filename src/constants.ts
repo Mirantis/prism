@@ -76,7 +76,6 @@ export const COMPACTION_TAIL_MESSAGES = 6;
  * Deliberately generous — no current Claude window is larger, so this only
  * fires when the thread is genuinely enormous, and a wrong small guess would
  * compact constantly. Trigger-only by design: the context meter never renders
- * a percentage derived from this guess (an invented number on screen is worse
- * than none; see context-usage.service.ts).
+ * a percentage derived from this guess.
  */
 export const COMPACTION_FALLBACK_WINDOW_TOKENS = 1_000_000;
