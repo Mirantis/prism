@@ -68,7 +68,10 @@ vi.mock('../lib/prisma', () => ({
 
 vi.mock('../lib/classification', () => ({ getClassificationModel: () => ({}) }));
 vi.mock('../lib/langfuse', () => ({ isLangfuseEnabled: () => false }));
-vi.mock('../lib/telemetry', () => ({ trackEvent: mockTrackEvent }));
+vi.mock('../lib/telemetry', () => ({
+  langfuseTelemetry: () => ({}),
+  trackEvent: mockTrackEvent,
+}));
 vi.mock('../config', () => ({ config: mockConfig }));
 vi.mock('../constants', () => ({
   GOAL_MAX_OBJECTIVE_CHARS: 4000,

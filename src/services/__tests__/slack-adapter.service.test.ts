@@ -81,6 +81,7 @@ vi.mock('@slack/bolt', () => ({
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
 
 vi.mock('../../lib/telemetry', () => ({
+  langfuseTelemetry: () => ({}),
   trackEvent: mockTrackEvent,
   isTelemetryEnabled: () => false,
 }));

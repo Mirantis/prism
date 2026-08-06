@@ -16,7 +16,7 @@
 import { EventEmitter } from 'node:events';
 import { generateText } from 'ai';
 import { getClassificationModel } from '../lib/classification';
-import { isLangfuseEnabled } from '../lib/langfuse';
+import { langfuseTelemetry } from '../lib/telemetry';
 import { conversationService } from './conversation.service';
 import { logger } from '../logger';
 
@@ -55,9 +55,7 @@ async function generateThreadTitle(message: string): Promise<string | null> {
       messages: [{ role: 'user' as const, content: text }],
       maxOutputTokens: 24,
       temperature: 0,
-      ...(isLangfuseEnabled() && {
-        experimental_telemetry: { isEnabled: true, functionId: 'thread-title' },
-      }),
+      ...langfuseTelemetry('thread-title'),
     });
     return clampTitle(result.text);
   } catch (error) {

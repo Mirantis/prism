@@ -32,7 +32,10 @@ vi.mock('ai', async (importOriginal) => ({
 vi.mock('../../lib/classification', () => ({
   getClassificationRequest: mockGetClassificationRequest,
 }));
-vi.mock('../../lib/telemetry', () => ({ trackEvent: mockTrackEvent }));
+vi.mock('../../lib/telemetry', () => ({
+  langfuseTelemetry: () => ({}),
+  trackEvent: mockTrackEvent,
+}));
 vi.mock('../../lib/backend-client', () => ({ backendClient: {} }));
 vi.mock('@slack/bolt', () => ({
   App: vi.fn(),

@@ -53,7 +53,7 @@ import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
 import { MIN_PLAUSIBLE_CONTEXT } from '../lib/model-catalog';
 import { createProvider } from '../lib/llm-providers/create-provider';
 import type { CachePointFragment } from '../lib/llm-providers/llm-provider';
-import { isLangfuseEnabled } from '../lib/langfuse';
+
 import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withOutputLimits } from '../lib/tool-output-limiter';
 import type { Invoker } from '../lib/task-tool';
@@ -64,7 +64,7 @@ import { resolveEffectiveModel } from './agent-workspace.service';
 import { contextService } from './context.service';
 import { contextUsageService, type ContextUsageSnapshot } from './context-usage.service';
 import { threadTurnService } from './thread-turn.service';
-import { trackEvent } from '../lib/telemetry';
+import { trackEvent, langfuseTelemetry } from '../lib/telemetry';
 
 /**
  * One row of the summarized context, as it stood when the request was built.
@@ -300,7 +300,7 @@ class CompactionService {
             ? { tools: cachedTools, toolChoice: 'none' as const }
             : {}),
           maxOutputTokens: MAX_OUTPUT_TOKENS,
-          ...this.langfuseTelemetry(userId, threadId),
+          ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
         });
         const summary = result.text.trim();
         if (!summary) {
@@ -384,7 +384,7 @@ class CompactionService {
         // turn's own request while forbidding tool use in the summary call.
         toolChoice: 'none',
         maxOutputTokens: MAX_OUTPUT_TOKENS,
-        ...this.langfuseTelemetry(userId, threadId),
+        ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
       });
       const summary = result.text.trim();
       if (!summary) {
@@ -446,7 +446,7 @@ class CompactionService {
             tools: Object.keys(fork.tools).length > 0 ? fork.tools : undefined,
             toolChoice: 'none',
             maxOutputTokens: MAX_OUTPUT_TOKENS,
-            ...this.langfuseTelemetry(userId, threadId),
+            ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
           });
           summary = result.text.trim();
           break;
@@ -642,17 +642,6 @@ class CompactionService {
     });
   }
 
-  private langfuseTelemetry(userId: string, threadId: string) {
-    return isLangfuseEnabled()
-      ? {
-          experimental_telemetry: {
-            isEnabled: true as const,
-            functionId: 'compaction',
-            metadata: { userId, sessionId: threadId },
-          },
-        }
-      : {};
-  }
 }
 
 function toForkRows(

@@ -25,6 +25,7 @@ vi.mock('../services/webhook.service', () => ({
 }));
 
 vi.mock('../lib/telemetry', () => ({
+  langfuseTelemetry: () => ({}),
   trackEvent: mockTrackEvent,
 }));
 

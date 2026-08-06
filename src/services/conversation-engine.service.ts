@@ -19,8 +19,8 @@ import type { ToolLifecycleListener } from '../lib/tool-lifecycle';
 import { logger } from '../logger';
 import prisma from '../lib/prisma';
 import { getClassificationModel } from '../lib/classification';
-import { isLangfuseEnabled } from '../lib/langfuse';
-import { isTelemetryEnabled, trackEvent } from '../lib/telemetry';
+
+import { isTelemetryEnabled, trackEvent, langfuseTelemetry } from '../lib/telemetry';
 import { agentWorkspaceService } from './agent-workspace.service';
 
 // ============================================================================
@@ -198,13 +198,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         maxOutputTokens: 5,
         temperature: 0,
         abortSignal,
-        ...(isLangfuseEnabled() && {
-          experimental_telemetry: {
-            isEnabled: true,
-            functionId: 'feedback-worthiness-gate',
-            metadata: { userId },
-          },
-        }),
+        ...langfuseTelemetry('feedback-worthiness-gate', { userId }),
       });
       const worthy = result.text.trim().toUpperCase().startsWith('WORTHY');
       logger.info(`[Feedback:Gate] Decision: ${result.text.trim()} (worthy=${worthy})`);

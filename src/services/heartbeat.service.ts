@@ -18,8 +18,8 @@ import { messageDeliveryService } from './message-delivery.service';
 import { getClassificationModel } from '../lib/classification';
 import { agentStatusService } from './agent-status.service';
 import { slackMessageQueueService } from './slack-message-queue.service';
-import { isLangfuseEnabled } from '../lib/langfuse';
-import { trackEvent } from '../lib/telemetry';
+
+import { trackEvent, langfuseTelemetry } from '../lib/telemetry';
 import { logger } from '../logger';
 import { formatTimeAgo } from '../prompts/context-builder';
 import { InvokeStep, SlackTriggerMessage } from '../types';
@@ -458,16 +458,7 @@ Respond with exactly one word: DELIVER or SUPPRESS`;
         messages: [{ role: 'user' as const, content: `${lastAlertContext}\n\n## New Heartbeat Report\n${heartbeatResponse}` }],
         maxOutputTokens: 10,
         temperature: 0,
-        // Langfuse tracing (enabled when LANGFUSE keys are set)
-        ...(isLangfuseEnabled() && {
-          experimental_telemetry: {
-            isEnabled: true,
-            functionId: 'heartbeat-gate',
-            metadata: {
-              userId,
-            },
-          },
-        }),
+        ...langfuseTelemetry('heartbeat-gate', { userId }),
       });
       const shouldDeliver = result.text.trim().toUpperCase().startsWith('DELIVER');
       logger.info(`[Heartbeat:Gate] Decision: ${result.text.trim()} (deliver=${shouldDeliver})`);

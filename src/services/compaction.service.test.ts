@@ -62,7 +62,10 @@ vi.mock('./context-usage.service', () => ({
 }));
 
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
-vi.mock('../lib/telemetry', () => ({ trackEvent: mockTrackEvent }));
+vi.mock('../lib/telemetry', () => ({
+  langfuseTelemetry: () => ({}),
+  trackEvent: mockTrackEvent,
+}));
 
 vi.mock('../lib/model-catalog', () => ({ MIN_PLAUSIBLE_CONTEXT: 1_000 }));
 vi.mock('../lib/langfuse', () => ({ isLangfuseEnabled: () => false }));

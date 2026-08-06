@@ -22,6 +22,7 @@ vi.mock('../../lib/prisma', () => ({
 }));
 
 vi.mock('../../lib/telemetry', () => ({
+  langfuseTelemetry: () => ({}),
   trackEvent: mockTrackEvent,
 }));
 

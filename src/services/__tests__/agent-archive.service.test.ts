@@ -55,6 +55,7 @@ vi.mock('../../lib/sqlite-path', () => ({
 }));
 
 vi.mock('../../lib/telemetry', () => ({
+  langfuseTelemetry: () => ({}),
   trackEvent: mockTrackEvent,
 }));
 
