@@ -36,6 +36,15 @@ type WorkspaceFileInput = z.infer<typeof workspaceFileInputSchema>;
 type WorkspaceFileField = 'soulMd' | 'memoryMd' | 'userMd' | 'heartbeatMd' | 'visionMd';
 
 /**
+ * Refusal returned to the model when a workspace-markdown write is attempted
+ * while locked-in mode is on. Names the way out so the model can tell the user
+ * what to do instead of retrying.
+ */
+const LOCKED_IN_REFUSAL =
+  'Locked-in mode is on, so your workspace files are read-only and this change was not saved. ' +
+  'Tell the user what you would have changed and that they can turn locked-in mode off on the Profile page.';
+
+/**
  * Resolve the final content for a workspace-file update, then persist it.
  *
  * - If `newContent` is provided: use it directly (full replace).
@@ -49,6 +58,15 @@ async function resolveWorkspaceFileUpdate(
   label: string,
 ): Promise<{ success: boolean; message?: string; error?: string }> {
   const { newContent, edits, changeDescription } = input;
+
+  // Layer 1, the actual invariant: every markdown-writing tool funnels through
+  // here, so one live read of the lock covers all of them in every invocation
+  // mode. The tools are also withheld from the tool set while locked (invoke.ts),
+  // but that is only to stop the model wasting turns — this check is what makes
+  // the guarantee hold, including for a lock switched on mid-turn.
+  if (await agentWorkspaceService.isLockedIn()) {
+    return { success: false, error: LOCKED_IN_REFUSAL };
+  }
 
   if (newContent !== undefined && edits !== undefined) {
     return { success: false, error: 'Provide either newContent or edits, not both.' };
@@ -235,6 +253,12 @@ export function getAgentConfigTools(): Record<string, Tool> {
         confirmationMessage: z.string().describe('A brief message acknowledging the end of bootstrap'),
       }),
       execute: async ({ confirmationMessage }) => {
+        // Writes bootstrapMd, so it is part of the locked set. Guarded here
+        // rather than in resolveWorkspaceFileUpdate because it clears the field
+        // with its own direct write instead of going through that helper.
+        if (await agentWorkspaceService.isLockedIn()) {
+          return { success: false, error: LOCKED_IN_REFUSAL };
+        }
         await prisma.agentWorkspace.update({ where: { id: agentId }, data: { bootstrapMd: '' } });
         trackEvent('agent config updated', null, {
           'agent.id': agentId,

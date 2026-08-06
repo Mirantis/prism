@@ -35,6 +35,13 @@ export interface AgentContext {
   cronModel: string | null;
   /** When false, only the final text step is delivered to the channel. */
   verbose: boolean;
+  /**
+   * When true, the workspace markdown files are read-only: the tools that write
+   * them are withheld from the tool set and their writes refused. A snapshot for
+   * prompt-building and tool collection only — the enforcing check re-reads the
+   * flag at write time (see `agentWorkspaceService.isLockedIn`).
+   */
+  lockedIn: boolean;
   isBootstrapPhase: boolean;
   conversationSummary: string | null;
   recentMessages: ConversationMessage[];
