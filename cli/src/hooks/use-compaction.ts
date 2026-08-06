@@ -28,6 +28,11 @@ export function useCompaction(
       if (event.status === 'completed') {
         const n = event.messagesCompacted ?? 0;
         appendSystemMessage(`Conversation compacted — ${n} older message${n === 1 ? '' : 's'} summarized.`);
+      } else if (event.status === 'skipped') {
+        // A no-op, not an error: only worth saying when the user asked for it.
+        if (event.trigger === 'manual') {
+          appendSystemMessage(event.detail ?? 'Nothing to compact yet.');
+        }
       } else if (event.status === 'failed' && event.trigger === 'manual') {
         appendSystemMessage(`Compaction failed: ${event.error ?? 'unknown error'}`);
       }

@@ -259,6 +259,11 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     if (compactionNotice.status === 'completed') {
       const n = compactionNotice.messagesCompacted ?? 0;
       appendSystemMessage(`Conversation compacted — ${n} older message${n === 1 ? '' : 's'} summarized.`);
+    } else if (compactionNotice.status === 'skipped') {
+      // A no-op, not an error: only worth saying when the user asked for it.
+      if (compactionNotice.trigger === 'manual') {
+        appendSystemMessage(compactionNotice.detail ?? 'Nothing to compact yet.');
+      }
     } else if (compactionNotice.trigger === 'manual') {
       appendSystemMessage(`Compaction failed: ${compactionNotice.error ?? 'unknown error'}`);
     }

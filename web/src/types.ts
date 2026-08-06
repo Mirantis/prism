@@ -66,13 +66,16 @@ export interface ContextUsage {
  */
 export interface CompactionEvent {
   threadId: string;
-  status: 'started' | 'completed' | 'failed';
+  /** `skipped` is a benign no-op (nothing to compact), never an error. */
+  status: 'started' | 'completed' | 'failed' | 'skipped';
   trigger: 'auto' | 'manual';
   tokensBefore?: number | null;
   tokensAfter?: number | null;
   messagesCompacted?: number;
   /** Failed only — short reason, shown for manual compactions. */
   error?: string;
+  /** Skipped only — why there was nothing to do. */
+  detail?: string;
 }
 
 export interface ConversationThread {
