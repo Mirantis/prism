@@ -401,6 +401,40 @@ class AgentWorkspaceService {
     return updated.verbose;
   }
 
+  /**
+   * Set locked-in mode. When on, the agent's own tools may no longer rewrite
+   * the workspace markdown files (soul, memory summary, user profile, vision,
+   * heartbeat config, bootstrap) — those tools are withheld from the tool set
+   * and their writes refused. Vector memory, behavioural settings and renames
+   * stay editable, and this setter itself is never reachable from a tool, so a
+   * locked agent cannot unlock itself.
+   */
+  async updateLockedIn(lockedIn: unknown): Promise<boolean> {
+    if (typeof lockedIn !== 'boolean') {
+      throw new ValidationError('lockedIn must be a boolean');
+    }
+    const agent = await this.getAgent();
+    const updated = await prisma.agentWorkspace.update({
+      where: { id: agent.id },
+      data: { lockedIn },
+    });
+    trackEvent('agent locked-in updated', null, {
+      'agent.id': updated.id,
+      'agent.locked_in': String(updated.lockedIn),
+    });
+    return updated.lockedIn;
+  }
+
+  /**
+   * Read locked-in mode. Called at every guarded write rather than snapshotted
+   * per turn, so toggling the lock takes effect immediately — including
+   * part-way through a turn that already collected its tools.
+   */
+  async isLockedIn(): Promise<boolean> {
+    const agent = await this.getAgent();
+    return agent.lockedIn;
+  }
+
   /** Cron equivalent of {@link updateHeartbeatModel}. */
   async updateCronModel(model: unknown): Promise<ModelOverrideInfo> {
     const normalized = normalizeModelOverride(model);
