@@ -44,6 +44,10 @@ function createTestAgentWorkspace(overrides: Record<string, unknown> = {}) {
     nexusMcpAgentToken: null,
     heartbeatIntervalMs: 28800000,
     timezone: 'UTC',
+    // Unlocked by default; the locked-in suite overrides it. The guard reads the
+    // live row through agentWorkspaceService.isLockedIn(), which resolves to the
+    // mocked prisma.findUnique below, so this field drives the whole gate.
+    lockedIn: false,
     ...overrides,
   };
 }
@@ -450,6 +454,136 @@ describe('getAgentConfigTools', () => {
       expect(result.success).toBe(false);
       expect(mockHeartbeatService.startHeartbeat).not.toHaveBeenCalled();
       expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
+  // Locked-in mode (Layer 1 — the enforcing check)
+  // ==========================================================================
+
+  describe('locked-in mode', () => {
+    // Every tool that writes one of the locked markdown fields, with an input
+    // that would otherwise succeed.
+    const guarded: Array<[string, Record<string, unknown>]> = [
+      ['update_soul', { newContent: '# Soul\nrewritten', changeDescription: 'rewrite soul' }],
+      ['update_memory', { newContent: '# Memory\nrewritten', changeDescription: 'rewrite memory' }],
+      ['update_user_profile', { newContent: '# User\nrewritten', changeDescription: 'rewrite user' }],
+      ['update_vision', { newContent: '# Vision\nrewritten', changeDescription: 'rewrite vision' }],
+      ['update_heartbeat_config', { newContent: '# Heartbeat\n- check', changeDescription: 'rewrite hb' }],
+      ['clear_bootstrap', { confirmationMessage: 'done onboarding' }],
+    ];
+
+    beforeEach(() => {
+      const locked = createTestAgentWorkspace({ lockedIn: true });
+      mockPrisma.agentWorkspace.findUnique.mockResolvedValue(locked);
+      mockPrisma.agentWorkspace.update.mockResolvedValue(locked);
+    });
+
+    it.each(guarded)('%s refuses and performs no write while locked', async (name, input) => {
+      const result = (await tools[name].execute(input)) as AgentConfigResult;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Locked-in mode is on');
+      // The refusal has to name the way out, or the model can't tell the user.
+      expect(result.error).toContain('turn locked-in mode off');
+      expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    });
+
+    it.each(guarded)('%s emits no config telemetry while locked', async (name, input) => {
+      await tools[name].execute(input);
+
+      expect(mockTrackEvent).not.toHaveBeenCalled();
+    });
+
+    it('refuses edits mode too, without reading or writing content', async () => {
+      const result = (await tools.update_soul.execute({
+        edits: [{ oldText: 'helpful', newText: 'terse' }],
+        changeDescription: 'tone tweak',
+      })) as AgentConfigResult;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Locked-in mode is on');
+      expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    });
+
+    it('does not restart the heartbeat when a locked heartbeat-config write is refused', async () => {
+      await tools.update_heartbeat_config.execute({
+        newContent: '# Heartbeat\n- check',
+        changeDescription: 'rewrite hb',
+      });
+
+      expect(mockHeartbeatService.startHeartbeat).not.toHaveBeenCalled();
+    });
+
+    // Renames and behavioural settings stay editable while locked — the lock
+    // covers the workspace markdown only.
+    it('still allows rename_self while locked', async () => {
+      mockPrisma.agentWorkspace.update.mockResolvedValue(
+        createTestAgentWorkspace({ lockedIn: true, name: 'NewName' }),
+      );
+
+      const result = (await tools.rename_self.execute({ name: 'NewName' })) as AgentConfigResult;
+
+      expect(result.success).toBe(true);
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: agentId },
+        data: { name: 'NewName' },
+      });
+    });
+
+    it('still allows update_settings (timezone) while locked', async () => {
+      const result = (await tools.update_settings.execute({
+        setting: 'timezone',
+        value: 'Europe/Berlin',
+      })) as AgentConfigResult;
+
+      expect(result.success).toBe(true);
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: agentId },
+        data: { timezone: 'Europe/Berlin' },
+      });
+    });
+
+    it('still allows update_settings (heartbeatIntervalMs) while locked', async () => {
+      const result = (await tools.update_settings.execute({
+        setting: 'heartbeatIntervalMs',
+        value: 3_600_000,
+      })) as AgentConfigResult;
+
+      expect(result.success).toBe(true);
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: agentId },
+        data: { heartbeatIntervalMs: 3_600_000 },
+      });
+    });
+
+    // The agent must not be able to unlock itself: `lockedIn` is deliberately
+    // absent from update_settings' setting enum, so it isn't a writable setting
+    // and the schema rejects it before any handler runs.
+    it('does not accept lockedIn as a writable setting', () => {
+      const schema = (tools.update_settings as unknown as {
+        inputSchema: { safeParse: (v: unknown) => { success: boolean } };
+      }).inputSchema;
+
+      expect(schema.safeParse({ setting: 'lockedIn', value: false }).success).toBe(false);
+      expect(schema.safeParse({ setting: 'timezone', value: 'UTC' }).success).toBe(true);
+    });
+
+    it('resumes writing once the lock is lifted', async () => {
+      const unlocked = createTestAgentWorkspace({ lockedIn: false });
+      mockPrisma.agentWorkspace.findUnique.mockResolvedValue(unlocked);
+      mockPrisma.agentWorkspace.update.mockResolvedValue(unlocked);
+
+      const result = (await tools.update_soul.execute({
+        newContent: '# Soul\nrewritten',
+        changeDescription: 'rewrite soul',
+      })) as AgentConfigResult;
+
+      expect(result.success).toBe(true);
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: agentId },
+        data: { soulMd: '# Soul\nrewritten' },
+      });
     });
   });
 });

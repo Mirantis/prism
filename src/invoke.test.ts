@@ -620,6 +620,76 @@ describe('invoke', () => {
     });
   });
 
+  describe('tool filtering while locked in', () => {
+    // The six workspace-markdown writers, i.e. the whole locked set.
+    const LOCKED_TOOLS = [
+      'update_soul',
+      'update_memory',
+      'update_user_profile',
+      'update_vision',
+      'update_heartbeat_config',
+      'clear_bootstrap',
+    ];
+
+    beforeEach(() => {
+      mockGetMemoryTools.mockReturnValue({
+        memory_search: { description: 'search' },
+        memory_write: { description: 'write' },
+        memory_delete: { description: 'delete' },
+      });
+      mockGetAgentConfigTools.mockReturnValue({
+        rename_self: { description: 'rename' },
+        update_soul: { description: 'update soul' },
+        update_memory: { description: 'update memory' },
+        update_user_profile: { description: 'update user' },
+        update_vision: { description: 'update vision' },
+        update_heartbeat_config: { description: 'update hb' },
+        update_settings: { description: 'update settings' },
+        clear_bootstrap: { description: 'clear bootstrap' },
+      });
+      mockGetShellTools.mockReturnValue({ shell_exec: { description: 'exec' } });
+      mockGetAgentContext.mockResolvedValue(createTestAgentContext({ lockedIn: true }));
+    });
+
+    // Every mode, because a lock that only held for chat would be bypassable by
+    // asking a subagent — or by waiting for the next heartbeat.
+    const modes = ['chat', 'subagent', 'heartbeat', 'cron', 'goal', 'webhook'] as const;
+
+    it.each(modes)('%s mode omits every workspace-markdown writer while locked', async (mode) => {
+      await invoke(createTestInvokeRequest({ mode }));
+
+      const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
+      for (const name of LOCKED_TOOLS) {
+        expect(toolNames).not.toContain(name);
+      }
+    });
+
+    it.each(modes)('%s mode keeps rename_self, update_settings and memory tools while locked', async (mode) => {
+      await invoke(createTestInvokeRequest({ mode }));
+
+      const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
+      // Renames and behavioural settings stay editable; vector memory is out of
+      // scope entirely so the agent keeps learning while locked.
+      expect(toolNames).toContain('rename_self');
+      expect(toolNames).toContain('update_settings');
+      expect(toolNames).toContain('memory_search');
+      expect(toolNames).toContain('memory_write');
+      expect(toolNames).toContain('memory_delete');
+      expect(toolNames).toContain('shell_exec');
+    });
+
+    it('keeps every writer when not locked', async () => {
+      mockGetAgentContext.mockResolvedValue(createTestAgentContext({ lockedIn: false }));
+
+      await invoke(createTestInvokeRequest({ mode: 'chat' }));
+
+      const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
+      for (const name of LOCKED_TOOLS) {
+        expect(toolNames).toContain(name);
+      }
+    });
+  });
+
   it('adds Nexus MCP tools when nexusMcpUrl is configured', async () => {
     mockGetMCPTools.mockResolvedValue({ kubectl: {} });
 

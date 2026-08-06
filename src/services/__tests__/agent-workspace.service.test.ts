@@ -228,6 +228,50 @@ describe('AgentWorkspaceService telemetry', () => {
     expect(mockTrackEvent).not.toHaveBeenCalled();
   });
 
+  it('emits "agent locked-in updated" and returns the persisted value on updateLockedIn', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ lockedIn: true }));
+
+    const result = await agentWorkspaceService.updateLockedIn(true);
+
+    expect(result).toBe(true);
+    expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+      where: { id: agentId },
+      data: { lockedIn: true },
+    });
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent locked-in updated', null, {
+      'agent.id': agentId,
+      'agent.locked_in': 'true',
+    });
+  });
+
+  it('unlocks and reports the persisted value on updateLockedIn(false)', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ lockedIn: false }));
+
+    const result = await agentWorkspaceService.updateLockedIn(false);
+
+    expect(result).toBe(false);
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent locked-in updated', null, {
+      'agent.id': agentId,
+      'agent.locked_in': 'false',
+    });
+  });
+
+  it('rejects a non-boolean lockedIn without writing or emitting telemetry', async () => {
+    await expect(agentWorkspaceService.updateLockedIn('yes')).rejects.toThrow('boolean');
+
+    expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+
+  it('isLockedIn reads the live row rather than a cached value', async () => {
+    mockPrisma.agentWorkspace.findUnique.mockResolvedValueOnce(createAgentRow({ lockedIn: false }));
+    expect(await agentWorkspaceService.isLockedIn()).toBe(false);
+
+    // A toggle between reads must be observed — the lock is never snapshotted.
+    mockPrisma.agentWorkspace.findUnique.mockResolvedValueOnce(createAgentRow({ lockedIn: true }));
+    expect(await agentWorkspaceService.isLockedIn()).toBe(true);
+  });
+
   it('emits "subagent added" on successful addSubagent', async () => {
     mockPrisma.agentWorkspace.findUnique
       .mockResolvedValueOnce(createAgentRow()) // parent

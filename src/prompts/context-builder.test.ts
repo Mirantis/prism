@@ -67,6 +67,43 @@ describe('buildSystemPrompt', () => {
     expect(heartbeatPrompt).not.toContain('# Bootstrap Phase');
   });
 
+  it('explains locked-in mode and drops the skills-install guidance when locked', async () => {
+    const prompt = await buildSystemPrompt(createTestAgentContext({ lockedIn: true }), 'chat');
+
+    expect(prompt).toContain('# Locked-In Mode');
+    // The catalog stays; only the "go install more" paragraph goes away.
+    expect(prompt).toContain('# Skills');
+    expect(prompt).not.toContain('npx skills add');
+    // No dangling separator where the install paragraph used to be.
+    expect(prompt).not.toMatch(/\n{3}/);
+  });
+
+  it('omits the locked-in section and keeps the install guidance when unlocked', async () => {
+    const prompt = await buildSystemPrompt(createTestAgentContext({ lockedIn: false }), 'chat');
+
+    expect(prompt).not.toContain('# Locked-In Mode');
+    expect(prompt).toContain('npx skills add');
+  });
+
+  it('suppresses the bootstrap script while locked in, since its tools are refused', async () => {
+    const context = createTestAgentContext({ isBootstrapPhase: true, lockedIn: true });
+
+    const prompt = await buildSystemPrompt(context, 'chat');
+
+    // Onboarding tells the model to write soul/user then clear_bootstrap — all
+    // refused while locked, so it must not be asked to try every turn.
+    expect(prompt).not.toContain('# Bootstrap Phase');
+    expect(prompt).toContain('# Locked-In Mode');
+  });
+
+  it('states the locked-in constraint after the mode instructions that ask for writes', async () => {
+    const prompt = await buildSystemPrompt(createTestAgentContext({ lockedIn: true }), 'chat');
+
+    // getChatInstructions() tells the model to record facts with update_memory,
+    // so the notice that those tools are gone has to be the later word.
+    expect(prompt.indexOf('# Locked-In Mode')).toBeGreaterThan(prompt.indexOf('# Chat Mode'));
+  });
+
   it('includes vision section when visionMd is non-empty', async () => {
     const context = createTestAgentContext({ visionMd: 'Scale to 10k users by Q4.' });
     const prompt = await buildSystemPrompt(context, 'chat');
