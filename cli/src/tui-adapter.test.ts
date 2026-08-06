@@ -237,6 +237,22 @@ describe('TuiAdapter inbound envelopes', () => {
       ]);
     });
 
+    it('accepts the skipped status and its detail', () => {
+      const seen: unknown[] = [];
+      tuiAdapterService.events.on('compaction', (e) => seen.push(e));
+
+      emit('compaction', {
+        threadId: 'thread-1',
+        status: 'skipped',
+        trigger: 'manual',
+        detail: 'Nothing to compact yet.',
+      });
+
+      expect(seen).toEqual([
+        expect.objectContaining({ status: 'skipped', detail: 'Nothing to compact yet.' }),
+      ]);
+    });
+
     it('drops malformed frames — a bad frame must not toggle an indicator it cannot clear', () => {
       const seen: unknown[] = [];
       tuiAdapterService.events.on('compaction', (e) => seen.push(e));

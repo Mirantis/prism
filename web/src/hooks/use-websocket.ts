@@ -132,7 +132,10 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             // toggle a "compacting…" indicator it can never clear.
             if (
               typeof p?.threadId === 'string' &&
-              (p.status === 'started' || p.status === 'completed' || p.status === 'failed') &&
+              (p.status === 'started' ||
+                p.status === 'completed' ||
+                p.status === 'failed' ||
+                p.status === 'skipped') &&
               (p.trigger === 'auto' || p.trigger === 'manual')
             ) {
               onCompactionRef.current?.(p as CompactionEvent);

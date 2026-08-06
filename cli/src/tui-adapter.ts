@@ -53,13 +53,16 @@ export interface ContextUsage {
  */
 export interface CompactionEvent {
   threadId: string;
-  status: 'started' | 'completed' | 'failed';
+  /** `skipped` is a benign no-op (nothing to compact), never an error. */
+  status: 'started' | 'completed' | 'failed' | 'skipped';
   trigger: 'auto' | 'manual';
   tokensBefore?: number | null;
   tokensAfter?: number | null;
   messagesCompacted?: number;
   /** Failed only — short reason, shown for manual compactions. */
   error?: string;
+  /** Skipped only — why there was nothing to do. */
+  detail?: string;
 }
 
 export interface TuiAdapterEvents {
@@ -185,7 +188,10 @@ function coerceCompactionEvent(raw: unknown): CompactionEvent | null {
   // "compacting…" indicator it can never clear.
   if (
     typeof e.threadId !== 'string' ||
-    (e.status !== 'started' && e.status !== 'completed' && e.status !== 'failed') ||
+    (e.status !== 'started' &&
+      e.status !== 'completed' &&
+      e.status !== 'failed' &&
+      e.status !== 'skipped') ||
     (e.trigger !== 'auto' && e.trigger !== 'manual')
   ) {
     return null;
@@ -198,6 +204,7 @@ function coerceCompactionEvent(raw: unknown): CompactionEvent | null {
     tokensAfter: typeof e.tokensAfter === 'number' ? e.tokensAfter : null,
     messagesCompacted: typeof e.messagesCompacted === 'number' ? e.messagesCompacted : undefined,
     error: typeof e.error === 'string' ? e.error : undefined,
+    detail: typeof e.detail === 'string' ? e.detail : undefined,
   };
 }
 
