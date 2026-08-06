@@ -122,7 +122,7 @@ decides how to consume the file using two tools:
 - **hydrate_attachment** — writes the stored file to a scratch directory on the
   agent's workspace disk. The agent can then inspect it with any shell tool:
   `cat`, `head`, `jq`, `unzip -l`, `pdftotext`, `sqlite3`, `strings`, etc.
-  Preferred for text, code, archives, data files, and PDFs. The scratch files
+  Preferred for text, code, archives, and data files. The scratch files
   are automatically reaped by an hourly janitor. RBAC-scoped: only attachments
   belonging to the caller's own conversation thread are accessible.
 

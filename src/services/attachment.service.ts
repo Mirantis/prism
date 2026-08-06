@@ -20,7 +20,7 @@ import { randomUUID } from 'crypto';
 import { MessageAttachment } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { config } from '../config';
-import { readMediaFile, removeMediaFile, writeMediaFile } from '../lib/media-store';
+import { listMediaFiles, readMediaFile, removeMediaFile, writeMediaFile } from '../lib/media-store';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
@@ -36,10 +36,11 @@ export interface AttachmentMeta {
   category: AttachmentCategory;
   /**
    * Content no longer stored (168h TTL passed) — only metadata remains.
-   * Derived from `storagePath === null`; deliberately does NOT null-check the
-   * legacy BLOB (selecting it would reload every byte on each thread read), so
-   * a backfill-failed row reads as expired in the UI while `loadBytes()` still
-   * serves its BLOB — a mismatch that self-heals at the next boot's backfill.
+   * True when the row has neither a media file (`storagePath`) nor a legacy
+   * BLOB. The BLOB presence is checked with an ids-only filtered query, never
+   * by selecting the bytes, so thread reads stay cheap; rows whose media file
+   * vanished out-of-band (lost volume, `.prism` import) are reconciled to
+   * `storagePath = null` at boot.
    */
   expired: boolean;
 }
@@ -231,16 +232,19 @@ export function humanFileSize(bytes: number): string {
   return `${value.toFixed(1)} ${units[i]}`;
 }
 
-function toMeta(
-  row: Pick<MessageAttachment, 'id' | 'filename' | 'mediaType' | 'sizeBytes' | 'category' | 'storagePath'>,
-): AttachmentMeta {
+type MetaRow = Pick<
+  MessageAttachment,
+  'id' | 'filename' | 'mediaType' | 'sizeBytes' | 'category' | 'storagePath'
+>;
+
+function toMeta(row: MetaRow, blobBackedIds: Set<string>): AttachmentMeta {
   return {
     id: row.id,
     filename: row.filename,
     mediaType: row.mediaType,
     sizeBytes: row.sizeBytes,
     category: row.category as AttachmentCategory,
-    expired: row.storagePath === null,
+    expired: row.storagePath === null && !blobBackedIds.has(row.id),
   };
 }
 
@@ -336,6 +340,22 @@ class AttachmentService {
     return null;
   }
 
+  /**
+   * Of the rows without a media file, the ids that still hold a legacy BLOB —
+   * those are not expired, just not backfilled yet. Filters on `data` without
+   * ever selecting it, so no bytes are loaded. The common case (every row has
+   * a `storagePath`) costs no extra query.
+   */
+  private async blobBackedIds(rows: Array<Pick<MetaRow, 'id' | 'storagePath'>>): Promise<Set<string>> {
+    const candidates = rows.filter((r) => r.storagePath === null).map((r) => r.id);
+    if (candidates.length === 0) return new Set();
+    const backed = await prisma.messageAttachment.findMany({
+      where: { id: { in: candidates }, data: { not: null } },
+      select: { id: true },
+    });
+    return new Set(backed.map((r) => r.id));
+  }
+
   /** Metadata only (no bytes) for the given message ids — for thread reads. */
   async getMetaByMessageIds(messageIds: string[]): Promise<Map<string, AttachmentMeta[]>> {
     const map = new Map<string, AttachmentMeta[]>();
@@ -345,10 +365,11 @@ class AttachmentService {
       select: { ...META_SELECT, messageId: true },
       orderBy: { createdAt: 'asc' },
     });
+    const blobBacked = await this.blobBackedIds(rows);
     for (const row of rows) {
       if (!row.messageId) continue;
       const list = map.get(row.messageId) ?? [];
-      list.push(toMeta(row));
+      list.push(toMeta(row, blobBacked));
       map.set(row.messageId, list);
     }
     return map;
@@ -380,10 +401,11 @@ class AttachmentService {
       select: { ...META_SELECT, externalTs: true },
       orderBy: { createdAt: 'asc' },
     });
+    const blobBacked = await this.blobBackedIds(rows);
     for (const row of rows) {
       if (!row.externalTs) continue;
       const list = map.get(row.externalTs) ?? [];
-      list.push(toMeta(row));
+      list.push(toMeta(row, blobBacked));
       map.set(row.externalTs, list);
     }
     return map;
@@ -404,7 +426,8 @@ class AttachmentService {
       select: META_SELECT,
       orderBy: { createdAt: 'asc' },
     });
-    return rows.map(toMeta);
+    const blobBacked = await this.blobBackedIds(rows);
+    return rows.map((row) => toMeta(row, blobBacked));
   }
 
   /** Link pre-uploaded (web) attachments to the message that carries them. */
@@ -555,14 +578,45 @@ class AttachmentService {
       where: { messageId: null, createdAt: { lt: cutoff } },
       select: { id: true, storagePath: true },
     });
-    if (victims.length === 0) return 0;
-    const result = await prisma.messageAttachment.deleteMany({
-      where: { id: { in: victims.map((v) => v.id) } },
-    });
+    let deleted = 0;
     for (const v of victims) {
-      if (v.storagePath) await removeMediaFile(v.storagePath);
+      // Re-check `messageId: null` in the delete itself: a send can link the
+      // row between the scan and here, and a just-linked attachment (and its
+      // media file) must survive. Per-row deletes so the file is only removed
+      // when its row actually went.
+      const result = await prisma.messageAttachment.deleteMany({
+        where: { id: v.id, messageId: null },
+      });
+      if (result.count > 0) {
+        deleted += result.count;
+        if (v.storagePath) await removeMediaFile(v.storagePath);
+      }
     }
-    return result.count;
+    return deleted;
+  }
+
+  /**
+   * Repoint rows whose media file is gone out-of-band — a `.prism` import onto
+   * a different install, a lost/replaced volume — back to `storagePath = null`
+   * so `expired` tells the truth (the web chip stops offering a download that
+   * would 410, and the stub stops advertising tools that would fail). Runs at
+   * boot, before the backfill: an imported row that still has a legacy BLOB is
+   * then re-exported to a real local file. One readdir, no byte reads.
+   */
+  async reconcileMissingFiles(): Promise<number> {
+    const rows = await prisma.messageAttachment.findMany({
+      where: { storagePath: { not: null } },
+      select: { id: true, storagePath: true },
+    });
+    if (rows.length === 0) return 0;
+    const present = await listMediaFiles();
+    const missing = rows.filter((r) => r.storagePath !== null && !present.has(r.storagePath));
+    if (missing.length === 0) return 0;
+    await prisma.messageAttachment.updateMany({
+      where: { id: { in: missing.map((m) => m.id) } },
+      data: { storagePath: null },
+    });
+    return missing.length;
   }
 }
 
