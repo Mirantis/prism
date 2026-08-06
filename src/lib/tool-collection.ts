@@ -216,7 +216,7 @@ const LOCKED_WORKSPACE_TOOL_NAMES = new Set([
 ]);
 
 /** Drop the workspace-markdown writers (locked-in mode, Layer 2). */
-export function omitLockedWorkspaceTools(tools: Record<string, Tool>): Record<string, Tool> {
+function omitLockedWorkspaceTools(tools: Record<string, Tool>): Record<string, Tool> {
   const result: Record<string, Tool> = {};
   for (const [name, tool] of Object.entries(tools)) {
     if (!LOCKED_WORKSPACE_TOOL_NAMES.has(name)) result[name] = tool;
