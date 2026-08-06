@@ -75,6 +75,7 @@ export function createTestAgentContext(overrides?: Partial<AgentContext>): Agent
     heartbeatModel: null,
     cronModel: null,
     verbose: false,
+    lockedIn: false,
     isBootstrapPhase: false,
     conversationSummary: null,
     recentMessages: [],

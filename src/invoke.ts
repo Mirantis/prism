@@ -141,6 +141,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       workspaceRoot: request.workspaceRoot,
       taskInvoker: invoke,
       registerAttachmentInjection: (message) => pendingAttachmentInjections.push(message),
+      // Layer 2 of locked-in mode: withhold the workspace-markdown writers so
+      // the model doesn't burn turns on writes that would be refused anyway.
+      // The refusal in agent-config.ts is what actually enforces the lock;
+      // dropping the tools is a courtesy, not the guarantee.
+      lockedIn: context.lockedIn,
     });
 
     // 5. Wrap tools with output limits, lifecycle events, and cache control

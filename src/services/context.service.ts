@@ -38,6 +38,7 @@ class ContextService {
       heartbeatModel: agent.heartbeatModel ?? null,
       cronModel: agent.cronModel ?? null,
       verbose: options.verbose ?? agent.verbose,
+      lockedIn: agent.lockedIn,
       isBootstrapPhase,
       conversationSummary: null,
       recentMessages: [],

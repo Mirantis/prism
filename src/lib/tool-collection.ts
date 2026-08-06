@@ -43,6 +43,13 @@ export interface CollectToolsInput {
    * converter accepts for file content.
    */
   registerAttachmentInjection?: (message: ModelMessage) => void;
+  /**
+   * Locked-in mode, read from the caller's already-fetched context rather than
+   * re-read here so the tools block stays a pure function of its input — two
+   * requests built from the same context (a chat turn and the compaction
+   * request that shares its cache prefix) must produce a byte-identical block.
+   */
+  lockedIn?: boolean;
 }
 
 /**
@@ -137,7 +144,18 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
 
   // Applied to everything, not just the built-ins: an MCP tool that shares a
   // name with a built-in the current mode removed must not survive either.
-  const tools = filterToolsByMode(merged, input.mode);
+  const modeFilteredTools = filterToolsByMode(merged, input.mode);
+
+  // Layer 2 of locked-in mode: withhold the workspace-markdown writers so the
+  // model doesn't burn turns on writes that would be refused anyway. Applied
+  // after (and independently of) the mode filter so it holds for every mode,
+  // present and future — including subagent, which otherwise keeps this whole
+  // surface, and over the merged map so an MCP or plugin tool can't answer to a
+  // withheld name either. The refusal in agent-config.ts is what actually
+  // enforces the lock; dropping the tools is a courtesy, not the guarantee.
+  const tools = input.lockedIn
+    ? omitLockedWorkspaceTools(modeFilteredTools)
+    : modeFilteredTools;
 
   // Fetch subagents (skip for subagent invocations to prevent recursion)
   const subagents = input.mode === 'subagent'
@@ -145,7 +163,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     : await agentWorkspaceService.getSubagents(input.agentId);
 
   logger.info(
-    `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} Nexus MCP + ${Object.keys(pluginTools).length} plugin MCP tool(s); ${subagents.length} subagent(s)`,
+    `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} Nexus MCP + ${Object.keys(pluginTools).length} plugin MCP tool(s); ${subagents.length} subagent(s)${input.lockedIn ? ' [locked-in]' : ''}`,
   );
 
   // Add task tool if subagents are configured
@@ -176,6 +194,32 @@ export function withToolsCacheControl(
     result[name] = name === lastKey
       ? { ...tool, providerOptions: cachePoint }
       : tool;
+  }
+  return result;
+}
+
+/**
+ * Tools that write the locked workspace markdown fields. Withheld from the tool
+ * set while locked-in mode is on. `rename_self` and `update_settings` are absent
+ * on purpose: renames and behavioural settings (heartbeat interval, timezone,
+ * verbose) stay editable while locked, and `update_settings` cannot reach the
+ * lock itself — `lockedIn` is deliberately not in its setting enum, so an agent
+ * can never unlock itself.
+ */
+const LOCKED_WORKSPACE_TOOL_NAMES = new Set([
+  'update_soul',
+  'update_memory',
+  'update_user_profile',
+  'update_vision',
+  'update_heartbeat_config',
+  'clear_bootstrap',
+]);
+
+/** Drop the workspace-markdown writers (locked-in mode, Layer 2). */
+export function omitLockedWorkspaceTools(tools: Record<string, Tool>): Record<string, Tool> {
+  const result: Record<string, Tool> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    if (!LOCKED_WORKSPACE_TOOL_NAMES.has(name)) result[name] = tool;
   }
   return result;
 }
