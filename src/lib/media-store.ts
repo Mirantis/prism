@@ -38,7 +38,11 @@ export function sanitizeFilename(raw: string, fallback: string): string {
   if (buf.length > MAX_FILENAME_BYTES) {
     name = buf.subarray(0, MAX_FILENAME_BYTES).toString('utf8');
   }
-  return name.trim() || fallback;
+  name = name.trim();
+  // basename('.') is '.', which would resolve to the containing directory
+  // itself — as unusable as an empty name.
+  if (name === '.') return fallback;
+  return name || fallback;
 }
 
 /**
@@ -94,6 +98,15 @@ export async function readMediaFile(storagePath: string): Promise<Buffer | null>
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
+  }
+}
+
+/** Basenames of every file currently in the media dir (empty when absent). */
+export async function listMediaFiles(): Promise<Set<string>> {
+  try {
+    return new Set(await fs.readdir(resolveMediaDir()));
+  } catch {
+    return new Set();
   }
 }
 

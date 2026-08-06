@@ -126,7 +126,11 @@ export async function buildSystemPromptParts(
     `will return a clear error you can relay back.`,
   );
 
-  stableSections.push(getAttachmentsInstructions());
+  // Subagents don't get the attachment tools (filterToolsByMode strips them —
+  // they have no user thread), so don't advertise them.
+  if (mode !== 'subagent') {
+    stableSections.push(getAttachmentsInstructions());
+  }
 
   // Skills — Agent Skills (agentskills.io). Progressive disclosure: only name +
   // description go here so the model knows what's available; the `skill` tool
@@ -490,13 +494,22 @@ function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
 
   for (const att of msg.attachments ?? []) {
     const head = `[Attachment: ${att.filename} · id=${att.id} · ${att.mediaType} · ${humanFileSize(att.sizeBytes)}`;
+    // Category-aware hint: the stub is the instruction the model actually
+    // follows (it sits right next to the file), so it must point images AND
+    // PDFs at view_attachment — not just the system-prompt section.
+    const hint =
+      att.category === 'image'
+        ? 'use view_attachment to look at it.'
+        : att.category === 'pdf'
+          ? 'use view_attachment to read it, or hydrate_attachment + pdftotext for shell inspection.'
+          : 'use hydrate_attachment to extract it to disk and inspect it with shell tools.';
     parts.push({
       type: 'text',
       // No tool hint on an expired stub — the content is gone, so the model
       // shouldn't burn a tool call discovering that.
       text: att.expired
         ? `${head} · content expired] — no longer stored; ask the user to share it again if needed.`
-        : `${head}] — use hydrate_attachment to extract it to disk (inspect with shell tools), or view_attachment for images.`,
+        : `${head}] — ${hint}`,
     });
   }
 

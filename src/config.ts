@@ -361,6 +361,14 @@ const rawCompactionTail = parseInt(process.env.COMPACTION_TAIL_MESSAGES ?? '', 1
 const compactionTailMessages =
   Number.isFinite(rawCompactionTail) && rawCompactionTail >= 0 ? rawCompactionTail : COMPACTION_TAIL_MESSAGES;
 
+// Same defensive shape as CONTEXT_WINDOW_TOKENS above: junk parses to NaN and
+// a non-positive TTL would expire everything on the next sweep, so both fall
+// back to the 168 h default.
+function resolveAttachmentTtlHours(): number {
+  const raw = Number.parseFloat(process.env.ATTACHMENT_TTL_HOURS ?? '');
+  return Number.isFinite(raw) && raw > 0 ? raw : ATTACHMENT_CONTENT_TTL_HOURS;
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
@@ -488,20 +496,16 @@ export const config = {
   // budget applied when the caller doesn't specify one — null means unbounded
   // (only the turn/stall caps bound the goal).
   goalMaxTurns: process.env.GOAL_MAX_TURNS ? parseInt(process.env.GOAL_MAX_TURNS, 10) : GOAL_MAX_TURNS,
-
-  // How long attachment content (the media file) is kept before the hourly
-  // sweep deletes it. The metadata row survives, so conversation history keeps
-  // its stubs. ATTACHMENT_TTL_HOURS overrides the 168 h (7 day) default.
-  attachmentContentTtlMs:
-    (process.env.ATTACHMENT_TTL_HOURS
-      ? parseFloat(process.env.ATTACHMENT_TTL_HOURS)
-      : ATTACHMENT_CONTENT_TTL_HOURS) *
-    60 *
-    60 *
-    1000,
   goalDefaultTokenBudget: process.env.GOAL_DEFAULT_TOKEN_BUDGET
     ? parseInt(process.env.GOAL_DEFAULT_TOKEN_BUDGET, 10)
     : null,
+
+  // How long attachment content (the media file) is kept before the hourly
+  // sweep deletes it. The metadata row survives, so conversation history keeps
+  // its stubs. ATTACHMENT_TTL_HOURS overrides the 168 h (7 day) default; a
+  // non-positive or unparseable value falls back to the default rather than
+  // expiring everything (negative) or throwing hourly (NaN → Invalid Date).
+  attachmentContentTtlMs: resolveAttachmentTtlHours() * 60 * 60 * 1000,
 
   // Provider-neutral model IDs (see the `modelIds` lookup above). The runtime
   // (invoke, classification gate, embeddings, per-agent model fallback) reads

@@ -30,6 +30,7 @@ function makeAttachment(overrides: Partial<AttachmentMeta> = {}): AttachmentMeta
     mediaType: 'application/octet-stream',
     category: 'unreadable',
     sizeBytes: 10,
+    expired: false,
     ...overrides,
   };
 }
@@ -687,7 +688,8 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
     expect(stub).toContain('pic.png');
     expect(stub).toContain('id=a');
     expect(stub).toContain('image/png');
-    expect(stub).toContain('hydrate_attachment');
+    // The image hint points at view_attachment — that's the tool that can look.
+    expect(stub).toContain('view_attachment');
   });
 
   it('emits a text metadata stub (not a file part) for a PDF attachment', () => {
@@ -706,8 +708,34 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
     expect(text).toContain('doc.pdf');
     expect(text).toContain('id=a');
     expect(text).toContain('application/pdf');
+    // PDFs lead with view_attachment (reads the document); hydrate + pdftotext
+    // stays as the shell-inspection fallback.
+    expect(text).toContain('view_attachment');
     expect(text).toContain('hydrate_attachment');
     expect(text).not.toContain('[object');
+  });
+
+  it('renders an expired stub with no tool hint', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: '1',
+          role: 'USER',
+          content: '',
+          attachments: [
+            makeAttachment({ id: 'a', filename: 'old.pdf', category: 'pdf', expired: true }),
+          ],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+    const text = textOf(messages[0].content);
+    expect(text).toContain('old.pdf');
+    expect(text).toContain('content expired');
+    // The content is gone — the stub must not send the model on a doomed
+    // tool call.
+    expect(text).not.toContain('view_attachment');
+    expect(text).not.toContain('hydrate_attachment');
   });
 
   it('renders a metadata stub for text attachments (no inline content)', () => {
@@ -763,7 +791,7 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
     // With only text parts and a single stub, it collapses to plain string.
     const text = textOf(messages[0].content);
     expect(text).toContain('pic.png');
-    expect(text).toContain('hydrate_attachment');
+    expect(text).toContain('view_attachment');
   });
 
   it('includes human-readable size in the stub', () => {

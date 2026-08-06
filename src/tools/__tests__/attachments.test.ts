@@ -21,7 +21,8 @@ function makeRow(overrides: Partial<{
   filename: string;
   mediaType: string;
   sizeBytes: number;
-  data: Buffer;
+  data: Buffer | null;
+  storagePath: string | null;
 }> = {}) {
   return {
     id: ATTACHMENT_ID,
@@ -31,7 +32,11 @@ function makeRow(overrides: Partial<{
     mediaType: 'application/pdf',
     sizeBytes: 1024,
     category: 'pdf',
+    // Legacy-BLOB shape by default: bytes in the row, no media file — so
+    // loadBytes() serves from `data` without touching the filesystem. Tests
+    // that need the expired state override both to null.
     data: Buffer.from('fake-pdf-content'),
+    storagePath: null,
     source: 'web',
     slackFileId: null,
     externalTs: null,
@@ -99,7 +104,7 @@ describe('runHydrateAttachment', () => {
   });
 
   it('returns an expired error when the content is gone (row without file or BLOB)', async () => {
-    getByIdSpy.mockResolvedValue(makeRow({ data: null as unknown as Buffer }));
+    getByIdSpy.mockResolvedValue(makeRow({ data: null }));
     const result = await runHydrateAttachment(
       { attachmentId: ATTACHMENT_ID },
       USER_ID, AGENT_ID, THREAD_ID, workspace,
@@ -297,7 +302,7 @@ describe('runViewAttachment', () => {
     getByIdSpy.mockResolvedValue(makeRow({
       filename: 'screenshot.png',
       mediaType: 'image/png',
-      data: null as unknown as Buffer,
+      data: null,
     }));
 
     const result = await runViewAttachment(
@@ -389,7 +394,14 @@ describe('runViewAttachment', () => {
     expect(registered[0]).toEqual({
       role: 'user',
       content: [
-        { type: 'file', data, mediaType: 'application/pdf', filename: 'report.pdf' },
+        {
+          type: 'file',
+          data,
+          mediaType: 'application/pdf',
+          filename: 'report.pdf',
+          // Bedrock text-extracts documents unless citations are enabled.
+          providerOptions: { bedrock: { citations: { enabled: true } } },
+        },
         { type: 'text', text: expect.stringContaining('report.pdf') },
       ],
     });
@@ -429,6 +441,54 @@ describe('runViewAttachment', () => {
     expect(registered).toHaveLength(1);
   });
 
+  it('injects once when the same PDF is viewed twice in parallel (same step)', async () => {
+    // The SDK executes a step's tool calls with Promise.all — the dedupe id is
+    // claimed before the byte read, so a concurrent duplicate can't slip in.
+    const data = Buffer.from('%PDF-1.7 fake');
+    getByIdSpy.mockResolvedValue(makeRow({
+      mediaType: 'application/pdf',
+      filename: 'report.pdf',
+      data,
+      sizeBytes: data.length,
+    }));
+    const registered: unknown[] = [];
+    const ctx = {
+      registerInjection: (m: unknown) => registered.push(m),
+      injectedDocumentIds: new Set<string>(),
+    };
+
+    const [a, b] = await Promise.all([
+      runViewAttachment({ attachmentId: ATTACHMENT_ID }, USER_ID, AGENT_ID, THREAD_ID, ctx),
+      runViewAttachment({ attachmentId: ATTACHMENT_ID }, USER_ID, AGENT_ID, THREAD_ID, ctx),
+    ]);
+
+    expect(a.success).toBe(true);
+    expect(b.success).toBe(true);
+    expect(registered).toHaveLength(1);
+  });
+
+  it('releases the dedupe claim when the PDF content turns out expired', async () => {
+    getByIdSpy.mockResolvedValue(makeRow({
+      mediaType: 'application/pdf',
+      filename: 'gone.pdf',
+      data: null,
+    }));
+    const ctx = {
+      registerInjection: () => {},
+      injectedDocumentIds: new Set<string>(),
+    };
+
+    const result = await runViewAttachment(
+      { attachmentId: ATTACHMENT_ID },
+      USER_ID, AGENT_ID, THREAD_ID, ctx,
+    );
+
+    expect(result.success).toBe(false);
+    // A failed view must not squat on the id — a later retry (e.g. after the
+    // user reshares) would otherwise be answered with "already attached".
+    expect(ctx.injectedDocumentIds.size).toBe(0);
+  });
+
   it('rejects an oversized PDF with a hydrate hint', async () => {
     getByIdSpy.mockResolvedValue(makeRow({
       mediaType: 'application/pdf',
@@ -452,7 +512,7 @@ describe('runViewAttachment', () => {
     getByIdSpy.mockResolvedValue(makeRow({
       mediaType: 'application/pdf',
       filename: 'gone.pdf',
-      data: null as unknown as Buffer,
+      data: null,
     }));
     const registered: unknown[] = [];
     const ctx = {
@@ -533,7 +593,7 @@ describe('view_attachment toModelOutput', () => {
   });
 
   it('degrades to text when the content expired between call and conversion', async () => {
-    getByIdSpy.mockResolvedValue(makeRow({ mediaType: 'image/jpeg', data: null as unknown as Buffer }));
+    getByIdSpy.mockResolvedValue(makeRow({ mediaType: 'image/jpeg', data: null }));
 
     const modelOutput = await viewTool().toModelOutput({ output: imageOutput });
     expect(modelOutput).toEqual({

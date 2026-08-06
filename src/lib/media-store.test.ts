@@ -36,6 +36,11 @@ describe('sanitizeFilename', () => {
   it('falls back when nothing survives', () => {
     expect(sanitizeFilename('   ', 'file')).toBe('file');
   });
+
+  it('falls back for "." — basename(".") resolves to the containing dir', () => {
+    expect(sanitizeFilename('.', 'file')).toBe('file');
+    expect(sanitizeFilename('./', 'file')).toBe('file');
+  });
 });
 
 describe('writeMediaFile / readMediaFile', () => {

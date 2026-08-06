@@ -274,24 +274,39 @@ export async function runViewAttachment(
         success: true,
         ...meta,
         category: 'pdf',
-        note: `"${row.filename}" is already attached to this conversation from an earlier view_attachment call — its content is still visible above.`,
+        note: `"${row.filename}" is already attached to this turn from an earlier view_attachment call — its content is still visible above.`,
       };
     }
+    // Claim the id BEFORE the await: the SDK runs a step's tool calls with
+    // Promise.all, and a check-then-add spanning the read would let two
+    // parallel calls for the same id both inject a multi-MB copy.
+    ctx.injectedDocumentIds?.add(attachmentId);
 
     const bytes = await attachmentService.loadBytes(row);
-    if (!bytes) return viewExpiredFailure(row.filename, userId, agentId, attachmentId);
+    if (!bytes) {
+      ctx.injectedDocumentIds?.delete(attachmentId);
+      return viewExpiredFailure(row.filename, userId, agentId, attachmentId);
+    }
 
     ctx.registerInjection!({
       role: 'user',
       content: [
-        { type: 'file', data: bytes, mediaType: 'application/pdf', filename: row.filename },
+        {
+          type: 'file',
+          data: bytes,
+          mediaType: 'application/pdf',
+          filename: row.filename,
+          // Bedrock Converse text-extracts a document unless citations are
+          // enabled; enabling them gives Claude the full visual pages. Other
+          // providers ignore the bedrock namespace.
+          providerOptions: { bedrock: { citations: { enabled: true } } },
+        },
         {
           type: 'text',
           text: `[Document "${row.filename}" (id=${attachmentId}) attached for analysis via view_attachment]`,
         },
       ],
     });
-    ctx.injectedDocumentIds?.add(attachmentId);
 
     trackEvent('attachment viewed', userId, {
       'agent.id': agentId,
@@ -305,7 +320,10 @@ export async function runViewAttachment(
       success: true,
       ...meta,
       category: 'pdf',
-      note: `Attached "${row.filename}" to the conversation — its full content follows this tool result as a document.`,
+      // Turn-scoped on purpose: this note is persisted into the ToolCallRecord
+      // and replayed verbatim in later turns' history — where no document
+      // follows. Overclaiming here would invite confabulated answers later.
+      note: `Attached "${row.filename}" as a document for this turn — its full content follows this tool result. In a later turn, call view_attachment again if you need it back.`,
     };
   }
 
@@ -326,7 +344,8 @@ export async function runViewAttachment(
     success: true,
     ...meta,
     category: 'image',
-    note: `Image "${row.filename}" is attached to this tool result.`,
+    // Turn-scoped for the same reason as the PDF note above.
+    note: `Image "${row.filename}" is attached to this tool result for this turn. In a later turn, call view_attachment again if you need it back.`,
   };
 }
 
