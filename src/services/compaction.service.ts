@@ -117,7 +117,12 @@ export interface AutoCompactFork extends CompactionFork {
 export interface CompactionEvent {
   userId: string;
   threadId: string;
-  status: 'started' | 'completed' | 'failed';
+  /**
+   * `skipped` is a benign no-op (nothing to compact), kept distinct from
+   * `failed` so it neither reads as an error in the UI nor counts toward the
+   * failure metric.
+   */
+  status: 'started' | 'completed' | 'failed' | 'skipped';
   trigger: 'auto' | 'manual';
   tokensBefore?: number | null;
   /** chars/4 estimate over the rebuilt context; null when the window is unknown. */
@@ -125,6 +130,8 @@ export interface CompactionEvent {
   messagesCompacted?: number;
   /** Failed only. Exception text — never the summary. */
   error?: string;
+  /** Skipped only. Why there was nothing to do. */
+  detail?: string;
 }
 
 interface FinishInput {
@@ -243,7 +250,10 @@ class CompactionService {
         });
         const rows = toForkRows(context.recentMessages);
         if (rows.length <= config.compactionTailMessages) {
-          this.fail(userId, agentId, threadId, 'manual', 'Nothing to compact yet.');
+          // A no-op, not a failure: the REST precheck counts DB rows while this
+          // counts the context view (attachFiles drops empty rows), so a thread
+          // at the tail boundary can pass the 409 gate and land here.
+          this.skip(userId, agentId, threadId, 'manual', 'Nothing to compact yet.');
           return;
         }
 
@@ -433,7 +443,14 @@ class CompactionService {
 
       let history: ModelMessage[] = [...fork.messages, ...fork.injections];
       let summary = '';
-      const MAX_ATTEMPTS = 5;
+      // Each shrink drops a quarter, so the reachable floor is 0.75^(n-1) of
+      // the original: 5 attempts bottom out at ~32%, which still overflows a
+      // history several times the window — and that is exactly the first turn
+      // on a thread whose full history was never compacted before. 10 attempts
+      // reach ~7.5%, enough for a thread carrying ~10x the window. The cap is
+      // only a runaway guard; shrinkHistoryHead's null return is the real
+      // terminating condition.
+      const MAX_ATTEMPTS = 10;
       for (let attempt = 0; ; attempt++) {
         try {
           const result = await generateText({
@@ -614,6 +631,32 @@ class CompactionService {
       trigger,
     } satisfies CompactionEvent);
     trackEvent('compaction started', userId, {
+      'agent.id': agentId,
+      'thread.id': threadId,
+      'compaction.trigger': trigger,
+    });
+  }
+
+  /**
+   * Terminal no-op: there was nothing to compact. Distinct from `fail()` so a
+   * benign outcome doesn't surface as an error to the user or inflate the
+   * `compaction failed` metric — the one you'd actually alert on.
+   */
+  private skip(
+    userId: string,
+    agentId: string,
+    threadId: string,
+    trigger: 'auto' | 'manual',
+    detail: string,
+  ): void {
+    this.events.emit('compaction', {
+      userId,
+      threadId,
+      status: 'skipped',
+      trigger,
+      detail,
+    } satisfies CompactionEvent);
+    trackEvent('compaction skipped', userId, {
       'agent.id': agentId,
       'thread.id': threadId,
       'compaction.trigger': trigger,
