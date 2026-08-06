@@ -23,6 +23,7 @@ vi.mock('../../services/heartbeat.service', () => ({
 }));
 
 vi.mock('../../lib/telemetry', () => ({
+  langfuseTelemetry: () => ({}),
   trackEvent: mockTrackEvent,
 }));
 

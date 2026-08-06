@@ -68,6 +68,7 @@ vi.mock('../lib/classification', () => ({
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
 
 vi.mock('../lib/telemetry', () => ({
+  langfuseTelemetry: () => ({}),
   trackEvent: mockTrackEvent,
 }));
 

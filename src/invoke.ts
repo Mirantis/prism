@@ -20,7 +20,7 @@ import {
   resolveEffectiveModel,
   resolveScopedModel,
 } from './services/agent-workspace.service';
-import { isLangfuseEnabled } from './lib/langfuse';
+
 import {
   buildSystemPromptParts,
   buildConversationMessages,
@@ -35,7 +35,7 @@ import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
 import { buildErrorStep, isContextOverflowError } from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
-import { trackEvent } from './lib/telemetry';
+import { trackEvent, langfuseTelemetry } from './lib/telemetry';
 import { AsyncChannel } from './utils/async-channel';
 
 /**
@@ -190,21 +190,13 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       `${context.agentName} in ${request.mode} mode: ${Object.keys(cachedTools).length} tool(s), ${messages.length} message(s)`
     );
 
-    // Build Langfuse telemetry config (reused across generateText calls)
-    const langfuseTelemetry = (functionId: string) =>
-      isLangfuseEnabled()
-        ? {
-            experimental_telemetry: {
-              isEnabled: true as const,
-              functionId,
-              metadata: {
-                userId: request.userId,
-                sessionId: request.threadId ?? '',
-                agentName: context.agentName,
-              },
-            },
-          }
-        : {};
+    // LLM-call tracing; one metadata set reused across this turn's calls.
+    const turnTelemetry = (functionId: string) =>
+      langfuseTelemetry(functionId, {
+        userId: request.userId,
+        sessionId: request.threadId ?? '',
+        agentName: context.agentName,
+      });
 
     // 8. Call generateText and yield steps as they complete
     let wasCanceled = false;
@@ -262,7 +254,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       stopWhen: stepCountIs(STEP_LIMIT),
       abortSignal: request.abortSignal,
-      ...langfuseTelemetry(`invoke-${request.mode}`),
+      ...turnTelemetry(`invoke-${request.mode}`),
       // Fold in any mid-turn steering messages, then re-apply the cache
       // breakpoint on the latest last message so the growing conversation
       // prefix is cached between steps (Bedrock doesn't support automatic
@@ -388,7 +380,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           messages: summaryMessages,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           abortSignal: request.abortSignal,
-          ...langfuseTelemetry('invoke-early-stopping'),
+          ...turnTelemetry('invoke-early-stopping'),
         });
 
         const earlyStoppingBlocks = extractBlocks(summaryResult.text);

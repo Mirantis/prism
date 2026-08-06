@@ -106,6 +106,7 @@ vi.mock('../../lib/langfuse', () => ({
 }));
 
 vi.mock('../../lib/telemetry', () => ({
+  langfuseTelemetry: () => ({}),
   isTelemetryEnabled: mockIsTelemetryEnabled,
   trackEvent: mockTrackEvent,
 }));

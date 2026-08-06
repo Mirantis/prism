@@ -33,6 +33,7 @@ vi.mock('../../services/cron-scheduler.service', () => ({
 }));
 
 vi.mock('../../lib/telemetry', () => ({
+  langfuseTelemetry: () => ({}),
   trackEvent: mockTrackEvent,
 }));
 

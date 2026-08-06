@@ -21,6 +21,7 @@ import { SeverityNumber, Logger } from '@opentelemetry/api-logs';
 import { v7 as uuidv7 } from 'uuid';
 import { config } from '../config';
 import { logger } from '../logger';
+import { isLangfuseEnabled } from './langfuse';
 
 // `deployment.environment.name` lives in the incubating semconv export, which our
 // tsconfig (`moduleResolution: node10`) can't follow via subpath. The attribute
@@ -108,4 +109,25 @@ export async function shutdownTelemetry(): Promise<void> {
     await provider.shutdown();
     logger.info('[Telemetry] Shutdown complete');
   }
+}
+
+/**
+ * Tracing options for an LLM call (`generateText`, `generateObject`, `embed`),
+ * routed to Langfuse. Returns an empty object when Langfuse isn't configured,
+ * so call sites can spread it unconditionally:
+ *
+ *   generateText({ ..., ...langfuseTelemetry('thread-title') })
+ */
+export function langfuseTelemetry(
+  functionId: string,
+  metadata?: Record<string, string>,
+): { experimental_telemetry?: { isEnabled: true; functionId: string; metadata?: Record<string, string> } } {
+  if (!isLangfuseEnabled()) return {};
+  return {
+    experimental_telemetry: {
+      isEnabled: true,
+      functionId,
+      ...(metadata ? { metadata } : {}),
+    },
+  };
 }

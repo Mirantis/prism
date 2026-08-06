@@ -26,8 +26,8 @@ import { config } from '../config';
 import { messageDeliveryService } from './message-delivery.service';
 import { threadTurnService } from './thread-turn.service';
 import { getClassificationModel } from '../lib/classification';
-import { isLangfuseEnabled } from '../lib/langfuse';
-import { trackEvent } from '../lib/telemetry';
+
+import { trackEvent, langfuseTelemetry } from '../lib/telemetry';
 import { logger } from '../logger';
 import { buildGoalContinuationPrompt, GOAL_COMPLETION_GATE_PROMPT } from '../prompts/goal-prompt';
 import { GOAL_MAX_OBJECTIVE_CHARS, GOAL_MAX_STALL_TURNS, GOAL_TURN_DELAY_MS } from '../constants';
@@ -497,9 +497,7 @@ class GoalService {
         ],
         maxOutputTokens: 10,
         temperature: 0,
-        ...(isLangfuseEnabled() && {
-          experimental_telemetry: { isEnabled: true, functionId: 'goal-completion-gate' },
-        }),
+        ...langfuseTelemetry('goal-completion-gate'),
       });
       const complete = result.text.trim().toUpperCase().startsWith('COMPLETE');
       logger.info(`[Goal:Gate] Decision: ${result.text.trim()} (complete=${complete})`);
