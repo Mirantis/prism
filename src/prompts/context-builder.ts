@@ -50,6 +50,8 @@ export interface AgentContext {
   model: string | null;
   /** When false, only the final text step is delivered to the channel. */
   verbose: boolean;
+  /** When true, the workspace markdown files are read-only for this agent. */
+  lockedIn: boolean;
   isBootstrapPhase: boolean;
   conversationSummary: string | null;
   recentMessages: ConversationMessage[];
@@ -137,7 +139,9 @@ export async function buildSystemPromptParts(
   // loads a skill's full instructions on demand. Includes the repo's workspace
   // skills when this turn has a workspaceRoot. Cacheable: stable within a thread
   // (a thread's workspaceRoot is fixed) and rescans only when a skills dir changes.
-  stableSections.push(buildSkillsSection(workspaceRoot));
+  // While locked in, the "how to install more skills" guidance is suppressed —
+  // it exists to send the agent at its own config via the shell.
+  stableSections.push(buildSkillsSection(workspaceRoot, context.lockedIn));
 
   // Plugins — Agent Plugins (agent-plugins.org). Deliberately not a second
   // skill listing: a plugin's skills already appear above, so this says only
@@ -149,6 +153,13 @@ export async function buildSystemPromptParts(
   // Concise delivery instructions (chat only, non-verbose)
   if (mode === 'chat' && !context.verbose) {
     stableSections.push(getConciseDeliveryInstructions());
+  }
+
+  // Locked-in mode: the workspace-markdown writers are absent from the tool set,
+  // so say why. Without this the model sees no `update_soul` and is left to
+  // guess whether it's broken or forbidden.
+  if (context.lockedIn) {
+    stableSections.push(getLockedInInstructions());
   }
 
   // Mode-specific instructions
@@ -252,26 +263,35 @@ const MAX_PLUGINS_LISTED = 50;
  * turn has a `workspaceRoot`, the repo's own skills are listed first under a
  * labeled group. Always rendered so the agent can bootstrap its first skill too.
  */
-function buildSkillsSection(workspaceRoot?: string): string {
+function buildSkillsSection(workspaceRoot?: string, lockedIn = false): string {
   const skills = skillCatalogService.getCatalog(workspaceRoot);
   const skillsDir = resolveSkillsDir();
 
   // Where skills live + how to add more. Phrased around the canonical dir so
   // it's correct regardless of where an ecosystem installer fetches to — the
   // agent just needs the bundle to end up under `skillsDir`.
-  const install =
-    `Global skills are installed in \`${skillsDir}\` — each is a \`<name>/SKILL.md\` bundle ` +
-    `(the agentskills.io standard, optionally with \`scripts/\`/\`references/\`/\`assets/\`). ` +
-    `Repository skills come from the workspace's \`.claude/skills/\` or \`.agents/skills/\`. ` +
-    `To add a global skill, use your shell tools to land a bundle there: copy or clone a ` +
-    `\`SKILL.md\` folder into \`${skillsDir}/<name>/\`, or fetch one from the ecosystem ` +
-    `with \`npx skills add <source> --copy\` (browse at https://skills.sh; \`<source>\` is a ` +
-    `GitHub repo like \`owner/repo\`, a skill URL, or a local path) and copy the resulting ` +
-    `\`<name>/\` folder into \`${skillsDir}\`. Newly added skills are detected automatically — ` +
-    `no restart needed.`;
+  //
+  // Suppressed while locked in: this paragraph's whole job is to send the agent
+  // at its own config directory with the shell tools, which is the drift the
+  // lock exists to discourage. The catalog itself stays — installed skills
+  // remain listed and usable, only the "go install more" guidance goes away.
+  const install = lockedIn
+    ? ''
+    : `Global skills are installed in \`${skillsDir}\` — each is a \`<name>/SKILL.md\` bundle ` +
+      `(the agentskills.io standard, optionally with \`scripts/\`/\`references/\`/\`assets/\`). ` +
+      `Repository skills come from the workspace's \`.claude/skills/\` or \`.agents/skills/\`. ` +
+      `To add a global skill, use your shell tools to land a bundle there: copy or clone a ` +
+      `\`SKILL.md\` folder into \`${skillsDir}/<name>/\`, or fetch one from the ecosystem ` +
+      `with \`npx skills add <source> --copy\` (browse at https://skills.sh; \`<source>\` is a ` +
+      `GitHub repo like \`owner/repo\`, a skill URL, or a local path) and copy the resulting ` +
+      `\`<name>/\` folder into \`${skillsDir}\`. Newly added skills are detected automatically — ` +
+      `no restart needed.`;
+
+  // Trailing block, present only when the install guidance is.
+  const installSuffix = install === '' ? '' : `\n\n${install}`;
 
   if (skills.length === 0) {
-    return `# Skills\n\nNo Agent Skills are available yet.\n\n${install}`;
+    return `# Skills\n\nNo Agent Skills are available yet.${installSuffix}`;
   }
 
   // Group by source so the model (and the user) can see where each skill came
@@ -308,7 +328,7 @@ function buildSkillsSection(workspaceRoot?: string): string {
     (overflow > 0
       ? `\n\n(+${overflow} more available — call \`skill\` with any listed skill's name to load it.)`
       : '') +
-    `\n\n${install}`
+    installSuffix
   );
 }
 
@@ -698,6 +718,22 @@ function getConciseDeliveryInstructions(): string {
   return `# Response Delivery (Concise Mode)
 
 Only your **final message** in a multi-step turn is delivered to the user. Intermediate text you produce while using tools is saved but not shown. Therefore your final message must be self-contained: state the outcome of the work you did, include any relevant results, and do not reference earlier narration the user cannot see, unless specifically asked by the user.`;
+}
+
+/**
+ * Locked-in mode notice. The workspace-markdown writers are withheld from the
+ * tool set while the lock is on, so this explains their absence — otherwise the
+ * model has to infer whether it is broken or forbidden. Also tells it what to do
+ * instead: say what it would have changed, and who can lift the lock.
+ */
+function getLockedInInstructions(): string {
+  return `# Locked-In Mode
+
+Locked-in mode is **on**, so your workspace files — soul, memory summary, user profile, vision, heartbeat config, and bootstrap notes — are read-only for this turn. The tools that edit them are unavailable, and any such edit would be refused.
+
+This is the user's deliberate choice, not a fault. When you notice something you would normally have written to one of those files, say so in your reply — describe the change you would have made and why — and note that the user can turn locked-in mode off on the Profile page. Do not try to work around it by editing files through the shell.
+
+Everything else is unaffected: you can still search and write long-term memories, run tools, and change behavioural settings such as your heartbeat interval or timezone.`;
 }
 
 // Exported for unit tests: these sections read the filesystem, so asserting on

@@ -25,7 +25,7 @@ import { pluginCatalogService } from '../services/plugin-catalog.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 
 export async function trackAgentStarted(
-  agent: Pick<AgentWorkspace, 'id' | 'userId' | 'webhooksEnabled'>,
+  agent: Pick<AgentWorkspace, 'id' | 'userId' | 'webhooksEnabled' | 'lockedIn'>,
   opts: { cronTasks: number },
 ): Promise<void> {
   // Gathering the census costs a skills-dir scan and a DB round-trip, both
@@ -70,6 +70,7 @@ export async function trackAgentStarted(
       'runtime.platform': process.platform,
       'runtime.arch': process.arch,
       'webhook.receiver_enabled': String(agent.webhooksEnabled),
+      'agent.locked_in': String(agent.lockedIn),
       'cron.tasks': String(opts.cronTasks),
       'skills.count': String(skills.length),
       'plugins.count': String(plugins.length),
