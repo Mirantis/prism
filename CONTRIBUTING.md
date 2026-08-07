@@ -49,6 +49,8 @@ npm run lint        # oxlint
 npm run lint:md     # markdownlint-cli2 over **/*.md
 npm run test:run    # vitest (single run)
 npm run build       # tsc + Web UI build
+
+npm run test:run --workspaces --if-present   # cli + web workspace suites
 ```
 
 `npm run test:coverage` produces a coverage report when you want one. The
@@ -64,6 +66,8 @@ New behavior should ship with tests. The suite runs on [vitest](https://vitest.d
   reaching into internals.
 - `npm test` runs vitest in watch mode for the inner loop; `npm run test:run`
   is the one-shot form used by the gate and CI.
+- The root run covers `src/**` only. The `cli/` and `web/` workspaces each have
+  their own vitest config, so their suites need the `--workspaces` form above.
 
 ## Pull Request Guidelines
 
