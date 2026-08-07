@@ -188,6 +188,12 @@ RUN --mount=type=secret,id=github_token,uid=1000,required=false \
     export MISE_CACHE_DIR=/home/node/.cache/mise; \
     GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
     export GITHUB_TOKEN MISE_GITHUB_TOKEN="$GITHUB_TOKEN" AQUA_GITHUB_TOKEN="$GITHUB_TOKEN"; \
+    # Never compile Python from source: when a fresh CPython patch release has
+    # no python-build-standalone build yet, mise's compile fallback breaks the
+    # image build (its pyenv python-build bootstrap is fragile in-container).
+    # Forcing precompiled makes `python@3.13` resolve to the newest patch that
+    # HAS a standalone build instead.
+    export MISE_PYTHON_COMPILE=false; \
     curl -fsSL https://mise.jdx.dev/install.sh | MISE_VERSION=${MISE_VERSION} sh \
  && ~/.local/bin/mise use -g \
         awscli@latest \
