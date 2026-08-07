@@ -145,6 +145,10 @@ USER node
 # stripped python-build-standalone tarball for `python@3.13` that it couldn't
 # lay out ("missing lib directory"); v2026.7.12 selects the correct build.
 ARG MISE_VERSION=v2026.7.12
+# python is pinned to an exact patch: 3.13.15's from-source build fails in
+# `make install` while ensurepip bootstraps the bundled pip wheel (python-build
+# 2.8.3, Debian bookworm, amd64 and arm64 alike). Re-float to python@3.13 once
+# a fixed patch release or python-build definition ships.
 # mise's aqua backend resolves each tool's release through the GitHub API.
 # Unauthenticated that's ~60 req/hr/IP — CI runners share IPs and trip a
 # 403 "rate limit exceeded" (e.g. resolving yq's release tag). Mitigated two
@@ -169,7 +173,7 @@ RUN --mount=type=secret,id=github_token,uid=1000,required=false \
         gh@latest \
         jq@latest \
         yq@latest \
-        python@3.13 \
+        python@3.13.14 \
         pandoc@latest
 
 # Baked document-skills pip set — a separate layer AFTER the mise tool install
