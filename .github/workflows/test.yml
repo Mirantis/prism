@@ -34,6 +34,9 @@ jobs:
       - name: Run tests with coverage
         run: npm run test:coverage
 
+      - name: Run workspace tests
+        run: npm run test:run --workspaces --if-present
+
       - name: Build the package
         run: npm run build
         env:
