@@ -1,10 +1,11 @@
 /**
- * `claude_code` + `claude_code_status` tools — in-process port of
- * the upstream Nexus handlers.
+ * `claude_code` + `claude_code_status` + `claude_code_stop` tools —
+ * in-process port of the upstream Nexus handlers.
  *
  * The agent dispatches a task with `claude_code({ prompt, ... })`,
  * gets back a `taskId`, then polls `claude_code_status({ taskId })`
- * for drain-on-read output + completion.
+ * for drain-on-read output + completion. `claude_code_stop({ taskId })`
+ * abandons a task that is no longer worth waiting out.
  *
  * Auth inherits from the agent-runtime's env: the spawned `claude`
  * CLI picks up `AWS_BEARER_TOKEN_BEDROCK` / `CLAUDE_CODE_USE_BEDROCK=1`
@@ -60,6 +61,10 @@ export const claudeCodeStatusInput = z.object({
     .describe('Max ms to wait for new output if none is buffered (default: 5000)'),
 });
 
+export const claudeCodeStopInput = z.object({
+  taskId: z.string().describe('Task ID returned by claude_code'),
+});
+
 export async function runClaudeCode(
   input: z.infer<typeof claudeCodeInput>,
   workspace: string,
@@ -80,4 +85,8 @@ export async function runClaudeCode(
 
 export async function runClaudeCodeStatus(input: z.infer<typeof claudeCodeStatusInput>) {
   return getAgentTaskManager().readStatus(input.taskId, input.waitMs);
+}
+
+export async function runClaudeCodeStop(input: z.infer<typeof claudeCodeStopInput>) {
+  return getAgentTaskManager().stopTask(input.taskId);
 }

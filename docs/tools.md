@@ -86,6 +86,9 @@ autonomous sub-agent in the workspace:
 - **Start** a Claude Code task with a prompt, in `edit` or `plan` mode, with a
   turn budget.
 - **Poll** the running task for output and completion.
+- **Stop** a task that is heading the wrong way, looping, or no longer needed.
+  The agent gets back whatever output the task produced before it was
+  terminated, and can resume that work later instead of starting over.
 
 This lets the agent delegate a self-contained engineering job — "refactor this
 module," "investigate this failing test" — and check back on the result, rather

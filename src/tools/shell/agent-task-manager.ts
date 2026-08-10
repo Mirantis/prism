@@ -9,8 +9,9 @@
  *
  * One in-process manager per agent-runtime, at most MAX_CONCURRENT
  * tasks running at once. The agent invokes `startTask()` via the
- * `claude_code` MCP tool and polls via `readStatus()` from
- * `claude_code_status`.
+ * `claude_code` MCP tool, polls via `readStatus()` from
+ * `claude_code_status`, and abandons a task via `stopTask()` from
+ * `claude_code_stop`.
  */
 import { ChildProcess, spawn } from 'child_process';
 import { createInterface } from 'readline';
@@ -21,6 +22,8 @@ import { sandboxEnv } from './sandbox-env';
 export const MAX_CONCURRENT = 3;
 export const DEFAULT_WAIT_MS = 5_000;
 export const MAX_BUFFER_SIZE = 1024 * 1024; // 1 MiB
+/** How long a stopped child gets to honour SIGTERM before SIGKILL. */
+export const STOP_GRACE_MS = 2_000;
 
 const PLAN_ONLY_SYSTEM_PROMPT =
   'You are in plan-only mode. Analyze, explore, and create a detailed plan. Do not create or modify any files. Return your plan as your final text response.';
@@ -61,6 +64,12 @@ interface TaskEntry {
   waiters: Array<() => void>;
   reading: boolean;
   child?: ChildProcess;
+  /** Set by stopTask so drive()'s finalize reports 'stopped', not 'error'. */
+  stopping?: boolean;
+  /** The drive() promise, so stopTask can await the final drain. */
+  driver?: Promise<void>;
+  /** A spawn failure (ENOENT, unusable cwd), captured before drive() can listen. */
+  spawnError?: Error;
 }
 
 interface StreamLine {
@@ -122,6 +131,15 @@ export class AgentTaskManager {
     });
     entry.child = child;
 
+    // A spawn failure — a missing `claude` binary, a workdir that doesn't exist —
+    // emits 'error' immediately, well before drive() gets as far as attaching its
+    // own listener. Unhandled, that event takes the whole runtime down, so claim
+    // it here and let the finalize report it as a failed task.
+    child.once('error', (err: Error) => {
+      entry.spawnError = err;
+      logger.error({ err, taskId }, '[AgentTask] child process error');
+    });
+
     logger.info(
       {
         taskId,
@@ -133,7 +151,12 @@ export class AgentTaskManager {
       '[AgentTask] starting Claude Code task',
     );
 
-    void this.drive(taskId, entry, child);
+    // Kept on the entry so stopTask can await the finalize instead of racing
+    // it. Rejections are logged here because nothing else awaits the driver on
+    // the normal path.
+    entry.driver = this.drive(taskId, entry, child).catch((err) => {
+      logger.error({ err, taskId }, '[AgentTask] driver failed');
+    });
     return taskId;
   }
 
@@ -141,7 +164,7 @@ export class AgentTaskManager {
     const entry = this.tasks.get(taskId);
     if (!entry) {
       if (this.reaped.has(taskId)) {
-        throw new Error(`Task ${taskId} has already completed and been cleaned up`);
+        throw new Error(`Task ${taskId} has already ended and been cleaned up`);
       }
       throw new Error(`Unknown task: ${taskId}`);
     }
@@ -166,16 +189,78 @@ export class AgentTaskManager {
       entry.reading = false;
     }
 
-    // The entry might have been reaped while we waited.
+    // The entry might have been reaped while we waited — by a concurrent
+    // stopTask, or by killAll. The state object we still hold carries the real
+    // outcome, so report that rather than inventing a failure; its output has
+    // already been delivered to whoever reaped it.
     const stillThere = this.tasks.get(taskId);
     if (!stillThere) {
-      return {
-        output: '',
-        completed: true,
-        stopReason: 'error',
-      };
+      return drainTask(entry.state);
     }
     return this.drainAndMaybeReap(taskId, stillThere);
+  }
+
+  /**
+   * Terminate a running task and hand back whatever it produced before it died.
+   *
+   * The entry is reaped unconditionally — the final output goes out in this
+   * response, so nothing is left to poll for and the concurrency slot is freed
+   * immediately. That is the point of the call: a task that went the wrong way
+   * otherwise holds one of MAX_CONCURRENT slots until it burns its whole turn
+   * budget.
+   *
+   * Unlike readStatus this deliberately ignores `reading`: the escape hatch has
+   * to work even while another step is parked in a poll. Whichever of the two
+   * drains first gets the output, and the reap is idempotent.
+   */
+  async stopTask(taskId: string): Promise<AgentTaskStatus> {
+    const entry = this.tasks.get(taskId);
+    if (!entry) {
+      if (this.reaped.has(taskId)) {
+        throw new Error(`Task ${taskId} has already ended and been cleaned up`);
+      }
+      throw new Error(`Unknown task: ${taskId}`);
+    }
+
+    if (!entry.state.completed) {
+      // A child that has already exited is mid-finalize, not running: its result
+      // line may be parsed but not yet written to the state. Signalling it and
+      // flagging the stop would relabel a task that finished on its own as
+      // stopped and throw away its real result.
+      const child = entry.child;
+      const alreadyExited =
+        child !== undefined && (child.exitCode !== null || child.signalCode !== null);
+      if (!alreadyExited) {
+        entry.stopping = true;
+        terminateChild(child, taskId);
+      }
+      // Let drive() reach its finalize: the child's stdout closes when it dies,
+      // the read loop ends, and the state picks up its result/turns/sessionId.
+      // Bounded so a child that ignores both signals can't hang the tool call.
+      await Promise.race([
+        entry.driver ?? Promise.resolve(),
+        new Promise<void>((resolve) => setTimeout(resolve, STOP_GRACE_MS + 500).unref()),
+      ]);
+      if (!entry.state.completed) {
+        // Outlived SIGKILL, or a grandchild is still holding its stdout open so
+        // drive()'s read loop can never end. Report the stop anyway rather than
+        // handing back a half-finished state; the buffered output still goes out
+        // in the drain below.
+        entry.state.completed = true;
+        entry.state.stopReason = 'stopped';
+        entry.state.result ??=
+          'Task stopped; it did not exit cleanly, so no final result was captured.';
+        // Wake anything parked in readStatus. Only drive()'s finalize notifies,
+        // and drive() finalizing is precisely what did not happen here — without
+        // this, a concurrent poll sleeps out its whole waitMs (up to 30s).
+        this.notify(entry);
+      }
+    }
+
+    const status = drainTask(entry.state);
+    this.reap(taskId);
+    logger.info({ taskId, stopReason: status.stopReason }, '[AgentTask] stopped');
+    return status;
   }
 
   killAll(): void {
@@ -201,16 +286,19 @@ export class AgentTaskManager {
   private drainAndMaybeReap(taskId: string, entry: TaskEntry): AgentTaskStatus {
     const status = drainTask(entry.state);
     const hadOutput = status.output !== '';
-    if (entry.state.completed && !hadOutput) {
-      this.tasks.delete(taskId);
-      this.reaped.add(taskId);
-      // Keep the reaped set from growing without bound.
-      if (this.reaped.size > MAX_CONCURRENT * 10) {
-        const first = this.reaped.values().next().value;
-        if (first !== undefined) this.reaped.delete(first);
-      }
-    }
+    if (entry.state.completed && !hadOutput) this.reap(taskId);
     return status;
+  }
+
+  /** Forget a task, remembering the id so a later poll can say why it's gone. */
+  private reap(taskId: string): void {
+    this.tasks.delete(taskId);
+    this.reaped.add(taskId);
+    // Keep the reaped set from growing without bound.
+    if (this.reaped.size > MAX_CONCURRENT * 10) {
+      const first = this.reaped.values().next().value;
+      if (first !== undefined) this.reaped.delete(first);
+    }
   }
 
   private notify(entry: TaskEntry): void {
@@ -253,6 +341,14 @@ export class AgentTaskManager {
           continue;
         }
 
+        // The CLI announces the session on its opening line (`system`/`init`),
+        // long before the `result` line the session id is normally read from.
+        // Recording it on the state as we go is what lets a *stopped* task be
+        // resumed — including when stopTask has to give up on this loop ever
+        // ending and finalize the state itself. drainTask only exposes it once
+        // the task is complete, so an in-flight poll is unaffected.
+        if (typeof parsed.session_id === 'string') state.sessionId = parsed.session_id;
+
         if (parsed.type === 'assistant' && parsed.message?.content) {
           for (const block of parsed.message.content) {
             if (block.type === 'text' && typeof block.text === 'string') {
@@ -271,21 +367,64 @@ export class AgentTaskManager {
     // mean the child is fully reaped).
     const exitCode: number | null = await new Promise((resolve) => {
       if (child.exitCode !== null) return resolve(child.exitCode);
+      // A child that failed to spawn has already emitted its one 'error' event,
+      // and will never emit 'exit' — without this the wait below never settles
+      // and the task holds a concurrency slot for the life of the process.
+      if (entry.spawnError) return resolve(null);
       child.once('exit', (code) => resolve(typeof code === 'number' ? code : null));
       child.once('error', () => resolve(null));
     });
 
     const cli = finalizeCliResult(resultLine, assistantTexts, stderrChunks.join('\n'), exitCode);
+    if (entry.spawnError && !resultLine) {
+      // It never ran, so "exited with code N" would be a fiction.
+      cli.result = `Claude Code failed to start: ${entry.spawnError.message}`;
+      cli.stopReason = 'error';
+    }
+    if (entry.stopping) {
+      // We are why it died, so don't read the signal exit code as a failure.
+      // Keep whatever text it managed to produce.
+      cli.stopReason = 'stopped';
+      cli.result =
+        assistantTexts.length > 0
+          ? assistantTexts.join('\n\n')
+          : 'Task stopped before producing any output.';
+    }
 
     state.completed = true;
     state.result = cli.result;
     state.turns = cli.turns;
     state.stopReason = cli.stopReason;
-    state.sessionId = cli.sessionId;
+    // The result line is authoritative when it carries one; otherwise keep the
+    // id recorded off an earlier line.
+    state.sessionId = cli.sessionId ?? state.sessionId;
 
     this.notify(entry);
     logger.info({ taskId, stopReason: cli.stopReason, turns: cli.turns }, '[AgentTask] completed');
   }
+}
+
+/**
+ * SIGTERM, then escalate to SIGKILL if the child is still alive — the same
+ * two-stage shape `shell_exec` uses for its timeout and cancel paths.
+ */
+function terminateChild(child: ChildProcess | undefined, taskId: string): void {
+  if (!child) return;
+  try {
+    child.kill('SIGTERM');
+  } catch (err) {
+    logger.warn({ err, taskId }, '[AgentTask] SIGTERM failed');
+    return;
+  }
+  setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGKILL');
+      } catch (err) {
+        logger.warn({ err, taskId }, '[AgentTask] SIGKILL failed');
+      }
+    }
+  }, STOP_GRACE_MS).unref();
 }
 
 function buildCliCommand(params: AgentTaskParams): {

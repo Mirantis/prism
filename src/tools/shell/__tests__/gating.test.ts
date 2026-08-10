@@ -12,6 +12,7 @@ describe('getShellTools', () => {
       [
         'claude_code',
         'claude_code_status',
+        'claude_code_stop',
         'shell_edit_file',
         'shell_exec',
         'shell_kill',
