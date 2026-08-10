@@ -20,6 +20,10 @@ class FakeChild extends EventEmitter {
   stdout = new PassThrough();
   stderr = new PassThrough();
   exitCode: number | null = null;
+  // Real ChildProcess exposes this, and the SIGKILL escalation reads it to
+  // decide whether the child is still alive. Diverging here would make an
+  // escalation test silently pass without ever escalating.
+  signalCode: NodeJS.Signals | null = null;
   killed = false;
   kill(_signal?: string): boolean {
     this.killed = true;
@@ -36,6 +40,28 @@ class FakeChild extends EventEmitter {
     this.stderr.end();
     // Slight delay so the readline 'close' fires before 'exit'.
     process.nextTick(() => this.emit('exit', code, null));
+  }
+}
+
+/**
+ * A child that ignores every signal and never closes stdout — a `claude` that
+ * hangs, or one whose grandchild inherited the pipe. drive()'s read loop can
+ * never end for this one, so stopTask has to finalize the state itself.
+ */
+class StubbornChild extends FakeChild {
+  override kill(_signal?: string): boolean {
+    this.killed = true;
+    return true;
+  }
+}
+
+/** A child whose spawn fails, as `spawn` reports it: one 'error', never 'exit'. */
+class FailedSpawnChild extends FakeChild {
+  fail(message: string): void {
+    // Mirrors Node: the streams are torn down and 'error' fires on its own turn.
+    this.stdout.end();
+    this.stderr.end();
+    process.nextTick(() => this.emit('error', new Error(message)));
   }
 }
 
@@ -58,6 +84,25 @@ const sampleParams: AgentTaskParams = {
   prompt: 'do X',
 };
 
+/** A manager whose spawner returns the given child, for the awkward children. */
+function makeManagerWith<T extends FakeChild>(make: () => T): {
+  manager: AgentTaskManager;
+  getChild: () => T;
+} {
+  let lastChild: T | null = null;
+  const manager = new AgentTaskManager(() => {
+    lastChild = make();
+    return lastChild as unknown as ChildProcess;
+  });
+  return {
+    manager,
+    getChild: () => {
+      if (!lastChild) throw new Error('spawn not called yet');
+      return lastChild;
+    },
+  };
+}
+
 /**
  * Drive readStatus in a loop until the task reports completion. Mirrors how a
  * real caller would poll; each iteration accumulates drained output.
@@ -75,6 +120,16 @@ async function pollUntilComplete(
     if (status.completed) return { output, status };
   }
   throw new Error(`task ${taskId} did not complete within ${timeoutMs}ms`);
+}
+
+/**
+ * Let the driver run to its finalize after the child exits: the readline close,
+ * the end of the stdout loop, the exit promise, and the state write all land
+ * within a few macrotask turns. Turn-based rather than a timed sleep, so it is
+ * deterministic.
+ */
+async function flush(turns = 5): Promise<void> {
+  for (let i = 0; i < turns; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
 describe('AgentTaskManager', () => {
@@ -208,6 +263,161 @@ describe('AgentTaskManager', () => {
 
   it('readStatus on an unknown taskId throws', async () => {
     await expect(manager.readStatus('no-such-id')).rejects.toThrow(/Unknown task/);
+  });
+
+  it('stopTask terminates a running task and returns the output so far', async () => {
+    const taskId = manager.startTask(sampleParams);
+    const child = getChild();
+    child.emitLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'partial work' }] },
+      }),
+    );
+
+    const status = await manager.stopTask(taskId);
+    expect(child.killed).toBe(true);
+    expect(status.completed).toBe(true);
+    expect(status.stopReason).toBe('stopped');
+    expect(status.output).toBe('partial work');
+    // The signal exit code must not be reported as a task failure.
+    expect(status.result).toBe('partial work');
+  });
+
+  it('stopTask reports the session id so the abandoned work can be resumed', async () => {
+    const taskId = manager.startTask(sampleParams);
+    const child = getChild();
+    // The CLI's opening line — the only place a killed task's session id
+    // appears, since it never reaches a `result` line.
+    child.emitLine(
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-init' }),
+    );
+
+    const status = await manager.stopTask(taskId);
+    expect(status.sessionId).toBe('sess-init');
+    expect(status.result).toBe('Task stopped before producing any output.');
+  });
+
+  it('stopTask frees the concurrency slot', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < MAX_CONCURRENT; i++) ids.push(manager.startTask(sampleParams));
+    expect(() => manager.startTask(sampleParams)).toThrow(/Max concurrent/);
+
+    await manager.stopTask(ids[0]);
+    expect(() => manager.startTask(sampleParams)).not.toThrow();
+  });
+
+  it('stopTask rejects an unknown or already-stopped taskId', async () => {
+    await expect(manager.stopTask('no-such-id')).rejects.toThrow(/Unknown task/);
+
+    const taskId = manager.startTask(sampleParams);
+    await manager.stopTask(taskId);
+    await expect(manager.stopTask(taskId)).rejects.toThrow(/cleaned up/);
+    await expect(manager.readStatus(taskId)).rejects.toThrow(/cleaned up/);
+  });
+
+  it('stopTask on a task that already finished keeps its real outcome', async () => {
+    const taskId = manager.startTask(sampleParams);
+    const child = getChild();
+    child.emitLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'done text' }] },
+      }),
+    );
+    child.emitLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'done',
+        num_turns: 3,
+      }),
+    );
+    child.finish(0);
+    await flush();
+
+    const status = await manager.stopTask(taskId);
+    expect(status.stopReason).toBe('end_turn');
+    expect(status.turns).toBe(3);
+    expect(status.output).toBe('done text');
+    expect(child.killed).toBe(false);
+  });
+
+  it('stopTask does not relabel a child that exited just before the stop', async () => {
+    const taskId = manager.startTask(sampleParams);
+    const child = getChild();
+    child.emitLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'THE REAL FINAL RESULT',
+        num_turns: 3,
+        session_id: 'sess-real',
+      }),
+    );
+    // Exit, but stop *before* drive() gets to its finalize — the window between
+    // the child dying and the state being written.
+    child.finish(0);
+
+    const status = await manager.stopTask(taskId);
+    expect(status.stopReason).toBe('end_turn');
+    expect(status.result).toBe('THE REAL FINAL RESULT');
+    expect(status.turns).toBe(3);
+    expect(status.sessionId).toBe('sess-real');
+  });
+
+  it('stopTask still reports output and a session id when the child never closes stdout', async () => {
+    const { manager: m, getChild: get } = makeManagerWith(() => new StubbornChild());
+    const taskId = m.startTask(sampleParams);
+    const child = get();
+    child.emitLine(
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-stubborn' }),
+    );
+    child.emitLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'half-done work' }] },
+      }),
+    );
+
+    const status = await m.stopTask(taskId);
+    expect(child.killed).toBe(true);
+    expect(status.completed).toBe(true);
+    expect(status.stopReason).toBe('stopped');
+    expect(status.output).toBe('half-done work');
+    // The whole point of the fallback: the resume path survives it, even though
+    // no `result` line ever arrives to carry the id.
+    expect(status.sessionId).toBe('sess-stubborn');
+  }, 15_000);
+
+  it('stopTask wakes a parked poll instead of leaving it to time out', async () => {
+    const { manager: m, getChild: get } = makeManagerWith(() => new StubbornChild());
+    const taskId = m.startTask(sampleParams);
+    // Only the init line, so there is nothing to drain and the poll really parks.
+    get().emitLine(
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-stubborn' }),
+    );
+
+    const started = Date.now();
+    const parked = m.readStatus(taskId, 25_000);
+    const parkedStatus = await Promise.all([m.stopTask(taskId), parked]).then(([, p]) => p);
+
+    // Woken by the stop, not by its own 25s timer.
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(parkedStatus.completed).toBe(true);
+    // And told the truth: the task was stopped, not failed.
+    expect(parkedStatus.stopReason).toBe('stopped');
+  }, 15_000);
+
+  it('reports a spawn failure as a failed task instead of crashing', async () => {
+    const { manager: m, getChild: get } = makeManagerWith(() => new FailedSpawnChild());
+    const taskId = m.startTask(sampleParams);
+    get().fail('spawn claude ENOENT');
+
+    const { status } = await pollUntilComplete(m, taskId);
+    expect(status.completed).toBe(true);
+    expect(status.stopReason).toBe('error');
+    expect(status.result).toMatch(/failed to start.*ENOENT/);
   });
 
   it('killAll marks running tasks completed with stopReason=error', async () => {

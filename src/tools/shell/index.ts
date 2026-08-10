@@ -20,8 +20,10 @@ import {
 import {
   runClaudeCode,
   runClaudeCodeStatus,
+  runClaudeCodeStop,
   claudeCodeInput,
   claudeCodeStatusInput,
+  claudeCodeStopInput,
 } from './claude-code';
 import {
   runShellSpawn,
@@ -74,7 +76,7 @@ export function getShellTools(workspaceRoot?: string): Record<string, Tool> {
 
     claude_code: tool({
       description:
-        'Start Claude Code as an autonomous sub-agent. Returns { taskId } immediately; poll with claude_code_status to stream output and check completion. Use for multi-step code workflows, debugging, exploration, builds, and anything where the next step depends on the previous result. Plan-then-edit: call once with mode="plan" to produce a plan, then call again with mode="edit" and the sessionId from the plan response to implement it. Max 3 concurrent tasks.',
+        'Start Claude Code as an autonomous sub-agent. Returns { taskId } immediately; poll with claude_code_status to stream output and check completion, or claude_code_stop to abandon it. Use for multi-step code workflows, debugging, exploration, builds, and anything where the next step depends on the previous result. Plan-then-edit: call once with mode="plan" to produce a plan, then call again with mode="edit" and the sessionId from the plan response to implement it. Max 3 concurrent tasks.',
       inputSchema: claudeCodeInput,
       execute: async (input) => runClaudeCode(input, workspace),
     }),
@@ -84,6 +86,13 @@ export function getShellTools(workspaceRoot?: string): Record<string, Tool> {
         'Poll a running claude_code task. Returns { output, completed, result, turns, stopReason, sessionId } — output is drained on read, so subsequent calls return only new output. When completed is true, result/turns/stopReason/sessionId are populated.',
       inputSchema: claudeCodeStatusInput,
       execute: async (input) => runClaudeCodeStatus(input),
+    }),
+
+    claude_code_stop: tool({
+      description:
+        'Terminate a running claude_code task. Use when it is heading the wrong way, looping, stuck, or no longer needed, rather than waiting out its turn budget. Returns the same shape as claude_code_status: any output produced before termination, completed:true, and stopReason:"stopped". sessionId comes back whenever the sub-agent got far enough to report one — pass it to claude_code({ prompt, sessionId }) to resume the abandoned work with its context instead of starting over. The taskId is invalid afterwards and its concurrency slot is freed immediately.',
+      inputSchema: claudeCodeStopInput,
+      execute: async (input) => runClaudeCodeStop(input),
     }),
 
     shell_spawn: tool({
