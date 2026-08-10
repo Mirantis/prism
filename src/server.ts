@@ -4,7 +4,8 @@
  * GET  /health         — liveness check
  *      /agents/*       — management routes (heartbeat, chat, cron lifecycle)
  *                        + inbound webhook ingestion (/agents/webhooks/:name)
- *      /threads, /messages, /latest-thread — no-auth endpoints for the local CLI
+ *      /threads, /latest-thread — thread resolve/list/open
+ *      /messages       — thread history replay
  *      /               — Prism Web UI (static SPA bundle from web/dist)
  *
  * Auth is handled by Nexus inbound routing in front of the runtime;
@@ -15,7 +16,8 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { managementRouter } from './routes/management';
-import { singleAgentRouter } from './routes/single-agent';
+import { threadsRouter } from './routes/threads';
+import { messagesRouter } from './routes/messages';
 import { webhookRouter } from './routes/webhook';
 
 export function createApp() {
@@ -34,10 +36,11 @@ export function createApp() {
   // Inbound webhook ingestion (POST /agents/webhooks/:name)
   app.use('/agents', webhookRouter);
 
-  // No-auth endpoints for the local CLI (prism-cli): /threads, /messages,
-  // /latest-thread. Mounted at the root and registered before the SPA
-  // fallback so these explicit routes win over the static catch-all.
-  app.use(singleAgentRouter);
+  // Thread and message routes: /threads, /latest-thread and /messages.
+  // Mounted at the root and registered before the SPA fallback so these
+  // explicit routes win over the static catch-all.
+  app.use(threadsRouter);
+  app.use(messagesRouter);
 
   // Prism Web UI. Skip the SPA mount silently when web/dist isn't
   // present (dev runs Vite separately on :5173). `PRISM_WEB_DIR` lets the

@@ -39,9 +39,10 @@ Security-sensitive areas include:
 - **The WebSocket gateway** — the backend verifies the JWT and proxies the
   upgrade; the runtime only decodes it. Whether a forged or replayed token can
   reach `conversationEngineService.chat()`.
-- **The HTTP API surface** (`/agents/*`, `/single-agent/*`, `/api/ws`) — the
-  runtime trusts inbound connections, so any unintended network exposure can
-  allow callers to drive heartbeat, cron, Slack, or thread operations.
+- **The HTTP API surface** (`/agents/*`, `/threads`, `/latest-thread`,
+  `/messages`, `/api/ws`) — the runtime trusts inbound connections, so any
+  unintended network exposure can allow callers to drive heartbeat, cron,
+  Slack, or thread operations.
 - **Prompt-driven actions** — whether untrusted content arriving over a channel
   (a Slack message, thread history, a tool result) can steer the agent into
   unsafe tool use or data exfiltration.
