@@ -5,11 +5,18 @@ import path from 'path';
 import {
   resolveDataDir,
   resolveSkillsDir,
+  resolvePluginsDir,
+  resolvePluginDataDir,
   resolveClaudeConfigDir,
   ensureDataDirs,
 } from './data-dir';
 
-const ENV_KEYS = ['PRISM_DATA_DIR', 'PRISM_SKILLS_DIR', 'CLAUDE_CONFIG_DIR'] as const;
+const ENV_KEYS = [
+  'PRISM_DATA_DIR',
+  'PRISM_SKILLS_DIR',
+  'PRISM_PLUGINS_DIR',
+  'CLAUDE_CONFIG_DIR',
+] as const;
 let saved: Record<string, string | undefined>;
 let tmp: string;
 
@@ -55,6 +62,32 @@ describe('resolveSkillsDir / resolveClaudeConfigDir', () => {
   });
 });
 
+describe('resolvePluginsDir / resolvePluginDataDir', () => {
+  it('derive from the data dir', () => {
+    process.env.PRISM_DATA_DIR = tmp;
+    expect(resolvePluginsDir()).toBe(path.join(tmp, 'plugins'));
+  });
+
+  it('honors PRISM_PLUGINS_DIR override', () => {
+    process.env.PRISM_DATA_DIR = tmp;
+    const custom = path.join(tmp, 'elsewhere');
+    process.env.PRISM_PLUGINS_DIR = custom;
+    expect(resolvePluginsDir()).toBe(custom);
+  });
+
+  it('keeps plugin data outside the plugin dir so it survives a re-drop', () => {
+    process.env.PRISM_DATA_DIR = tmp;
+    const dataDir = resolvePluginDataDir('demo');
+    expect(dataDir).toBe(path.join(tmp, 'plugin-data', 'demo'));
+    expect(dataDir.startsWith(resolvePluginsDir())).toBe(false);
+  });
+
+  it('never escapes the data dir when given a path-shaped id', () => {
+    process.env.PRISM_DATA_DIR = tmp;
+    expect(resolvePluginDataDir('../../etc')).toBe(path.join(tmp, 'plugin-data', 'etc'));
+  });
+});
+
 describe('ensureDataDirs', () => {
   it('creates the skills + claude dirs, symlinks skills, and sets CLAUDE_CONFIG_DIR', () => {
     process.env.PRISM_DATA_DIR = tmp;
@@ -62,8 +95,14 @@ describe('ensureDataDirs', () => {
 
     expect(r.fellBackFrom).toBeNull();
     expect(r.skillsDir).toBe(path.join(tmp, 'skills'));
+    expect(r.pluginsDir).toBe(path.join(tmp, 'plugins'));
     expect(fs.statSync(r.skillsDir).isDirectory()).toBe(true);
+    expect(fs.statSync(r.pluginsDir).isDirectory()).toBe(true);
     expect(fs.statSync(r.claudeConfigDir).isDirectory()).toBe(true);
+
+    // Only skills are exposed to Claude Code — its plugin layout differs from
+    // the Agent Plugins one, so we deliberately do not link plugins across.
+    expect(fs.existsSync(path.join(r.claudeConfigDir, 'plugins'))).toBe(false);
 
     // The claude config dir's skills child is a symlink to the canonical dir.
     const link = path.join(r.claudeConfigDir, 'skills');

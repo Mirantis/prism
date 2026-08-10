@@ -14,6 +14,7 @@ import type {
   ModelInfo,
   OverrideModelInfo,
   SkillSummary,
+  PluginSummary,
   Goal,
   WebhookSubscription,
 } from '@/types';
@@ -261,6 +262,10 @@ export const runtimeApi = {
       `/agents/skills/${encodeURIComponent(name)}/run`,
       { method: 'POST', body: JSON.stringify(threadId ? { threadId } : {}) },
     ),
+
+  // Plugins (Agent Plugins — agent-plugins.org). Installed once for the
+  // container rather than per workspace, so this takes no thread id.
+  listPlugins: () => request<PluginSummary[]>('/agents/plugins'),
 
   // Compaction (fold older history into the thread's summary). 202 + WS
   // `compaction` frames carry the progress; 409 when there's nothing to compact.

@@ -33,12 +33,15 @@ The main conversation surface.
   **[Terminal UI](terminal-ui.md#slash-commands)**: filter by typing, **Tab** to
   complete, arrow keys to move the selection, **Enter** to run. The web supports
   `/help`, **`/skills`** (list installed [skills](skills.md), or `/skills run
-  <name>`), **`/goal`** (set or manage a background goal — `/goal
+  <name>`), **`/plugins`** (list installed [plugins](plugins.md) and what each
+  contributes), **`/goal`** (set or manage a background goal — `/goal
   <objective>`, `status`, `list`, `pause`, `resume`, `stop`), and **`/compact`**
   (summarize older history to free up context — see
   **[Compaction](compaction.md)**). Commands run
   locally and call the runtime directly; their output appears as a system note
   in the conversation, and `/goal`/`/skills run` stream the agent's reply in.
+  A one-line note renders as a centered aside; a listing (`/skills`, `/plugins`)
+  renders as a normal left-aligned block so the list is readable.
 - **Attachments.** Attach files with the paperclip button or by drag-and-drop.
   Pending attachments show as chips (with a progress spinner, name, and size)
   and can be removed before sending. Up to 100 attachments per message.

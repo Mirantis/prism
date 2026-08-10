@@ -3,10 +3,13 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { skillCatalogService, __test } from '../skill-catalog.service';
+import { pluginCatalogService, PLUGIN_SCHEMA_1_0_0 } from '../plugin-catalog.service';
 
 let tmp: string;
 let skillsDir: string;
+let pluginsDir: string;
 let savedSkillsDir: string | undefined;
+let savedPluginsDir: string | undefined;
 
 function writeSkill(dirName: string, content: string): void {
   const dir = path.join(skillsDir, dirName);
@@ -14,18 +17,38 @@ function writeSkill(dirName: string, content: string): void {
   fs.writeFileSync(path.join(dir, 'SKILL.md'), content);
 }
 
+/** Install a plugin that contributes one skill. */
+function writePluginSkill(pluginId: string, dirName: string, content: string): void {
+  const root = path.join(pluginsDir, pluginId);
+  fs.mkdirSync(path.join(root, 'skills', dirName), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'plugin.json'),
+    JSON.stringify({ $schema: PLUGIN_SCHEMA_1_0_0, name: pluginId }),
+  );
+  fs.writeFileSync(path.join(root, 'skills', dirName, 'SKILL.md'), content);
+}
+
 beforeEach(() => {
   savedSkillsDir = process.env.PRISM_SKILLS_DIR;
+  savedPluginsDir = process.env.PRISM_PLUGINS_DIR;
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-skills-test-'));
   skillsDir = path.join(tmp, 'skills');
+  pluginsDir = path.join(tmp, 'plugins');
   fs.mkdirSync(skillsDir, { recursive: true });
+  fs.mkdirSync(pluginsDir, { recursive: true });
   process.env.PRISM_SKILLS_DIR = skillsDir;
+  // Pin the plugins dir too, or the catalog would read whatever the developer
+  // happens to have installed under ~/.prism/plugins.
+  process.env.PRISM_PLUGINS_DIR = pluginsDir;
   skillCatalogService.invalidate();
+  pluginCatalogService.invalidate();
 });
 
 afterEach(() => {
   if (savedSkillsDir === undefined) delete process.env.PRISM_SKILLS_DIR;
   else process.env.PRISM_SKILLS_DIR = savedSkillsDir;
+  if (savedPluginsDir === undefined) delete process.env.PRISM_PLUGINS_DIR;
+  else process.env.PRISM_PLUGINS_DIR = savedPluginsDir;
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -126,6 +149,64 @@ describe('SkillCatalogService.find / getSkillBody', () => {
   });
 });
 
+describe('SkillCatalogService plugin skills', () => {
+  it('merges a plugin skills/ dir into the catalog, tagged with its plugin', () => {
+    writePluginSkill('demo', 'summarize', `---\nname: summarize\ndescription: Summarize.\n---\nbody\n`);
+    skillCatalogService.invalidate();
+    pluginCatalogService.invalidate();
+
+    const catalog = skillCatalogService.getCatalog();
+    expect(catalog).toHaveLength(1);
+    expect(catalog[0]).toMatchObject({
+      name: 'summarize',
+      source: 'plugin',
+      pluginId: 'demo',
+    });
+  });
+
+  it('leaves pluginId unset on skills that did not come from a plugin', () => {
+    writeSkill('plain', `---\nname: plain\ndescription: p\n---\nbody\n`);
+    skillCatalogService.invalidate();
+
+    expect(skillCatalogService.find('plain')).not.toHaveProperty('pluginId');
+  });
+
+  it('loads a plugin skill body through the same progressive-disclosure path', () => {
+    writePluginSkill('demo', 'summarize', `---\nname: summarize\ndescription: s\n---\n# Sum\n\nDo it.\n`);
+    skillCatalogService.invalidate();
+    pluginCatalogService.invalidate();
+
+    const found = skillCatalogService.getSkillBody('summarize');
+    expect(found?.entry.pluginId).toBe('demo');
+    expect(found?.body).toBe('# Sum\n\nDo it.');
+  });
+
+  it('ignores a plugin whose manifest is invalid', () => {
+    writePluginSkill('broken', 'ghost', `---\nname: ghost\ndescription: g\n---\nbody\n`);
+    // Replace the good manifest with one targeting a version we do not implement.
+    fs.writeFileSync(
+      path.join(pluginsDir, 'broken', 'plugin.json'),
+      JSON.stringify({ $schema: 'https://agent-plugins.org/schemas/9.9.9/plugin.schema.json', name: 'broken' }),
+    );
+    skillCatalogService.invalidate();
+    pluginCatalogService.invalidate();
+
+    expect(skillCatalogService.getCatalog()).toEqual([]);
+  });
+
+  it('resolves a clash between two plugins by plugin id order', () => {
+    writePluginSkill('zeta', 'dup', `---\nname: dup\ndescription: from zeta\n---\nbody\n`);
+    writePluginSkill('alpha', 'dup', `---\nname: dup\ndescription: from alpha\n---\nbody\n`);
+    skillCatalogService.invalidate();
+    pluginCatalogService.invalidate();
+
+    expect(skillCatalogService.find('dup')).toMatchObject({
+      pluginId: 'alpha',
+      description: 'from alpha',
+    });
+  });
+});
+
 describe('SkillCatalogService workspace skills', () => {
   // Build a fake repo with .claude/skills and .agents/skills under `tmp`.
   let workspaceRoot: string;
@@ -174,6 +255,24 @@ describe('SkillCatalogService workspace skills', () => {
     skillCatalogService.invalidate();
 
     expect(skillCatalogService.find('dup', workspaceRoot)).toMatchObject({ description: 'from claude' });
+  });
+
+  it('plugin skills lose to both workspace and global on a name collision', () => {
+    writePluginSkill('demo', 'dup', `---\nname: dup\ndescription: from plugin\n---\nbody\n`);
+    writeSkill('dup', `---\nname: dup\ndescription: from global\n---\nbody\n`);
+    writeWorkspaceSkill('.claude', 'dup', `---\nname: dup\ndescription: from workspace\n---\nbody\n`);
+    skillCatalogService.invalidate();
+    pluginCatalogService.invalidate();
+
+    expect(skillCatalogService.find('dup', workspaceRoot)).toMatchObject({
+      source: 'workspace',
+      description: 'from workspace',
+    });
+    // Even with no workspace in play, the user's own global skill still wins.
+    expect(skillCatalogService.find('dup')).toMatchObject({
+      source: 'global',
+      description: 'from global',
+    });
   });
 
   it('getSkillBody resolves a workspace skill body', () => {

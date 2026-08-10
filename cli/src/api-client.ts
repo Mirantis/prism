@@ -98,8 +98,23 @@ export interface SkillSummary {
   name: string;
   description: string;
   dirName: string;
-  /** Where the skill came from: the workspace repo or the global dir. */
-  source: 'workspace' | 'global';
+  /** Where the skill came from: the workspace repo, the global dir, or a plugin. */
+  source: 'workspace' | 'global' | 'plugin';
+  /** The contributing plugin's id — present only when `source` is `'plugin'`. */
+  pluginId?: string;
+}
+
+export interface PluginSummary {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  /** Names of the skills this plugin contributed to the catalog. */
+  skills: string[];
+  /** Names of the MCP servers its mcp.json declares. */
+  mcpServers: string[];
+  /** Non-fatal problems found while loading it. */
+  diagnostics: string[];
 }
 
 export interface ApiClient {
@@ -135,6 +150,7 @@ export interface ApiClient {
   downloadAttachment(id: string): Promise<Buffer>;
   listSkills(threadId?: string): Promise<SkillSummary[]>;
   runSkill(name: string, threadId?: string): Promise<{ threadId: string; skill: string }>;
+  listPlugins(): Promise<PluginSummary[]>;
   compactThread(threadId: string): Promise<{ threadId: string }>;
 }
 
@@ -327,6 +343,12 @@ export class HttpApiClient implements ApiClient {
 
   runSkill(name: string, threadId?: string): Promise<{ threadId: string; skill: string }> {
     return this.request('POST', `/agents/skills/${encodeURIComponent(name)}/run`, threadId ? { threadId } : {});
+  }
+
+  // Plugins are installed once for the container rather than per workspace, so
+  // this listing takes no thread id.
+  listPlugins(): Promise<PluginSummary[]> {
+    return this.request('GET', '/agents/plugins');
   }
 
   // Compaction (fold older history into the thread's summary). 202 + WS

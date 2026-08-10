@@ -23,6 +23,7 @@ import { getShareFileTools, SHARE_FILE_TOOL_NAME } from '../tools/share-file';
 import { getSkillTools } from '../tools/skills/index';
 import { getMeetingTools, MEETING_TOOL_NAMES, isMeetingSupported } from '../tools/meeting';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
+import { pluginMcpService } from '../services/plugin-mcp.service';
 
 export interface CollectToolsInput {
   userId: string;
@@ -77,26 +78,23 @@ export interface CollectedTools {
  */
 export async function collectTools(input: CollectToolsInput): Promise<CollectedTools> {
   const originChannel = input.originChannel ?? 'websocket';
-  const builtInTools = filterToolsByMode(
-    {
-      ...getMemoryTools(input.userId, input.agentId),
-      ...getCronTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
-      ...getGoalTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
-      ...getAgentConfigTools(),
-      ...getShellTools(input.workspaceRoot),
-      ...getShareFileTools(),
-      // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md
-      // body on demand. workspaceRoot merges the repo's skills with the global
-      // ones. Empty (and omitted) when no skills are available.
-      ...getSkillTools(input.workspaceRoot),
-      // Live voice meetings. Empty unless the host has the browser/audio
-      // toolchain and an OpenAI key — see `meetingToolsAvailable`.
-      ...(meetingToolsAvailable
-        ? getMeetingTools({ userId: input.userId, agentId: input.agentId, threadId: input.threadId })
-        : {}),
-    },
-    input.mode,
-  );
+  const builtInTools: Record<string, Tool> = {
+    ...getMemoryTools(input.userId, input.agentId),
+    ...getCronTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
+    ...getGoalTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
+    ...getAgentConfigTools(),
+    ...getShellTools(input.workspaceRoot),
+    ...getShareFileTools(),
+    // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md
+    // body on demand. workspaceRoot merges the repo's skills with the global
+    // ones. Empty (and omitted) when no skills are available.
+    ...getSkillTools(input.workspaceRoot),
+    // Live voice meetings. Empty unless the host has the browser/audio
+    // toolchain and an OpenAI key — see `meetingToolsAvailable`.
+    ...(meetingToolsAvailable
+      ? getMeetingTools({ userId: input.userId, agentId: input.agentId, threadId: input.threadId })
+      : {}),
+  };
 
   // Register every tool the Nexus MCP endpoint exposes. In the sandbox this
   // is the project-scoped endpoint, which already excludes first-party shell
@@ -106,7 +104,25 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     ? await getMCPTools({ url: config.nexusMcpUrl })
     : {};
 
-  const tools: Record<string, Tool> = { ...builtInTools, ...nexusTools };
+  // Tools contributed by installed Agent Plugins, already namespaced by plugin
+  // and server and in a stable order.
+  const pluginTools = await pluginMcpService.getTools();
+
+  const merged: Record<string, Tool> = { ...builtInTools, ...nexusTools };
+  // Merged with an explicit guard rather than a spread, so "a plugin can never
+  // replace a built-in" is a property of this code and not of a naming
+  // convention that a future rename could quietly invalidate.
+  for (const [name, tool] of Object.entries(pluginTools)) {
+    if (name in merged) {
+      logger.warn(`[Plugins] dropping tool "${name}" — a built-in or Nexus tool already owns it`);
+      continue;
+    }
+    merged[name] = tool;
+  }
+
+  // Applied to everything, not just the built-ins: an MCP tool that shares a
+  // name with a built-in the current mode removed must not survive either.
+  const tools = filterToolsByMode(merged, input.mode);
 
   // Fetch subagents (skip for subagent invocations to prevent recursion)
   const subagents = input.mode === 'subagent'
@@ -114,7 +130,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     : await agentWorkspaceService.getSubagents(input.agentId);
 
   logger.info(
-    `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} Nexus MCP tool(s); ${subagents.length} subagent(s)`,
+    `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} Nexus MCP + ${Object.keys(pluginTools).length} plugin MCP tool(s); ${subagents.length} subagent(s)`,
   );
 
   // Add task tool if subagents are configured
@@ -150,7 +166,11 @@ export function withToolsCacheControl(
 }
 
 /**
- * Filter built-in tools by invocation mode.
+ * Filter the assembled tool set by invocation mode.
+ *
+ * Named for built-ins because that is what it omits, but it runs over every
+ * tool — including MCP ones — so a remote tool cannot answer to a name the
+ * mode has just taken away.
  *
  * Joining a voice meeting is a chat-only act: every other mode drops the meeting
  * tools, because an autonomous run (a heartbeat, a cron tick, a subagent) dialling

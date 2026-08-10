@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const {
   mockListSkills,
+  mockListPlugins,
   mockRunSkill,
   mockCreateGoal,
   mockGetThreadGoal,
@@ -12,6 +13,7 @@ const {
   mockCompactThread,
 } = vi.hoisted(() => ({
   mockListSkills: vi.fn(),
+  mockListPlugins: vi.fn(),
   mockRunSkill: vi.fn(),
   mockCreateGoal: vi.fn(),
   mockGetThreadGoal: vi.fn(),
@@ -25,6 +27,7 @@ const {
 vi.mock('@/api/runtime-client', () => ({
   runtimeApi: {
     listSkills: mockListSkills,
+    listPlugins: mockListPlugins,
     runSkill: mockRunSkill,
     createGoal: mockCreateGoal,
     getThreadGoal: mockGetThreadGoal,
@@ -100,9 +103,20 @@ describe('/skills command', () => {
     ]);
     const out = await cmd('/skills').run({ args: [], rawArgs: '', threadId: 't1' });
     expect(mockListSkills).toHaveBeenCalledWith('t1');
-    expect(out).toContain('repo-skill — From the repo. (workspace)');
-    expect(out).toContain('echo-marker — Reply with a marker.');
-    expect(out).not.toContain('echo-marker — Reply with a marker. (workspace)');
+    // Markdown, not indented plain text: the chat renders a system message
+    // through the same markdown pipeline as a reply, so single newlines in a
+    // plain-text list would collapse into one run-on line.
+    expect(out).toContain('- **repo-skill** — From the repo. _(workspace)_');
+    expect(out).toContain('- **echo-marker** — Reply with a marker.');
+    expect(out).not.toContain('echo-marker** — Reply with a marker. _(workspace)_');
+  });
+
+  it('labels a plugin-contributed skill with its plugin', async () => {
+    mockListSkills.mockResolvedValue([
+      { name: 'summarize', description: 'Summarize.', dirName: 'summarize', source: 'plugin', pluginId: 'demo' },
+    ]);
+    const out = await cmd('/skills').run({ args: [], rawArgs: '', threadId: 't1' });
+    expect(out).toContain('- **summarize** — Summarize. _(plugin: demo)_');
   });
 
   it('list subcommand also lists', async () => {
@@ -242,5 +256,48 @@ describe('/help', () => {
   it('lists every registered command', async () => {
     const out = await cmd('/help').run({ args: [], rawArgs: '' });
     for (const c of COMMANDS) expect(out).toContain(c.name);
+  });
+});
+
+describe('/plugins command', () => {
+  it('lists each plugin as its own entry with what it contributes', async () => {
+    mockListPlugins.mockResolvedValue([
+      {
+        id: 'demo',
+        name: 'demo',
+        version: '1.2.0',
+        description: 'A demo plugin.',
+        skills: ['summarize'],
+        mcpServers: ['probe'],
+        diagnostics: [],
+      },
+    ]);
+    const out = await cmd('/plugins').run({ args: [], rawArgs: '' });
+    // One markdown list item per plugin, contributions nested beneath it — the
+    // point of the format is that plugins don't run together into one sentence.
+    expect(out).toContain('- **demo** `v1.2.0` — A demo plugin.');
+    expect(out).toContain('    - Skills: `summarize`');
+    expect(out).toContain('    - MCP servers: `probe`');
+  });
+
+  it('surfaces load diagnostics so a half-broken plugin is visible', async () => {
+    mockListPlugins.mockResolvedValue([
+      {
+        id: 'demo',
+        name: 'demo',
+        skills: [],
+        mcpServers: [],
+        diagnostics: ['mcp.json is invalid — no MCP servers loaded'],
+      },
+    ]);
+    const out = await cmd('/plugins').run({ args: [], rawArgs: '' });
+    expect(out).toContain('    - **Problem:** mcp.json is invalid');
+    expect(out).toContain('    - Contributes nothing');
+  });
+
+  it('reports when no plugins are installed', async () => {
+    mockListPlugins.mockResolvedValue([]);
+    const out = await cmd('/plugins').run({ args: [], rawArgs: '' });
+    expect(out).toMatch(/no plugins installed/i);
   });
 });

@@ -14,7 +14,7 @@ run skills explicitly with the [`/skills` command](#the-skills-command).
 
 ## Where skills live
 
-Skills are discovered from two places, and the two sets are merged:
+Skills are discovered from three places, and the sets are merged:
 
 - **Global skills** — the agent's skills directory, which lives in its data dir:
   `~/.prism/skills` for a native install, `/data/skills` in Docker. (Override the
@@ -24,10 +24,13 @@ Skills are discovered from two places, and the two sets are merged:
 - **Workspace skills** — when you start the terminal UI inside a repository, that
   repo's `.claude/skills/` and `.agents/skills/` are loaded too, so a project can
   ship its own skills. These are labelled `(workspace)` in `/skills` listings.
+- **Plugin skills** — the `skills/` folder of each installed
+  **[plugin](plugins.md)**. These are labelled `(plugin: <id>)`.
 
-If a global and a workspace skill share a name, the **workspace** one wins
-(a repo can override a global skill), and `.claude/skills` takes precedence over
-`.agents/skills`.
+On a name clash the **workspace** skill wins over a global one (a repo can
+override a global skill), and `.claude/skills` takes precedence over
+`.agents/skills`. Plugin skills come last, so a plugin can add a skill but never
+replaces one you installed yourself.
 
 ## Installing skills
 
@@ -72,7 +75,8 @@ Both the **[Terminal UI](terminal-ui.md)** and the **[Web UI](web-ui.md)** expos
 a `/skills` slash command (type `/` in the chat input):
 
 - `/skills` or `/skills list` — list the available skills with their
-  descriptions; workspace skills are marked `(workspace)`.
+  descriptions; workspace skills are marked `(workspace)` and plugin-provided
+  ones `(plugin: <id>)`.
 - `/skills run <name>` — run a skill now. The agent loads it and works through
   it, streaming the reply back into the conversation.
 

@@ -65,6 +65,7 @@ Type `/` to open a command popup; keep typing to filter, **Tab** to complete,
 | `/heartbeat <…>` | Control the heartbeat — see below |
 | `/goal <…>` | Set or manage a background [goal](#goal) — see below |
 | `/skills [list\|run <name>]` | List installed [skills](skills.md), or run one |
+| `/plugins` | List installed [plugins](plugins.md) and what each contributes |
 | `/compact` | Summarize older history to free up context — see [Compaction](compaction.md) |
 | `/schedules` | Open the scheduled-tasks panel |
 | `/config` | Open the identity/config viewer panel |

@@ -21,6 +21,7 @@ import { cronModelCommand } from './commands/cron-model.js';
 import { heartbeatCommand } from './commands/heartbeat.js';
 import { goalCommand } from './commands/goal.js';
 import { skillsCommand } from './commands/skills.js';
+import { pluginsCommand } from './commands/plugins.js';
 import { compactCommand } from './commands/compact.js';
 import { attachCommand } from './commands/attach.js';
 import { detachCommand } from './commands/detach.js';
@@ -44,6 +45,7 @@ export const COMMANDS: SlashCommand[] = [
   heartbeatCommand,
   goalCommand,
   skillsCommand,
+  pluginsCommand,
   compactCommand,
   attachCommand,
   detachCommand,

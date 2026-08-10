@@ -15,6 +15,7 @@
 
 import type { SlashCommand } from './commands/types';
 import { skillsCommand } from './commands/skills';
+import { pluginsCommand } from './commands/plugins';
 import { goalCommand } from './commands/goal';
 import { compactCommand } from './commands/compact';
 import { makeHelpCommand } from './commands/help';
@@ -24,6 +25,7 @@ export { parseCommandLine, isSlashMode } from './commands/parse';
 
 export const COMMANDS: SlashCommand[] = [
   skillsCommand,
+  pluginsCommand,
   goalCommand,
   compactCommand,
   makeHelpCommand(() => COMMANDS),

@@ -84,7 +84,8 @@ The `python`/`pandoc`/`poppler`/`tesseract` set — plus the Python libraries th
 Anthropic `pdf`/`docx`/`xlsx`/`pptx` skills import (`openpyxl`, `python-pptx`,
 `pypdf`, `pdfplumber`, `Pillow`, and more; see `requirements.txt`) — is the
 toolchain those document skills need. The image ships the *toolchain*, not the
-skills themselves; skills are installed at runtime into `/data/skills`. Because
+skills themselves; skills are installed at runtime into `/data/skills`, and
+[plugins](plugins.md) into `/data/plugins`. Because
 `python` is a node-owned, non-externally-managed interpreter, `pip install`
 works out of the box (against PyPI, which is already reachable — no extra network
 allowances needed). LibreOffice is intentionally not bundled (size), so document

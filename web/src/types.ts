@@ -220,8 +220,24 @@ export interface SkillSummary {
   name: string;
   description: string;
   dirName: string;
-  /** Where the skill came from: the workspace repo or the global dir. */
-  source: 'workspace' | 'global';
+  /** Where the skill came from: the workspace repo, the global dir, or a plugin. */
+  source: 'workspace' | 'global' | 'plugin';
+  /** The contributing plugin's id — present only when `source` is `'plugin'`. */
+  pluginId?: string;
+}
+
+/** An installed Agent Plugin (agent-plugins.org), as listed by GET /agents/plugins. */
+export interface PluginSummary {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  /** Names of the skills this plugin contributed to the catalog. */
+  skills: string[];
+  /** Names of the MCP servers its mcp.json declares. */
+  mcpServers: string[];
+  /** Non-fatal problems found while loading it. */
+  diagnostics: string[];
 }
 
 /** A background goal the agent works toward across turns (GET/POST /agents/goals). */

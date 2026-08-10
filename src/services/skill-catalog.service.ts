@@ -8,12 +8,15 @@
  *   - the full SKILL.md BODY is read on demand via `getSkillBody()` (the `skill`
  *     tool / manual trigger), never up front.
  *
- * Skills come from two kinds of source, in precedence order:
+ * Skills come from three kinds of source, in precedence order:
  *   1. WORKSPACE — the repo the CLI was started in: `<workspaceRoot>/.claude/skills`
  *      then `<workspaceRoot>/.agents/skills` (only when a workspaceRoot is given).
  *   2. GLOBAL — the persistent `<DATA>/skills` dir (always).
+ *   3. PLUGIN — the `skills/` dir of each installed Agent Plugin (always).
  * On a name collision the higher-precedence source wins (workspace over global,
  * `.claude` over `.agents`), matching Claude Code's project > personal model.
+ * Plugins rank last deliberately: a plugin can contribute a skill but can never
+ * shadow one the user installed themselves.
  *
  * A skill is a folder under a skills dir containing a `SKILL.md` with YAML
  * frontmatter. Only `name` and `description` are required by the standard.
@@ -26,9 +29,10 @@ import fs from 'fs';
 import path from 'path';
 import { logger } from '../logger';
 import { resolveSkillsDir } from '../lib/data-dir';
+import { pluginCatalogService } from './plugin-catalog.service';
 
 /** Where a skill was discovered. */
-export type SkillSource = 'workspace' | 'global';
+export type SkillSource = 'workspace' | 'global' | 'plugin';
 
 export interface SkillEntry {
   /** Frontmatter `name` — the authoritative key used to invoke the skill. */
@@ -40,8 +44,10 @@ export interface SkillEntry {
   dir: string;
   /** Absolute path to the bundle's SKILL.md. */
   skillMdPath: string;
-  /** Whether this skill came from the workspace repo or the global dir. */
+  /** Whether this skill came from the workspace repo, the global dir, or a plugin. */
   source: SkillSource;
+  /** The contributing plugin's id — set only when `source` is `'plugin'`. */
+  pluginId?: string;
 }
 
 interface CachedDir {
@@ -53,6 +59,8 @@ interface CachedDir {
 interface SkillRoot {
   dir: string;
   source: SkillSource;
+  /** Set for plugin roots so each entry can name its contributing plugin. */
+  pluginId?: string;
 }
 
 /** Generous cap on how much of SKILL.md we read just to extract frontmatter. */
@@ -65,8 +73,10 @@ class SkillCatalogService {
 
   /**
    * The directories to scan, in precedence order: workspace first (when a
-   * workspaceRoot is given), then the global dir. `.claude/skills` ranks above
-   * `.agents/skills` so the Claude-native location wins a name clash.
+   * workspaceRoot is given), then the global dir, then each installed plugin's
+   * `skills/`. `.claude/skills` ranks above `.agents/skills` so the
+   * Claude-native location wins a name clash, and plugin roots come last so a
+   * plugin never shadows a skill the user installed.
    */
   private roots(workspaceRoot?: string): SkillRoot[] {
     const roots: SkillRoot[] = [];
@@ -77,6 +87,13 @@ class SkillCatalogService {
       roots.push({ dir: path.join(ws, '.agents', 'skills'), source: 'workspace' });
     }
     roots.push({ dir: resolveSkillsDir(), source: 'global' });
+    // Plugins are enumerated in id order, so a clash between two plugins
+    // resolves the same way on every boot.
+    for (const plugin of pluginCatalogService.getPlugins()) {
+      if (plugin.skillsDir) {
+        roots.push({ dir: plugin.skillsDir, source: 'plugin', pluginId: plugin.id });
+      }
+    }
     return roots;
   }
 
@@ -135,12 +152,13 @@ class SkillCatalogService {
     }
     const cached = this.cache.get(root.dir);
     if (cached && cached.mtimeMs === mtimeMs) return cached.entries;
-    const entries = this.scan(root.dir, root.source);
+    const entries = this.scan(root);
     this.cache.set(root.dir, { mtimeMs, entries });
     return entries;
   }
 
-  private scan(dir: string, source: SkillSource): SkillEntry[] {
+  private scan(root: SkillRoot): SkillEntry[] {
+    const { dir, source } = root;
     let dirents: fs.Dirent[];
     try {
       dirents = fs.readdirSync(dir, { withFileTypes: true });
@@ -203,6 +221,7 @@ class SkillCatalogService {
         dir: bundleDir,
         skillMdPath,
         source,
+        ...(root.pluginId ? { pluginId: root.pluginId } : {}),
       });
     }
     return [...byName.values()];

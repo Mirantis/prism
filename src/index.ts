@@ -37,6 +37,8 @@ import { slackAdapterService } from './services/slack-adapter.service';
 import { webSocketAdapterService } from './services/websocket-adapter.service';
 import { webSocketGatewayService } from './services/websocket-gateway.service';
 import { messageDeliveryService } from './services/message-delivery.service';
+import { pluginMcpService } from './services/plugin-mcp.service';
+import { pluginCatalogService } from './services/plugin-catalog.service';
 import { attachmentService } from './services/attachment.service';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
@@ -103,6 +105,13 @@ const initialize = async () => {
       dirs.skillsDir,
       dirs.claudeConfigDir,
       dirs.symlinkOk ? 'ok' : 'unavailable',
+    );
+    // Scanning here also surfaces any malformed plugin's warning at boot rather
+    // than on whichever turn first happens to build a system prompt.
+    logger.info(
+      '[Startup] plugins dir: %s (%d installed)',
+      dirs.pluginsDir,
+      pluginCatalogService.getPlugins().length,
     );
 
     // Active LLM provider + routing, so the deployed vendor is observable in
@@ -221,6 +230,9 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
     logger.warn(`[Meeting] Shutdown teardown failed: ${String(err)}`);
   });
   await messageDeliveryService.shutdownAll();
+  // Plugin MCP servers are child processes we spawned; close them explicitly so
+  // a bare SIGTERM to the runtime doesn't orphan them.
+  await pluginMcpService.shutdownAll();
   await getSlackHeartbeatThrottleQueue().stop();
   await shutdownLangfuse();
   await shutdownTelemetry().catch(() => {});
