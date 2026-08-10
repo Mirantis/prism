@@ -30,15 +30,23 @@ const ChatMessage = memo(function ChatMessage({ message, agentName }: ChatMessag
   });
 
   if (message.role === 'SYSTEM') {
+    // A one-line note ("Running skill…") reads as an aside: centered, italic,
+    // out of the way. Anything multi-line is structured output from a slash
+    // command — a list of plugins, skills, goals — and centering or
+    // italicizing that makes it unreadable, so it gets a normal block.
+    const isBlock = message.content.trim().includes('\n');
+    // Built as one non-overlapping set rather than layered conditionals: two
+    // competing `bg-*`/`border-*` classes on the same element resolve by
+    // stylesheet order, not by which appears last in the string.
+    const shape = isBlock ? 'w-full text-left' : 'text-center italic';
+    const skin = isError
+      ? 'border border-destructive/40 bg-destructive/10 text-destructive'
+      : isBlock
+        ? 'border bg-card text-foreground'
+        : 'text-muted-foreground';
     return (
-      <div className="flex justify-center">
-        <div
-          className={`max-w-[85%] rounded-lg px-4 py-2 text-center text-sm italic ${
-            isError
-              ? 'border border-destructive/40 bg-destructive/10 text-destructive'
-              : 'text-muted-foreground'
-          }`}
-        >
+      <div className={`flex ${isBlock ? 'justify-start' : 'justify-center'}`}>
+        <div className={`max-w-[85%] rounded-lg px-4 py-2 text-sm ${shape} ${skin}`}>
           <ChatMarkdown content={message.content} />
         </div>
       </div>

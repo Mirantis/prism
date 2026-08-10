@@ -46,6 +46,27 @@ fs.writeFileSync(
     'SKILL_RAN_OK\n',
 );
 
+// An Agent Plugins bundle (agent-plugins.org), seeded the same way and for the
+// same reason: the web-plugins scenarios assert that `/plugins` lists it and
+// that the skill it contributes reaches the catalog labelled as plugin-provided.
+const E2E_PLUGIN_DIR = path.join(E2E_DATA_DIR, 'plugins', 'demo');
+fs.mkdirSync(path.join(E2E_PLUGIN_DIR, 'skills', 'plugin-marker'), { recursive: true });
+fs.writeFileSync(
+  path.join(E2E_PLUGIN_DIR, 'plugin.json'),
+  JSON.stringify({
+    $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
+    name: 'demo',
+    version: '1.2.0',
+    description: 'A demo plugin.',
+  }),
+);
+fs.writeFileSync(
+  path.join(E2E_PLUGIN_DIR, 'skills', 'plugin-marker', 'SKILL.md'),
+  '---\nname: plugin-marker\ndescription: Reply with a fixed plugin marker.\n---\n\n' +
+    'When this skill is invoked, reply with exactly the following text and nothing else:\n\n' +
+    'PLUGIN_SKILL_RAN_OK\n',
+);
+
 // Provision the SQLite e2e DB *at config load* so it exists before
 // Playwright spawns the runtime webServer (the WebServerPlugin runs in
 // the plugin-setup phase, which precedes globalSetup).

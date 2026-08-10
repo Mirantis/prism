@@ -302,6 +302,8 @@ locally.
    `lib/tool-collection.ts#collectTools` and filtered per invocation mode. There is
    **no internal MCP server** — these are in-process closures, not an HTTP surface.
 2. **Nexus MCP** — kubectl, GitHub, AWS tools (external, via `NEXUS_MCP_URL`).
+3. **Plugin MCP** — whatever an installed Agent Plugin declares in its `mcp.json`;
+   stdio, Streamable HTTP or legacy SSE (`services/plugin-mcp.service.ts`).
 
 ## Key Services
 
@@ -325,6 +327,8 @@ locally.
 | **SessionManagerService** | `services/session-manager.service.ts` | Daily session resets, idle timeout management |
 | **MemoryManagerService** | `services/memory-manager.service.ts` | Two-layer memory: daily append-only logs + curated long-term key-value store |
 | **MeetingBotService** | `services/meeting/meeting-bot.service.ts` | Live voice meetings: owns one call at a time (Xvfb + PulseAudio virtual devices + Chromium spawned as an ordinary process and driven over CDP, plus an OpenAI Realtime session). Joins **signed into a Google account** — Meet auto-denies automated anonymous guests, so this is required rather than preferred; the browser profile persists under `<DATA>/meeting-browser-profile`. The Realtime model *is* the agent in the room — it carries the agent's system prompt (`buildSystemPromptParts(ctx, 'meeting')` + `prompts/meeting-prompt.ts`) and its real tools, bridged in as Realtime function tools and executed in-process (`tool-bridge.ts`). `meeting` mode is chat's tool set **minus `share_file`** — a meeting runs neither the invoke loop nor the conversation engine that deliver what it stores, so it could only file something away that reached nobody. Speech is the only channel out of a call (there is no message-send tool), which `prompts/meeting-prompt.ts` now states outright so the model stops offering to "drop it in the chat". That prompt's confirmation rule is the *only* guard on everything else, self-configuration included: it used to refuse spoken attempts to rename the agent or rewrite its Soul/profile/memory, and at the operator's request it no longer does — so a sentence agreed in an unauthenticated call can change the agent for every future turn on every channel. Everything Google-specific sits behind `MeetingProvider` in `providers/google-meet/` — the join flow *and* the account sign-in, which the provider owns rather than the browser stack. It answers `configurationError()` (why it cannot run at all, checked before a call's worth of infrastructure is built) and `signIn(page, {force})`, which never throws because a failed login is not a reason to refuse a join the profile's cookies might carry. `browser-stack.ts` is a real browser on a virtual display with a persistent profile, and nothing else. Adding Teams means adding one folder. Barge-in is local, not server-side, so a backchannel doesn't cut the bot off (`barge-in.ts` + `audio-playback.ts`). **Responses are local too**: `create_response` is off for every call, and `response-policy.ts` decides which utterances become speech — everything in a one-to-one (fired at the turn boundary, so no slower than the server doing it), and otherwise a one-word Haiku verdict from `addressed-classifier.ts` on the single question *was the agent called by name* — asked once from the streaming partial transcript (an early yes answers sooner; an early no is re-judged on the finished text) and once on completion — not whether the sentence sounds like a request, which a mixed mono channel cannot answer. The model rather than a regex because transcription mangles names ("Prism" → "Pritham"), the name is arbitrary user-set text, and a name can be mentioned without being addressed. Fails **closed**, unlike the heartbeat/cron gates: it sits in front of most utterances in a call, so failing open would answer a whole room. Input transcription is on for every call and pinned to English. The mode follows the participant count the auto-leave watchdog already polls; an unreadable count never changes it. Answers are spoken at the *turn boundary*, never the moment a verdict lands: judging early hides the gate's ~1.3s behind the rest of the sentence, but acting on it early made the agent answer a request it had only half heard. In `open` mode the early look is skipped entirely — the utterance is answered at the boundary regardless, so judging it was a model call per sentence for nothing. The agent's name and the room's roster (scraped alongside the participant count) are seeded to the transcriber as `keywords` and the roster is also sent to the model as context, since a mixed mono channel gives it no other way to know who is present. `[Meeting:Latency]` logs the silence the room actually experienced, split into the part the gate cost and the part the Realtime model did — measured at ~0ms and ~1.3s respectively when the name comes early, and ~2s and ~1.3s when it comes last. Losing either half of the audio path ends the call, rather than leaving a mute, deaf tile in the room until the empty-room poll or the duration cap notices: `VoiceConversation`'s `onSessionLost` fires for any Realtime close the runtime didn't initiate, and `AudioStack`'s `onLost` for a `parec`/`pacat` death (deaf and mute respectively); both post a note and tear down. The startup path publishes nothing onto the service's fields until it has re-checked the epoch — a `leave()` mid-startup returns the service to `idle` and so frees it for a second `join()`, and the abandoned startup has to release its own browser and session rather than overwrite the live call's or drag it down with its own late failure |
+| **PluginCatalogService** | `services/plugin-catalog.service.ts` | Discovers Agent Plugins under `<DATA>/plugins`, validates each `plugin.json`, records per-plugin diagnostics |
+| **PluginMcpService** | `services/plugin-mcp.service.ts` | Connects each plugin's MCP servers (lazily, once per server), qualifies and orders their tools, closes them at shutdown |
 | **WebSocketGatewayService** | `services/websocket-gateway.service.ts` | WebSocket server: JWT decode (backend verifies), connection management, per-user message queuing, agent status management |
 | **WebSocketAdapterService** | `services/websocket-adapter.service.ts` | ChannelAdapter for WebSocket delivery, calls local gateway directly |
 | **BackendClient** | `lib/backend-client.ts` | Typed HTTP client for backend internal REST API: access control (`canAccessAgent()`) + SlackConnection read-only access (`getActiveSlackConnections()`, `getSlackConnection()`) |
@@ -375,6 +379,10 @@ src/
 │   │   ├── addressed-classifier.ts # "Did someone call my name?" — Haiku, fails closed
 │   │   ├── resampler.ts        # 48k⇄24k pcm16 with anti-alias FIR
 │   │   └── openai-endpoint.ts  # Direct wss://api.openai.com — no Nexus mount exists
+│   ├── skill-catalog.service.ts   # Agent Skills discovery (workspace, global, plugin roots)
+│   ├── plugin-catalog.service.ts  # Agent Plugins discovery + plugin.json validation
+│   ├── plugin-mcp-config.ts       # mcp.json parsing/validation (pure; no SDK, no I/O)
+│   ├── plugin-mcp.service.ts      # Plugin MCP connections, tool naming, shutdown
 │   ├── thread-provider.interface.ts # ThreadMessageProvider abstraction
 │   └── providers/
 │       ├── database-thread.provider.ts # Default: reads messages from PostgreSQL
@@ -806,3 +814,66 @@ frontmatter with required `name` + `description`, optional `scripts/`/
   `npx skills add <source> -g -a claude-code --copy` (writes into the
   Claude-config skills dir, i.e. the symlink → `<DATA>/skills`). The catalog
   refreshes on the skills-dir mtime, so new skills appear without a restart.
+
+## Agent Plugins
+
+The runtime also implements **Agent Plugins 1.0.0** ([agent-plugins.org](https://agent-plugins.org)) —
+a portable folder format that packages skills together with the MCP servers they
+need. The standard defines exactly two component types and nothing else.
+
+- **Layout.** `<DATA>/plugins/<id>/` (override `PRISM_PLUGINS_DIR`) holding a
+  required `plugin.json`, an optional `skills/`, and an optional `mcp.json`. The
+  directory name is the plugin id; the manifest `name` is display only, so the
+  id never depends on a lossy slugification. Installation is out of band, as for
+  skills — drop a folder in, and the catalog refreshes on the plugins-dir mtime.
+- **`plugin.json`** (`plugin-catalog.service.ts`) is a closed schema: `$schema`
+  and `name` required, eight optional metadata fields. `$schema` is a **version
+  gate matched by exact string against a local allowlist and never fetched**
+  (spec §5.2). Three outcomes are distinguished — supported, an Agent Plugins
+  version we don't implement, and not an Agent Plugins manifest at all — because
+  they are different problems with different fixes. Unknown top-level fields and
+  a non-object `extensions` are *reported and ignored*; anything else rejects
+  that plugin alone.
+- **Skills** are one more root in `skillCatalogService.roots()`, appended after
+  the global dir and tagged `source: 'plugin'` + `pluginId`. Plugin roots rank
+  **last**, so a plugin can add a skill but never shadows a workspace or global
+  one. Everything downstream (the `skill` tool, its emptiness gate, both REST
+  endpoints, the `# Skills` prompt section) picks that up unchanged.
+- **`# Plugins` prompt section** (`buildPluginsSection` in `context-builder.ts`)
+  carries what nothing else can: which plugin a skill or tool came from, the
+  `<plugin>__<server>__<tool>` naming scheme (the tools block has the names but
+  can't explain them), and the plugins dir path, which is what makes "the agent
+  installs a plugin itself" reachable. Deliberately not a second skill listing —
+  plugin skills are named, not re-described, since `# Skills` already pays for
+  their descriptions. Collapses to one sentence when no plugin is installed, so
+  the common case stays cheap. Cacheable on the same terms as `# Skills`.
+- **MCP servers** (`plugin-mcp-config.ts` parses, `plugin-mcp.service.ts`
+  connects). stdio uses `@ai-sdk/mcp/mcp-stdio`; the spec's `streamable-http` is
+  translated to the SDK's `http` at the parse boundary. `client.tools()` is
+  called **once at connect**, not per turn — that keeps one child process per
+  server instead of per turn and makes the tools block byte-identical across
+  turns and across the chat/compaction paths, which is what the prompt cache
+  needs. Connection is lazy and coalesced; a failed server sticks until its
+  `mcp.json` changes. `shutdownAll()` runs from `index.ts` so a SIGTERM doesn't
+  orphan children.
+- **Deliberate leniencies, both reported as diagnostics.** `mcp.json` may omit
+  `$schema` (assumed 1.0.0) and a server may omit `type` (assumed `stdio`),
+  though the spec's schema requires both. Every `mcp.json` written for another
+  agent omits `$schema`, and refusing the file over it loads zero servers while
+  the plugin's skills keep working — which reads as a runtime bug, not a
+  malformed file. A `$schema` that is *present* and names an unimplemented
+  version is still refused: absent means unstated, present-and-different is a
+  real declaration.
+- **Tool names** are `<pluginId>__<serverName>__<toolName>`, capped at **64**
+  characters — Bedrock Converse's `toolSpec.name` limit binds tighter than
+  Anthropic's 128, and this runtime defaults to Bedrock. Over-long names are
+  truncated with a digest suffix so they stay distinct and stable across
+  restarts. In `collectTools()` plugin tools merge **last** behind an explicit
+  guard, and `filterToolsByMode()` now wraps the *merged* map so MCP tools no
+  longer bypass mode gating.
+- **Failure isolation is graduated** (spec §11.3), and every level is covered by
+  a test: a bad manifest skips one plugin; a bad `mcp.json` disables only MCP and
+  leaves that plugin's skills loading; one bad server entry skips only itself.
+- **Deliberately out of scope**, because the spec defers all of it: enable/
+  disable state, a registry, signing or provenance, and reverse-domain extension
+  namespaces (parsed for validity, then ignored — which is conformant).

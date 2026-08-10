@@ -76,7 +76,16 @@ task-specific instructions (the agentskills.io standard) — and follow it. It s
 each available skill's name and description up front and loads the full
 instructions on demand when a task matches; you can also list and run skills with
 the [`/skills` command](skills.md#the-skills-command). Skills come from a global
-directory and, in the terminal UI, the current repository's `.claude/skills`.
+directory, an installed **[plugin](plugins.md)**, and — in the terminal UI — the
+current repository's `.claude/skills`.
+
+## Plugin tools
+
+An installed **[plugin](plugins.md)** can bring its own MCP tool servers, and
+their tools join the agent's tool set alongside the built-ins. They are named
+`<plugin id>__<server name>__<tool name>`, so it is always clear which plugin a
+tool came from, and they are subject to the same per-mode gating as built-in
+tools.
 
 ## Claude Code sub-agent
 

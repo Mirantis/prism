@@ -21,6 +21,7 @@ import { logger } from '../logger';
 import { trackEvent, isTelemetryEnabled } from './telemetry';
 import { modelCatalogState } from './model-catalog';
 import { skillCatalogService } from '../services/skill-catalog.service';
+import { pluginCatalogService } from '../services/plugin-catalog.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 
 export async function trackAgentStarted(
@@ -33,8 +34,10 @@ export async function trackAgentStarted(
   if (!isTelemetryEnabled()) return;
 
   try {
-    // No workspaceRoot at boot — this counts the globally installed skills.
+    // No workspaceRoot at boot — this counts the globally installed skills,
+    // which includes any a plugin contributes.
     const skills = skillCatalogService.getCatalog();
+    const plugins = pluginCatalogService.getPlugins();
     const subagents = await agentWorkspaceService.getSubagents(agent.id);
 
     trackEvent('agent started', agent.userId, {
@@ -69,6 +72,7 @@ export async function trackAgentStarted(
       'webhook.receiver_enabled': String(agent.webhooksEnabled),
       'cron.tasks': String(opts.cronTasks),
       'skills.count': String(skills.length),
+      'plugins.count': String(plugins.length),
       'agent.subagents': String(subagents.length),
     });
   } catch (error: unknown) {

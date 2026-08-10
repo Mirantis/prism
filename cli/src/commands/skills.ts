@@ -15,11 +15,16 @@ export const skillsCommand: SlashCommand = {
         if (skills.length === 0) {
           return 'No skills available. Drop SKILL.md bundles into the agent’s skills directory or this repo’s .claude/skills/.';
         }
+        const label = (s: (typeof skills)[number]): string => {
+          if (s.source === 'workspace') return ' (workspace)';
+          // `pluginId` is optional on the wire, so fall back rather than
+          // rendering "(plugin: undefined)" at the user.
+          if (s.source === 'plugin') return s.pluginId ? ` (plugin: ${s.pluginId})` : ' (plugin)';
+          return '';
+        };
         return [
           'Available skills:',
-          ...skills.map(
-            (s) => `  ${s.name} — ${s.description}${s.source === 'workspace' ? ' (workspace)' : ''}`,
-          ),
+          ...skills.map((s) => `  ${s.name} — ${s.description}${label(s)}`),
         ].join('\n');
       }
       if (sub === 'run') {

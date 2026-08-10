@@ -49,6 +49,9 @@
  *   GET    /agents/skills                 - List available skills (name + description + source)
  *   POST   /agents/skills/:name/run       - Manually trigger a skill (streams over WS)
  *
+ * Plugins (Agent Plugins — agent-plugins.org):
+ *   GET    /agents/plugins                - List installed plugins and what each contributes
+ *
  * Slack heartbeat trigger management:
  *   GET    /agents/slack-heartbeat-trigger/channel/:channelId - Check if channel is a trigger
  *   GET    /agents/slack-heartbeat-trigger                    - List active triggers
@@ -96,6 +99,7 @@
 
 import { Router, Request, Response } from 'express';
 import { randomBytes } from 'crypto';
+import fs from 'fs';
 import multer from 'multer';
 import { AgentType, MessageRole, MessageTrigger, Prisma, ThreadSource } from '@prisma/client';
 import { logger } from '../logger';
@@ -109,6 +113,10 @@ import { slackMappingService } from '../services/slack-mapping.service';
 import { conversationService, type MessageInput } from '../services/conversation.service';
 import { conversationEngineService, type ChatInput } from '../services/conversation-engine.service';
 import { skillCatalogService } from '../services/skill-catalog.service';
+import { pluginCatalogService } from '../services/plugin-catalog.service';
+import { pluginMcpService } from '../services/plugin-mcp.service';
+import { parseMcpJson } from '../services/plugin-mcp-config';
+import { resolvePluginDataDir } from '../lib/data-dir';
 import { compactionService } from '../services/compaction.service';
 import { slackAdapterService } from '../services/slack-adapter.service';
 import { attachmentService, detectMediaType, classifyMediaType } from '../services/attachment.service';
@@ -2365,6 +2373,9 @@ router.get('/skills', async (req: Request, res: Response) => {
       description: s.description,
       dirName: s.dirName,
       source: s.source,
+      // Present only on plugin-contributed skills, so a capability can be
+      // traced back to the plugin that supplied it.
+      ...(s.pluginId ? { pluginId: s.pluginId } : {}),
     }));
     res.json(skills);
   } catch (error: unknown) {
@@ -2442,6 +2453,77 @@ router.post('/skills/:name/run', async (req: Request, res: Response) => {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] POST /skills/:name/run failed: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Plugins (Agent Plugins — agent-plugins.org). Used by both the web SPA and the CLI.
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /agents/plugins — installed Agent Plugins and what each contributes.
+ *
+ * Unlike skills there is no thread scoping: plugins are installed once for the
+ * container, so there is no workspace to resolve. `skills` lists the names this
+ * plugin actually contributed to the catalog — a skill shadowed by a workspace
+ * or global one of the same name is absent, which is the truthful answer to
+ * "what is this plugin giving me".
+ *
+ * `diagnostics` carries the non-fatal problems found while loading, so a
+ * half-broken plugin is attributable here rather than only in the logs. A
+ * plugin whose manifest was rejected outright does not appear at all.
+ */
+router.get('/plugins', async (_req: Request, res: Response) => {
+  try {
+    const catalog = skillCatalogService.getCatalog();
+    // Connect anything not yet connected so a server that fails to start is
+    // reported here rather than only in the logs. Idempotent and cached, so
+    // this is a no-op once a turn has already collected tools.
+    await pluginMcpService.getTools();
+    const statuses = pluginMcpService.getServerStatuses();
+
+    const plugins = pluginCatalogService.getPlugins().map((p) => {
+      const diagnostics = [...p.diagnostics];
+      let mcpServers: string[] = [];
+
+      if (p.mcpConfigPath) {
+        try {
+          const parsed = parseMcpJson(fs.readFileSync(p.mcpConfigPath, 'utf8'), {
+            pluginId: p.id,
+            pluginRoot: p.dir,
+            pluginData: resolvePluginDataDir(p.id),
+          });
+          if (!parsed) diagnostics.push('mcp.json is invalid — no MCP servers loaded');
+          else {
+            mcpServers = parsed.servers.map((s) => s.name);
+            diagnostics.push(...parsed.warnings);
+          }
+        } catch {
+          diagnostics.push('mcp.json could not be read — no MCP servers loaded');
+        }
+      }
+
+      for (const s of statuses) {
+        if (s.pluginId === p.id && s.status === 'failed') {
+          diagnostics.push(`MCP server "${s.serverName}" failed to start: ${s.error}`);
+        }
+      }
+
+      return {
+        id: p.id,
+        name: p.name,
+        version: p.version,
+        description: p.description,
+        skills: catalog.filter((s) => s.pluginId === p.id).map((s) => s.name),
+        mcpServers,
+        diagnostics,
+      };
+    });
+    res.json(plugins);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error(`[Management] GET /plugins failed: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });

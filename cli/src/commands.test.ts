@@ -48,6 +48,7 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     downloadAttachment: vi.fn(),
     listSkills: vi.fn(),
     runSkill: vi.fn(),
+    listPlugins: vi.fn(),
     compactThread: vi.fn(),
   };
 }
@@ -411,6 +412,15 @@ describe('/skills', () => {
     expect(out).toContain('echo-marker — Reply with a marker.');
     // Global skills are not labeled (workspace)
     expect(out).not.toContain('echo-marker — Reply with a marker. (workspace)');
+  });
+
+  it('labels a plugin-contributed skill with its plugin', async () => {
+    const api = stubApi();
+    api.listSkills.mockResolvedValue([
+      { name: 'summarize', description: 'Summarize.', dirName: 'summarize', source: 'plugin', pluginId: 'demo' },
+    ]);
+    const out = await cmd('/skills').run(makeCtx({ args: [], api: api as unknown as ApiClient }));
+    expect(out).toContain('summarize — Summarize. (plugin: demo)');
   });
 
   it('list subcommand also lists', async () => {
@@ -851,5 +861,55 @@ describe('/save', () => {
       }),
     );
     expect(out).toMatch(/failed to save/i);
+  });
+});
+
+describe('/plugins', () => {
+  it('lists installed plugins with what each contributes', async () => {
+    const api = stubApi();
+    api.listPlugins.mockResolvedValue([
+      {
+        id: 'demo',
+        name: 'demo',
+        version: '1.2.0',
+        description: 'A demo plugin.',
+        skills: ['summarize'],
+        mcpServers: ['probe'],
+        diagnostics: [],
+      },
+    ]);
+    const out = await cmd('/plugins').run(makeCtx({ api: api as unknown as ApiClient }));
+    expect(out).toContain('demo v1.2.0 — A demo plugin.');
+    expect(out).toContain('skills: summarize');
+    expect(out).toContain('mcp servers: probe');
+  });
+
+  it('surfaces load diagnostics so a half-broken plugin is visible', async () => {
+    const api = stubApi();
+    api.listPlugins.mockResolvedValue([
+      {
+        id: 'demo',
+        name: 'demo',
+        skills: [],
+        mcpServers: [],
+        diagnostics: ['mcp.json is invalid — no MCP servers loaded'],
+      },
+    ]);
+    const out = await cmd('/plugins').run(makeCtx({ api: api as unknown as ApiClient }));
+    expect(out).toContain('! mcp.json is invalid');
+  });
+
+  it('reports when no plugins are installed', async () => {
+    const api = stubApi();
+    api.listPlugins.mockResolvedValue([]);
+    const out = await cmd('/plugins').run(makeCtx({ api: api as unknown as ApiClient }));
+    expect(out).toMatch(/no plugins installed/i);
+  });
+
+  it('surfaces an API error as a message', async () => {
+    const api = stubApi();
+    api.listPlugins.mockRejectedValue(new ApiError('boom', 500));
+    const out = await cmd('/plugins').run(makeCtx({ api: api as unknown as ApiClient }));
+    expect(out).toBe('boom');
   });
 });

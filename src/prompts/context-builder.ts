@@ -15,8 +15,9 @@ import {
 } from '../services/attachment.service';
 import { MAX_INLINE_TEXT_CHARS } from '../constants';
 import { SlackTriggerMessage } from '../types';
-import { skillCatalogService } from '../services/skill-catalog.service';
-import { resolveSkillsDir } from '../lib/data-dir';
+import { skillCatalogService, type SkillSource } from '../services/skill-catalog.service';
+import { pluginCatalogService } from '../services/plugin-catalog.service';
+import { resolveSkillsDir, resolvePluginsDir } from '../lib/data-dir';
 
 // Minimal type for conversation messages (matches Prisma's shape).
 // toolCalls uses Prisma's Json? type (any JSON value); parseToolCalls() validates at runtime.
@@ -139,6 +140,13 @@ export async function buildSystemPromptParts(
   // (a thread's workspaceRoot is fixed) and rescans only when a skills dir changes.
   stableSections.push(buildSkillsSection(workspaceRoot));
 
+  // Plugins — Agent Plugins (agent-plugins.org). Deliberately not a second
+  // skill listing: a plugin's skills already appear above, so this says only
+  // which plugins are installed, what each contributed, and how a plugin's
+  // tools are named — the one thing the tools block itself cannot convey.
+  // Cacheable on the same terms as the skills section.
+  stableSections.push(buildPluginsSection());
+
   // Concise delivery instructions (chat only, non-verbose)
   if (mode === 'chat' && !context.verbose) {
     stableSections.push(getConciseDeliveryInstructions());
@@ -235,6 +243,9 @@ export async function buildSystemPrompt(
  * realistically the catalog is small). */
 const MAX_SKILLS_LISTED = 50;
 
+/** Same ceiling as skills: the listing is a map, not an inventory. */
+const MAX_PLUGINS_LISTED = 50;
+
 /**
  * Build the `# Skills` system-prompt section. Lists available skills (name +
  * one-line description — the `skill` tool loads a skill's full instructions on
@@ -264,23 +275,29 @@ function buildSkillsSection(workspaceRoot?: string): string {
     return `# Skills\n\nNo Agent Skills are available yet.\n\n${install}`;
   }
 
-  // Group by source so the model (and the user) can see which skills are
-  // repo-local. Workspace skills are listed first since they take precedence.
-  const workspace = skills.filter((s) => s.source === 'workspace').slice(0, MAX_SKILLS_LISTED);
-  const global = skills.filter((s) => s.source === 'global').slice(0, MAX_SKILLS_LISTED);
-  const overflow = skills.length - workspace.length - global.length;
+  // Group by source so the model (and the user) can see where each skill came
+  // from. Driven off one ordered list rather than a bucket per source, so
+  // adding a source can never silently drop its skills from the listing — or,
+  // worse, leave them counted as overflow.
+  const GROUPS: { source: SkillSource; heading: string }[] = [
+    { source: 'workspace', heading: '**Workspace skills** (from this repository):' },
+    { source: 'global', heading: '**Installed skills** (global):' },
+    { source: 'plugin', heading: '**Plugin skills** (from installed plugins):' },
+  ];
   const bullet = (s: { name: string; description: string }) => `- **${s.name}**: ${s.description}`;
 
-  const groups: string[] = [];
-  if (workspace.length > 0) {
-    groups.push(
-      `**Workspace skills** (from this repository):\n` + workspace.map(bullet).join('\n'),
-    );
-  }
-  if (global.length > 0) {
-    const heading = workspace.length > 0 ? '**Installed skills** (global):\n' : '';
-    groups.push(heading + global.map(bullet).join('\n'));
-  }
+  const buckets = GROUPS.map((g) => ({
+    ...g,
+    items: skills.filter((s) => s.source === g.source).slice(0, MAX_SKILLS_LISTED),
+  })).filter((g) => g.items.length > 0);
+
+  const overflow = skills.length - buckets.reduce((n, g) => n + g.items.length, 0);
+  const groups = buckets.map((g) => {
+    // A lone global list needs no heading — that's the default install, where
+    // "where did this come from" has only one answer.
+    const bare = buckets.length === 1 && g.source === 'global';
+    return (bare ? '' : `${g.heading}\n`) + g.items.map(bullet).join('\n');
+  });
 
   return (
     `# Skills\n\n` +
@@ -293,6 +310,69 @@ function buildSkillsSection(workspaceRoot?: string): string {
       ? `\n\n(+${overflow} more available — call \`skill\` with any listed skill's name to load it.)`
       : '') +
     `\n\n${install}`
+  );
+}
+
+/**
+ * The `# Plugins` section: which Agent Plugins are installed, what each one
+ * contributed, and where plugins live so the agent can install one itself.
+ *
+ * Deliberately NOT a second skill listing — a plugin's skills are already in
+ * `# Skills`, so repeating their descriptions here would pay for the same
+ * tokens twice. What this adds that nothing else can:
+ *
+ *   - provenance: which plugin a given skill or tool came from;
+ *   - the tool naming scheme, so `demo__probe__search` is legible as the
+ *     `search` tool of the `probe` server in the `demo` plugin — the tools
+ *     block carries the names but cannot explain them;
+ *   - the install path, which is what makes "drop a folder in" reachable.
+ *
+ * When nothing is installed this collapses to a single sentence: most installs
+ * have no plugins, and they should not pay for a section about a feature they
+ * are not using beyond knowing it exists.
+ */
+function buildPluginsSection(): string {
+  const pluginsDir = resolvePluginsDir();
+  const plugins = pluginCatalogService.getPlugins();
+
+  const install =
+    `Plugins are installed in \`${pluginsDir}\` — each is a directory holding a ` +
+    `\`plugin.json\` (the agent-plugins.org standard), plus an optional \`skills/\` ` +
+    `and an optional \`mcp.json\` declaring MCP servers. To add one, use your shell ` +
+    `tools to place a plugin directory there; to remove one, delete its directory. ` +
+    `Changes are detected automatically — no restart needed.`;
+
+  if (plugins.length === 0) {
+    return `# Plugins\n\nNo Agent Plugins are installed. ${install}`;
+  }
+
+  const listed = plugins.slice(0, MAX_PLUGINS_LISTED);
+  const overflow = plugins.length - listed.length;
+  const skills = skillCatalogService.getCatalog();
+
+  const lines = listed.map((p) => {
+    // Only the skills this plugin actually contributed — one it shipped that
+    // lost a name clash to a workspace or global skill is not available.
+    const contributedSkills = skills.filter((s) => s.pluginId === p.id).map((s) => s.name);
+    const parts: string[] = [];
+    if (contributedSkills.length > 0) parts.push(`skills: ${contributedSkills.join(', ')}`);
+    // Tool names are namespaced by plugin id, so the prefix is enough to point
+    // at them without restating the whole tool list the tools block already has.
+    if (p.mcpConfigPath) parts.push(`tools prefixed \`${p.id}__\``);
+    const detail = parts.length > 0 ? ` (${parts.join('; ')})` : '';
+    const version = p.version ? ` v${p.version}` : '';
+    return `- **${p.id}**${version}${p.description ? ` — ${p.description}` : ''}${detail}`;
+  });
+
+  return (
+    `# Plugins\n\n` +
+    `These Agent Plugins are installed. Each can contribute skills (listed under ` +
+    `# Skills above) and MCP tool servers (already in your tool set).\n\n` +
+    lines.join('\n') +
+    (overflow > 0 ? `\n\n(+${overflow} more installed.)` : '') +
+    `\n\nA plugin's tools are named \`<plugin>__<server>__<tool>\`, so a tool called ` +
+    `\`example__probe__search\` would be the \`search\` tool of the \`probe\` server in a ` +
+    `plugin called \`example\`.\n\n${install}`
   );
 }
 
@@ -610,3 +690,7 @@ function getConciseDeliveryInstructions(): string {
 
 Only your **final message** in a multi-step turn is delivered to the user. Intermediate text you produce while using tools is saved but not shown. Therefore your final message must be self-contained: state the outcome of the work you did, include any relevant results, and do not reference earlier narration the user cannot see.`;
 }
+
+// Exported for unit tests: these sections read the filesystem, so asserting on
+// them directly is cheaper and clearer than through a whole prompt build.
+export const __test = { buildSkillsSection, buildPluginsSection };

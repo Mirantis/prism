@@ -46,6 +46,7 @@ to complete, **Enter** to run.
 | `/heartbeat` | `status` \| `start` \| `stop` \| `trigger` \| `every <N>m`\|`<N>h` | Control the heartbeat (interval 1 min – 7 days). |
 | `/goal` | `<objective>` \| `status` \| `list` \| `pause` \| `resume` \| `stop` | Set or manage a background goal the agent pursues across turns. |
 | `/skills` | `[list]` \| `run <name>` | List installed [skills](skills.md), or run one. |
+| `/plugins` | — | List installed [plugins](plugins.md) and what each contributes. |
 | `/compact` | — | Summarize older history to free up context ([compaction](compaction.md)). |
 | `/schedules` | — | Open the scheduled-tasks panel. |
 | `/config` | — | Open the identity/config viewer panel. |

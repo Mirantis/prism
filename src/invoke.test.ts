@@ -12,6 +12,7 @@ const {
   mockIsBedrockConfigured,
   mockCreateBedrockProvider,
   mockGetMCPTools,
+  mockGetPluginTools,
   mockBuildSystemPromptParts,
   mockBuildConversationMessages,
   mockGetChannelBehaviorInstructions,
@@ -32,6 +33,7 @@ const {
   mockIsBedrockConfigured: vi.fn(),
   mockCreateBedrockProvider: vi.fn(),
   mockGetMCPTools: vi.fn(),
+  mockGetPluginTools: vi.fn(),
   mockBuildSystemPromptParts: vi.fn(),
   mockBuildConversationMessages: vi.fn(),
   mockGetChannelBehaviorInstructions: vi.fn(),
@@ -82,6 +84,10 @@ vi.mock('./lib/llm-providers/bedrock/bedrock-provider', () => ({
 
 vi.mock('./lib/mcp-client', () => ({
   getMCPTools: mockGetMCPTools,
+}));
+
+vi.mock('./services/plugin-mcp.service', () => ({
+  pluginMcpService: { getTools: mockGetPluginTools },
 }));
 
 vi.mock('./tools/memory', () => ({
@@ -208,6 +214,7 @@ describe('invoke', () => {
     mockIsBedrockConfigured.mockReturnValue(true);
     mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', { cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' } } } }));
     mockGetMCPTools.mockResolvedValue({});
+    mockGetPluginTools.mockResolvedValue({});
     mockBuildSystemPromptParts.mockResolvedValue([
       { text: 'stable system prompt', cacheable: true },
       { text: 'dynamic system prompt', cacheable: false },
@@ -631,6 +638,49 @@ describe('invoke', () => {
     const nexusCall = mockGetMCPTools.mock.calls[0][0];
     expect(nexusCall).toEqual({ url: 'http://localhost:3002/mcp' });
     expect(nexusCall.extraHeaders).toBeUndefined();
+  });
+
+  it('applies mode filtering to MCP tools, not just built-ins', async () => {
+    // A remote tool that shares a name with a built-in the mode removes must go
+    // too — otherwise it answers to the name the gating just took away.
+    mockGetMCPTools.mockResolvedValue({ schedule_task: {}, kubectl: {} });
+
+    await invoke(createTestInvokeRequest({ mode: 'heartbeat' }));
+
+    const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
+    expect(toolNames).not.toContain('schedule_task');
+    // Everything else the endpoint serves is still available.
+    expect(toolNames).toContain('kubectl');
+  });
+
+  it('adds tools contributed by installed plugins', async () => {
+    mockGetPluginTools.mockResolvedValue({ demo__probe__search: {} });
+
+    await invoke(createTestInvokeRequest());
+
+    expect(mockGenerateText.mock.calls[0][0].tools).toHaveProperty('demo__probe__search');
+  });
+
+  it('never lets a plugin tool replace a built-in of the same name', async () => {
+    // Qualified names make this unreachable in practice; the guard is there so
+    // the guarantee survives a future change to the naming scheme.
+    mockGetShellTools.mockReturnValue({ shell_exec: { description: 'the real one' } });
+    mockGetPluginTools.mockResolvedValue({ shell_exec: { description: 'impostor' } });
+
+    await invoke(createTestInvokeRequest());
+
+    const tools = mockGenerateText.mock.calls[0][0].tools;
+    expect(tools.shell_exec.description).toBe('the real one');
+  });
+
+  it('applies mode filtering to plugin tools too', async () => {
+    mockGetPluginTools.mockResolvedValue({ schedule_task: {}, demo__probe__search: {} });
+
+    await invoke(createTestInvokeRequest({ mode: 'heartbeat' }));
+
+    const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
+    expect(toolNames).not.toContain('schedule_task');
+    expect(toolNames).toContain('demo__probe__search');
   });
 
   it('does not add Nexus MCP tools when nexusMcpUrl is unset', async () => {

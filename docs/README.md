@@ -66,6 +66,8 @@ What the agent can do.
 - **[Skills](skills.md)** — installable `SKILL.md` capability bundles (the
   agentskills.io standard) the agent uses automatically, from a global directory
   or a repository's own `.claude/skills`.
+- **[Plugins](plugins.md)** — installable folders (the agent-plugins.org
+  standard) that bundle skills together with the MCP tool servers they need.
 - **[Tools](tools.md)** — everything the agent can call: memory, self-management,
   scheduling, skills, shell, file sharing, and the Claude Code sub-agent.
 

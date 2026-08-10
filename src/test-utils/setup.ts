@@ -6,6 +6,23 @@
  */
 
 import { vi, beforeEach } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+// Point the on-disk catalogs at an empty scratch dir unless a test pins its own.
+// Both the skill and plugin catalogs resolve from PRISM_DATA_DIR, so without
+// this a developer with real skills or plugins under ~/.prism would get
+// different results from CI — green here, red there, or the reverse.
+//
+// One fixed path rather than a fresh mkdtemp: this file runs once per test file,
+// so a unique dir per run would leak hundreds of them into the OS temp dir. It
+// can safely be shared because nothing writes here — any test that needs to put
+// something on disk pins its own PRISM_DATA_DIR (or PRISM_SKILLS_DIR /
+// PRISM_PLUGINS_DIR), and this default exists only so the rest read an empty one.
+const scratchDataDir = path.join(os.tmpdir(), 'prism-test-data');
+fs.mkdirSync(scratchDataDir, { recursive: true });
+process.env.PRISM_DATA_DIR = scratchDataDir;
 
 // Silence console output during tests to keep terminal clean.
 // Tests that need to assert on console calls can use vi.mocked(console.error).
