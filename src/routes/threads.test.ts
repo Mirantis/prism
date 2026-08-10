@@ -1,9 +1,9 @@
 /**
- * Single-Agent Routes Tests
+ * Thread Routes Tests
  *
- * Covers the no-auth endpoints the local CLI hits: POST /threads (start a
- * fresh thread on open), GET /threads (resume picker), and GET /messages
- * (history replay, optionally pinned to a specific thread via ?threadId).
+ * Covers the root-mounted endpoints that resolve and open threads:
+ * GET /latest-thread, POST /threads (start a fresh thread) and GET /threads
+ * (the resumable listing).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -17,16 +17,12 @@ import express from 'express';
 const {
   mockStartNewThread,
   mockListThreads,
-  mockGetOwnedThreadId,
   mockGetOrCreateLatestThread,
-  mockGetRecentMessages,
   mockGetGitBranch,
 } = vi.hoisted(() => ({
   mockStartNewThread: vi.fn(),
   mockListThreads: vi.fn(),
-  mockGetOwnedThreadId: vi.fn(),
   mockGetOrCreateLatestThread: vi.fn(),
-  mockGetRecentMessages: vi.fn(),
   mockGetGitBranch: vi.fn(),
 }));
 
@@ -34,20 +30,12 @@ vi.mock('../services/conversation.service', () => ({
   conversationService: {
     startNewThread: mockStartNewThread,
     listThreads: mockListThreads,
-    getOwnedThreadId: mockGetOwnedThreadId,
     getOrCreateLatestThread: mockGetOrCreateLatestThread,
-    getRecentMessages: mockGetRecentMessages,
   },
 }));
 
 vi.mock('../utils/git-branch', () => ({
   getGitBranch: mockGetGitBranch,
-}));
-
-vi.mock('../services/attachment.service', () => ({
-  attachmentService: {
-    attachMetaToMessages: vi.fn(async (m: unknown) => m),
-  },
 }));
 
 // Override the global config mock with the fields this route reads.
@@ -59,21 +47,42 @@ vi.mock('../config', () => ({
 // Import under test
 // ---------------------------------------------------------------------------
 
-import { singleAgentRouter } from './single-agent';
+import { threadsRouter } from './threads';
 import { config } from '../config';
 
 function makeApp() {
   const app = express();
   app.use(express.json());
-  // Mounted at the root (no /single-agent prefix), matching server.ts.
-  app.use(singleAgentRouter);
+  // Mounted at the root (no prefix), matching server.ts.
+  app.use(threadsRouter);
   return app;
 }
 
-describe('Single-Agent Routes', () => {
+describe('Thread Routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     config.agentId = 'test-agent-id';
+  });
+
+  describe('GET /latest-thread', () => {
+    it('returns the id of the latest thread', async () => {
+      mockGetOrCreateLatestThread.mockResolvedValue({ id: 'latest-thread' });
+
+      const res = await request(makeApp()).get('/latest-thread');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ threadId: 'latest-thread' });
+      expect(mockGetOrCreateLatestThread).toHaveBeenCalledWith('test-agent-id', 'owner-user-1');
+    });
+
+    it('returns 503 when the agent is not initialized', async () => {
+      config.agentId = undefined as unknown as string;
+
+      const res = await request(makeApp()).get('/latest-thread');
+
+      expect(res.status).toBe(503);
+      expect(mockGetOrCreateLatestThread).not.toHaveBeenCalled();
+    });
   });
 
   describe('POST /threads', () => {
@@ -155,8 +164,8 @@ describe('Single-Agent Routes', () => {
           updatedAt: '2026-06-16T10:00:00.000Z',
           workspaceRoot: '/repo/a',
           branch: 'worktree/feature',
-          // These threads carry no stored context snapshot, so a resumed CLI
-          // shows no percentage for them.
+          // These threads carry no stored context snapshot, so there is no
+          // percentage to report for them.
           contextUsage: null,
         },
         {
@@ -176,8 +185,8 @@ describe('Single-Agent Routes', () => {
           contextUsage: null,
         },
       ]);
-      // Resumable (web/CLI) threads only via threadSource DATABASE, capped at
-      // 50; ordering is the service's responsibility.
+      // Resumable threads only via threadSource DATABASE, capped at 50;
+      // ordering is the service's responsibility.
       expect(mockListThreads).toHaveBeenCalledWith('owner-user-1', 'test-agent-id', {
         threadSource: 'DATABASE',
         limit: 50,
@@ -232,51 +241,6 @@ describe('Single-Agent Routes', () => {
 
       expect(res.status).toBe(503);
       expect(mockListThreads).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('GET /messages', () => {
-    it('replays the latest thread when no threadId is given', async () => {
-      mockGetOrCreateLatestThread.mockResolvedValue({ id: 'latest-thread' });
-      mockGetRecentMessages.mockResolvedValue([]);
-
-      const res = await request(makeApp()).get('/messages?limit=10');
-
-      expect(res.status).toBe(200);
-      expect(mockGetOwnedThreadId).not.toHaveBeenCalled();
-      expect(mockGetOrCreateLatestThread).toHaveBeenCalledWith('test-agent-id', 'owner-user-1');
-      expect(mockGetRecentMessages).toHaveBeenCalledWith('latest-thread', 10);
-    });
-
-    it('replays a specific, ownership-checked thread when threadId is given', async () => {
-      // Cheap ownership check returns the id (no message load) — not getThread.
-      mockGetOwnedThreadId.mockResolvedValue('thread-x');
-      mockGetRecentMessages.mockResolvedValue([]);
-
-      const res = await request(makeApp()).get('/messages?threadId=thread-x');
-
-      expect(res.status).toBe(200);
-      expect(mockGetOwnedThreadId).toHaveBeenCalledWith('owner-user-1', 'test-agent-id', 'thread-x');
-      expect(mockGetRecentMessages).toHaveBeenCalledWith('thread-x', 50);
-      expect(mockGetOrCreateLatestThread).not.toHaveBeenCalled();
-    });
-
-    it('returns 404 when the requested thread is not owned / does not exist', async () => {
-      mockGetOwnedThreadId.mockResolvedValue(null);
-
-      const res = await request(makeApp()).get('/messages?threadId=nope');
-
-      expect(res.status).toBe(404);
-      expect(mockGetRecentMessages).not.toHaveBeenCalled();
-    });
-
-    it('returns 503 when the agent is not initialized', async () => {
-      config.agentId = undefined as unknown as string;
-
-      const res = await request(makeApp()).get('/messages');
-
-      expect(res.status).toBe(503);
-      expect(mockGetRecentMessages).not.toHaveBeenCalled();
     });
   });
 });
