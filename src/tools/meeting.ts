@@ -17,7 +17,7 @@ import { Tool, tool } from 'ai';
 import { z } from 'zod';
 import { meetingBotService } from '../services/meeting/meeting-bot.service';
 import { AUDIO_STACK_BINARIES } from '../services/meeting/audio-stack';
-import { isChromiumAvailable } from '../services/meeting/browser-stack';
+import { isBrowserAvailable } from '../services/meeting/browser-stack';
 import { isRealtimeConfigured } from '../services/meeting/openai-endpoint';
 import { logger } from '../logger';
 
@@ -40,7 +40,7 @@ export interface MeetingToolsInput {
  */
 export async function isMeetingSupported(): Promise<boolean> {
   if (!isRealtimeConfigured()) return false;
-  if (!(await isChromiumAvailable())) return false;
+  if (!(await isBrowserAvailable())) return false;
 
   const { promises: fs } = await import('fs');
   const pathEntries = (process.env.PATH ?? '').split(':').filter(Boolean);

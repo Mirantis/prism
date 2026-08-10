@@ -42,18 +42,41 @@ function fakePage(options: FakePageOptions) {
   const fills: string[] = [];
   let ticks = 0;
 
-  const locator = (matches: () => boolean, attributeKey?: string) => ({
-    first: () => locator(matches, attributeKey),
-    isVisible: async () => matches(),
+  type FakeLocator = ReturnType<typeof locator>;
+  /** `key` is a thunk so an `or` chain resolves it when used, not when composed. */
+  const locator = (matches: () => boolean, key: () => string | undefined = () => undefined) => ({
+    /** Exposed so `.or()` can compose, as Playwright's real locator does. */
+    _matches: matches,
+    _key: key,
+    first: () => locator(matches, key),
+    or: (other: FakeLocator) =>
+      locator(
+        () => matches() || other._matches(),
+        // Attribution follows whichever side matches at the moment of use, so a
+        // click through the chain is still credited to the right element.
+        () => (matches() ? key() : other._key()),
+      ),
+    // Playwright's real `waitFor` polls until the element is visible and throws on
+    // timeout. Resolving/throwing immediately here keeps the tests fast; the
+    // provider's own retry loops still drive state changes via waitForTimeout.
+    waitFor: async () => {
+      if (!matches()) throw new Error('locator.waitFor: timeout exceeded');
+    },
+    // The bug this file exists to prevent: `isVisible()` answers "right now" and
+    // never waits, so using it made the provider miss UI Meet had not rendered
+    // yet. Fail loudly rather than silently passing if it comes back.
+    isVisible: async () => {
+      throw new Error('isVisible() must not be used — it does not wait. Use waitFor().');
+    },
     isEnabled: async () => matches(),
     click: async () => {
-      clicks.push(attributeKey ?? 'unknown');
+      clicks.push(key() ?? 'unknown');
     },
     fill: async (value: string) => {
       fills.push(value);
     },
     innerText: async () => state.bodyText,
-    getAttribute: async (attr: string) => state.attributes[`${attributeKey}|${attr}`] ?? null,
+    getAttribute: async (attr: string) => state.attributes[`${key()}|${attr}`] ?? null,
   });
 
   const page = {
@@ -62,12 +85,11 @@ function fakePage(options: FakePageOptions) {
     },
     getByRole: (_role: string, opts: { name: RegExp }) => {
       const match = () => [...state.visibleButtons].some((label) => opts.name.test(label));
-      const label = [...state.visibleButtons].find((l) => opts.name.test(l)) ?? String(opts.name);
-      return locator(match, label);
+      return locator(match, () => [...state.visibleButtons].find((l) => opts.name.test(l)) ?? String(opts.name));
     },
     locator: (selector: string) => {
-      if (selector === 'body') return locator(() => true, 'body');
-      return locator(() => state.visibleSelectors.has(selector), selector);
+      if (selector === 'body') return locator(() => true, () => 'body');
+      return locator(() => state.visibleSelectors.has(selector), () => selector);
     },
     waitForTimeout: async () => {
       ticks += 1;
@@ -129,13 +151,18 @@ describe('join outcomes', () => {
     expect((outcome as { reason: string }).reason).toMatch(/host denied/i);
   });
 
-  it('explains a restricted meeting rather than retrying forever', async () => {
+  it("names every cause of Meet's catch-all wall rather than asserting one", async () => {
+    // The same page text covers an ended meeting, a stale link and a tenant that
+    // blocks guests. Blaming one sent us hunting the wrong problem once already.
     const { page } = fakePage({ bodyText: "You can't join this video call" });
 
     const outcome = await provider.join(page, joinOptions);
 
     expect(outcome.status).toBe('denied');
-    expect((outcome as { reason: string }).reason).toMatch(/restricted to signed-in members/i);
+    const { reason } = outcome as { reason: string };
+    expect(reason).toMatch(/has ended/i);
+    expect(reason).toMatch(/no longer valid/i);
+    expect(reason).toMatch(/signed-in members/i);
   });
 
   it('recognizes an unrecognized meeting code', async () => {
@@ -180,6 +207,53 @@ describe('join outcomes', () => {
 
     expect(outcome.status).toBe('failed');
     expect((outcome as { reason: string }).reason).toMatch(/may have changed/i);
+  });
+
+  it('matches the join button by the accessible name Meet really uses', async () => {
+    // Observed live: the guest button's accessible name is "Ask to join without
+    // camera", not "Ask to join". An anchored match found nothing and the join
+    // silently failed, which is the bug this test pins down.
+    const { page, clicks } = fakePage({
+      visibleButtons: ['Ask to join without camera'],
+      visibleSelectors: [
+        'input[aria-label="Your name"]',
+        'button[aria-label*="Leave call" i]',
+      ],
+    });
+
+    const outcome = await provider.join(page, joinOptions);
+
+    expect(outcome).toEqual({ status: 'admitted' });
+    expect(clicks).toContain('Ask to join without camera');
+  });
+
+  it('keeps waiting while the join button is present but disabled', async () => {
+    // Meet disables it until the name field has a value and device probing ends.
+    const harness = fakePage({
+      visibleSelectors: ['input[aria-label="Your name"]'],
+      onTick: (tick) => {
+        // Only becomes clickable on the third poll.
+        if (tick >= 3) {
+          harness.state.visibleButtons.add('Ask to join without camera');
+          harness.state.visibleSelectors.add('button[aria-label*="Leave call" i]');
+        }
+      },
+    });
+
+    const outcome = await provider.join(harness.page, joinOptions);
+
+    expect(outcome).toEqual({ status: 'admitted' });
+  });
+
+  it('says the name field was the problem when it could not be filled', async () => {
+    // Distinguishes "Meet changed its name field" from "the button never enabled",
+    // because they need different fixes.
+    const { page } = fakePage({});
+
+    const outcome = await provider.join(page, { ...joinOptions, admissionTimeoutMs: 200 });
+
+    expect(outcome.status).toBe('failed');
+    expect((outcome as { reason: string }).reason).toMatch(/could not enter a name/i);
   });
 
   it('accepts "Join now" when Meet treats it as a member', async () => {

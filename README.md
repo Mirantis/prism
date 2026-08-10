@@ -250,10 +250,10 @@ something up and say the answer without leaving. Interrupt it and it yields the
 floor; a short "mm-hm" won't cut it off. Needs the container image (which ships
 Chromium, Xvfb and PulseAudio) plus `OPENAI_API_KEY` — the in-meeting voice is
 OpenAI's Realtime API, the one model call that doesn't use your configured provider.
-Because a meeting isn't an authenticated channel, nothing said in a call can outlive
-it — scheduling, self-configuration and memory writes are withheld there — and the
-agent won't take other state-changing actions on a spoken request. See
-[docs/voice-meetings.md](docs/voice-meetings.md).
+It has its full toolset in the call. A meeting isn't an authenticated channel, though,
+so the guardrails are prompt-level — it announces and confirms before anything
+destructive — which means a meeting link effectively grants the agent's authority.
+See [docs/voice-meetings.md](docs/voice-meetings.md).
 
 ### Sessions and idle handling
 
@@ -350,7 +350,7 @@ restarts.
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry at startup (e.g. `https://models.dev/api.json`); unset means no outbound call, bundled catalog only | — (disabled) |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check on the Slack app identity | — |
 | `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) (OpenAI Realtime API, connected directly — not via Nexus) | — (disabled) |
-| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice | `gpt-realtime` |
+| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice (pinned snapshot) | `gpt-realtime-2.1` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one meeting call | `60` |
 | `LANGFUSE_SECRET_KEY` | Enables Langfuse tracing when set | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |

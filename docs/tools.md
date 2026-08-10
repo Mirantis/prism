@@ -112,12 +112,11 @@ These tools only exist when the runtime can actually host a call: the container
 image's browser/audio toolchain plus `OPENAI_API_KEY`. They're also chat-only — a
 heartbeat or scheduled run can't dial into a meeting on its own.
 
-Because anyone with the meeting link can talk to it, a meeting also **withholds
-every tool whose effect would outlive the call**: scheduling (which would otherwise
-run later with a wider toolset), edits to its own configuration, and memory writes.
-Those are enforced, not merely discouraged. For the tools it keeps, the agent is
-instructed to look things up and report freely but to refuse anything that changes
-state on a spoken request, and to arrange that with its configured user in chat.
+In a call the agent keeps its **full tool surface** — nothing is withheld — so the
+guardrails are its prompt rather than the tool list: announce and get an explicit
+"yes" in the room before anything destructive, and refuse spoken attempts to rewrite
+its own configuration or memory. Since a meeting has no authentication, treat the
+link as granting the agent's authority and share it accordingly.
 
 ## External tools (MCP)
 

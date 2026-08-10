@@ -23,9 +23,9 @@ vi.mock('../../services/meeting/meeting-bot.service', () => ({
   },
 }));
 
-const mockIsChromiumAvailable = vi.fn();
+const mockIsBrowserAvailable = vi.fn();
 vi.mock('../../services/meeting/browser-stack', () => ({
-  isChromiumAvailable: () => mockIsChromiumAvailable(),
+  isBrowserAvailable: () => mockIsBrowserAvailable(),
 }));
 
 const mockIsRealtimeConfigured = vi.fn();
@@ -37,7 +37,7 @@ const { getMeetingTools, isMeetingSupported, MEETING_TOOL_NAMES } = await import
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockIsChromiumAvailable.mockResolvedValue(true);
+  mockIsBrowserAvailable.mockResolvedValue(true);
   mockIsRealtimeConfigured.mockReturnValue(true);
   mockFindProvider.mockReturnValue({ name: 'google-meet', displayName: 'Google Meet' });
 });
@@ -147,7 +147,7 @@ describe('isMeetingSupported', () => {
   });
 
   it('is false without a browser', async () => {
-    mockIsChromiumAvailable.mockResolvedValue(false);
+    mockIsBrowserAvailable.mockResolvedValue(false);
     expect(await isMeetingSupported()).toBe(false);
   });
 
@@ -164,77 +164,39 @@ describe('isMeetingSupported', () => {
 });
 
 describe('meeting tool mode', () => {
-  it('drops what does not belong in a live call', async () => {
-    const { filterToolsByMode } = await import('../../lib/tool-collection');
-
-    const filtered = filterToolsByMode(
-      {
-        // Kept: reads and work the room can hear being done.
-        memory_search: stub(),
-        shell_exec: stub(),
-        skill: stub(),
-        // Kept: "please leave" is a reasonable thing to say out loud.
-        leave_meeting: stub(),
-        // Dropped: joining another call, or reporting on itself, mid-call.
-        join_google_meet: stub(),
-        meeting_status: stub(),
-        // Dropped: minutes-long work that would leave the room in silence.
-        claude_code: stub(),
-        shell_spawn: stub(),
-        shell_stdout: stub(),
-        // Dropped: they target a user thread a meeting doesn't have.
-        create_goal: stub(),
-        share_file: stub(),
-      },
-      'meeting',
-    );
-
-    expect(Object.keys(filtered).sort()).toEqual(
-      ['leave_meeting', 'memory_search', 'shell_exec', 'skill'].sort(),
-    );
-  });
-
-  it('withholds everything that would outlive the call', async () => {
+  it('gives a live call the agent\'s full tool surface, same as chat', async () => {
     const { filterToolsByMode } = await import('../../lib/tool-collection');
     const { AGENT_CONFIG_WRITE_TOOL_NAMES } = await import('../agent-config');
 
-    const dangerous = [
-      // A spoken request would become a persisted task that later runs in `cron`
-      // mode with a wider toolset — an escalation around this very filter.
-      'schedule_task',
-      'list_scheduled_tasks',
-      'delete_scheduled_task',
-      // Persistent prompt injection: a sentence in a call would shape every
-      // future turn, long after everyone hung up.
-      'memory_write',
-      'memory_delete',
-      ...AGENT_CONFIG_WRITE_TOOL_NAMES,
-    ];
-
-    const filtered = filterToolsByMode(
-      Object.fromEntries([...dangerous, 'memory_search'].map((n) => [n, stub()])),
-      'meeting',
+    // Deliberately unrestricted: an agent that can only read is little use in a
+    // working meeting. The trade-off is that `prompts/meeting-prompt.ts` becomes
+    // the only guard — asserted in meeting-prompt.test.ts.
+    const everything = Object.fromEntries(
+      [
+        'memory_search', 'memory_write', 'memory_delete',
+        'shell_exec', 'shell_write_file', 'claude_code', 'shell_spawn',
+        'schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task',
+        'create_goal', 'get_goal', 'share_file', 'skill',
+        'leave_meeting', 'join_google_meet', 'meeting_status',
+        ...AGENT_CONFIG_WRITE_TOOL_NAMES,
+      ].map((n) => [n, stub()]),
     );
 
-    // Meeting audio is unauthenticated — this list is the boundary, not the prompt.
-    expect(Object.keys(filtered)).toEqual(['memory_search']);
+    const filtered = filterToolsByMode(everything, 'meeting');
+
+    expect(Object.keys(filtered).sort()).toEqual(Object.keys(everything).sort());
   });
 
-  it('keeps the withheld agent-config list in step with the tools that exist', async () => {
-    const { getAgentConfigTools, AGENT_CONFIG_WRITE_TOOL_NAMES } = await import('../agent-config');
-
-    // A new self-modification tool must not quietly become reachable from a call.
-    expect(Object.keys(getAgentConfigTools()).sort()).toEqual([...AGENT_CONFIG_WRITE_TOOL_NAMES].sort());
-  });
-
-  it('leaves the chat mode tool set untouched', async () => {
+  it('matches chat mode exactly, so the two cannot drift apart', async () => {
     const { filterToolsByMode } = await import('../../lib/tool-collection');
-    const all = { join_google_meet: stub(), claude_code: stub(), create_goal: stub() };
+    const all = { schedule_task: stub(), update_soul: stub(), memory_write: stub(), shell_exec: stub() };
 
-    expect(Object.keys(filterToolsByMode(all, 'chat'))).toEqual(Object.keys(all));
+    expect(Object.keys(filterToolsByMode(all, 'meeting'))).toEqual(
+      Object.keys(filterToolsByMode(all, 'chat')),
+    );
   });
 
-  it('keeps the meeting tools out of autonomous modes too', async () => {
+  it('still keeps the meeting tools out of autonomous modes', async () => {
     const { filterToolsByMode } = await import('../../lib/tool-collection');
 
     // An autonomous run dialling into a live call with people in it is never what

@@ -77,12 +77,18 @@ export class VoiceConversation {
       resumePlayback: () => this.playback.resume(),
       isSpeaking: () => this.playback.isSpeaking,
       commitInterrupt: () => {
-        // Drop what hasn't been heard, then tell the model exactly how far it
-        // actually got — otherwise its context claims words the room never heard.
-        const { playedMs } = this.playback.flush();
-        this.session.interrupt(playedMs);
+        // Drop what hasn't been heard, then tell the model exactly how far each
+        // item actually got — otherwise its context claims words the room never
+        // heard. A turn can hold several audio items (a native preamble, then the
+        // answer), so every one of them is reported.
+        const items = this.playback.flush();
+        this.session.interrupt(items);
         this.stats.interruptions += 1;
-        logger.info(`[Meeting] Yielded the floor after ${Math.round(playedMs)}ms of speech`);
+        const heard = items.reduce((n, i) => n + i.playedMs, 0);
+        logger.info(
+          `[Meeting] Yielded the floor after ${Math.round(heard)}ms of speech ` +
+            `across ${items.length} item(s)`,
+        );
       },
     });
 

@@ -62,6 +62,11 @@ function makeSession(options: {
   });
 }
 
+/** Base64 for `ms` of pcm16 @24kHz — lets a test emit a realistic amount of audio. */
+function silenceDelta(ms: number): string {
+  return Buffer.alloc(Math.round((ms / 1000) * 24000) * 2).toString('base64');
+}
+
 let active: Harness | null = null;
 beforeEach(() => {
   active = null;
@@ -106,7 +111,22 @@ describe('RealtimeSession configuration', () => {
 
     expect(update.session.audio.input.turn_detection.create_response).toBe(false);
     // Transcription is only for deciding who was addressed, never model input.
-    expect(update.session.audio.input.transcription).toBeDefined();
+    expect(update.session.audio.input.transcription).toEqual({ model: 'gpt-realtime-whisper' });
+  });
+
+  it('leaves transcription off in normal mode, since it bills per minute', async () => {
+    active = await harness();
+    const update = active.sent.find((f) => f.type === 'session.update') as { session: Record<string, any> };
+
+    expect(update.session.audio.input.transcription).toBeUndefined();
+  });
+
+  it('asks for far-field noise reduction, because meeting audio is room audio', async () => {
+    active = await harness();
+    const update = active.sent.find((f) => f.type === 'session.update') as { session: Record<string, any> };
+
+    // Several people at conversational distance from a laptop mic — not a headset.
+    expect(update.session.audio.input.noise_reduction).toEqual({ type: 'far_field' });
   });
 
   it('declares the agent tools as function tools', async () => {
@@ -237,19 +257,45 @@ describe('RealtimeSession outbound frames', () => {
 
   it('truncates the spoken item at what was actually heard', async () => {
     active = await harness();
-    active.emit({ type: 'response.created' });
-    active.emit({ type: 'response.output_audio.delta', delta: 'AAAA', item_id: 'item-7' });
+    active.emit({ type: 'response.created', response: { id: 'resp-1' } });
+    // Enough generated audio that the truncation point below is legal.
+    active.emit({ type: 'response.output_audio.delta', delta: silenceDelta(2000), item_id: 'item-7', response_id: 'resp-1' });
     await new Promise((r) => setTimeout(r, 20));
 
-    active.session.interrupt(1234.6);
+    active.session.interrupt([{ itemId: 'item-7', playedMs: 1234.6, sentMs: 2000 }]);
     await new Promise((r) => setTimeout(r, 20));
 
     expect(active.sent.some((f) => f.type === 'response.cancel')).toBe(true);
     expect(active.sent.find((f) => f.type === 'conversation.item.truncate')).toMatchObject({
       item_id: 'item-7',
       content_index: 0,
-      audio_end_ms: 1235,
+      // played + 50ms of slack, per OpenAI's transport: cutting at exactly the
+      // measured played-ms makes the model repeat the last word or two.
+      audio_end_ms: 1284,
     });
+  });
+
+  it('truncates every audio item of an interrupted turn', async () => {
+    active = await harness();
+    // gpt-realtime-2.x speaks a native preamble as its own item, then the answer as
+    // another. Truncating only the newest leaves the preamble in context as words
+    // the model believes it delivered.
+    active.emit({ type: 'response.created', response: { id: 'resp-1' } });
+    active.emit({ type: 'response.output_audio.delta', delta: silenceDelta(1000), item_id: 'preamble', response_id: 'resp-1' });
+    active.emit({ type: 'response.output_audio.delta', delta: silenceDelta(1000), item_id: 'answer', response_id: 'resp-1' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    active.session.interrupt([
+      // A fully-played preamble: sent == played, so the slack is clamped away.
+      { itemId: 'preamble', playedMs: 800, sentMs: 800 },
+      { itemId: 'answer', playedMs: 120, sentMs: 1000 },
+    ]);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const truncates = active.sent.filter((f) => f.type === 'conversation.item.truncate');
+    expect(truncates).toHaveLength(2);
+    expect(truncates[0]).toMatchObject({ item_id: 'preamble', audio_end_ms: 800 });
+    expect(truncates[1]).toMatchObject({ item_id: 'answer', audio_end_ms: 170 });
   });
 
   it('does not cancel when no response is in flight', async () => {
@@ -257,7 +303,7 @@ describe('RealtimeSession outbound frames', () => {
     active.emit({ type: 'response.output_audio.delta', delta: 'AAAA', item_id: 'item-8' });
     await new Promise((r) => setTimeout(r, 20));
 
-    active.session.interrupt(100);
+    active.session.interrupt([{ itemId: 'item-8', playedMs: 100, sentMs: 100 }]);
     await new Promise((r) => setTimeout(r, 20));
 
     expect(active.sent.some((f) => f.type === 'response.cancel')).toBe(false);
@@ -270,46 +316,86 @@ describe('RealtimeSession outbound frames', () => {
     const received: Buffer[] = [];
     active.session.on('audio', (pcm) => received.push(pcm));
 
-    active.emit({ type: 'response.created' });
-    active.emit({ type: 'response.output_audio.delta', delta: 'AAAA', item_id: 'item-1' });
+    active.emit({ type: 'response.created', response: { id: 'resp-1' } });
+    active.emit({ type: 'response.output_audio.delta', delta: 'AAAA', item_id: 'item-1', response_id: 'resp-1' });
     await new Promise((r) => setTimeout(r, 20));
     expect(received).toHaveLength(1);
 
-    active.session.interrupt(500);
+    active.session.interrupt([{ itemId: 'item-1', playedMs: 500, sentMs: 500 }]);
 
-    // The socket keeps delivering the abandoned response's tail. Forwarding it
-    // would restart playback over the person who just interrupted, and would push
-    // played-ms past the audio_end_ms already reported.
-    active.emit({ type: 'response.output_audio.delta', delta: 'BBBB', item_id: 'item-1' });
-    active.emit({ type: 'response.output_audio.delta', delta: 'CCCC', item_id: 'item-1' });
+    // The socket keeps delivering the abandoned turn's tail. Forwarding it would
+    // restart playback over the person who just interrupted.
+    active.emit({ type: 'response.output_audio.delta', delta: 'BBBB', item_id: 'item-1', response_id: 'resp-1' });
+    // A *later item* of the same abandoned turn must be dropped too — an item-keyed
+    // discard set would happily play this one.
+    active.emit({ type: 'response.output_audio.delta', delta: 'CCCC', item_id: 'item-2', response_id: 'resp-1' });
     await new Promise((r) => setTimeout(r, 20));
 
     expect(received).toHaveLength(1);
   });
 
-  it('still plays the next utterance after an interrupt', async () => {
+  it('still plays the next turn after an interrupt', async () => {
     active = await harness();
     const received: string[] = [];
     active.session.on('audio', (_pcm, itemId) => received.push(itemId));
 
-    active.emit({ type: 'response.created' });
-    active.emit({ type: 'response.output_audio.delta', delta: 'AAAA', item_id: 'item-1' });
+    active.emit({ type: 'response.created', response: { id: 'resp-1' } });
+    active.emit({ type: 'response.output_audio.delta', delta: 'AAAA', item_id: 'item-1', response_id: 'resp-1' });
     await new Promise((r) => setTimeout(r, 20));
-    active.session.interrupt(100);
+    active.session.interrupt([{ itemId: 'item-1', playedMs: 100, sentMs: 100 }]);
 
-    active.emit({ type: 'response.output_audio.delta', delta: 'DDDD', item_id: 'item-2' });
+    // A genuinely new turn must still be heard.
+    active.emit({ type: 'response.created', response: { id: 'resp-2' } });
+    active.emit({ type: 'response.output_audio.delta', delta: 'DDDD', item_id: 'item-2', response_id: 'resp-2' });
     await new Promise((r) => setTimeout(r, 20));
 
     expect(received).toEqual(['item-1', 'item-2']);
   });
 
-  it('truncates only once per interrupted item', async () => {
+  it('caps audio_end_ms at what the server actually generated', async () => {
+    active = await harness();
+    active.emit({ type: 'response.created', response: { id: 'resp-1' } });
+    // 8 base64 chars -> 6 bytes -> 3 samples -> ~0.125ms of generated audio.
+    active.emit({ type: 'response.output_audio.delta', delta: 'AAAAAAAA', item_id: 'item-x', response_id: 'resp-1' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    // A played-ms beyond the item's real duration is rejected by the API outright,
+    // which would turn a barge-in into a protocol error mid-call.
+    active.session.interrupt([{ itemId: 'item-x', playedMs: 99_999, sentMs: 99_999 }]);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const truncate = active.sent.find((f) => f.type === 'conversation.item.truncate') as { audio_end_ms: number };
+    expect(truncate.audio_end_ms).toBeLessThan(10);
+  });
+
+  it('truncates an item that never started at zero', async () => {
+    active = await harness();
+    active.emit({ type: 'response.created', response: { id: 'resp-1' } });
+    active.emit({ type: 'response.output_audio.delta', delta: silenceDelta(500), item_id: 'heard', response_id: 'resp-1' });
+    active.emit({ type: 'response.output_audio.delta', delta: silenceDelta(500), item_id: 'unheard', response_id: 'resp-1' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    active.session.interrupt([
+      { itemId: 'heard', playedMs: 300, sentMs: 300 },
+      // Queued but never handed to the device: nothing was heard, so its transcript
+      // must leave the context entirely rather than gain 50ms of slack.
+      { itemId: 'unheard', playedMs: 0, sentMs: 0 },
+    ]);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const truncates = active.sent.filter((f) => f.type === 'conversation.item.truncate');
+    expect(truncates[1]).toMatchObject({ item_id: 'unheard', audio_end_ms: 0 });
+  });
+
+  it('sends nothing when there is nothing left to truncate', async () => {
     active = await harness();
     active.emit({ type: 'response.output_audio.delta', delta: 'AAAA', item_id: 'item-9' });
     await new Promise((r) => setTimeout(r, 20));
 
-    active.session.interrupt(100);
-    active.session.interrupt(200);
+    // Playback reports the items; a second interrupt with an empty list (everything
+    // already flushed) must not invent a truncate.
+    active.session.interrupt([{ itemId: 'item-9', playedMs: 100, sentMs: 100 }]);
+    active.session.interrupt([]);
     await new Promise((r) => setTimeout(r, 20));
 
     expect(active.sent.filter((f) => f.type === 'conversation.item.truncate')).toHaveLength(1);
@@ -350,7 +436,7 @@ describe('RealtimeSession outbound frames', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     active.session.sendFunctionOutput('call-1', '{"ok":true}');
-    active.session.interrupt(200);
+    active.session.interrupt([{ itemId: 'i-1', playedMs: 200, sentMs: 200 }]);
     active.emit({ type: 'response.done' });
     await new Promise((r) => setTimeout(r, 20));
 

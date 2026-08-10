@@ -30,6 +30,7 @@ import path from 'path';
 import { promisify } from 'util';
 import { logger } from '../../logger';
 import { MEETING_SAMPLE_RATE } from './resampler';
+import { SINK_BUFFER_MS, type PlaybackSink } from './audio-playback';
 
 const execFileAsync = promisify(execFile);
 
@@ -46,8 +47,8 @@ export interface AudioStackHandles {
   browserEnv: Record<string, string>;
   /** Meeting audio, 48 kHz pcm16 mono — feed to the conversation. */
   onCapture: (handler: (pcm48k: Buffer) => void) => void;
-  /** Sink for the model's speech, 48 kHz pcm16 mono. */
-  playbackSink: { write: (chunk: Buffer) => void };
+  /** Sink for the model's speech, 48 kHz pcm16 mono, with backpressure. */
+  playbackSink: PlaybackSink;
 }
 
 /**
@@ -93,11 +94,17 @@ export class AudioStack {
       onCapture: (handler) => {
         this.captureHandler = handler;
       },
+      // No backpressure handling needed: `AudioPlayback` paces writes to stay a
+      // fixed, small distance ahead of real time, so the pipe never fills. (An
+      // earlier version did wait on `drain`, which both destroyed interruption
+      // latency — a full pipe holds ~680ms of speech — and could hang forever if
+      // pacat died while the pipe was full.)
       playbackSink: {
-        write: (chunk: Buffer) => {
-          // stdin can be gone if pacat died; dropping a frame is the right
-          // failure here — audio is realtime, a retry would arrive too late.
-          if (this.pacat?.stdin?.writable) this.pacat.stdin.write(chunk);
+        write: (chunk: Buffer): boolean => {
+          // stdin can be gone if pacat died; dropping a frame is the right failure
+          // here — audio is realtime, a retry would arrive too late to matter.
+          if (!this.pacat?.stdin?.writable) return true;
+          return this.pacat.stdin.write(chunk);
         },
       },
     };
@@ -259,7 +266,10 @@ export class AudioStack {
         '--format=s16le',
         `--rate=${MEETING_SAMPLE_RATE}`,
         '--channels=1',
-        '--latency-msec=20',
+        // Deep enough that a stalled event loop can't starve the device mid-word.
+        // Must stay equal to SINK_BUFFER_MS, which is how playback estimates what
+        // the room has actually heard.
+        `--latency-msec=${SINK_BUFFER_MS}`,
       ],
       { stdio: ['pipe', 'ignore', 'pipe'], env: this.pulseEnv() },
     );

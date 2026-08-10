@@ -69,7 +69,9 @@ describe('prepareMeetingTools', () => {
     });
   });
 
-  it('drops the Task tool — a subagent would leave the room in silence', async () => {
+  it('offers every executable tool, Task included', async () => {
+    // Long-running tools all hand back a handle immediately rather than blocking,
+    // so the model can start work, say so, and report back later in the same call.
     mockCollectTools.mockResolvedValue({
       tools: {
         Task: tool({ description: 'Delegate', inputSchema: z.object({}), execute: async () => 'x' }),
@@ -80,7 +82,7 @@ describe('prepareMeetingTools', () => {
 
     const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
 
-    expect(prepared.declarations.map((d) => d.name)).toEqual(['memory_search']);
+    expect(prepared.declarations.map((d) => d.name).sort()).toEqual(['Task', 'memory_search']);
   });
 
   it('drops tools with no local implementation to call', async () => {

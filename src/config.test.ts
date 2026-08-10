@@ -383,10 +383,12 @@ describe('config', () => {
       expect(cfg.openaiApiKey).toBe('__nexus_cred:1234-uuid__');
     });
 
-    it('defaults the realtime model to the GA alias', async () => {
+    it('pins the realtime model to a snapshot rather than the moving alias', async () => {
+      // The `gpt-realtime` alias follows OpenAI's current snapshot, so turn-taking
+              // and prosody could change under a live deployment with no code change.
       delete process.env.OPENAI_REALTIME_MODEL;
       const cfg = await loadConfig();
-      expect(cfg.openaiRealtimeModel).toBe('gpt-realtime');
+      expect(cfg.openaiRealtimeModel).toBe('gpt-realtime-2.1');
     });
 
     it('reads a realtime model override', async () => {
@@ -395,10 +397,17 @@ describe('config', () => {
       expect(cfg.openaiRealtimeModel).toBe('gpt-realtime-mini');
     });
 
-    it('leaves the voice unset so the API picks its own default', async () => {
+    it('names a voice rather than accepting the API default', async () => {
+      // `marin` is materially better for conversation than the default `alloy`.
       delete process.env.OPENAI_REALTIME_VOICE;
       const cfg = await loadConfig();
-      expect(cfg.openaiRealtimeVoice).toBeUndefined();
+      expect(cfg.openaiRealtimeVoice).toBe('marin');
+    });
+
+    it('allows overriding the voice, in case a model retires the name', async () => {
+      process.env.OPENAI_REALTIME_VOICE = 'cedar';
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeVoice).toBe('cedar');
     });
 
     it('defaults the call duration cap to 60 minutes', async () => {

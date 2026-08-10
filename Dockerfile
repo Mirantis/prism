@@ -79,15 +79,20 @@ ENV CHECKPOINT_DISABLE=1
 # from the nexus-shell-sandbox parity set. Python + pandoc, which mise CAN
 # provide, are added to the `mise use -g` line below instead.
 #
-# chromium + xvfb + pulseaudio are the voice-meeting toolchain (see
-# src/services/meeting/): a real browser joins the call, Xvfb gives it a display
-# because Meet's WebRTC path is unreliable headless, and PulseAudio's null-sinks
-# are the virtual speaker/microphone that let the runtime exchange audio with it.
-# This is the one place we knowingly spend image size on a feature rather than a
-# CLI (~400MB) — unlike LibreOffice, which is left out for exactly that reason,
-# there is no way to do voice meetings without a browser and an audio server.
-# Debian's `chromium` (not Google Chrome) because it is the only one of the two
-# packaged for arm64, and the image is multi-arch.
+# xvfb + pulseaudio are the voice-meeting toolchain (see src/services/meeting/):
+# a browser joins the call, Xvfb gives it a display because Meet's WebRTC path is
+# unreliable headless, and PulseAudio's null-sinks are the virtual speaker and
+# microphone the runtime exchanges audio through. This is the one place we
+# knowingly spend image size on a feature rather than a CLI (~400MB) — unlike
+# LibreOffice, left out for exactly that reason, there is no way to be in a
+# meeting without a browser and an audio server.
+#
+# Debian's `chromium` rather than Google Chrome. Chrome does now have arm64 Linux
+# builds, and the runtime prefers `/usr/bin/google-chrome` when an image happens to
+# provide it — but Meet's refusals turned out to be about being an *anonymous*
+# automated guest, not about the browser build, so there is nothing to buy with a
+# second browser and a third-party apt repo. Sign-in is the fix (see
+# services/meeting/browser-stack.ts).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openssl wget \
         git ca-certificates curl libatomic1 gcc libc-dev make zstd \
@@ -97,6 +102,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-liberation fontconfig \
         iptables \
         chromium xvfb pulseaudio pulseaudio-utils \
+        tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Install only production dependencies. Scope to root + cli — the web
@@ -271,4 +277,16 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # node above, and the generated Prisma client + dist layers are 0755/0644.
 USER node
 
+
+# Run under tini so PID 1 reaps orphans.
+#
+# Needed because Chromium's crash handler deliberately re-parents itself to PID 1,
+# and Node only reaps children it spawned itself — so every voice meeting left four
+# unreapable zombies behind, accumulating for the life of the container (measured:
+# 4 after one call, 8 after two). The same applies to anything the agent
+# double-forks from its shell tools, so this fixes a latent leak beyond meetings.
+#
+# tini forwards signals to start.sh, so the graceful-shutdown path (SIGTERM ->
+# node -> service teardown) is unchanged.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./start.sh"]

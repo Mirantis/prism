@@ -237,16 +237,21 @@ The voice model is OpenAI's Realtime API. It is the one model call that does not
 route through your configured provider or the Nexus LLM gateway: managed inference
 serves Bedrock, Azure and Bedrock Mantle, none of which exposes a realtime voice
 surface. The socket goes straight to `api.openai.com`, so an egress-filtered
-deployment must allow that host (plus Google's meeting hosts, including WebRTC UDP).
+deployment must allow that host (plus Google's meeting and accounts hosts, including
+WebRTC UDP). The browser profile — and with it the signed-in session — is persisted
+under the data dir, so sign-in happens once rather than per meeting.
 The key is only ever sent as a request header, so it may be a
 `__nexus_cred:<uuid>__` sentinel that the sandbox rewrites on the wire.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `OPENAI_API_KEY` | Enables voice meetings. May be a Nexus credential sentinel. | — (disabled) |
-| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. `gpt-realtime-mini` is materially cheaper. | `gpt-realtime` |
-| `OPENAI_REALTIME_VOICE` | Voice name; unset lets the API pick its own default. | — |
-| `MEETING_DISPLAY_NAME` | Name shown to the other participants. | the agent's name |
+| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot so a new one cannot change behaviour under you; `gpt-realtime-mini` is materially cheaper. | `gpt-realtime-2.1` |
+| `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
+| `GOOGLE_BOT_EMAIL` | Google account the agent signs into for meetings. **Effectively required**: Google auto-denies automated anonymous guests, so without this the agent reaches the lobby and is refused. Use a dedicated account. | — |
+| `GOOGLE_BOT_PASSWORD` | Password for that account. May be a credential sentinel. Accounts with a phone/hardware challenge or enforced SSO cannot be signed in unattended. | — |
+| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used **only** by `addressedOnly` mode, to decide whether the agent was spoken to. Billed per minute of audio, so it is not enabled otherwise. `gpt-4o-transcribe` and `whisper-1` also work. | `gpt-realtime-whisper` |
+| `MEETING_DISPLAY_NAME` | Name shown to participants on the guest path only — a signed-in agent shows its Google account name. | the agent's name |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call, so a meeting nobody ended can't hold a browser and a metered socket open. Junk or non-positive falls back to the default. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room for a host to admit the agent. | `300` |
 
