@@ -368,4 +368,86 @@ describe('config', () => {
       }
     });
   });
+
+  describe('voice meetings', () => {
+    it('leaves the OpenAI key undefined when unset, which disables the feature', async () => {
+      delete process.env.OPENAI_API_KEY;
+      const cfg = await loadConfig();
+      expect(cfg.openaiApiKey).toBeUndefined();
+    });
+
+    it('reads the OpenAI key verbatim so a credential sentinel survives', async () => {
+      // The sandbox MITM swaps this on the wire; config must not touch it.
+      process.env.OPENAI_API_KEY = '__nexus_cred:1234-uuid__';
+      const cfg = await loadConfig();
+      expect(cfg.openaiApiKey).toBe('__nexus_cred:1234-uuid__');
+    });
+
+    it('defaults the realtime model to the GA alias', async () => {
+      delete process.env.OPENAI_REALTIME_MODEL;
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeModel).toBe('gpt-realtime');
+    });
+
+    it('reads a realtime model override', async () => {
+      process.env.OPENAI_REALTIME_MODEL = 'gpt-realtime-mini';
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeModel).toBe('gpt-realtime-mini');
+    });
+
+    it('leaves the voice unset so the API picks its own default', async () => {
+      delete process.env.OPENAI_REALTIME_VOICE;
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeVoice).toBeUndefined();
+    });
+
+    it('defaults the call duration cap to 60 minutes', async () => {
+      delete process.env.MEETING_TIMEOUT_MINUTES;
+      const cfg = await loadConfig();
+      expect(cfg.meetingTimeoutMinutes).toBe(60);
+    });
+
+    it('reads a duration cap override', async () => {
+      process.env.MEETING_TIMEOUT_MINUTES = '15';
+      const cfg = await loadConfig();
+      expect(cfg.meetingTimeoutMinutes).toBe(15);
+    });
+
+    it('falls back to the default cap on junk or non-positive values', async () => {
+      // A meeting with no cap could hold a browser and a metered socket forever.
+      for (const bad of ['soon', '0', '-10']) {
+        process.env.MEETING_TIMEOUT_MINUTES = bad;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.meetingTimeoutMinutes).toBe(60);
+      }
+    });
+
+    it('defaults the admission wait to five minutes, in milliseconds', async () => {
+      delete process.env.MEETING_ADMISSION_TIMEOUT_SECONDS;
+      const cfg = await loadConfig();
+      expect(cfg.meetingAdmissionTimeoutMs).toBe(300_000);
+    });
+
+    it('converts an admission wait override from seconds', async () => {
+      process.env.MEETING_ADMISSION_TIMEOUT_SECONDS = '30';
+      const cfg = await loadConfig();
+      expect(cfg.meetingAdmissionTimeoutMs).toBe(30_000);
+    });
+
+    it('falls back to the default admission wait on junk', async () => {
+      for (const bad of ['later', '0']) {
+        process.env.MEETING_ADMISSION_TIMEOUT_SECONDS = bad;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.meetingAdmissionTimeoutMs).toBe(300_000);
+      }
+    });
+
+    it('leaves the display name empty so the agent name is used', async () => {
+      delete process.env.MEETING_DISPLAY_NAME;
+      const cfg = await loadConfig();
+      expect(cfg.meetingDisplayName).toBe('');
+    });
+  });
 });

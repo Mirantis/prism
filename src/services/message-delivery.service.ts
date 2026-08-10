@@ -24,7 +24,7 @@ import { logger } from '../logger';
 /**
  * What triggered this message
  */
-export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK';
+export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK' | 'SYSTEM';
 
 /**
  * Options for publishing a message
@@ -143,7 +143,9 @@ export class MessageDeliveryService {
     agentId: string,
     userId: string,
     content: string,
-    triggeredBy: 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK',
+    // Autonomous triggers only — a user message always has a thread of its own.
+    // SYSTEM covers runtime status notes (e.g. a meeting the agent just joined).
+    triggeredBy: 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK' | 'SYSTEM',
     options?: PublishOptions
   ): Promise<ConversationMessage> {
     // Resolve (or create) the latest thread for this user

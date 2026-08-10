@@ -28,6 +28,8 @@ import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
 import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
 import { trackAgentStarted } from './lib/startup-telemetry';
 import { heartbeatService } from './services/heartbeat.service';
+import { meetingBotService } from './services/meeting/meeting-bot.service';
+import { initMeetingToolAvailability } from './lib/tool-collection';
 import { cronSchedulerService } from './services/cron-scheduler.service';
 import { goalService } from './services/goal.service';
 import { sessionManagerService } from './services/session-manager.service';
@@ -172,6 +174,16 @@ const initialize = async () => {
     await reapOrphanAttachments();
     orphanCleanupTimer = setInterval(reapOrphanAttachments, 60 * 60 * 1000);
     orphanCleanupTimer.unref?.();
+
+    // Probe for the voice-meeting toolchain once, here rather than per turn: the
+    // tools block must stay byte-identical across requests for the provider's
+    // prompt cache to hit.
+    const meetingsAvailable = await initMeetingToolAvailability();
+    logger.info(
+      meetingsAvailable
+        ? 'Voice meetings available (browser + audio toolchain and OpenAI key present)'
+        : 'Voice meetings unavailable — meeting tools not registered',
+    );
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`Failed to initialize services: ${msg}`);
@@ -203,6 +215,11 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   // socket, so server.close() waits and the 5s force-exit below fires.
   cancelModelCatalogRefresh();
   webSocketGatewayService.closeAll();
+  // Leave any live call before the process goes: otherwise the browser and audio
+  // daemon die with us and the bot lingers in the meeting as a frozen participant.
+  await meetingBotService.shutdown().catch((err) => {
+    logger.warn(`[Meeting] Shutdown teardown failed: ${String(err)}`);
+  });
   await messageDeliveryService.shutdownAll();
   await getSlackHeartbeatThrottleQueue().stop();
   await shutdownLangfuse();

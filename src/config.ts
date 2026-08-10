@@ -171,6 +171,34 @@ const modelIds = {
   },
 }[llmProvider];
 
+// Live voice meetings (OpenAI Realtime API). This is the one model call that does
+// NOT ride the Nexus LLM gateway: managed inference serves Bedrock, Azure and
+// Bedrock Mantle — the Anthropic Messages and OpenAI Chat Completions surfaces —
+// and none of them serves the Realtime WebSocket, so there is no vendor mount to
+// route through and the socket goes straight to api.openai.com. Still
+// credential-safe in a sandbox: the key may be a `__nexus_cred:<uuid>__` sentinel
+// that the egress MITM swaps on the wire, and it is only ever sent as a header.
+// Unset disables the meeting tools entirely (they're also gated on the browser and
+// audio toolchain being present).
+const openaiApiKey = process.env.OPENAI_API_KEY;
+const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
+// Empty means "let the API pick", which is why this is `||` rather than a literal
+// default — naming a voice that a future model drops would break the session.
+const openaiRealtimeVoice = process.env.OPENAI_REALTIME_VOICE || undefined;
+
+// Hard cap on one call, so a meeting nobody ended can't hold a browser, an audio
+// daemon and a metered WebSocket open indefinitely. Junk or non-positive falls
+// back to the default rather than disabling the cap.
+const rawMeetingTimeout = parseInt(process.env.MEETING_TIMEOUT_MINUTES ?? '', 10);
+const meetingTimeoutMinutes =
+  Number.isFinite(rawMeetingTimeout) && rawMeetingTimeout > 0 ? rawMeetingTimeout : 60;
+
+// How long to wait in the waiting room for a host to click "Admit". Generous by
+// default: a guest often waits out the host's own join.
+const rawAdmissionTimeout = parseInt(process.env.MEETING_ADMISSION_TIMEOUT_SECONDS ?? '', 10);
+const meetingAdmissionTimeoutMs =
+  (Number.isFinite(rawAdmissionTimeout) && rawAdmissionTimeout > 0 ? rawAdmissionTimeout : 300) * 1000;
+
 // Parsed defensively: `parseInt` yields NaN for junk, and a zero/negative window
 // would make the context indicator divide by nothing, so both collapse to null
 // (= fall through to the bundled snapshot).
@@ -355,4 +383,14 @@ export const config = {
   // Newest messages excluded from compaction and kept verbatim in the context.
   // COMPACTION_TAIL_MESSAGES, default COMPACTION_TAIL_MESSAGES (6); 0 is legal.
   compactionTailMessages,
+
+  // Live voice meetings (see the derivations above). The meeting tools are only
+  // registered when `openaiApiKey` is set AND the container has the browser and
+  // audio toolchain; `meetingDisplayName` falls back to the agent's own name.
+  openaiApiKey,
+  openaiRealtimeModel,
+  openaiRealtimeVoice,
+  meetingDisplayName: process.env.MEETING_DISPLAY_NAME || '',
+  meetingTimeoutMinutes,
+  meetingAdmissionTimeoutMs,
 };

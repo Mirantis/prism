@@ -89,3 +89,13 @@ skills themselves; skills are installed at runtime into `/data/skills`. Because
 works out of the box (against PyPI, which is already reachable — no extra network
 allowances needed). LibreOffice is intentionally not bundled (size), so document
 skills' LibreOffice-backed conversion/recalc/render paths are unavailable.
+
+The image also carries `chromium`, `xvfb` and `pulseaudio`, which are what
+[voice meetings](voice-meetings.md) need: a real browser joins the call, Xvfb gives
+it a display, and PulseAudio's virtual sinks are the speaker and microphone the
+runtime exchanges audio through. This is the one feature we spend image size on
+rather than leaving out (roughly 400 MB) — unlike LibreOffice above, there is no way
+to join a meeting without a browser and an audio server. It's Debian's `chromium`
+rather than Google Chrome because only the former is packaged for arm64, and the
+image is multi-arch. Voice meetings additionally need `OPENAI_API_KEY`; without it
+the toolchain sits idle and the meeting tools aren't offered.

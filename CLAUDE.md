@@ -281,12 +281,13 @@ locally.
    mutations, and skills list/run. The Slack-specific endpoints are
    detailed in the "Management API Endpoints (for Slack)" table below.
 
-### MCP Tool Servers
+### Tools
 
-The runtime hosts one MCP server and connects to another externally:
-
-1. **Internal MCP** (`/internal/mcp`) - memory, config, cron tools (served in-process by agent-runtime)
-2. **Nexus MCP** - kubectl, GitHub, AWS tools (external)
+1. **Built-ins** — direct AI SDK tools in `src/tools/` (memory, agent config, cron,
+   goals, shell/Claude Code, share-file, skills, meetings), assembled by
+   `lib/tool-collection.ts#collectTools` and filtered per invocation mode. There is
+   **no internal MCP server** — these are in-process closures, not an HTTP surface.
+2. **Nexus MCP** — kubectl, GitHub, AWS tools (external, via `NEXUS_MCP_URL`).
 
 ## Key Services
 
@@ -309,7 +310,7 @@ The runtime hosts one MCP server and connects to another externally:
 | **SlackHeartbeatTriggerService** | `services/slack-heartbeat-trigger.service.ts` | CRUD for per-agent Slack heartbeat trigger config, atomic claim logic |
 | **SessionManagerService** | `services/session-manager.service.ts` | Daily session resets, idle timeout management |
 | **MemoryManagerService** | `services/memory-manager.service.ts` | Two-layer memory: daily append-only logs + curated long-term key-value store |
-| **MCP Server** | `mcp/server.ts` | Internal MCP server at `/internal/mcp` providing memory, config, and cron tools |
+| **MeetingBotService** | `services/meeting/meeting-bot.service.ts` | Live voice meetings: owns one call at a time (Xvfb + PulseAudio virtual devices + Chromium via playwright-core + an OpenAI Realtime session). The Realtime model *is* the agent in the room — it carries the agent's system prompt (`buildSystemPromptParts(ctx, 'meeting')` + `prompts/meeting-prompt.ts`) and its real tools, bridged in as Realtime function tools and executed in-process (`tool-bridge.ts`). Platform-specific join flows sit behind `MeetingProvider` (`providers/google-meet.provider.ts`); everything else is platform-agnostic. Barge-in is local, not server-side, so a backchannel doesn't cut the bot off (`barge-in.ts` + `audio-playback.ts`) |
 | **WebSocketGatewayService** | `services/websocket-gateway.service.ts` | WebSocket server: JWT decode (backend verifies), connection management, per-user message queuing, agent status management |
 | **WebSocketAdapterService** | `services/websocket-adapter.service.ts` | ChannelAdapter for WebSocket delivery, calls local gateway directly |
 | **BackendClient** | `lib/backend-client.ts` | Typed HTTP client for backend internal REST API: access control (`canAccessAgent()`) + SlackConnection read-only access (`getActiveSlackConnections()`, `getSlackConnection()`) |
@@ -343,17 +344,33 @@ src/
 │   ├── slack-heartbeat-trigger.service.ts # CRUD for per-agent Slack heartbeat trigger config, atomic claim logic
 │   ├── session-manager.service.ts # Daily session resets, idle timeout management
 │   ├── memory-manager.service.ts  # Two-layer memory system (daily logs + curated key-value store)
+│   ├── meeting/                # Live voice meetings (OpenAI Realtime API)
+│   │   ├── meeting-bot.service.ts    # Lifecycle owner: one call at a time, teardown, telemetry
+│   │   ├── meeting-provider.interface.ts # Per-platform join flow seam (Teams/Zoom later)
+│   │   ├── providers/google-meet.provider.ts # Anonymous-guest join, admission, auto-leave
+│   │   ├── audio-stack.ts      # Per-meeting Xvfb + PulseAudio null-sinks + parec/pacat
+│   │   ├── browser-stack.ts    # System Chromium via playwright-core (not headless)
+│   │   ├── voice-conversation.ts # Wires session + playback + barge-in + tools
+│   │   ├── realtime-session.ts # Realtime WebSocket protocol (semantic VAD, truncation)
+│   │   ├── tool-bridge.ts      # collectTools('meeting') → Realtime function tools
+│   │   ├── audio-playback.ts   # Paced playback + accurate played-ms for truncation
+│   │   ├── barge-in.ts         # Yield the floor to humans, tolerate backchannels
+│   │   ├── addressed-detection.ts # "Was that said to me?" for addressedOnly mode
+│   │   ├── resampler.ts        # 48k⇄24k pcm16 with anti-alias FIR
+│   │   └── openai-endpoint.ts  # Direct wss://api.openai.com — no Nexus mount exists
 │   ├── thread-provider.interface.ts # ThreadMessageProvider abstraction
 │   └── providers/
 │       ├── database-thread.provider.ts # Default: reads messages from PostgreSQL
 │       └── slack-thread.provider.ts    # Slack: reads messages via local Bolt apps (direct Slack API)
-├── mcp/
-│   ├── auth.ts                 # MCP authentication middleware
-│   ├── server.ts               # MCP server setup, mounted at /internal/mcp
-│   └── tools/
-│       ├── agent-config.mcp.ts # Agent config tools (soul, user, memory, heartbeat, vision, settings)
-│       ├── cron.mcp.ts         # Cron task tools (schedule, list, delete)
-│       └── memory.mcp.ts       # Memory tools (search, write, delete)
+├── tools/                      # Built-in AI SDK tools (no MCP round trip)
+│   ├── memory.ts               # Memory tools (search, write, delete)
+│   ├── agent-config.ts         # Agent config tools (soul, user, memory, heartbeat, vision, settings)
+│   ├── cron.ts                 # Cron task tools (schedule, list, delete)
+│   ├── goals.ts                # Goal tools (create, get)
+│   ├── share-file.ts           # Deliver a workspace file to the user as an attachment
+│   ├── meeting.ts              # Voice meetings (join_google_meet, leave_meeting, meeting_status)
+│   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, claude_code
+│   └── skills/                 # The `skill` tool (loads a SKILL.md body on demand)
 ├── routes/
 │   └── management.ts           # Management API for backend to push heartbeat/cron/slack-heartbeat-trigger events
 ├── utils/
@@ -430,6 +447,12 @@ What the operator sets on `docker run`:
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
 | `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction (sent verbatim) | `6` |
+| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md). **Never routed through Nexus** — no managed-inference vendor serves the Realtime surface, so the socket goes direct to `api.openai.com`; may be a `__nexus_cred:…__` sentinel since it only ever rides a header | — (meeting tools unregistered) |
+| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice | `gpt-realtime` |
+| `OPENAI_REALTIME_VOICE` | Voice name; unset lets the API choose | — |
+| `MEETING_DISPLAY_NAME` | Name shown to meeting participants | the agent's name |
+| `MEETING_TIMEOUT_MINUTES` | Hard cap on one call | `60` |
+| `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait to be admitted from the waiting room | `300` |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |

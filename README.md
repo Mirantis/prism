@@ -241,6 +241,20 @@ rendered template directly with zero LLM cost. Works out of the box with
 Alertmanager, PagerDuty, GitHub, or any sender that can POST JSON — see
 [docs/webhooks.md](docs/webhooks.md).
 
+### Voice meetings
+
+The agent can join a **Google Meet** call and take part by voice — ask it in chat
+and it requests to join, a host admits it like any other guest, and from then on it
+listens and speaks in the room. It keeps its tools during the call, so it can look
+something up and say the answer without leaving. Interrupt it and it yields the
+floor; a short "mm-hm" won't cut it off. Needs the container image (which ships
+Chromium, Xvfb and PulseAudio) plus `OPENAI_API_KEY` — the in-meeting voice is
+OpenAI's Realtime API, the one model call that doesn't use your configured provider.
+Because a meeting isn't an authenticated channel, nothing said in a call can outlive
+it — scheduling, self-configuration and memory writes are withheld there — and the
+agent won't take other state-changing actions on a spoken request. See
+[docs/voice-meetings.md](docs/voice-meetings.md).
+
 ### Sessions and idle handling
 
 A configurable daily reset (default 4 AM local time) and idle timeouts give
@@ -335,6 +349,9 @@ restarts.
 | `CONTEXT_WINDOW_TOKENS` | Context window to assume for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry at startup (e.g. `https://models.dev/api.json`); unset means no outbound call, bundled catalog only | — (disabled) |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check on the Slack app identity | — |
+| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) (OpenAI Realtime API, connected directly — not via Nexus) | — (disabled) |
+| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice | `gpt-realtime` |
+| `MEETING_TIMEOUT_MINUTES` | Hard cap on one meeting call | `60` |
 | `LANGFUSE_SECRET_KEY` | Enables Langfuse tracing when set | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server | `http://localhost:3100` |

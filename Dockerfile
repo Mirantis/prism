@@ -78,6 +78,16 @@ ENV CHECKPOINT_DISABLE=1
 # backend handles (same reason ripgrep is apt). This intentionally diverges
 # from the nexus-shell-sandbox parity set. Python + pandoc, which mise CAN
 # provide, are added to the `mise use -g` line below instead.
+#
+# chromium + xvfb + pulseaudio are the voice-meeting toolchain (see
+# src/services/meeting/): a real browser joins the call, Xvfb gives it a display
+# because Meet's WebRTC path is unreliable headless, and PulseAudio's null-sinks
+# are the virtual speaker/microphone that let the runtime exchange audio with it.
+# This is the one place we knowingly spend image size on a feature rather than a
+# CLI (~400MB) — unlike LibreOffice, which is left out for exactly that reason,
+# there is no way to do voice meetings without a browser and an audio server.
+# Debian's `chromium` (not Google Chrome) because it is the only one of the two
+# packaged for arm64, and the image is multi-arch.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openssl wget \
         git ca-certificates curl libatomic1 gcc libc-dev make zstd \
@@ -86,6 +96,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tesseract-ocr \
         fonts-liberation fontconfig \
         iptables \
+        chromium xvfb pulseaudio pulseaudio-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install only production dependencies. Scope to root + cli — the web
