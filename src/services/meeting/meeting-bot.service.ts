@@ -195,13 +195,16 @@ export class MeetingBotService {
 
       this.state = 'waiting_admission';
       // Deliberately not awaited: the waiting room can outlast any chat turn.
-      void this.runJoin(provider, this.page, input, displayName, epoch);
+      void this.runJoin(provider, this.page, input, displayName, epoch, browser.isAuthenticated);
 
       return {
         state: this.state,
         message:
-          `Requested to join the ${provider.displayName} call as "${displayName}". ` +
-          `A host needs to admit me — I'll report back when I'm in.`,
+          `Requested to join the ${provider.displayName} call` +
+          // Only meaningful on the guest path: a signed-in agent shows up under its
+          // Google account's own name, so quoting this one would mislead.
+          (browser.isAuthenticated ? '' : ` as "${displayName}"`) +
+          `. A host needs to admit me — I'll report back when I'm in.`,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -218,12 +221,14 @@ export class MeetingBotService {
     input: JoinMeetingInput,
     displayName: string,
     epoch: number,
+    signedIn: boolean,
   ): Promise<void> {
     try {
       const outcome = await provider.join(page, {
         url: input.url,
         displayName,
         admissionTimeoutMs: config.meetingAdmissionTimeoutMs,
+        signedIn,
       });
 
       // The call was ended while we waited (leave, timeout, shutdown). Whatever

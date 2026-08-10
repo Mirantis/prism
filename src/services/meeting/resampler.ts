@@ -23,11 +23,16 @@ export const MEETING_SAMPLE_RATE = 48000;
 export const REALTIME_SAMPLE_RATE = 24000;
 
 /**
- * Filter length. 33 taps at 48 kHz is ~0.7 ms of group delay — inaudible in a
- * conversation — and gives roughly 60 dB of stopband rejection with the Blackman
- * window below, which is well past what a voice codec preserves anyway.
+ * Filter length.
+ *
+ * 63 taps at 48 kHz is ~1.3 ms of group delay — still inaudible in a conversation —
+ * and buys a materially steeper transition than the 33 taps this started with. That
+ * matters on the upsampling leg, where a lazy filter leaves image energy just above
+ * 12 kHz for Meet's Opus encoder to chew on, which reads as a thin, synthetic edge
+ * on the voice. The cost is ~2x the multiplies on a path that is nowhere near being
+ * the bottleneck.
  */
-const FILTER_TAPS = 33;
+const FILTER_TAPS = 63;
 
 /**
  * Cutoff as a fraction of the 48 kHz sample rate. 0.24 (11.5 kHz) rather than a

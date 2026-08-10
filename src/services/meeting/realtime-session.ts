@@ -25,13 +25,35 @@
 
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
+import { config } from '../../config';
 import { logger } from '../../logger';
 import { REALTIME_SAMPLE_RATE } from './resampler';
+import type { PlaybackSnapshot } from './audio-playback';
 import {
   buildRealtimeSocketOptions,
   resolveRealtimeEndpoint,
   type RealtimeEndpoint,
 } from './openai-endpoint';
+
+/**
+ * How long to wait for `response.created` after asking for a response.
+ *
+ * Only a safety net for the optimistic active-response flag; see
+ * `responseCreatedWatchdog`.
+ */
+const RESPONSE_CREATED_TIMEOUT_MS = 5_000;
+
+/**
+ * Slack added to the played duration before truncating, per OpenAI's own
+ * server-side transport (`TwilioRealtimeTransport`).
+ *
+ * Truncating at exactly what was measured as heard makes the model repeat the last
+ * word or two after an interruption: its context ends a fraction before the sound
+ * the listener actually registered, so it resumes from there. Nudging the cut point
+ * slightly *later* — always bounded by what was really sent to the device — trades a
+ * few milliseconds the room may not have heard for speech that doesn't stutter.
+ */
+const TRUNCATE_SLACK_MS = 50;
 
 /** A function tool offered to the model, already in JSON Schema form. */
 export interface RealtimeFunctionTool {
@@ -107,19 +129,38 @@ export class RealtimeSession extends EventEmitter {
   /** The audio item currently being spoken, for targeted truncation. */
   private currentItemId: string | null = null;
   private responseActive = false;
+  /** True once the server has actually opened the response we asked for. */
+  private responseConfirmed = false;
+  private responseWatchdog: NodeJS.Timeout | null = null;
   /** A `response.create` deferred until the open response finishes. */
   private responsePending = false;
   /**
-   * Items we have given up on, whose remaining audio must be discarded.
+   * Responses we have given up on, whose remaining audio must be discarded.
    *
-   * An interrupt cannot un-send what is already in flight: deltas for the
-   * abandoned response keep arriving for as long as the socket takes to drain.
-   * Forwarding them would restart playback *over the person who interrupted*, and
-   * would push the played-ms past the `audio_end_ms` already reported — after
-   * which a second truncate for the same item is rejected by the API. So the
-   * abandoned item is remembered and its later deltas are dropped.
+   * An interrupt cannot un-send what is already in flight: deltas for the abandoned
+   * response keep arriving for as long as the socket takes to drain. Forwarding them
+   * would restart playback *over the person who interrupted*.
+   *
+   * Keyed by response rather than item on purpose: one turn can emit several audio
+   * items (a native preamble, then the answer), so an item-keyed set would happily
+   * play a *later* item of a response we already cancelled. This is also what
+   * OpenAI's own server-side transport does.
    */
-  private abandonedItemIds = new Set<string>();
+  private abandonedResponseIds = new Set<string>();
+  /** Response each audio item belongs to, so an item can be matched to its turn. */
+  private itemResponseIds = new Map<string, string>();
+  /**
+   * Audio the server actually generated per item, in ms.
+   *
+   * The hard ceiling for `audio_end_ms`: the API rejects a truncate beyond an item's
+   * real duration. Our played-ms is derived from the same deltas so it should never
+   * exceed this, but "should never" is not a guarantee worth betting a live call on —
+   * a resampler rounding a few samples the wrong way would turn a barge-in into a
+   * protocol error. OpenAI's own SDK caps the same way.
+   */
+  private generatedMsByItem = new Map<string, number>();
+  /** The response currently generating, for attributing a barge-in. */
+  private activeResponseId: string | null = null;
 
   constructor(private readonly options: RealtimeSessionOptions) {
     super();
@@ -188,9 +229,19 @@ export class RealtimeSession extends EventEmitter {
               // ("mm-hm") doesn't cut the bot off mid-sentence.
               interrupt_response: false,
             },
-            // Only needed to decide who was addressed; never fed back as input.
+            // Meeting audio is room audio — several people at conversational
+            // distance from a laptop mic, not one person on a headset. Far-field
+            // reduction is what the room case wants, and it feeds cleaner audio to
+            // both the turn detector and the transcriber.
+            noise_reduction: { type: 'far_field' },
+            // Only needed to decide who was addressed; never fed back as input,
+            // and billed per minute, so it stays off unless that decision is ours
+            // to make. `gpt-realtime-whisper` is the streaming transcriber built
+            // for realtime sessions (verified accepted in a speech-to-speech
+            // session, despite its model page listing only the
+            // transcription-session endpoint).
             ...(addressedOnly
-              ? { transcription: { model: 'gpt-4o-mini-transcribe' } }
+              ? { transcription: { model: config.openaiTranscriptionModel } }
               : {}),
           },
           output: {
@@ -234,12 +285,20 @@ export class RealtimeSession extends EventEmitter {
       case 'response.audio.delta': {
         const delta = event.delta;
         const itemId = typeof event.item_id === 'string' ? event.item_id : '';
+        const responseId = typeof event.response_id === 'string' ? event.response_id : this.activeResponseId;
         if (typeof delta !== 'string' || delta.length === 0) return;
-        // Tail of an utterance we already yielded the floor on — see
-        // `abandonedItemIds`. Dropped before it can restart playback.
-        if (itemId && this.abandonedItemIds.has(itemId)) return;
-        if (itemId) this.currentItemId = itemId;
-        this.emitEvent('audio', Buffer.from(delta, 'base64'), itemId);
+        // Tail of a turn we already yielded the floor on — see
+        // `abandonedResponseIds`. Dropped before it can restart playback.
+        if (responseId && this.abandonedResponseIds.has(responseId)) return;
+        const pcm = Buffer.from(delta, 'base64');
+        if (itemId) {
+          this.currentItemId = itemId;
+          if (responseId) this.itemResponseIds.set(itemId, responseId);
+          // pcm16 mono at the session rate: two bytes per sample.
+          const ms = (pcm.length / 2 / REALTIME_SAMPLE_RATE) * 1000;
+          this.generatedMsByItem.set(itemId, (this.generatedMsByItem.get(itemId) ?? 0) + ms);
+        }
+        this.emitEvent('audio', pcm, itemId);
         return;
       }
 
@@ -259,9 +318,16 @@ export class RealtimeSession extends EventEmitter {
         return;
       }
 
-      case 'response.created':
+      case 'response.created': {
+        // Also covers responses the server starts on its own when semantic VAD
+        // decides a speaker finished — those must set the flag too, or our next
+        // request would collide with them.
         this.responseActive = true;
+        this.responseConfirmed = true;
+        const created = event.response as { id?: string } | undefined;
+        this.activeResponseId = created?.id ?? null;
         return;
+      }
 
       case 'response.function_call_arguments.done': {
         const callId = typeof event.call_id === 'string' ? event.call_id : '';
@@ -277,6 +343,7 @@ export class RealtimeSession extends EventEmitter {
 
       case 'response.done':
         this.responseActive = false;
+        this.responseConfirmed = false;
         this.emitEvent('responseDone');
         // Release a response that was requested while this one was still open.
         if (this.responsePending) {
@@ -288,6 +355,32 @@ export class RealtimeSession extends EventEmitter {
       case 'error': {
         const err = event.error as { message?: string } | undefined;
         const message = err?.message ?? 'unknown Realtime API error';
+        // Two opposite errors mention an active response, and confusing them wedges
+        // the session: matching them loosely once meant a failed *cancel* was read
+        // as "a response is running", after which every later request deferred
+        // forever and the bot went mute for the rest of the call.
+        if (/already has an active response/i.test(message)) {
+          // The server is mid-response and dropped our request. Remember it so the
+          // answer goes out when that one finishes instead of being lost.
+          this.responseActive = true;
+          this.responseConfirmed = true;
+          this.responsePending = true;
+          logger.warn('[Meeting] Response request arrived too early; queued behind the open one');
+          return;
+        }
+        if (/no active response/i.test(message)) {
+          // We cancelled something already finished — a barge-in landing just as the
+          // model stopped. The response is over, so release the flags rather than
+          // leaving them set on a response that no longer exists.
+          this.responseActive = false;
+          this.responseConfirmed = false;
+          logger.debug('[Meeting] Cancelled a response that had already finished');
+          if (this.responsePending) {
+            this.responsePending = false;
+            this.requestResponse();
+          }
+          return;
+        }
         logger.error(`[Meeting] Realtime API error: ${message}`);
         this.emitEvent('apiError', message);
         return;
@@ -320,7 +413,36 @@ export class RealtimeSession extends EventEmitter {
       this.responsePending = true;
       return;
     }
+    // Marked active on *send*, not on the server's `response.created`. Waiting for
+    // confirmation leaves a round-trip-wide window in which a second request looks
+    // legal, and the API answers that with "Conversation already has an active
+    // response in progress" — after which the second answer is simply lost.
+    this.responseActive = true;
+    this.responseCreatedWatchdog();
     this.send({ type: 'response.create' });
+  }
+
+  /**
+   * Undo an optimistic `responseActive` if the server never opens the response.
+   *
+   * Without this, a `response.create` that the API drops (a rejected tool argument,
+   * a transient error) would leave the flag set and every later request deferred
+   * forever — the bot goes permanently mute, which is far worse than one duplicate.
+   */
+  private responseCreatedWatchdog(): void {
+    if (this.responseWatchdog) clearTimeout(this.responseWatchdog);
+    this.responseWatchdog = setTimeout(() => {
+      this.responseWatchdog = null;
+      if (this.responseActive && !this.responseConfirmed) {
+        logger.warn('[Meeting] No response.created arrived; clearing the active-response flag');
+        this.responseActive = false;
+        if (this.responsePending) {
+          this.responsePending = false;
+          this.requestResponse();
+        }
+      }
+    }, RESPONSE_CREATED_TIMEOUT_MS);
+    this.responseWatchdog.unref?.();
   }
 
   /**
@@ -330,7 +452,7 @@ export class RealtimeSession extends EventEmitter {
    * `playedMs` must be what reached the meeting, not what was received — audio
    * deltas arrive far faster than real time.
    */
-  interrupt(playedMs: number): void {
+  interrupt(items: PlaybackSnapshot[]): void {
     // A response queued behind this one is abandoned with it: the human now has
     // the floor, and their speech is what should decide the next turn. (Any tool
     // result already sits in the conversation, so nothing is lost.)
@@ -339,22 +461,36 @@ export class RealtimeSession extends EventEmitter {
       this.send({ type: 'response.cancel' });
       this.responseActive = false;
     }
-    if (this.currentItemId) {
+
+    items.forEach(({ itemId, playedMs, sentMs }, index) => {
+      // OpenAI's transport formula: nudge the cut point past what was measured as
+      // heard, bounded by what actually reached the device — and truncate an item
+      // that never started at 0 so its transcript still leaves the context.
+      const generated = this.generatedMsByItem.get(itemId) ?? sentMs;
+      const ceiling = Math.min(sentMs, generated);
+      const audioEndMs =
+        index === 0 || playedMs > 0
+          ? Math.max(0, Math.floor(Math.min(ceiling, playedMs + TRUNCATE_SLACK_MS)))
+          : 0;
       this.send({
         type: 'conversation.item.truncate',
-        item_id: this.currentItemId,
+        item_id: itemId,
         content_index: 0,
-        audio_end_ms: Math.max(0, Math.round(playedMs)),
+        audio_end_ms: audioEndMs,
       });
-      // Remember it so the tail still on the wire is discarded rather than played.
-      this.abandonedItemIds.add(this.currentItemId);
-      // Bounded: only the last few matter, and a long call would otherwise grow
-      // this set for every interruption.
-      if (this.abandonedItemIds.size > 32) {
-        this.abandonedItemIds.delete(this.abandonedItemIds.values().next().value as string);
-      }
-      this.currentItemId = null;
+      const responseId = this.itemResponseIds.get(itemId);
+      if (responseId) this.abandonedResponseIds.add(responseId);
+      this.itemResponseIds.delete(itemId);
+      this.generatedMsByItem.delete(itemId);
+    });
+    if (this.activeResponseId) this.abandonedResponseIds.add(this.activeResponseId);
+
+    // Bounded: only recent turns matter, and a long call would otherwise grow this
+    // set for every interruption.
+    while (this.abandonedResponseIds.size > 32) {
+      this.abandonedResponseIds.delete(this.abandonedResponseIds.values().next().value as string);
     }
+    this.currentItemId = null;
   }
 
   /** Return a tool result to the model and let it continue speaking. */

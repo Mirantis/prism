@@ -1,137 +1,215 @@
+/**
+ * Playback is paced against a clock: it stays a fixed, small distance ahead of real
+ * time. The two properties these tests pin down are the ones that broke in
+ * production — audio must not be committed far ahead (or interruption is sluggish),
+ * and a new response item must not discard the previous one (or the bot cuts itself
+ * off mid-word when a tool result arrives).
+ */
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AudioPlayback } from '../audio-playback';
 import { MEETING_SAMPLE_RATE, pcm16BytesForMs } from '../resampler';
-
-/** A sink that records every frame written to it. */
-function recordingSink() {
-  const writes: Buffer[] = [];
-  return {
-    writes,
-    total: () => writes.reduce((n, b) => n + b.length, 0),
-    sink: { write: (chunk: Buffer) => writes.push(chunk) },
-  };
-}
 
 /** `ms` of silence at the meeting's rate. */
 function audio(ms: number): Buffer {
   return Buffer.alloc(pcm16BytesForMs(ms, MEETING_SAMPLE_RATE));
 }
 
+function recordingSink() {
+  const writes: Buffer[] = [];
+  return {
+    writes,
+    totalMs: () => (writes.reduce((n, b) => n + b.length, 0) / 2 / MEETING_SAMPLE_RATE) * 1000,
+    sink: { write: (c: Buffer) => void writes.push(c) },
+  };
+}
+
 describe('AudioPlayback', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('meters audio out over time rather than dumping it at once', () => {
-    const { sink, total } = recordingSink();
-    const playback = new AudioPlayback(sink);
+  it('hands over only a small lead, not the whole utterance', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
 
-    playback.enqueue(audio(200), 'item-1');
+    // Five seconds arrive at once, as the Realtime API really delivers them.
+    playback.enqueue(audio(5000), 'item-1');
 
-    // One frame goes out immediately; the rest is paced.
-    expect(total()).toBeLessThan(pcm16BytesForMs(40, MEETING_SAMPLE_RATE));
-    vi.advanceTimersByTime(100);
-    const midway = total();
-    expect(midway).toBeGreaterThan(0);
-    expect(midway).toBeLessThan(pcm16BytesForMs(200, MEETING_SAMPLE_RATE));
-
-    vi.advanceTimersByTime(200);
-    expect(total()).toBe(pcm16BytesForMs(200, MEETING_SAMPLE_RATE));
+    // Committing all of it is what made interruption sluggish: a full pipe holds
+    // most of a second of speech that cannot be recalled.
+    expect(s.totalMs()).toBeLessThan(400);
+    expect(s.totalMs()).toBeGreaterThan(0);
   });
 
-  it('tracks played milliseconds, not received milliseconds', () => {
-    const { sink } = recordingSink();
-    const playback = new AudioPlayback(sink);
+  it('keeps feeding the device as time passes', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
+    playback.enqueue(audio(5000), 'item-1');
 
-    // A full second arrives instantly, as the Realtime API really delivers it.
-    playback.enqueue(audio(1000), 'item-1');
-    vi.advanceTimersByTime(100);
+    vi.advanceTimersByTime(1000);
+    const afterOneSecond = s.totalMs();
+    // Roughly a second of audio plus the lead.
+    expect(afterOneSecond).toBeGreaterThan(900);
+    expect(afterOneSecond).toBeLessThan(1400);
 
-    // Truncating the model's context at 1000ms here would be a lie.
-    expect(playback.currentPlayedMs).toBeGreaterThan(80);
-    expect(playback.currentPlayedMs).toBeLessThan(140);
+    vi.advanceTimersByTime(1000);
+    expect(s.totalMs()).toBeGreaterThan(afterOneSecond + 800);
   });
 
-  it('stops emitting while paused and continues on resume', () => {
-    const { sink, total } = recordingSink();
-    const playback = new AudioPlayback(sink);
+  it('catches up after a late tick instead of starving the device', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
+    playback.enqueue(audio(5000), 'item-1');
 
+    // Simulates the event loop being blocked — a GC pause or a tool call. A fixed
+    // amount-per-tick design under-delivers here and the device runs dry, which is
+    // what produced the clicks and chopped syllables.
+    vi.advanceTimersByTime(600);
+
+    expect(s.totalMs()).toBeGreaterThan(600);
+  });
+
+  it('does NOT discard the previous item when a new one arrives', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
+
+    // The exact production bug: the model says "let me check that" (item-1), calls a
+    // tool, and the follow-up response arrives as item-2. Discarding item-1 cut the
+    // filler off mid-word and sounded like the bot interrupting itself.
+    playback.enqueue(audio(500), 'item-1');
+    playback.enqueue(audio(500), 'item-2');
+    vi.advanceTimersByTime(2000);
+
+    expect(s.totalMs()).toBeCloseTo(1000, 0);
+  });
+
+  it('reports played time measured from the clock', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
+    playback.enqueue(audio(3000), 'item-1');
+
+    vi.advanceTimersByTime(1000);
+
+    // Measured, not inferred from an assumed buffer depth: what the room heard is
+    // what elapsed, and truncation has to be told that.
+    expect(playback.currentPlayedMs).toBeGreaterThan(900);
+    expect(playback.currentPlayedMs).toBeLessThan(1100);
+  });
+
+  it('never claims more was heard than was handed over', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
     playback.enqueue(audio(200), 'item-1');
-    vi.advanceTimersByTime(60);
-    const atPause = total();
-    playback.pause();
-    vi.advanceTimersByTime(200);
 
-    expect(total()).toBe(atPause);
+    vi.advanceTimersByTime(5000);
 
-    playback.resume();
-    vi.advanceTimersByTime(200);
-    expect(total()).toBeGreaterThan(atPause);
+    expect(playback.currentPlayedMs).toBeLessThanOrEqual(200);
+  });
+
+  it('attributes played time to the audible item after a switch', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
+
+    playback.enqueue(audio(400), 'item-1');
+    playback.enqueue(audio(2000), 'item-2');
+    vi.advanceTimersByTime(1500);
+
+    // Both items are reported: item-1 was heard in full, item-2 partially. Only
+    // reporting the newest left the preamble's unheard tail in the model's context.
+    const items = playback.flush();
+    expect(items.map((i) => i.itemId)).toEqual(['item-1', 'item-2']);
+    expect(items[0].playedMs).toBeCloseTo(400, 0);
+    expect(items[1].playedMs).toBeGreaterThan(900);
+    // `sentMs` accompanies each: the recommended truncation point is derived from
+    // played *and* sent, so reporting only one would under-determine it.
+    expect(items[0].sentMs).toBeCloseTo(400, 0);
+    expect(items[1].sentMs).toBeGreaterThan(items[1].playedMs);
   });
 
   it('drops unplayed audio on flush and reports what was heard', () => {
-    const { sink, total } = recordingSink();
-    const playback = new AudioPlayback(sink);
-
-    playback.enqueue(audio(1000), 'item-1');
-    vi.advanceTimersByTime(100);
-    const played = total();
-
-    const result = playback.flush();
-
-    expect(result.itemId).toBe('item-1');
-    expect(result.playedMs).toBeGreaterThan(80);
-    expect(result.playedMs).toBeLessThan(140);
-
-    // Nothing more reaches the meeting — this is what makes barge-in instant.
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
+    playback.enqueue(audio(5000), 'item-1');
     vi.advanceTimersByTime(1000);
-    expect(total()).toBe(played);
+    const written = s.totalMs();
+
+    const items = playback.flush();
+    expect(items).toHaveLength(1);
+    expect(items[0].itemId).toBe('item-1');
+    expect(items[0].playedMs).toBeGreaterThan(900);
+
+    vi.advanceTimersByTime(3000);
+    // Nothing further reaches the meeting — barge-in has to actually stop it.
+    expect(s.totalMs()).toBe(written);
     expect(playback.isSpeaking).toBe(false);
   });
 
-  it('restarts the played-ms counter for a new utterance', () => {
-    const { sink } = recordingSink();
-    const playback = new AudioPlayback(sink);
+  it('stops while paused and continues on resume', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
+    playback.enqueue(audio(5000), 'item-1');
+    vi.advanceTimersByTime(300);
 
-    playback.enqueue(audio(200), 'item-1');
-    vi.advanceTimersByTime(100);
-    expect(playback.currentPlayedMs).toBeGreaterThan(0);
+    playback.pause();
+    const atPause = s.totalMs();
+    vi.advanceTimersByTime(1000);
+    expect(s.totalMs()).toBe(atPause);
 
-    playback.enqueue(audio(200), 'item-2');
-    expect(playback.currentPlayedMs).toBe(0);
+    playback.resume();
+    vi.advanceTimersByTime(500);
+    expect(s.totalMs()).toBeGreaterThan(atPause);
   });
 
-  it('discards a previous utterance leftovers when a new one arrives', () => {
-    const { sink, writes } = recordingSink();
-    const playback = new AudioPlayback(sink);
+  it('plays an utterance shorter than the pre-roll rather than holding it forever', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
+
+    // Below the pre-roll and no more is coming: a deadline releases it, otherwise a
+    // brief "mm-hm" from the bot would be silently swallowed.
+    playback.enqueue(audio(40), 'item-1');
+    expect(s.totalMs()).toBe(0);
+
+    vi.advanceTimersByTime(400);
+    expect(s.totalMs()).toBeCloseTo(40, 0);
+  });
+
+  it('counts itself as speaking while audio is still in the device', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
 
     playback.enqueue(audio(1000), 'item-1');
-    vi.advanceTimersByTime(40);
-    writes.length = 0;
-
-    // The new item must not play the old item's tail under its own identity.
-    playback.enqueue(audio(40), 'item-2');
-    vi.advanceTimersByTime(500);
-
-    expect(writes.reduce((n, b) => n + b.length, 0)).toBe(pcm16BytesForMs(40, MEETING_SAMPLE_RATE));
+    // Barge-in must work during the lead as well as while queued.
+    expect(playback.isSpeaking).toBe(true);
+    vi.advanceTimersByTime(1200);
+    expect(playback.isSpeaking).toBe(false);
   });
 
-  it('splices across chunk boundaries into whole frames', () => {
-    const { sink, writes } = recordingSink();
-    const playback = new AudioPlayback(sink);
+  it('does not burst after a gap between phrases', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
 
-    // Ragged chunks smaller than one frame must still produce full frames.
-    for (let i = 0; i < 10; i++) playback.enqueue(audio(7), 'item-1');
-    vi.advanceTimersByTime(200);
+    playback.enqueue(audio(300), 'item-1');
+    vi.advanceTimersByTime(2000);
+    s.writes.length = 0;
 
-    const frameBytes = pcm16BytesForMs(20, MEETING_SAMPLE_RATE);
-    // Nothing is lost or duplicated by the splicing...
-    expect(writes.reduce((n, b) => n + b.length, 0)).toBe(pcm16BytesForMs(70, MEETING_SAMPLE_RATE));
-    // ...and no write exceeds a frame, so playback stays paced. (Writes may be
-    // shorter than a frame: a tick emits whatever is queued, which is how the
-    // first chunk starts speaking without waiting to fill a frame.)
-    for (const w of writes) expect(w.length).toBeLessThanOrEqual(frameBytes);
-    // Most frames are full — the splice combines the small chunks.
-    expect(writes.filter((w) => w.length === frameBytes).length).toBeGreaterThan(1);
+    // A long silence must not let the clock race ahead and dump the next phrase in
+    // one go, which would undo the pacing entirely.
+    playback.enqueue(audio(5000), 'item-2');
+    expect(s.totalMs()).toBeLessThan(400);
+  });
+
+  it('reports never-played items so their transcript is truncated too', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
+
+    // item-2's audio arrived but never reached the device: nothing was heard, and
+    // without a 0ms truncate its transcript would stay in the model's context.
+    playback.enqueue(audio(3000), 'item-1');
+    playback.enqueue(audio(500), 'item-2');
+    const items = playback.flush();
+
+    expect(items.map((i) => i.itemId)).toEqual(['item-1', 'item-2']);
+    expect(items[1].playedMs).toBe(0);
   });
 
   it('survives a sink that throws', () => {
@@ -141,20 +219,19 @@ describe('AudioPlayback', () => {
       },
     });
 
-    playback.enqueue(audio(200), 'item-1');
-    expect(() => vi.advanceTimersByTime(200)).not.toThrow();
+    playback.enqueue(audio(500), 'item-1');
+    expect(() => vi.advanceTimersByTime(500)).not.toThrow();
     expect(playback.isSpeaking).toBe(false);
   });
 
-  it('releases its timer on dispose', () => {
-    const { sink, total } = recordingSink();
-    const playback = new AudioPlayback(sink);
+  it('ignores audio enqueued after dispose', () => {
+    const s = recordingSink();
+    const playback = new AudioPlayback(s.sink);
 
-    playback.enqueue(audio(500), 'item-1');
     playback.dispose();
-    const afterDispose = total();
+    playback.enqueue(audio(500), 'item-1');
     vi.advanceTimersByTime(1000);
 
-    expect(total()).toBe(afterDispose);
+    expect(s.totalMs()).toBe(0);
   });
 });

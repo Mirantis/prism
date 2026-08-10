@@ -17,7 +17,7 @@ import { createTaskTool, type Invoker } from './task-tool';
 import { getMemoryTools } from '../tools/memory';
 import { getCronTools } from '../tools/cron';
 import { getGoalTools } from '../tools/goals';
-import { getAgentConfigTools, AGENT_CONFIG_WRITE_TOOL_NAMES } from '../tools/agent-config';
+import { getAgentConfigTools } from '../tools/agent-config';
 import { getShellTools } from '../tools/shell/index';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from '../tools/share-file';
 import { getSkillTools } from '../tools/skills/index';
@@ -164,8 +164,7 @@ export function withToolsCacheControl(
  *   "check again later" follow-ups
  * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
  * - goal: minus create_goal (no nested goals) and cron-management; get_goal stays
- * - meeting: the Realtime model's tool set inside a live call — minus the meeting
- *   tools themselves, share_file, goals, and the long-running shell/agent tools
+ * - meeting: same full set as chat (see the note in the function body)
  */
 export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<string, Tool> {
   // Goal-management tools are chat-only entry points; a goal turn keeps only
@@ -181,7 +180,17 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
     return result;
   };
 
-  if (mode === 'chat') {
+  // Chat and a live voice meeting both get the agent's full tool surface.
+  //
+  // Meeting mode used to withhold the tools whose effects outlive the call (cron,
+  // self-configuration, memory writes) because meeting audio is unauthenticated:
+  // anyone with the link can speak, and their words drive a model holding real
+  // tools. That boundary was removed deliberately — an agent that can only read is
+  // not much use in a working meeting — which makes
+  // `prompts/meeting-prompt.ts` the only remaining guard. It is guidance, not
+  // enforcement, so treat a meeting link as conferring the agent's own authority
+  // and keep it private. `docs/voice-meetings.md` says so plainly.
+  if (mode === 'chat' || mode === 'meeting') {
     return tools;
   }
 
@@ -222,48 +231,6 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
   // schedule.
   if (mode === 'goal') {
     return omit(new Set(['create_goal', ...cronToolNames, ...meetingToolNames]));
-  }
-
-  // A live voice meeting. Two different reasons to drop a tool here, and it is
-  // worth keeping them apart.
-  //
-  // **Nothing may outlive the call.** Meeting audio is unauthenticated — anyone
-  // with the link can speak, and their words drive a model holding the agent's
-  // tools. The line drawn here is that the room may direct work that happens
-  // *now*, while the people in the call can hear it being done, but may not leave
-  // anything behind that acts later or changes who the agent is:
-  //   - cron tools: a spoken request would become a persisted task that later runs
-  //     in `cron` mode with a *wider* toolset — an escalation straight around this
-  //     filter, and the sharpest edge here.
-  //   - agent-config writes and memory writes: persistent prompt injection. A
-  //     sentence in a meeting would shape every future turn, long after the call.
-  // The prompt (`prompts/meeting-prompt.ts`) also tells the model to refuse
-  // state-changing requests, but a prompt is guidance, not a boundary — this list
-  // is the boundary.
-  //
-  // **Nothing may leave the room in silence.** `claude_code` and the `shell_spawn`
-  // family run for minutes; goals and share_file target a user thread a meeting
-  // doesn't have. `leave_meeting` deliberately stays: "please leave" is a
-  // reasonable thing to say out loud and the agent should be able to act on it.
-  if (mode === 'meeting') {
-    return omit(
-      new Set([
-        'join_google_meet',
-        'meeting_status',
-        ...goalToolNames,
-        ...cronToolNames,
-        ...AGENT_CONFIG_WRITE_TOOL_NAMES,
-        'memory_write',
-        'memory_delete',
-        SHARE_FILE_TOOL_NAME,
-        'claude_code',
-        'claude_code_status',
-        'shell_spawn',
-        'shell_stdin',
-        'shell_stdout',
-        'shell_kill',
-      ]),
-    );
   }
 
   return tools;

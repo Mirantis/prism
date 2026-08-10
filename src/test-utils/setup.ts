@@ -32,5 +32,8 @@ vi.mock('../config', () => ({
     langfuseSecretKey: undefined,
     langfusePublicKey: undefined,
     langfuseBaseUrl: 'http://localhost:3100',
+    // Voice meetings. The transcriber is named here because the Realtime session
+    // sends it in `session.update`, so an undefined value would be asserted on.
+    openaiTranscriptionModel: 'gpt-realtime-whisper',
   },
 }));

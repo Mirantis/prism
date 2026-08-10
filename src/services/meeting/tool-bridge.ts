@@ -12,10 +12,11 @@
  * container anyway.
  *
  * Because the bridge runs tools on behalf of whoever is talking, everything a
- * meeting participant says is untrusted input with tool authority behind it. Two
- * guards live here: the `meeting` tool mode drops what doesn't belong in a live
- * call, and every result is size-capped before it goes back to a model that has to
- * *say* it out loud.
+ * meeting participant says is untrusted input with the agent's full tool authority
+ * behind it — the `meeting` mode intentionally withholds nothing. The only guard
+ * left in code is the size cap on results, which exists for a different reason (a
+ * model that has to *say* the answer should not be handed a 100 kB dump). Behaviour
+ * around destructive requests is prompt-level; see `prompts/meeting-prompt.ts`.
  */
 
 import { asSchema, type Tool } from 'ai';
@@ -51,10 +52,12 @@ export interface PreparedMeetingTools {
 /**
  * Collect the agent's tools in `meeting` mode and adapt them for the Realtime API.
  *
- * The Task tool is not offered even when subagents exist: it is collected by
- * `collectTools` and then dropped here, because a subagent invocation runs for
- * minutes while the meeting waits in silence. Long work belongs in a chat turn the
- * agent can follow up on.
+ * Everything executable is offered, Task included. Be aware of what that means for
+ * pacing: `shell_spawn` and `claude_code` do hand back a handle immediately, but
+ * `Task` awaits the whole subagent run, so its result can take minutes. The session
+ * stays alive and interruptible throughout — but the model is waiting on that
+ * result, so the prompt's instruction to say something before a tool call is what
+ * keeps the room from sitting in silence.
  */
 export async function prepareMeetingTools(
   input: MeetingToolBridgeInput,
@@ -67,16 +70,18 @@ export async function prepareMeetingTools(
     // A meeting has no workspace: it is not launched from a repo checkout, so
     // only global skills apply — the same position autonomous runs are in.
     workspaceRoot: undefined,
-    // Unreachable: the Task tool is dropped below, so nothing can invoke this.
-    // Kept explicit rather than cast away so a future change fails loudly.
-    taskInvoker: async () => {
-      throw new Error('Subagent tasks are not available during a live meeting.');
+    // Imported at call time, not at module load: the cycle
+    // invoke -> tool-collection -> tools/meeting -> meeting-bot.service -> here is
+    // real, and a top-level import would close it and leave one module
+    // half-initialized.
+    taskInvoker: async (request) => {
+      const { invoke } = await import('../../invoke');
+      return invoke(request);
     },
   });
 
   const usable: Record<string, Tool> = {};
   for (const [name, tool] of Object.entries(tools)) {
-    if (name === 'Task') continue;
     if (typeof tool.execute !== 'function') {
       // Provider-executed or client-side tools have no local implementation to
       // call; offering them would produce a call the bridge can't answer.

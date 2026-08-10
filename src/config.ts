@@ -181,10 +181,33 @@ const modelIds = {
 // Unset disables the meeting tools entirely (they're also gated on the browser and
 // audio toolchain being present).
 const openaiApiKey = process.env.OPENAI_API_KEY;
-const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
-// Empty means "let the API pick", which is why this is `||` rather than a literal
-// default — naming a voice that a future model drops would break the session.
-const openaiRealtimeVoice = process.env.OPENAI_REALTIME_VOICE || undefined;
+// Pinned to a snapshot rather than the `gpt-realtime` alias. The alias silently
+// follows OpenAI's current snapshot, and a voice model changing under a live
+// deployment shifts turn-taking and prosody with no code change to point at.
+const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1';
+// `marin` is markedly better for conversation than the API's `alloy` default.
+// Overridable because a future model may retire a voice name.
+const openaiRealtimeVoice = process.env.OPENAI_REALTIME_VOICE || 'marin';
+// Transcriber for the addressed-only gate (only that mode needs words, and it is
+// billed per minute). `gpt-realtime-whisper` is the streaming model built for
+// realtime sessions; `gpt-4o-transcribe` and `whisper-1` also work if a
+// deployment prefers them.
+const openaiTranscriptionModel =
+  process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-realtime-whisper';
+
+// Google account the meeting bot signs in as.
+//
+// Not optional in practice for Google Meet: Google auto-denies automated
+// *anonymous* guests (the join RPC returns 403 and the host is never even
+// prompted), so a bot that isn't signed in reaches the lobby and stops there. A
+// signed-in account is an ordinary participant. The browser profile is persisted
+// under the data dir, so the sign-in happens once rather than per meeting —
+// which also keeps Google from treating every call as a new-device event.
+//
+// Accounts protected by a phone/hardware challenge or enforced SSO cannot be
+// signed in unattended; those deployments need a profile seeded out of band.
+const googleBotEmail = process.env.GOOGLE_BOT_EMAIL;
+const googleBotPassword = process.env.GOOGLE_BOT_PASSWORD;
 
 // Hard cap on one call, so a meeting nobody ended can't hold a browser, an audio
 // daemon and a metered WebSocket open indefinitely. Junk or non-positive falls
@@ -390,6 +413,9 @@ export const config = {
   openaiApiKey,
   openaiRealtimeModel,
   openaiRealtimeVoice,
+  openaiTranscriptionModel,
+  googleBotEmail,
+  googleBotPassword,
   meetingDisplayName: process.env.MEETING_DISPLAY_NAME || '',
   meetingTimeoutMinutes,
   meetingAdmissionTimeoutMs,

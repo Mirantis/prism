@@ -29,6 +29,16 @@ export interface JoinOptions {
   displayName: string;
   /** Cap on the whole join attempt, waiting room included. */
   admissionTimeoutMs: number;
+  /**
+   * Whether the browser profile is signed into a Google account.
+   *
+   * Lets a provider tell two very different situations apart. Meet offers a guest
+   * name field both to an anonymous visitor *and* to a signed-in one whose meeting
+   * has ended — so seeing that field while signed in is strong evidence the link is
+   * dead, not that sign-in failed. Without this the two look identical in the logs,
+   * which cost real debugging time.
+   */
+  signedIn?: boolean;
 }
 
 export interface MeetingProvider {

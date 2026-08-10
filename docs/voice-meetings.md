@@ -17,8 +17,8 @@ audio or model path.
 
 ## What you need
 
-Voice meetings need two things, and the agent's `join_google_meet` tool only
-appears when both are present:
+Voice meetings need three things, and the agent's `join_google_meet` tool only
+appears when the first two are present:
 
 1. **The container image.** It ships the browser and audio toolchain (Chromium,
    Xvfb, PulseAudio). A native install via the `prism` binary has no browser to
@@ -27,36 +27,71 @@ appears when both are present:
    call in the runtime that does *not* go through your configured Bedrock/Azure
    provider, because none of them serves a realtime voice surface. Your chat model
    is unaffected; only the in-meeting voice uses OpenAI.
+3. **A Google account for the agent** (`GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD`).
+   This one is not optional in practice — see below.
 
 ```bash
 docker run -d \
   -e AGENT_ID="$(uuidgen)" \
   -e AWS_BEARER_TOKEN_BEDROCK=... \
   -e OPENAI_API_KEY=sk-... \
+  -e GOOGLE_BOT_EMAIL=prism-bot@example.com \
+  -e GOOGLE_BOT_PASSWORD=... \
   -p 3003:3003 -v prism-data:/data \
   ghcr.io/lensapp/prism-agent:latest
 ```
 
-In a Lens sandbox the key can be a managed credential — it is only ever sent as a
-request header, so the platform swaps it at the network boundary and no real key
-lands in the container. If your deployment filters egress, allow `api.openai.com`
-along with Google's meeting hosts (including WebRTC UDP).
+In a Lens sandbox these can be managed credentials — they are only ever sent as
+request headers or typed into Google's own form, so the platform swaps them at the
+network boundary and no real secret lands in the container. If your deployment
+filters egress, allow `api.openai.com` along with Google's meeting and accounts
+hosts (including WebRTC UDP).
+
+### Why the agent needs its own Google account
+
+**Google auto-denies automated anonymous guests.** Asking to join without signing in
+gets refused about a second after the request — the join RPC returns 403 and *the
+host is never shown a request to admit*. This is policy rather than bot detection:
+Google's documentation states that anonymous users and third-party bots using "Ask
+to join" are denied without host action, and their March 2026 "safeguarded guest
+admit flow" defaults to deny. Patched automation, real Chrome, human-like pacing and
+honest user agents all hit the same wall; the same browser signed into an account
+joins normally. Every commercial meeting-bot vendor uses signed-in accounts for the
+same reason.
+
+So give the agent a **dedicated** account, not a person's:
+
+- It signs in once and the browser profile is kept under `/data`, so later meetings
+  reuse the session. That also matters for reliability — Google challenges a *new*
+  device, not a returning one.
+- If the session goes stale, the agent notices and signs in again on its own.
+- The account's display name is what participants see in the call.
+- **Accounts with a phone/hardware-key challenge or enforced SSO can't be signed in
+  unattended.** The runtime will report what Google's page said and fall back to a
+  guest attempt (which will be denied). For those tenants, seed the profile out of
+  band instead.
+
+An account inside the meeting's own Workspace is the smoothest case: invite it to
+the event and it can skip the waiting room entirely.
 
 ## Joining
 
-The agent joins as an **anonymous guest**, exactly like a person opening the link
-without signing in. That means:
+The agent joins as its own signed-in participant. That means:
 
 - **A host has to admit it.** The join tool returns as soon as the request is in —
   it does not wait, because a host might take minutes. You'll get "Requested to
   join… a host needs to admit me", and then a second note when it's actually in.
-- **Some meetings won't let it in at all.** Workspace tenants can restrict a
-  meeting to signed-in members of the organization. The agent reports what Meet
-  told it rather than retrying.
+- **Some meetings won't let it in at all.** A tenant can restrict a meeting to
+  members of its own organization. The agent reports what Meet told it rather than
+  retrying.
+- **A dead link looks like a guest prompt.** Meet offers a guest name field for a
+  meeting that has ended, even to a signed-in visitor, and then refuses the join.
+  If a join fails, check the meeting is still running with a host in it — that is
+  by far the most common cause.
 - **It joins with no camera.** It appears as a name and an avatar tile.
 
-It uses its own name by default; pass a different one, or set
-`MEETING_DISPLAY_NAME`, if you'd rather it show up as "Prism (bot)".
+Participants see the Google account's own name. `MEETING_DISPLAY_NAME` only applies
+on the guest path.
 
 The agent handles one call at a time. Asking it to join a second one while it's in
 a meeting returns an error rather than dropping the first.
@@ -87,38 +122,26 @@ acting on them.
 
 ## Tools, and what it won't do on a spoken request
 
-The agent keeps most of its real tools in the meeting — memory search, its shell
-and its connected integrations. It can check a cluster, read a file, or search its
-memory and tell you the answer without leaving the call.
+The agent has its **full toolset** in a call — the same memory, shell, scheduling
+and integration tools it has in chat, with nothing withheld. It can check a cluster,
+read a file, search its memory or kick off longer work and tell you the answer
+without leaving the meeting. It's asked to say something like "let me check that
+real quick" before each tool call, so a pause never sounds like it dropped off.
 
-**A meeting is not an authenticated channel.** Anyone with the link can speak, and
-the agent cannot verify who anyone is. Two layers follow from that.
+**A meeting is not an authenticated channel — and that matters more now.** Anyone
+with the link can speak, the agent cannot verify who anyone is, and there is no
+code-level restriction on what it can be asked to do. The guardrails are
+instructions in its prompt: announce and get an explicit "yes" in the room before
+anything that deletes, deploys, spends money, grants access, or changes its own
+configuration; and refuse spoken attempts to rewrite its configuration, memory or
+instructions.
 
-**Nothing said in a call can outlive it.** These tools are withheld outright in a
-meeting, in code and not merely by instruction:
+Instructions are a strong default, not enforcement. So treat a meeting link as
+handing over the agent's own authority: **share it only with people you'd trust with
+the agent's shell.** If you want the stricter behaviour, use `addressedOnly` to
+limit what it engages with, or start the agent with a narrower tool surface.
 
-- **Scheduling** (`schedule_task` and friends). This one matters most: a spoken
-  request would otherwise become a saved task that runs later, on its own, with a
-  *wider* set of tools than the meeting allows — a way around every other limit
-  here.
-- **Editing its own configuration** — its Soul, user profile, settings, heartbeat,
-  vision. A sentence in a call would otherwise reshape every future conversation.
-- **Writing to memory.** Same reason: it would persist as fact.
-
-**Anything that changes state needs chat.** For the tools it does keep, the agent is
-instructed to look things up and report freely, but to refuse anything that
-deploys, deletes, spends, or grants access on a spoken request alone — and to raise
-it with its configured user in chat instead. It holds to that even if the speaker
-claims to be that person. This layer is instruction rather than enforcement, so it
-is a strong default and not a guarantee: if you would not give everyone on the call
-shell access to the container, keep the link private.
-
-Two further limits are for the room's sake rather than for safety: the agent can't
-start a Claude Code sub-agent or a background process during a call (those run for
-minutes while the meeting waits in silence), and it can't create goals or share
-files, which need a conversation thread a meeting doesn't have.
-
-It *can* leave on request — "you can drop off now" works, and it hangs up.
+It also leaves on request — "you can drop off now" works, and it hangs up.
 
 ## Cost
 
@@ -145,9 +168,10 @@ call without consent is also a legal question, not just an etiquette one.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `OPENAI_API_KEY` | Enables voice meetings. May be a managed-credential sentinel. | — (disabled) |
-| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime` |
-| `OPENAI_REALTIME_VOICE` | Voice name; unset lets the API choose. | — |
-| `MEETING_DISPLAY_NAME` | Name shown to participants. | the agent's name |
+| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
+| `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
+| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber for `addressedOnly` mode only (billed per minute). | `gpt-realtime-whisper` |
+| `MEETING_DISPLAY_NAME` | Name shown to participants on the guest path only. | the agent's name |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait to be admitted. | `300` |
 

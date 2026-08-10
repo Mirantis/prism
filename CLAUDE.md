@@ -310,7 +310,7 @@ locally.
 | **SlackHeartbeatTriggerService** | `services/slack-heartbeat-trigger.service.ts` | CRUD for per-agent Slack heartbeat trigger config, atomic claim logic |
 | **SessionManagerService** | `services/session-manager.service.ts` | Daily session resets, idle timeout management |
 | **MemoryManagerService** | `services/memory-manager.service.ts` | Two-layer memory: daily append-only logs + curated long-term key-value store |
-| **MeetingBotService** | `services/meeting/meeting-bot.service.ts` | Live voice meetings: owns one call at a time (Xvfb + PulseAudio virtual devices + Chromium via playwright-core + an OpenAI Realtime session). The Realtime model *is* the agent in the room — it carries the agent's system prompt (`buildSystemPromptParts(ctx, 'meeting')` + `prompts/meeting-prompt.ts`) and its real tools, bridged in as Realtime function tools and executed in-process (`tool-bridge.ts`). Platform-specific join flows sit behind `MeetingProvider` (`providers/google-meet.provider.ts`); everything else is platform-agnostic. Barge-in is local, not server-side, so a backchannel doesn't cut the bot off (`barge-in.ts` + `audio-playback.ts`) |
+| **MeetingBotService** | `services/meeting/meeting-bot.service.ts` | Live voice meetings: owns one call at a time (Xvfb + PulseAudio virtual devices + Chromium spawned as an ordinary process and driven over CDP, plus an OpenAI Realtime session). Joins **signed into a Google account** — Meet auto-denies automated anonymous guests, so this is required rather than preferred; the browser profile persists under `<DATA>/meeting-browser-profile`. The Realtime model *is* the agent in the room — it carries the agent's system prompt (`buildSystemPromptParts(ctx, 'meeting')` + `prompts/meeting-prompt.ts`) and its real tools, bridged in as Realtime function tools and executed in-process (`tool-bridge.ts`). Platform-specific join flows sit behind `MeetingProvider` (`providers/google-meet.provider.ts`); everything else is platform-agnostic. Barge-in is local, not server-side, so a backchannel doesn't cut the bot off (`barge-in.ts` + `audio-playback.ts`) |
 | **WebSocketGatewayService** | `services/websocket-gateway.service.ts` | WebSocket server: JWT decode (backend verifies), connection management, per-user message queuing, agent status management |
 | **WebSocketAdapterService** | `services/websocket-adapter.service.ts` | ChannelAdapter for WebSocket delivery, calls local gateway directly |
 | **BackendClient** | `lib/backend-client.ts` | Typed HTTP client for backend internal REST API: access control (`canAccessAgent()`) + SlackConnection read-only access (`getActiveSlackConnections()`, `getSlackConnection()`) |
@@ -448,9 +448,11 @@ What the operator sets on `docker run`:
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
 | `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction (sent verbatim) | `6` |
 | `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md). **Never routed through Nexus** — no managed-inference vendor serves the Realtime surface, so the socket goes direct to `api.openai.com`; may be a `__nexus_cred:…__` sentinel since it only ever rides a header | — (meeting tools unregistered) |
-| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice | `gpt-realtime` |
-| `OPENAI_REALTIME_VOICE` | Voice name; unset lets the API choose | — |
-| `MEETING_DISPLAY_NAME` | Name shown to meeting participants | the agent's name |
+| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot rather than the moving `gpt-realtime` alias, so a new snapshot cannot change turn-taking under a live deployment | `gpt-realtime-2.1` |
+| `OPENAI_REALTIME_VOICE` | Voice name | `marin` |
+| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber for `addressedOnly` mode only (bills per minute; verified accepted in a speech-to-speech session despite its model page listing only the transcription-session endpoint) | `gpt-realtime-whisper` |
+| `GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD` | Google account the meeting bot signs in as. **Effectively required** — Meet auto-denies automated anonymous guests (`CreateMeetingDevice` 403, host never prompted). Profile persisted under `<DATA>/meeting-browser-profile`, so login is rare | — |
+| `MEETING_DISPLAY_NAME` | Name shown to participants on the guest path (signed-in uses the account's name) | the agent's name |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait to be admitted from the waiting room | `300` |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
