@@ -83,7 +83,7 @@ export interface SystemPromptPart {
  */
 export async function buildSystemPromptParts(
   context: AgentContext,
-  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' = 'chat',
+  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' | 'meeting' = 'chat',
   slackMessages?: SlackTriggerMessage[],
   query?: string,
   workspaceRoot?: string,
@@ -159,6 +159,11 @@ export async function buildSystemPromptParts(
     // Goal turns do real work like a chat turn, plus the autonomous-goal framing.
     stableSections.push(getChatInstructions());
     stableSections.push(getGoalInstructions());
+  } else if (mode === 'meeting') {
+    // No chat-mode section: a live voice meeting is not a conversation with the
+    // user, and its delivery rules are the opposite of chat's (no markdown, no
+    // paragraphs). `prompts/meeting-prompt.ts` is authoritative there and the
+    // meeting service appends it.
   } else {
     stableSections.push(getChatInstructions());
   }
@@ -218,7 +223,7 @@ export async function buildSystemPromptParts(
  */
 export async function buildSystemPrompt(
   context: AgentContext,
-  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' = 'chat',
+  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' | 'meeting' = 'chat',
   slackMessages?: SlackTriggerMessage[],
   query?: string,
 ): Promise<string> {

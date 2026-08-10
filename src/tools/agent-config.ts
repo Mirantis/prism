@@ -16,6 +16,26 @@ import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { config } from '../config';
 
+/**
+ * Every tool here that mutates the agent's own definition.
+ *
+ * Exported so callers that must withhold self-modification can do so by name
+ * without re-deriving the list — notably the `meeting` tool mode, where a
+ * sentence spoken by anyone on an unauthenticated conference line would
+ * otherwise rewrite the agent's identity for every future turn. Keep in sync
+ * with the tools returned below; the test in `src/tools/__tests__` asserts it.
+ */
+export const AGENT_CONFIG_WRITE_TOOL_NAMES = [
+  'rename_self',
+  'update_soul',
+  'update_memory',
+  'update_user_profile',
+  'update_heartbeat_config',
+  'update_settings',
+  'update_vision',
+  'clear_bootstrap',
+] as const;
+
 /** Shared input schema for workspace-file update tools (dual-mode: full replace or targeted edits). */
 const workspaceFileInputSchema = z.object({
   newContent: z.string().optional().describe(

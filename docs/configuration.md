@@ -226,6 +226,30 @@ for that.
 | `NEXUS_MCP_URL` | Endpoint of an external [MCP server](tools.md#external-tools-mcp). When set, its tools are exposed to the agent. | — (no external tools) |
 | `NEXUS_API_URL` | Base URL of a Nexus instance, used for the LLM proxy and WebSocket authorization. When set, LLM calls route through Nexus (for either platform). It is **not** a fallback for `NEXUS_MCP_URL`. | — |
 
+## Voice meetings
+
+[Voice meetings](voice-meetings.md) let the agent join a Google Meet call and take
+part by voice. The tools appear only when `OPENAI_API_KEY` is set **and** the host
+has the browser/audio toolchain, which ships in the container image — so a native
+install never grows them.
+
+The voice model is OpenAI's Realtime API. It is the one model call that does not
+route through your configured provider or the Nexus LLM gateway: managed inference
+serves Bedrock, Azure and Bedrock Mantle, none of which exposes a realtime voice
+surface. The socket goes straight to `api.openai.com`, so an egress-filtered
+deployment must allow that host (plus Google's meeting hosts, including WebRTC UDP).
+The key is only ever sent as a request header, so it may be a
+`__nexus_cred:<uuid>__` sentinel that the sandbox rewrites on the wire.
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `OPENAI_API_KEY` | Enables voice meetings. May be a Nexus credential sentinel. | — (disabled) |
+| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. `gpt-realtime-mini` is materially cheaper. | `gpt-realtime` |
+| `OPENAI_REALTIME_VOICE` | Voice name; unset lets the API pick its own default. | — |
+| `MEETING_DISPLAY_NAME` | Name shown to the other participants. | the agent's name |
+| `MEETING_TIMEOUT_MINUTES` | Hard cap on one call, so a meeting nobody ended can't hold a browser and a metered socket open. Junk or non-positive falls back to the default. | `60` |
+| `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room for a host to admit the agent. | `300` |
+
 ## Observability
 
 All optional; each is off until its variable is set. Langfuse traces every LLM

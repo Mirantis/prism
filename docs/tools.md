@@ -98,6 +98,27 @@ attachment** (up to 10 MB). That's how files it produces — a report, an export
 a generated artifact — reach you in the Web UI, Terminal UI, or Slack. In the
 TUI, save them to disk with [`/save`](terminal-ui.md#attaching-and-saving-files).
 
+## Voice meetings
+
+The agent can join a Google Meet call and take part by voice — see
+[Voice meetings](voice-meetings.md). It asks to join, a host admits it, and from
+then on it listens and speaks in the room. Inside the call it keeps the tools above
+(so it can look something up and say the answer), minus the ones that don't fit a
+live conversation: no Claude Code sub-agent or background process (they run for
+minutes while the room waits), and no goals or file sharing (those need a
+conversation thread a meeting doesn't have).
+
+These tools only exist when the runtime can actually host a call: the container
+image's browser/audio toolchain plus `OPENAI_API_KEY`. They're also chat-only — a
+heartbeat or scheduled run can't dial into a meeting on its own.
+
+Because anyone with the meeting link can talk to it, a meeting also **withholds
+every tool whose effect would outlive the call**: scheduling (which would otherwise
+run later with a wider toolset), edits to its own configuration, and memory writes.
+Those are enforced, not merely discouraged. For the tools it keeps, the agent is
+instructed to look things up and report freely but to refuse anything that changes
+state on a spoken request, and to arrange that with its configured user in chat.
+
 ## External tools (MCP)
 
 Beyond the built-in tools, the runtime can connect to an external **MCP** server
