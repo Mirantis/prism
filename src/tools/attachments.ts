@@ -372,8 +372,6 @@ export function getAttachmentTools(
   workspaceRoot?: string | null,
   registerInjection?: (message: ModelMessage) => void,
 ): Record<string, Tool> {
-  // One invocation = one tool set (built per invokeStream call), so this set
-  // is exactly the "already attached this turn" dedupe scope PDFs need.
   const injectedDocumentIds = new Set<string>();
   return {
     hydrate_attachment: tool({

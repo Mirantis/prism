@@ -39,9 +39,8 @@ import { webSocketGatewayService } from './services/websocket-gateway.service';
 import { messageDeliveryService } from './services/message-delivery.service';
 import { pluginMcpService } from './services/plugin-mcp.service';
 import { pluginCatalogService } from './services/plugin-catalog.service';
-import { attachmentService } from './services/attachment.service';
-import { reapScratchDirs } from './tools/attachments';
-import { reapStrayMediaFiles } from './lib/media-store';
+import { reconcileAttachmentStorage } from './lib/attachment-boot';
+import { startAttachmentJanitor } from './lib/attachment-janitor';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
@@ -116,38 +115,9 @@ const initialize = async () => {
       pluginCatalogService.getPlugins().length,
     );
 
-    // Attachment storage reconciliation, in dependency order. All three run
-    // before listen() — acceptable because expiry runs first, so the backfill
-    // only ever exports content younger than the TTL (bounded work), and a
-    // per-row failure is logged and retried next boot rather than thrown.
-    //
-    // 1. Rows pointing at media files that no longer exist (a `.prism` import
-    //    onto another install, a lost volume) go back to storagePath = null so
-    //    `expired` tells the truth.
-    const reconciled = await attachmentService.reconcileMissingFiles();
-    if (reconciled > 0) {
-      logger.warn('[Attachments] %d row(s) pointed at missing media files; marked expired', reconciled);
-    }
-    // 2. Expire over-TTL content now — clearing legacy BLOBs *before* the
-    //    backfill, so a long-lived database doesn't write years of old BLOBs
-    //    to disk only to unlink them minutes later.
-    try {
-      const expired = await attachmentService.expireContent(config.attachmentContentTtlMs);
-      if (expired > 0) logger.info(`[Attachments] expired content of ${expired} attachment(s)`);
-    } catch (err) {
-      logger.error({ err }, '[Attachments] boot content expiry failed');
-    }
-    // 3. Migrate the surviving legacy BLOB rows to media files (idempotent; a
-    //    migrated database matches nothing).
-    const backfill = await attachmentService.backfillBlobsToFiles();
-    if (backfill.migrated > 0 || backfill.failed > 0) {
-      logger.info(
-        '[Attachments] backfilled %d BLOB row(s) to %s (%d failed)',
-        backfill.migrated,
-        dirs.mediaDir,
-        backfill.failed,
-      );
-    }
+    // Bring the attachment rows and the media dir back into agreement (missing
+    // files, over-TTL content, legacy BLOBs) before anything can serve them.
+    await reconcileAttachmentStorage(dirs.mediaDir);
 
     // Active LLM provider + routing, so the deployed vendor is observable in
     // logs. `routing` is 'nexus' when the selected vendor's Nexus chat mount is
@@ -204,54 +174,9 @@ const initialize = async () => {
 
     await getSlackHeartbeatThrottleQueue().start();
 
-    // Hourly attachment janitor: reap abandoned pre-send uploads (chip added
-    // but never sent), stale hydrate scratch dirs, content past its TTL, and
-    // stray media files no row references (cascade-deleted messages, imports).
-    const ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
-    // Grace before a stray media file may be reaped — covers the window
-    // between the file write and its row insert. Never shorten below 1 h.
-    const STRAY_MEDIA_GRACE_MS = 60 * 60 * 1000;
-    const reapOrphanAttachments = async () => {
-      try {
-        const deleted = await attachmentService.deleteOrphans(ORPHAN_TTL_MS);
-        if (deleted > 0) logger.info(`[Attachments] reaped ${deleted} orphaned upload(s)`);
-      } catch (err) {
-        logger.error({ err }, '[Attachments] orphan cleanup failed');
-      }
-      try {
-        // hydrate_attachment writes under the *thread's* workspace root (a TUI
-        // thread's launch cwd), not only the default shell workspace — sweep
-        // every root we know about or CLI repos accumulate .attachments dirs.
-        const threadRoots = await prisma.conversationThread.findMany({
-          where: { workspaceRoot: { not: null } },
-          select: { workspaceRoot: true },
-          distinct: ['workspaceRoot'],
-        });
-        let reaped = 0;
-        for (const root of [null, ...threadRoots.map((t) => t.workspaceRoot)]) {
-          reaped += await reapScratchDirs(root, ORPHAN_TTL_MS);
-        }
-        if (reaped > 0) logger.info(`[Attachments] reaped ${reaped} stale scratch dir(s)`);
-      } catch (err) {
-        logger.error({ err }, '[Attachments] scratch dir cleanup failed');
-      }
-      try {
-        const expired = await attachmentService.expireContent(config.attachmentContentTtlMs);
-        if (expired > 0) logger.info(`[Attachments] expired content of ${expired} attachment(s)`);
-      } catch (err) {
-        logger.error({ err }, '[Attachments] content expiry failed');
-      }
-      try {
-        const live = await attachmentService.listLiveStoragePaths();
-        const strays = await reapStrayMediaFiles(live, STRAY_MEDIA_GRACE_MS);
-        if (strays > 0) logger.info(`[Attachments] reaped ${strays} stray media file(s)`);
-      } catch (err) {
-        logger.error({ err }, '[Attachments] stray media cleanup failed');
-      }
-    };
-    await reapOrphanAttachments();
-    orphanCleanupTimer = setInterval(reapOrphanAttachments, 60 * 60 * 1000);
-    orphanCleanupTimer.unref?.();
+    // Sweep abandoned uploads, scratch dirs, expired content and stray media
+    // files now, then hourly (see lib/attachment-janitor.ts).
+    orphanCleanupTimer = await startAttachmentJanitor();
 
     // Probe for the voice-meeting toolchain once, here rather than per turn: the
     // tools block must stay byte-identical across requests for the provider's
