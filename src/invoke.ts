@@ -123,12 +123,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     const model = provider(modelId);
     const cachePoint = provider.cachePoint;
 
-    // Messages a tool asked to append to the running conversation — today
-    // only view_attachment on a PDF, whose document block is only legal in a
-    // user message (the Bedrock Converse converter throws on file content in
-    // a tool result). Queued here, drained into `injections` at the next step
-    // boundary (prepareStep below), so the document lands right after the
-    // tool result that requested it.
+    // Queue for messages a tool asks to append to the running conversation,
+    // for content a tool result cannot carry and that must arrive as a user
+    // message of its own. A tool pushes here while its step runs; `prepareStep`
+    // (below) drains the queue at the next step boundary into `injections`,
+    // which pins each message right after the tool result that asked for it.
     const pendingAttachmentInjections: ModelMessage[] = [];
 
     // 4. Collect tools (see lib/tool-collection.ts).

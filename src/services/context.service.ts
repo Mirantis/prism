@@ -60,7 +60,7 @@ class ContextService {
   }
 
   /**
-   * Attach shared-file metadata (no bytes) to every message in the model
+   * Attach shared-file metadata to every message in the model
    * window. The window is every non-compacted message — compaction
    * (compaction.service.ts) bounds it in steady state by folding older history
    * into the thread's summary, so there is deliberately no count-based slice
