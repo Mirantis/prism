@@ -91,15 +91,8 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
             'addressed by name. "open" always answers every utterance — only for a call you ' +
             'know stays one-to-one. "addressed" always waits to be named.',
           ),
-        aliases: z
-          .array(z.string())
-          .optional()
-          .describe(
-            'Other spellings of your name to listen for, if live transcription tends to ' +
-            'mangle it (e.g. ["prisma", "prison"] for "Prism").',
-          ),
       }),
-      execute: async ({ url, displayName, responseMode, aliases }) => {
+      execute: async ({ url, displayName, responseMode }) => {
         const provider = meetingBotService.findProvider(url);
         if (!provider) {
           return {
@@ -117,7 +110,6 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
           threadId: input.threadId,
           displayName,
           responseMode,
-          aliases,
         });
 
         return {

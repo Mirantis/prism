@@ -15,28 +15,32 @@
  *   It answers on end-of-utterance, before any transcript exists. That matters:
  *   it is the same instant the server would have created the response itself, so
  *   a one-to-one call is no slower than it was with the API driving.
- * - **addressed** — more than one human, so an utterance has to look like it was
- *   aimed at the agent: its name (or an alias), or the sticky window below.
- *   This is the one path that waits for the transcript.
+ * - **addressed** — more than one human, so the agent has to be called by name,
+ *   every time. Whether it was is decided by `addressed-classifier.ts`, not by
+ *   matching the string: transcription mangles names ("Prism" came back as
+ *   "Pritham"), an agent can be called anything, and a name can be mentioned
+ *   without being addressed ("I asked Prism about that yesterday").
  *
- * **Sticky engagement.** Requiring the name on every turn makes a real
- * back-and-forth stilted ("Prism, and staging?" … "Prism, thanks"). So for a
- * short while after the agent finishes speaking, the next utterance counts as
- * addressed. Two things keep that from re-creating the original problem: the
- * window is anchored to the *agent's* last turn rather than the last thing any
- * human said, and it survives only a few consecutive unaddressed turns before
- * the name is needed again. Both are deliberate — there is no reliable
- * "that wasn't for me" classifier, which is the whole premise here, so the
- * escape hatch has to be a timer and a counter rather than a judgement.
+ * Deliberately *not* judged: whether a sentence merely sounds like a request for
+ * an assistant. The room is one mixed channel with no speaker labels, so "can you
+ * add apples to the list?" is identical whether it was said to the agent or to the
+ * person in the next chair. Guessing there is how a meeting bot ends up in the
+ * middle of other people's conversations.
+ *
+ * **No grace period after the agent speaks.** An earlier version kept a 15-second
+ * window in which any utterance counted as addressed, so a follow-up needn't
+ * repeat the name. Testing on real calls killed it: fifteen seconds after the
+ * agent stops talking is mostly other people starting to talk to *each other*,
+ * which is the exact failure this file exists to prevent. Being named every time
+ * is slightly more effort to talk to and much harder to get wrong, and it leaves
+ * one rule to explain instead of three interacting ones.
  *
  * Every "yes" from this object *will* be spoken: unlike prompt-level gating there
  * is no path for the model to decline once `response.create` goes out. That makes
- * false positives the failure mode to design against, hence the conservative
- * window and the counter.
+ * false positives the failure mode to design against.
  */
 
 import { logger } from '../../logger';
-import { isAddressedToAgent } from './addressed-detection';
 
 /** What the caller asked for. `auto` resolves from the participant count. */
 export type ResponseMode = 'auto' | 'open' | 'addressed';
@@ -45,32 +49,27 @@ export type ResponseMode = 'auto' | 'open' | 'addressed';
 export type EffectiveMode = 'open' | 'addressed';
 
 /**
- * How long after the agent stops speaking an unnamed utterance still counts.
+ * What to do with an utterance once its words are known.
  *
- * Long enough for someone to react to what they just heard, short enough that
- * two humans resuming their own conversation get at most one stray answer.
+ * `classify` means this object declines to decide: whether the agent was named is
+ * a judgement, and judgements live outside a class the rest of the code calls
+ * synchronously.
  */
-export const STICKY_WINDOW_MS = 15_000;
+export type TranscriptDecision = 'respond' | 'ignore' | 'classify';
 
 /**
- * Consecutive unnamed answers the sticky window will carry before the agent's
- * name is needed again.
+ * Which transcript a verdict was judged from.
  *
- * Without a cap, a room that keeps talking keeps renewing the window and the
- * agent is back to answering everything — the bug this file exists to fix. Three
- * covers the usual "check X" / "and staging?" / "what about prod?" run.
+ * `partial` is a guess made while the speaker is still talking; `final` is the
+ * finished sentence, and the authoritative one.
  */
-export const MAX_STICKY_TURNS = 3;
+export type TranscriptStage = 'partial' | 'final';
 
 /** Item ids remembered for the duplicate check. Bounded; turns are short-lived. */
 const HANDLED_ITEM_LIMIT = 32;
 
 export interface ResponsePolicyOptions {
   mode: ResponseMode;
-  /** The name the agent answers to — the workspace name the room hears. */
-  agentName: string;
-  /** Extra spellings, for names live transcription reliably mangles. */
-  aliases?: string[];
 }
 
 export interface ResponsePolicyStats {
@@ -80,7 +79,7 @@ export interface ResponsePolicyStats {
   answered: number;
   /** Of those, the ones it stayed quiet through. */
   suppressed: number;
-  /** Answers that came from a name/alias match rather than the sticky window. */
+  /** Answers in `addressed` mode — times the agent was called by name. */
   addressedMatches: number;
   /** How often the effective mode changed as people joined or left. */
   modeSwitches: number;
@@ -92,14 +91,11 @@ export class ResponsePolicy {
    *
    * A count arrives moments after admission, so this covers a scraper that can't
    * read the UI at all. Guessing `open` there would put the original bug back in
-   * a full room; guessing `addressed` costs a one-to-one caller one spoken name,
-   * after which the sticky window carries the conversation.
+   * a full room; guessing `addressed` costs a one-to-one caller one spoken name.
    */
   private mode: EffectiveMode = 'addressed';
-  /** When the sticky window lapses. 0 = closed. */
-  private engagedUntil = 0;
-  /** Consecutive answers so far owed to the sticky window rather than a name. */
-  private stickyTurns = 0;
+  /** An id-less utterance was answered at the boundary; see `onTranscript`. */
+  private answeredIdlessInOpenMode = false;
   private readonly handledItems: string[] = [];
   private readonly stats: ResponsePolicyStats = {
     utterances: 0,
@@ -147,84 +143,80 @@ export class ResponsePolicy {
   /**
    * The turn detector closed an utterance.
    *
-   * The decision point for `open` mode and for an already-engaged room, both of
-   * which can answer without knowing what was said. In `addressed` mode with the
-   * window shut this only counts the utterance; `onTranscript` decides.
+   * Only `open` mode answers here, and that is the point of it: with one human in
+   * the room there is nothing to decide, so the answer starts at the same instant
+   * the server would have started it, without waiting for any words.
    */
   onUtteranceCommitted(itemId: string): boolean {
     this.stats.utterances += 1;
-
-    if (this.mode === 'open') return this.answer(itemId);
-
-    // Answering here and again on the transcript would be spoken twice, not
-    // deduplicated — and an utterance with no id can't be matched between the two
-    // paths. Rather than risk that, leave it to the transcript, which is the only
-    // path that can also tell whether it was addressed. Costs a little latency in
-    // a case the API is not expected to produce at all.
-    if (this.isEngaged() && itemId !== '') {
-      this.stickyTurns += 1;
-      logger.info('[Meeting] Following up on my own turn — responding');
-      return this.answer(itemId);
-    }
-
-    return false;
+    if (this.mode !== 'open') return false;
+    // Remembered rather than re-derived: without an id the transcript path can't
+    // recognise this utterance later, and the mode can flip between the two. See
+    // the guard in `onTranscript`.
+    if (itemId === '') this.answeredIdlessInOpenMode = true;
+    return this.answer(itemId);
   }
 
   /**
-   * A finished utterance's transcript arrived.
+   * Words arrived for an utterance — either the finished transcript, or enough of
+   * a partial one to be worth judging early.
    *
-   * The words are read even for an utterance already answered at commit time,
-   * because a mention refills the sticky budget whether or not it was needed to
-   * decide — a fully named back-and-forth should never run out of turns. What is
-   * not repeated is the answer: a second `response.create` for one utterance is
-   * *queued* by the session's pending-response deferral rather than dropped, so
-   * the room would hear the same reply twice.
+   * Answering twice for one utterance is the thing to avoid: a second
+   * `response.create` is *queued* by the session's pending-response deferral
+   * rather than dropped, so the room would hear the same reply twice.
    */
-  onTranscript(itemId: string, transcript: string): boolean {
-    const addressed = isAddressedToAgent(
-      transcript,
-      this.options.agentName,
-      this.options.aliases,
-    );
+  onTranscript(itemId: string): TranscriptDecision {
+    if (this.wasHandled(itemId)) return 'ignore';
 
-    if (addressed) {
-      // An explicit mention is a fresh start: the sticky budget measures how far a
-      // conversation coasts *without* one.
-      this.stickyTurns = 0;
-      if (this.wasHandled(itemId)) return false;
-      this.stats.addressedMatches += 1;
-      logger.info('[Meeting] Addressed directly — responding');
-      return this.answer(itemId);
+    // With no id there is nothing to match the two paths on, so an utterance that
+    // `open` mode already answered at the boundary cannot be recognised here, and
+    // classifying it risks a second answer to the same sentence. Tested against
+    // what the mode *was* when the utterance closed, not what it is now: a
+    // participant leaving mid-utterance would otherwise unlatch the guard and let
+    // the same sentence be answered twice.
+    if (itemId === '' && this.answeredIdlessInOpenMode) {
+      this.answeredIdlessInOpenMode = false;
+      return 'ignore';
     }
 
+    // Deliberately does not otherwise test the *current* mode. Someone leaving can
+    // flip `addressed` → `open` in the second between an utterance closing and its
+    // words arriving, and a person who used the agent's name in that second should
+    // be answered rather than dropped.
+    return 'classify';
+  }
+
+  /**
+   * Apply the verdict on whether the agent was named.
+   *
+   * Re-checks the item rather than trusting the caller: verdicts arrive a few
+   * hundred milliseconds late, and one judged from a partial transcript can land
+   * while the finished transcript is already being judged.
+   *
+   * `stage` exists only for the counter. An utterance is usually judged twice —
+   * once from a partial transcript, once from the finished one — and both verdicts
+   * reach this method, so counting every "no" would report roughly double the
+   * suppressions actually made. `suppressed` against `utterances` is the ratio that
+   * says whether the gate earned its keep, and a metric at 2x is worse than no
+   * metric. The finished transcript is the authoritative judgement, so it is the
+   * one that counts. (The "yes" side needs no such guard: the first one to answer
+   * marks the item, and the second sees it as already handled.)
+   */
+  resolveClassification(
+    itemId: string,
+    addressed: boolean,
+    stage: TranscriptStage = 'final',
+  ): boolean {
     if (this.wasHandled(itemId)) return false;
-    // Open mode already answered at the turn boundary; nothing was held back.
-    if (this.mode === 'open') return false;
 
-    this.stats.suppressed += 1;
-    return false;
-  }
+    if (!addressed) {
+      if (stage === 'final') this.stats.suppressed += 1;
+      return false;
+    }
 
-  /**
-   * Someone talked over the agent and took the floor.
-   *
-   * Opens the follow-up window, because someone who cuts the agent off is usually
-   * reacting to it and shouldn't have to say its name to be heard. It does *not*
-   * refill the sticky budget, and that distinction is the whole point: barge-in
-   * fires on any human speech that overlaps the agent for half a second, which in
-   * a busy room is indistinguishable from two people simply carrying on their own
-   * conversation while it talks. Refilling here would let that cross-talk renew
-   * its own licence every time it overlapped an answer, and the budget — the one
-   * thing stopping the agent drifting back to answering the whole room — would
-   * never bind.
-   */
-  onInterrupted(): void {
-    this.engage();
-  }
-
-  /** The agent finished speaking — open the follow-up window. */
-  onAgentTurnEnded(): void {
-    this.engage();
+    this.stats.addressedMatches += 1;
+    logger.info('[Meeting] Addressed by name — responding');
+    return this.answer(itemId);
   }
 
   /** Record a yes: remember the item so the other path can't answer it twice. */
@@ -232,19 +224,6 @@ export class ResponsePolicy {
     this.remember(itemId);
     this.stats.answered += 1;
     return true;
-  }
-
-  private engage(): void {
-    this.engagedUntil = Date.now() + STICKY_WINDOW_MS;
-  }
-
-  /**
-   * Open window *and* budget left. The counter is what stops a room that keeps
-   * talking from renewing its way back to answering everything; only a name
-   * (or an interruption) refills it.
-   */
-  private isEngaged(): boolean {
-    return this.engagedUntil > Date.now() && this.stickyTurns < MAX_STICKY_TURNS;
   }
 
   private remember(itemId: string): void {

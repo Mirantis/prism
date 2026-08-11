@@ -88,7 +88,7 @@ describe('getMeetingTools', () => {
     expect(mockJoin).not.toHaveBeenCalled();
   });
 
-  it('forwards the response mode and any name aliases', async () => {
+  it('forwards the response mode', async () => {
     mockJoin.mockResolvedValue({ state: 'waiting_admission', message: 'ok' });
     const tools = getMeetingTools(input);
 
@@ -96,7 +96,6 @@ describe('getMeetingTools', () => {
       {
         url: 'https://meet.google.com/abc-defg-hij',
         responseMode: 'addressed',
-        aliases: ['prisma'],
         displayName: 'Prism Bot',
       },
       { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
@@ -105,7 +104,6 @@ describe('getMeetingTools', () => {
     expect(mockJoin).toHaveBeenCalledWith(
       expect.objectContaining({
         responseMode: 'addressed',
-        aliases: ['prisma'],
         displayName: 'Prism Bot',
       }),
     );
