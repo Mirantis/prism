@@ -453,10 +453,13 @@ describe('config', () => {
       }
     });
 
-    it('leaves the display name empty so the agent name is used', async () => {
-      delete process.env.MEETING_DISPLAY_NAME;
+    it('has no display-name setting', async () => {
+      // Removed rather than defaulted: participants see the Google account's own
+      // name, and the only path the setting applied to is the guest join Meet
+      // auto-denies. It survives as a per-join argument for a platform that
+      // admits named guests.
       const cfg = await loadConfig();
-      expect(cfg.meetingDisplayName).toBe('');
+      expect(cfg).not.toHaveProperty('meetingDisplayName');
     });
   });
 });

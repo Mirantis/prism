@@ -45,21 +45,26 @@ beforeEach(() => {
 const input = { userId: 'u1', agentId: 'a1', threadId: 't1' };
 
 describe('getMeetingTools', () => {
-  it('names the join tool after the platform, keeping leave and status generic', () => {
-    // A future Teams provider adds its own join tool and reuses these two.
+  it('names all three generically, and says which platforms work in the description', () => {
+    // The platform comes from the URL, not the tool name — a per-platform *leave*
+    // would mean two tools doing the identical thing to one single-call state.
     expect(Object.keys(getMeetingTools(input))).toEqual([
-      'join_google_meet',
+      'join_meeting',
       'leave_meeting',
       'meeting_status',
     ]);
     expect([...MEETING_TOOL_NAMES]).toEqual(Object.keys(getMeetingTools(input)));
+
+    // The name no longer says "Google Meet", so the description has to.
+    const { description } = getMeetingTools(input).join_meeting as { description: string };
+    expect(description).toMatch(/Google Meet/);
   });
 
   it('passes the calling thread through so progress lands in the right place', async () => {
     mockJoin.mockResolvedValue({ state: 'waiting_admission', message: 'Requested to join.' });
     const tools = getMeetingTools(input);
 
-    await tools.join_google_meet.execute!(
+    await tools.join_meeting.execute!(
       { url: 'https://meet.google.com/abc-defg-hij' },
       { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
     );
@@ -78,7 +83,7 @@ describe('getMeetingTools', () => {
     mockFindProvider.mockReturnValue(null);
     const tools = getMeetingTools(input);
 
-    const result = (await tools.join_google_meet.execute!(
+    const result = (await tools.join_meeting.execute!(
       { url: 'https://zoom.us/j/123' },
       { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
     )) as { success: boolean; error: string };
@@ -92,7 +97,7 @@ describe('getMeetingTools', () => {
     mockJoin.mockResolvedValue({ state: 'waiting_admission', message: 'ok' });
     const tools = getMeetingTools(input);
 
-    await tools.join_google_meet.execute!(
+    await tools.join_meeting.execute!(
       {
         url: 'https://meet.google.com/abc-defg-hij',
         responseMode: 'addressed',
@@ -113,7 +118,7 @@ describe('getMeetingTools', () => {
     mockJoin.mockResolvedValue({ state: 'idle', message: 'Could not join the meeting: no chromium' });
     const tools = getMeetingTools(input);
 
-    const result = (await tools.join_google_meet.execute!(
+    const result = (await tools.join_meeting.execute!(
       { url: 'https://meet.google.com/abc-defg-hij' },
       { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
     )) as { success: boolean };
@@ -191,7 +196,7 @@ describe('meeting tool mode', () => {
     'shell_exec', 'shell_write_file', 'claude_code', 'shell_spawn',
     'schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task',
     'create_goal', 'get_goal', 'share_file', 'skill',
-    'leave_meeting', 'join_google_meet', 'meeting_status',
+    'leave_meeting', 'join_meeting', 'meeting_status',
     'rename_self', 'update_soul', 'update_memory', 'update_user_profile',
     'update_heartbeat_config', 'update_settings', 'update_vision', 'clear_bootstrap',
   ];
@@ -230,7 +235,7 @@ describe('meeting tool mode', () => {
     // the operator asked for — only a person in a conversation invites the agent.
     for (const mode of ['heartbeat', 'cron', 'webhook', 'subagent', 'goal']) {
       const filtered = filterToolsByMode(
-        { join_google_meet: stub(), leave_meeting: stub(), meeting_status: stub(), memory_search: stub() },
+        { join_meeting: stub(), leave_meeting: stub(), meeting_status: stub(), memory_search: stub() },
         mode,
       );
       expect(Object.keys(filtered)).toEqual(['memory_search']);

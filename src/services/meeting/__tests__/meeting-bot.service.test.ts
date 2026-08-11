@@ -116,7 +116,6 @@ vi.mock('../providers/google-meet.provider', () => ({
 vi.mock('../../../config', () => ({
   config: {
     agentName: 'Prism',
-    meetingDisplayName: '',
     meetingTimeoutMinutes: 60,
     meetingAdmissionTimeoutMs: 5_000,
     openaiRealtimeVoice: undefined,
