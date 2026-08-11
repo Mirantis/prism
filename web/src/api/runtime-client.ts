@@ -116,6 +116,13 @@ export const runtimeApi = {
       body: JSON.stringify({ verbose }),
     }),
 
+  // Locked-in mode (workspace markdown files read-only to the agent's own tools)
+  updateLockedIn: (lockedIn: boolean) =>
+    request<{ lockedIn: boolean }>('/agents/locked-in', {
+      method: 'PATCH',
+      body: JSON.stringify({ lockedIn }),
+    }),
+
   // Threads
   getOrCreateLatestThread: (agentId: string, userId: string) =>
     request<ConversationThread>('/agents/threads/get-or-create-latest', {
