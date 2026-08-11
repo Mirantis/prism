@@ -45,6 +45,24 @@ const LOCKED_IN_REFUSAL =
   'Tell the user what you would have changed and that they can turn locked-in mode off in their agent settings.';
 
 /**
+ * The one emitter for a refused locked write, so both guard sites report it
+ * identically and neither can double-count. Worth a durable event rather than
+ * only a log line: an agent repeatedly pushing against the lock is the signal
+ * that the lock is holding back something the user actually wants, and the
+ * counter is the only place that shows up.
+ */
+function refuseLockedWrite(
+  agentId: string,
+  field: WorkspaceFileField | 'bootstrapMd',
+): { success: false; error: string } {
+  trackEvent('agent locked write refused', null, {
+    'agent.id': agentId,
+    'config.field': field,
+  });
+  return { success: false, error: LOCKED_IN_REFUSAL };
+}
+
+/**
  * Resolve the final content for a workspace-file update, then persist it.
  *
  * - If `newContent` is provided: use it directly (full replace).
@@ -66,7 +84,7 @@ async function resolveWorkspaceFileUpdate(
   // this check is what makes the guarantee hold, including for a lock switched
   // on mid-turn.
   if (await agentWorkspaceService.isLockedIn()) {
-    return { success: false, error: LOCKED_IN_REFUSAL };
+    return refuseLockedWrite(agentId, field);
   }
 
   if (newContent !== undefined && edits !== undefined) {
@@ -258,7 +276,7 @@ export function getAgentConfigTools(): Record<string, Tool> {
         // rather than in resolveWorkspaceFileUpdate because it clears the field
         // with its own direct write instead of going through that helper.
         if (await agentWorkspaceService.isLockedIn()) {
-          return { success: false, error: LOCKED_IN_REFUSAL };
+          return refuseLockedWrite(agentId, 'bootstrapMd');
         }
         await prisma.agentWorkspace.update({ where: { id: agentId }, data: { bootstrapMd: '' } });
         trackEvent('agent config updated', null, {

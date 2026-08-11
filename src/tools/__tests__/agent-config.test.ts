@@ -489,10 +489,44 @@ describe('getAgentConfigTools', () => {
       expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
     });
 
-    it.each(guarded)('%s emits no config telemetry while locked', async (name, input) => {
+    it.each(guarded)('%s emits no config-updated telemetry while locked', async (name, input) => {
       await tools[name].execute(input);
 
-      expect(mockTrackEvent).not.toHaveBeenCalled();
+      // Nothing was written, so the write metric must not count it.
+      expect(mockTrackEvent).not.toHaveBeenCalledWith(
+        'agent config updated',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    // An agent repeatedly pushing against the lock means the lock is holding
+    // back something the user wants; the counter is where that shows up.
+    it.each(guarded)('%s records the refusal as telemetry', async (name, input) => {
+      await tools[name].execute(input);
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'agent locked write refused',
+        null,
+        expect.objectContaining({ 'agent.id': expect.any(String) }),
+      );
+    });
+
+    it('names the refused field, so the metric shows which document is being fought over', async () => {
+      await tools.update_soul.execute({ newContent: '# Soul', changeDescription: 'rewrite' });
+      await tools.clear_bootstrap.execute({ confirmationMessage: 'done' });
+
+      const fields = mockTrackEvent.mock.calls
+        .filter((c) => c[0] === 'agent locked write refused')
+        .map((c) => c[2]['config.field']);
+      expect(fields).toEqual(['soulMd', 'bootstrapMd']);
+    });
+
+    it('emits exactly one refusal event per refused write', async () => {
+      await tools.update_soul.execute({ newContent: '# Soul', changeDescription: 'rewrite' });
+
+      const refusals = mockTrackEvent.mock.calls.filter((c) => c[0] === 'agent locked write refused');
+      expect(refusals).toHaveLength(1);
     });
 
     it('refuses edits mode too, without reading or writing content', async () => {
