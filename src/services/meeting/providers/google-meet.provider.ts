@@ -320,12 +320,7 @@ export class GoogleMeetProvider implements MeetingProvider {
       return { status: 'stale_session' };
     }
 
-    const nameEntered = await this.enterDisplayName(
-      page,
-      options.displayName,
-      options.signedIn === true,
-      lobbyDeadline,
-    );
+    const nameEntered = await this.enterDisplayName(page, options.displayName, lobbyDeadline);
     await this.turnOffCamera(page);
 
     const attempt = await this.clickJoinButton(page, lobbyDeadline);
@@ -398,13 +393,6 @@ export class GoogleMeetProvider implements MeetingProvider {
   }
 
   /**
-   * Enter the guest name.
-   *
-   * Not optional in practice: the join button is disabled until this field has a
-   * value, so failing here means the flow can never proceed. Given a generous
-   * wait because the field is rendered a moment after the page's first paint.
-   */
-  /**
    * Is Meet asking for a guest name?
    *
    * Only asked of a browser we believe is signed in, where the answer means the
@@ -424,10 +412,25 @@ export class GoogleMeetProvider implements MeetingProvider {
     }
   }
 
+  /**
+   * Work out which lobby this is, and fill the name in if it is the guest one.
+   *
+   * Mostly a classifier, despite the name: telling a member lobby (a join button,
+   * no name field) from a guest one is what every healthy join depends on, and it
+   * is the only reliable answer to "are we actually signed in". The `signedIn` flag
+   * the caller holds is a hint — it comes from our own check, which has been seen
+   * reporting a challenge while the browser was in fact signed in — so the page is
+   * the authority, not the flag.
+   *
+   * The typing survives even though Meet auto-denies automated anonymous guests:
+   * the join button stays disabled until the field has a value, so skipping it
+   * would turn a clear "Google refuses anonymous guests" refusal into a vague
+   * "no join button appeared" timeout. The signed-in-but-offered-a-name-field case
+   * never reaches here any more — `attemptJoin` intercepts it as `stale_session`.
+   */
   private async enterDisplayName(
     page: Page,
     displayName: string,
-    signedIn: boolean,
     lobbyDeadline: number,
   ): Promise<boolean> {
     const nameField = nameFieldLocator(page);
@@ -474,15 +477,6 @@ export class GoogleMeetProvider implements MeetingProvider {
       return false;
     }
     if (found === 'name') {
-      if (signedIn) {
-        // Meet shows a guest name field to a signed-in visitor whose meeting has
-        // ended, so this is the clearest early warning that the link is dead — and
-        // it previously looked identical to "sign-in didn't work".
-        logger.warn(
-          '[Meeting] A guest name field appeared even though the browser is signed in — ' +
-            'the meeting has most likely ended or the link is no longer valid',
-        );
-      }
       try {
         await nameField.fill(displayName, { timeout: 5_000 });
         logger.info(`[Meeting] Entered display name "${displayName}"`);
