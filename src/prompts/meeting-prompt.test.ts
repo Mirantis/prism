@@ -33,11 +33,41 @@ describe('getMeetingInstructions', () => {
   });
 
   it('tells the model it really does have the destructive tools here', () => {
-    // `meeting` mode withholds nothing, so the prompt must not imply otherwise —
-    // a model that thinks a tool is unavailable will refuse instead of confirming.
+    // `meeting` mode withholds no destructive tool, so the prompt must not imply
+    // otherwise — a model that thinks a tool is unavailable refuses instead of
+    // confirming.
     const text = getMeetingInstructions(base);
-    expect(text).toMatch(/full toolset here/i);
+    expect(text).toMatch(/everything else in your toolset works here/i);
     expect(text).toMatch(/including the destructive parts/i);
+  });
+
+  it('tells the model speech is its only channel', () => {
+    // There is no tool for reaching a chat from a call: a meeting runs neither the
+    // invoke loop nor the conversation engine, and `share_file` is filtered out of
+    // `meeting` mode. Saying so is the whole guard against a promise it can't keep.
+    const text = getMeetingInstructions(base);
+    expect(text).toMatch(/only way you can reach anyone from here/i);
+    expect(text).toMatch(/never offer to/i);
+    expect(text).toMatch(/not to this meeting's own chat panel/i);
+  });
+
+  it('never offers to hand anything over to a chat', () => {
+    // Each of these was an instruction in this prompt with no tool behind it. A
+    // near-identical phrase still appears as something the model is told never to
+    // say, so the check is that they survive only inside the prohibition.
+    const promises = [
+      /Say "I'll drop the command in the chat"/i,
+      /offer the detail in chat/i,
+      /say you'll take it to chat, and do/i,
+      /something to mention afterwards/i,
+    ];
+    for (const addressedOnly of [false, true]) {
+      const text = getMeetingInstructions({ ...base, addressedOnly });
+      for (const promise of promises) expect(text).not.toMatch(promise);
+      // ...and the prohibition itself is present, in the model's own words.
+      expect(text).toMatch(/No "I'll drop that in the chat"/i);
+      expect(text).toMatch(/a promise you cannot keep/i);
+    }
   });
 
   it('requires explicit in-room consent before anything irreversible', () => {

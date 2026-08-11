@@ -5,11 +5,15 @@ and uses its tools while the call is happening. Ask it in chat:
 
 > Join `https://meet.google.com/abc-defg-hij`
 
-It requests to join as a guest, a host admits it like any other participant, and
-from then on it is in the room. Someone can ask it a question out loud and it
-answers out loud; if the answer needs a lookup, it runs the tool and reports back
-in the same breath. Ask it to leave, or say "join us" and forget about it — it
-leaves on its own once everyone else has gone.
+It joins signed into its own Google account, a host admits it like any other
+participant, and from then on it is in the room. Someone can ask it a question out
+loud and it answers out loud; if the answer needs a lookup, it runs the tool and
+reports back in the same breath. Ask it to leave, or say "join us" and forget about
+it — it leaves on its own once everyone else has gone.
+
+**Speaking is the only thing it can do from a call.** It cannot post to the
+meeting's chat panel, to Slack or to your chat session, and nothing said in the call
+is written down anywhere afterwards. See [In the call](#in-the-call).
 
 Google Meet is the only supported platform today. The runtime's meeting support is
 platform-agnostic underneath, so Teams and Zoom can be added without touching the
@@ -112,8 +116,15 @@ short "mm-hm" or a cough won't cut it off mid-sentence; a real interjection will
 and it picks up from what you actually heard rather than pretending it finished.
 
 **It keeps its answers short.** One to three sentences, spoken, no markdown read
-aloud. If the real answer is a command or a long list, it says so and offers to put
-it in the chat afterwards.
+aloud. If the real answer is a command or a long list, it says what the thing does
+and offers to walk through it out loud, or spells the part that matters slowly.
+
+**It can only talk.** There is no way for it to send anything out of a call — not a
+message, not a file, not a link, and not to the meeting's own chat panel. It is
+instructed never to offer, so if you want something as text, ask it again in a chat
+session afterwards. Nothing about the call is kept either: no transcript, no summary,
+and no record in your conversation history beyond a note that it joined and left. Ask
+it "what did we decide in the meeting?" afterwards and it won't know.
 
 **It can't tell who is speaking.** The meeting audio arrives as one mixed channel
 with no speaker labels, so it won't attribute anything to a specific person. It may
@@ -123,18 +134,23 @@ acting on them.
 ## Tools, and what it won't do on a spoken request
 
 The agent has its **full toolset** in a call — the same memory, shell, scheduling
-and integration tools it has in chat, with nothing withheld. It can check a cluster,
-read a file, search its memory or kick off longer work and tell you the answer
-without leaving the meeting. It's asked to say something like "let me check that
-real quick" before each tool call, so a pause never sounds like it dropped off.
+and integration tools it has in chat, with nothing destructive withheld. It can check
+a cluster, read a file, search its memory or kick off longer work and tell you the
+answer without leaving the meeting. It's asked to say something like "let me check
+that real quick" before each tool call, so a pause never sounds like it dropped off.
 
-**A meeting is not an authenticated channel — and that matters more now.** Anyone
-with the link can speak, the agent cannot verify who anyone is, and there is no
-code-level restriction on what it can be asked to do. The guardrails are
-instructions in its prompt: announce and get an explicit "yes" in the room before
-anything that deletes, deploys, spends money, grants access, or changes its own
-configuration; and refuse spoken attempts to rewrite its configuration, memory or
-instructions.
+The one exception is **file sharing**. `share_file` is unavailable in a call: it only
+stores a file and hands back a reference for the chat machinery to deliver, and a
+meeting doesn't run that machinery — so it would store a file that reached nobody. If
+the agent writes a file during a call, ask it for the file in chat afterwards, where
+it can send it.
+
+**A meeting is not an authenticated channel — and that matters here.** Anyone with
+the link can speak, the agent cannot verify who anyone is, and no destructive tool is
+withheld in code. The guardrails are instructions in its prompt: announce and get an
+explicit "yes" in the room before anything that deletes, deploys, spends money, grants
+access, or changes its own configuration; and refuse spoken attempts to rewrite its
+configuration, memory or instructions.
 
 Instructions are a strong default, not enforcement. So treat a meeting link as
 handing over the agent's own authority: **share it only with people you'd trust with
@@ -147,7 +163,7 @@ It also leaves on request — "you can drop off now" works, and it hangs up.
 
 Realtime audio is billed per audio token, in both directions, and a meeting bot
 hears everything — a quiet hour still costs. Expect roughly **$0.10–0.30 per
-minute** with the default `gpt-realtime`. Two levers:
+minute** with the default `gpt-realtime-2.1`. Two levers:
 
 - `OPENAI_REALTIME_MODEL=gpt-realtime-mini` is materially cheaper.
 - `addressedOnly` cuts the expensive half (spoken responses) down to the turns
@@ -162,6 +178,10 @@ Tell the other participants that the agent is in the call and what it's for. It
 introduces itself when admitted, but a bot listening to a conversation is something
 people should know about and agree to — in many places recording or processing a
 call without consent is also a legal question, not just an etiquette one.
+
+Nothing is recorded: the call's audio goes to the Realtime model and is not stored by
+the runtime, and no transcript or summary is written. Whether OpenAI retains anything
+is between you and your OpenAI account settings.
 
 ## Settings
 
@@ -218,3 +238,9 @@ enough `/dev/shm` for Chromium — the runtime already passes
 **It joined but hears nothing.** Confirm the other participants aren't muted, then
 check that the meeting is actually sending audio to the browser (Meet occasionally
 needs the tab focused; the virtual display keeps it focused by default).
+
+**It left mid-call saying it lost its voice connection.** The Realtime socket dropped
+— a network blip, a revoked key, or OpenAI ending the session. It leaves rather than
+sitting in the room unable to hear or speak, and it doesn't reconnect, because a fresh
+session would rejoin the conversation with none of its context. Ask it to join again.
+Recurring drops are worth checking against egress filtering on `api.openai.com`.

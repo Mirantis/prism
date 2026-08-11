@@ -102,21 +102,24 @@ TUI, save them to disk with [`/save`](terminal-ui.md#attaching-and-saving-files)
 
 The agent can join a Google Meet call and take part by voice — see
 [Voice meetings](voice-meetings.md). It asks to join, a host admits it, and from
-then on it listens and speaks in the room. Inside the call it keeps the tools above
-(so it can look something up and say the answer), minus the ones that don't fit a
-live conversation: no Claude Code sub-agent or background process (they run for
-minutes while the room waits), and no goals or file sharing (those need a
-conversation thread a meeting doesn't have).
+then on it listens and speaks in the room.
 
-These tools only exist when the runtime can actually host a call: the container
-image's browser/audio toolchain plus `OPENAI_API_KEY`. They're also chat-only — a
-heartbeat or scheduled run can't dial into a meeting on its own.
+Inside the call it keeps **every tool above except `share_file`**, so it can look
+something up and say the answer. `share_file` is out because it only stores a file for
+the chat machinery to deliver, and a meeting doesn't run that machinery — in a call it
+could only store a file that reached nobody. Speaking is the agent's only channel from
+a meeting: there is no tool for posting to Slack, to your chat session, or to the
+meeting's own chat panel.
 
-In a call the agent keeps its **full tool surface** — nothing is withheld — so the
-guardrails are its prompt rather than the tool list: announce and get an explicit
-"yes" in the room before anything destructive, and refuse spoken attempts to rewrite
-its own configuration or memory. Since a meeting has no authentication, treat the
-link as granting the agent's authority and share it accordingly.
+Nothing else is withheld, so the guardrails are its prompt rather than the tool list:
+announce and get an explicit "yes" in the room before anything destructive, and refuse
+spoken attempts to rewrite its own configuration or memory. Since a meeting has no
+authentication, treat the link as granting the agent's authority and share it
+accordingly.
+
+The meeting tools themselves only exist when the runtime can actually host a call: the
+container image's browser/audio toolchain plus `OPENAI_API_KEY`. They're also
+chat-only — a heartbeat or scheduled run can't dial into a meeting on its own.
 
 ## External tools (MCP)
 

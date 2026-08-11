@@ -37,6 +37,15 @@ export interface VoiceConversationOptions {
   model?: string;
   voice?: string;
   endpointOverride?: RealtimeSessionOptions['endpointOverride'];
+  /**
+   * The session died on its own — the agent has no voice and no ears any more.
+   *
+   * Only fired for a close we did not ask for: `stop()` sets `stopped` before it
+   * closes the socket, so a teardown-initiated close is already distinguishable.
+   * The owner is expected to end the call, because everything that makes the bot a
+   * participant is gone while the browser is still sitting in the room.
+   */
+  onSessionLost?: (reason: string) => void;
 }
 
 /** Counters the service reports as telemetry when the meeting ends. */
@@ -137,6 +146,11 @@ export class VoiceConversation {
 
     this.session.on('closed', (reason) => {
       logger.info(`[Meeting] Realtime session closed: ${reason}`);
+      // A close we didn't ask for is the end of the agent's participation: no
+      // audio reaches the room and none of the room's audio reaches a model. The
+      // browser is still in the call, so without this the bot lingers as a silent
+      // tile until the empty-room poll or the duration cap notices.
+      if (!this.stopped) this.options.onSessionLost?.(reason);
     });
   }
 

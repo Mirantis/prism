@@ -21,7 +21,13 @@ import { isBrowserAvailable } from '../services/meeting/browser-stack';
 import { isRealtimeConfigured } from '../services/meeting/openai-endpoint';
 import { logger } from '../logger';
 
-/** Tool names, exported so the `meeting` tool mode can drop them from itself. */
+/**
+ * Tool names, exported so every autonomous mode can drop them in one place.
+ *
+ * A live call keeps them: `join_google_meet` inside a meeting harmlessly reports
+ * that it is already in one, and `leave_meeting`/`meeting_status` are how the
+ * agent ends and inspects the call it is in.
+ */
 export const MEETING_TOOL_NAMES = ['join_google_meet', 'leave_meeting', 'meeting_status'] as const;
 
 export interface MeetingToolsInput {

@@ -31,7 +31,18 @@ const conversationStop = vi.fn();
 const conversationStart = vi.fn();
 const conversationNotify = vi.fn();
 const conversationSpeak = vi.fn();
+/**
+ * The options the service last built a conversation with.
+ *
+ * Captured so a test can fire `onSessionLost` the way the real Realtime socket's
+ * close handler would — that callback is the whole seam between a dead session and
+ * the service's decision to leave.
+ */
+let conversationOptions: { onSessionLost?: (reason: string) => void } = {};
 class FakeVoiceConversation {
+  constructor(options: { onSessionLost?: (reason: string) => void }) {
+    conversationOptions = options;
+  }
   start = conversationStart;
   stop = conversationStop;
   notify = conversationNotify;
@@ -122,6 +133,7 @@ beforeEach(() => {
   providerJoin.mockResolvedValue({ status: 'admitted' });
   providerLeave.mockResolvedValue(undefined);
   providerParticipantCount.mockResolvedValue(3);
+  conversationOptions = {};
   service = new MeetingBotService();
 });
 
@@ -285,6 +297,109 @@ describe('release of resources', () => {
     expect(browserStop).toHaveBeenCalled();
     expect(audioStop).toHaveBeenCalled();
     expect(service.status().state).toBe('idle');
+  });
+});
+
+describe('a lost Realtime session', () => {
+  /** Fire the callback the real socket's close handler calls. */
+  const dropSession = async (reason = 'code 1011') => {
+    conversationOptions.onSessionLost?.(reason);
+    await settle();
+  };
+
+  it('leaves the call and says why', async () => {
+    await service.join(input);
+    await settle();
+    expect(service.status().state).toBe('in_call');
+
+    await dropSession('connection reset');
+
+    // Everything a participant needs is gone, so staying would leave a mute tile
+    // in someone's meeting until the empty-room poll or the duration cap noticed.
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/lost my voice connection.*connection reset/is),
+      'SYSTEM',
+    );
+    expect(providerLeave).toHaveBeenCalled();
+    expect(browserStop).toHaveBeenCalled();
+    expect(audioStop).toHaveBeenCalled();
+    expect(service.status().state).toBe('idle');
+  });
+
+  it('reports the ending as an error, once', async () => {
+    await service.join(input);
+    await settle();
+    trackEvent.mockClear();
+
+    await dropSession();
+
+    const ended = trackEvent.mock.calls.filter((c) => c[0] === 'meeting ended');
+    expect(ended).toHaveLength(1);
+    expect(ended[0][2]).toMatchObject({ status: 'error' });
+  });
+
+  it('stays quiet about a close it asked for itself', async () => {
+    await service.join(input);
+    await settle();
+    await service.leave();
+    publish.mockClear();
+
+    // The real conversation sets `stopped` before closing the socket, so this
+    // callback never fires for our own teardown. Belt and braces: even if it did,
+    // the epoch has moved on and the ended call must not be announced twice.
+    await dropSession();
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('does not tear down a later call', async () => {
+    await service.join(input);
+    await settle();
+    const firstCallSessionLost = conversationOptions.onSessionLost;
+    await service.leave();
+
+    await service.join(input);
+    await settle();
+    publish.mockClear();
+
+    firstCallSessionLost?.('code 1011');
+    await settle();
+
+    expect(service.status().state).toBe('in_call');
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('does not tear down a later call when the note it posts is slow', async () => {
+    // The dangerous version of the case above: the drop happens while the old call
+    // is still live, so the guard passes — and then posting the note takes long
+    // enough for the user to leave and rejoin underneath it. Teardown's own guard
+    // does not catch this (it only rejects a re-entry mid-teardown, and by then the
+    // service is back to idle), so the epoch has to be re-checked after the await.
+    await service.join(input);
+    await settle();
+
+    // Mocked only now: the admission note is published first and would otherwise
+    // consume this, leaving the race untested.
+    let releaseNote: () => void = () => {};
+    publish.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { releaseNote = () => resolve(); }),
+    );
+
+    conversationOptions.onSessionLost?.('code 1011');
+    await settle();
+
+    // The note is still in flight. Meanwhile the call ends and another one starts.
+    await service.leave();
+    await service.join(input);
+    await settle();
+    expect(service.status().state).toBe('in_call');
+
+    releaseNote();
+    await settle();
+
+    expect(service.status().state).toBe('in_call');
   });
 });
 
