@@ -495,3 +495,59 @@ describe('leave', () => {
     await expect(provider.leave(page)).resolves.toBeUndefined();
   });
 });
+
+/**
+ * A signed-in profile that Meet treats as a guest.
+ *
+ * Not a rare edge: on a live deployment this happened on *every* join, because the
+ * browser is torn down between calls and the session does not survive it. Before
+ * this outcome existed the flow filled in a guest name and asked to join, which
+ * Meet auto-denies for automated anonymous guests — so a recoverable stale cookie
+ * cost a page load, a lobby wait and a refusal, and only recovered if the agent
+ * happened to call the tool again.
+ */
+describe('a stale signed-in session', () => {
+  it('reports it instead of joining as a guest', async () => {
+    const { page, clicks, fills } = fakePage({
+      // The signature: a guest name field on a browser we believe is authenticated.
+      visibleSelectors: ['input[aria-label="Your name"]'],
+      visibleButtons: ['Ask to join'],
+    });
+
+    const outcome = await provider.join(page, { ...joinOptions, signedIn: true });
+
+    expect(outcome).toEqual({ status: 'stale_session' });
+    // Nothing was typed and nothing was clicked: going further is a guaranteed
+    // refusal, and the caller can fix this by signing in again.
+    expect(fills).toEqual([]);
+    expect(clicks).toEqual([]);
+  });
+
+  it('treats the same field as the normal path when not signed in', async () => {
+    // An unauthenticated join is *expected* to be asked for a name — that field is
+    // the guest flow working, not a symptom.
+    const { page, fills } = fakePage({
+      visibleSelectors: [
+        'input[aria-label="Your name"]',
+        'button[aria-label*="Leave call" i]',
+      ],
+      visibleButtons: ['Ask to join'],
+    });
+
+    const outcome = await provider.join(page, { ...joinOptions, signedIn: false });
+
+    expect(outcome).toEqual({ status: 'admitted' });
+    expect(fills).toContain('Prism');
+  });
+
+  it('does not report it for a signed-in lobby with no name field', async () => {
+    const { page } = fakePage({
+      visibleButtons: ['Join now'],
+      visibleSelectors: ['button[aria-label*="Leave call" i]'],
+    });
+
+    const outcome = await provider.join(page, { ...joinOptions, signedIn: true });
+
+    expect(outcome).toEqual({ status: 'admitted' });
+  });
+});
