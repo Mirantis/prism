@@ -135,6 +135,20 @@ Prism about that yesterday" doesn't summon it.
 It answers to whatever it's called in its workspace, so renaming the agent renames
 what you say to get its attention.
 
+<a id="names"></a>
+**Names are the words a transcript gets wrong most often**, and this feature leans
+on them harder than anything else. So the agent's own name — and the names of
+everyone else in the call, read from the participant list — are given to the
+transcriber as hints, and refreshed as people come and go. Without that, "Hey Emma"
+has come back as "Hey, I'm", and a direct question went unanswered because the name
+never reached the text.
+
+**Where you put the name changes how fast it answers.** Say it early — "Prism, can
+you check the deploy?" — and the decision is made while you're still talking, so the
+reply starts as soon as you stop. Leave it to the end, or say the name on its own,
+and the decision can only start once you've finished, which adds a second or two of
+silence. Both work; one is quicker.
+
 It deliberately does **not** try to work out whether a sentence sounds like a
 request for an assistant. A call is a single mixed audio channel with no speaker
 labels, so "can you add that to the list?" reads exactly the same whether it was
@@ -225,6 +239,11 @@ audio. Working out whether you called the agent by name is one short call to the
 small classification model — a few tokens per sentence, and none at all in a
 one-to-one call, where nothing needs deciding.
 
+**A call cannot run past an hour.** OpenAI's Realtime sessions end at 60 minutes,
+which is not configurable and applies regardless of `MEETING_TIMEOUT_MINUTES`. When
+it happens the agent drops out of the call rather than winding down — ask it to
+rejoin if the meeting is still going.
+
 Every call is capped at `MEETING_TIMEOUT_MINUTES` (60 by default), so a meeting
 nobody ended can't run up a bill overnight.
 
@@ -246,7 +265,7 @@ is between you and your OpenAI account settings.
 | `OPENAI_API_KEY` | Enables voice meetings. May be a managed-credential sentinel. | — (disabled) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
-| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used to decide whether the agent was spoken to. Runs on every call, billed per minute; never fed to the model. | `gpt-realtime-whisper` |
+| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used to decide whether the agent was spoken to. Runs on every call, billed per minute; never fed to the model. The default is the only streaming model that also accepts name hints — see [Names](#names). | `gpt-live-transcribe` |
 | `MEETING_DISPLAY_NAME` | Name shown to participants on the guest path only. | the agent's name |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |

@@ -195,6 +195,25 @@ export class BrowserStack {
     return this.signInFailure;
   }
 
+  /**
+   * Sign in again on a profile whose session the platform has stopped accepting.
+   *
+   * `isSignedIn()` navigates to the account page and believes what it sees, and that
+   * is not the same question as "will Meet accept this session": a profile whose own
+   * account page loads has been handed a guest name field by Meet three times in one
+   * afternoon. Only the platform can answer it, and only once the join is under way,
+   * so the recovery has to be callable from there.
+   *
+   * Forces the login rather than re-testing, since the caller has already seen
+   * better evidence than the test can produce.
+   */
+  async reauthenticate(page: Page): Promise<boolean> {
+    this.authenticated = false;
+    this.signInFailure = null;
+    await this.signInIfConfigured(page, { force: true });
+    return this.authenticated;
+  }
+
   /** Start the browser on the virtual display and return a blank page. */
   async start(options: BrowserStackOptions): Promise<Page> {
     const executablePath = await resolveBrowser();
@@ -311,14 +330,14 @@ export class BrowserStack {
    * challenged bot account surfaced to the user as "the meeting has ended". The
    * reason is recorded in `signInFailure` and named in the denial instead.
    */
-  private async signInIfConfigured(page: Page): Promise<void> {
+  private async signInIfConfigured(page: Page, options?: { force: boolean }): Promise<void> {
     const email = config.googleBotEmail;
     const password = config.googleBotPassword;
     if (!email || !password) {
       logger.info('[Meeting] No Google account configured — joining as an anonymous guest');
       return;
     }
-    if (await this.isSignedIn(page)) {
+    if (!options?.force && (await this.isSignedIn(page))) {
       this.authenticated = true;
       logger.info('[Meeting] Reusing the signed-in session from the persisted profile');
       return;
