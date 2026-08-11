@@ -5,15 +5,19 @@
  * so every assertion reads the soul document out of the database rather than
  * matching on reply text — the model's wording for "I can't do that" is not
  * something a test should pin down. Each chat scenario therefore ends on one
- * DB/telemetry assertion and never chains two agent-response assertions
- * (concise mode delivers exactly one bubble per turn, so a second one would
- * just burn its timeout).
+ * DB assertion and never chains two agent-response assertions (concise mode
+ * delivers exactly one bubble per turn, so a second one would just burn its
+ * timeout).
+ *
+ * The `agent locked write refused` event is deliberately not asserted here:
+ * Layer 2 withholds the writer tools from a locked turn, so Layer 1's refusal
+ * (the only emitter) is reachable only on a mid-turn flip. Covered instead in
+ * `src/tools/__tests__/agent-config.test.ts`.
  */
 
 import { createBdd } from 'playwright-bdd';
 import { expect } from '@playwright/test';
 import * as dbHelper from '../support/db-helper';
-import { waitForTelemetryEvent } from '../support/s3-helper';
 import { HomePage } from '../pages/home.page';
 import { DEFAULT_AGENT_ID } from '../fixtures/test-data';
 
@@ -85,13 +89,6 @@ Then('the stored soul document is unchanged', async ({ page }) => {
   // on the reply — the refusal wording belongs to the model.
   expect(agent?.soulMd ?? '').toBe(soulBefore);
   expect(agent?.soulMd ?? '').not.toContain(SOUL_MARKER);
-});
-
-Then('a refused locked write is recorded in telemetry', async () => {
-  const event = await waitForTelemetryEvent('agent locked write refused', 30_000);
-  expect(event.attributes['config.field']).toBe('soulMd');
-  // Ids and field names only — the attempted content must never ride along.
-  expect(JSON.stringify(event.attributes)).not.toContain(SOUL_MARKER);
 });
 
 Then('the stored soul document changes', async ({ page }) => {
