@@ -138,8 +138,11 @@ the metadata stub stays in the conversation, marked *content expired*, and
 downloads answer **410 Gone**. Share the file again if the agent still needs
 it.
 
-> **Untrusted data:** the contents of attachments are treated as untrusted
-> input — they cannot alter the agent's system prompt or escalate privileges.
+> **Untrusted data:** the agent is instructed to treat attachment contents as
+> data, never as instructions, because a shared file can carry adversarial
+> text. This is a system-prompt instruction, not a sandbox — the agent still
+> holds its shell and MCP tools while it reads a file, so share files from
+> sources you trust.
 
 ## Voice meetings
 
