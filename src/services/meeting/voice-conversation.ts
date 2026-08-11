@@ -29,6 +29,18 @@ import { RealtimeSession, type RealtimeSessionOptions } from './realtime-session
 import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { BargeInPolicy } from './barge-in';
 import { ResponsePolicy, type EffectiveMode, type ResponseMode } from './response-policy';
+import { classifyAddressed, CLASSIFY_DEADLINE_MS } from './addressed-classifier';
+
+/**
+ * How much of a partial transcript is worth judging.
+ *
+ * Long enough that a name isn't cut in half — a verdict on "Pri" is worthless —
+ * and short enough to still beat the finished transcript by a useful margin.
+ */
+const EARLY_VERDICT_MIN_CHARS = 12;
+
+/** Utterances remembered as early-judged. Insertion-ordered, oldest evicted. */
+const EARLY_JUDGED_LIMIT = 32;
 import type { PreparedMeetingTools } from './tool-bridge';
 
 export interface VoiceConversationOptions {
@@ -40,8 +52,6 @@ export interface VoiceConversationOptions {
   responseMode: ResponseMode;
   /** The name the agent answers to — the same one the room hears it introduce. */
   agentName: string;
-  /** Extra spellings for a name live transcription mangles. */
-  aliases?: string[];
   model?: string;
   voice?: string;
   endpointOverride?: RealtimeSessionOptions['endpointOverride'];
@@ -79,6 +89,15 @@ export class VoiceConversation {
   private toolCalls = 0;
   private interruptions = 0;
   private currentItemId: string | null = null;
+  /**
+   * Utterances already judged from a partial transcript, so it happens once.
+   *
+   * Bounded rather than cleared purely on the `transcript` event: a transcription
+   * that fails, or one that trims to empty, never emits that event, so its id would
+   * otherwise sit here for the rest of the call. A stale id can only ever suppress a
+   * *second* early judgement of the same utterance, so evicting the oldest is safe.
+   */
+  private readonly earlyJudged = new Set<string>();
   private stopped = false;
 
   constructor(private readonly options: VoiceConversationOptions) {
@@ -90,11 +109,7 @@ export class VoiceConversation {
       endpointOverride: options.endpointOverride,
     });
 
-    this.responsePolicy = new ResponsePolicy({
-      mode: options.responseMode,
-      agentName: options.agentName,
-      ...(options.aliases ? { aliases: options.aliases } : {}),
-    });
+    this.responsePolicy = new ResponsePolicy({ mode: options.responseMode });
 
     this.playback = new AudioPlayback(options.sink);
 
@@ -110,9 +125,6 @@ export class VoiceConversation {
         const items = this.playback.flush();
         this.session.interrupt(items);
         this.interruptions += 1;
-        // Talking over the agent is talking *to* it, so what they go on to say is
-        // answered without needing the name.
-        this.responsePolicy.onInterrupted();
         const heard = items.reduce((n, i) => n + i.playedMs, 0);
         logger.info(
           `[Meeting] Yielded the floor after ${Math.round(heard)}ms of speech ` +
@@ -141,9 +153,6 @@ export class VoiceConversation {
 
     this.session.on('responseDone', () => {
       this.responses += 1;
-      // The agent just stopped speaking: open the follow-up window, so whoever
-      // replies doesn't have to say its name again.
-      this.responsePolicy.onAgentTurnEnded();
     });
 
     this.session.on('functionCall', (call) => {
@@ -160,8 +169,32 @@ export class VoiceConversation {
       if (this.responsePolicy.onUtteranceCommitted(itemId)) this.session.requestResponse();
     });
 
+    // Judged twice, and on purpose. People put a name at the start of a sentence,
+    // so a partial transcript usually settles the question several hundred
+    // milliseconds before the finished one arrives — and those milliseconds sit
+    // between someone finishing a sentence and the agent starting to answer. An
+    // early *yes* therefore answers immediately; an early *no* is not trusted,
+    // because the rest of the sentence is still coming, so the finished transcript
+    // is judged again. The policy's per-item dedupe makes the overlap safe.
+    this.session.on('transcriptPartial', (itemId, textSoFar) => {
+      if (textSoFar.trim().length < EARLY_VERDICT_MIN_CHARS) return;
+      if (this.earlyJudged.has(itemId)) return;
+      if (this.responsePolicy.onTranscript(itemId) !== 'classify') return;
+      this.earlyJudged.add(itemId);
+      if (this.earlyJudged.size > EARLY_JUDGED_LIMIT) {
+        this.earlyJudged.delete(this.earlyJudged.values().next().value as string);
+      }
+      void this.classifyThenMaybeRespond(itemId, textSoFar, 'partial');
+    });
+
     this.session.on('transcript', (itemId, text) => {
-      if (this.responsePolicy.onTranscript(itemId, text)) this.session.requestResponse();
+      this.earlyJudged.delete(itemId);
+      const decision = this.responsePolicy.onTranscript(itemId);
+      if (decision === 'respond') {
+        this.session.requestResponse();
+        return;
+      }
+      if (decision === 'classify') void this.classifyThenMaybeRespond(itemId, text, 'final');
     });
 
     this.session.on('apiError', (message) => {
@@ -176,6 +209,38 @@ export class VoiceConversation {
       // tile until the empty-room poll or the duration cap notices.
       if (!this.stopped) this.options.onSessionLost?.(reason);
     });
+  }
+
+  /**
+   * Ask the model whether an unnamed utterance was aimed at the agent.
+   *
+   * Deferred rather than awaited inline because the whole point of the lexical
+   * test is that the common cases never get this far. A verdict that arrives too
+   * late is dropped: the room has moved on, and answering a question everyone has
+   * stopped caring about is worse in a meeting than having missed it.
+   */
+  private async classifyThenMaybeRespond(
+    itemId: string,
+    transcript: string,
+    stage: 'partial' | 'final',
+  ): Promise<void> {
+    const asked = Date.now();
+    const addressed = await classifyAddressed({
+      transcript,
+      agentName: this.options.agentName,
+      stage,
+    });
+
+    if (this.stopped) return;
+
+    if (Date.now() - asked > CLASSIFY_DEADLINE_MS) {
+      logger.info('[Meeting] Dropped a late verdict — the room has moved on');
+      return;
+    }
+
+    if (this.responsePolicy.resolveClassification(itemId, addressed, stage)) {
+      this.session.requestResponse();
+    }
   }
 
   private async runTool(callId: string, name: string, argumentsJson: string): Promise<void> {

@@ -7,16 +7,22 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ResponsePolicy, STICKY_WINDOW_MS, MAX_STICKY_TURNS } from '../response-policy';
+import { ResponsePolicy } from '../response-policy';
 
 const policy = (over: Partial<ConstructorParameters<typeof ResponsePolicy>[0]> = {}) =>
-  new ResponsePolicy({ mode: 'auto', agentName: 'Prism', ...over });
+  new ResponsePolicy({ mode: 'auto', ...over });
 
-/** One utterance, from turn-end through to its transcript landing. */
-const utterance = (p: ResponsePolicy, itemId: string, transcript: string): boolean => {
-  const atCommit = p.onUtteranceCommitted(itemId);
-  const atTranscript = p.onTranscript(itemId, transcript);
-  return atCommit || atTranscript;
+/**
+ * One utterance through both paths.
+ *
+ * `'classify'` means this object declined to decide — the window did not cover it,
+ * so whether the agent was named is a question for the model. The decision then
+ * continues in `resolveClassification`.
+ */
+const utterance = (p: ResponsePolicy, itemId: string): boolean | 'classify' => {
+  if (p.onUtteranceCommitted(itemId)) return true;
+  const decision = p.onTranscript(itemId);
+  return decision === 'classify' ? 'classify' : decision === 'respond';
 };
 
 beforeEach(() => {
@@ -38,13 +44,13 @@ describe('choosing a mode from the room', () => {
     expect(p.onUtteranceCommitted('i1')).toBe(true);
   });
 
-  it('waits to be addressed once a third person joins', () => {
+  it('defers to the classifier once a third person joins', () => {
     const p = policy();
     p.setParticipantCount(2);
     p.setParticipantCount(3);
 
     expect(p.effectiveMode).toBe('addressed');
-    expect(utterance(p, 'i1', 'so I told Dana we would ship on Friday')).toBe(false);
+    expect(utterance(p, 'i1')).toBe('classify');
   });
 
   it('assumes a crowd until it has been told otherwise', () => {
@@ -85,22 +91,19 @@ describe('being addressed', () => {
     return p;
   };
 
-  it('answers when its name comes up', () => {
+  it('answers when the model says the agent was named', () => {
     const p = crowded();
-    expect(utterance(p, 'i1', 'Prism, can you check the cluster?')).toBe(true);
+    expect(utterance(p, 'i1')).toBe('classify');
+    expect(p.resolveClassification('i1', true)).toBe(true);
     expect(p.statistics.addressedMatches).toBe(1);
   });
 
-  it('answers to an alias, for a name transcription mangles', () => {
-    const p = policy({ mode: 'addressed', aliases: ['prisma'] });
-    expect(utterance(p, 'i1', 'prisma, check the cluster')).toBe(true);
-  });
-
-  it('stays quiet through people talking to each other', () => {
+  it('stays quiet when the model says it was not for the agent', () => {
     const p = crowded();
-    expect(utterance(p, 'i1', 'did you see the Friday numbers')).toBe(false);
-    expect(utterance(p, 'i2', 'yeah, they were fine')).toBe(false);
-    expect(p.statistics.suppressed).toBe(2);
+
+    expect(utterance(p, 'i1')).toBe('classify');
+    expect(p.resolveClassification('i1', false)).toBe(false);
+    expect(p.statistics.suppressed).toBe(1);
     expect(p.statistics.answered).toBe(0);
   });
 
@@ -112,118 +115,113 @@ describe('being addressed', () => {
     p.setParticipantCount(2);
 
     expect(p.onUtteranceCommitted('i1')).toBe(true);
-    expect(p.onTranscript('i1', 'Prism, hello')).toBe(false);
+    expect(p.onTranscript('i1')).toBe('ignore');
     expect(p.statistics.answered).toBe(1);
   });
-});
 
-describe('the follow-up window', () => {
-  const engaged = () => {
-    const p = policy();
-    p.setParticipantCount(4);
-    p.onAgentTurnEnded();
-    return p;
-  };
+  it('drops a verdict for an utterance already answered', () => {
+    // Two verdicts can be in flight for one utterance — one judged from a partial
+    // transcript, one from the finished text. Answering both would not be
+    // deduplicated by the session; it queues the second, so the room hears the
+    // same reply twice.
+    const p = crowded();
 
-  it('takes the next utterance without needing the name again', () => {
-    const p = engaged();
-    // "and what about staging?" — a continuation, not a fresh request.
-    expect(p.onUtteranceCommitted('i1')).toBe(true);
+    expect(p.resolveClassification('i1', true)).toBe(true);
+    expect(p.resolveClassification('i1', true)).toBe(false);
+    expect(p.statistics.answered).toBe(1);
   });
 
-  it('lapses, so a room that moves on is not interrupted', () => {
-    const p = engaged();
-    vi.advanceTimersByTime(STICKY_WINDOW_MS + 1);
+  it('needs the name every time, with no grace period after it speaks', () => {
+    // A 15s window used to make any utterance count as addressed after the agent
+    // spoke. On real calls that window was mostly other people starting to talk to
+    // each other — the exact failure this gate exists to prevent.
+    const p = crowded();
 
-    expect(utterance(p, 'i1', 'anyway, about the roadmap')).toBe(false);
-  });
-
-  it('stops coasting after a few unnamed turns', () => {
-    const p = engaged();
-
-    for (let i = 0; i < MAX_STICKY_TURNS; i += 1) {
-      expect(p.onUtteranceCommitted(`i${i}`)).toBe(true);
-      // Each answer re-opens the window, which is how a conversation would run
-      // away with itself if the budget below were not there.
-      p.onAgentTurnEnded();
-    }
-
-    expect(utterance(p, 'last', 'and then Dana said no')).toBe(false);
-  });
-
-  it('refills the budget when someone says the name again', () => {
-    const p = engaged();
-    for (let i = 0; i < MAX_STICKY_TURNS; i += 1) {
-      p.onUtteranceCommitted(`i${i}`);
-      p.onAgentTurnEnded();
-    }
-
-    expect(utterance(p, 'named', 'Prism, one more thing')).toBe(true);
-    p.onAgentTurnEnded();
-    expect(p.onUtteranceCommitted('after')).toBe(true);
-  });
-
-  it('refills the budget on a mention even when the window already answered', () => {
-    // The window answers at the turn boundary, before the words exist. Reading them
-    // afterwards is what keeps a fully named back-and-forth from running out of
-    // turns and stalling on transcript latency at the fourth question.
-    const p = engaged();
-    for (let i = 0; i < MAX_STICKY_TURNS; i += 1) {
-      expect(p.onUtteranceCommitted(`i${i}`)).toBe(true);
-      expect(p.onTranscript(`i${i}`, 'Prism, and staging?')).toBe(false);
-      p.onAgentTurnEnded();
-    }
-
-    expect(p.onUtteranceCommitted('fourth')).toBe(true);
-  });
-
-  it('opens the window on an interruption without refilling the budget', () => {
-    // Barge-in fires on any human speech overlapping the agent for half a second,
-    // which in a busy room is just two people carrying on while it talks. If that
-    // refilled the budget, cross-talk would renew its own licence forever and the
-    // agent would be back to answering the whole room.
-    const p = engaged();
-    for (let i = 0; i < MAX_STICKY_TURNS; i += 1) {
-      p.onUtteranceCommitted(`i${i}`);
-      p.onAgentTurnEnded();
-    }
-
-    p.onInterrupted();
-    expect(utterance(p, 'cross-talk', 'no, Dana said Thursday')).toBe(false);
-  });
-
-  it('answers an interruption that arrives with the budget intact', () => {
-    const p = policy();
-    p.setParticipantCount(4);
-    p.onInterrupted();
-
-    // Someone cutting the agent off is usually reacting to it, and shouldn't have
-    // to say its name to be heard.
-    expect(p.onUtteranceCommitted('i1')).toBe(true);
+    expect(p.resolveClassification('i1', true)).toBe(true);
+    expect(p.onUtteranceCommitted('i2')).toBe(false);
+    expect(p.onTranscript('i2')).toBe('classify');
   });
 });
 
 describe('degraded inputs', () => {
-  it('answers a named utterance whose mode flipped mid-flight', () => {
-    // The count is polled, so it can land between an utterance closing and its
-    // transcript arriving. Someone who said the name must not get silence for it.
+  it('still ignores an id-less transcript when the room filled mid-utterance', () => {
+    // Open mode answered it at the boundary; a participant joining before the words
+    // arrive must not unlatch the guard and let the same sentence be answered twice.
+    const p = policy();
+    p.setParticipantCount(2);
+
+    expect(p.onUtteranceCommitted('')).toBe(true);
+    p.setParticipantCount(4);
+
+    expect(p.onTranscript('')).toBe('ignore');
+  });
+
+  it('ignores an id-less transcript in open mode, rather than risk a double', () => {
+    // Open mode answered at the boundary, and with no id there is nothing to
+    // recognise that by here. A second request for one utterance is queued rather
+    // than dropped, so the room would hear the same reply twice.
+    const p = policy();
+    p.setParticipantCount(2);
+
+    expect(p.onUtteranceCommitted('')).toBe(true);
+    expect(p.onTranscript('')).toBe('ignore');
+  });
+
+  it('still judges an id-less transcript when nothing answered it', () => {
+    const p = policy();
+    p.setParticipantCount(4);
+
+    expect(p.onUtteranceCommitted('')).toBe(false);
+    expect(p.onTranscript('')).toBe('classify');
+  });
+});
+
+describe('counting what happened', () => {
+  it('counts one suppression per utterance, not one per verdict', () => {
+    // An utterance is judged twice — once while the speaker is still talking, once
+    // on the finished sentence — and both verdicts land here. Counting each "no"
+    // would report roughly double, and `suppressed` against `utterances` is exactly
+    // the ratio that says whether the gate earned its keep.
+    const p = policy({ mode: 'addressed' });
+
+    expect(p.resolveClassification('i1', false, 'partial')).toBe(false);
+    expect(p.resolveClassification('i1', false, 'final')).toBe(false);
+
+    expect(p.statistics.suppressed).toBe(1);
+  });
+
+  it('counts an answer once however many verdicts arrive', () => {
+    const p = policy({ mode: 'addressed' });
+
+    expect(p.resolveClassification('i1', true, 'partial')).toBe(true);
+    expect(p.resolveClassification('i1', true, 'final')).toBe(false);
+
+    expect(p.statistics.answered).toBe(1);
+    expect(p.statistics.addressedMatches).toBe(1);
+  });
+});
+
+describe('a mode flip mid-utterance', () => {
+  it('still answers someone who used the name as the room emptied', () => {
+    // The count is polled, so it can land in the second between an utterance
+    // closing and its words arriving.
     const p = policy();
     p.setParticipantCount(4);
 
     expect(p.onUtteranceCommitted('i1')).toBe(false);
     p.setParticipantCount(2);
 
-    expect(p.onTranscript('i1', 'Prism, are we good?')).toBe(true);
+    expect(p.onTranscript('i1')).toBe('classify');
+    expect(p.resolveClassification('i1', true)).toBe(true);
   });
 
-  it('leaves an utterance with no id to the transcript, rather than risk a double', () => {
-    // Nothing ties the two paths together without an id, and a second request for
-    // one utterance is queued rather than dropped — the room would hear it twice.
+  it('does not answer twice when the room filled instead', () => {
     const p = policy();
-    p.setParticipantCount(4);
-    p.onAgentTurnEnded();
+    p.setParticipantCount(2);
 
-    expect(p.onUtteranceCommitted('')).toBe(false);
-    expect(p.onTranscript('', 'Prism, one thing')).toBe(true);
+    expect(p.onUtteranceCommitted('i1')).toBe(true);
+    p.setParticipantCount(4);
+
+    expect(p.onTranscript('i1')).toBe('ignore');
   });
 });

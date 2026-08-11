@@ -453,42 +453,14 @@ describe('join outcomes', () => {
   });
 });
 
-describe('participantCount', () => {
-  it('reads the explicit participant-count attribute', async () => {
-    const { page } = fakePage({
-      visibleSelectors: ['[data-participant-count]'],
-      attributes: { '[data-participant-count]|data-participant-count': '4' },
-    });
-
-    expect(await provider.participantCount(page)).toBe(4);
-  });
-
-  it('falls back to the count in the People button label', async () => {
-    const { page } = fakePage({
-      visibleSelectors: ['button[aria-label*="People" i]'],
-      attributes: { 'button[aria-label*="People" i]|aria-label': 'People (3)' },
-    });
-
-    expect(await provider.participantCount(page)).toBe(3);
-  });
-
-  it('returns null when the count cannot be read', async () => {
-    // Null means "don't know" — the service treats that as a reason to stay, so a
-    // selector change can't eject the bot from a live meeting.
-    const { page } = fakePage({});
-
-    expect(await provider.participantCount(page)).toBeNull();
-  });
-
-  it('returns null rather than NaN for a non-numeric attribute', async () => {
-    const { page } = fakePage({
-      visibleSelectors: ['[data-participant-count]'],
-      attributes: { '[data-participant-count]|data-participant-count': 'lots' },
-    });
-
-    expect(await provider.participantCount(page)).toBeNull();
-  });
-});
+/**
+ * `participantCount` is exercised in `google-meet.provider.test.ts`, against a real
+ * DOM built from the markup Meet actually serves. It reads the page in one
+ * `page.evaluate` rather than through locators, so the selector-shaped fake below
+ * cannot express what it does — and a fake that only proves "an absent selector
+ * reads as null" was exactly what let a live call return null for a whole meeting
+ * with every test still green.
+ */
 
 describe('leave', () => {
   it('clicks the leave button when present', async () => {

@@ -103,6 +103,14 @@ export interface RealtimeSessionEvents {
    * call answer as promptly as it did when the server created responses itself.
    */
   utteranceCommitted: (itemId: string) => void;
+  /**
+   * Transcription so far for an utterance still being transcribed.
+   *
+   * Carries the text accumulated up to this point, not just the new fragment.
+   * People put a name at the *start* of a sentence, so this usually settles the
+   * question a good few hundred milliseconds before `transcript` would.
+   */
+  transcriptPartial: (itemId: string, textSoFar: string) => void;
   /** A participant's finished utterance, transcribed. */
   transcript: (itemId: string, text: string) => void;
   functionCall: (call: RealtimeFunctionCall) => void;
@@ -130,6 +138,13 @@ export class RealtimeSession extends EventEmitter {
   }
 
   private ws: WebSocket | null = null;
+  /**
+   * Transcription accumulated per utterance while it is still being transcribed.
+   *
+   * Bounded by the conversation itself: an entry is added when an utterance starts
+   * being transcribed and removed when it finishes, so at most a handful are live.
+   */
+  private readonly partialTranscripts = new Map<string, string>();
   private closed = false;
   /** The audio item currently being spoken, for targeted truncation. */
   private currentItemId: string | null = null;
@@ -226,7 +241,15 @@ export class RealtimeSession extends EventEmitter {
             // of humans needs.
             turn_detection: {
               type: 'semantic_vad',
-              eagerness: 'low',
+              // `low` waits longest before deciding a speaker has finished, which
+              // reads as a pause before every single answer — and in `addressed`
+              // mode it is spent *before* the transcript and the name check even
+              // begin. `medium` still judges meaning rather than silence, so a
+              // mid-thought pause is not mistaken for the end of a turn the way an
+              // energy-based detector would; it just stops being maximally patient
+              // about it. Barge-in covers the remaining case: if it does start
+              // early, the speaker talking on takes the floor straight back.
+              eagerness: 'medium',
               // The model never answers on its own. Whether an utterance in a
               // mixed room channel was aimed at the agent is a judgement only the
               // client can make; `response-policy.ts` makes it and asks for the
@@ -252,7 +275,13 @@ export class RealtimeSession extends EventEmitter {
             // realtime sessions (verified accepted in a speech-to-speech session,
             // despite its model page listing only the transcription-session
             // endpoint).
-            transcription: { model: config.openaiTranscriptionModel },
+            // Pinned to English rather than auto-detected. Left to itself the
+            // transcriber drifts language mid-call — one real meeting came back
+            // with German, Korean and Bulgarian renderings of English speech —
+            // and a wrong language guess also mangles the agent's name, which is
+            // the one word this transcript exists to find. Voice meetings are
+            // English-only today, and the prompt says so to the model.
+            transcription: { model: config.openaiTranscriptionModel, language: 'en' },
           },
           output: {
             format: pcm,
@@ -330,9 +359,29 @@ export class RealtimeSession extends EventEmitter {
         return;
       }
 
+      case 'conversation.item.input_audio_transcription.delta': {
+        const itemId = typeof event.item_id === 'string' ? event.item_id : '';
+        const delta = typeof event.delta === 'string' ? event.delta : '';
+        if (!itemId || !delta) return;
+        const soFar = (this.partialTranscripts.get(itemId) ?? '') + delta;
+        this.partialTranscripts.set(itemId, soFar);
+        this.emitEvent('transcriptPartial', itemId, soFar);
+        return;
+      }
+
+      // Transcription can fail outright. Nothing to judge, but the partial text
+      // accumulated so far has to go, or it sits in the map for the rest of the call.
+      case 'conversation.item.input_audio_transcription.failed': {
+        const itemId = typeof event.item_id === 'string' ? event.item_id : '';
+        if (itemId) this.partialTranscripts.delete(itemId);
+        logger.debug(`[Meeting] Transcription failed for ${itemId || 'an utterance'}`);
+        return;
+      }
+
       case 'conversation.item.input_audio_transcription.completed': {
         const transcript = event.transcript;
         const itemId = typeof event.item_id === 'string' ? event.item_id : '';
+        this.partialTranscripts.delete(itemId);
         if (typeof transcript === 'string' && transcript.trim()) {
           this.emitEvent('transcript', itemId, transcript.trim());
         }

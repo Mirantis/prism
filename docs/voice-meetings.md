@@ -109,10 +109,10 @@ call:
 
 - **Just you and the agent.** It answers everything you say, as an assistant on a
   call with you would.
-- **Anyone else in the call.** It stays quiet unless something looks meant for it:
-  its name ("Prism, can you check the cluster?"), a presence check ("are you
-  there?"), or a follow-up to something it just said. Everything else — two people
-  working through a problem with each other — it sits through in silence.
+- **Anyone else in the call.** It stays quiet unless you call it by name ("Prism,
+  can you check the cluster?") — every time, including follow-ups. Everything else —
+  two people working through a problem with each other — it sits through in silence,
+  however much a sentence might have sounded like a request.
 
 It switches over as people join and leave, within about ten seconds. You don't
 have to ask for any of this, but you can override it per call:
@@ -120,20 +120,33 @@ have to ask for any of this, but you can override it per call:
 > Join `https://meet.google.com/abc-defg-hij` and only speak when someone says your
 > name
 
-**Follow-ups don't need the name.** For about fifteen seconds after it finishes
-speaking, whatever is said next also reaches it — so "and what about staging?"
-works, and you're not saying "Prism" into every sentence. That carries a few turns
-before it wants the name again, which is what keeps it from drifting back into
-answering the whole room.
+**Say its name every time, including follow-ups.** There's no grace period. An
+earlier version stayed engaged for fifteen seconds after speaking, so a follow-up
+didn't need the name — but in a real room those fifteen seconds are mostly people
+starting to talk to *each other*, and it answered them. One rule that always holds
+turned out to be better than a shortcut that sometimes interrupts.
 
-**If it doesn't answer to its name.** Live transcription mangles names ("Prism"
-often comes back as "prisma", sometimes "prison"). Give it the spellings to listen
-for when you ask it to join:
-
-> Join that call, and listen for "prisma" as well as your own name
+**Its name is what gets its attention, but it isn't matched literally.** Live
+transcription mangles names — "Prism" has come back as "Pritham" — so a check
+decides whether you called it, allowing for a clear mishearing. The same check
+knows the difference between talking *to* it and talking *about* it, so "I asked
+Prism about that yesterday" doesn't summon it.
 
 It answers to whatever it's called in its workspace, so renaming the agent renames
 what you say to get its attention.
+
+It deliberately does **not** try to work out whether a sentence sounds like a
+request for an assistant. A call is a single mixed audio channel with no speaker
+labels, so "can you add that to the list?" reads exactly the same whether it was
+said to the agent or to the person next to you — and a bot guessing at that is a
+bot that interrupts. The cost of the stricter rule is that the first thing you say
+to it in a group call needs its name.
+
+**English only, for now.** The call's audio is transcribed as English so the agent
+can work out what was aimed at it. Speaking another language degrades that rather
+than failing outright — it may miss things said to it, or answer something that
+wasn't. It's told to say so and offer to continue in a chat session, which has no
+such limit.
 
 **You can interrupt it.** Start talking and it stops — humans have the floor. A
 short "mm-hm" or a cough won't cut it off mid-sentence; a real interjection will,
@@ -208,7 +221,9 @@ minute** with the default `gpt-realtime-2.1`. Two levers:
 Deciding who was addressed needs a transcript, so input transcription runs on every
 call. It bills per audio minute at a small fraction of the Realtime audio rate for
 the same minute, and it never feeds the model — the conversation itself stays pure
-audio.
+audio. Working out whether you called the agent by name is one short call to the
+small classification model — a few tokens per sentence, and none at all in a
+one-to-one call, where nothing needs deciding.
 
 Every call is capped at `MEETING_TIMEOUT_MINUTES` (60 by default), so a meeting
 nobody ended can't run up a bill overnight.
