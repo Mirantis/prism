@@ -35,7 +35,12 @@ import { spawn, type ChildProcess } from 'child_process';
 import { promises as fs } from 'fs';
 import net from 'net';
 import path from 'path';
-import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright-core';
+// Type-only, deliberately: `chromium` is loaded lazily in `attach()` so
+// `playwright-core` stays out of the static import graph. It cannot be bundled into
+// the SEA binaries — esbuild can't resolve its optional `chromium-bidi` imports —
+// and it doesn't need to be, because a binary ships no browser or audio server and
+// therefore never registers the meeting tools at all. See `scripts/build-sea.mjs`.
+import type { Browser, BrowserContext, Locator, Page } from 'playwright-core';
 import { config } from '../../config';
 import { resolveDataDir } from '../../lib/data-dir';
 import { logger } from '../../logger';
@@ -263,6 +268,8 @@ export class BrowserStack {
 
   /** Wait for the debugging endpoint to come up, then connect to it. */
   private async attach(port: number): Promise<Browser> {
+    // Resolved once, here rather than at module load — see the import comment.
+    const { chromium } = await import('playwright-core');
     const deadline = Date.now() + 30_000;
     let lastError: unknown;
     while (Date.now() < deadline) {
