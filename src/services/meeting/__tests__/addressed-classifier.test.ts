@@ -88,14 +88,14 @@ describe('classifyAddressed', () => {
     // Being named is the only signal there is, so it is the only one asked about.
     expect(call.system).toMatch(/by name/i);
     expect(call.system).toMatch(/mishearing/i);
-    expect(call.system).toMatch(/talked about rather than to/i);
+    expect(call.system).toMatch(/talking \*about\* rather than who they are talking/i);
     // Cheap and deterministic: this sits in front of most utterances in a call.
     expect(call.temperature).toBe(0);
-    // Room for the verdict wherever the model puts it. Asked for one word it often
-    // writes a sentence instead, and a cap tight enough to truncate a reply that
-    // opens with its reasoning would cut the YES or NO off entirely — read as no
-    // verdict, i.e. a silent miss on someone saying the name.
-    expect(call.maxOutputTokens).toBeGreaterThanOrEqual(24);
+    // Tight on purpose. Asked for one word the model writes a sentence anyway, and
+    // every extra token is latency on the path whose whole purpose is speed — a
+    // wider cap measured ~700ms slower per call. Enough for the verdict plus a few
+    // words, not enough to fund an explanation.
+    expect(call.maxOutputTokens).toBeLessThanOrEqual(12);
   });
 
   it('keeps every agent name out of the system prompt', async () => {

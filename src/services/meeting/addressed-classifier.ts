@@ -67,13 +67,17 @@ meeting. Did the speaker call that assistant by name?
 
 Answer with one word: YES or NO.
 
-YES only if the name is used to address it — including a clear mishearing, since
-transcription is imperfect: a word that sounds like the name, is spelled close to
-it, or is split or merged with a neighbour.
+YES only if the name is used to address it — spoken *to* the assistant, alongside
+something meant for it. Accept a clear mishearing, since transcription is imperfect:
+a word that sounds like the name, is spelled close to it, or is split or merged with
+a neighbour.
 
 NO if the name is absent, however much the sentence sounds like a request; if the
-assistant is talked about rather than to ("I asked it yesterday"); or if a word
-merely resembles the name. If unsure, NO.
+name is what the speaker is talking *about* rather than who they are talking *to* —
+the name with "the" in front of it, or raised as a topic or an agenda item, is a
+subject rather than someone being addressed; if the assistant is referred to in the
+third person ("I asked it yesterday", "it could help with that"); or if a word merely
+resembles the name. If unsure, NO.
 `.trim();
 
 /**
@@ -119,13 +123,14 @@ export async function classifyAddressed(input: ClassifyAddressedInput): Promise<
             `Sentence: ${input.transcript}`,
         },
       ],
-      // Enough that the verdict survives however the model chooses to word it.
-      // Asked for one word, it frequently writes a sentence instead — live calls
-      // produced "NO The speaker did..." truncated mid-clause. That parses only
-      // because the verdict happened to come first; a reply that opened with its
-      // reasoning would have had the YES or NO cut off entirely and been read as a
-      // refusal to answer, i.e. a silent miss on someone saying the name.
-      maxOutputTokens: 32,
+      // Deliberately tight. Asked for one word the model writes a sentence anyway,
+      // and every token of it is latency on the one path whose whole purpose is
+      // speed: raising this to 32 to guard against a truncated verdict cost a
+      // measured ~700ms per call against a risk that never materialised across a
+      // meeting's worth of live traffic — the verdict always came first, and the
+      // parser takes the first standalone YES/NO wherever it lands. Eight leaves
+      // room for "NO The speaker did" and stops short of funding an explanation.
+      maxOutputTokens: 8,
       temperature: 0,
       ...langfuseTelemetry('meeting-addressed-gate'),
     });
