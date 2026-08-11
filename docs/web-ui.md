@@ -157,6 +157,12 @@ The agent's identity and runtime controls.
   **Verbose** mode. In concise mode only the agent's final message is delivered;
   intermediate steps are persisted but not shown. See
   **[Configuration → Chat verbosity](configuration.md#chat-verbosity)**.
+- **Locked-in mode.** A toggle freezes the agent's identity documents against its
+  own tools — Soul, User, Memory, Vision, Heartbeat and Bootstrap become
+  read-only to it, while settings, renames and vector memory keep working. The
+  agent cannot turn this off itself. It is a guardrail against drift, not a
+  security boundary (the agent can still reach the files through its shell). See
+  **[Configuration → Locked-in mode](configuration.md#locked-in-mode)**.
 - **Identity documents.** Seven tabs show the agent's markdown documents —
   **Agent** (guide), **Soul**, **User**, **Heartbeat**, **Memory**, **Vision**,
   and **Bootstrap**. These are **read-only viewers** in the Web UI: the agent
