@@ -110,9 +110,7 @@ still deletes itself; only the message is withheld.
 The scheduled-task prompt states this contract to the agent explicitly: the
 run's final message is delivered for it, so the agent must **not** also post the
 result itself with Slack (or any other messaging) tools — that would duplicate
-the message and bypass the gate. When the instruction names a destination
-("post the digest to #eng"), the agent posts there and replies with a short
-confirmation.
+the message and bypass the gate.
 
 ## Reliability
 

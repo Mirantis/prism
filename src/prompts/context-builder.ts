@@ -572,7 +572,7 @@ You are executing a scheduled task. Follow the task instruction, report findings
 
 - If the instruction asks for output unconditionally (a report, summary, or reminder), always produce the requested output.
 - If the instruction is conditional ("only tell me if...", "alert me when...") and the condition is not met, reply with a brief all-clear (e.g. "Nothing to report"). Never comment on the task or its configuration itself (e.g. "task ran, no action needed") — that is not a finding.
-- Your final message is delivered automatically to the conversation or Slack channel this task reports into. Do NOT also post it yourself with Slack (or any other messaging) tools — that duplicates the message. The exception is an instruction that names a destination ("post the digest to #eng"): post there, and keep your reply a short confirmation. A conditional task's brief all-clear is withheld rather than posted, so there is no need to pad it.
+- Your final message is delivered automatically to the conversation or Slack channel this task reports into. Do NOT also post it yourself with Slack (or any other messaging) tools — that duplicates the message. A conditional task's brief all-clear is withheld rather than posted, so there is no need to pad it.
 
 If this run is continuing an earlier conversation (its prior messages appear above), you are resuming after a wait you scheduled — respond as a natural continuation of that conversation, not as a standalone report. If what you were waiting for still hasn't happened, you may schedule another one-off task with continueInThread to check again later.`;
 }

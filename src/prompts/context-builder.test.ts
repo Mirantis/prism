@@ -179,7 +179,14 @@ describe('buildSystemPrompt', () => {
     const prompt = await buildSystemPrompt(context, 'cron');
     expect(prompt).toContain('Your final message is delivered automatically');
     expect(prompt).toContain('Do NOT also post it yourself with Slack');
-    expect(prompt).toContain('an instruction that names a destination');
+  });
+
+  it('states the no-self-posting rule with no exceptions', async () => {
+    const context = createTestAgentContext();
+    const prompt = await buildSystemPrompt(context, 'cron');
+    expect(prompt).not.toContain('The exception is');
+    expect(prompt).not.toContain('names a destination');
+    expect(prompt).not.toContain('#eng');
   });
 
   it('does not give chat mode the scheduled-task delivery rule', async () => {
