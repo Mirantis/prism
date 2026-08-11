@@ -276,7 +276,7 @@ export class MeetingBotService {
     auth: { signedIn: boolean; signInFailureReason?: string },
   ): Promise<void> {
     try {
-      const outcome = await provider.join(page, {
+      let outcome = await provider.join(page, {
         url: input.url,
         displayName,
         admissionTimeoutMs: config.meetingAdmissionTimeoutMs,
@@ -286,6 +286,41 @@ export class MeetingBotService {
       // The call was ended while we waited (leave, timeout, shutdown). Whatever
       // the waiting room decided is now about a meeting that no longer exists.
       if (this.epoch !== epoch) return;
+
+      // The platform says the profile's session is stale. Sign in again and try the
+      // link once more — this is the one join failure that fixes itself, and until
+      // now it recovered only if the agent happened to call the tool a second time.
+      // Once, deliberately: a second failure is a real problem (a challenged
+      // account, a changed password) and retrying it in a loop would hammer Google's
+      // login with the credentials that just didn't work.
+      if (outcome.status === 'stale_session') {
+        const browser = this.browser;
+        const signedIn = browser ? await browser.reauthenticate(page) : false;
+        if (this.epoch !== epoch) return;
+
+        outcome = await provider.join(page, {
+          url: input.url,
+          displayName,
+          admissionTimeoutMs: config.meetingAdmissionTimeoutMs,
+          signedIn,
+          ...(browser?.signInFailureReason
+            ? { signInFailureReason: browser.signInFailureReason }
+            : {}),
+        });
+        if (this.epoch !== epoch) return;
+
+        // Twice in a row is not a stale cookie any more. Report it as a refusal
+        // rather than looping, and name the session as the cause.
+        if (outcome.status === 'stale_session') {
+          this.failStep = 'lobby';
+          await this.notifyThread(
+            `I couldn't join the ${provider.displayName} call: signing in again didn't help — ` +
+              `the meeting is still treating me as a guest, and it refuses those automatically.`,
+          );
+          await this.teardown('denied');
+          return;
+        }
+      }
 
       if (outcome.status !== 'admitted') {
         // Handed to the one owning emitter in `teardown` rather than emitted here, so
@@ -409,6 +444,19 @@ export class MeetingBotService {
     }
 
     this.conversation?.setParticipantCount(count);
+
+    // Same poll, because the roster changes for the same reason the count does. Read
+    // separately rather than returned alongside it: a provider need not offer names
+    // at all, and failing to read them must not disturb the count that decides
+    // whether the agent stays in the call.
+    if (this.provider.participantNames) {
+      try {
+        const names = await this.provider.participantNames(this.page);
+        if (names.length > 0) this.conversation?.setParticipantNames(names);
+      } catch {
+        // A hint, not a mechanism — the call carries on without it.
+      }
+    }
 
     // null means "couldn't read it" — never a reason to leave a live call, nor to
     // change how the agent behaves. But it is worth saying out loud: the count is

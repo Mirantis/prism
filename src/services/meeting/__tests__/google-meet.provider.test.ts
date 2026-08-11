@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { GoogleMeetProvider } from '../providers/google-meet.provider';
+import {
+  GoogleMeetProvider,
+  nameFromOptionsLabel,
+  unglueTileName,
+} from '../providers/google-meet.provider';
 
 const provider = new GoogleMeetProvider();
 
@@ -124,4 +128,38 @@ describe('GoogleMeetProvider.participantCount', () => {
     // whole call: one read that never settles would stall every later poll.
     await expect(provider.participantCount(wedged)).resolves.toBeNull();
   }, 10_000);
+});
+
+/**
+ * Name extraction, against the exact strings a live Meet call produced.
+ *
+ * Written this way on purpose: the participant *count* selectors were invented from
+ * first principles, passed every test, and matched nothing Meet actually serves —
+ * the count read `null` for entire meetings while the suite stayed green. These
+ * inputs were copied out of a running call over CDP.
+ */
+describe('reading participant names', () => {
+  it('undoubles the name in a tile', () => {
+    // Meet renders the name twice and glues a control label on the end.
+    expect(unglueTileName('Mario SarcherMario Sarcherdevices')).toBe('Mario Sarcher');
+  });
+
+  it('rejects a tile that is only controls', () => {
+    expect(
+      unglueTileName('visual_effectsBackgrounds and effectsShow in a tilemore_vert'),
+    ).toBeNull();
+  });
+
+  it('takes the name out of the per-participant menu label', () => {
+    expect(nameFromOptionsLabel('More options for Emma Sky')).toBe('Emma Sky');
+    expect(nameFromOptionsLabel('Pin Emma Sky to the screen')).toBeNull();
+  });
+
+  it('declines a tile it cannot read as doubled', () => {
+    // The first version stripped trailing lowercase as "control labels" and turned
+    // "Miska" into "M" — a single letter handed to the transcriber as a hint to bias
+    // towards. Undoubled tiles are left to the menu-label reading instead.
+    expect(unglueTileName('Miska')).toBeNull();
+    expect(unglueTileName('Lee')).toBeNull();
+  });
 });

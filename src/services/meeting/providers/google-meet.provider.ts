@@ -109,6 +109,14 @@ const REJECTION_CONFIRM_INTERVAL_MS = 1_200;
 /** Per-round wait when deciding guest-vs-member; see `enterDisplayName`. */
 const CLASSIFY_ROUND_MS = 400;
 
+/**
+ * How long to look for a guest name field before concluding a signed-in profile is
+ * still signed in. Paid on every join by an authenticated bot, so it is short: the
+ * member lobby shows a join button and never this field, and a miss only falls
+ * through to the path that handled it before.
+ */
+const STALE_SESSION_PROBE_MS = 2_500;
+
 /** Throttle for the "still waiting on the join button" progress line. */
 const BUTTON_REPORT_INTERVAL_MS = 10_000;
 
@@ -128,6 +136,46 @@ interface CountElement {
 interface CountDocument {
   querySelector(selectors: string): CountElement | null;
   querySelectorAll(selectors: string): ArrayLike<CountElement>;
+}
+
+/**
+ * Undo Meet's doubled tile text.
+ *
+ * A participant tile renders the name twice — once visibly, once for assistive
+ * tech — so `textContent` reads "Mario SarcherMario Sarcher" with a control label
+ * glued on the end. Read from the live DOM rather than assumed: the last set of
+ * selectors written from first principles matched nothing Meet actually serves.
+ */
+export function unglueTileName(raw: string): string | null {
+  const text = raw.trim();
+
+  // Only the doubling is trusted. Stripping trailing lowercase runs as "control
+  // labels" was tried first and ate real names — "Miska" became "M" — which would
+  // have handed the transcriber a single letter to bias towards. A tile that isn't
+  // doubled is left to the menu-label reading rather than guessed at.
+  for (let half = Math.floor(text.length / 2); half >= 2; half--) {
+    const candidate = text.slice(0, half);
+    if (text.slice(half, half * 2) === candidate) return candidate.trim() || null;
+  }
+  return null;
+}
+
+/** Strip Meet's per-participant menu label down to the name it names. */
+export function nameFromOptionsLabel(label: string): string | null {
+  const match = label.match(/^more options for\s+(.+?)\s*$/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Names are handed to the transcriber as decoding hints, so an implausible one is
+ * worse than a missing one: it biases the recognizer toward a word nobody says.
+ */
+function plausibleName(name: string): boolean {
+  // Any script, not just Latin: the reason this reads names at all is that a live
+  // call rendered a participant's name in Japanese characters, and rejecting those
+  // would drop exactly the hint most needed. The letter test only excludes strings
+  // that are punctuation or digits — a stray badge rather than a person.
+  return name.length >= 2 && name.length <= 40 && /\p{L}/u.test(name);
 }
 
 /**
@@ -258,6 +306,20 @@ export class GoogleMeetProvider implements MeetingProvider {
     await this.dismissDeviceDialogs(page);
     // Before the camera toggle and the join click: Meet keeps the join button
     // disabled until the guest name has a value.
+    // Meet offering a guest name field to a browser we believe is signed in means
+    // the session is stale, and going on from here is a guaranteed refusal: Meet
+    // auto-denies automated anonymous guests without ever prompting a host. Say so
+    // and let the caller sign in again, rather than spending a lobby wait to be
+    // told no. (An unauthenticated join is a different case — that name field is
+    // the expected path, not a symptom.)
+    if (options.signedIn === true && (await this.guestNameFieldPresent(page, lobbyDeadline))) {
+      logger.warn(
+        '[Meeting] Meet is treating this signed-in profile as a guest — ' +
+          'the session is stale, so signing in again before trying the link',
+      );
+      return { status: 'stale_session' };
+    }
+
     const nameEntered = await this.enterDisplayName(
       page,
       options.displayName,
@@ -342,6 +404,26 @@ export class GoogleMeetProvider implements MeetingProvider {
    * value, so failing here means the flow can never proceed. Given a generous
    * wait because the field is rendered a moment after the page's first paint.
    */
+  /**
+   * Is Meet asking for a guest name?
+   *
+   * Only asked of a browser we believe is signed in, where the answer means the
+   * session is stale. Deliberately short-tempered about it: the member lobby paints
+   * a join button and no name field, so waiting the full lobby budget here would
+   * delay every healthy join to catch a broken one. A miss is not costly — the flow
+   * carries on into `enterDisplayName`, which is where this used to be handled.
+   */
+  private async guestNameFieldPresent(page: Page, lobbyDeadline: number): Promise<boolean> {
+    const budget = Math.max(0, Math.min(STALE_SESSION_PROBE_MS, lobbyDeadline - Date.now()));
+    if (budget === 0) return false;
+    try {
+      await nameFieldLocator(page).waitFor({ state: 'visible', timeout: budget });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private async enterDisplayName(
     page: Page,
     displayName: string,
@@ -622,6 +704,58 @@ export class GoogleMeetProvider implements MeetingProvider {
    * but the readings that actually work are the People control's count badge and
    * the participant ids on the tiles.
    */
+  /**
+   * Who is in the room, as far as the DOM will say.
+   *
+   * Fed to the transcriber as decoding hints. The problem it solves is observed, not
+   * theoretical: one call rendered "Miska" as "Mees", "Max" as "Mark", and a third
+   * participant's name in Japanese characters. Names are the words a meeting
+   * transcript is worst at and the ones this feature most depends on — the gate's
+   * clearest refusals are of the form "the speaker addresses Isaac", which only holds
+   * when Isaac survives transcription.
+   *
+   * Two readings, because they fail differently. The per-participant menu label is
+   * clean but English ("More options for Ada Lovelace"); tile text is
+   * language-independent but arrives doubled and with control labels glued on. Empty
+   * on any failure — a missing hint costs accuracy, and nothing else.
+   */
+  async participantNames(page: Page): Promise<string[]> {
+    try {
+      const raw = await withTimeout(
+        page.evaluate(() => {
+          const doc = (globalThis as unknown as { document: CountDocument }).document;
+          const labels: string[] = [];
+          const tiles: string[] = [];
+
+          for (const el of Array.from(doc.querySelectorAll('[aria-label]'))) {
+            const label = el.getAttribute('aria-label');
+            if (label && /^more options for /i.test(label)) labels.push(label);
+          }
+          for (const el of Array.from(doc.querySelectorAll('[data-participant-id]'))) {
+            const text = el.textContent?.trim();
+            if (text) tiles.push(text.slice(0, 120));
+          }
+          return { labels, tiles };
+        }),
+        COUNT_READ_TIMEOUT_MS,
+      );
+
+      const names = [
+        ...raw.labels.map(nameFromOptionsLabel),
+        ...raw.tiles.map(unglueTileName),
+      ].filter((n): n is string => n !== null && plausibleName(n));
+
+      // Case-insensitively unique: the same person appears as a tile and as a menu
+      // label, and the two spellings need not match in case.
+      const seen = new Map<string, string>();
+      for (const name of names) if (!seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
+      return [...seen.values()];
+    } catch (err) {
+      logger.debug(`[Meeting] Could not read participant names: ${String(err)}`);
+      return [];
+    }
+  }
+
   async participantCount(page: Page): Promise<number | null> {
     let readings: number[];
     try {

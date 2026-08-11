@@ -188,12 +188,15 @@ const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2
 // `marin` is markedly better for conversation than the API's `alloy` default.
 // Overridable because a future model may retire a voice name.
 const openaiRealtimeVoice = process.env.OPENAI_REALTIME_VOICE || 'marin';
-// Transcriber for the addressed-only gate (only that mode needs words, and it is
-// billed per minute). `gpt-realtime-whisper` is the streaming model built for
-// realtime sessions; `gpt-4o-transcribe` and `whisper-1` also work if a
-// deployment prefers them.
+// Transcriber feeding the addressed gate (billed per audio minute, on for every
+// call). `gpt-live-transcribe` streams as the sentence unfolds *and* accepts
+// `keywords`, which is what lets the agent's own name be seeded into the decoder
+// — the one word the transcript exists to find, and the one a speech model is
+// most likely to drop. Only it and `gpt-transcribe` take keywords at all, and
+// only it streams. Override at your own risk: a model without `keywords`
+// silently ignores the name and the gate goes deaf to whoever it garbles.
 const openaiTranscriptionModel =
-  process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-realtime-whisper';
+  process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-live-transcribe';
 
 // Google account the meeting bot signs in as.
 //
