@@ -73,6 +73,19 @@ export interface RealtimeSessionOptions {
   /** Overrides `OPENAI_REALTIME_MODEL`. */
   model?: string;
   voice?: string;
+  /**
+   * What the room calls the agent, handed to the transcriber as a keyword.
+   *
+   * The one word the transcript exists to find is the hardest one in it: a name
+   * is arbitrary, often short, and unstressed in the vocative ("hey Emma, …"),
+   * which is exactly where a speech model reaches for a common function word
+   * instead. A live call rendered "Hey Emma, what's on the agenda" as "Hey,
+   * **I'm** what's on the agenda" — the gate then correctly found no name and
+   * stayed silent, having been asked a direct question. No amount of judgement
+   * downstream recovers a word that never reached the text, so the fix belongs
+   * here, in the decoder's prior.
+   */
+  agentName?: string;
   /** Injected in tests so they can point at a local mock server. */
   endpointOverride?: RealtimeEndpoint;
 }
@@ -271,17 +284,26 @@ export class RealtimeSession extends EventEmitter {
             // retroactively for an utterance already past. It is billed per audio
             // minute, but at whisper-class rates that is a rounding error beside
             // the Realtime audio tokens the same minute costs.
-            // `gpt-realtime-whisper` is the streaming transcriber built for
-            // realtime sessions (verified accepted in a speech-to-speech session,
-            // despite its model page listing only the transcription-session
-            // endpoint).
+            // `gpt-live-transcribe` is the streaming transcriber that also accepts
+            // `keywords`. That pairing is what this path needs and only two models
+            // offer it (`gpt-transcribe` is the same family without the live
+            // streaming the early-verdict path reads from). The previous default,
+            // `gpt-realtime-whisper`, supports neither `keywords` nor `prompt` in
+            // GA Realtime sessions, so there was no way to tell it which word
+            // mattered — see `agentName` above for what that cost.
             // Pinned to English rather than auto-detected. Left to itself the
             // transcriber drifts language mid-call — one real meeting came back
             // with German, Korean and Bulgarian renderings of English speech —
             // and a wrong language guess also mangles the agent's name, which is
             // the one word this transcript exists to find. Voice meetings are
             // English-only today, and the prompt says so to the model.
-            transcription: { model: config.openaiTranscriptionModel, language: 'en' },
+            transcription: {
+              model: config.openaiTranscriptionModel,
+              language: 'en',
+              ...(this.options.agentName
+                ? { keywords: [this.options.agentName] }
+                : {}),
+            },
           },
           output: {
             format: pcm,
@@ -587,6 +609,37 @@ export class RealtimeSession extends EventEmitter {
         type: 'message',
         role: 'user',
         content: [{ type: 'input_text', text }],
+      },
+    });
+  }
+
+  /**
+   * Tell the transcriber which names to expect, mid-call.
+   *
+   * The roster changes while the call runs — people join and leave — and the whole
+   * value of these hints is that they name the *current* room. Sent as a partial
+   * `session.update`, which merges rather than replacing, so nothing else about the
+   * session has to be restated here (restating it would risk resetting turn
+   * detection under a live conversation).
+   *
+   * Silently a no-op before the socket opens; the connect-time config already
+   * carries the agent's own name, which is the one that matters most.
+   */
+  setTranscriptionKeywords(keywords: string[]): void {
+    if (!this.isOpen || keywords.length === 0) return;
+    this.send({
+      type: 'session.update',
+      session: {
+        type: 'realtime',
+        audio: {
+          input: {
+            transcription: {
+              model: config.openaiTranscriptionModel,
+              language: 'en',
+              keywords,
+            },
+          },
+        },
       },
     });
   }
