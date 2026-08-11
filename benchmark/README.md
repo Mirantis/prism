@@ -47,7 +47,29 @@ Prism. `-l 5` limits the run to 5 tasks.
 harbor run -d terminal-bench/terminal-bench-2-1 -a oracle -l 5
 ```
 
-Expect all 5 to pass.
+Expect all 5 to pass. Harbor writes results to `jobs/<timestamp>/` in the working
+directory (git-ignored here); per-task rewards are in
+`jobs/<timestamp>/result.json` under `reward_stats`.
+
+**The host must be amd64.** Terminal-Bench task images are amd64-only, and under
+Docker's QEMU emulation on an arm64 host (Apple Silicon) the verifiers segfault:
+
+```text
+qemu: uncaught target signal 11 (Segmentation fault) - core dumped
+```
+
+That surfaces as a *task failure*, not an infrastructure error — an oracle run on
+this machine scored 1/4, with a QEMU segfault in the verifier log of every failing
+task and none in the passing one. Any adapter numbers collected that way are
+meaningless. Run on an amd64 Linux host, or offload the sandboxes:
+
+```bash
+export DAYTONA_API_KEY=<key>
+harbor run -d terminal-bench/terminal-bench-2-1 -a oracle -l 5 --env daytona
+```
+
+Run the oracle check first on whatever host you choose, and only continue when it
+passes clean.
 
 **2. Is the adapter working?** Same 5 tasks through Prism, one trial each:
 
