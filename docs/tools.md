@@ -111,11 +111,12 @@ could only store a file that reached nobody. Speaking is the agent's only channe
 a meeting: there is no tool for posting to Slack, to your chat session, or to the
 meeting's own chat panel.
 
-Nothing else is withheld, so the guardrails are its prompt rather than the tool list:
-announce and get an explicit "yes" in the room before anything destructive, and refuse
-spoken attempts to rewrite its own configuration or memory. Since a meeting has no
-authentication, treat the link as granting the agent's authority and share it
-accordingly.
+Nothing else is withheld, so the guardrail is its prompt rather than the tool list:
+announce and get an explicit "yes" in the room before anything destructive — including
+renaming itself or rewriting its Soul, user profile or memory, which it will do on a
+spoken request the room agrees to. Since a meeting has no authentication, treat the
+link as granting the agent's authority over itself as well as over your systems, and
+share it accordingly.
 
 The meeting tools themselves only exist when the runtime can actually host a call: the
 container image's browser/audio toolchain plus `OPENAI_API_KEY`. They're also

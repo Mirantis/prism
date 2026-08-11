@@ -252,9 +252,10 @@ container image (which ships Chromium, Xvfb and PulseAudio) plus `OPENAI_API_KEY
 the in-meeting voice is OpenAI's Realtime API, the one model call that doesn't use
 your configured provider. Speaking is its only channel from a call: it can't post to
 a chat and nothing about the meeting is recorded. It has its full toolset otherwise
-(everything but `share_file`), and a meeting isn't an authenticated channel, so the
-guardrails are prompt-level — it announces and confirms before anything destructive —
-which means a meeting link effectively grants the agent's authority. See
+(everything but `share_file`), including the tools that change its own configuration.
+A meeting isn't an authenticated channel and the guardrail is prompt-level — it
+announces and confirms before anything destructive — so a meeting link effectively
+grants the agent's authority, over itself included. See
 [docs/voice-meetings.md](docs/voice-meetings.md).
 
 ### Sessions and idle handling

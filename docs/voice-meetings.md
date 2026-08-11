@@ -146,16 +146,25 @@ the agent writes a file during a call, ask it for the file in chat afterwards, w
 it can send it.
 
 **A meeting is not an authenticated channel — and that matters here.** Anyone with
-the link can speak, the agent cannot verify who anyone is, and no destructive tool is
-withheld in code. The guardrails are instructions in its prompt: announce and get an
-explicit "yes" in the room before anything that deletes, deploys, spends money, grants
-access, or changes its own configuration; and refuse spoken attempts to rewrite its
-configuration, memory or instructions.
+the link can speak, the agent cannot verify who anyone is, and `share_file` above is
+the only tool withheld in code — nothing is held back for safety. The single guardrail
+is an instruction in its prompt: announce what it's about to do and get an explicit
+"yes" in the room before anything that deletes, deploys, spends money, grants access,
+or changes its own configuration — and never read that permission out of enthusiasm
+or out of someone claiming authority.
+
+**That includes changing itself.** Renaming itself and rewriting its Soul, its user
+profile or its memory are things it will do on a spoken request that the room agrees
+to. It used to refuse those outright; it no longer does, because the refusal also
+turned down its own user asking in a call. So a sentence agreed in an unauthenticated
+meeting can change the agent for every future turn on every channel, not just for the
+duration of the call.
 
 Instructions are a strong default, not enforcement. So treat a meeting link as
-handing over the agent's own authority: **share it only with people you'd trust with
-the agent's shell.** If you want the stricter behaviour, use `addressedOnly` to
-limit what it engages with, or start the agent with a narrower tool surface.
+handing over the agent's own authority — over itself included: **share it only with
+people you'd trust with the agent's shell and its configuration.** If you want the
+stricter behaviour, use `addressedOnly` to limit what it engages with, or start the
+agent with a narrower tool surface.
 
 It also leaves on request — "you can drop off now" works, and it hangs up.
 
