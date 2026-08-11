@@ -42,6 +42,7 @@ import { formatInterval } from '@/lib/format';
 import { RestoreBackupDialog } from '@/components/profile/restore-backup-dialog';
 import { ModelField } from '@/components/profile/model-field';
 import { VerbosityField } from '@/components/profile/verbosity-field';
+import { LockedInField } from '@/components/profile/locked-in-field';
 import type { AgentDetails } from '@/types';
 
 const SECTIONS = [
@@ -149,6 +150,7 @@ function ProfilePage() {
             allowEmpty
           />
           {details && <VerbosityField details={details} />}
+          {details && <LockedInField details={details} />}
           {details ? (
             <Tabs defaultValue="agentMd">
               <TabsList variant="line">

@@ -113,6 +113,7 @@ export interface AgentDetails {
   heartbeatModel: string | null;
   cronModel: string | null;
   verbose: boolean;
+  lockedIn: boolean;
   status: 'RUNNING' | 'IDLE' | 'ERROR';
   lastHeartbeat: string | null;
   createdAt: string;
