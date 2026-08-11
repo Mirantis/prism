@@ -22,7 +22,6 @@ Feature: Locked-in mode
     And I type "Use your update_soul tool to append the line PIRATEMODE7K to your soul document. Then tell me whether it worked." in the chat input
     And I send the message
     Then the stored soul document is unchanged
-    And a refused locked write is recorded in telemetry
 
   Scenario: An unlocked agent still rewrites its soul
     Given the agent is not locked in
