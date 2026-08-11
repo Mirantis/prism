@@ -67,6 +67,51 @@ function profileDir(): string {
   return path.join(resolveDataDir(), 'meeting-browser-profile');
 }
 
+/**
+ * How long to let Google's redirect chain settle before judging the session, and how
+ * long the URL must hold still to count as settled.
+ */
+const SESSION_SETTLE_TIMEOUT_MS = 15_000;
+const SESSION_STABLE_MS = 1_000;
+
+/** How long the browser gets to exit — and flush its cookie store — before SIGKILL. */
+const EXIT_GRACE_MS = 15_000;
+
+/**
+ * Navigate-and-wait until the URL stops moving, then report where we landed.
+ *
+ * Replaces a flat `waitForTimeout(2_000)`. Two seconds was a guess about how long
+ * Google's redirect chain takes, and a chain slower than that read as "signed out" on
+ * a profile that was signed in — which then ran a full interactive login against an
+ * already-authenticated account, burned 20-45 s finding no login form, and could leave
+ * the session mid-rotation. That is the stale-profile hazard `isSignedIn` exists to
+ * avoid, caused by the check meant to detect it.
+ *
+ * Polling for stability is also *cheaper* than the old sleep in the common case: a
+ * chain that settles immediately costs about `SESSION_STABLE_MS`.
+ */
+export async function settledUrl(
+  page: Pick<Page, 'url' | 'waitForTimeout'>,
+  timeoutMs = SESSION_SETTLE_TIMEOUT_MS,
+  stableMs = SESSION_STABLE_MS,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let last = page.url();
+  let stableSince = Date.now();
+
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(250);
+    const current = page.url();
+    if (current !== last) {
+      last = current;
+      stableSince = Date.now();
+      continue;
+    }
+    if (Date.now() - stableSince >= stableMs) break;
+  }
+  return page.url();
+}
+
 /** Wait for a locator to become visible, answering false instead of throwing. */
 async function appearsVisible(locator: Locator, timeoutMs: number): Promise<boolean> {
   try {
@@ -127,10 +172,22 @@ export class BrowserStack {
   /** Tail of the browser's stderr, for explaining a launch failure. */
   private browserStderr = '';
   private authenticated = false;
+  private signInFailure: string | null = null;
 
   /** Whether the profile ended up signed into a Google account. */
   get isAuthenticated(): boolean {
     return this.authenticated;
+  }
+
+  /**
+   * Why signing in failed, when an account was configured — otherwise null.
+   *
+   * Exists so a downstream refusal can name its real cause. Meet hides "we refuse
+   * automated anonymous guests" behind the same wall it shows for an ended meeting,
+   * and the runtime knew the answer thirty seconds earlier without saying it.
+   */
+  get signInFailureReason(): string | null {
+    return this.signInFailure;
   }
 
   /** Start the browser on the virtual display and return a blank page. */
@@ -236,9 +293,16 @@ export class BrowserStack {
    * signed in can reach the lobby and never get further. A signed-in account is an
    * ordinary participant.
    *
-   * Failure is deliberately not fatal: the join attempt continues as a guest and
-   * reports Google's own refusal, which is a far clearer symptom than a login error
-   * from a screen nobody saw.
+   * Failure is deliberately not fatal, and stays that way: whether the browser is
+   * signed in is decided by the profile's cookies, not by anything recorded here, so
+   * refusing to join on a failed login would also refuse joins that would have
+   * worked.
+   *
+   * What *was* wrong is that failure said nothing. The original reasoning held that
+   * Google's own refusal would be the clearer symptom; it is not — Meet answers an
+   * automated anonymous guest with the same wall it shows for an ended meeting, so a
+   * challenged bot account surfaced to the user as "the meeting has ended". The
+   * reason is recorded in `signInFailure` and named in the denial instead.
    */
   private async signInIfConfigured(page: Page): Promise<void> {
     const email = config.googleBotEmail;
@@ -279,7 +343,18 @@ export class BrowserStack {
           await another.click({ timeout: 5_000 });
         }
       }
-      await identifier.waitFor({ state: 'visible', timeout: 20_000 });
+      if (!(await appearsVisible(identifier, 20_000))) {
+        // No identifier form and no account chooser normally means Google decided we
+        // were already authenticated and sent us straight through. Re-ask instead of
+        // reporting a failure — the old bare `waitFor` threw here, which is how a
+        // good profile ended up flagged as a failed sign-in.
+        if (await this.isSignedIn(page)) {
+          this.authenticated = true;
+          logger.info('[Meeting] Already signed in — Google skipped the login form');
+          return;
+        }
+        throw new Error('the Google sign-in form never appeared');
+      }
       await identifier.click();
       await identifier.type(email, { delay: 60 });
       await page.getByRole('button', { name: /^next$/i }).first().click({ timeout: 10_000 });
@@ -290,8 +365,10 @@ export class BrowserStack {
       await pw.type(password, { delay: 60 });
       await page.getByRole('button', { name: /^next$/i }).first().click({ timeout: 10_000 });
 
-      // Settling time: Google interposes redirects and occasional interstitials.
-      await page.waitForTimeout(8_000);
+      // Wait for the post-password redirect chain to stop moving rather than sleeping
+      // a flat 8 s: a slow interstitial used to make the check below run early and
+      // report failure for a login that was about to succeed.
+      await settledUrl(page, 45_000);
 
       if (await this.isSignedIn(page)) {
         this.authenticated = true;
@@ -304,12 +381,15 @@ export class BrowserStack {
         .locator('body')
         .innerText({ timeout: 3_000 })
         .catch(() => '');
+      this.signInFailure = 'Google is likely challenging this account';
       logger.warn(
         `[Meeting] Sign-in did not complete — Google is likely challenging this account. ` +
           `Page said: ${visible.replace(/\s+/g, ' ').slice(0, 200)}`,
       );
     } catch (err) {
-      logger.warn(`[Meeting] Sign-in failed: ${err instanceof Error ? err.message : String(err)}`);
+      const message = err instanceof Error ? err.message : String(err);
+      this.signInFailure = message;
+      logger.warn(`[Meeting] Sign-in failed: ${message}`);
     }
   }
 
@@ -334,9 +414,11 @@ export class BrowserStack {
         waitUntil: 'domcontentloaded',
         timeout: 30_000,
       });
-      // Let the redirect chain settle before reading the URL.
-      await page.waitForTimeout(2_000);
-      return page.url().startsWith('https://myaccount.google.com/');
+      // Judged only once the redirect chain has stopped moving — see `settledUrl`.
+      const url = await settledUrl(page);
+      if (url.startsWith('https://myaccount.google.com/')) return true;
+      logger.info(`[Meeting] Profile is not signed in (settled on ${new URL(url).origin})`);
+      return false;
     } catch (err) {
       logger.debug(`[Meeting] Sign-in check failed: ${String(err)}`);
       return false;
@@ -370,13 +452,17 @@ export class BrowserStack {
       // Give it real time to shut down. Chromium flushes its cookie store on exit,
       // and killing it too early leaves a half-rotated session that Google later
       // rejects — which costs a fresh login, and Google challenges new devices. The
-      // old 500 ms was not enough for that.
-      const deadline = Date.now() + 8_000;
+      // old 500 ms was not enough for that; 8 s turned out to be marginal too, and
+      // the cost of being wrong lands on the *next* join rather than this one, so it
+      // is paid for generously here.
+      const deadline = Date.now() + EXIT_GRACE_MS;
       while (proc.exitCode === null && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 200));
       }
       if (proc.exitCode === null) {
-        logger.warn('[Meeting] Browser did not exit in time; killing it');
+        logger.warn(
+          '[Meeting] Browser did not exit in time; killing it — the next join may need a fresh sign-in',
+        );
         try {
           proc.kill('SIGKILL');
         } catch {

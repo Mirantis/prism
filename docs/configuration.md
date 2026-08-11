@@ -253,7 +253,7 @@ The key is only ever sent as a request header, so it may be a
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used **only** by `addressedOnly` mode, to decide whether the agent was spoken to. Billed per minute of audio, so it is not enabled otherwise. `gpt-4o-transcribe` and `whisper-1` also work. | `gpt-realtime-whisper` |
 | `MEETING_DISPLAY_NAME` | Name shown to participants on the guest path only — a signed-in agent shows its Google account name. | the agent's name |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call, so a meeting nobody ended can't hold a browser and a metered socket open. Junk or non-positive falls back to the default. | `60` |
-| `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room for a host to admit the agent. | `300` |
+| `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room for a host to admit the agent, counted from when the join request goes in (reaching the lobby is budgeted separately). | `300` |
 
 ## Observability
 

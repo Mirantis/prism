@@ -14,7 +14,27 @@ import path from 'path';
 
 vi.mock('../../../config', () => ({ config: { googleBotEmail: undefined, googleBotPassword: undefined } }));
 
-const { resolveBrowser, isBrowserAvailable } = await import('../browser-stack');
+const { resolveBrowser, isBrowserAvailable, settledUrl } = await import('../browser-stack');
+
+/**
+ * A page whose URL advances one step per `waitForTimeout`, standing in for Google's
+ * redirect chain.
+ *
+ * The stub yields to a real timer rather than resolving immediately: `settledUrl`
+ * polls in a `while (Date.now() < deadline)` loop, so an instant stub turns it into a
+ * busy loop that blocks the event loop for the whole budget — which starved the
+ * socket-based suites elsewhere in the run and made them fail intermittently.
+ */
+function redirectingPage(chain: string[]) {
+  let step = 0;
+  return {
+    url: () => chain[Math.min(step, chain.length - 1)],
+    waitForTimeout: async () => {
+      step += 1;
+      await new Promise((r) => setTimeout(r, 1));
+    },
+  };
+}
 
 const savedOverride = process.env.PRISM_CHROMIUM_PATH;
 let tmp: string;
@@ -56,6 +76,57 @@ describe('resolveBrowser', () => {
     await expect(isBrowserAvailable()).resolves.toBeTypeOf('boolean');
     expect(typeof (await isBrowserAvailable())).toBe('boolean');
     expect(resolveBrowser).toBeTypeOf('function');
+  });
+});
+
+describe('settledUrl', () => {
+  it('reports where a redirect chain came to rest, not where it was mid-flight', async () => {
+    // The whole point: reading the URL while Google is still bouncing between
+    // accounts.google.com and myaccount.google.com is what made an intermittently
+    // slow chain look like a signed-out profile.
+    const page = redirectingPage([
+      'https://accounts.google.com/ServiceLogin',
+      'https://accounts.google.com/CheckCookie',
+      'https://myaccount.google.com/',
+    ]);
+
+    expect(await settledUrl(page, 5_000, 1)).toBe('https://myaccount.google.com/');
+  });
+
+  it('still resolves a chain slower than the old two-second sleep', async () => {
+    // The regression this exists for. Nine hops at 250 ms each is well past 2 s, and
+    // under the old flat sleep this profile was declared signed out — triggering a
+    // full interactive login against an account that was already authenticated.
+    const chain = Array.from({ length: 9 }, (_, i) => `https://accounts.google.com/hop-${i}`);
+    const page = redirectingPage([...chain, 'https://myaccount.google.com/']);
+
+    expect(await settledUrl(page, 30_000, 1)).toBe('https://myaccount.google.com/');
+  });
+
+  it('detects a settled signed-out landing without waiting out the timeout', async () => {
+    const page = redirectingPage(['https://www.google.com/account/about']);
+    const startedAt = Date.now();
+
+    const url = await settledUrl(page, 30_000, 1);
+
+    expect(url).toBe('https://www.google.com/account/about');
+    // Must not have burned the full budget on a page that never moves.
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+
+  it('gives up at the deadline rather than hanging on a chain that never settles', async () => {
+    // A page that redirects forever must still produce an answer; the caller treats
+    // "not myaccount" as not signed in, which is the safe direction.
+    let step = 0;
+    const page = {
+      url: () => `https://accounts.google.com/step-${step}`,
+      waitForTimeout: async () => {
+        step += 1;
+        await new Promise((r) => setTimeout(r, 1));
+      },
+    };
+
+    await expect(settledUrl(page, 100, 10_000)).resolves.toMatch(/accounts\.google\.com/);
   });
 });
 

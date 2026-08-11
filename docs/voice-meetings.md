@@ -173,7 +173,10 @@ call without consent is also a legal question, not just an etiquette one.
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber for `addressedOnly` mode only (billed per minute). | `gpt-realtime-whisper` |
 | `MEETING_DISPLAY_NAME` | Name shown to participants on the guest path only. | the agent's name |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
-| `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait to be admitted. | `300` |
+| `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |
+
+Reaching the lobby has its own budget, so a slow-loading Meet page never eats into
+the waiting-room time.
 
 ## When it doesn't work
 
@@ -185,6 +188,27 @@ for `Voice meetings available` or `Voice meetings unavailable`, and confirm
 **It waits forever to be admitted.** Nobody clicked Admit, or the meeting blocks
 anonymous guests. It gives up after `MEETING_ADMISSION_TIMEOUT_SECONDS` and says
 so.
+
+**It said the meeting had ended, but the link was live — and joining again
+worked.** Meet shows one catch-all wall for an ended meeting, a dead link and a
+guest it refuses, and the runtime used to believe that text the first time it saw
+it, including while the page was still rendering. A rejection now has to survive
+three reads 1.2 seconds apart before it counts, and being in the call outranks
+anything written on the page. A message that didn't survive shows up in the log as
+`A rejection message did not persist`.
+
+**It says it couldn't sign in to its Google account.** Google is challenging the
+bot account — usually a "verify it's you" prompt that needs a code. The runtime says
+so plainly instead of reporting Meet's refusal, because Meet answers an automated
+anonymous guest with the same wall as an ended meeting. Sign in once by hand with
+the profile under `<DATA>/meeting-browser-profile`, or clear that directory and let
+the next join log in fresh. A screenshot of any failed join lands at
+`<DATA>/meeting-join-failure.png`.
+
+**Diagnosing which step failed.** Each join logs the elapsed time for page load,
+the join-button hunt and the admission wait, and a failed attempt tags its
+`meeting ended` telemetry event with `fail_step` — one of `page_load`, `lobby`,
+`join_button` or `admission`.
 
 **It's in the call but silent, or nobody can hear it.** Almost always the audio
 devices: check the runtime log for `parec`/`pacat` warnings. A container needs

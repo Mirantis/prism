@@ -91,9 +91,15 @@ function fakePage(options: FakePageOptions) {
       if (selector === 'body') return locator(() => true, () => 'body');
       return locator(() => state.visibleSelectors.has(selector), () => selector);
     },
+    // Yields to a real timer rather than resolving in a microtask. The provider's
+    // waits are all `while (Date.now() < deadline)` loops, so a stub that never
+    // reaches the macrotask queue turns them into event-loop blocks for the whole
+    // budget — which starved the socket-based suites elsewhere in the run and made
+    // them fail intermittently.
     waitForTimeout: async () => {
       ticks += 1;
       options.onTick?.(ticks);
+      await new Promise((r) => setTimeout(r, 1));
     },
     on: () => {},
   };
@@ -266,6 +272,171 @@ describe('join outcomes', () => {
 
     expect(outcome).toEqual({ status: 'admitted' });
     expect(clicks).toContain('Join now');
+  });
+
+  it('ignores a rejection message that does not survive the next read', async () => {
+    // The bug this whole debounce exists for. Meet renders interstitials on the way
+    // to the lobby, and reading the page once at `domcontentloaded` caught one — so
+    // joining a live call failed intermittently and asking again walked straight in.
+    const harness = fakePage({
+      bodyText: "You can't join this video call",
+      visibleButtons: ['Ask to join'],
+      visibleSelectors: ['button[aria-label*="Leave call" i]'],
+      onTick: () => {
+        harness.state.bodyText = '';
+      },
+    });
+
+    const outcome = await provider.join(harness.page, joinOptions);
+
+    expect(outcome).toEqual({ status: 'admitted' });
+  });
+
+  it('reports a rejection confirmed during the button hunt even if the text then clears', async () => {
+    // The reason used to be discarded and confirmed a second time by the caller. If
+    // the wall had repainted away in between — several seconds later — a genuine
+    // denial was reported as "the join button never became available", blaming the
+    // Meet UI for a refusal already read three times.
+    const harness = fakePage({
+      visibleSelectors: ['input[aria-label="Your name"]'],
+      onTick: (tick) => {
+        if (tick >= 1) harness.state.bodyText = "You can't join this video call";
+        // Long enough to be confirmed inside the hunt, gone by the time a second
+        // confirmation would have run.
+        if (tick >= 4) harness.state.bodyText = '';
+      },
+    });
+
+    const outcome = await provider.join(harness.page, { ...joinOptions, admissionTimeoutMs: 8_000 });
+
+    expect(outcome.status).toBe('denied');
+    expect((outcome as { reason: string }).reason).toMatch(/wouldn't let me in/i);
+    expect((outcome as { step: string }).step).toBe('lobby');
+  });
+
+  it('prefers being in the call over stale rejection text on the page', async () => {
+    // Once admitted, "This meeting has ended" can be anything on screen — a caption,
+    // a chat line. Ejecting on it would drop the bot out of a live call.
+    const { page } = fakePage({
+      bodyText: 'This meeting has ended',
+      visibleButtons: ['Join now'],
+      visibleSelectors: ['button[aria-label*="Leave call" i]'],
+    });
+
+    const outcome = await provider.join(page, joinOptions);
+
+    expect(outcome).toEqual({ status: 'admitted' });
+  });
+
+  it('does not read "meeting ended" in unrelated text as a rejection', async () => {
+    // The pattern used to make "has" optional, so this sentence denied the join.
+    const { page } = fakePage({
+      bodyText: 'Alice: sorry I am late, my last meeting ended late',
+      visibleButtons: ['Ask to join'],
+      visibleSelectors: [
+        'input[aria-label="Your name"]',
+        'button[aria-label*="Leave call" i]',
+      ],
+    });
+
+    const outcome = await provider.join(page, joinOptions);
+
+    expect(outcome).toEqual({ status: 'admitted' });
+  });
+
+  it('fills the name field even when the join button is already enabled', async () => {
+    // Both are painted together on a guest lobby, and filling the field is what
+    // enables the button — so the guest path is the right reading. This used to be a
+    // Promise.race, and the same page took either branch depending on paint order.
+    const { page, fills } = fakePage({
+      visibleButtons: ['Ask to join'],
+      visibleSelectors: [
+        'input[aria-label="Your name"]',
+        'button[aria-label*="Leave call" i]',
+      ],
+    });
+
+    const outcome = await provider.join(page, joinOptions);
+
+    expect(outcome).toEqual({ status: 'admitted' });
+    expect(fills).toContain('Prism');
+  });
+
+  it('does not mistake an unrelated named input for the guest name field', async () => {
+    // The old selector matched any text input whose label merely contained "name".
+    const { page, fills } = fakePage({
+      visibleButtons: ['Join now'],
+      visibleSelectors: [
+        'input[type="text"][aria-label*="name" i]',
+        'button[aria-label*="Leave call" i]',
+      ],
+    });
+
+    const outcome = await provider.join(page, joinOptions);
+
+    expect(outcome).toEqual({ status: 'admitted' });
+    expect(fills).toEqual([]);
+  });
+
+  it('classifies a lobby offering "Join anyway" as signed in', async () => {
+    // The click loop always accepted this label; the classification race did not, so
+    // such a lobby reported that it had found neither control.
+    const { page, clicks, fills } = fakePage({
+      visibleButtons: ['Join anyway'],
+      visibleSelectors: ['button[aria-label*="Leave call" i]'],
+    });
+
+    const outcome = await provider.join(page, joinOptions);
+
+    expect(outcome).toEqual({ status: 'admitted' });
+    expect(clicks).toContain('Join anyway');
+    expect(fills).toEqual([]);
+  });
+
+  it('names a failed sign-in as the likely cause behind the catch-all wall', async () => {
+    // Meet shows the same wall for an ended meeting and for refusing an automated
+    // anonymous guest. When the runtime already knows sign-in failed, saying so beats
+    // letting the user chase a link they can see is live.
+    const { page } = fakePage({ bodyText: "You can't join this video call" });
+
+    const outcome = await provider.join(page, {
+      ...joinOptions,
+      signInFailureReason: 'Google is challenging this account',
+    });
+
+    expect(outcome.status).toBe('denied');
+    const { reason } = outcome as { reason: string };
+    expect(reason).toMatch(/couldn't sign in/i);
+    expect(reason).toMatch(/challenging this account/i);
+    expect(reason).toMatch(/anonymous guests/i);
+  });
+
+  it('leaves the denial alone when no sign-in failure is known', async () => {
+    const { page } = fakePage({ bodyText: "You can't join this video call" });
+
+    const outcome = await provider.join(page, joinOptions);
+
+    expect((outcome as { reason: string }).reason).not.toMatch(/sign in/i);
+  });
+
+  it('gives the waiting room its own budget after a slow lobby', async () => {
+    // The deadline used to be taken before `page.goto`, so page load and the button
+    // hunt spent the admission budget — and in the tail the waiting room was entered
+    // already expired and reported "nobody admitted" without waiting once.
+    const harness = fakePage({
+      visibleButtons: ['Ask to join'],
+      onTick: (tick) => {
+        if (tick >= 3) harness.state.visibleSelectors.add('button[aria-label*="Leave call" i]');
+      },
+    });
+    // Deliberately shorter than the time the lobby phase takes to settle.
+    harness.page.goto = (async () => {
+      await new Promise((r) => setTimeout(r, 120));
+    }) as never;
+
+    const outcome = await provider.join(harness.page, { ...joinOptions, admissionTimeoutMs: 100 });
+
+    expect(outcome).toEqual({ status: 'admitted' });
   });
 
   it('joins a meeting with no name field', async () => {

@@ -29,7 +29,7 @@ import { BrowserStack } from './browser-stack';
 import { VoiceConversation } from './voice-conversation';
 import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet.provider';
-import type { MeetingProvider } from './meeting-provider.interface';
+import type { JoinStep, MeetingProvider } from './meeting-provider.interface';
 import type { Page } from 'playwright-core';
 
 /** How often to check whether the meeting has emptied out. */
@@ -86,6 +86,8 @@ export class MeetingBotService {
   private startedAt: number | null = null;
   private current: JoinMeetingInput | null = null;
   private addressedOnly = false;
+  /** Step a failed join reached, carried to the `meeting ended` event. */
+  private failStep: JoinStep | null = null;
   /**
    * Which call the asynchronous join flow belongs to.
    *
@@ -195,7 +197,10 @@ export class MeetingBotService {
 
       this.state = 'waiting_admission';
       // Deliberately not awaited: the waiting room can outlast any chat turn.
-      void this.runJoin(provider, this.page, input, displayName, epoch, browser.isAuthenticated);
+      void this.runJoin(provider, this.page, input, displayName, epoch, {
+        signedIn: browser.isAuthenticated,
+        ...(browser.signInFailureReason ? { signInFailureReason: browser.signInFailureReason } : {}),
+      });
 
       return {
         state: this.state,
@@ -221,14 +226,14 @@ export class MeetingBotService {
     input: JoinMeetingInput,
     displayName: string,
     epoch: number,
-    signedIn: boolean,
+    auth: { signedIn: boolean; signInFailureReason?: string },
   ): Promise<void> {
     try {
       const outcome = await provider.join(page, {
         url: input.url,
         displayName,
         admissionTimeoutMs: config.meetingAdmissionTimeoutMs,
-        signedIn,
+        ...auth,
       });
 
       // The call was ended while we waited (leave, timeout, shutdown). Whatever
@@ -236,6 +241,10 @@ export class MeetingBotService {
       if (this.epoch !== epoch) return;
 
       if (outcome.status !== 'admitted') {
+        // Handed to the one owning emitter in `teardown` rather than emitted here, so
+        // the failing step rides the existing `meeting ended` event instead of adding
+        // a second one that would have to be kept in step with it.
+        this.failStep = outcome.step;
         await this.notifyThread(
           outcome.status === 'denied'
             ? `I couldn't join the ${provider.displayName} call: ${outcome.reason}`
@@ -367,6 +376,9 @@ export class MeetingBotService {
       trackEvent('meeting ended', this.current.userId, {
         provider: this.provider.name,
         status,
+        // Which step a failed join got to. A bounded enum, never the prose reason —
+        // that would put page text into telemetry.
+        ...(this.failStep ? { fail_step: this.failStep } : {}),
         duration_ms: String(Date.now() - this.startedAt),
         responses: String(this.conversation?.statistics.responses ?? 0),
         tool_calls: String(this.conversation?.statistics.toolCalls ?? 0),
@@ -384,6 +396,7 @@ export class MeetingBotService {
     this.startedAt = null;
     this.emptyReadings = 0;
     this.addressedOnly = false;
+    this.failStep = null;
     this.state = 'idle';
   }
 
