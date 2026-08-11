@@ -196,10 +196,13 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
   // effects outlive the call (cron, self-configuration, memory writes), because
   // meeting audio is unauthenticated: anyone with the link can speak, and their
   // words drive a model holding real tools. That boundary was removed deliberately
-  // — an agent that can only read is not much use in a working meeting — which
-  // leaves `prompts/meeting-prompt.ts` as the only guard on those. It is guidance,
-  // not enforcement, so treat a meeting link as conferring the agent's own
-  // authority and keep it private. `docs/voice-meetings.md` says so plainly.
+  // — an agent that can only read is not much use in a working meeting, and the
+  // filter also refused the agent's own user asking in a call. The one guard left is
+  // `prompts/meeting-prompt.ts`'s confirmation rule, which covers self-configuration
+  // by name; it is guidance, not enforcement, so a sentence agreed in a call can
+  // change the agent for every future turn on every channel. Treat a meeting link as
+  // conferring the agent's authority over itself and keep it private.
+  // `docs/voice-meetings.md` says so plainly.
   if (mode === 'meeting') {
     return omit(new Set([SHARE_FILE_TOOL_NAME]));
   }
