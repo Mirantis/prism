@@ -61,13 +61,30 @@ describe('resolveBrowser', () => {
   });
 
   it('explains that the toolchain ships in the container when nothing is found', async () => {
-    process.env.PRISM_CHROMIUM_PATH = path.join(tmp, 'nope');
+    // Absence is forced rather than assumed from the host. The candidate list has
+    // hardcoded Linux paths, and GitHub's Ubuntu image really does ship
+    // `/usr/bin/google-chrome` — so this passed on a dev Mac and failed in CI,
+    // resolving a browser where it expected to find none. The override below points
+    // at a file that *does* exist, so the mock is what decides the outcome and the
+    // test can no longer pass for the wrong reason.
+    const present = path.join(tmp, 'exists');
+    await fs.writeFile(present, '#!/bin/sh\n');
+    process.env.PRISM_CHROMIUM_PATH = present;
+
+    vi.doMock('fs', async () => {
+      const actual = await vi.importActual<typeof import('fs')>('fs');
+      const promises = { ...actual.promises, access: vi.fn().mockRejectedValue(new Error('ENOENT')) };
+      return { ...actual, promises, default: { ...actual, promises } };
+    });
     vi.resetModules();
     const { resolveBrowser: fresh } = await import('../browser-stack');
 
-    // On a dev Mac none of the Linux paths exist either, so this is the real
-    // message an operator sees.
-    await expect(fresh()).rejects.toThrow(/container image/i);
+    try {
+      await expect(fresh()).rejects.toThrow(/container image/i);
+    } finally {
+      vi.doUnmock('fs');
+      vi.resetModules();
+    }
   });
 
   it('reports availability without throwing', async () => {
