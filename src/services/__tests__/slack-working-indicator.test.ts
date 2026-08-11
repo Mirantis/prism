@@ -3,7 +3,7 @@
  * entries (the primary cue), the eyes-reaction fallback (added only when the
  * initial status set fails, or right away for turns without a status thread),
  * event-driven status pushes (set on begin, on text change, and after bot
- * posts), and ordered clears. Ops are plain vi.fn()s — a resolving setStatus
+ * posts — all skipped once the initial set failed), and ordered clears. Ops are plain vi.fn()s — a resolving setStatus
  * is the success regime, a rejecting one drives the fallback; fake timers
  * only flush microtasks.
  */
@@ -13,6 +13,7 @@ vi.mock('../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+import { logger } from '../../logger';
 import {
   SlackWorkingIndicator,
   WORKING_REACTION,
@@ -207,6 +208,72 @@ describe('SlackWorkingIndicator', () => {
 
     await owning.end();
     expect(ops.removeReaction).toHaveBeenCalledWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
+  });
+
+  it('stops pushing the status once the initial set failed', async () => {
+    ops.setStatus.mockRejectedValueOnce(new Error('not an AI app'));
+
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    await vi.advanceTimersByTimeAsync(0); // let the initial outcome land
+    expect(ops.setStatus).toHaveBeenCalledOnce(); // the rejected initial set
+
+    // Both push paths: the live tool phrase, and the re-push the adapter fires
+    // after every bot post. Neither can restore a cue this thread never had.
+    handle.setText('is running kubectl…');
+    indicator.setStatus(TEAM, CHANNEL, THREAD_TS);
+    indicator.setStatus(TEAM, CHANNEL, THREAD_TS);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenCalledOnce();
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('Slack thread status rejected'),
+      WORKING_REACTION, CHANNEL, THREAD_TS,
+    );
+
+    // The clear still goes out — the one case a rendered status could stick is
+    // a set that failed after Slack had already stored it.
+    await handle.end();
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+  });
+
+  it('tries the status again for the next turn on the same thread', async () => {
+    ops.setStatus.mockRejectedValueOnce(new Error('ratelimited'));
+
+    const first = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await first.end();
+
+    // The failure was cached on that entry, not on the thread: a fresh entry
+    // retries, so a transient rejection costs one turn's cue and no more.
+    const second = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: '1111.0002', statusThreadTs: THREAD_TS,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, WORKING_STATUS_TEXT);
+
+    second.setText('is running kubectl…');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, 'is running kubectl…');
+    expect(ops.addReaction).toHaveBeenCalledExactlyOnceWith(CHANNEL, MSG_TS, TEAM, WORKING_REACTION);
+  });
+
+  it('logs the accepted initial status — the phrase the e2e suite greps', async () => {
+    await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, messageTs: MSG_TS, statusThreadTs: THREAD_TS,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The status line is write-only on the Slack API, so this line is what the
+    // Slack e2e suite asserts on. Renaming it there and not here (or the other
+    // way round) is the regression this pins.
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('Slack thread status accepted'),
+      CHANNEL, THREAD_TS,
+    );
   });
 
   it('keeps status entries on different threads independent', async () => {
