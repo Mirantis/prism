@@ -225,3 +225,39 @@ describe('a mode flip mid-utterance', () => {
     expect(p.onTranscript('i1')).toBe('ignore');
   });
 });
+
+describe('not paying for a verdict that cannot matter', () => {
+  it('skips the early look in open mode', () => {
+    // One human in the room: the utterance is answered at its turn boundary
+    // whatever the gate would say. Judging it anyway bought nothing and cost a
+    // model call per sentence — on a live one-to-one call a verdict arrived 1.5s
+    // after the agent had already begun answering that same utterance.
+    const policy = new ResponsePolicy({ mode: 'auto' });
+    policy.setParticipantCount(2);
+
+    expect(policy.onTranscript('item-1', 'partial')).toBe('ignore');
+  });
+
+  it('still judges the finished transcript in open mode', () => {
+    // The mode can flip between an utterance closing and its words arriving, so
+    // the authoritative pass is not skipped — only the speculative one.
+    const policy = new ResponsePolicy({ mode: 'auto' });
+    policy.setParticipantCount(2);
+
+    expect(policy.onTranscript('item-1', 'final')).toBe('classify');
+  });
+
+  it('keeps the early look when the agent must be named', () => {
+    const policy = new ResponsePolicy({ mode: 'addressed' });
+
+    expect(policy.onTranscript('item-1', 'partial')).toBe('classify');
+  });
+
+  it('never re-judges an utterance already answered', () => {
+    const policy = new ResponsePolicy({ mode: 'auto' });
+    policy.setParticipantCount(2);
+    policy.onUtteranceCommitted('item-1');
+
+    expect(policy.onTranscript('item-1', 'final')).toBe('ignore');
+  });
+});

@@ -141,6 +141,19 @@ export class ResponsePolicy {
   }
 
   /**
+   * Count an utterance the caller is answering without asking this object first.
+   *
+   * The held-answer path decides at the transcript and speaks at the boundary, so
+   * it never routes through `onUtteranceCommitted` — and without this the same
+   * utterance was counted as answered but never as spoken, letting `answered`
+   * climb past `utterances` and corrupting the suppressed/utterances ratio that is
+   * the point of the stats.
+   */
+  noteUtterance(): void {
+    this.stats.utterances += 1;
+  }
+
+  /**
    * The turn detector closed an utterance.
    *
    * Only `open` mode answers here, and that is the point of it: with one human in
@@ -165,8 +178,20 @@ export class ResponsePolicy {
    * `response.create` is *queued* by the session's pending-response deferral
    * rather than dropped, so the room would hear the same reply twice.
    */
-  onTranscript(itemId: string): TranscriptDecision {
+  onTranscript(itemId: string, stage: TranscriptStage = 'final'): TranscriptDecision {
     if (this.wasHandled(itemId)) return 'ignore';
+
+    // In `open` mode an early look cannot change anything: the utterance will be
+    // answered at its turn boundary whatever the verdict says, and the verdict does
+    // not arrive before that boundary often enough to matter. Judging it anyway cost
+    // a model call for every sentence spoken in a one-to-one call — measured on a
+    // live call as a gate verdict landing 1.5s *after* the agent had already
+    // started answering the same utterance.
+    //
+    // Only the early look is skipped. A finished transcript still reaches the
+    // classifier when the utterance was not already answered, which is what covers
+    // a mode flip between the boundary and the words arriving.
+    if (stage === 'partial' && this.mode === 'open') return 'ignore';
 
     // With no id there is nothing to match the two paths on, so an utterance that
     // `open` mode already answered at the boundary cannot be recognised here, and
