@@ -37,7 +37,9 @@ appears when the first two are present:
    form, so unlike other secrets it can't be a managed-credential placeholder that
    gets swapped in on the wire. Google Meet offers no bot or service-account API, so
    this is the price of being in a call at all — give the agent a dedicated account
-   with nothing else attached to it.
+   with nothing else attached to it, **one per agent**. Sharing an account between
+   agents works, but each one then sees the other's name on its own tile and only
+   one can be in a call at a time.
 
 ```bash
 docker run -d \
@@ -67,6 +69,10 @@ admit flow" defaults to deny. Patched automation, real Chrome, human-like pacing
 honest user agents all hit the same wall; the same browser signed into an account
 joins normally. Every commercial meeting-bot vendor uses signed-in accounts for the
 same reason.
+
+So the runtime does not try. Ask it to join a Meet call with no account configured
+and it says so immediately, rather than starting a browser and an audio stack to
+sit in a lobby that will refuse it.
 
 So give the agent a **dedicated** account, not a person's:
 

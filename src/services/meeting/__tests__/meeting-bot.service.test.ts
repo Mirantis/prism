@@ -107,6 +107,7 @@ vi.mock('../providers/google-meet.provider', () => ({
     name: 'google-meet',
     displayName: 'Google Meet',
     matchesUrl: (url: string) => url.startsWith('https://meet.google.com/'),
+    requiresSignIn: true,
     join: (...a: unknown[]) => providerJoin(...a),
     leave: (...a: unknown[]) => providerLeave(...a),
     participantCount: (...a: unknown[]) => providerParticipantCount(...a),
@@ -116,6 +117,8 @@ vi.mock('../providers/google-meet.provider', () => ({
 vi.mock('../../../config', () => ({
   config: {
     agentName: 'Prism',
+    googleBotEmail: 'bot@example.com',
+    googleBotPassword: 'hunter2',
     meetingTimeoutMinutes: 60,
     meetingAdmissionTimeoutMs: 5_000,
     openaiRealtimeVoice: undefined,
@@ -158,6 +161,31 @@ afterEach(() => {
 
 /** Let the fire-and-forget join flow settle. */
 const settle = () => new Promise((r) => setTimeout(r, 10));
+
+describe('a platform that will not take an unauthenticated bot', () => {
+  it('says so instead of building a call to be refused', async () => {
+    // Meet denies an automated anonymous guest before a host is prompted, so this
+    // join cannot succeed — and finding that out in the lobby costs a virtual
+    // display, an audio daemon, a browser and a metered Realtime socket first.
+    const { config } = await import('../../../config');
+    const saved = { email: config.googleBotEmail, password: config.googleBotPassword };
+    (config as { googleBotEmail?: string }).googleBotEmail = '';
+    (config as { googleBotPassword?: string }).googleBotPassword = '';
+
+    try {
+      const result = await service.join(input);
+
+      expect(result.state).toBe('idle');
+      expect(result.message).toMatch(/GOOGLE_BOT_EMAIL/);
+      // Nothing was started, and nothing to tear down.
+      expect(providerJoin).not.toHaveBeenCalled();
+      expect(service.status().state).toBe('idle');
+    } finally {
+      (config as { googleBotEmail?: string }).googleBotEmail = saved.email;
+      (config as { googleBotPassword?: string }).googleBotPassword = saved.password;
+    }
+  });
+});
 
 describe('joining', () => {
   it('returns before admission, then reports being in the call', async () => {

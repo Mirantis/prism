@@ -84,6 +84,17 @@ export interface MeetingProvider {
   /** Human-readable platform name for messages to the user. */
   readonly displayName: string;
 
+  /**
+   * Whether the platform refuses an unauthenticated bot outright.
+   *
+   * Google Meet does: an automated anonymous guest is denied before a host is
+   * prompted, so a join without an account is not a join that might fail — it is one
+   * that cannot succeed. The runtime checks this before building a call's worth of
+   * infrastructure. A platform that admits named guests leaves it false and uses
+   * `JoinOptions.displayName`.
+   */
+  readonly requiresSignIn: boolean;
+
   /** Whether this provider handles the given link. */
   matchesUrl(url: string): boolean;
 

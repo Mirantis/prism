@@ -183,6 +183,22 @@ export class MeetingBotService {
       return { state: 'idle', message: `That doesn't look like a supported meeting link.` };
     }
 
+    // Refused here rather than in the lobby. Google Meet auto-denies automated
+    // anonymous guests — `CreateMeetingDevice` 403, the host never even prompted —
+    // so without an account this join cannot succeed, and finding that out the slow
+    // way costs a virtual display, an audio daemon, a browser and a metered Realtime
+    // socket before Google says no. `requiresSignIn` is a property of the platform,
+    // so a provider that admits named guests (Teams, Zoom) simply does not set it.
+    if (provider.requiresSignIn && !(config.googleBotEmail && config.googleBotPassword)) {
+      return {
+        state: 'idle',
+        message:
+          `I can't join ${provider.displayName} without a Google account: it refuses ` +
+          `automated guests before a host is ever asked. Set GOOGLE_BOT_EMAIL and ` +
+          `GOOGLE_BOT_PASSWORD and I'll be able to join.`,
+      };
+    }
+
     this.provider = provider;
     this.current = input;
     this.responseMode = input.responseMode ?? 'auto';
@@ -190,11 +206,9 @@ export class MeetingBotService {
     this.startedAt = Date.now();
     const epoch = this.epoch;
 
-    // Only reaches a platform that admits named guests. Google Meet auto-denies
-    // those, so on Meet this is the label on a join that is about to be refused —
-    // kept because the provider seam is platform-agnostic and Teams and Zoom do
-    // admit them. `context.agentName` is not available this early, hence the env
-    // fallback; a signed-in join shows the Google account's name regardless.
+    // Only meaningful to a provider that admits named guests; a signed-in join shows
+    // the Google account's own name. `context.agentName` is not loaded this early,
+    // hence the env fallback.
     const displayName = input.displayName || config.agentName;
 
     try {
