@@ -262,6 +262,14 @@ const REJECTION_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
 export class GoogleMeetProvider implements MeetingProvider {
   readonly name = 'google-meet';
   readonly displayName = 'Google Meet';
+  /**
+   * Meet denies an automated anonymous guest before a host is ever prompted — the
+   * `CreateMeetingDevice` RPC answers 403 a second after "Ask to join". Real Chrome,
+   * patched automation, human-like pacing and honest user agents all hit the same
+   * wall; a signed-in account walks in. So this is policy, not something a better
+   * guest flow could get past.
+   */
+  readonly requiresSignIn = true;
 
   matchesUrl(url: string): boolean {
     try {
@@ -320,7 +328,6 @@ export class GoogleMeetProvider implements MeetingProvider {
       return { status: 'stale_session' };
     }
 
-    const nameEntered = await this.enterDisplayName(page, options.displayName, lobbyDeadline);
     await this.turnOffCamera(page);
 
     const attempt = await this.clickJoinButton(page, lobbyDeadline);
@@ -337,9 +344,7 @@ export class GoogleMeetProvider implements MeetingProvider {
       return {
         status: 'failed',
         step: 'join_button',
-        reason: nameEntered
-          ? 'The join button never became available — the Meet page may have changed.'
-          : 'Could not enter a name, so the join button stayed disabled — the Meet page may have changed.',
+        reason: 'The join button never became available — the Meet page may have changed.',
       };
     }
 
@@ -410,84 +415,6 @@ export class GoogleMeetProvider implements MeetingProvider {
     } catch {
       return false;
     }
-  }
-
-  /**
-   * Work out which lobby this is, and fill the name in if it is the guest one.
-   *
-   * Mostly a classifier, despite the name: telling a member lobby (a join button,
-   * no name field) from a guest one is what every healthy join depends on, and it
-   * is the only reliable answer to "are we actually signed in". The `signedIn` flag
-   * the caller holds is a hint — it comes from our own check, which has been seen
-   * reporting a challenge while the browser was in fact signed in — so the page is
-   * the authority, not the flag.
-   *
-   * The typing survives even though Meet auto-denies automated anonymous guests:
-   * the join button stays disabled until the field has a value, so skipping it
-   * would turn a clear "Google refuses anonymous guests" refusal into a vague
-   * "no join button appeared" timeout. The signed-in-but-offered-a-name-field case
-   * never reaches here any more — `attemptJoin` intercepts it as `stale_session`.
-   */
-  private async enterDisplayName(
-    page: Page,
-    displayName: string,
-    lobbyDeadline: number,
-  ): Promise<boolean> {
-    const nameField = nameFieldLocator(page);
-    // Built from the same patterns the click loop uses. These lists had drifted: the
-    // race matched only /ask to join|join now/ while the click loop also accepted
-    // "Join anyway", so a lobby offering that button classified as neither — and the
-    // flow walked on having logged that it found nothing.
-    const joinButton = page
-      .getByRole('button', { name: new RegExp(JOIN_BUTTON_PATTERNS.map((p) => p.source).join('|'), 'i') })
-      .first();
-
-    // Polled a round at a time rather than raced. Both alternatives previously got
-    // the full timeout in parallel and whichever resolved first decided the branch,
-    // so on a guest lobby — where the name field and a disabled "Ask to join" are
-    // painted together — the same page took either path from run to run.
-    //
-    // Name field first, deliberately: filling it is what *enables* the button, so
-    // when both exist the guest path is the correct reading. Short per-round waits
-    // keep the signed-in path fast, which is the point of not simply waiting out
-    // NAME_FIELD_TIMEOUT_MS on a field that will never appear.
-    const deadline = Math.min(Date.now() + NAME_FIELD_TIMEOUT_MS, lobbyDeadline);
-    let found: 'name' | 'join' | 'neither' = 'neither';
-    while (Date.now() < deadline) {
-      if (await appears(nameField, CLASSIFY_ROUND_MS)) {
-        found = 'name';
-        break;
-      }
-      // Deliberately *enabled*, not merely visible: a disabled join button beside an
-      // unpainted name field is a guest lobby mid-render, not a member lobby.
-      if (await appearsEnabled(joinButton, CLASSIFY_ROUND_MS)) {
-        found = 'join';
-        break;
-      }
-      // A real `waitFor` spends its timeout when the element is absent, so a round
-      // already costs the better part of a second — but this loop must not depend on
-      // that. Without the yield, a locator that answers instantly turns the wait into
-      // a busy loop that blocks the event loop for the whole budget.
-      await new Promise((r) => setTimeout(r, 100));
-    }
-
-    if (found === 'join') {
-      // Signed in: Meet already knows who we are.
-      logger.info('[Meeting] Recognized as a signed-in participant — no name needed');
-      return false;
-    }
-    if (found === 'name') {
-      try {
-        await nameField.fill(displayName, { timeout: 5_000 });
-        logger.info(`[Meeting] Entered display name "${displayName}"`);
-        return true;
-      } catch (err) {
-        logger.warn(`[Meeting] Could not fill the name field: ${String(err)}`);
-      }
-    }
-    // Neither appeared: report it and let the join attempt produce the real error.
-    logger.info('[Meeting] Neither a name field nor a join button appeared yet');
-    return false;
   }
 
   /**

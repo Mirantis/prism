@@ -127,8 +127,10 @@ describe('join outcomes', () => {
     const outcome = await provider.join(page, joinOptions);
 
     expect(outcome).toEqual({ status: 'admitted' });
-    expect(fills).toContain('Prism');
     expect(clicks).toContain('Ask to join');
+    // Nothing is typed any more: Meet refuses automated anonymous guests, so a join
+    // without an account is rejected before a browser is ever launched.
+    expect(fills).toEqual([]);
   });
 
   it('waits out the waiting room and reports admission when it arrives', async () => {
@@ -251,15 +253,15 @@ describe('join outcomes', () => {
     expect(outcome).toEqual({ status: 'admitted' });
   });
 
-  it('says the name field was the problem when it could not be filled', async () => {
-    // Distinguishes "Meet changed its name field" from "the button never enabled",
-    // because they need different fixes.
+  it('reports a join button that never became available', async () => {
+    // One reason now, not two: the name-field branch it used to distinguish is gone
+    // along with guest joining, so selector rot on the button is the only way here.
     const { page } = fakePage({});
 
     const outcome = await provider.join(page, { ...joinOptions, admissionTimeoutMs: 200 });
 
     expect(outcome.status).toBe('failed');
-    expect((outcome as { reason: string }).reason).toMatch(/could not enter a name/i);
+    expect((outcome as { reason: string }).reason).toMatch(/join button never became available/i);
   });
 
   it('accepts "Join now" when Meet treats it as a member', async () => {
@@ -342,24 +344,6 @@ describe('join outcomes', () => {
     const outcome = await provider.join(page, joinOptions);
 
     expect(outcome).toEqual({ status: 'admitted' });
-  });
-
-  it('fills the name field even when the join button is already enabled', async () => {
-    // Both are painted together on a guest lobby, and filling the field is what
-    // enables the button — so the guest path is the right reading. This used to be a
-    // Promise.race, and the same page took either branch depending on paint order.
-    const { page, fills } = fakePage({
-      visibleButtons: ['Ask to join'],
-      visibleSelectors: [
-        'input[aria-label="Your name"]',
-        'button[aria-label*="Leave call" i]',
-      ],
-    });
-
-    const outcome = await provider.join(page, joinOptions);
-
-    expect(outcome).toEqual({ status: 'admitted' });
-    expect(fills).toContain('Prism');
   });
 
   it('does not mistake an unrelated named input for the guest name field', async () => {
@@ -523,9 +507,11 @@ describe('a stale signed-in session', () => {
     expect(clicks).toEqual([]);
   });
 
-  it('treats the same field as the normal path when not signed in', async () => {
-    // An unauthenticated join is *expected* to be asked for a name — that field is
-    // the guest flow working, not a symptom.
+  it('leaves the name field alone when not signed in', async () => {
+    // There is no guest path any more: `MeetingBotService` refuses a Meet join with
+    // no Google account before any of this runs, because Meet denies automated
+    // anonymous guests before a host is prompted. Typing a name only ever bought a
+    // clearer refusal, at the cost of a browser and a lobby wait.
     const { page, fills } = fakePage({
       visibleSelectors: [
         'input[aria-label="Your name"]',
@@ -537,7 +523,7 @@ describe('a stale signed-in session', () => {
     const outcome = await provider.join(page, { ...joinOptions, signedIn: false });
 
     expect(outcome).toEqual({ status: 'admitted' });
-    expect(fills).toContain('Prism');
+    expect(fills).toEqual([]);
   });
 
   it('does not report it for a signed-in lobby with no name field', async () => {
