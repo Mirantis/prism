@@ -21,7 +21,7 @@ audio or model path.
 
 ## What you need
 
-Voice meetings need three things, and the agent's `join_google_meet` tool only
+Voice meetings need three things, and the agent's `join_meeting` tool only
 appears when the first two are present:
 
 1. **The container image.** It ships the browser and audio toolchain (Chromium,
@@ -32,7 +32,12 @@ appears when the first two are present:
    provider, because none of them serves a realtime voice surface. Your chat model
    is unaffected; only the in-meeting voice uses OpenAI.
 3. **A Google account for the agent** (`GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD`).
-   This one is not optional in practice — see below.
+   This one is not optional in practice — see below. Note the password has to be the
+   **real password, in plain text**: the agent signs in by typing it into Google's
+   form, so unlike other secrets it can't be a managed-credential placeholder that
+   gets swapped in on the wire. Google Meet offers no bot or service-account API, so
+   this is the price of being in a call at all — give the agent a dedicated account
+   with nothing else attached to it.
 
 ```bash
 docker run -d \
@@ -94,8 +99,9 @@ The agent joins as its own signed-in participant. That means:
   by far the most common cause.
 - **It joins with no camera.** It appears as a name and an avatar tile.
 
-Participants see the Google account's own name. `MEETING_DISPLAY_NAME` only applies
-on the guest path.
+Participants see the Google account's own name — there is no setting for it. The
+join tool takes an optional display name, but it only reaches platforms that admit
+named guests, and Google Meet is not one of them.
 
 The agent handles one call at a time. Asking it to join a second one while it's in
 a meeting returns an error rather than dropping the first.
@@ -266,7 +272,6 @@ is between you and your OpenAI account settings.
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used to decide whether the agent was spoken to. Runs on every call, billed per minute; never fed to the model. The default is the only streaming model that also accepts name hints — see [Names](#names). | `gpt-live-transcribe` |
-| `MEETING_DISPLAY_NAME` | Name shown to participants on the guest path only. | the agent's name |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |
 
