@@ -2,9 +2,11 @@
  * Exposes the agent's real tools to the Realtime model, and runs them.
  *
  * This is what makes the voice in the meeting the agent rather than a narrator:
- * the same tools an ordinary chat turn gets — memory, cron, goals, shell, skills,
- * plus everything the Nexus MCP endpoint serves — are offered to the Realtime
- * session as function tools and executed in this process when called.
+ * the tools an ordinary chat turn gets — memory, cron, goals, shell, skills, plus
+ * everything the Nexus MCP endpoint serves — are offered to the Realtime session as
+ * function tools and executed in this process when called. `share_file` is the one
+ * exception, dropped by `filterToolsByMode` because a meeting runs neither the
+ * invoke loop nor the conversation engine that deliver what it stores.
  *
  * Executing them here (rather than via OpenAI's remote-MCP feature) is not a
  * choice: the tools are in-process closures over service singletons and a
@@ -13,10 +15,11 @@
  *
  * Because the bridge runs tools on behalf of whoever is talking, everything a
  * meeting participant says is untrusted input with the agent's full tool authority
- * behind it — the `meeting` mode intentionally withholds nothing. The only guard
- * left in code is the size cap on results, which exists for a different reason (a
- * model that has to *say* the answer should not be handed a 100 kB dump). Behaviour
- * around destructive requests is prompt-level; see `prompts/meeting-prompt.ts`.
+ * behind it — nothing destructive is withheld in `meeting` mode. The only guards
+ * left in code are that one dropped tool and the size cap on results, and the cap
+ * exists for a different reason (a model that has to *say* the answer should not be
+ * handed a 100 kB dump). Behaviour around destructive requests is prompt-level; see
+ * `prompts/meeting-prompt.ts`.
  */
 
 import { asSchema, type Tool } from 'ai';
@@ -165,7 +168,8 @@ function truncate(text: string): string {
   if (text.length <= MAX_RESULT_CHARS) return text;
   return (
     text.slice(0, MAX_RESULT_CHARS) +
-    `\n\n[truncated ${text.length - MAX_RESULT_CHARS} characters — summarize what's here and offer ` +
-    `to follow up in chat with the full result]`
+    `\n\n[truncated ${text.length - MAX_RESULT_CHARS} characters — say the part that answers the ` +
+    `question and offer to go into more of it out loud. You cannot send the rest anywhere; the ` +
+    `call is your only channel]`
   );
 }

@@ -174,6 +174,7 @@ export class MeetingBotService {
         addressedOnly: this.addressedOnly,
         agentName: config.agentName,
         voice: config.openaiRealtimeVoice,
+        onSessionLost: (reason) => this.onSessionLost(epoch, reason),
       });
       this.conversation = conversation;
       await conversation.start();
@@ -333,8 +334,46 @@ export class MeetingBotService {
     note: string | null,
   ): Promise<void> {
     if (!this.isActive) return;
+    // Claim the ending before the note goes out. Posting one is a database write and
+    // a fan-out to the channel adapters, and the session can close during it —
+    // teardown always closes it — so without this the room would be told both
+    // "everyone else left" and "I lost my voice connection". Teardown bumps the
+    // epoch again; doing it twice costs nothing.
+    this.epoch += 1;
     if (note) await this.notifyThread(note);
     await this.teardown(status);
+  }
+
+  /**
+   * The Realtime session died under us — end the call.
+   *
+   * Nothing about the bot is a participant any more: no audio reaches the room and
+   * nothing the room says reaches a model. Staying would leave a mute, deaf tile in
+   * someone's meeting until the empty-room poll or the duration cap fired, so this
+   * leaves and says why. Deliberately no reconnect: a fresh session would come back
+   * with none of the call's context, so rejoining the conversation mid-sentence is
+   * worse than an honest exit the room can see.
+   *
+   * Epoch-guarded like the join flow — a close belonging to a call that has already
+   * ended must not tear down whatever is running now.
+   */
+  private onSessionLost(epoch: number, reason: string): void {
+    if (this.epoch !== epoch || !this.isActive) return;
+    logger.warn(`[Meeting] Lost the Realtime session mid-call: ${reason}`);
+    void (async () => {
+      await this.notifyThread(
+        `I lost my voice connection to the ${this.provider?.displayName ?? 'meeting'} call, ` +
+          `so I've left it: ${reason}`,
+      );
+      // Re-checked after the note, not just before it: posting one is a database
+      // write and a fan-out to every channel adapter, and a `leave()` landing in
+      // that window can finish its own teardown and let the user rejoin. Without
+      // this, the stale teardown below would cancel or end *that* call. Teardown's
+      // own guard doesn't cover it — it only rejects a re-entry mid-teardown, and
+      // by then the service is back to `idle`.
+      if (this.epoch !== epoch) return;
+      await this.teardown('error');
+    })();
   }
 
   /**

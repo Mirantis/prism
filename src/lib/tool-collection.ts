@@ -164,7 +164,7 @@ export function withToolsCacheControl(
  *   "check again later" follow-ups
  * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
  * - goal: minus create_goal (no nested goals) and cron-management; get_goal stays
- * - meeting: same full set as chat (see the note in the function body)
+ * - meeting: chat's full set minus share_file (see the note in the function body)
  */
 export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<string, Tool> {
   // Goal-management tools are chat-only entry points; a goal turn keeps only
@@ -180,18 +180,28 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
     return result;
   };
 
-  // Chat and a live voice meeting both get the agent's full tool surface.
-  //
-  // Meeting mode used to withhold the tools whose effects outlive the call (cron,
-  // self-configuration, memory writes) because meeting audio is unauthenticated:
-  // anyone with the link can speak, and their words drive a model holding real
-  // tools. That boundary was removed deliberately — an agent that can only read is
-  // not much use in a working meeting — which makes
-  // `prompts/meeting-prompt.ts` the only remaining guard. It is guidance, not
-  // enforcement, so treat a meeting link as conferring the agent's own authority
-  // and keep it private. `docs/voice-meetings.md` says so plainly.
-  if (mode === 'chat' || mode === 'meeting') {
+  if (mode === 'chat') {
     return tools;
+  }
+
+  // A live voice meeting gets chat's full surface except `share_file`.
+  //
+  // `share_file` is dropped for the same reason `subagent` drops it: the tool only
+  // stores the file and hands back an id, and it is the *invoke loop* that carries
+  // that id onto the step and the conversation engine that links it to a delivered
+  // message. A meeting runs neither, so a shared file would be stored and then
+  // reach nobody — while the tool's own description promises the user a download.
+  //
+  // Nothing else is withheld. Meeting mode used to also drop the tools whose
+  // effects outlive the call (cron, self-configuration, memory writes), because
+  // meeting audio is unauthenticated: anyone with the link can speak, and their
+  // words drive a model holding real tools. That boundary was removed deliberately
+  // — an agent that can only read is not much use in a working meeting — which
+  // leaves `prompts/meeting-prompt.ts` as the only guard on those. It is guidance,
+  // not enforcement, so treat a meeting link as conferring the agent's own
+  // authority and keep it private. `docs/voice-meetings.md` says so plainly.
+  if (mode === 'meeting') {
+    return omit(new Set([SHARE_FILE_TOOL_NAME]));
   }
 
   // Only a person in a conversation asks the agent into a call, so every mode

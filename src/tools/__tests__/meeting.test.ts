@@ -164,36 +164,41 @@ describe('isMeetingSupported', () => {
 });
 
 describe('meeting tool mode', () => {
-  it('gives a live call the agent\'s full tool surface, same as chat', async () => {
-    const { filterToolsByMode } = await import('../../lib/tool-collection');
-    const { AGENT_CONFIG_WRITE_TOOL_NAMES } = await import('../agent-config');
+  const EVERYTHING = [
+    'memory_search', 'memory_write', 'memory_delete',
+    'shell_exec', 'shell_write_file', 'claude_code', 'shell_spawn',
+    'schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task',
+    'create_goal', 'get_goal', 'share_file', 'skill',
+    'leave_meeting', 'join_google_meet', 'meeting_status',
+    'rename_self', 'update_soul', 'update_memory', 'update_user_profile',
+    'update_heartbeat_config', 'update_settings', 'update_vision', 'clear_bootstrap',
+  ];
 
-    // Deliberately unrestricted: an agent that can only read is little use in a
-    // working meeting. The trade-off is that `prompts/meeting-prompt.ts` becomes
-    // the only guard — asserted in meeting-prompt.test.ts.
-    const everything = Object.fromEntries(
-      [
-        'memory_search', 'memory_write', 'memory_delete',
-        'shell_exec', 'shell_write_file', 'claude_code', 'shell_spawn',
-        'schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task',
-        'create_goal', 'get_goal', 'share_file', 'skill',
-        'leave_meeting', 'join_google_meet', 'meeting_status',
-        ...AGENT_CONFIG_WRITE_TOOL_NAMES,
-      ].map((n) => [n, stub()]),
-    );
+  it('withholds share_file, and only share_file', async () => {
+    const { filterToolsByMode } = await import('../../lib/tool-collection');
+
+    // Deliberately unrestricted apart from share_file: an agent that can only read
+    // is little use in a working meeting, so `prompts/meeting-prompt.ts` is the
+    // only guard on the destructive tools — asserted in meeting-prompt.test.ts.
+    // share_file is different in kind: it is not withheld for safety but because
+    // nothing in a meeting delivers what it stores, so it could only lie.
+    const everything = Object.fromEntries(EVERYTHING.map((n) => [n, stub()]));
 
     const filtered = filterToolsByMode(everything, 'meeting');
 
-    expect(Object.keys(filtered).sort()).toEqual(Object.keys(everything).sort());
+    expect(Object.keys(filtered).sort()).toEqual(
+      EVERYTHING.filter((n) => n !== 'share_file').sort(),
+    );
   });
 
-  it('matches chat mode exactly, so the two cannot drift apart', async () => {
+  it('otherwise tracks chat mode, so the two cannot drift apart', async () => {
     const { filterToolsByMode } = await import('../../lib/tool-collection');
-    const all = { schedule_task: stub(), update_soul: stub(), memory_write: stub(), shell_exec: stub() };
+    const all = Object.fromEntries(EVERYTHING.map((n) => [n, stub()]));
 
-    expect(Object.keys(filterToolsByMode(all, 'meeting'))).toEqual(
-      Object.keys(filterToolsByMode(all, 'chat')),
-    );
+    const chatOnly = Object.keys(filterToolsByMode(all, 'chat'))
+      .filter((n) => n !== 'share_file');
+
+    expect(Object.keys(filterToolsByMode(all, 'meeting'))).toEqual(chatOnly);
   });
 
   it('still keeps the meeting tools out of autonomous modes', async () => {
