@@ -248,6 +248,9 @@ function toMeta(row: MetaRow, blobBackedIds: Set<string>): AttachmentMeta {
   };
 }
 
+/** Ids per `updateMany` in `reconcileMissingFiles` — well under any SQLite bind-variable limit. */
+const RECONCILE_BATCH_SIZE = 500;
+
 const META_SELECT = {
   id: true,
   filename: true,
@@ -612,10 +615,17 @@ class AttachmentService {
     const present = await listMediaFiles();
     const missing = rows.filter((r) => r.storagePath !== null && !present.has(r.storagePath));
     if (missing.length === 0) return 0;
-    await prisma.messageAttachment.updateMany({
-      where: { id: { in: missing.map((m) => m.id) } },
-      data: { storagePath: null },
-    });
+    // Repoint in batches. In the scenarios this method exists for (import onto
+    // another install, replaced volume) *every* row is missing, so one `IN`
+    // list would hold the whole table — past SQLite's bind-variable ceiling
+    // that throws, at boot, on every restart. Prisma auto-chunks `in` on reads,
+    // not on `updateMany`.
+    for (let i = 0; i < missing.length; i += RECONCILE_BATCH_SIZE) {
+      await prisma.messageAttachment.updateMany({
+        where: { id: { in: missing.slice(i, i + RECONCILE_BATCH_SIZE).map((m) => m.id) } },
+        data: { storagePath: null },
+      });
+    }
     return missing.length;
   }
 }
