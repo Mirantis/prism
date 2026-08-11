@@ -39,7 +39,29 @@ import { classifyAddressed, CLASSIFY_DEADLINE_MS } from './addressed-classifier'
  */
 const EARLY_VERDICT_MIN_CHARS = 12;
 
-/** Utterances remembered as early-judged. Insertion-ordered, oldest evicted. */
+/**
+ * How much new text is worth another look at a sentence still being spoken.
+ *
+ * Judging exactly once was the first version's mistake: it read the opening three
+ * or four words of every utterance — " Yeah. I think", " Do we have any" — and never
+ * looked again, so a name arriving later in the sentence was only ever caught by the
+ * finished transcript. Since transcription streams *ahead* of the utterance closing
+ * (1.8s to 40s of lead, measured live), there is room to look again as it grows.
+ */
+const EARLY_VERDICT_GROWTH_CHARS = 40;
+
+/**
+ * Most early looks at one utterance.
+ *
+ * Each is a model call, and meetings contain minute-long monologues that would
+ * otherwise be re-judged every few words for their whole duration. Six covers the
+ * first couple of hundred characters, which is where a name realistically appears
+ * when someone means to address the agent; past that the finished transcript is
+ * close enough to be worth waiting for.
+ */
+const MAX_EARLY_VERDICTS = 6;
+
+/** Utterances tracked for early judging. Insertion-ordered, oldest evicted. */
 const EARLY_JUDGED_LIMIT = 32;
 import type { PreparedMeetingTools } from './tool-bridge';
 
@@ -92,12 +114,14 @@ export class VoiceConversation {
   /**
    * Utterances already judged from a partial transcript, so it happens once.
    *
+   * Holds how long the text was when last judged and how many looks it has had.
    * Bounded rather than cleared purely on the `transcript` event: a transcription
-   * that fails, or one that trims to empty, never emits that event, so its id would
-   * otherwise sit here for the rest of the call. A stale id can only ever suppress a
-   * *second* early judgement of the same utterance, so evicting the oldest is safe.
+   * that fails, or one that trims to empty, never emits that event, so its entry
+   * would otherwise sit here for the rest of the call. A stale entry can only ever
+   * suppress further early looks at that same utterance, so evicting the oldest is
+   * safe.
    */
-  private readonly earlyJudged = new Set<string>();
+  private readonly earlyJudged = new Map<string, { chars: number; looks: number }>();
   private stopped = false;
 
   constructor(private readonly options: VoiceConversationOptions) {
@@ -169,20 +193,26 @@ export class VoiceConversation {
       if (this.responsePolicy.onUtteranceCommitted(itemId)) this.session.requestResponse();
     });
 
-    // Judged twice, and on purpose. People put a name at the start of a sentence,
-    // so a partial transcript usually settles the question several hundred
-    // milliseconds before the finished one arrives — and those milliseconds sit
-    // between someone finishing a sentence and the agent starting to answer. An
-    // early *yes* therefore answers immediately; an early *no* is not trusted,
-    // because the rest of the sentence is still coming, so the finished transcript
-    // is judged again. The policy's per-item dedupe makes the overlap safe.
+    // Judged while the speaker is still talking, and again when they stop.
+    // Transcription streams well ahead of the utterance closing — seconds of lead,
+    // sometimes tens of them — so a name can be recognised and answered before the
+    // sentence even ends: a live call answered "Actually, prism, can you help with
+    // that?" off the first fifteen characters, while the rest was still being said.
+    // An early *yes* therefore answers immediately; an early *no* is never trusted,
+    // because the rest of the sentence is still coming. The policy's per-item dedupe
+    // makes the overlapping verdicts safe.
     this.session.on('transcriptPartial', (itemId, textSoFar) => {
-      if (textSoFar.trim().length < EARLY_VERDICT_MIN_CHARS) return;
-      if (this.earlyJudged.has(itemId)) return;
+      const chars = textSoFar.trim().length;
+      if (chars < EARLY_VERDICT_MIN_CHARS) return;
+
+      const seen = this.earlyJudged.get(itemId);
+      if (seen && (seen.looks >= MAX_EARLY_VERDICTS || chars - seen.chars < EARLY_VERDICT_GROWTH_CHARS)) {
+        return;
+      }
       if (this.responsePolicy.onTranscript(itemId) !== 'classify') return;
-      this.earlyJudged.add(itemId);
+      this.earlyJudged.set(itemId, { chars, looks: (seen?.looks ?? 0) + 1 });
       if (this.earlyJudged.size > EARLY_JUDGED_LIMIT) {
-        this.earlyJudged.delete(this.earlyJudged.values().next().value as string);
+        this.earlyJudged.delete(this.earlyJudged.keys().next().value as string);
       }
       void this.classifyThenMaybeRespond(itemId, textSoFar, 'partial');
     });
