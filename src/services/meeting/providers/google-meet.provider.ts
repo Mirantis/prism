@@ -113,6 +113,48 @@ const CLASSIFY_ROUND_MS = 400;
 const BUTTON_REPORT_INTERVAL_MS = 10_000;
 
 /**
+ * The slice of the DOM the participant-count probe touches.
+ *
+ * Structural rather than the real `Document`, because this runtime compiles
+ * against Node's libs only: adding `dom` to get one type would put `document`,
+ * `fetch`, `Response` and the rest of the browser surface in scope for every
+ * server module, where they are a source of confusion rather than help.
+ */
+interface CountElement {
+  getAttribute(name: string): string | null;
+  readonly textContent: string | null;
+}
+
+interface CountDocument {
+  querySelector(selectors: string): CountElement | null;
+  querySelectorAll(selectors: string): ArrayLike<CountElement>;
+}
+
+/**
+ * Cap on one participant-count read.
+ *
+ * `page.evaluate` has no timeout of its own, and this runs on a timer for the
+ * whole call: a read that never settles would stall every later poll behind it,
+ * freezing both the response mode and the empty-room check.
+ */
+const COUNT_READ_TIMEOUT_MS = 2_000;
+
+/** Reject if `promise` hasn't settled within `ms`. */
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * The guest name field.
  *
  * Shared by the classification race and the fill so the two cannot disagree. The
@@ -562,39 +604,87 @@ export class GoogleMeetProvider implements MeetingProvider {
   }
 
   /**
-   * Read the participant count from the UI.
+   * Read the participant count from the UI, the agent included.
    *
-   * Returns null rather than guessing when the count can't be read: the caller
-   * uses this to auto-leave an empty meeting, and a selector change must not
-   * eject the bot from a call that is still going.
+   * Two things ride on this: leaving once the room has emptied, and deciding
+   * whether the agent answers everything or waits to be addressed. It is
+   * therefore read four ways and the **largest** reading wins, because the two
+   * failure directions are not equally bad. Reading high costs one person having
+   * to say the agent's name; reading low puts a silent agent back to answering
+   * every sentence in a room full of people, which is the bug this exists to
+   * prevent. Returns null only when nothing could be read at all — never a guess,
+   * since the caller must not eject the agent from a call that is still going.
+   *
+   * Checked against a live call rather than the docs: Meet renders **neither**
+   * `[data-participant-count]` nor a `button[aria-label*="People"]`, the two the
+   * first version relied on. They are kept as the first attempts anyway — they
+   * cost nothing in the same pass and other Meet surfaces may still carry them —
+   * but the readings that actually work are the People control's count badge and
+   * the participant ids on the tiles.
    */
   async participantCount(page: Page): Promise<number | null> {
+    let readings: number[];
     try {
-      const attr = await page
-        .locator('[data-participant-count]')
-        .first()
-        .getAttribute('data-participant-count', { timeout: 1_000 });
-      if (attr) {
-        const parsed = parseInt(attr, 10);
-        if (Number.isFinite(parsed)) return parsed;
-      }
+      // One `evaluate` rather than a locator per strategy: this runs on a timer
+      // for the whole call, and four locator round-trips each with their own
+      // timeout is a lot of work to repeat every ten seconds.
+      readings = await withTimeout(
+        page.evaluate(() => {
+          // This body runs in the page, not in Node. The runtime's `lib` is
+          // deliberately Node-only — pulling in `dom` would put `document`,
+          // `fetch` and friends in scope for every server module — so the handful
+          // of DOM members used here are described structurally instead.
+          const doc = (globalThis as unknown as { document: CountDocument }).document;
+
+          const found: number[] = [];
+          const add = (value: number) => {
+            if (Number.isFinite(value) && value > 0) found.push(value);
+          };
+
+          const attr = doc
+            .querySelector('[data-participant-count]')
+            ?.getAttribute('data-participant-count');
+          if (attr) add(parseInt(attr, 10));
+
+          const label = doc
+            .querySelector('button[aria-label*="People" i]')
+            ?.getAttribute('aria-label');
+          const labelled = label?.match(/(\d+)/);
+          if (labelled) add(parseInt(labelled[1], 10));
+
+          // The People control renders its label and a count badge as separate
+          // nodes, so the control's combined text reads "People2". Matched on the
+          // container's text rather than a class name, because every class on that
+          // subtree is a generated hash that changes without notice.
+          for (const el of Array.from(doc.querySelectorAll('div,span,button'))) {
+            const text = el.textContent?.trim() ?? '';
+            if (text.length > 24) continue;
+            const badge = text.match(/^people\s*(\d{1,4})$/i);
+            if (badge) add(parseInt(badge[1], 10));
+          }
+
+          // Language-independent, and the only reading that survives a relabelled
+          // People control. Distinct ids because the same participant appears both
+          // as a tile and as a row once the roster panel is open. It can *under*
+          // report if Meet stops rendering off-screen tiles in a large call, which
+          // is exactly why the largest reading wins below.
+          const ids = new Set(
+            Array.from(doc.querySelectorAll('[data-participant-id]')).map((el) =>
+              el.getAttribute('data-participant-id'),
+            ),
+          );
+          add(ids.size);
+
+          return found;
+        }),
+        COUNT_READ_TIMEOUT_MS,
+      );
     } catch {
-      // Fall through to the label-based reading.
+      // A closed page, a navigation mid-read, or a page too busy to answer.
+      return null;
     }
 
-    try {
-      // The People button's accessible name carries the count, e.g. "People (3)".
-      const label = await page
-        .locator('button[aria-label*="People" i]')
-        .first()
-        .getAttribute('aria-label', { timeout: 1_000 });
-      const match = label?.match(/(\d+)/);
-      if (match) return parseInt(match[1], 10);
-    } catch {
-      // Unknown.
-    }
-
-    return null;
+    return readings.length > 0 ? Math.max(...readings) : null;
   }
 
   async leave(page: Page): Promise<void> {

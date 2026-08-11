@@ -54,6 +54,16 @@ const PARTICIPANT_POLL_MS = 10_000;
 const UNREADABLE_COUNTS_BEFORE_WARNING = 3;
 
 /**
+ * How hard to try for a participant count at the moment of admission.
+ *
+ * Meet admits the agent before it renders the other tiles, so the first read is
+ * a reliable 1 — see `seedParticipantCount`. Together these span a few seconds,
+ * which is well inside the poll interval the reading would otherwise wait for.
+ */
+const SEED_READ_ATTEMPTS = 5;
+const SEED_READ_INTERVAL_MS = 700;
+
+/**
  * How long the agent must read as the only one left before it leaves.
  *
  * More than a single reading because a count of 1 is also what a brief UI
@@ -98,8 +108,6 @@ export interface JoinMeetingInput {
   displayName?: string
   /** How much the agent speaks up; `auto` follows the participant count. */
   responseMode?: ResponseMode;
-  /** Extra spellings of the agent's name, for when transcription mangles it. */
-  aliases?: string[];
 }
 
 export class MeetingBotService {
@@ -211,7 +219,6 @@ export class MeetingBotService {
         // agent that says one name and answers to another would be addressed by
         // the name it just gave the room, and stay silent.
         agentName,
-        ...(input.aliases ? { aliases: input.aliases } : {}),
         voice: config.openaiRealtimeVoice,
         onSessionLost: (reason) => this.onSessionLost(epoch, reason),
       });
@@ -310,12 +317,9 @@ export class MeetingBotService {
       this.conversation?.speakNow();
 
       await this.notifyThread(`I'm in the ${provider.displayName} call now.`);
-      // Read the room once straight away rather than waiting a poll interval:
-      // until this lands the policy assumes a crowd, and a one-to-one caller
-      // would have to say the agent's name to get their first answer. Failing to
-      // read it is not a reason to abandon a call already joined, so this cannot
-      // be allowed to reach the catch below.
-      await this.checkParticipants().catch((err) => {
+      // Failing to read the room is not a reason to abandon a call already
+      // joined, so this cannot be allowed to reach the catch below.
+      await this.seedParticipantCount(epoch).catch((err) => {
         logger.warn({ err }, '[Meeting] Could not read the room on admission');
       });
 
@@ -347,6 +351,44 @@ export class MeetingBotService {
       },
       config.meetingTimeoutMinutes * 60 * 1000,
     );
+  }
+
+  /**
+   * Read the room once on admission, patiently, for the response mode alone.
+   *
+   * Not simply an early `checkParticipants()`, for two reasons found on a live
+   * call. Meet renders the other tiles a moment *after* it admits us, so an
+   * immediate read comes back as 1 — and 1 is also what an empty room looks like,
+   * so feeding it to the leave counter would put a false "I'm alone" reading into
+   * a call a host had just that second let us into. And the mode is the only
+   * thing that needs an answer this early; the leave check can wait for the timer,
+   * which is what it is for.
+   *
+   * Gives up quietly rather than seeding a 1. The policy's cautious default —
+   * wait to be addressed — is the right place to stay when the room is unknown,
+   * and the poll will correct it within one interval.
+   */
+  private async seedParticipantCount(epoch: number): Promise<void> {
+    for (let attempt = 0; attempt < SEED_READ_ATTEMPTS; attempt += 1) {
+      if (this.epoch !== epoch || this.state !== 'in_call' || !this.page || !this.provider) return;
+
+      let count: number | null = null;
+      try {
+        count = await this.provider.participantCount(this.page);
+      } catch {
+        // Keep trying: the page is still settling.
+      }
+
+      // Anything above the agent itself means the room has rendered.
+      if (count !== null && count > 1) {
+        this.conversation?.setParticipantCount(count);
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, SEED_READ_INTERVAL_MS));
+    }
+
+    logger.info('[Meeting] Room not readable yet on admission — waiting for the poll');
   }
 
   /**
@@ -499,9 +541,9 @@ export class MeetingBotService {
         tool_calls: String(stats?.toolCalls ?? 0),
         interruptions: String(stats?.interruptions ?? 0),
         // How the room was handled. `suppressed` against `utterances` is what says
-        // whether the gate earned its keep; `addressed_matches` against the answers
-        // says how much of that came from someone saying the name rather than the
-        // follow-up window. Counts only — no transcript ever leaves the process.
+        // whether the gate earned its keep, and `addressed_matches` how often
+        // someone actually called the agent by name. Counts only — no transcript
+        // ever leaves the process.
         utterances: String(stats?.utterances ?? 0),
         suppressed: String(stats?.suppressed ?? 0),
         addressed_matches: String(stats?.addressedMatches ?? 0),
@@ -550,8 +592,9 @@ export class MeetingBotService {
         responseMode: this.responseMode,
       }),
     ].join('\n\n---\n\n');
-    // Handed back so the caller can give the same name to the addressed-detection
-    // path — the room hears this one, so it is the one people will say.
+    // Handed back so the caller can give the same name to the gate that decides
+    // whether the agent was called — the room hears this one, so it is the one
+    // people will actually say.
     return { instructions, agentName: context.agentName };
   }
 

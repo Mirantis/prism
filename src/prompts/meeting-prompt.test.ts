@@ -125,7 +125,10 @@ describe('getMeetingInstructions', () => {
     // A model that doesn't know it is being filtered re-introduces itself every
     // time it is let through, or asks whether the follow-up was meant for it.
     expect(text).toMatch(/don't re-introduce yourself/i);
-    expect(text).toMatch(/and staging\?/i);
+    // No grace period, so it must not expect to hear the turns in between and must
+    // not read a gap as the speaker changing the subject.
+    expect(text).toMatch(/every time/i);
+    expect(text).toMatch(/did not hear the turns in between/i);
   });
 
   it('covers both cases under auto, since the room decides which applies', () => {

@@ -84,7 +84,14 @@ describe('RealtimeSession configuration', () => {
     const audio = update!.session.audio;
     expect(audio.input.format).toEqual({ type: 'audio/pcm', rate: 24000 });
     expect(audio.output.format).toEqual({ type: 'audio/pcm', rate: 24000 });
-    expect(audio.input.turn_detection).toMatchObject({ type: 'semantic_vad', eagerness: 'low' });
+    // `medium` rather than `low`: semantic VAD still judges meaning rather than
+    // silence, so a mid-thought pause isn't read as the end of a turn, but it stops
+    // waiting as long to say so — dead air before every answer was the single
+    // biggest source of perceived latency on a live call.
+    expect(audio.input.turn_detection).toMatchObject({
+      type: 'semantic_vad',
+      eagerness: 'medium',
+    });
   });
 
   it('never lets the server answer or interrupt on its own', async () => {
@@ -112,7 +119,14 @@ describe('RealtimeSession configuration', () => {
     // Only ever used to decide who was addressed, never as model input. On for
     // every call because a third person can join at any moment, and an utterance
     // already past cannot be transcribed retroactively.
-    expect(update.session.audio.input.transcription).toEqual({ model: 'gpt-realtime-whisper' });
+    // Language is pinned rather than auto-detected: left to itself the transcriber
+    // drifted to German, Korean and Bulgarian inside one English call, and a wrong
+    // language guess mangles the agent's own name — the one word this transcript
+    // exists to find.
+    expect(update.session.audio.input.transcription).toEqual({
+      model: 'gpt-realtime-whisper',
+      language: 'en',
+    });
   });
 
   it('asks for far-field noise reduction, because meeting audio is room audio', async () => {
@@ -157,6 +171,58 @@ describe('RealtimeSession events', () => {
     // Arrives before any transcript exists, which is what lets a one-to-one call
     // answer as promptly as it did when the server created responses itself.
     expect(committed).toEqual(['item-7']);
+  });
+
+  it('accumulates partial transcription and reports the text so far', async () => {
+    active = await harness();
+    const partials: Array<[string, string]> = [];
+    active.session.on('transcriptPartial', (itemId, text) => partials.push([itemId, text]));
+
+    active.emit({
+      type: 'conversation.item.input_audio_transcription.delta',
+      item_id: 'item-9',
+      delta: 'Hey ',
+    });
+    active.emit({
+      type: 'conversation.item.input_audio_transcription.delta',
+      item_id: 'item-9',
+      delta: 'Prism,',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The accumulated text, not the fragment: a name is only recognisable whole,
+    // and it is what lets the gate answer before the sentence has finished.
+    expect(partials).toEqual([
+      ['item-9', 'Hey '],
+      ['item-9', 'Hey Prism,'],
+    ]);
+  });
+
+  it('drops the buffered partial when transcription fails outright', async () => {
+    active = await harness();
+    const partials: string[] = [];
+    active.session.on('transcriptPartial', (_id, text) => partials.push(text));
+
+    active.emit({
+      type: 'conversation.item.input_audio_transcription.delta',
+      item_id: 'item-8',
+      delta: 'Hey ',
+    });
+    active.emit({
+      type: 'conversation.item.input_audio_transcription.failed',
+      item_id: 'item-8',
+    });
+    // A failed utterance emits no words and leaves nothing behind: the accumulator
+    // would otherwise hold that text for the rest of the call, and a later delta on
+    // the same id would be judged with a stale prefix in front of it.
+    active.emit({
+      type: 'conversation.item.input_audio_transcription.delta',
+      item_id: 'item-8',
+      delta: 'Prism',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(partials).toEqual(['Hey ', 'Prism']);
   });
 
   it('tags a transcript with the item it belongs to', async () => {

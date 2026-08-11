@@ -40,3 +40,88 @@ describe('GoogleMeetProvider identity', () => {
     expect(provider.displayName).toBe('Google Meet');
   });
 });
+
+/**
+ * Reading the room.
+ *
+ * The first version of this looked for `[data-participant-count]` and a
+ * `button[aria-label*="People"]`. A live call renders neither, so the count came
+ * back null for the whole meeting — which pinned the agent to one response mode
+ * and disabled the empty-room check, both silently. These cases are built from
+ * the markup Meet actually served, so the same drift fails a test next time.
+ */
+describe('GoogleMeetProvider.participantCount', () => {
+  /** A page whose `evaluate` runs the probe against `html` in a real DOM. */
+  const pageWith = (html: string) => ({
+    async evaluate<T>(fn: () => T): Promise<T> {
+      const { JSDOM } = await import('jsdom');
+      const dom = new JSDOM(`<body>${html}</body>`);
+      const previous = globalThis.document;
+      (globalThis as { document?: Document }).document = dom.window.document;
+      try {
+        return fn();
+      } finally {
+        (globalThis as { document?: Document }).document = previous;
+      }
+    },
+  }) as unknown as Parameters<GoogleMeetProvider['participantCount']>[0];
+
+  it('reads the count badge on the People control', async () => {
+    // Label and badge are separate nodes, so the control's text reads "People3".
+    // Every class on that subtree is a generated hash, hence matching on text.
+    const html = `<div><div class="nI4yAd"><span>People</span><div class="fs3avc">3</div></div></div>`;
+    expect(await provider.participantCount(pageWith(html))).toBe(3);
+  });
+
+  it('counts distinct participant ids when the control is unreadable', async () => {
+    // The language-independent reading, and the one that survives a relabelled
+    // People control. Ids repeat across the grid and the roster panel.
+    const html = `
+      <div data-participant-id="a"></div>
+      <div data-participant-id="b"></div>
+      <div data-participant-id="a"></div>`;
+    expect(await provider.participantCount(pageWith(html))).toBe(2);
+  });
+
+  it('takes the largest reading when they disagree', async () => {
+    // Meet stops rendering off-screen tiles in a big call, so the tile count can
+    // read low. Reading low is the dangerous direction: it would put the agent
+    // back to answering every sentence in a room full of people.
+    const html = `
+      <div class="nI4yAd"><span>People</span><div>9</div></div>
+      <div data-participant-id="a"></div>
+      <div data-participant-id="b"></div>`;
+    expect(await provider.participantCount(pageWith(html))).toBe(9);
+  });
+
+  it('still reads the two legacy attributes', async () => {
+    expect(await provider.participantCount(pageWith('<div data-participant-count="5"></div>'))).toBe(5);
+    expect(
+      await provider.participantCount(pageWith('<button aria-label="People (4)"></button>')),
+    ).toBe(4);
+  });
+
+  it('discards a reading that is not a number', async () => {
+    // `parseInt('lots')` is NaN, and NaN reaching the caller would compare false
+    // against every threshold — neither "leave" nor "stay", just quietly wrong.
+    expect(
+      await provider.participantCount(pageWith('<div data-participant-count="lots"></div>')),
+    ).toBeNull();
+  });
+
+  it('returns null when the page says nothing about people', async () => {
+    // Never a guess: the caller uses this to leave, and a selector change must
+    // not eject the agent from a call that is still going.
+    expect(await provider.participantCount(pageWith('<div>call in progress</div>'))).toBeNull();
+  });
+
+  it('returns null rather than hanging when the page cannot answer', async () => {
+    const wedged = {
+      evaluate: () => new Promise(() => {}),
+    } as unknown as Parameters<GoogleMeetProvider['participantCount']>[0];
+
+    // `page.evaluate` has no timeout of its own, and this runs on a timer for the
+    // whole call: one read that never settles would stall every later poll.
+    await expect(provider.participantCount(wedged)).resolves.toBeNull();
+  }, 10_000);
+});

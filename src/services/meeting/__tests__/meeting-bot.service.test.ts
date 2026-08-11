@@ -647,15 +647,45 @@ describe('reading the room', () => {
     expect(conversationSetParticipantCount).toHaveBeenCalledWith(2);
   });
 
-  it('keeps the call when the count cannot be read, and says so', async () => {
+  it('waits for the room to render instead of believing the first "1"', async () => {
+    // Observed live: Meet admits the agent a moment before it renders anyone
+    // else's tile, so an immediate read is a reliable 1.
+    providerParticipantCount
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(1)
+      .mockResolvedValue(3);
+
+    await service.join(input);
+    // The seed retries over a few seconds while the room renders.
+    await vi.waitFor(() => expect(conversationSetParticipantCount).toHaveBeenCalledWith(3), {
+      timeout: 6_000,
+    });
+
+    // And never the transient 1 — which is also what an empty room looks like,
+    // so seeding it would put a false "I'm alone" into a call just joined.
+    expect(conversationSetParticipantCount).not.toHaveBeenCalledWith(1);
+  });
+
+  it('does not count the admission read towards leaving an empty room', async () => {
+    // A room a host has just admitted the agent to is not empty by definition.
+    providerParticipantCount.mockResolvedValue(1);
+
+    await service.join(input);
+    await settle();
+
+    expect(service.status().state).toBe('in_call');
+  });
+
+  it('keeps the call when the count cannot be read, and seeds nothing', async () => {
     providerParticipantCount.mockRejectedValue(new Error('selector gone'));
 
     await service.join(input);
     await settle();
 
-    // A scraper failure is reported as "unknown", never guessed at: guessing
-    // "open" would put the agent back to answering a whole room.
-    expect(conversationSetParticipantCount).toHaveBeenCalledWith(null);
+    // Never guessed at. The policy's own default — wait to be addressed — is
+    // where an unknown room belongs, and guessing "open" instead would put the
+    // agent back to answering everything said by everyone.
+    expect(conversationSetParticipantCount).not.toHaveBeenCalled();
     expect(service.status().state).toBe('in_call');
   });
 
@@ -671,10 +701,4 @@ describe('reading the room', () => {
     expect(conversationOptions).toMatchObject({ agentName: 'Atlas', responseMode: 'auto' });
   });
 
-  it('passes aliases through for a name transcription mangles', async () => {
-    await service.join({ ...input, aliases: ['prisma', 'prison'] });
-    await settle();
-
-    expect(conversationOptions).toMatchObject({ aliases: ['prisma', 'prison'] });
-  });
 });

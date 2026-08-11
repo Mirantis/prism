@@ -105,9 +105,8 @@ The agent can join a Google Meet call and take part by voice — see
 then on it listens and speaks in the room.
 
 How much it speaks up follows the room: on a one-to-one call it answers everything,
-and once anyone else is present it waits to be addressed by name, with a short
-window afterwards so follow-ups don't need repeating it. That switches as people
-come and go, so there is nothing to set — see
+and once anyone else is present it waits to be called by name — every time, including
+follow-ups. That switches as people come and go, so there is nothing to set — see
 [Voice meetings](voice-meetings.md#in-the-call) to override it for a given call.
 
 Inside the call it keeps **every tool above except `share_file`**, so it can look
