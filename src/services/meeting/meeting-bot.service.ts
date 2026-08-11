@@ -190,7 +190,12 @@ export class MeetingBotService {
     this.startedAt = Date.now();
     const epoch = this.epoch;
 
-    const displayName = input.displayName || config.meetingDisplayName || config.agentName;
+    // Only reaches a platform that admits named guests. Google Meet auto-denies
+    // those, so on Meet this is the label on a join that is about to be refused —
+    // kept because the provider seam is platform-agnostic and Teams and Zoom do
+    // admit them. `context.agentName` is not available this early, hence the env
+    // fallback; a signed-in join shows the Google account's name regardless.
+    const displayName = input.displayName || config.agentName;
 
     try {
       // Instructions and tools first: they need the database and the model

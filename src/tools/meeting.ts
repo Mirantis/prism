@@ -1,11 +1,13 @@
 /**
  * Tools for joining and leaving live voice meetings.
  *
- * The join tool is named per platform (`join_google_meet`) rather than generically:
- * a Teams or Zoom provider would add its own, and a single `join_meeting` taking a
- * URL would leave the model guessing which platforms are actually supported. Leave
- * and status are generic because there is only ever one active call, whatever it
- * runs on.
+ * All three are platform-agnostic. The join tool was `join_meeting` first, on the
+ * reasoning that the name is the model's only signal of which platforms work — but
+ * the platform is already decided by the URL (`findProvider` matches on the host),
+ * and the alternative scales badly: a per-platform *leave* would mean
+ * `leave_google_meet` and `leave_msteams_meeting` doing the identical thing to the
+ * same single-call state. The supported platforms belong in the description, which
+ * is read at the same moment as the name and can say more.
  *
  * Registered only when the container can actually host a call — the browser and
  * audio toolchain on PATH plus an OpenAI key. Offering a tool that always answers
@@ -24,11 +26,11 @@ import { logger } from '../logger';
 /**
  * Tool names, exported so every autonomous mode can drop them in one place.
  *
- * A live call keeps them: `join_google_meet` inside a meeting harmlessly reports
+ * A live call keeps them: `join_meeting` inside a meeting harmlessly reports
  * that it is already in one, and `leave_meeting`/`meeting_status` are how the
  * agent ends and inspects the call it is in.
  */
-export const MEETING_TOOL_NAMES = ['join_google_meet', 'leave_meeting', 'meeting_status'] as const;
+export const MEETING_TOOL_NAMES = ['join_meeting', 'leave_meeting', 'meeting_status'] as const;
 
 export interface MeetingToolsInput {
   userId: string;
@@ -71,13 +73,16 @@ export async function isMeetingSupported(): Promise<boolean> {
 
 export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> {
   return {
-    join_google_meet: tool({
+    join_meeting: tool({
       description:
-        'Join a Google Meet call as a live voice participant — you will speak and listen in ' +
-        'real time. Returns as soon as the request to join is in; a host must admit you, and ' +
-        'progress is reported in this conversation. Only one call at a time.',
+        'Join a video call as a live voice participant — you will speak and listen in real ' +
+        'time. Google Meet links are supported today; the platform is taken from the URL. ' +
+        'Returns as soon as the request to join is in; a host must admit you, and progress ' +
+        'is reported in this conversation. Only one call at a time.',
       inputSchema: z.object({
-        url: z.string().describe('The Google Meet link, e.g. https://meet.google.com/abc-defg-hij'),
+        url: z
+          .string()
+          .describe('The meeting link — a Google Meet URL, e.g. https://meet.google.com/abc-defg-hij'),
         displayName: z
           .string()
           .optional()
@@ -121,7 +126,9 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
     }),
 
     leave_meeting: tool({
-      description: 'Leave the meeting call you are currently in.',
+      description:
+        'Leave the call you are currently in, whichever platform it is on. ' +
+        'There is only ever one, so this needs no arguments.',
       inputSchema: z.object({}),
       execute: async () => {
         const { message } = await meetingBotService.leave();
@@ -131,9 +138,9 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
 
     meeting_status: tool({
       description:
-        'Check whether you are in a meeting call, and how it is going (state, how long, ' +
-        'how many times you have spoken or used a tool, and whether you are currently ' +
-        'answering everything or only when addressed).',
+        'Check whether you are in a call and how it is going, whichever platform it is on: ' +
+        'state, which platform, how long, how many times you have spoken or used a tool, and ' +
+        'whether you are currently answering everything or only when addressed.',
       inputSchema: z.object({}),
       execute: async () => {
         const status = meetingBotService.status();

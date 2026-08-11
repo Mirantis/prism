@@ -412,14 +412,15 @@ export const config = {
 
   // Live voice meetings (see the derivations above). The meeting tools are only
   // registered when `openaiApiKey` is set AND the container has the browser and
-  // audio toolchain; `meetingDisplayName` falls back to the agent's own name.
+  // audio toolchain. The name shown to participants is the Google account's own, so
+  // there is no display-name setting: it is a per-join argument for platforms that
+  // admit named guests, defaulting to the agent's name.
   openaiApiKey,
   openaiRealtimeModel,
   openaiRealtimeVoice,
   openaiTranscriptionModel,
   googleBotEmail,
   googleBotPassword,
-  meetingDisplayName: process.env.MEETING_DISPLAY_NAME || '',
   meetingTimeoutMinutes,
   meetingAdmissionTimeoutMs,
 };
