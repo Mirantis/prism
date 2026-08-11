@@ -454,7 +454,7 @@ What the operator sets on `docker run`:
 | `GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD` | Google account the meeting bot signs in as. **Effectively required** — Meet auto-denies automated anonymous guests (`CreateMeetingDevice` 403, host never prompted). Profile persisted under `<DATA>/meeting-browser-profile`, so login is rare | — |
 | `MEETING_DISPLAY_NAME` | Name shown to participants on the guest path (signed-in uses the account's name) | the agent's name |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call | `60` |
-| `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait to be admitted from the waiting room | `300` |
+| `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait to be admitted from the waiting room, counted from when the join request goes in (reaching the lobby is budgeted separately) | `300` |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |

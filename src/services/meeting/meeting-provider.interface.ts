@@ -14,20 +14,35 @@
 
 import type { Page } from 'playwright-core';
 
+/**
+ * Where a join attempt got to before it stopped.
+ *
+ * A bounded enum rather than the prose reason, because it is emitted as telemetry:
+ * it answers "which step is failing in production" without carrying page text. The
+ * `reason` stays the thing a human reads.
+ */
+export type JoinStep = 'page_load' | 'lobby' | 'join_button' | 'admission';
+
 /** Outcome of trying to get into a call. */
 export type JoinOutcome =
   /** In the room — audio flows from here. */
   | { status: 'admitted' }
   /** A host actively refused, or the waiting room timed out. */
-  | { status: 'denied'; reason: string }
+  | { status: 'denied'; reason: string; step: JoinStep }
   /** Never got as far as the waiting room (bad link, meeting over, UI changed). */
-  | { status: 'failed'; reason: string };
+  | { status: 'failed'; reason: string; step: JoinStep };
 
 export interface JoinOptions {
   url: string;
   /** Name shown to the other participants. */
   displayName: string;
-  /** Cap on the whole join attempt, waiting room included. */
+  /**
+   * Cap on the waiting room, measured from the moment the join request goes in.
+   *
+   * Reaching the lobby is budgeted separately: charging page load and the join-button
+   * hunt to this number let a slow lobby report "nobody admitted the request" without
+   * the provider having waited even once.
+   */
   admissionTimeoutMs: number;
   /**
    * Whether the browser profile is signed into a Google account.
@@ -39,6 +54,16 @@ export interface JoinOptions {
    * which cost real debugging time.
    */
   signedIn?: boolean;
+  /**
+   * Why signing in failed, when an account *was* configured.
+   *
+   * Meet refuses automated anonymous guests behind the same wall it shows for an
+   * ended meeting and a dead link, so without this the runtime reported an expired
+   * bot password as "the meeting has ended" — knowing the real answer and not saying
+   * it. Absent when sign-in succeeded, or when no account is configured at all
+   * (joining as a guest is then a deliberate choice, not a failure).
+   */
+  signInFailureReason?: string;
 }
 
 export interface MeetingProvider {

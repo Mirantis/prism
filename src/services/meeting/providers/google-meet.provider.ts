@@ -77,6 +77,59 @@ const JOIN_BUTTON_TIMEOUT_MS = 60_000;
 const NAME_FIELD_TIMEOUT_MS = 20_000;
 
 /**
+ * Budget for everything before the join request is in — the lobby, the name field,
+ * the button hunt.
+ *
+ * Deliberately separate from the admission budget. Both used to come out of one
+ * deadline computed before `page.goto`, so a slow page load (up to 45 s) plus a slow
+ * button hunt (up to 60 s) silently spent the waiting-room budget, and in the tail
+ * `waitForAdmission` was entered with its deadline already past — reporting "nobody
+ * admitted the request" without having waited even once.
+ *
+ * The trade is a longer worst case: roughly 45 s page load + 80 s lobby + the full
+ * admission budget, so about 7 minutes at the 300 s default, against about 6 before.
+ * Nothing user-facing blocks on it — `runJoin` is fire-and-forget and
+ * `MEETING_TIMEOUT_MINUTES` still caps the call — and the alternative is failing a
+ * join that was going to succeed.
+ */
+const LOBBY_PHASE_TIMEOUT_MS = NAME_FIELD_TIMEOUT_MS + JOIN_BUTTON_TIMEOUT_MS;
+
+/**
+ * Reads that must agree before a rejection is believed, and the gap between them.
+ *
+ * One read is whatever Meet happened to have painted in that instant, and acting on
+ * it is terminal — so a single match is a hypothesis, not an answer. Meet is an SPA
+ * that renders interstitials on the way to the lobby, and a rejection caught
+ * mid-render is exactly the intermittent "the meeting has ended" that a retry
+ * against the same live link then walked straight past.
+ */
+const REJECTION_CONFIRM_READS = 3;
+const REJECTION_CONFIRM_INTERVAL_MS = 1_200;
+
+/** Per-round wait when deciding guest-vs-member; see `enterDisplayName`. */
+const CLASSIFY_ROUND_MS = 400;
+
+/** Throttle for the "still waiting on the join button" progress line. */
+const BUTTON_REPORT_INTERVAL_MS = 10_000;
+
+/**
+ * The guest name field.
+ *
+ * Shared by the classification race and the fill so the two cannot disagree. The
+ * third alternative is scoped to "your name" rather than any label merely
+ * *containing* "name": the looser form matched unrelated text inputs on a signed-in
+ * lobby, filled one, and then logged the "meeting has most likely ended" warning at
+ * nobody.
+ */
+function nameFieldLocator(page: Page): Locator {
+  return page
+    .locator('input[aria-label="Your name"]')
+    .or(page.locator('input[placeholder="Your name"]'))
+    .or(page.locator('input[type="text"][aria-label*="your name" i]'))
+    .first();
+}
+
+/**
  * Accessible-name patterns for the button that submits a join request.
  *
  * Matched as substrings, not exact strings: Meet appends device state to the
@@ -85,16 +138,33 @@ const NAME_FIELD_TIMEOUT_MS = 20_000;
  */
 const JOIN_BUTTON_PATTERNS = [/ask to join/i, /join now/i, /join anyway/i, /switch here/i];
 
+/**
+ * Meet's catch-all wall, which covers several unrelated causes — including the one
+ * the runtime can often explain itself. See `explainDenial`.
+ */
+const CATCH_ALL_REJECTION =
+  "Google Meet wouldn't let me in. Either the meeting has ended, the link is no longer valid, or this meeting only admits signed-in members of its organization.";
+
+/**
+ * What the join-button hunt concluded.
+ *
+ * Carries the rejection rather than dropping it — see `clickJoinButton`.
+ */
+type ClickOutcome = { clicked: true } | { clicked: false; rejection: string | null };
+
 /** Signs the meeting rejected us outright, mapped to what to tell the user. */
 const REJECTION_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
   // Meet's catch-all wall. It covers an ended meeting, a link that was never
   // valid, and a tenant that blocks anonymous guests — and the page says the same
   // thing for all three, so the message lists them instead of asserting one.
-  { pattern: /you can'?t join this (video call|meeting)/i, reason: "Google Meet wouldn't let me in. Either the meeting has ended, the link is no longer valid, or this meeting only admits signed-in members of its organization." },
+  { pattern: /you can'?t join this (video call|meeting)/i, reason: CATCH_ALL_REJECTION },
   { pattern: /no one responded to your request/i, reason: 'Nobody admitted the request to join.' },
   { pattern: /your request to join was denied/i, reason: 'A host denied the request to join.' },
   { pattern: /this meeting hasn'?t started/i, reason: "The meeting hasn't started yet." },
-  { pattern: /(the )?meeting (has )?ended/i, reason: 'The meeting has already ended.' },
+  // Anchored to Meet's real copy. The old form made `has` optional, so the bare
+  // substring "meeting ended" matched — and this text is scanned against the whole
+  // visible page, including chat and captions once the bot is in the room.
+  { pattern: /(this|the) (video call|meeting) has ended/i, reason: 'The meeting has already ended.' },
   { pattern: /check your meeting code/i, reason: 'Google Meet did not recognize that meeting link.' },
   { pattern: /invalid video call name/i, reason: 'Google Meet did not recognize that meeting link.' },
 ];
@@ -123,37 +193,80 @@ export class GoogleMeetProvider implements MeetingProvider {
   }
 
   private async attemptJoin(page: Page, options: JoinOptions): Promise<JoinOutcome> {
-    const deadline = Date.now() + options.admissionTimeoutMs;
+    const startedAt = Date.now();
 
     try {
       await page.goto(options.url, { waitUntil: 'domcontentloaded', timeout: PAGE_READY_TIMEOUT_MS });
     } catch (err) {
-      return { status: 'failed', reason: `Could not load the meeting page: ${err instanceof Error ? err.message : String(err)}` };
+      return { status: 'failed', step: 'page_load', reason: `Could not load the meeting page: ${err instanceof Error ? err.message : String(err)}` };
     }
+    logger.info(`[Meeting] Meet page loaded in ${Date.now() - startedAt}ms`);
 
-    // A rejection can be on screen before we ever reach the name field.
-    const earlyRejection = await this.findRejection(page);
-    if (earlyRejection) return { status: 'denied', reason: earlyRejection };
+    // Everything up to the click shares this; the waiting room gets its own budget
+    // below. Capped by the admission timeout as well so a caller asking for a short
+    // join gets a short one.
+    const lobbyDeadline = Date.now() + Math.min(options.admissionTimeoutMs, LOBBY_PHASE_TIMEOUT_MS);
+
+    // A rejection can be on screen before we ever reach the name field — but at
+    // `domcontentloaded` it can equally be a frame the SPA is about to replace, so
+    // this has to be the confirmed reading rather than a single glance.
+    const earlyRejection = await this.confirmedRejection(page);
+    if (earlyRejection) return { status: 'denied', step: 'lobby', reason: this.explainDenial(earlyRejection, options) };
 
     await this.dismissDeviceDialogs(page);
     // Before the camera toggle and the join click: Meet keeps the join button
     // disabled until the guest name has a value.
-    const nameEntered = await this.enterDisplayName(page, options.displayName, options.signedIn === true);
+    const nameEntered = await this.enterDisplayName(
+      page,
+      options.displayName,
+      options.signedIn === true,
+      lobbyDeadline,
+    );
     await this.turnOffCamera(page);
 
-    const clicked = await this.clickJoinButton(page, deadline);
-    if (!clicked) {
-      const rejection = await this.findRejection(page);
-      if (rejection) return { status: 'denied', reason: rejection };
+    const attempt = await this.clickJoinButton(page, lobbyDeadline);
+    if (!attempt.clicked) {
+      // Already confirmed inside the loop — reported as-is rather than re-confirmed,
+      // because the page may have moved on since.
+      if (attempt.rejection) {
+        return { status: 'denied', step: 'lobby', reason: this.explainDenial(attempt.rejection, options) };
+      }
+      // Deliberately not split further by "did we run out of time". The button hunt
+      // always runs to the lobby deadline, so an elapsed-budget test is true on every
+      // failure path and would make the selector-rot message below unreachable —
+      // which is the distinction that actually gets acted on.
       return {
         status: 'failed',
+        step: 'join_button',
         reason: nameEntered
           ? 'The join button never became available — the Meet page may have changed.'
           : 'Could not enter a name, so the join button stayed disabled — the Meet page may have changed.',
       };
     }
 
-    return this.waitForAdmission(page, deadline);
+    // Measured from the moment the request actually went in, not from the top of the
+    // function — see `LOBBY_PHASE_TIMEOUT_MS`.
+    return this.waitForAdmission(page, Date.now() + options.admissionTimeoutMs, options);
+  }
+
+  /**
+   * Add the real cause to Meet's catch-all wall when we already know it.
+   *
+   * Meet says the same thing for an ended meeting, a dead link and a tenant that
+   * blocks guests — and says it *also* when it refused us for being an automated
+   * anonymous guest. In that last case the runtime knows why (sign-in failed
+   * moments earlier) and used to say nothing, so an expired bot password read to
+   * the user as "the meeting has ended".
+   */
+  private explainDenial(reason: string, options: JoinOptions): string {
+    // Only the catch-all wall is ambiguous enough to be worth annotating; "a host
+    // denied the request" is already unambiguous and needs no help.
+    if (!options.signInFailureReason || reason !== CATCH_ALL_REJECTION) return reason;
+    return (
+      `${reason} I also couldn't sign in to the Google account configured for me ` +
+      `(${options.signInFailureReason}), and Google refuses automated anonymous guests — ` +
+      `that is the most likely cause.`
+    );
   }
 
   /**
@@ -191,26 +304,45 @@ export class GoogleMeetProvider implements MeetingProvider {
     page: Page,
     displayName: string,
     signedIn: boolean,
+    lobbyDeadline: number,
   ): Promise<boolean> {
-    // Raced against the join button rather than waited for outright. A signed-in
-    // account never gets a name field, so waiting the full timeout on each selector
-    // in turn added a silent minute to every signed-in join — the browser sitting on
-    // a ready page, looking for something that will never appear.
-    const nameField = page
-      .locator('input[aria-label="Your name"]')
-      .or(page.locator('input[placeholder="Your name"]'))
-      .or(page.locator('input[type="text"][aria-label*="name" i]'))
+    const nameField = nameFieldLocator(page);
+    // Built from the same patterns the click loop uses. These lists had drifted: the
+    // race matched only /ask to join|join now/ while the click loop also accepted
+    // "Join anyway", so a lobby offering that button classified as neither — and the
+    // flow walked on having logged that it found nothing.
+    const joinButton = page
+      .getByRole('button', { name: new RegExp(JOIN_BUTTON_PATTERNS.map((p) => p.source).join('|'), 'i') })
       .first();
-    const joinButton = page.getByRole('button', { name: /ask to join|join now/i }).first();
 
-    const found = await Promise.race([
-      appears(nameField, NAME_FIELD_TIMEOUT_MS).then((ok) => (ok ? 'name' : 'neither')),
-      // Deliberately waits for *enabled*, not merely visible. On the guest lobby Meet
-      // paints the name field and a disabled "Ask to join" in the same frame, so a
-      // visibility race could declare "no name needed", never fill the field, and
-      // then spend 60s watching a button that stays disabled forever.
-      appearsEnabled(joinButton, NAME_FIELD_TIMEOUT_MS).then((ok) => (ok ? 'join' : 'neither')),
-    ]);
+    // Polled a round at a time rather than raced. Both alternatives previously got
+    // the full timeout in parallel and whichever resolved first decided the branch,
+    // so on a guest lobby — where the name field and a disabled "Ask to join" are
+    // painted together — the same page took either path from run to run.
+    //
+    // Name field first, deliberately: filling it is what *enables* the button, so
+    // when both exist the guest path is the correct reading. Short per-round waits
+    // keep the signed-in path fast, which is the point of not simply waiting out
+    // NAME_FIELD_TIMEOUT_MS on a field that will never appear.
+    const deadline = Math.min(Date.now() + NAME_FIELD_TIMEOUT_MS, lobbyDeadline);
+    let found: 'name' | 'join' | 'neither' = 'neither';
+    while (Date.now() < deadline) {
+      if (await appears(nameField, CLASSIFY_ROUND_MS)) {
+        found = 'name';
+        break;
+      }
+      // Deliberately *enabled*, not merely visible: a disabled join button beside an
+      // unpainted name field is a guest lobby mid-render, not a member lobby.
+      if (await appearsEnabled(joinButton, CLASSIFY_ROUND_MS)) {
+        found = 'join';
+        break;
+      }
+      // A real `waitFor` spends its timeout when the element is absent, so a round
+      // already costs the better part of a second — but this loop must not depend on
+      // that. Without the yield, a locator that answers instantly turns the wait into
+      // a busy loop that blocks the event loop for the whole budget.
+      await new Promise((r) => setTimeout(r, 100));
+    }
 
     if (found === 'join') {
       // Signed in: Meet already knows who we are.
@@ -265,9 +397,19 @@ export class GoogleMeetProvider implements MeetingProvider {
    * Retrying rather than waiting once: the button's label changes as Meet decides
    * whether we're a guest ("Ask to join") or a member ("Join now"), and it is
    * briefly present-but-disabled in between.
+   *
+   * Hands back the rejection it found rather than a bare false. Discarding it meant
+   * the caller had to confirm all over again — several seconds later — and if the
+   * wall text had repainted away by then, a genuine denial was reported as "the join
+   * button never became available", blaming the Meet UI for a refusal we had already
+   * read twice.
    */
-  private async clickJoinButton(page: Page, deadline: number): Promise<boolean> {
-    const buttonDeadline = Math.min(deadline, Date.now() + JOIN_BUTTON_TIMEOUT_MS);
+  private async clickJoinButton(page: Page, deadline: number): Promise<ClickOutcome> {
+    const startedAt = Date.now();
+    // `deadline` already carries the lobby-phase cap, so there is nothing left to
+    // min() against here.
+    const buttonDeadline = deadline;
+    let lastReport = 0;
 
     while (Date.now() < buttonDeadline) {
       for (const pattern of JOIN_BUTTON_PATTERNS) {
@@ -278,22 +420,32 @@ export class GoogleMeetProvider implements MeetingProvider {
           // value and Meet has finished probing devices, so this is a retry
           // condition rather than a failure.
           if (!(await button.isEnabled())) {
-            logger.debug(`[Meeting] Join button matching ${pattern} is not enabled yet`);
+            // Reported at info, throttled: at debug a 60-second hunt left no trace at
+            // all, so the only evidence was the terminal "may have changed" message.
+            if (Date.now() - lastReport > BUTTON_REPORT_INTERVAL_MS) {
+              lastReport = Date.now();
+              logger.info(
+                `[Meeting] Join button matching ${pattern} is not enabled yet ` +
+                  `(${Date.now() - startedAt}ms so far)`,
+              );
+            }
             continue;
           }
           await button.click({ timeout: 5_000 });
-          logger.info(`[Meeting] Clicked the join button (matched ${pattern})`);
-          return true;
+          logger.info(`[Meeting] Clicked the join button (matched ${pattern}) after ${Date.now() - startedAt}ms`);
+          return { clicked: true };
         } catch {
           // Not this pattern, or it went stale mid-check — keep looking.
         }
       }
 
-      if (await this.findRejection(page)) return false;
+      const rejection = await this.confirmedRejection(page);
+      if (rejection) return { clicked: false, rejection };
       await page.waitForTimeout(JOIN_RETRY_INTERVAL_MS);
     }
 
-    return false;
+    logger.info(`[Meeting] Gave up looking for a join button after ${Date.now() - startedAt}ms`);
+    return { clicked: false, rejection: null };
   }
 
   /**
@@ -302,23 +454,33 @@ export class GoogleMeetProvider implements MeetingProvider {
    * Admission is inferred from in-call furniture appearing (the leave button, the
    * participants panel) because Meet exposes no explicit "you are in" signal.
    */
-  private async waitForAdmission(page: Page, deadline: number): Promise<JoinOutcome> {
+  private async waitForAdmission(page: Page, deadline: number, options: JoinOptions): Promise<JoinOutcome> {
     logger.info('[Meeting] Waiting to be admitted');
+    const startedAt = Date.now();
 
     while (Date.now() < deadline) {
       if (await this.isInCall(page)) {
-        logger.info('[Meeting] Admitted to the call');
+        logger.info(`[Meeting] Admitted to the call after ${Date.now() - startedAt}ms`);
         return { status: 'admitted' };
       }
 
-      const rejection = await this.findRejection(page);
-      if (rejection) return { status: 'denied', reason: rejection };
+      const rejection = await this.confirmedRejection(page);
+      if (rejection) {
+        // Confirming takes a couple of seconds, and admission can land inside that
+        // window. Being in the room outranks any text on it.
+        if (await this.isInCall(page)) {
+          logger.info('[Meeting] Admitted while a rejection message was being confirmed');
+          return { status: 'admitted' };
+        }
+        return { status: 'denied', step: 'admission', reason: this.explainDenial(rejection, options) };
+      }
 
       await page.waitForTimeout(1_500);
     }
 
     return {
       status: 'denied',
+      step: 'admission',
       reason: 'Nobody admitted the request to join before the wait timed out.',
     };
   }
@@ -355,8 +517,38 @@ export class GoogleMeetProvider implements MeetingProvider {
     }
   }
 
+  /**
+   * A rejection that held still — the only kind worth acting on.
+   *
+   * Costs nothing in the common case: a page with no rejection text takes one read
+   * and returns. Only once something matches do we pay for confirmation, and that is
+   * exactly when it is worth paying, because the alternative is ending the join on a
+   * frame Meet was about to replace.
+   */
+  private async confirmedRejection(page: Page): Promise<string | null> {
+    const first = await this.readRejection(page);
+    if (!first) return null;
+
+    for (let i = 1; i < REJECTION_CONFIRM_READS; i += 1) {
+      // If we are already in the room, whatever the page says is stale by
+      // definition — chat and captions are part of the text being scanned.
+      if (await this.isInCall(page)) {
+        logger.info('[Meeting] Ignoring rejection text — already in the call');
+        return null;
+      }
+      await page.waitForTimeout(REJECTION_CONFIRM_INTERVAL_MS);
+      // Compared on the mapped reason, so a *different* rejection on a later read
+      // also counts as a page that has not settled.
+      if ((await this.readRejection(page)) !== first) {
+        logger.info(`[Meeting] A rejection message did not persist — continuing (was: ${first.slice(0, 60)})`);
+        return null;
+      }
+    }
+    return first;
+  }
+
   /** Scan the visible text for a known rejection, returning what to tell the user. */
-  private async findRejection(page: Page): Promise<string | null> {
+  private async readRejection(page: Page): Promise<string | null> {
     let text: string;
     try {
       text = (await page.locator('body').innerText({ timeout: 2_000 })) ?? '';

@@ -427,6 +427,33 @@ describe('telemetry', () => {
       expect.objectContaining({ status: 'denied' }),
     );
   });
+
+  it('records which step a failed join reached', async () => {
+    // The point of the enum: "joins are failing" is not actionable, "joins are
+    // failing at admission" is. Emitted on the existing event rather than a new one.
+    providerJoin.mockResolvedValue({
+      status: 'denied',
+      step: 'admission',
+      reason: 'Nobody admitted the request to join before the wait timed out.',
+    });
+    await service.join(input);
+    await settle();
+
+    expect(trackEvent).toHaveBeenCalledWith(
+      'meeting ended',
+      'u1',
+      expect.objectContaining({ status: 'denied', fail_step: 'admission' }),
+    );
+  });
+
+  it('omits the step entirely for a call that ended normally', async () => {
+    await service.join(input);
+    await settle();
+    await service.leave();
+
+    const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
+    expect(ended?.[2]).not.toHaveProperty('fail_step');
+  });
 });
 
 describe('status notes', () => {
