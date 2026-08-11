@@ -6,9 +6,15 @@
  *
  *     capture (48k) → Downsampler → RealtimeSession → Upsampler → AudioPlayback
  *                                        │
+ *                                   ResponsePolicy (decides whether to answer)
+ *                                        │
  *                                   BargeInPolicy (yields the floor to humans)
  *                                        │
  *                                   ToolBridge (runs the agent's real tools)
+ *
+ * Every response on this session is one asked for here: the server is configured
+ * never to answer on its own, so an utterance becomes speech only if
+ * `ResponsePolicy` says it was aimed at the agent.
  *
  * The one subtlety is the ordering between a new utterance and a pending pause.
  * When the model starts speaking again while a barge-in pause is still undecided,
@@ -22,7 +28,7 @@ import { Downsampler, Upsampler } from './resampler';
 import { RealtimeSession, type RealtimeSessionOptions } from './realtime-session';
 import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { BargeInPolicy } from './barge-in';
-import { isAddressedToAgent } from './addressed-detection';
+import { ResponsePolicy, type EffectiveMode, type ResponseMode } from './response-policy';
 import type { PreparedMeetingTools } from './tool-bridge';
 
 export interface VoiceConversationOptions {
@@ -30,10 +36,12 @@ export interface VoiceConversationOptions {
   tools: PreparedMeetingTools;
   /** Written with 48 kHz pcm16 — `pacat`'s stdin in production. */
   sink: PlaybackSink;
-  /** Decides who is being addressed locally; see addressed-detection.ts. */
-  addressedOnly?: boolean;
-  /** Needed by addressed-only mode to recognize its own name. */
+  /** `auto` follows the participant count; see response-policy.ts. */
+  responseMode: ResponseMode;
+  /** The name the agent answers to — the same one the room hears it introduce. */
   agentName: string;
+  /** Extra spellings for a name live transcription mangles. */
+  aliases?: string[];
   model?: string;
   voice?: string;
   endpointOverride?: RealtimeSessionOptions['endpointOverride'];
@@ -53,19 +61,23 @@ export interface VoiceConversationStats {
   responses: number;
   toolCalls: number;
   interruptions: number;
+  /** Utterances the room produced, and how they were handled. */
+  utterances: number;
+  suppressed: number;
+  addressedMatches: number;
+  modeSwitches: number;
 }
 
 export class VoiceConversation {
   private readonly session: RealtimeSession;
   private readonly playback: AudioPlayback;
   private readonly bargeIn: BargeInPolicy;
+  private readonly responsePolicy: ResponsePolicy;
   private readonly downsampler = new Downsampler();
   private readonly upsampler = new Upsampler();
-  private readonly stats: VoiceConversationStats = {
-    responses: 0,
-    toolCalls: 0,
-    interruptions: 0,
-  };
+  private responses = 0;
+  private toolCalls = 0;
+  private interruptions = 0;
   private currentItemId: string | null = null;
   private stopped = false;
 
@@ -73,10 +85,15 @@ export class VoiceConversation {
     this.session = new RealtimeSession({
       instructions: options.instructions,
       tools: options.tools.declarations,
-      addressedOnly: options.addressedOnly,
       model: options.model,
       voice: options.voice,
       endpointOverride: options.endpointOverride,
+    });
+
+    this.responsePolicy = new ResponsePolicy({
+      mode: options.responseMode,
+      agentName: options.agentName,
+      ...(options.aliases ? { aliases: options.aliases } : {}),
     });
 
     this.playback = new AudioPlayback(options.sink);
@@ -92,7 +109,10 @@ export class VoiceConversation {
         // answer), so every one of them is reported.
         const items = this.playback.flush();
         this.session.interrupt(items);
-        this.stats.interruptions += 1;
+        this.interruptions += 1;
+        // Talking over the agent is talking *to* it, so what they go on to say is
+        // answered without needing the name.
+        this.responsePolicy.onInterrupted();
         const heard = items.reduce((n, i) => n + i.playedMs, 0);
         logger.info(
           `[Meeting] Yielded the floor after ${Math.round(heard)}ms of speech ` +
@@ -120,25 +140,29 @@ export class VoiceConversation {
     this.session.on('speechStopped', () => this.bargeIn.onSpeechStopped());
 
     this.session.on('responseDone', () => {
-      this.stats.responses += 1;
+      this.responses += 1;
+      // The agent just stopped speaking: open the follow-up window, so whoever
+      // replies doesn't have to say its name again.
+      this.responsePolicy.onAgentTurnEnded();
     });
 
     this.session.on('functionCall', (call) => {
-      this.stats.toolCalls += 1;
+      this.toolCalls += 1;
       void this.runTool(call.callId, call.name, call.argumentsJson);
     });
 
-    // Addressed-only mode: the model never answers on its own, so a finished
-    // utterance is examined here and a response is requested only when the bot
-    // was the intended audience.
-    if (this.options.addressedOnly) {
-      this.session.on('transcript', (text) => {
-        if (isAddressedToAgent(text, this.options.agentName)) {
-          logger.info('[Meeting] Addressed directly — responding');
-          this.session.requestResponse();
-        }
-      });
-    }
+    // The model never answers on its own, so every utterance passes the policy.
+    // Two chances to say yes, and the policy makes sure only one of them fires
+    // per utterance: at the turn boundary, which needs no words and so costs
+    // nothing in a one-to-one call, and again once the transcript lands, which is
+    // the only way to tell whether a crowded room meant the agent.
+    this.session.on('utteranceCommitted', (itemId) => {
+      if (this.responsePolicy.onUtteranceCommitted(itemId)) this.session.requestResponse();
+    });
+
+    this.session.on('transcript', (itemId, text) => {
+      if (this.responsePolicy.onTranscript(itemId, text)) this.session.requestResponse();
+    });
 
     this.session.on('apiError', (message) => {
       logger.warn(`[Meeting] Realtime API reported: ${message}`);
@@ -186,8 +210,34 @@ export class VoiceConversation {
     this.session.requestResponse();
   }
 
+  /**
+   * Report how many people are in the room, the agent included.
+   *
+   * Drives `auto` mode: one human means everything said is said to the agent,
+   * more than one means it waits to be addressed. `null` (the count couldn't be
+   * read) leaves the current behaviour alone.
+   */
+  setParticipantCount(count: number | null): void {
+    if (this.stopped) return;
+    this.responsePolicy.setParticipantCount(count);
+  }
+
+  /** What the policy is doing right now — reported by `meeting_status`. */
+  get responseMode(): EffectiveMode {
+    return this.responsePolicy.effectiveMode;
+  }
+
   get statistics(): VoiceConversationStats {
-    return { ...this.stats };
+    const policy = this.responsePolicy.statistics;
+    return {
+      responses: this.responses,
+      toolCalls: this.toolCalls,
+      interruptions: this.interruptions,
+      utterances: policy.utterances,
+      suppressed: policy.suppressed,
+      addressedMatches: policy.addressedMatches,
+      modeSwitches: policy.modeSwitches,
+    };
   }
 
   /** Tear down the session, playback timer and pending barge-in timer. */

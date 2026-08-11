@@ -38,12 +38,44 @@ export interface MeetingInstructionsInput {
   agentName: string;
   /** e.g. "Google Meet" — named so the model can refer to where it is. */
   platform: string;
-  /** When true the model is only prompted to speak when addressed. */
-  addressedOnly: boolean;
+  /**
+   * What the client-side gate is doing. It, not this prompt, decides which
+   * utterances become responses at all — this only tells the model what to expect,
+   * so it doesn't reintroduce itself on every follow-up or apologise for silence
+   * it never had a choice about.
+   */
+  responseMode: 'auto' | 'open' | 'addressed';
+}
+
+/**
+ * What to expect from the gate that decides which utterances reach the model.
+ *
+ * Worth telling it: a model that doesn't know it is being filtered explains its
+ * own silence, re-introduces itself every time it is let through, or asks whether
+ * a follow-up was meant for it — all of which read as broken in a live room.
+ */
+function listeningNote(mode: MeetingInstructionsInput['responseMode']): string {
+  const gated = `You are not prompted to speak for every utterance in this call — something has to
+   look like it was meant for you first, usually your name. So when you are prompted,
+   answer the thing that was said: don't re-introduce yourself, don't ask whether they
+   were talking to you, and don't apologise for the gaps in between. For a short while
+   after you finish speaking, whatever is said next also reaches you — a follow-up like
+   "and staging?" is the rest of your own conversation, not a fragment you're
+   overhearing.`;
+
+  if (mode === 'open') {
+    return `In this call there is only one other person, so take everything you hear as
+   said to you.`;
+  }
+  if (mode === 'addressed') return gated;
+
+  return `How much of the room reaches you depends on who else is in it. While it's just
+   you and one other person, take everything you hear as said to you. Once more people
+   join, it narrows: ${gated[0].toLowerCase()}${gated.slice(1)}`;
 }
 
 export function getMeetingInstructions(input: MeetingInstructionsInput): string {
-  const { agentName, platform, addressedOnly } = input;
+  const { agentName, platform, responseMode } = input;
 
   return `
 # Live Voice Meeting
@@ -77,11 +109,8 @@ the room's audio — several people, talking to each other as much as to you.
 
 6. **Most of what you hear is not for you.** People are talking to each other. Only
    respond when you're addressed by name, asked a direct question, or something is
-   clearly aimed at you.${
-     addressedOnly
-       ? `\n   In this call you will only be prompted to speak when you're addressed directly.`
-       : ''
-   }
+   clearly aimed at you.
+   ${listeningNote(responseMode)}
 7. **You can't see who is speaking.** The audio is a single mixed channel with no
    speaker labels. Don't guess at names or attribute statements to specific people;
    if it matters, ask.
