@@ -30,7 +30,18 @@ export type JoinOutcome =
   /** A host actively refused, or the waiting room timed out. */
   | { status: 'denied'; reason: string; step: JoinStep }
   /** Never got as far as the waiting room (bad link, meeting over, UI changed). */
-  | { status: 'failed'; reason: string; step: JoinStep };
+  | { status: 'failed'; reason: string; step: JoinStep }
+  /**
+   * The profile believed it was signed in and the platform disagreed.
+   *
+   * Worth its own outcome because it is the one failure that heals itself: sign in
+   * again and the same link works. Previously the join went ahead as an anonymous
+   * guest, which Meet auto-denies — so a recoverable stale cookie cost a page load,
+   * a lobby wait and a refusal, and only recovered if the agent happened to try
+   * again. Observed three times in one afternoon on a profile whose own account
+   * page still loaded, so it is routine rather than exotic.
+   */
+  | { status: 'stale_session' };
 
 export interface JoinOptions {
   url: string;
@@ -84,6 +95,15 @@ export interface MeetingProvider {
    * errors. Throwing is reserved for genuine breakage.
    */
   join(page: Page, options: JoinOptions): Promise<JoinOutcome>;
+
+  /**
+   * Names of the people in the call, best effort, empty when unavailable.
+   *
+   * Optional because it is a hint rather than a mechanism: a platform that cannot
+   * offer it still works, just with a transcriber that has never been told how the
+   * room's names are spelled.
+   */
+  participantNames?(page: Page): Promise<string[]>;
 
   /**
    * How many people are in the call, or null when it can't be determined.
