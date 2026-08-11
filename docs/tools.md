@@ -104,6 +104,12 @@ The agent can join a Google Meet call and take part by voice — see
 [Voice meetings](voice-meetings.md). It asks to join, a host admits it, and from
 then on it listens and speaks in the room.
 
+How much it speaks up follows the room: on a one-to-one call it answers everything,
+and once anyone else is present it waits to be addressed by name, with a short
+window afterwards so follow-ups don't need repeating it. That switches as people
+come and go, so there is nothing to set — see
+[Voice meetings](voice-meetings.md#in-the-call) to override it for a given call.
+
 Inside the call it keeps **every tool above except `share_file`**, so it can look
 something up and say the answer. `share_file` is out because it only stores a file for
 the chat machinery to deliver, and a meeting doesn't run that machinery — in a call it

@@ -50,14 +50,12 @@ async function harness(options: Partial<Parameters<typeof makeSession>[0]> = {})
 
 function makeSession(options: {
   port: number;
-  addressedOnly?: boolean;
   tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   instructions?: string;
 }): RealtimeSession {
   return new RealtimeSession({
     instructions: options.instructions ?? 'You are Prism.',
     tools: options.tools ?? [],
-    addressedOnly: options.addressedOnly,
     endpointOverride: { url: `ws://127.0.0.1:${options.port}`, headers: {} },
   });
 }
@@ -89,12 +87,14 @@ describe('RealtimeSession configuration', () => {
     expect(audio.input.turn_detection).toMatchObject({ type: 'semantic_vad', eagerness: 'low' });
   });
 
-  it('lets the model answer on its own but never auto-interrupt', async () => {
+  it('never lets the server answer or interrupt on its own', async () => {
     active = await harness();
     const update = active.sent.find((f) => f.type === 'session.update') as { session: Record<string, any> };
 
-    expect(update.session.audio.input.turn_detection.create_response).toBe(true);
-    // Server-side interruption would cut the bot off on a cough; barge-in is local.
+    // The room is one mixed channel, so "someone stopped talking" says nothing
+    // about who they meant. Responses are asked for by response-policy.ts.
+    expect(update.session.audio.input.turn_detection.create_response).toBe(false);
+    // Server-side interruption would cut the agent off on a cough; barge-in is local.
     expect(update.session.audio.input.turn_detection.interrupt_response).toBe(false);
   });
 
@@ -105,20 +105,14 @@ describe('RealtimeSession configuration', () => {
     expect(update.session.instructions).toContain('You are **Prism**');
   });
 
-  it('in addressed-only mode suppresses auto-response and enables transcription', async () => {
-    active = await harness({ addressedOnly: true });
-    const update = active.sent.find((f) => f.type === 'session.update') as { session: Record<string, any> };
-
-    expect(update.session.audio.input.turn_detection.create_response).toBe(false);
-    // Transcription is only for deciding who was addressed, never model input.
-    expect(update.session.audio.input.transcription).toEqual({ model: 'gpt-realtime-whisper' });
-  });
-
-  it('leaves transcription off in normal mode, since it bills per minute', async () => {
+  it('always enables transcription, since the mode can change mid-call', async () => {
     active = await harness();
     const update = active.sent.find((f) => f.type === 'session.update') as { session: Record<string, any> };
 
-    expect(update.session.audio.input.transcription).toBeUndefined();
+    // Only ever used to decide who was addressed, never as model input. On for
+    // every call because a third person can join at any moment, and an utterance
+    // already past cannot be transcribed retroactively.
+    expect(update.session.audio.input.transcription).toEqual({ model: 'gpt-realtime-whisper' });
   });
 
   it('asks for far-field noise reduction, because meeting audio is room audio', async () => {
@@ -152,6 +146,36 @@ describe('RealtimeSession configuration', () => {
 });
 
 describe('RealtimeSession events', () => {
+  it('reports a committed utterance, which is the cue to decide on answering', async () => {
+    active = await harness();
+    const committed: string[] = [];
+    active.session.on('utteranceCommitted', (itemId) => committed.push(itemId));
+
+    active.emit({ type: 'input_audio_buffer.committed', item_id: 'item-7' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Arrives before any transcript exists, which is what lets a one-to-one call
+    // answer as promptly as it did when the server created responses itself.
+    expect(committed).toEqual(['item-7']);
+  });
+
+  it('tags a transcript with the item it belongs to', async () => {
+    active = await harness();
+    const seen: Array<[string, string]> = [];
+    active.session.on('transcript', (itemId, text) => seen.push([itemId, text]));
+
+    active.emit({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-7',
+      transcript: '  Prism, check the cluster  ',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The id is what stops the commit path and this one both answering the same
+    // utterance — a duplicate would be queued, not dropped, and spoken twice.
+    expect(seen).toEqual([['item-7', 'Prism, check the cluster']]);
+  });
+
   it('decodes audio deltas to pcm buffers', async () => {
     active = await harness();
     const received: Array<{ pcm: Buffer; itemId: string }> = [];

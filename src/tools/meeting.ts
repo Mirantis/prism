@@ -82,15 +82,24 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
           .string()
           .optional()
           .describe('Name shown to the other participants. Defaults to your own name.'),
-        addressedOnly: z
-          .boolean()
+        responseMode: z
+          .enum(['auto', 'open', 'addressed'])
           .optional()
           .describe(
-            'Only respond when addressed by name or asked a direct question. Use for large ' +
-            'meetings where replying to everything would be disruptive and costly.',
+            'How much you speak up. "auto" (the default, and almost always right) reads the ' +
+            'room: with one other person you answer everything, with more you wait to be ' +
+            'addressed by name. "open" always answers every utterance — only for a call you ' +
+            'know stays one-to-one. "addressed" always waits to be named.',
+          ),
+        aliases: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Other spellings of your name to listen for, if live transcription tends to ' +
+            'mangle it (e.g. ["prisma", "prison"] for "Prism").',
           ),
       }),
-      execute: async ({ url, displayName, addressedOnly }) => {
+      execute: async ({ url, displayName, responseMode, aliases }) => {
         const provider = meetingBotService.findProvider(url);
         if (!provider) {
           return {
@@ -107,7 +116,8 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
           agentId: input.agentId,
           threadId: input.threadId,
           displayName,
-          addressedOnly,
+          responseMode,
+          aliases,
         });
 
         return {
@@ -130,7 +140,8 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
     meeting_status: tool({
       description:
         'Check whether you are in a meeting call, and how it is going (state, how long, ' +
-        'how many times you have spoken or used a tool).',
+        'how many times you have spoken or used a tool, and whether you are currently ' +
+        'answering everything or only when addressed).',
       inputSchema: z.object({}),
       execute: async () => {
         const status = meetingBotService.status();

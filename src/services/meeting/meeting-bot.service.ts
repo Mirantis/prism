@@ -26,22 +26,46 @@ import { buildSystemPromptParts } from '../../prompts/context-builder';
 import { getMeetingInstructions } from '../../prompts/meeting-prompt';
 import { AudioStack } from './audio-stack';
 import { BrowserStack } from './browser-stack';
-import { VoiceConversation } from './voice-conversation';
+import { VoiceConversation, type VoiceConversationStats } from './voice-conversation';
+import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet.provider';
 import type { JoinStep, MeetingProvider } from './meeting-provider.interface';
 import type { Page } from 'playwright-core';
 
-/** How often to check whether the meeting has emptied out. */
-const PARTICIPANT_POLL_MS = 30_000;
+/**
+ * How often to read the participant count.
+ *
+ * Two jobs ride on this reading: leaving once the room has emptied, and choosing
+ * whether the agent answers everything or waits to be addressed. The second is
+ * what sets the interval — until a third person's arrival has been noticed, the
+ * agent is still answering everything said in what is now a group call, so the
+ * poll wants to be quick relative to how long that stays tolerable.
+ */
+const PARTICIPANT_POLL_MS = 10_000;
 
 /**
- * Consecutive lone-participant readings before leaving.
+ * Unreadable counts in a row before saying so.
  *
- * More than one because a count of 1 is also what a brief UI reshuffle looks
- * like, and leaving a live meeting by mistake is much worse than lingering.
+ * The count comes from scraping Meet's UI, which changes without notice. A failure
+ * is quiet by design — the last known mode simply stands — so without a log line
+ * a broken selector would look exactly like a stable meeting.
  */
-const EMPTY_READINGS_BEFORE_LEAVING = 2;
+const UNREADABLE_COUNTS_BEFORE_WARNING = 3;
+
+/**
+ * How long the agent must read as the only one left before it leaves.
+ *
+ * More than a single reading because a count of 1 is also what a brief UI
+ * reshuffle looks like, and leaving a live meeting by mistake is much worse than
+ * lingering. Expressed as a duration rather than a number of polls so that
+ * shortening the poll interval doesn't quietly make the agent quicker to hang up.
+ */
+const EMPTY_DURATION_BEFORE_LEAVING_MS = 60_000;
+
+const EMPTY_READINGS_BEFORE_LEAVING = Math.ceil(
+  EMPTY_DURATION_BEFORE_LEAVING_MS / PARTICIPANT_POLL_MS,
+);
 
 export type MeetingState =
   | 'idle'
@@ -53,11 +77,16 @@ export type MeetingState =
 export interface MeetingStatus {
   state: MeetingState;
   provider: string | null;
-  /** Whether the model answers only when addressed. */
-  addressedOnly: boolean;
+  /** What was asked for. */
+  responseMode: ResponseMode;
+  /**
+   * What that resolved to right now — `auto` follows the room, so this is the
+   * answer to "is it going to speak up?" and the requested mode is not.
+   */
+  effectiveResponseMode: EffectiveMode | null;
   joinedAt: string | null;
   /** Present once the call is under way. */
-  stats?: { responses: number; toolCalls: number; interruptions: number };
+  stats?: VoiceConversationStats;
 }
 
 export interface JoinMeetingInput {
@@ -67,7 +96,10 @@ export interface JoinMeetingInput {
   /** Where progress notes go. Falls back to the agent's latest thread. */
   threadId?: string;
   displayName?: string
-  addressedOnly?: boolean;
+  /** How much the agent speaks up; `auto` follows the participant count. */
+  responseMode?: ResponseMode;
+  /** Extra spellings of the agent's name, for when transcription mangles it. */
+  aliases?: string[];
 }
 
 export class MeetingBotService {
@@ -85,7 +117,8 @@ export class MeetingBotService {
   private joinedAt: number | null = null;
   private startedAt: number | null = null;
   private current: JoinMeetingInput | null = null;
-  private addressedOnly = false;
+  private responseMode: ResponseMode = 'auto';
+  private unreadableCounts = 0;
   /** Step a failed join reached, carried to the `meeting ended` event. */
   private failStep: JoinStep | null = null;
   /**
@@ -114,7 +147,8 @@ export class MeetingBotService {
     return {
       state: this.state,
       provider: this.provider?.name ?? null,
-      addressedOnly: this.addressedOnly,
+      responseMode: this.responseMode,
+      effectiveResponseMode: this.conversation?.responseMode ?? null,
       joinedAt: this.joinedAt ? new Date(this.joinedAt).toISOString() : null,
       ...(this.conversation ? { stats: this.conversation.statistics } : {}),
     };
@@ -143,7 +177,7 @@ export class MeetingBotService {
 
     this.provider = provider;
     this.current = input;
-    this.addressedOnly = input.addressedOnly === true;
+    this.responseMode = input.responseMode ?? 'auto';
     this.state = 'launching';
     this.startedAt = Date.now();
     const epoch = this.epoch;
@@ -153,7 +187,7 @@ export class MeetingBotService {
     try {
       // Instructions and tools first: they need the database and the model
       // catalog, and failing here should cost nothing but a message.
-      const instructions = await this.buildInstructions(input);
+      const { instructions, agentName } = await this.buildInstructions(input);
       const tools = await prepareMeetingTools({
         userId: input.userId,
         agentId: input.agentId,
@@ -171,8 +205,13 @@ export class MeetingBotService {
         instructions,
         tools,
         sink: handles.playbackSink,
-        addressedOnly: this.addressedOnly,
-        agentName: config.agentName,
+        responseMode: this.responseMode,
+        // The name the prompt introduces it by, not `config.agentName`. These
+        // differ the moment someone renames the agent in its workspace — and an
+        // agent that says one name and answers to another would be addressed by
+        // the name it just gave the room, and stay silent.
+        agentName,
+        ...(input.aliases ? { aliases: input.aliases } : {}),
         voice: config.openaiRealtimeVoice,
         onSessionLost: (reason) => this.onSessionLost(epoch, reason),
       });
@@ -259,7 +298,7 @@ export class MeetingBotService {
       this.joinedAt = Date.now();
       trackEvent('meeting joined', input.userId, {
         provider: provider.name,
-        addressed_only: String(this.addressedOnly),
+        response_mode: this.responseMode,
       });
 
       // Tell the model where it is and let it introduce itself, so the room isn't
@@ -271,6 +310,20 @@ export class MeetingBotService {
       this.conversation?.speakNow();
 
       await this.notifyThread(`I'm in the ${provider.displayName} call now.`);
+      // Read the room once straight away rather than waiting a poll interval:
+      // until this lands the policy assumes a crowd, and a one-to-one caller
+      // would have to say the agent's name to get their first answer. Failing to
+      // read it is not a reason to abandon a call already joined, so this cannot
+      // be allowed to reach the catch below.
+      await this.checkParticipants().catch((err) => {
+        logger.warn({ err }, '[Meeting] Could not read the room on admission');
+      });
+
+      // Both awaits above can outlive the call: a `leave()` or a shutdown in that
+      // gap runs the whole teardown, timers included. Arming new ones now would
+      // leave an interval nobody clears and — worse — a duration cap that fires an
+      // hour later and hangs up on whatever call is running by then.
+      if (this.epoch !== epoch) return;
       this.startWatchdogs();
     } catch (err) {
       // A teardown mid-wait closes the page underneath the provider, so the throw
@@ -296,7 +349,13 @@ export class MeetingBotService {
     );
   }
 
-  /** Leave once the bot is demonstrably the only one left. */
+  /**
+   * Read the room: how loudly the agent should participate, and whether to leave.
+   *
+   * One reading serves both. The count is the only thing the agent knows about
+   * the shape of the call, and it answers both "is anyone still here?" and
+   * "am I talking to one person or interrupting a group?".
+   */
   private async checkParticipants(): Promise<void> {
     if (this.state !== 'in_call' || !this.page || !this.provider) return;
 
@@ -304,11 +363,26 @@ export class MeetingBotService {
     try {
       count = await this.provider.participantCount(this.page);
     } catch {
-      return;
+      count = null;
     }
 
-    // null means "couldn't read it" — never a reason to leave a live call.
-    if (count === null) return;
+    this.conversation?.setParticipantCount(count);
+
+    // null means "couldn't read it" — never a reason to leave a live call, nor to
+    // change how the agent behaves. But it is worth saying out loud: the count is
+    // scraped from Meet's UI, so a persistent null is a broken selector rather
+    // than a quiet meeting, and it silently pins the agent to one mode.
+    if (count === null) {
+      this.unreadableCounts += 1;
+      if (this.unreadableCounts === UNREADABLE_COUNTS_BEFORE_WARNING) {
+        logger.warn(
+          `[Meeting] Can't read the participant count (${this.unreadableCounts} tries) — ` +
+            `staying in "${this.conversation?.responseMode ?? 'addressed'}" mode and not checking for an empty room`,
+        );
+      }
+      return;
+    }
+    this.unreadableCounts = 0;
 
     if (count <= 1) {
       this.emptyReadings += 1;
@@ -412,16 +486,26 @@ export class MeetingBotService {
     await this.audio?.stop();
 
     if (wasActive && this.startedAt && this.current && this.provider) {
+      const stats = this.conversation?.statistics;
       trackEvent('meeting ended', this.current.userId, {
         provider: this.provider.name,
         status,
+        response_mode: this.responseMode,
         // Which step a failed join got to. A bounded enum, never the prose reason —
         // that would put page text into telemetry.
         ...(this.failStep ? { fail_step: this.failStep } : {}),
         duration_ms: String(Date.now() - this.startedAt),
-        responses: String(this.conversation?.statistics.responses ?? 0),
-        tool_calls: String(this.conversation?.statistics.toolCalls ?? 0),
-        interruptions: String(this.conversation?.statistics.interruptions ?? 0),
+        responses: String(stats?.responses ?? 0),
+        tool_calls: String(stats?.toolCalls ?? 0),
+        interruptions: String(stats?.interruptions ?? 0),
+        // How the room was handled. `suppressed` against `utterances` is what says
+        // whether the gate earned its keep; `addressed_matches` against the answers
+        // says how much of that came from someone saying the name rather than the
+        // follow-up window. Counts only — no transcript ever leaves the process.
+        utterances: String(stats?.utterances ?? 0),
+        suppressed: String(stats?.suppressed ?? 0),
+        addressed_matches: String(stats?.addressedMatches ?? 0),
+        mode_switches: String(stats?.modeSwitches ?? 0),
       });
     }
 
@@ -434,7 +518,8 @@ export class MeetingBotService {
     this.joinedAt = null;
     this.startedAt = null;
     this.emptyReadings = 0;
-    this.addressedOnly = false;
+    this.unreadableCounts = 0;
+    this.responseMode = 'auto';
     this.failStep = null;
     this.state = 'idle';
   }
@@ -449,20 +534,25 @@ export class MeetingBotService {
    * a meeting is its own context, and a whole thread would bloat a session that
    * pays per audio token.
    */
-  private async buildInstructions(input: JoinMeetingInput): Promise<string> {
+  private async buildInstructions(
+    input: JoinMeetingInput,
+  ): Promise<{ instructions: string; agentName: string }> {
     const context = await contextService.getAgentContext(input.userId, {
       agentId: input.agentId,
       includeConversation: false,
     });
     const parts = await buildSystemPromptParts(context, 'meeting');
-    return [
+    const instructions = [
       parts.map((p) => p.text).join('\n\n---\n\n'),
       getMeetingInstructions({
         agentName: context.agentName,
         platform: this.provider?.displayName ?? 'video call',
-        addressedOnly: this.addressedOnly,
+        responseMode: this.responseMode,
       }),
     ].join('\n\n---\n\n');
+    // Handed back so the caller can give the same name to the addressed-detection
+    // path — the room hears this one, so it is the one people will say.
+    return { instructions, agentName: context.agentName };
   }
 
   /** Post a progress note where the user asked from, or the latest thread. */

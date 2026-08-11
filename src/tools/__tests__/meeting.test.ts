@@ -88,17 +88,26 @@ describe('getMeetingTools', () => {
     expect(mockJoin).not.toHaveBeenCalled();
   });
 
-  it('forwards the addressedOnly option', async () => {
+  it('forwards the response mode and any name aliases', async () => {
     mockJoin.mockResolvedValue({ state: 'waiting_admission', message: 'ok' });
     const tools = getMeetingTools(input);
 
     await tools.join_google_meet.execute!(
-      { url: 'https://meet.google.com/abc-defg-hij', addressedOnly: true, displayName: 'Prism Bot' },
+      {
+        url: 'https://meet.google.com/abc-defg-hij',
+        responseMode: 'addressed',
+        aliases: ['prisma'],
+        displayName: 'Prism Bot',
+      },
       { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
     );
 
     expect(mockJoin).toHaveBeenCalledWith(
-      expect.objectContaining({ addressedOnly: true, displayName: 'Prism Bot' }),
+      expect.objectContaining({
+        responseMode: 'addressed',
+        aliases: ['prisma'],
+        displayName: 'Prism Bot',
+      }),
     );
   });
 
@@ -116,7 +125,13 @@ describe('getMeetingTools', () => {
 
   it('leaves and reports status', async () => {
     mockLeave.mockResolvedValue({ message: 'Left the Google Meet call.' });
-    mockStatus.mockReturnValue({ state: 'in_call', provider: 'google-meet', addressedOnly: false, joinedAt: null });
+    mockStatus.mockReturnValue({
+      state: 'in_call',
+      provider: 'google-meet',
+      responseMode: 'auto',
+      effectiveResponseMode: 'open',
+      joinedAt: null,
+    });
     const tools = getMeetingTools(input);
     const ctx = { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal };
 
@@ -124,11 +139,20 @@ describe('getMeetingTools', () => {
     expect(await tools.meeting_status.execute!({}, ctx)).toMatchObject({
       inMeeting: true,
       state: 'in_call',
+      // What `auto` resolved to is what tells the agent whether it will be
+      // prompted to speak; the requested mode alone does not.
+      effectiveResponseMode: 'open',
     });
   });
 
   it('reports not being in a meeting', async () => {
-    mockStatus.mockReturnValue({ state: 'idle', provider: null, addressedOnly: false, joinedAt: null });
+    mockStatus.mockReturnValue({
+      state: 'idle',
+      provider: null,
+      responseMode: 'auto',
+      effectiveResponseMode: null,
+      joinedAt: null,
+    });
     const tools = getMeetingTools(input);
 
     expect(

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { getMeetingInstructions } from './meeting-prompt';
 
-const base = { agentName: 'Prism', platform: 'Google Meet', addressedOnly: false };
+const base = { agentName: 'Prism', platform: 'Google Meet', responseMode: 'auto' as const };
 
 describe('getMeetingInstructions', () => {
   it('names the agent and the platform it is on', () => {
@@ -61,8 +61,8 @@ describe('getMeetingInstructions', () => {
       /say you'll take it to chat, and do/i,
       /something to mention afterwards/i,
     ];
-    for (const addressedOnly of [false, true]) {
-      const text = getMeetingInstructions({ ...base, addressedOnly });
+    for (const responseMode of ['open', 'addressed'] as const) {
+      const text = getMeetingInstructions({ ...base, responseMode });
       for (const promise of promises) expect(text).not.toMatch(promise);
       // ...and the prohibition itself is present, in the model's own words.
       expect(text).toMatch(/No "I'll drop that in the chat"/i);
@@ -113,11 +113,25 @@ describe('getMeetingInstructions', () => {
     expect(text).toMatch(/may mishear/i);
   });
 
-  it('mentions the addressed-only behaviour only in that mode', () => {
-    expect(getMeetingInstructions(base)).not.toMatch(/only be prompted to speak/i);
-    expect(getMeetingInstructions({ ...base, addressedOnly: true })).toMatch(
-      /only be prompted to speak/i,
-    );
+  it('tells a one-to-one call to take everything as its own', () => {
+    const text = getMeetingInstructions({ ...base, responseMode: 'open' });
+    expect(text).toMatch(/only one other person/i);
+    expect(text).not.toMatch(/not prompted to speak for every utterance/i);
+  });
+
+  it('warns a gated call not to explain its own silence', () => {
+    const text = getMeetingInstructions({ ...base, responseMode: 'addressed' });
+    expect(text).toMatch(/not prompted to speak for every utterance/i);
+    // A model that doesn't know it is being filtered re-introduces itself every
+    // time it is let through, or asks whether the follow-up was meant for it.
+    expect(text).toMatch(/don't re-introduce yourself/i);
+    expect(text).toMatch(/and staging\?/i);
+  });
+
+  it('covers both cases under auto, since the room decides which applies', () => {
+    const text = getMeetingInstructions(base);
+    expect(text).toMatch(/depends on who else is in it/i);
+    expect(text).toMatch(/not prompted to speak for every utterance/i);
   });
 
   it('adapts to another platform without code changes', () => {
