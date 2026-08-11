@@ -132,6 +132,23 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
         expect(reply, 'bot never replied to the opening mention').not.toBeNull();
       });
 
+      And('Slack accepted the working status line on that thread', async () => {
+        if (skip()) return;
+        // The primary working cue for the turn above. Slack exposes no read for
+        // an assistant-thread status, so the runtime's own log of the initial
+        // `assistant.threads.setStatus` outcome is the only signal it rendered:
+        // the accepted line proves the call reached Slack and came back ok, and
+        // its absence (or the rejected line) is what a silently blank cue looks
+        // like — the case the eyes reaction exists to cover.
+        //
+        // The turn has already replied by now, so the line is in the log; the
+        // wait only absorbs the gap between the reply and the status log.
+        await waitForLog(/Slack thread status accepted/, 30_000);
+        expect(logText(), 'status rejected — the cue fell back to the reaction').not.toMatch(
+          /Slack thread status rejected/,
+        );
+      });
+
       When('a human posts a follow-up aimed at another person', async () => {
         if (skip()) return;
         // No @mention: a mention of another user would trip the pre-LLM

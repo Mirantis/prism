@@ -8,7 +8,10 @@
  *    (a tool starts or finishes) and after each message the adapter posts
  *    into the thread (Slack clears the status on any bot post), and cleared
  *    when the turn ends — Slack never expires it otherwise, so every exit
- *    path must clear it explicitly or it sticks forever; and
+ *    path must clear it explicitly or it sticks forever. A thread whose
+ *    initial set fails is on the fallback cue for the rest of the turn, so
+ *    its later pushes are skipped instead of re-attempted; only the final
+ *    clear still goes out; and
  *  - an `eyes` reaction on the triggering user message — the fallback cue:
  *    added only when the thread's initial setStatus fails, or right away
  *    when the turn has no status thread at all (a top-level DM). The
@@ -117,6 +120,15 @@ interface StatusEntry {
    * rejects.
    */
   statusOk: Promise<boolean>;
+  /**
+   * Mirrors a false {@link statusOk} synchronously, for the push paths to
+   * read. Once the initial set failed the turn is on the reaction fallback
+   * and every later push would fail the same way, so pushing again buys
+   * nothing but rate-limit pressure. Per entry rather than per thread: the
+   * next turn on the thread builds a fresh entry and tries again, so one
+   * transient failure disables the cue for one turn only.
+   */
+  statusFailed: boolean;
 }
 
 /** Returned by begin() after stopAll(): shows nothing, ends as a no-op. */
@@ -147,9 +159,11 @@ export class SlackWorkingIndicator {
 
     let ended = false;
     // Ending the turn takes the add off the table, so the decision below
-    // races the status outcome against this signal — end() must not sit out
-    // a slow or stuck setStatus round trip just to learn nothing will be
-    // added.
+    // races the status outcome against this signal — the reaction decision
+    // must not sit out a slow or stuck setStatus round trip just to learn
+    // nothing will be added. The owning turn's clear still queues behind that
+    // round trip on the entry's op chain (see releaseStatus); only this
+    // decision, and a steered turn's end(), are freed by the race.
     let signalEnded!: () => void;
     const endedSignal = new Promise<'ended'>((resolve) => {
       signalEnded = () => resolve('ended');
@@ -180,8 +194,10 @@ export class SlackWorkingIndicator {
 
     const handle: WorkingIndicatorHandle = {
       setText: (text: string | null) => {
+        // statusFailed: this thread showed the reaction instead, and the phrase
+        // has nowhere to render — pushing it buys another rejection.
+        if (ended || !entry || !statusThreadTs || entry.statusFailed) return;
         // Identity check: a stale handle must not write into a newer turn's entry.
-        if (ended || !entry || !statusThreadTs) return;
         const key = this.statusKey(teamId, channelId, statusThreadTs);
         if (this.statusEntries.get(key) !== entry) return;
         const next = text ?? WORKING_STATUS_TEXT;
@@ -212,14 +228,18 @@ export class SlackWorkingIndicator {
   /**
    * Set the thread's current status again after the adapter posted a message
    * into it — Slack clears the assistant status on any bot post, including
-   * mid-turn intermediate replies. No-op when no turn is live on the thread.
-   * The final reply also sets it; end()'s clear lands after it on the same
-   * per-key op chain, so the final state stays cleared.
+   * mid-turn intermediate replies. No-op when no turn is live on the thread,
+   * and once the thread's initial set failed. The final reply also sets it;
+   * end()'s clear lands after it on the same per-key op chain, so the final
+   * state stays cleared.
    */
   setStatus(teamId: string, channelId: string, threadTs: string): void {
     const key = this.statusKey(teamId, channelId, threadTs);
     const entry = this.statusEntries.get(key);
-    if (!entry) return;
+    // No entry: no turn is live on the thread. statusFailed: the cue cannot
+    // come back this turn, so a turn posting N intermediate replies would
+    // otherwise issue N more rejected calls, one per post.
+    if (!entry || entry.statusFailed) return;
     void this.runStatusOp(key, 'assistant.threads.setStatus', () =>
       this.ops.setStatus(teamId, channelId, threadTs, entry.text));
   }
@@ -272,8 +292,26 @@ export class SlackWorkingIndicator {
       refCount: 1,
       text: WORKING_STATUS_TEXT,
       statusOk,
+      statusFailed: false,
     };
     this.statusEntries.set(key, entry);
+    // Log the outcome once per entry (not per push — a long turn should not
+    // narrate itself). The status line is write-only on the Slack API, so this
+    // is the only signal that the primary cue rendered, and the only place the
+    // fallback announces itself; the e2e suite asserts on these phrases.
+    void statusOk.then((ok) => {
+      if (ok) {
+        logger.info('Slack thread status accepted (channel=%s, thread=%s)', channelId, threadTs);
+        return;
+      }
+      entry.statusFailed = true;
+      logger.info(
+        'Slack thread status rejected - falling back to the %s reaction (channel=%s, thread=%s)',
+        WORKING_REACTION,
+        channelId,
+        threadTs,
+      );
+    });
     return entry;
   }
 
