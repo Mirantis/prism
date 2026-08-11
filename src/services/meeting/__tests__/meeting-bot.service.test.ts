@@ -31,25 +31,41 @@ const conversationStop = vi.fn();
 const conversationStart = vi.fn();
 const conversationNotify = vi.fn();
 const conversationSpeak = vi.fn();
+const conversationSetParticipantCount = vi.fn();
 /**
  * The options the service last built a conversation with.
  *
- * Captured so a test can fire `onSessionLost` the way the real Realtime socket's
- * close handler would — that callback is the whole seam between a dead session and
- * the service's decision to leave.
+ * Captured for two reasons: a test can fire `onSessionLost` the way the real
+ * Realtime socket's close handler would — that callback is the whole seam between
+ * a dead session and the service's decision to leave — and the name and mode the
+ * service resolved are only observable here.
  */
-let conversationOptions: { onSessionLost?: (reason: string) => void } = {};
+let conversationOptions: Record<string, unknown> & {
+  onSessionLost?: (reason: string) => void;
+} = {};
 class FakeVoiceConversation {
-  constructor(options: { onSessionLost?: (reason: string) => void }) {
+  constructor(options: Record<string, unknown>) {
     conversationOptions = options;
   }
   start = conversationStart;
   stop = conversationStop;
   notify = conversationNotify;
   speakNow = conversationSpeak;
+  setParticipantCount = conversationSetParticipantCount;
   pushMeetingAudio = vi.fn();
+  get responseMode() {
+    return 'addressed';
+  }
   get statistics() {
-    return { responses: 2, toolCalls: 1, interruptions: 3 };
+    return {
+      responses: 2,
+      toolCalls: 1,
+      interruptions: 3,
+      utterances: 9,
+      suppressed: 6,
+      addressedMatches: 2,
+      modeSwitches: 1,
+    };
   }
 }
 vi.mock('../voice-conversation', () => ({ VoiceConversation: FakeVoiceConversation }));
@@ -499,7 +515,7 @@ describe('telemetry', () => {
 
     expect(trackEvent).toHaveBeenCalledWith('meeting joined', 'u1', {
       provider: 'google-meet',
-      addressed_only: 'false',
+      response_mode: 'auto',
     });
 
     await service.leave();
@@ -510,9 +526,16 @@ describe('telemetry', () => {
       expect.objectContaining({
         provider: 'google-meet',
         status: 'completed',
+        response_mode: 'auto',
         responses: '2',
         tool_calls: '1',
         interruptions: '3',
+        // How the room was handled — the counters that say whether the gate
+        // suppressed anything and how much of that was a name being said.
+        utterances: '9',
+        suppressed: '6',
+        addressed_matches: '2',
+        mode_switches: '1',
       }),
     );
   });
@@ -596,15 +619,62 @@ describe('status()', () => {
   });
 
   it('reports the provider, mode and stats during a call', async () => {
-    await service.join({ ...input, addressedOnly: true });
+    await service.join({ ...input, responseMode: 'addressed' });
     await settle();
 
     expect(service.status()).toMatchObject({
       state: 'in_call',
       provider: 'google-meet',
-      addressedOnly: true,
+      responseMode: 'addressed',
+      // What `auto` actually resolved to is the answer to "will it speak up?",
+      // so status reports it alongside what was asked for.
+      effectiveResponseMode: 'addressed',
       stats: { responses: 2, toolCalls: 1, interruptions: 3 },
     });
     expect(service.status().joinedAt).toBeTruthy();
+  });
+});
+
+describe('reading the room', () => {
+  it('reads the participant count on admission rather than a poll later', async () => {
+    providerParticipantCount.mockResolvedValue(2);
+
+    await service.join(input);
+    await settle();
+
+    // Until a count lands the policy assumes a crowd, so a one-to-one caller
+    // would have to say the agent's name to be answered at all.
+    expect(conversationSetParticipantCount).toHaveBeenCalledWith(2);
+  });
+
+  it('keeps the call when the count cannot be read, and says so', async () => {
+    providerParticipantCount.mockRejectedValue(new Error('selector gone'));
+
+    await service.join(input);
+    await settle();
+
+    // A scraper failure is reported as "unknown", never guessed at: guessing
+    // "open" would put the agent back to answering a whole room.
+    expect(conversationSetParticipantCount).toHaveBeenCalledWith(null);
+    expect(service.status().state).toBe('in_call');
+  });
+
+  it('listens for the name the room actually hears, not the env default', async () => {
+    // The prompt introduces the agent by its workspace name. If detection listened
+    // for `config.agentName` instead, a renamed agent would ignore the very name it
+    // had just given the room.
+    getAgentContext.mockResolvedValue({ agentName: 'Atlas', soulMd: '', userMd: '' });
+
+    await service.join(input);
+    await settle();
+
+    expect(conversationOptions).toMatchObject({ agentName: 'Atlas', responseMode: 'auto' });
+  });
+
+  it('passes aliases through for a name transcription mangles', async () => {
+    await service.join({ ...input, aliases: ['prisma', 'prison'] });
+    await settle();
+
+    expect(conversationOptions).toMatchObject({ aliases: ['prisma', 'prison'] });
   });
 });

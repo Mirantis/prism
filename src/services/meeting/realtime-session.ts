@@ -3,8 +3,8 @@
  *
  * This is a speech-to-speech session: meeting audio goes in as pcm16 and the
  * model's speech comes back as pcm16. There is deliberately no transcript in the
- * conversation path — transcription, when enabled, is only used to decide whether
- * the bot was addressed (see `addressedOnly`), never as the model's input.
+ * conversation path — transcription is only ever used to decide whether the agent
+ * was addressed (see `response-policy.ts`), never as the model's input.
  *
  * The model carries the agent's real system prompt as session `instructions` and
  * the agent's real tools as Realtime function tools, so the participant in the
@@ -17,6 +17,10 @@
  * - `interrupt_response` is left OFF: the server would kill the response on any
  *   detected speech, including a cough or an "mm-hm". Interruption is decided
  *   locally instead (see barge-in.ts) so backchannels don't cut the bot off.
+ * - `create_response` is left OFF too, always. The server would answer every
+ *   utterance in the room, and the room is a single mixed channel — so whether an
+ *   utterance was aimed at the agent is a question only the client can ask (see
+ *   `response-policy.ts`). Every response on this session is one we asked for.
  * - Truncation is the client's job on this transport. The server has no idea how
  *   much of its audio actually reached the room, so after an interruption we tell
  *   it via `conversation.item.truncate` — otherwise the model's context claims it
@@ -69,13 +73,6 @@ export interface RealtimeSessionOptions {
   /** Overrides `OPENAI_REALTIME_MODEL`. */
   model?: string;
   voice?: string;
-  /**
-   * When true the model never answers on its own: the caller decides who was
-   * addressed and calls `requestResponse()`. Used for large meetings, where
-   * answering every utterance in the room is both wrong and expensive. Turns on
-   * input transcription, since that decision needs words.
-   */
-  addressedOnly?: boolean;
   /** Injected in tests so they can point at a local mock server. */
   endpointOverride?: RealtimeEndpoint;
 }
@@ -98,8 +95,16 @@ export interface RealtimeSessionEvents {
   audio: (pcm: Buffer, itemId: string) => void;
   speechStarted: () => void;
   speechStopped: () => void;
-  /** A participant's finished utterance (only when transcription is enabled). */
-  transcript: (text: string) => void;
+  /**
+   * The turn detector closed an utterance and added it to the conversation.
+   *
+   * Earlier than `transcript` by however long transcription takes, and the only
+   * signal available before any words exist — which is what lets a one-to-one
+   * call answer as promptly as it did when the server created responses itself.
+   */
+  utteranceCommitted: (itemId: string) => void;
+  /** A participant's finished utterance, transcribed. */
+  transcript: (itemId: string, text: string) => void;
   functionCall: (call: RealtimeFunctionCall) => void;
   responseDone: () => void;
   /** A protocol-level error from the API; the socket usually stays open. */
@@ -203,7 +208,6 @@ export class RealtimeSession extends EventEmitter {
 
   /** Send the session configuration: instructions, audio formats, tools, VAD. */
   private configureSession(): void {
-    const addressedOnly = this.options.addressedOnly === true;
     const pcm = { type: 'audio/pcm', rate: REALTIME_SAMPLE_RATE };
 
     this.send({
@@ -223,10 +227,14 @@ export class RealtimeSession extends EventEmitter {
             turn_detection: {
               type: 'semantic_vad',
               eagerness: 'low',
-              // In addressed-only mode the model must not answer on its own.
-              create_response: !addressedOnly,
-              // Always off: interruption is decided locally so a backchannel
-              // ("mm-hm") doesn't cut the bot off mid-sentence.
+              // The model never answers on its own. Whether an utterance in a
+              // mixed room channel was aimed at the agent is a judgement only the
+              // client can make; `response-policy.ts` makes it and asks for the
+              // response. Detection of the turn *boundary* still belongs here.
+              create_response: false,
+              // Off for the same family of reasons: interruption is decided
+              // locally so a backchannel ("mm-hm") doesn't cut the agent off
+              // mid-sentence.
               interrupt_response: false,
             },
             // Meeting audio is room audio — several people at conversational
@@ -234,15 +242,17 @@ export class RealtimeSession extends EventEmitter {
             // reduction is what the room case wants, and it feeds cleaner audio to
             // both the turn detector and the transcriber.
             noise_reduction: { type: 'far_field' },
-            // Only needed to decide who was addressed; never fed back as input,
-            // and billed per minute, so it stays off unless that decision is ours
-            // to make. `gpt-realtime-whisper` is the streaming transcriber built
-            // for realtime sessions (verified accepted in a speech-to-speech
-            // session, despite its model page listing only the
-            // transcription-session endpoint).
-            ...(addressedOnly
-              ? { transcription: { model: config.openaiTranscriptionModel } }
-              : {}),
+            // Only ever used to decide who was addressed — never fed back as the
+            // model's input. On for every call, because the mode can change under
+            // a live session as people join, and transcription cannot be turned on
+            // retroactively for an utterance already past. It is billed per audio
+            // minute, but at whisper-class rates that is a rounding error beside
+            // the Realtime audio tokens the same minute costs.
+            // `gpt-realtime-whisper` is the streaming transcriber built for
+            // realtime sessions (verified accepted in a speech-to-speech session,
+            // despite its model page listing only the transcription-session
+            // endpoint).
+            transcription: { model: config.openaiTranscriptionModel },
           },
           output: {
             format: pcm,
@@ -310,18 +320,30 @@ export class RealtimeSession extends EventEmitter {
         this.emitEvent('speechStopped');
         return;
 
+      // The turn detector decided the speaker was finished and committed the
+      // audio as a conversation item. With `create_response` off this is where a
+      // response *would* have been created, so it is the moment to decide whether
+      // to ask for one.
+      case 'input_audio_buffer.committed': {
+        const itemId = typeof event.item_id === 'string' ? event.item_id : '';
+        this.emitEvent('utteranceCommitted', itemId);
+        return;
+      }
+
       case 'conversation.item.input_audio_transcription.completed': {
         const transcript = event.transcript;
+        const itemId = typeof event.item_id === 'string' ? event.item_id : '';
         if (typeof transcript === 'string' && transcript.trim()) {
-          this.emitEvent('transcript', transcript.trim());
+          this.emitEvent('transcript', itemId, transcript.trim());
         }
         return;
       }
 
       case 'response.created': {
-        // Also covers responses the server starts on its own when semantic VAD
-        // decides a speaker finished — those must set the flag too, or our next
-        // request would collide with them.
+        // Confirms the optimistic flag `requestResponse()` set on send. Setting it
+        // here as well keeps the bookkeeping right for any response the server
+        // opens that we did not ask for — with `create_response` off there should
+        // be none, but colliding with one would wedge the session.
         this.responseActive = true;
         this.responseConfirmed = true;
         const created = event.response as { id?: string } | undefined;

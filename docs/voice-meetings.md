@@ -102,14 +102,38 @@ a meeting returns an error rather than dropping the first.
 
 ## In the call
 
-**It only answers what's aimed at it.** The audio it hears is the whole room, most
-of which is people talking to each other. It's instructed to stay out of the way
-unless it's addressed by name or asked something directly. For a big meeting where
-even that is too eager, pass `addressedOnly` — then it only ever speaks when its
-name comes up or someone asks it a direct question:
+**It reads the room before it speaks.** The audio it hears is the whole room, and
+it has no way to tell who is talking to whom — it is one mixed channel with no
+speaker labels. So how much it speaks up depends on how many people are in the
+call:
 
-> Join `https://meet.google.com/abc-defg-hij`, but only speak when someone asks you
-> something
+- **Just you and the agent.** It answers everything you say, as an assistant on a
+  call with you would.
+- **Anyone else in the call.** It stays quiet unless something looks meant for it:
+  its name ("Prism, can you check the cluster?"), a presence check ("are you
+  there?"), or a follow-up to something it just said. Everything else — two people
+  working through a problem with each other — it sits through in silence.
+
+It switches over as people join and leave, within about ten seconds. You don't
+have to ask for any of this, but you can override it per call:
+
+> Join `https://meet.google.com/abc-defg-hij` and only speak when someone says your
+> name
+
+**Follow-ups don't need the name.** For about fifteen seconds after it finishes
+speaking, whatever is said next also reaches it — so "and what about staging?"
+works, and you're not saying "Prism" into every sentence. That carries a few turns
+before it wants the name again, which is what keeps it from drifting back into
+answering the whole room.
+
+**If it doesn't answer to its name.** Live transcription mangles names ("Prism"
+often comes back as "prisma", sometimes "prison"). Give it the spellings to listen
+for when you ask it to join:
+
+> Join that call, and listen for "prisma" as well as your own name
+
+It answers to whatever it's called in its workspace, so renaming the agent renames
+what you say to get its attention.
 
 **You can interrupt it.** Start talking and it stops — humans have the floor. A
 short "mm-hm" or a cough won't cut it off mid-sentence; a real interjection will,
@@ -127,9 +151,10 @@ and no record in your conversation history beyond a note that it joined and left
 it "what did we decide in the meeting?" afterwards and it won't know.
 
 **It can't tell who is speaking.** The meeting audio arrives as one mixed channel
-with no speaker labels, so it won't attribute anything to a specific person. It may
-also mishear a name or a number, and is told to read important details back before
-acting on them.
+with no speaker labels, so it won't attribute anything to a specific person — and
+it can't tell "ask the agent" from "ask the person next to you" except by what the
+words say, which is why the rules above are what they are. It may also mishear a
+name or a number, and is told to read important details back before acting on them.
 
 ## Tools, and what it won't do on a spoken request
 
@@ -162,8 +187,9 @@ duration of the call.
 
 Instructions are a strong default, not enforcement. So treat a meeting link as
 handing over the agent's own authority — over itself included: **share it only with
-people you'd trust with the agent's shell and its configuration.** If you want the
-stricter behaviour, use `addressedOnly` to limit what it engages with, or start the
+people you'd trust with the agent's shell and its configuration.** Note that waiting
+to be addressed narrows what it *responds* to, not what it can be asked to do —
+anyone who says its name has its full toolset. For a real restriction, start the
 agent with a narrower tool surface.
 
 It also leaves on request — "you can drop off now" works, and it hangs up.
@@ -175,8 +201,14 @@ hears everything — a quiet hour still costs. Expect roughly **$0.10–0.30 per
 minute** with the default `gpt-realtime-2.1`. Two levers:
 
 - `OPENAI_REALTIME_MODEL=gpt-realtime-mini` is materially cheaper.
-- `addressedOnly` cuts the expensive half (spoken responses) down to the turns
-  actually meant for the agent.
+- In a call with several people, staying quiet unless addressed cuts the expensive
+  half — spoken responses — down to the turns actually meant for the agent. That
+  happens on its own; there is nothing to switch on.
+
+Deciding who was addressed needs a transcript, so input transcription runs on every
+call. It bills per audio minute at a small fraction of the Realtime audio rate for
+the same minute, and it never feeds the model — the conversation itself stays pure
+audio.
 
 Every call is capped at `MEETING_TIMEOUT_MINUTES` (60 by default), so a meeting
 nobody ended can't run up a bill overnight.
@@ -199,7 +231,7 @@ is between you and your OpenAI account settings.
 | `OPENAI_API_KEY` | Enables voice meetings. May be a managed-credential sentinel. | — (disabled) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
-| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber for `addressedOnly` mode only (billed per minute). | `gpt-realtime-whisper` |
+| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used to decide whether the agent was spoken to. Runs on every call, billed per minute; never fed to the model. | `gpt-realtime-whisper` |
 | `MEETING_DISPLAY_NAME` | Name shown to participants on the guest path only. | the agent's name |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |
