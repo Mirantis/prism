@@ -43,27 +43,6 @@ async function appears(locator: Locator, timeoutMs: number): Promise<boolean> {
   }
 }
 
-/**
- * Wait for a locator to be visible *and* enabled.
- *
- * Visibility alone is not enough for a button whose disabled state is the whole
- * signal — see the join-button race in `enterDisplayName`.
- */
-async function appearsEnabled(locator: Locator, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await appears(locator, Math.min(1_000, Math.max(100, deadline - Date.now())))) {
-      try {
-        if (await locator.isEnabled()) return true;
-      } catch {
-        // Went stale between checks; try again.
-      }
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  return false;
-}
-
 /** How long to wait for the initial page furniture before deciding it's broken. */
 const PAGE_READY_TIMEOUT_MS = 45_000;
 
@@ -73,12 +52,19 @@ const JOIN_RETRY_INTERVAL_MS = 2_000;
 /** How long to keep looking for a join button before giving up. */
 const JOIN_BUTTON_TIMEOUT_MS = 60_000;
 
-/** How long to wait for the guest name field to render. */
-const NAME_FIELD_TIMEOUT_MS = 20_000;
+/**
+ * Slack in the lobby budget beyond the button hunt itself.
+ *
+ * Was the guest name field's own timeout, back when the flow waited for one. The
+ * field is gone with guest joining, but the allowance is not wasted: Meet paints the
+ * lobby in stages and the button often appears well after first paint, so the hunt
+ * wants headroom beyond its own patience.
+ */
+const LOBBY_SLACK_MS = 20_000;
 
 /**
- * Budget for everything before the join request is in — the lobby, the name field,
- * the button hunt.
+ * Budget for everything before the join request is in — the lobby and the button
+ * hunt.
  *
  * Deliberately separate from the admission budget. Both used to come out of one
  * deadline computed before `page.goto`, so a slow page load (up to 45 s) plus a slow
@@ -92,7 +78,7 @@ const NAME_FIELD_TIMEOUT_MS = 20_000;
  * `MEETING_TIMEOUT_MINUTES` still caps the call — and the alternative is failing a
  * join that was going to succeed.
  */
-const LOBBY_PHASE_TIMEOUT_MS = NAME_FIELD_TIMEOUT_MS + JOIN_BUTTON_TIMEOUT_MS;
+const LOBBY_PHASE_TIMEOUT_MS = LOBBY_SLACK_MS + JOIN_BUTTON_TIMEOUT_MS;
 
 /**
  * Reads that must agree before a rejection is believed, and the gap between them.
@@ -105,9 +91,6 @@ const LOBBY_PHASE_TIMEOUT_MS = NAME_FIELD_TIMEOUT_MS + JOIN_BUTTON_TIMEOUT_MS;
  */
 const REJECTION_CONFIRM_READS = 3;
 const REJECTION_CONFIRM_INTERVAL_MS = 1_200;
-
-/** Per-round wait when deciding guest-vs-member; see `enterDisplayName`. */
-const CLASSIFY_ROUND_MS = 400;
 
 /**
  * How long to look for a guest name field before concluding a signed-in profile is
@@ -403,8 +386,9 @@ export class GoogleMeetProvider implements MeetingProvider {
    * Only asked of a browser we believe is signed in, where the answer means the
    * session is stale. Deliberately short-tempered about it: the member lobby paints
    * a join button and no name field, so waiting the full lobby budget here would
-   * delay every healthy join to catch a broken one. A miss is not costly — the flow
-   * carries on into `enterDisplayName`, which is where this used to be handled.
+   * delay every healthy join to catch a broken one. A miss is not costly — the join
+   * goes ahead and Meet refuses it, which is the outcome this only makes faster and
+   * clearer.
    */
   private async guestNameFieldPresent(page: Page, lobbyDeadline: number): Promise<boolean> {
     const budget = Math.max(0, Math.min(STALE_SESSION_PROBE_MS, lobbyDeadline - Date.now()));
