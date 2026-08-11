@@ -354,6 +354,7 @@ src/
 │   ├── channel-adapter.interface.ts # Channel adapter contract (ChannelAdapter interface)
 │   ├── context.service.ts      # Builds agent context (agent data from backend + conversation from DB)
 │   ├── conversation.service.ts # Thread/message CRUD via Prisma, pluggable thread providers
+│   ├── attachment.service.ts   # All MessageAttachment DB access + media-type detection; content as files (lib/media-store.ts), metadata stubs to the model
 │   ├── heartbeat.service.ts    # Heartbeat timer management, execution, and Slack-triggered heartbeats
 │   ├── cron-scheduler.service.ts # Cron job scheduling and execution
 │   ├── slack-adapter.service.ts   # Full Slack implementation: Bolt apps, Socket Mode, message handling
@@ -392,6 +393,7 @@ src/
 │   ├── agent-config.ts         # Agent config tools (soul, user, memory, heartbeat, vision, settings)
 │   ├── cron.ts                 # Cron task tools (schedule, list, delete)
 │   ├── goals.ts                # Goal tools (create, get)
+│   ├── attachments.ts          # hydrate_attachment (stored bytes → workspace file) + view_attachment (image/PDF into the turn) + `reapScratchDirs`
 │   ├── share-file.ts           # Deliver a workspace file to the user as an attachment
 │   ├── meeting.ts              # Voice meetings (join_meeting, leave_meeting, meeting_status)
 │   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, claude_code
@@ -402,6 +404,8 @@ src/
 │   ├── async-channel.ts        # Bridges SDK push-based onStepFinish into async iteration (used by invokeStream)
 │   └── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
 ├── lib/
+│   ├── attachment-boot.ts      # Boot-time attachment storage reconciliation, in order: missing media files → content expiry → legacy BLOB backfill
+│   ├── attachment-janitor.ts   # Hourly attachment sweep: orphaned uploads, stale hydrate scratch dirs, over-TTL content, stray media files
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
 │   ├── llm-providers/          # One folder per LLM vendor, plus the shared contract and the selector
 │   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` + `.embedding(modelId)` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (Anthropic breakpoint or the empty `NO_CACHE_POINT`) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares
@@ -419,6 +423,7 @@ src/
 │   ├── classification-gate.ts  # Shared one-word-verdict gate call (`runClassificationGate`) + `isRecentDuplicate`, used by the heartbeat and cron DELIVER/SUPPRESS gates
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
+│   ├── media-store.ts          # Attachment bytes as files under `<data dir>/media`: write/read/remove, filename sanitizing, stray-file reaper
 │   └── prisma.ts               # Prisma client singleton (runtime database)
 ├── prisma/
 │   └── schema.prisma           # Prisma schema for runtime PostgreSQL database
@@ -477,6 +482,7 @@ What the operator sets on `docker run`:
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
 | `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction (sent verbatim) | `6` |
+| `ATTACHMENT_TTL_HOURS` | How long attachment content (the media file under `<data dir>/media`) is kept before the hourly sweep deletes it; the metadata stub survives, so history keeps showing the file as *content expired*. A non-positive or unparseable value falls back to the default | `168` (7 days) |
 | `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md), and drives chat when `LLM_PROVIDER=openai` (required direct; not needed through Nexus). The Realtime WebSocket is **never routed through Nexus** — the openai mount routes POST only, so the socket goes direct to `api.openai.com`; may be a `__nexus_cred:…__` sentinel since it only ever rides a header | — (meeting tools unregistered) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot rather than the moving `gpt-realtime` alias, so a new snapshot cannot change turn-taking under a live deployment | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name | `marin` |
