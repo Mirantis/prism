@@ -32,6 +32,11 @@ The agent can edit its own identity from inside a conversation — this is how
   mode: `true` streams every step, `false` delivers only the final message).
 - **Clear the bootstrap** prompt once first-run onboarding is done.
 
+When **[locked-in mode](configuration.md#locked-in-mode)** is on, the document
+writers and "clear the bootstrap" are withheld and their writes refused — renames,
+settings and memory search stay available, and the agent cannot lift the lock
+itself.
+
 ## Scheduling
 
 Create and manage its own [scheduled tasks](scheduled-tasks.md):

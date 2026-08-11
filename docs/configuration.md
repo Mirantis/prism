@@ -128,6 +128,54 @@ agent's memory of past turns. The setting applies to **new** turns only —
 toggling `verbose` does not reveal steps that were already hidden, nor hide steps
 that were already delivered.
 
+## Locked-in mode
+
+Once an agent is shaped the way you want it, `lockedIn` stops it from reshaping
+itself. While the lock is on, the agent's own tools may no longer rewrite the six
+workspace markdown files:
+
+| Frozen while locked | Still editable while locked |
+|---------------------|-----------------------------|
+| **Soul**, **User**, **Memory** (the curated summary), **Vision**, **Heartbeat** config, **Bootstrap** | **Behavioural settings** — heartbeat interval, timezone, `verbose`; the agent's **name** (`rename_self`); **vector memory** (search/write/delete), so it keeps learning; the **Agent Guide** |
+
+The lock works in two layers. The workspace-writing tools (`update_soul`,
+`update_memory`, `update_user_profile`, `update_vision`,
+`update_heartbeat_config`, `clear_bootstrap`) are withheld from the tool set, so
+the model doesn't spend turns on writes that would be refused; and every one of
+those writes is refused at the point it happens, which is what actually makes the
+guarantee hold. The lock is read live at each write rather than snapshotted per
+turn, so turning it on takes effect immediately — including part-way through a
+turn that has already collected its tools. A locked agent that is asked to change
+one of these files says what it would have changed and points you at the setting.
+
+**The agent cannot unlock itself.** `lockedIn` is deliberately absent from the
+`update_settings` tool's setting enum, and no other tool reaches it. Only you can,
+via:
+
+- The **Profile** page toggle in the [Web UI](web-ui.md#profile)
+- `PATCH /agents/locked-in` with `{ "lockedIn": true | false }`
+
+Onboarding is paused while the lock is on: a locked agent with a non-empty
+Bootstrap document does not run the first-run script, because it could not clear
+it afterwards.
+
+### Known limitations (v1)
+
+Locked-in mode is a **guardrail against drift, not a security boundary.** It
+constrains the agent's self-management tools, and two paths deliberately go
+around it in v1:
+
+- **The shell.** The agent has a real shell and the database is a local file, so
+  a determined agent can still reach these files without its workspace tools. The
+  lock is not sandboxing.
+- **`POST /agents/import`.** Restoring a `.prism` backup replaces the whole agent
+  record, including the frozen documents and the flag itself. This is an operator
+  action rather than something the agent initiates, and it is not gated by the
+  lock.
+
+Treat the setting as "stop the agent quietly rewriting its own identity", not as
+"the agent cannot change these bytes".
+
 ## Models
 
 Which set applies depends on `LLM_PROVIDER`. Bedrock model IDs are Bedrock model
