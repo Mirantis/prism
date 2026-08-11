@@ -174,6 +174,20 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('Never comment on the task or its configuration itself');
   });
 
+  it('cron mode tells the agent its response is delivered for it, not to post to Slack itself', async () => {
+    const context = createTestAgentContext();
+    const prompt = await buildSystemPrompt(context, 'cron');
+    expect(prompt).toContain('Your final message is delivered automatically');
+    expect(prompt).toContain('Do NOT also post it yourself with Slack');
+    expect(prompt).toContain('an instruction that names a destination');
+  });
+
+  it('does not give chat mode the scheduled-task delivery rule', async () => {
+    const context = createTestAgentContext();
+    const prompt = await buildSystemPrompt(context, 'chat');
+    expect(prompt).not.toContain('Do NOT also post it yourself with Slack');
+  });
+
   it('webhook mode includes webhook instructions and no chat/bootstrap sections', async () => {
     const context = createTestAgentContext({ isBootstrapPhase: true });
     const prompt = await buildSystemPrompt(context, 'webhook');

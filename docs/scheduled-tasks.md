@@ -107,6 +107,13 @@ the gate entirely, so failures are never silently swallowed. A suppressed run
 is still a full run — the task's last-run timestamp advances and a one-shot
 still deletes itself; only the message is withheld.
 
+The scheduled-task prompt states this contract to the agent explicitly: the
+run's final message is delivered for it, so the agent must **not** also post the
+result itself with Slack (or any other messaging) tools — that would duplicate
+the message and bypass the gate. When the instruction names a destination
+("post the digest to #eng"), the agent posts there and replies with a short
+confirmation.
+
 ## Reliability
 
 - Tasks are stored in the embedded database, so they **persist across
