@@ -39,15 +39,29 @@ const isWin = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
 const version = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
+/**
+ * Deps that cannot go through the bundler, needed by both targets.
+ *
+ * - `playwright-core` reaches esbuild as a prebuilt bundle whose optional
+ *   `chromium-bidi/...` imports don't resolve, so bundling it fails outright. It is
+ *   only ever loaded by a lazy `import()` in `services/meeting/browser-stack.ts`,
+ *   which a binary never reaches: a SEA ships no Chromium, Xvfb or PulseAudio, so
+ *   `isBrowserAvailable()` leaves the meeting tools unregistered at startup. An
+ *   external that can't resolve at runtime is therefore unreachable, not broken.
+ * - `fsevents` is a macOS-only native addon pulled in transitively by file watchers;
+ *   esbuild has no loader for its `.node` file.
+ */
+const UNBUNDLABLE = ['playwright-core', 'fsevents'];
+
 const TARGETS = {
   prism: {
     entry: 'cli/src/index.tsx',
-    external: [],
+    external: [...UNBUNDLABLE],
   },
   'prism-server': {
     entry: 'src/sea/server-entry.ts',
     // Native addons + sidecar-loaded modules + pino's worker-thread transport.
-    external: ['better-sqlite3', '@prisma/client', 'sqlite-vec', 'pino-pretty'],
+    external: ['better-sqlite3', '@prisma/client', 'sqlite-vec', 'pino-pretty', ...UNBUNDLABLE],
   },
 };
 const cfg = TARGETS[target];
