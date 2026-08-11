@@ -563,9 +563,10 @@ describe('maybeCompactAfterOverflow', () => {
 });
 
 describe('compactNow (manual)', () => {
-  function makeContext(rowCount: number) {
+  function makeContext(rowCount: number, overrides: Record<string, unknown> = {}) {
     return {
       model: 'stored-model',
+      lockedIn: false,
       recentMessages: Array.from({ length: rowCount }, (_, i) => ({
         id: `m${i}`,
         role: 'USER',
@@ -573,6 +574,7 @@ describe('compactNow (manual)', () => {
         externalMessageId: null,
         internalStep: false,
       })),
+      ...overrides,
     };
   }
 
@@ -640,6 +642,27 @@ describe('compactNow (manual)', () => {
       tokensBefore: 12_345,
       messagesCompacted: 2,
     });
+  });
+
+  // The tools block is the provider's cache prefix. A chat turn on a locked
+  // agent withholds the six workspace-markdown writers (invoke.ts passes
+  // `lockedIn` from the same context), so a compaction that forgot to pass it
+  // would assemble a different — larger — block and miss the shared prefix on
+  // every compaction the locked agent ever runs.
+  it('reflects the lock in the tool set, so the block matches the chat turn byte-for-byte', async () => {
+    mockGetAgentContext.mockResolvedValue(makeContext(8, { lockedIn: true }));
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
+
+    expect(mockCollectTools).toHaveBeenCalledWith(expect.objectContaining({ lockedIn: true }));
+  });
+
+  it('leaves the lock off in the tool set for an unlocked agent', async () => {
+    mockGetAgentContext.mockResolvedValue(makeContext(8));
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
+
+    expect(mockCollectTools).toHaveBeenCalledWith(expect.objectContaining({ lockedIn: false }));
   });
 
   it('appends the task-tool instructions to the stable system part when subagents exist', async () => {

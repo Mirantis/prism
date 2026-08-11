@@ -61,9 +61,10 @@ async function resolveWorkspaceFileUpdate(
 
   // Layer 1, the actual invariant: every markdown-writing tool funnels through
   // here, so one live read of the lock covers all of them in every invocation
-  // mode. The tools are also withheld from the tool set while locked (invoke.ts),
-  // but that is only to stop the model wasting turns — this check is what makes
-  // the guarantee hold, including for a lock switched on mid-turn.
+  // mode. The tools are also withheld from the tool set while locked (see
+  // lib/tool-collection.ts), but that is only to stop the model wasting turns —
+  // this check is what makes the guarantee hold, including for a lock switched
+  // on mid-turn.
   if (await agentWorkspaceService.isLockedIn()) {
     return { success: false, error: LOCKED_IN_REFUSAL };
   }
