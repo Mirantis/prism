@@ -369,7 +369,7 @@ src/
 │   ├── cron.ts                 # Cron task tools (schedule, list, delete)
 │   ├── goals.ts                # Goal tools (create, get)
 │   ├── share-file.ts           # Deliver a workspace file to the user as an attachment
-│   ├── meeting.ts              # Voice meetings (join_google_meet, leave_meeting, meeting_status)
+│   ├── meeting.ts              # Voice meetings (join_meeting, leave_meeting, meeting_status)
 │   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, claude_code
 │   └── skills/                 # The `skill` tool (loads a SKILL.md body on demand)
 ├── routes/
@@ -452,8 +452,7 @@ What the operator sets on `docker run`:
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot rather than the moving `gpt-realtime` alias, so a new snapshot cannot change turn-taking under a live deployment | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name | `marin` |
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber that decides whether the agent was addressed — never fed to the model. On for every call, since the mode can change mid-session and an utterance already past can't be transcribed retroactively (bills per minute). `gpt-live-transcribe` because it is the only model that both streams partials *and* accepts `keywords`; the agent's name and the room's roster are seeded through that, and a model without it drops them silently | `gpt-live-transcribe` |
-| `GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD` | Google account the meeting bot signs in as. **Effectively required** — Meet auto-denies automated anonymous guests (`CreateMeetingDevice` 403, host never prompted). Profile persisted under `<DATA>/meeting-browser-profile`, so login is rare | — |
-| `MEETING_DISPLAY_NAME` | Name shown to participants on the guest path (signed-in uses the account's name) | the agent's name |
+| `GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD` | Google account the meeting bot signs in as. **Effectively required** — Meet auto-denies automated anonymous guests (`CreateMeetingDevice` 403, host never prompted). Profile persisted under `<DATA>/meeting-browser-profile`. The password **cannot** be a `__nexus_cred:…__` sentinel, unlike every other secret here: sentinels are rewritten on the wire and only work for a header, while this is typed into a sign-in form over TLS to Google — the runtime needs the real value in memory. Google Meet exposes no bot or service-account API, so a real browser signed into a real account is the only way in; use a dedicated account | — |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait to be admitted from the waiting room, counted from when the join request goes in (reaching the lobby is budgeted separately) | `300` |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
