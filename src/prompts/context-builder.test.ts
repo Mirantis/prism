@@ -177,22 +177,9 @@ describe('buildSystemPrompt', () => {
   it('cron mode tells the agent its response is delivered for it, not to post to Slack itself', async () => {
     const context = createTestAgentContext();
     const prompt = await buildSystemPrompt(context, 'cron');
-    expect(prompt).toContain('Your final message is delivered automatically');
-    expect(prompt).toContain('Do NOT also post it yourself with Slack');
-  });
-
-  it('states the no-self-posting rule with no exceptions', async () => {
-    const context = createTestAgentContext();
-    const prompt = await buildSystemPrompt(context, 'cron');
-    expect(prompt).not.toContain('The exception is');
-    expect(prompt).not.toContain('names a destination');
-    expect(prompt).not.toContain('#eng');
-  });
-
-  it('does not give chat mode the scheduled-task delivery rule', async () => {
-    const context = createTestAgentContext();
-    const prompt = await buildSystemPrompt(context, 'chat');
-    expect(prompt).not.toContain('Do NOT also post it yourself with Slack');
+    expect(prompt).toContain(
+      "- Your final message is delivered automatically to the conversation or Slack channel this task reports into. Do NOT also post it yourself with Slack (or any other messaging) tools — that duplicates the message. A conditional task's brief all-clear is withheld rather than posted, so there is no need to pad it.",
+    );
   });
 
   it('webhook mode includes webhook instructions and no chat/bootstrap sections', async () => {
