@@ -618,6 +618,132 @@ describe('invoke', () => {
     ]);
   });
 
+  describe('PRISM_DISABLED_TOOLS', () => {
+    beforeEach(() => {
+      mockGetShellTools.mockReturnValue({
+        shell_exec: { description: 'shell_exec' },
+        claude_code: { description: 'claude_code' },
+        claude_code_status: { description: 'claude_code_status' },
+      });
+    });
+
+    afterEach(() => {
+      config.disabledTools = [];
+    });
+
+    it('withholds the named tools from the model', async () => {
+      config.disabledTools = ['claude_code', 'claude_code_status'];
+
+      await invoke(createTestInvokeRequest({ mode: 'chat' }));
+
+      const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
+      expect(toolNames).not.toContain('claude_code');
+      expect(toolNames).not.toContain('claude_code_status');
+      expect(toolNames).toContain('shell_exec');
+    });
+
+    it('passes every tool through when nothing is disabled', async () => {
+      config.disabledTools = [];
+
+      await invoke(createTestInvokeRequest({ mode: 'chat' }));
+
+      expect(Object.keys(mockGenerateText.mock.calls[0][0].tools)).toContain('claude_code');
+    });
+
+    it('reaches Nexus MCP tools, not just built-ins', async () => {
+      // The gate runs after the two maps merge, so an operator can withhold a
+      // tool the MCP endpoint serves — which mode filtering never touches.
+      mockGetMCPTools.mockResolvedValue({ kubectl: { description: 'kubectl' } });
+      config.disabledTools = ['kubectl'];
+
+      await invoke(createTestInvokeRequest({ mode: 'chat' }));
+
+      expect(Object.keys(mockGenerateText.mock.calls[0][0].tools)).not.toContain('kubectl');
+    });
+
+    it('ignores a name no tool has', async () => {
+      config.disabledTools = ['not_a_tool'];
+
+      await invoke(createTestInvokeRequest({ mode: 'chat' }));
+
+      expect(Object.keys(mockGenerateText.mock.calls[0][0].tools)).toContain('shell_exec');
+    });
+  });
+
+  describe('PRISM_REASONING_EFFORT and PRISM_THINKING', () => {
+    afterEach(() => {
+      config.reasoningEffort = null;
+      config.thinking = null;
+    });
+
+    it('sends the configured effort under the anthropic namespace', async () => {
+      config.reasoningEffort = 'high';
+
+      await invoke(createTestInvokeRequest());
+
+      expect(mockGenerateText.mock.calls[0][0].providerOptions).toEqual({
+        anthropic: { effort: 'high' },
+      });
+    });
+
+    it('sends adaptive thinking when configured', async () => {
+      // Load-bearing on Opus 4.8/4.7: omitting the field there means no
+      // thinking at all, so the runtime has to say so explicitly.
+      config.thinking = 'adaptive';
+
+      await invoke(createTestInvokeRequest());
+
+      expect(mockGenerateText.mock.calls[0][0].providerOptions).toEqual({
+        anthropic: { thinking: { type: 'adaptive' } },
+      });
+    });
+
+    it('sends effort and thinking together', async () => {
+      config.reasoningEffort = 'high';
+      config.thinking = 'adaptive';
+
+      await invoke(createTestInvokeRequest());
+
+      expect(mockGenerateText.mock.calls[0][0].providerOptions).toEqual({
+        anthropic: { effort: 'high', thinking: { type: 'adaptive' } },
+      });
+    });
+
+    it('sends no provider options when neither is set', async () => {
+      config.reasoningEffort = null;
+      config.thinking = null;
+
+      await invoke(createTestInvokeRequest());
+
+      expect(mockGenerateText.mock.calls[0][0].providerOptions).toEqual({});
+    });
+
+    it('keeps the same effort on the early-stopping summary call', async () => {
+      // A turn must not silently change effort or thinking at the step limit.
+      config.reasoningEffort = 'high';
+      config.thinking = 'adaptive';
+      // 100 steps == STEP_LIMIT, which is what triggers the summary call.
+      const steps = Array.from({ length: 100 }, (_, i) => ({
+        text: '',
+        toolCalls: [{ toolCallId: `tc-${i}`, toolName: 'shell_exec', input: {} }],
+        toolResults: [{ toolCallId: `tc-${i}`, output: 'ok' }],
+      }));
+      mockGenerateText
+        .mockResolvedValueOnce({ text: 'Still working...', steps })
+        .mockResolvedValueOnce({
+          text: 'summary',
+          steps: [{ text: 'summary', toolCalls: [], toolResults: [] }],
+        });
+
+      await invoke(createTestInvokeRequest());
+
+      expect(mockGenerateText).toHaveBeenCalledTimes(2);
+      expect(mockGenerateText.mock.calls[1][0].providerOptions).toEqual({
+        anthropic: { effort: 'high', thinking: { type: 'adaptive' } },
+      });
+    });
+  });
+
   describe('cancellation (abortSignal)', () => {
     it('threads the abortSignal into generateText', async () => {
       const controller = new AbortController();

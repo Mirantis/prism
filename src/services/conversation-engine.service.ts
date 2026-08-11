@@ -44,6 +44,22 @@ interface StreamedTurn {
   toolCalls: ToolCallRecord[];
   blocks: UIBlock[];
   agentMessage: Awaited<ReturnType<typeof messageDeliveryService.publish>> | undefined;
+  usage: TurnUsage;
+}
+
+/**
+ * Token counts summed over a turn's steps, for callers that report cost.
+ *
+ * Providers report usage per step and some omit it entirely, so every field is
+ * a running total of what was actually reported — a zero means "nothing
+ * reported", not "nothing spent". `steps` counts model round trips, which is
+ * what makes the totals interpretable.
+ */
+export interface TurnUsage {
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  steps: number;
 }
 
 // ============================================================================
@@ -93,6 +109,13 @@ export interface ChatResponse {
   content: string;
   toolCalls: ToolCallRecord[];
   blocks?: unknown[];
+  /**
+   * Tokens summed over every step of the exchange, including any coalesced
+   * follow-up turns. Present even when the provider reported nothing (all
+   * zeroes) so callers can read the fields without a presence check; a
+   * `steered` reply made no model call and reports zero steps.
+   */
+  usage: TurnUsage;
   durationMs: number;
   /** The title just assigned to the thread from this message, else null. */
   titleSet: string | null;
@@ -258,6 +281,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         threadId,
         content: '',
         toolCalls: [],
+      usage: { totalTokens: 0, inputTokens: 0, outputTokens: 0, steps: 0 },
         durationMs: Date.now() - startTime,
         titleSet: null,
         steered: false,
@@ -299,6 +323,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         threadId,
         content: '',
         toolCalls: [],
+      usage: { totalTokens: 0, inputTokens: 0, outputTokens: 0, steps: 0 },
         durationMs: Date.now() - startTime,
         titleSet,
         steered: true,
@@ -331,6 +356,7 @@ Respond with exactly one word: WORTHY or SKIP`;
     const responseTexts: string[] = [];
     const allBlocks: UIBlock[] = [];
     const allToolCalls: ToolCallRecord[] = [];
+    const usage: TurnUsage = { totalTokens: 0, inputTokens: 0, outputTokens: 0, steps: 0 };
     let agentMessage: StreamedTurn['agentMessage'];
     let verbose = false;
     let titleSet: string | null = null;
@@ -379,6 +405,10 @@ Respond with exactly one word: WORTHY or SKIP`;
 
         if (streamed.text) responseTexts.push(streamed.text);
         allToolCalls.push(...streamed.toolCalls);
+        usage.totalTokens += streamed.usage.totalTokens;
+        usage.inputTokens += streamed.usage.inputTokens;
+        usage.outputTokens += streamed.usage.outputTokens;
+        usage.steps += streamed.usage.steps;
         allBlocks.push(...streamed.blocks);
         if (streamed.agentMessage) agentMessage = streamed.agentMessage;
 
@@ -426,6 +456,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       content: response,
       toolCalls: allToolCalls,
       blocks: allBlocks.length > 0 ? allBlocks : undefined,
+      usage,
       durationMs: Date.now() - startTime,
       titleSet,
     };
@@ -537,6 +568,7 @@ Respond with exactly one word: WORTHY or SKIP`;
     // Files the agent shared (share_file) accrue across steps and ride out on
     // the final delivered message, so they appear alongside the answer.
     const allAttachmentIds: string[] = [];
+    const usage: TurnUsage = { totalTokens: 0, inputTokens: 0, outputTokens: 0, steps: 0 };
 
     for await (const step of invokeStream({
       userId,
@@ -558,6 +590,10 @@ Respond with exactly one word: WORTHY or SKIP`;
       allToolCalls.push(...step.toolCalls);
       if (step.blocks) allBlocks.push(...step.blocks);
       if (step.attachmentIds) allAttachmentIds.push(...step.attachmentIds);
+      usage.steps += 1;
+      usage.totalTokens += step.usage?.totalTokens ?? 0;
+      usage.inputTokens += step.usage?.inputTokens ?? 0;
+      usage.outputTokens += step.usage?.outputTokens ?? 0;
       pendingToolCalls.push(...step.toolCalls);
 
       if (step.text) {
@@ -642,7 +678,7 @@ Respond with exactly one word: WORTHY or SKIP`;
       );
     }
 
-    return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage };
+    return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage, usage };
   }
 }
 

@@ -134,6 +134,32 @@ Bedrock identifiers** — same names, no `us.`/`eu.`/`global.` prefix.
 | `AWS_REGION` | **(Mantle)** Region for both the mantle host and the Titan embedding leg | `us-east-1` |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
+| `PRISM_REASONING_EFFORT` | Reasoning effort for every turn: `low`, `medium`, `high`, `xhigh`, or `max`. Rejected at startup if it is anything else. Applies on `azure` and `bedrock-mantle` only — see below. | — (the model's own default, `high`) |
+| `PRISM_THINKING` | Thinking mode for every turn: `adaptive` or `disabled`. Rejected at startup if it is anything else. Applies on `azure` and `bedrock-mantle` only — see below. | — (the model decides; **not** the same as `disabled`) |
+| `PRISM_DISABLED_TOOLS` | Comma-separated [tool](tools.md) names withheld from every turn, e.g. `claude_code,claude_code_status`. Unknown names are ignored. | — (nothing withheld) |
+| `PRISM_DISABLE_AUTONOMY` | `true` stops everything the agent starts by itself: [heartbeat](heartbeat.md), [scheduled tasks](scheduled-tasks.md), goal resumption, session resets, background sweeps. Chat still works. | `false` |
+
+`PRISM_REASONING_EFFORT` and `PRISM_THINKING` are sent as Anthropic Messages
+options, so they reach the model on the two providers that speak that API —
+`azure` and `bedrock-mantle`. Native `bedrock` goes through Converse, which has
+neither parameter, so both are ignored there rather than reported as an error.
+
+Leaving `PRISM_THINKING` unset is **not** the same as setting it to `disabled`,
+because the models disagree about what an absent field means: Claude Fable 5
+always thinks, Opus 5 thinks by default, and Opus 4.8, Opus 4.7, and Sonnet 4.6
+do **no** thinking unless `adaptive` is sent. Set `PRISM_THINKING=adaptive`
+explicitly on those three to get their intended agentic behavior.
+
+`PRISM_DISABLE_AUTONOMY=true` turns the agent into a request-only service: it
+answers chat, and starts nothing on its own. It exists for runs that must
+measure exactly one turn, such as a benchmark trial where a heartbeat firing
+mid-task would change the result. It is not a lighter boot — it changes what the
+agent is, so leave it off for normal deployments.
+
+`PRISM_DISABLED_TOOLS` narrows the tool surface without a rebuild. It is matched
+against the assembled tool set, so it reaches both built-in tools and anything a
+Nexus MCP endpoint serves. It does not remove subagent dispatch — subagents are
+configuration, not a tool toggled here.
 
 The mantle **chat and classification** variables deliberately do **not** fall
 back to their `BEDROCK_*` counterparts, since those carry a cross-region prefix

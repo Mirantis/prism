@@ -29,7 +29,15 @@ import type { EmbeddingModel, LanguageModel } from 'ai';
  * above). The value union stays inside `JSONValue`, so this is assignable
  * wherever the SDK asks for `providerOptions`.
  */
-export type ProviderOptionsFragment = Record<string, Record<string, string | number | boolean>>;
+export type ProviderOptionValue =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: ProviderOptionValue }
+  | ProviderOptionValue[];
+
+export type ProviderOptionsFragment = Record<string, Record<string, ProviderOptionValue>>;
 
 export type LlmProvider = ((modelId: string) => LanguageModel) & {
   embedding: (modelId: string) => EmbeddingModel;

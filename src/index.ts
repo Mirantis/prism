@@ -132,31 +132,51 @@ const initialize = async () => {
       data: { status: 'IDLE' },
     });
 
-    heartbeatService.startHeartbeat(agent);
-    logger.info('Heartbeat started');
-
-    const cronTasks = await cronSchedulerService.listActiveCronTasks(agent.id);
-    for (const task of cronTasks) {
-      // Boot re-registration of existing tasks — not a new schedule, so
-      // scheduleTask skips its 'cron task scheduled' telemetry.
-      cronSchedulerService.scheduleTask(task, { source: 'boot' });
+    // Everything below that the agent starts *for itself* — heartbeat timers,
+    // cron registration, goal resumption, session resets, the Slack throttle
+    // queue, the attachment sweep — is suppressed by PRISM_DISABLE_AUTONOMY.
+    // Request-driven turns are unaffected. See config.ts for why it exists.
+    const autonomous = !config.disableAutonomy;
+    if (!autonomous) {
+      logger.warn(
+        '[Startup] PRISM_DISABLE_AUTONOMY=true — no heartbeat, cron, goals, session resets, or background sweeps. Only request-driven turns will run.',
+      );
     }
-    logger.info(`Cron tasks scheduled: ${cronTasks.length}`);
+
+    let cronTasks: Awaited<ReturnType<typeof cronSchedulerService.listActiveCronTasks>> = [];
+    if (autonomous) {
+      heartbeatService.startHeartbeat(agent);
+      logger.info('Heartbeat started');
+
+      cronTasks = await cronSchedulerService.listActiveCronTasks(agent.id);
+      for (const task of cronTasks) {
+        // Boot re-registration of existing tasks — not a new schedule, so
+        // scheduleTask skips its 'cron task scheduled' telemetry.
+        cronSchedulerService.scheduleTask(task, { source: 'boot' });
+      }
+      logger.info(`Cron tasks scheduled: ${cronTasks.length}`);
+    }
 
     // Product telemetry: the boot census — the provider/routing logged above
     // plus the rest of the deployment shape (integrations, host, feature
     // counts). Best-effort; never throws.
     await trackAgentStarted(agent, { cronTasks: cronTasks.length });
 
-    // Resume any goal that was still active when the process last stopped.
-    await goalService.restoreActiveGoals(agent.id);
+    if (autonomous) {
+      // Resume any goal that was still active when the process last stopped.
+      await goalService.restoreActiveGoals(agent.id);
 
-    await sessionManagerService.initialize();
-    logger.info('Session manager initialized');
+      await sessionManagerService.initialize();
+      logger.info('Session manager initialized');
+    }
 
+    // Channel adapters stay up either way: delivering a reply is request-driven
+    // work, not something the agent starts on its own.
     await messageDeliveryService.initializeAll();
 
-    await getSlackHeartbeatThrottleQueue().start();
+    if (autonomous) {
+      await getSlackHeartbeatThrottleQueue().start();
+    }
 
     // Reap abandoned pre-send file uploads (chip added but never sent).
     // Linked attachments are untouched. Run on boot, then hourly.
@@ -169,9 +189,11 @@ const initialize = async () => {
         logger.error({ err }, '[Attachments] orphan cleanup failed');
       }
     };
-    await reapOrphanAttachments();
-    orphanCleanupTimer = setInterval(reapOrphanAttachments, 60 * 60 * 1000);
-    orphanCleanupTimer.unref?.();
+    if (autonomous) {
+      await reapOrphanAttachments();
+      orphanCleanupTimer = setInterval(reapOrphanAttachments, 60 * 60 * 1000);
+      orphanCleanupTimer.unref?.();
+    }
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`Failed to initialize services: ${msg}`);

@@ -185,6 +185,57 @@ const contextWindowTokensOverride =
 // rather than as an unreachable URL that would warn on every boot.
 const modelsDevUrlOverride = (process.env.MODELS_DEV_URL ?? '').trim() || null;
 
+// Tool names withheld from every invocation, comma-separated. Exists so an
+// operator can narrow the tool surface without a rebuild — the motivating case
+// is a benchmark run that must measure this agent's own loop, where leaving
+// `claude_code` enabled would let a nested agent do the work and make the score
+// unattributable. Names are matched exactly against the assembled tool map, so
+// an unknown name is inert rather than an error.
+const disabledTools = (process.env.PRISM_DISABLED_TOOLS ?? '')
+  .split(',')
+  .map((name) => name.trim())
+  .filter(Boolean);
+
+// Reasoning effort for the chat/invoke path, passed through to the Anthropic
+// Messages surface as `providerOptions.anthropic.effort`. Unset = the model's
+// own default (`high`). Validated here so a typo fails loudly at boot instead
+// of 400ing on the first turn; note the vendors that don't accept it ignore the
+// fragment rather than rejecting it.
+const rawReasoningEffort = (process.env.PRISM_REASONING_EFFORT ?? '').trim().toLowerCase();
+const REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+if (rawReasoningEffort && !(REASONING_EFFORTS as readonly string[]).includes(rawReasoningEffort)) {
+  throw new Error(
+    `Invalid PRISM_REASONING_EFFORT "${rawReasoningEffort}" — expected one of ${REASONING_EFFORTS.join(', ')}`,
+  );
+}
+const reasoningEffort = (rawReasoningEffort || null) as ReasoningEffort | null;
+
+// Thinking mode for the chat/invoke path. Unset leaves the field off the
+// request, which is *not* the same as "off" on every model: Fable 5 thinks
+// always, Opus 5 thinks by default, but Opus 4.8/4.7 and Sonnet 4.6 run with no
+// thinking at all unless `adaptive` is sent explicitly. Set this to `adaptive`
+// on those models to get their intended agentic behavior.
+const rawThinking = (process.env.PRISM_THINKING ?? '').trim().toLowerCase();
+const THINKING_MODES = ['adaptive', 'disabled'] as const;
+export type ThinkingMode = (typeof THINKING_MODES)[number];
+if (rawThinking && !(THINKING_MODES as readonly string[]).includes(rawThinking)) {
+  throw new Error(
+    `Invalid PRISM_THINKING "${rawThinking}" — expected one of ${THINKING_MODES.join(', ')}`,
+  );
+}
+const thinking = (rawThinking || null) as ThinkingMode | null;
+
+// Suppress everything the agent starts on its own: heartbeat timers, cron
+// registration, goal resumption, session resets, the Slack throttle queue, and
+// the periodic attachment sweep. Request-driven turns still work.
+//
+// Exists for runs that must measure exactly one turn — a benchmark trial, where
+// a heartbeat firing mid-task would edit the tree under the grader and make the
+// result unattributable. This is not a lighter boot: it changes what the agent
+// is, so leave it off for any normal deployment.
+const disableAutonomy = (process.env.PRISM_DISABLE_AUTONOMY ?? '').trim().toLowerCase() === 'true';
+
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
@@ -304,6 +355,14 @@ export const config = {
   goalDefaultTokenBudget: process.env.GOAL_DEFAULT_TOKEN_BUDGET
     ? parseInt(process.env.GOAL_DEFAULT_TOKEN_BUDGET, 10)
     : null,
+
+  // Tool names withheld from every invocation, the reasoning effort and
+  // thinking mode passed to the model, and the autonomy kill switch (see the
+  // derivations above).
+  disabledTools,
+  reasoningEffort,
+  thinking,
+  disableAutonomy,
 
   // Provider-neutral model IDs (see the `modelIds` lookup above). The runtime
   // (invoke, classification gate, embeddings, per-agent model fallback) reads

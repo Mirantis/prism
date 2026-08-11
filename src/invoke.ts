@@ -10,6 +10,7 @@ import { generateText, ModelMessage, SystemModelMessage, Tool, stepCountIs } fro
 import { config } from './config';
 import { logger } from './logger';
 import { createProvider, isProviderConfigured } from './lib/llm-providers/create-provider';
+import type { ProviderOptionsFragment, ProviderOptionValue } from './lib/llm-providers/llm-provider';
 import { getMCPTools } from './lib/mcp-client';
 import { getMemoryTools } from './tools/memory';
 import { getCronTools } from './tools/cron';
@@ -166,7 +167,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       ? await getMCPTools({ url: config.nexusMcpUrl })
       : {};
 
-    const tools: Record<string, Tool> = { ...builtInTools, ...nexusTools };
+    const tools: Record<string, Tool> = withoutDisabledTools({ ...builtInTools, ...nexusTools });
 
     // Fetch subagents (skip for subagent invocations to prevent recursion)
     const subagents = request.mode === 'subagent'
@@ -282,6 +283,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       stopWhen: stepCountIs(STEP_LIMIT),
       abortSignal: request.abortSignal,
+      providerOptions: modelProviderOptions(),
       ...langfuseTelemetry(`invoke-${request.mode}`),
       // Fold in any mid-turn steering messages, then re-apply the cache
       // breakpoint on the latest last message so the growing conversation
@@ -402,6 +404,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           messages: summaryMessages,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           abortSignal: request.abortSignal,
+          providerOptions: modelProviderOptions(),
           ...langfuseTelemetry('invoke-early-stopping'),
         });
 
@@ -628,6 +631,64 @@ export function withToolsCacheControl(tools: Record<string, Tool>): Record<strin
     result[name] = name === lastKey
       ? { ...tool, providerOptions: cachePoint }
       : tool;
+  }
+  return result;
+}
+
+/**
+ * The `providerOptions` fragment carrying `PRISM_REASONING_EFFORT` and
+ * `PRISM_THINKING`, or `{}` when neither is set.
+ *
+ * Emitted under the `anthropic` namespace because both are features of the
+ * Anthropic Messages surface, which is what the `azure` and `bedrock-mantle`
+ * vendors speak (each builds its model with `createAnthropic`). Native
+ * `bedrock` goes through Converse, whose provider id is `bedrock`, so the
+ * fragment is ignored there rather than rejected — either option on that vendor
+ * needs `LLM_PROVIDER=bedrock-mantle`.
+ *
+ * `thinking` is worth setting explicitly rather than left to the default:
+ * omitting the field means "always on" on Fable 5, "on" on Opus 5, and "off
+ * entirely" on Opus 4.8/4.7 and Sonnet 4.6 — so the same absent field produces
+ * a thinking model or a non-thinking one depending on which model answers.
+ *
+ * Spread into every `generateText` call on this path, including the
+ * early-stopping summary, so neither setting changes at the step limit.
+ */
+function modelProviderOptions(): ProviderOptionsFragment {
+  const anthropic: Record<string, ProviderOptionValue> = {};
+  if (config.reasoningEffort) anthropic.effort = config.reasoningEffort;
+  if (config.thinking) anthropic.thinking = { type: config.thinking };
+  return Object.keys(anthropic).length > 0 ? { anthropic } : {};
+}
+
+/**
+ * Drop every tool named in `PRISM_DISABLED_TOOLS`.
+ *
+ * Applied after the built-in and Nexus MCP maps are merged, so it can reach any
+ * tool the agent would otherwise see — including the MCP surface, which
+ * `filterToolsByMode` never touches. Mode filtering stays separate: that
+ * encodes which tools make sense for a heartbeat or a subagent, this encodes an
+ * operator's decision to withhold one everywhere.
+ *
+ * The `Task` tool is added after this point, so a disabled name cannot remove
+ * subagent dispatch; that is deliberate — subagents are configuration, not a
+ * tool the operator toggles here.
+ */
+export function withoutDisabledTools(tools: Record<string, Tool>): Record<string, Tool> {
+  // Defaulted rather than read directly: partial `config` mocks are the norm in
+  // this suite, and an unset field must mean "disable nothing" rather than throw.
+  const names = config.disabledTools ?? [];
+  if (names.length === 0) return tools;
+
+  const disabled = new Set(names);
+  const result: Record<string, Tool> = {};
+  const dropped: string[] = [];
+  for (const [name, tool] of Object.entries(tools)) {
+    if (disabled.has(name)) dropped.push(name);
+    else result[name] = tool;
+  }
+  if (dropped.length > 0) {
+    logger.info(`Withholding ${dropped.length} disabled tool(s): ${dropped.join(', ')}`);
   }
   return result;
 }

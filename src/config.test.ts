@@ -30,6 +30,82 @@ describe('config', () => {
     return mod.config;
   }
 
+  describe('PRISM_DISABLED_TOOLS', () => {
+    it('defaults to withholding nothing', async () => {
+      delete process.env.PRISM_DISABLED_TOOLS;
+      expect((await loadConfig()).disabledTools).toEqual([]);
+    });
+
+    it('splits, trims, and drops blanks', async () => {
+      process.env.PRISM_DISABLED_TOOLS = ' claude_code , claude_code_status ,, ';
+      expect((await loadConfig()).disabledTools).toEqual(['claude_code', 'claude_code_status']);
+    });
+
+    it('treats an empty value as withholding nothing', async () => {
+      process.env.PRISM_DISABLED_TOOLS = '';
+      expect((await loadConfig()).disabledTools).toEqual([]);
+    });
+  });
+
+  describe('PRISM_REASONING_EFFORT', () => {
+    it('defaults to null (the model decides)', async () => {
+      delete process.env.PRISM_REASONING_EFFORT;
+      expect((await loadConfig()).reasoningEffort).toBeNull();
+    });
+
+    it.each(['low', 'medium', 'high', 'xhigh', 'max'])('accepts %s', async (level) => {
+      process.env.PRISM_REASONING_EFFORT = level;
+      expect((await loadConfig()).reasoningEffort).toBe(level);
+    });
+
+    it('normalizes case and surrounding space', async () => {
+      process.env.PRISM_REASONING_EFFORT = '  XHigh ';
+      expect((await loadConfig()).reasoningEffort).toBe('xhigh');
+    });
+
+    it('throws on an unknown level rather than silently ignoring it', async () => {
+      // A typo must fail at boot, not 400 on the first turn of a benchmark sweep.
+      process.env.PRISM_REASONING_EFFORT = 'extreme';
+      await expect(loadConfig()).rejects.toThrow(/Invalid PRISM_REASONING_EFFORT/);
+    });
+  });
+
+  describe('PRISM_THINKING', () => {
+    it('defaults to null, which is not the same as disabled', async () => {
+      delete process.env.PRISM_THINKING;
+      expect((await loadConfig()).thinking).toBeNull();
+    });
+
+    it.each(['adaptive', 'disabled'])('accepts %s', async (mode) => {
+      process.env.PRISM_THINKING = mode;
+      expect((await loadConfig()).thinking).toBe(mode);
+    });
+
+    it('throws on an unknown mode', async () => {
+      process.env.PRISM_THINKING = 'enabled';
+      await expect(loadConfig()).rejects.toThrow(/Invalid PRISM_THINKING/);
+    });
+  });
+
+  describe('PRISM_DISABLE_AUTONOMY', () => {
+    it('defaults to false', async () => {
+      delete process.env.PRISM_DISABLE_AUTONOMY;
+      expect((await loadConfig()).disableAutonomy).toBe(false);
+    });
+
+    it('is true only for the literal string true', async () => {
+      process.env.PRISM_DISABLE_AUTONOMY = 'TRUE';
+      expect((await loadConfig()).disableAutonomy).toBe(true);
+    });
+
+    it.each(['false', '1', 'yes', ''])('treats %o as autonomy enabled', async (value) => {
+      // Deliberately strict: disabling autonomy changes what the agent is, so
+      // only an unambiguous opt-in counts.
+      process.env.PRISM_DISABLE_AUTONOMY = value;
+      expect((await loadConfig()).disableAutonomy).toBe(false);
+    });
+  });
+
   it('reads PORT with default 3003', async () => {
     delete process.env.PORT;
     const cfg = await loadConfig();
