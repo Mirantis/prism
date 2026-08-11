@@ -143,3 +143,26 @@ describe('getMeetingInstructions', () => {
     expect(text).not.toContain('Google Meet');
   });
 });
+
+describe('who the agent is in a call', () => {
+  it('frames the call as a channel rather than a persona', () => {
+    // A live call had the agent introduce itself as "a voice agent called Prism"
+    // — a persona it synthesised from being told it was participating by voice,
+    // over the identity its Soul and profile actually give it. Being in a meeting
+    // is a way of communicating, not a different agent.
+    const text = getMeetingInstructions(base);
+
+    expect(text).toMatch(/channel, not an identity/i);
+    expect(text).toMatch(/never introduce or describe yourself as a voice assistant/i);
+  });
+
+  it('points at the identity sections rather than restating them', () => {
+    // The meeting instructions are appended *after* Soul, Agent Guide and User, so
+    // anything they assert about identity competes with the real thing. They should
+    // defer to it instead.
+    const text = getMeetingInstructions(base);
+
+    expect(text).toMatch(/Soul/);
+    expect(text).toMatch(/Nothing above this line tells you who\s+you are/i);
+  });
+});
