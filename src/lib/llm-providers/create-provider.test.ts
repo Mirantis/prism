@@ -1,6 +1,6 @@
 /**
- * create-provider switch tests: vendor (bedrock/azure/bedrock-mantle) x
- * routing (direct/nexus).
+ * create-provider switch tests: vendor (bedrock/azure/bedrock-mantle/openai)
+ * x routing (direct/nexus).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -10,16 +10,20 @@ const {
   mockCreateBedrockProvider,
   mockCreateAzureProvider,
   mockCreateBedrockMantleProvider,
+  mockCreateOpenAiProvider,
   mockIsBedrockConfigured,
   mockIsAzureConfigured,
   mockIsBedrockMantleConfigured,
+  mockIsOpenAiConfigured,
 } = vi.hoisted(() => ({
   mockCreateBedrockProvider: vi.fn(() => 'bedrock-provider'),
   mockCreateAzureProvider: vi.fn(() => 'azure-provider'),
   mockCreateBedrockMantleProvider: vi.fn(() => 'bedrock-mantle-provider'),
+  mockCreateOpenAiProvider: vi.fn(() => 'openai-provider'),
   mockIsBedrockConfigured: vi.fn(() => true),
   mockIsAzureConfigured: vi.fn(() => true),
   mockIsBedrockMantleConfigured: vi.fn(() => true),
+  mockIsOpenAiConfigured: vi.fn(() => true),
 }));
 
 vi.mock('./bedrock/bedrock-provider', () => ({
@@ -34,6 +38,10 @@ vi.mock('./bedrock-mantle/bedrock-mantle-provider', () => ({
   createBedrockMantleProvider: mockCreateBedrockMantleProvider,
   isBedrockMantleConfigured: mockIsBedrockMantleConfigured,
 }));
+vi.mock('./openai/openai-provider', () => ({
+  createOpenAiProvider: mockCreateOpenAiProvider,
+  isOpenAiConfigured: mockIsOpenAiConfigured,
+}));
 
 import { createProvider, isProviderConfigured } from './create-provider';
 
@@ -43,6 +51,7 @@ describe('createProvider', () => {
     config.nexusLlmBaseUrl = null;
     config.nexusAzureBaseUrl = null;
     config.nexusBedrockMantleBaseUrl = null;
+    config.nexusOpenAiBaseUrl = null;
     vi.clearAllMocks();
   });
 
@@ -96,6 +105,30 @@ describe('createProvider', () => {
     createProvider();
     expect(mockCreateBedrockMantleProvider).toHaveBeenCalledWith(undefined);
   });
+
+  it('openai + no nexus URL → direct OpenAI (undefined baseURL)', () => {
+    config.llmProvider = 'openai';
+    expect(createProvider()).toBe('openai-provider');
+    expect(mockCreateOpenAiProvider).toHaveBeenCalledWith(undefined);
+    expect(mockCreateBedrockProvider).not.toHaveBeenCalled();
+    expect(mockCreateAzureProvider).not.toHaveBeenCalled();
+    expect(mockCreateBedrockMantleProvider).not.toHaveBeenCalled();
+  });
+
+  it('openai + nexus openai URL → Nexus-routed OpenAI', () => {
+    config.llmProvider = 'openai';
+    config.nexusOpenAiBaseUrl = 'https://nexus.example/llm/openai/v1';
+    expect(createProvider()).toBe('openai-provider');
+    expect(mockCreateOpenAiProvider).toHaveBeenCalledWith('https://nexus.example/llm/openai/v1');
+  });
+
+  it('openai ignores the other vendors’ Nexus mounts', () => {
+    config.llmProvider = 'openai';
+    config.nexusLlmBaseUrl = 'https://nexus.example/llm/bedrock/us-east-1';
+    config.nexusAzureBaseUrl = 'https://nexus.example/llm/azure/anthropic/v1';
+    createProvider();
+    expect(mockCreateOpenAiProvider).toHaveBeenCalledWith(undefined);
+  });
 });
 
 describe('isProviderConfigured', () => {
@@ -125,5 +158,14 @@ describe('isProviderConfigured', () => {
     expect(isProviderConfigured()).toBe(false);
     expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
     expect(mockIsAzureConfigured).not.toHaveBeenCalled();
+  });
+
+  it('delegates to isOpenAiConfigured for openai', () => {
+    config.llmProvider = 'openai';
+    mockIsOpenAiConfigured.mockReturnValue(false);
+    expect(isProviderConfigured()).toBe(false);
+    expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
+    expect(mockIsAzureConfigured).not.toHaveBeenCalled();
+    expect(mockIsBedrockMantleConfigured).not.toHaveBeenCalled();
   });
 });

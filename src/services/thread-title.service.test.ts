@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockGenerateText, mockGetClassificationModel, mockUpdateThreadTitle } = vi.hoisted(() => ({
+const { mockGenerateText, mockGetGateRequest, mockUpdateThreadTitle } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
-  mockGetClassificationModel: vi.fn(() => 'haiku-model'),
+  mockGetGateRequest: vi.fn(() => ({ model: 'haiku-model', providerOptions: {} })),
   mockUpdateThreadTitle: vi.fn(),
 }));
 
 vi.mock('ai', () => ({ generateText: mockGenerateText }));
-vi.mock('../lib/classification', () => ({ getClassificationModel: mockGetClassificationModel }));
+vi.mock('../lib/classification', () => ({ getGateRequest: mockGetGateRequest }));
 vi.mock('../lib/langfuse', () => ({ isLangfuseEnabled: () => false }));
 vi.mock('./conversation.service', () => ({
   conversationService: { updateThreadTitle: mockUpdateThreadTitle },
@@ -23,7 +23,7 @@ const flush = () => new Promise((r) => setImmediate(r));
 describe('threadTitleService.generateAndSave', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetClassificationModel.mockReturnValue('haiku-model');
+    mockGetGateRequest.mockReturnValue({ model: 'haiku-model', providerOptions: {} });
     mockUpdateThreadTitle.mockResolvedValue(undefined);
   });
 
@@ -78,7 +78,7 @@ describe('threadTitleService.generateAndSave', () => {
 describe('threadTitleService.onFirstUserMessage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetClassificationModel.mockReturnValue('haiku-model');
+    mockGetGateRequest.mockReturnValue({ model: 'haiku-model', providerOptions: {} });
     mockUpdateThreadTitle.mockResolvedValue(undefined);
     threadTitleService.events.removeAllListeners();
   });

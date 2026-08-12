@@ -2,12 +2,13 @@
  * Classification gate — the DELIVER/SUPPRESS LLM call shared by the delivery
  * gates (heartbeat, cron). The caller owns its verdict-rules prompt and
  * user-message construction; this module owns the call shape: fast
- * classification model, tiny output budget, deterministic sampling, and the
- * fail-open default (a transient gate failure must never drop a message).
+ * classification model, tiny output budget, deterministic sampling where
+ * the vendor accepts it, and the fail-open default (a transient gate
+ * failure must never drop a message).
  */
 
 import { generateText } from 'ai';
-import { getClassificationModel } from './classification';
+import { getGateRequest } from './classification';
 import { langfuseTelemetry } from './telemetry';
 import { logger } from '../logger';
 
@@ -29,12 +30,17 @@ export interface ClassificationGateInput {
 
 export async function runClassificationGate(input: ClassificationGateInput): Promise<boolean> {
   try {
+    const { model, providerOptions, samplingParams } = getGateRequest();
     const result = await generateText({
-      model: getClassificationModel(),
+      model,
+      providerOptions,
       system: input.system,
       messages: [{ role: 'user' as const, content: input.user }],
-      maxOutputTokens: 10,
-      temperature: 0,
+      // 16 is the OpenAI Responses API minimum; a cap, so free elsewhere —
+      // the verdict is one word.
+      maxOutputTokens: 16,
+      // temperature: 0 on the vendors that accept it, omitted elsewhere.
+      ...samplingParams,
       ...langfuseTelemetry(input.functionId, input.userId ? { userId: input.userId } : undefined),
     });
     const shouldDeliver = result.text.trim().toUpperCase().startsWith('DELIVER');

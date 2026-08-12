@@ -10,7 +10,7 @@ vi.mock('../logger', () => ({ logger: mockLogger }));
 
 vi.mock('../config', () => ({
   config: {
-    llmProvider: 'bedrock' as 'bedrock' | 'azure',
+    llmProvider: 'bedrock' as 'bedrock' | 'azure' | 'openai',
     contextWindowTokens: null as number | null,
     modelsDevUrl: null as string | null,
   },
@@ -77,29 +77,45 @@ describe('model catalog', () => {
   });
 
   describe('isUsableRegistryEntry', () => {
-    it('keeps Claude-family models with a believable window', () => {
-      expect(isUsableRegistryEntry('claude-opus-5', { limit: { context: 1_000_000 } })).toBe(true);
-      expect(isUsableRegistryEntry('anthropic.claude-fable-5', { limit: { context: 200_000 } })).toBe(true);
+    it('keeps Claude-family models with a believable window in the Claude buckets', () => {
+      expect(isUsableRegistryEntry('claude-opus-5', { limit: { context: 1_000_000 } }, 'azure')).toBe(true);
+      expect(
+        isUsableRegistryEntry('anthropic.claude-fable-5', { limit: { context: 200_000 } }, 'amazon-bedrock'),
+      ).toBe(true);
     });
 
-    it('drops non-Claude models', () => {
-      expect(isUsableRegistryEntry('amazon.titan-embed-text-v2:0', { limit: { context: 8_192 } })).toBe(false);
-      expect(isUsableRegistryEntry('gpt-5', { limit: { context: 400_000 } })).toBe(false);
+    it('drops out-of-family models per bucket', () => {
+      expect(
+        isUsableRegistryEntry('amazon.titan-embed-text-v2:0', { limit: { context: 8_192 } }, 'amazon-bedrock'),
+      ).toBe(false);
+      // GPT ids are noise in the Claude buckets, and Claude ids in the openai one.
+      expect(isUsableRegistryEntry('gpt-5', { limit: { context: 400_000 } }, 'azure')).toBe(false);
+      expect(isUsableRegistryEntry('claude-opus-5', { limit: { context: 1_000_000 } }, 'openai')).toBe(false);
+    });
+
+    it('keeps GPT/o-series/codex models in the openai bucket', () => {
+      expect(isUsableRegistryEntry('gpt-5.6-sol', { limit: { context: 1_050_000 } }, 'openai')).toBe(true);
+      expect(isUsableRegistryEntry('o3-mini', { limit: { context: 200_000 } }, 'openai')).toBe(true);
+      expect(isUsableRegistryEntry('codex-mini-latest', { limit: { context: 200_000 } }, 'openai')).toBe(true);
+    });
+
+    it('drops everything for an unknown registry provider', () => {
+      expect(isUsableRegistryEntry('claude-opus-5', { limit: { context: 1_000_000 } }, 'acme')).toBe(false);
     });
 
     it('drops an implausibly small or missing window', () => {
       // A handful-of-tokens window renders "100% context used" forever, which is the
       // exact failure the indicator exists to avoid.
-      expect(isUsableRegistryEntry('claude-opus-5', { limit: { context: 0 } })).toBe(false);
-      expect(isUsableRegistryEntry('claude-opus-5', { limit: { context: -1 } })).toBe(false);
-      expect(isUsableRegistryEntry('claude-opus-5', { limit: { context: 500 } })).toBe(false);
-      expect(isUsableRegistryEntry('claude-opus-5', { limit: {} })).toBe(false);
-      expect(isUsableRegistryEntry('claude-opus-5', {})).toBe(false);
+      expect(isUsableRegistryEntry('claude-opus-5', { limit: { context: 0 } }, 'azure')).toBe(false);
+      expect(isUsableRegistryEntry('claude-opus-5', { limit: { context: -1 } }, 'azure')).toBe(false);
+      expect(isUsableRegistryEntry('claude-opus-5', { limit: { context: 500 } }, 'azure')).toBe(false);
+      expect(isUsableRegistryEntry('claude-opus-5', { limit: {} }, 'azure')).toBe(false);
+      expect(isUsableRegistryEntry('claude-opus-5', {}, 'azure')).toBe(false);
     });
 
     it('accepts exactly at the floor', () => {
       expect(
-        isUsableRegistryEntry('claude-opus-5', { limit: { context: MIN_PLAUSIBLE_CONTEXT } }),
+        isUsableRegistryEntry('claude-opus-5', { limit: { context: MIN_PLAUSIBLE_CONTEXT } }, 'azure'),
       ).toBe(true);
     });
   });

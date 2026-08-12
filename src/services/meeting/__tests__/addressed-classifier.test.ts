@@ -12,9 +12,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const generateText = vi.fn();
 vi.mock('ai', () => ({ generateText: (...a: unknown[]) => generateText(...a) }));
 
-const getClassificationModel = vi.fn();
+const getGateRequest = vi.fn();
 vi.mock('../../../lib/classification', () => ({
-  getClassificationModel: () => getClassificationModel(),
+  getGateRequest: () => getGateRequest(),
 }));
 
 vi.mock('../../../lib/telemetry', () => ({ langfuseTelemetry: () => ({}) }));
@@ -23,13 +23,34 @@ const { classifyAddressed } = await import('../addressed-classifier');
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getClassificationModel.mockReturnValue({ id: 'haiku' });
+  getGateRequest.mockReturnValue({
+    model: { id: 'haiku' },
+    providerOptions: {},
+    samplingParams: { temperature: 0 },
+  });
 });
 
 describe('classifyAddressed', () => {
   it('treats YES as addressed', async () => {
     generateText.mockResolvedValue({ text: 'YES' });
     expect(await classifyAddressed({ transcript: 'add apples', agentName: 'Prism', stage: 'final' })).toBe(true);
+  });
+
+  it('keeps the latency-tuned 8-token cap where the vendor allows it', async () => {
+    generateText.mockResolvedValue({ text: 'YES' });
+    await classifyAddressed({ transcript: 'add apples', agentName: 'Prism', stage: 'final' });
+    expect(generateText.mock.calls[0][0]).toMatchObject({ maxOutputTokens: 8 });
+  });
+
+  it("respects the provider's output-token floor (OpenAI rejects caps under 16)", async () => {
+    getGateRequest.mockReturnValue({
+      model: { id: 'gpt-5.6-luna' },
+      providerOptions: { openai: { reasoningEffort: 'none' } },
+      minOutputTokens: 16,
+    });
+    generateText.mockResolvedValue({ text: 'YES' });
+    await classifyAddressed({ transcript: 'add apples', agentName: 'Prism', stage: 'final' });
+    expect(generateText.mock.calls[0][0]).toMatchObject({ maxOutputTokens: 16 });
   });
 
   it('treats anything else as not addressed', async () => {

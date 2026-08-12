@@ -31,7 +31,7 @@
  */
 
 import { generateText } from 'ai';
-import { getClassificationModel } from '../../lib/classification';
+import { getGateRequest } from '../../lib/classification';
 import { langfuseTelemetry } from '../../lib/telemetry';
 import { logger } from '../../logger';
 
@@ -112,8 +112,10 @@ export interface ClassifyAddressedInput {
 export async function classifyAddressed(input: ClassifyAddressedInput): Promise<boolean> {
   const started = Date.now();
   try {
+    const { model, providerOptions, minOutputTokens = 0, samplingParams } = getGateRequest();
     const result = await generateText({
-      model: getClassificationModel(),
+      model,
+      providerOptions,
       system: SYSTEM,
       messages: [
         {
@@ -129,9 +131,11 @@ export async function classifyAddressed(input: ClassifyAddressedInput): Promise<
       // measured ~700ms per call against a risk that never materialised across a
       // meeting's worth of live traffic — the verdict always came first, and the
       // parser takes the first standalone YES/NO wherever it lands. Eight leaves
-      // room for "NO The speaker did" and stops short of funding an explanation.
-      maxOutputTokens: 8,
-      temperature: 0,
+      // room for "NO The speaker did" and stops short of funding an explanation —
+      // on vendors that allow it: the provider's floor wins where a tighter cap
+      // is illegal (OpenAI's Responses API rejects anything under 16).
+      maxOutputTokens: Math.max(8, minOutputTokens),
+      ...samplingParams,
       ...langfuseTelemetry('meeting-addressed-gate'),
     });
 

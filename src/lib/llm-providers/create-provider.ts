@@ -2,8 +2,8 @@
  * Unified LLM provider factory.
  *
  * Two orthogonal choices:
- *  - Vendor: `config.llmProvider` (`bedrock` default, `azure`, or
- *    `bedrock-mantle`).
+ *  - Vendor: `config.llmProvider` (`bedrock` default, `azure`,
+ *    `bedrock-mantle`, or `openai`).
  *  - Routing: each vendor's factory takes an optional Nexus base URL — set →
  *    route through the Nexus gateway, unset → direct to the vendor.
  *
@@ -26,6 +26,12 @@
  * mantle dispatcher strips `us.`/`eu.`/… prefixes), and embeddings do not run
  * on mantle at all — they stay on Titan over bedrock-runtime, so the mantle
  * provider reaches for `nexusLlmBaseUrl`, not its own route.
+ *
+ * **openai** is the one vendor serving OpenAI models rather than Claude, on a
+ * single surface: chat, classification and embeddings all ride one base URL —
+ * the Nexus `…/llm/openai/v1` mount (nexus-monorepo#483) or api.openai.com
+ * direct. Only the voice-meeting Realtime WebSocket stays off Nexus (the
+ * mount routes POST only); see `openai/openai-provider.ts`.
  */
 
 import { config } from '../../config';
@@ -35,6 +41,7 @@ import {
   createBedrockMantleProvider,
   isBedrockMantleConfigured,
 } from './bedrock-mantle/bedrock-mantle-provider';
+import { createOpenAiProvider, isOpenAiConfigured } from './openai/openai-provider';
 import type { LlmProvider } from './llm-provider';
 
 export function createProvider(): LlmProvider {
@@ -43,6 +50,8 @@ export function createProvider(): LlmProvider {
       return createAzureProvider(config.nexusAzureBaseUrl ?? undefined);
     case 'bedrock-mantle':
       return createBedrockMantleProvider(config.nexusBedrockMantleBaseUrl ?? undefined);
+    case 'openai':
+      return createOpenAiProvider(config.nexusOpenAiBaseUrl ?? undefined);
     default:
       return createBedrockProvider(config.nexusLlmBaseUrl ?? undefined);
   }
@@ -55,6 +64,8 @@ export function isProviderConfigured(): boolean {
       return isAzureConfigured();
     case 'bedrock-mantle':
       return isBedrockMantleConfigured();
+    case 'openai':
+      return isOpenAiConfigured();
     default:
       return isBedrockConfigured();
   }

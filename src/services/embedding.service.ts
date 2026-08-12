@@ -4,11 +4,12 @@
  * Handles vector embedding generation for memory entries. Storage and
  * search are delegated to `memoryEmbeddingStore` (sqlite-vec backed).
  * The embedding model comes from the active LLM provider: Titan on
- * Bedrock, an Azure OpenAI text-embedding-3 deployment on Azure, and Titan
+ * Bedrock, an Azure OpenAI text-embedding-3 deployment on Azure, Titan
  * again on bedrock-mantle (which serves no embedding models of its own, so
- * its provider reaches bedrock-runtime for this leg). On Azure and
- * bedrock-mantle the model is optional — when unset, embedding generation
- * fail-opens (returns null) and memory search is effectively disabled.
+ * its provider reaches bedrock-runtime for this leg), and text-embedding-3
+ * on OpenAI. On every vendor but Bedrock the model is optional — when
+ * unset, embedding generation fail-opens (returns null) and memory search
+ * is effectively disabled.
  */
 
 import { embed, embedMany, type EmbeddingModel } from 'ai';
@@ -21,14 +22,15 @@ import type { MemorySearchResult } from './memory-manager.service';
 
 // The sqlite-vec index is fixed at 1024 dims (see EMBEDDING_DIM in
 // sqlite-bootstrap.ts), so every vendor must emit exactly that. Titan v2 takes
-// the target under the `bedrock` key; Azure/OpenAI text-embedding-3 models
-// truncate to it under the `openai` key. The provider-option key must match the
-// SDK actually serving embeddings or the setting is silently ignored (wrong
-// dimensionality) — which is why `bedrock-mantle` belongs on the `bedrock` arm
-// rather than getting one of its own: its embeddings are Titan.
+// the target under the `bedrock` key; the text-embedding-3 models Azure and
+// OpenAI serve truncate to it under the `openai` key. The provider-option key
+// must match the SDK actually serving embeddings or the setting is silently
+// ignored (wrong dimensionality) — which is why `bedrock-mantle` belongs on
+// the `bedrock` arm rather than getting one of its own: its embeddings are
+// Titan.
 const EMBEDDING_DIMENSIONS = 1024;
 const EMBEDDING_PROVIDER_OPTIONS: Record<string, Record<string, number>> =
-  config.llmProvider === 'azure'
+  config.llmProvider === 'azure' || config.llmProvider === 'openai'
     ? { openai: { dimensions: EMBEDDING_DIMENSIONS } }
     : { bedrock: { dimensions: EMBEDDING_DIMENSIONS } };
 

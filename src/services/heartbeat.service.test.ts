@@ -19,7 +19,7 @@ const {
   mockUpdateAgentHeartbeatStatus,
   mockDrainSlackMessages,
   mockGenerateText,
-  mockGetClassificationModel,
+  mockGetGateRequest,
   mockLoggerInfo,
   mockLoggerDebug,
 } = vi.hoisted(() => ({
@@ -29,7 +29,7 @@ const {
   mockUpdateAgentHeartbeatStatus: vi.fn(),
   mockDrainSlackMessages: vi.fn(),
   mockGenerateText: vi.fn(),
-  mockGetClassificationModel: vi.fn(),
+  mockGetGateRequest: vi.fn(),
   mockLoggerInfo: vi.fn(),
   mockLoggerDebug: vi.fn(),
 }));
@@ -62,7 +62,7 @@ vi.mock('ai', () => ({
 }));
 
 vi.mock('../lib/classification', () => ({
-  getClassificationModel: mockGetClassificationModel,
+  getGateRequest: mockGetGateRequest,
 }));
 
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
@@ -132,7 +132,11 @@ describe('HeartbeatService', () => {
 
     // Default: gate suppresses (most tests override this)
     mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
-    mockGetClassificationModel.mockReturnValue('classification-model');
+    mockGetGateRequest.mockReturnValue({
+      model: 'classification-model',
+      providerOptions: {},
+      samplingParams: { temperature: 0 },
+    });
     // Sensible defaults
     mockInvoke.mockResolvedValue({ response: 'All systems healthy.', toolCalls: [], steps: [] });
     mockUpdateHeartbeatTimestamp.mockResolvedValue(undefined);
@@ -467,7 +471,8 @@ describe('HeartbeatService', () => {
 
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
-          maxOutputTokens: 10,
+          // 16 = the OpenAI Responses API minimum; a cap, so free elsewhere.
+          maxOutputTokens: 16,
           temperature: 0,
         }),
       );

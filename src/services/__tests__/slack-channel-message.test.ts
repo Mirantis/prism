@@ -87,7 +87,7 @@ vi.mock('../../lib/llm-providers/bedrock/bedrock-provider', () => ({
 }));
 
 vi.mock('../../lib/classification', () => ({
-  getClassificationModel: vi.fn(),
+  getClassificationRequest: vi.fn(),
 }));
 
 vi.mock('@slack/bolt', () => ({

@@ -51,10 +51,10 @@ async function main(): Promise<void> {
     }
 
     const entries = Object.entries(models)
-      // Shared predicate: Claude family, believable context window. A row that
-      // fails it would render as a bogus percentage, so it's dropped rather than
-      // written out.
-      .filter(([id, model]) => isUsableRegistryEntry(id, model))
+      // Shared predicate: the provider's model family, believable context
+      // window. A row that fails it would render as a bogus percentage, so
+      // it's dropped rather than written out.
+      .filter(([id, model]) => isUsableRegistryEntry(id, model, registryId))
       // Sort so the committed file has a stable, reviewable diff.
       .sort(([a], [b]) => a.localeCompare(b))
       .map(
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
           [id, { context: model.limit!.context!, output: model.limit?.output ?? null }] as const,
       );
 
-    if (entries.length === 0) throw new Error(`no Claude models found under "${registryId}"`);
+    if (entries.length === 0) throw new Error(`no usable models found under "${registryId}"`);
     snapshot[provider] = Object.fromEntries(entries);
   }
 

@@ -66,7 +66,9 @@ vi.mock('../lib/prisma', () => ({
   },
 }));
 
-vi.mock('../lib/classification', () => ({ getClassificationModel: () => ({}) }));
+vi.mock('../lib/classification', () => ({
+  getGateRequest: () => ({ model: {}, providerOptions: {} }),
+}));
 vi.mock('../lib/langfuse', () => ({ isLangfuseEnabled: () => false }));
 vi.mock('../lib/telemetry', () => ({
   langfuseTelemetry: () => ({}),

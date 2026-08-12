@@ -98,7 +98,7 @@ vi.mock('ai', () => ({
 }));
 
 vi.mock('../../lib/classification', () => ({
-  getClassificationModel: () => ({}),
+  getGateRequest: () => ({ model: {}, providerOptions: {} }),
 }));
 
 vi.mock('../../lib/langfuse', () => ({

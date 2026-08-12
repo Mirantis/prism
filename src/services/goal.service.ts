@@ -25,7 +25,7 @@ import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { messageDeliveryService } from './message-delivery.service';
 import { threadTurnService } from './thread-turn.service';
-import { getClassificationModel } from '../lib/classification';
+import { getGateRequest } from '../lib/classification';
 
 import { trackEvent, langfuseTelemetry } from '../lib/telemetry';
 import { logger } from '../logger';
@@ -489,14 +489,17 @@ class GoalService {
     if (!latestTurnText.trim()) return false;
 
     try {
+      const { model, providerOptions, samplingParams } = getGateRequest();
       const result = await generateText({
-        model: getClassificationModel(),
+        model,
+        providerOptions,
         system: GOAL_COMPLETION_GATE_PROMPT,
         messages: [
           { role: 'user' as const, content: `## Objective\n${objective}\n\n## Agent's Latest Update\n${latestTurnText}` },
         ],
-        maxOutputTokens: 10,
-        temperature: 0,
+        // 16 is the OpenAI Responses API minimum (a cap — the verdict is one word).
+        maxOutputTokens: 16,
+        ...samplingParams,
         ...langfuseTelemetry('goal-completion-gate'),
       });
       const complete = result.text.trim().toUpperCase().startsWith('COMPLETE');
