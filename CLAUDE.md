@@ -104,7 +104,8 @@ credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy.
 
 One LLM provider per container, selected by `LLM_PROVIDER` (`bedrock`
-default, `azure`, or `bedrock-mantle`). All three serve **Claude**.
+default, `azure`, `bedrock-mantle`, or `openai`). The first three serve
+**Claude**; `openai` serves OpenAI models.
 **Bedrock** via Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the SDK
 auto-selects Bearer over SigV4 when set. **Azure = Claude via Microsoft
 Foundry**: chat/classification
@@ -126,14 +127,27 @@ SigV4 path on that surface). Its model IDs are **bare** Bedrock IDs (defaults
 mantle has no cross-region inference profiles; the provider strips a `us.`/
 `eu.`/`global.` prefix off per-agent overrides rather than 400ing. Mantle
 serves no embedding models, so memory embeddings stay on Titan over
-bedrock-runtime (`BEDROCK_MANTLE_EMBEDDING_MODEL_ID=''` to skip). Any provider
+bedrock-runtime (`BEDROCK_MANTLE_EMBEDDING_MODEL_ID=''` to skip).
+**OpenAI** is the one vendor not serving Claude: chat/classification speak the
+OpenAI Responses API (defaults `gpt-5.6-sol` / `gpt-5.6-luna`) and embeddings
+`text-embedding-3-small` truncated to 1024 dims (`OPENAI_EMBEDDING_MODEL_ID=''`
+to skip) — one surface, one key (`OPENAI_API_KEY`, shared with voice meetings;
+may be a `__nexus_cred:<uuid>__` sentinel since it only rides a header). The
+provider declares `classificationProviderOptions: { openai: { reasoningEffort:
+'none' } }` plus empty gate sampling params — the gates omit `temperature` on
+OpenAI rather than track which model/SDK combination accepts it — so their
+tiny token budgets stay valid on a GPT-5.x classification model, and the empty
+cache-point fragment (OpenAI prompt caching is automatic — no breakpoints). Any provider
 can run direct or through the Nexus LLM gateway — routing is automatic when
 `NEXUS_API_URL` is set (`…/llm/bedrock/{region}` for Bedrock; Azure chat
 rides `…/llm/azure/anthropic/v1` and Azure embeddings
 `…/llm/azure/openai/v1`; mantle chat rides
 `…/llm/bedrock-mantle/anthropic/{region}/v1` while its embeddings stay on the
-bedrock mount; Nexus holds the platform credentials, so no local
-LLM key is needed on that path).
+bedrock mount; openai chat, classification and embeddings all ride
+`…/llm/openai/v1`, a Nexus backend since nexus-monorepo#483; Nexus holds the
+platform credentials, so no local LLM key is needed on that path). The one
+OpenAI call that never rides Nexus is the voice-meeting Realtime WebSocket —
+the openai mount routes POST only.
 
 ## SEA binaries — Node 22 pin
 
@@ -382,16 +396,18 @@ src/
 ├── lib/
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
 │   ├── llm-providers/          # One folder per LLM vendor, plus the shared contract and the selector
-│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` + `.embedding(modelId)` contract every vendor factory returns, plus the optional `structuredOutputOptions` each vendor declares for `generateObject` calls
-│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle), passes each its optional Nexus baseURL; `isProviderConfigured()`
+│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` + `.embedding(modelId)` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (Anthropic breakpoint or the empty `NO_CACHE_POINT`) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares
+│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai), passes each its optional Nexus baseURL; `isProviderConfigured()`
 │   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors need: AWS credential resolution, the generic Converse/embeddings provider (mantle's Titan leg), `isAnthropicModelId()`
 │   │   ├── bedrock/
 │   │   │   └── bedrock-provider.ts # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or Nexus when baseURL set)
 │   │   ├── azure/
 │   │   │   └── azure-provider.ts   # Azure provider factory (Claude via MS Foundry, Anthropic Messages API; embeddings via Azure OpenAI): `createAzureProvider(baseURL?)`
-│   │   └── bedrock-mantle/
-│   │       └── bedrock-mantle-provider.ts # Bedrock Mantle factory (Anthropic Messages surface only; bare model IDs, embeddings borrowed from bedrock-runtime): `createBedrockMantleProvider(baseURL?)`
-│   ├── classification.ts       # Classification-gate model factory (`getClassificationModel()`) + `getStructuredOutputOptions()`, the active vendor's `providerOptions` for `generateObject`
+│   │   ├── bedrock-mantle/
+│   │   │   └── bedrock-mantle-provider.ts # Bedrock Mantle factory (Anthropic Messages surface only; bare model IDs, embeddings borrowed from bedrock-runtime): `createBedrockMantleProvider(baseURL?)`
+│   │   └── openai/
+│   │       └── openai-provider.ts # OpenAI factory (Responses API; one surface for chat/classification/embeddings; pins gate calls to reasoningEffort 'none'): `createOpenAiProvider(baseURL?)`
+│   ├── classification.ts       # Classification-gate request factories (`getGateRequest()` for the generateText gates, `getClassificationRequest()` for generateObject) — model + the active vendor's merged `providerOptions`
 │   ├── classification-gate.ts  # Shared one-word-verdict gate call (`runClassificationGate`) + `isRecentDuplicate`, used by the heartbeat and cron DELIVER/SUPPRESS gates
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
@@ -431,7 +447,7 @@ What the operator sets on `docker run`:
 | `NEXUS_API_URL` | Nexus server URL (LLM proxy + MCP tools) | — |
 | `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
 | `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
-| `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, or `bedrock-mantle` (one per container) | `bedrock` |
+| `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, or `openai` (one per container) | `bedrock` |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key; on Bedrock selected over SigV4 when set, on mantle sent as `x-api-key` and **required** direct | — |
 | `AWS_REGION` | AWS region for Bedrock and for the mantle host | `us-east-1` |
 | `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
@@ -446,11 +462,14 @@ What the operator sets on `docker run`:
 | `BEDROCK_MANTLE_MODEL_ID` / `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` | **Bare** Bedrock IDs for mantle (chat / classification gate); no fallback to the prefixed `BEDROCK_*` vars | `anthropic.claude-opus-5` / `anthropic.claude-haiku-4-5` |
 | `BEDROCK_MANTLE_EMBEDDING_MODEL_ID` | Memory embeddings under mantle — Titan on bedrock-runtime, since mantle serves none (`''` to skip) | `amazon.titan-embed-text-v2:0` |
 | `BEDROCK_MANTLE_BASE_URL` | Override the derived `…/anthropic/v1` mantle chat endpoint | derived from region |
+| `OPENAI_MODEL_ID` / `OPENAI_CLASSIFICATION_MODEL_ID` | OpenAI model IDs (chat / classification gate). The provider pins gate calls to `reasoningEffort: 'none'` and omits their `temperature`, keeping the gates' tiny token budgets valid on GPT-5.x | `gpt-5.6-sol` / `gpt-5.6-luna` |
+| `OPENAI_EMBEDDING_MODEL_ID` | Memory embeddings under openai — a `text-embedding-3` model truncated to 1024 dims (`''` to skip) | `text-embedding-3-small` |
+| `OPENAI_BASE_URL` | Override the direct chat/embeddings endpoint (must serve the Responses API; does not move the Realtime socket) | SDK default (`https://api.openai.com/v1`) |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window assumed for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
 | `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction (sent verbatim) | `6` |
-| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md). **Never routed through Nexus** — no managed-inference vendor serves the Realtime surface, so the socket goes direct to `api.openai.com`; may be a `__nexus_cred:…__` sentinel since it only ever rides a header | — (meeting tools unregistered) |
+| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md), and drives chat when `LLM_PROVIDER=openai` (required direct; not needed through Nexus). The Realtime WebSocket is **never routed through Nexus** — the openai mount routes POST only, so the socket goes direct to `api.openai.com`; may be a `__nexus_cred:…__` sentinel since it only ever rides a header | — (meeting tools unregistered) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot rather than the moving `gpt-realtime` alias, so a new snapshot cannot change turn-taking under a live deployment | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the in-meeting model thinks before answering or picking a tool (`minimal`…`xhigh`). The Realtime API's own default is `low` — right for a voice agent that reads out an order status, wrong for one holding shell, kubectl and its own configuration, so this defaults to `high`. Paid for in latency, which in a call is silence in a room: `[Meeting:Latency]` logs the level in force beside the figure so levels can be compared. `''` sends no setting and takes the API default | `high` |
@@ -598,7 +617,7 @@ When the step limit is reached, a follow-up `generateText()` call is made **with
 | `STEP_LIMIT` | `100` | Maximum number of tool-use steps before stopping |
 | `MAX_OUTPUT_TOKENS` | `16000` | Max tokens per `generateText()` call |
 
-The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature`, `top_p`, `top_k`) at all — Opus 4.7 and later reject them (per Anthropic's Bedrock migration guide), so the invoke path omits them entirely rather than tracking which model version accepts what. Haiku-backed classification gates (`heartbeat.service.ts`, `slack-adapter.service.ts`) still use `temperature: 0` — Haiku continues to accept it.
+The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature`, `top_p`, `top_k`) at all — Opus 4.7 and later reject them (per Anthropic's Bedrock migration guide), so the invoke path omits them entirely rather than tracking which model version accepts what. The classification gates apply the same rule through the provider seam: `getGateRequest().samplingParams` is `{ temperature: 0 }` on the Claude vendors (Haiku continues to accept it) and `{}` on openai, whose GPT-5.x models reject or strip an explicit temperature.
 
 ## LLM Error Handling
 
@@ -660,9 +679,9 @@ When a Slack message arrives in a heartbeat trigger channel, the agent-runtime's
 
 After the main LLM call produces a heartbeat response, a second cheap LLM call acts as a DELIVER/SUPPRESS gate. This replaced the earlier fragile `HEARTBEAT_OK` token parsing.
 
-- **Model**: the fast classification model via `getClassificationModel()` (from `lib/classification.ts`, which goes through `createProvider()`), configured by `BEDROCK_CLASSIFICATION_MODEL_ID` (or `AZURE_CLASSIFICATION_MODEL_ID` on Azure, `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` on bedrock-mantle).
+- **Model**: the fast classification model via `getGateRequest()` (from `lib/classification.ts`, which goes through `createProvider()` and also carries the vendor's `classificationProviderOptions`), configured by `BEDROCK_CLASSIFICATION_MODEL_ID` (or `AZURE_CLASSIFICATION_MODEL_ID` on Azure, `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` on bedrock-mantle, `OPENAI_CLASSIFICATION_MODEL_ID` on openai).
 - **Input**: The heartbeat response text and the last alert context (text + how long ago it was sent, formatted via `formatTimeAgo`).
-- **Output**: A single word -- `DELIVER` or `SUPPRESS`. Uses `maxOutputTokens: 10` and `temperature: 0` to keep the call fast and deterministic.
+- **Output**: A single word -- `DELIVER` or `SUPPRESS`. Uses `maxOutputTokens: 16` (the OpenAI Responses API minimum — a cap, so free on the Claude vendors) and the provider's gate sampling params: `temperature: 0` on the Claude vendors for determinism, omitted entirely on openai (GPT-5.x rejects or strips it), with `reasoningEffort: 'none'` pinned there so reasoning tokens can't eat the budget.
 - **Meta-commentary**: The gate prompt explicitly suppresses reports that are meta-commentary about the heartbeat itself (e.g. "no checks configured", "heartbeat config is empty") rather than real findings.
 - **Fail-open**: If the gate call throws an error, the message is delivered (safe default).
 - **Ordering**: Programmatic checks (empty response, exact-match 24h duplicate suppression) run first. The gate LLM call is only made when those checks pass.

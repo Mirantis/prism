@@ -11,9 +11,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockGenerateText, mockGetClassificationModel } = vi.hoisted(() => ({
+const { mockGenerateText, mockGetGateRequest } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
-  mockGetClassificationModel: vi.fn(),
+  mockGetGateRequest: vi.fn(),
 }));
 
 vi.mock('ai', () => ({
@@ -21,7 +21,7 @@ vi.mock('ai', () => ({
 }));
 
 vi.mock('./classification', () => ({
-  getClassificationModel: mockGetClassificationModel,
+  getGateRequest: mockGetGateRequest,
 }));
 
 vi.mock('../logger', () => ({
@@ -49,7 +49,11 @@ const baseInput = {
 describe('runClassificationGate', () => {
   beforeEach(() => {
     mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-    mockGetClassificationModel.mockReturnValue('classification-model');
+    mockGetGateRequest.mockReturnValue({
+      model: 'classification-model',
+      providerOptions: { openai: { reasoningEffort: 'none' } },
+      samplingParams: { temperature: 0 },
+    });
   });
 
   afterEach(() => {
@@ -82,12 +86,29 @@ describe('runClassificationGate', () => {
     expect(mockGenerateText).toHaveBeenCalledWith(
       expect.objectContaining({
         model: 'classification-model',
+        // The provider's classification options ride every gate call — this
+        // is what pins reasoning off for a GPT-5.x classification model.
+        providerOptions: { openai: { reasoningEffort: 'none' } },
         system: baseInput.system,
         messages: [{ role: 'user', content: baseInput.user }],
-        maxOutputTokens: 10,
+        // 16 = the OpenAI Responses API minimum; a cap, so free elsewhere.
+        maxOutputTokens: 16,
+        // Comes from the provider's samplingParams — omitted on openai.
         temperature: 0,
       }),
     );
+  });
+
+  it('omits temperature entirely when the provider declares empty sampling params', async () => {
+    mockGetGateRequest.mockReturnValue({
+      model: 'classification-model',
+      providerOptions: { openai: { reasoningEffort: 'none' } },
+      samplingParams: {},
+    });
+
+    await runClassificationGate(baseInput);
+
+    expect(mockGenerateText.mock.calls[0][0]).not.toHaveProperty('temperature');
     // Langfuse disabled in tests → no tracing options on the call
     expect(mockGenerateText.mock.calls[0][0]).not.toHaveProperty('experimental_telemetry');
   });

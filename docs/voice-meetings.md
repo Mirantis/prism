@@ -27,10 +27,11 @@ appears when the first two are present:
 1. **The container image.** It ships the browser and audio toolchain (Chromium,
    Xvfb, PulseAudio). A native install via the `prism` binary has no browser to
    drive, so the feature is container-only.
-2. **`OPENAI_API_KEY`.** The voice model is OpenAI's Realtime API — the one model
-   call in the runtime that does *not* go through your configured Bedrock/Azure
-   provider, because none of them serves a realtime voice surface. Your chat model
-   is unaffected; only the in-meeting voice uses OpenAI.
+2. **`OPENAI_API_KEY`.** The voice model is OpenAI's Realtime API, connected
+   directly to `api.openai.com` — it never rides the Nexus gateway, whose openai
+   mount routes POST only. Your chat model is unaffected: on the Claude platforms
+   only the in-meeting voice uses OpenAI, and with `LLM_PROVIDER=openai` chat
+   shares this same key (see [Configuration](configuration.md#provider-selection)).
 3. **A Google account for the agent** (`GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD`).
    This one is not optional in practice — see below. Note the password has to be the
    **real password, in plain text**: the agent signs in by typing it into Google's
@@ -348,7 +349,7 @@ is between you and your OpenAI account settings.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `OPENAI_API_KEY` | Enables voice meetings. May be a managed-credential sentinel. | — (disabled) |
+| `OPENAI_API_KEY` | Enables voice meetings. May be a managed-credential sentinel. Shared with the chat provider when `LLM_PROVIDER=openai`. | — (disabled) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model thinks before answering or picking a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults higher than the API's own `low` — see [Reasoning effort](#reasoning-effort). Empty takes the API default. | `high` |

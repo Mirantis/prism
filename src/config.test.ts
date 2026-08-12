@@ -235,6 +235,32 @@ describe('config', () => {
       const cfg = await loadConfig();
       expect(cfg.embeddingModelId).toBe('');
     });
+
+    it('selects openai (case-insensitive) and resolves the neutral model IDs', async () => {
+      process.env.LLM_PROVIDER = 'OpenAI';
+      const cfg = await loadConfig();
+      expect(cfg.llmProvider).toBe('openai');
+      expect(cfg.chatModelId).toBe('gpt-5.6-sol');
+      expect(cfg.classificationModelId).toBe('gpt-5.6-luna');
+      expect(cfg.embeddingModelId).toBe('text-embedding-3-small');
+    });
+
+    it('OPENAI_EMBEDDING_MODEL_ID="" disables embeddings', async () => {
+      process.env.LLM_PROVIDER = 'openai';
+      process.env.OPENAI_EMBEDDING_MODEL_ID = '';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingModelId).toBe('');
+    });
+
+    it('openaiBaseUrl is undefined by default (SDK default endpoint)', async () => {
+      delete process.env.OPENAI_BASE_URL;
+      expect((await loadConfig()).openaiBaseUrl).toBeUndefined();
+    });
+
+    it('reads OPENAI_BASE_URL as the direct endpoint override', async () => {
+      process.env.OPENAI_BASE_URL = 'https://gw.example/openai/v1';
+      expect((await loadConfig()).openaiBaseUrl).toBe('https://gw.example/openai/v1');
+    });
   });
 
   describe('bedrock-mantle endpoints', () => {
@@ -314,11 +340,35 @@ describe('config', () => {
       expect(cfg.nexusLlmBaseUrl).toBe('https://nexus.example.com/llm/bedrock/us-east-1');
     });
 
+    it('is the openai mount on openai', async () => {
+      process.env.LLM_PROVIDER = 'openai';
+      const cfg = await loadConfig();
+      expect(cfg.nexusChatBaseUrl).toBe('https://nexus.example.com/llm/openai/v1');
+      expect(cfg.nexusOpenAiBaseUrl).toBe('https://nexus.example.com/llm/openai/v1');
+    });
+
+    it('builds the explicit-project openai mount when PROJECT_ID is set', async () => {
+      process.env.LLM_PROVIDER = 'openai';
+      process.env.PROJECT_ID = 'proj-42';
+      const cfg = await loadConfig();
+      expect(cfg.nexusOpenAiBaseUrl).toBe(
+        'https://nexus.example.com/projects/proj-42/llm/openai/v1',
+      );
+    });
+
     it('is null for every provider when NEXUS_API_URL is unset', async () => {
       delete process.env.NEXUS_API_URL;
       process.env.LLM_PROVIDER = 'bedrock-mantle';
       const cfg = await loadConfig();
       expect(cfg.nexusChatBaseUrl).toBeNull();
+    });
+
+    it('is null on openai when NEXUS_API_URL is unset (direct to api.openai.com)', async () => {
+      delete process.env.NEXUS_API_URL;
+      process.env.LLM_PROVIDER = 'openai';
+      const cfg = await loadConfig();
+      expect(cfg.nexusChatBaseUrl).toBeNull();
+      expect(cfg.nexusOpenAiBaseUrl).toBeNull();
     });
   });
 

@@ -184,6 +184,42 @@ describe('trackAgentStarted', () => {
     expect(emittedProps()['llm.routing']).toBe('nexus');
   });
 
+  it('reports direct routing and omits the region on OpenAI', async () => {
+    setConfig({
+      llmProvider: 'openai',
+      chatModelId: 'gpt-5.6-sol',
+      classificationModelId: 'gpt-5.6-luna',
+      embeddingModelId: 'text-embedding-3-small',
+      nexusLlmBaseUrl: null,
+      nexusChatBaseUrl: null,
+      nexusApiUrl: undefined,
+    });
+
+    await trackAgentStarted(AGENT, { cronTasks: 0 });
+
+    const props = emittedProps();
+    expect(props).toMatchObject({
+      'llm.provider': 'openai',
+      'llm.routing': 'direct',
+      'llm.chat_model': 'gpt-5.6-sol',
+      'llm.classification_model': 'gpt-5.6-luna',
+      'llm.embedding_model': 'text-embedding-3-small',
+    });
+    expect(props).not.toHaveProperty('llm.region');
+  });
+
+  it('routes through Nexus on OpenAI when the openai mount is set', async () => {
+    setConfig({
+      llmProvider: 'openai',
+      nexusLlmBaseUrl: null,
+      nexusChatBaseUrl: 'https://nexus.test/llm/openai/v1',
+    });
+
+    await trackAgentStarted(AGENT, { cronTasks: 0 });
+
+    expect(emittedProps()['llm.routing']).toBe('nexus');
+  });
+
   it('omits the embedding model when embeddings are disabled', async () => {
     setConfig({ embeddingModelId: '' });
 

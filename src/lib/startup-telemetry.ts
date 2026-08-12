@@ -49,12 +49,14 @@ export async function trackAgentStarted(
       // yet, and 'pending' (i.e. slower than boot) is itself the useful signal.
       // Deliberately not awaited: the census must never gate on a network call.
       'model_catalog.state': modelCatalogState(),
-      // Empty when embeddings are disabled (AZURE_EMBEDDING_MODEL_ID='' or
-      // BEDROCK_MANTLE_EMBEDDING_MODEL_ID='').
+      // Empty when embeddings are disabled (AZURE_EMBEDDING_MODEL_ID='',
+      // BEDROCK_MANTLE_EMBEDDING_MODEL_ID='', or OPENAI_EMBEDDING_MODEL_ID='').
       ...(config.embeddingModelId ? { 'llm.embedding_model': config.embeddingModelId } : {}),
-      // Both AWS endpoints are regional; meaningless only on Azure, where the
-      // resource name pins the region.
-      ...(config.llmProvider !== 'azure' ? { 'llm.region': config.awsRegion } : {}),
+      // Both AWS endpoints are regional; meaningless on Azure (the resource
+      // name pins the region) and on OpenAI (no region at all).
+      ...(config.llmProvider !== 'azure' && config.llmProvider !== 'openai'
+        ? { 'llm.region': config.awsRegion }
+        : {}),
       'slack.enabled': String(Boolean(config.slackBotToken)),
       'nexus.enabled': String(Boolean(config.nexusApiUrl)),
       'nexus.mcp_enabled': String(Boolean(config.nexusMcpUrl)),

@@ -40,6 +40,7 @@
     "@ai-sdk/anthropic": "^3.0.94",
     "@ai-sdk/azure": "^3.0.85",
     "@ai-sdk/mcp": "^1.0.25",
+    "@ai-sdk/openai": "^3.0.91",
     "@aws-sdk/credential-provider-node": "^3.972.17",
     "@langfuse/otel": "^4.6.1",
     "@modelcontextprotocol/sdk": "^1.27.1",

@@ -23,7 +23,7 @@ const {
   mockCronSchedule,
   mockCronValidate,
   mockGenerateText,
-  mockGetClassificationModel,
+  mockGetGateRequest,
   mockLoggerError,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -37,7 +37,7 @@ const {
   mockCronSchedule: vi.fn(),
   mockCronValidate: vi.fn(),
   mockGenerateText: vi.fn(),
-  mockGetClassificationModel: vi.fn(),
+  mockGetGateRequest: vi.fn(),
   mockLoggerError: vi.fn(),
 }));
 
@@ -81,7 +81,7 @@ vi.mock('ai', () => ({
 }));
 
 vi.mock('../lib/classification', () => ({
-  getClassificationModel: mockGetClassificationModel,
+  getGateRequest: mockGetGateRequest,
 }));
 
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
@@ -152,7 +152,11 @@ describe('CronSchedulerService', () => {
     mockCronTaskDelete.mockResolvedValue({});
     // Default: gate delivers (the suppression suite overrides this)
     mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-    mockGetClassificationModel.mockReturnValue('classification-model');
+    mockGetGateRequest.mockReturnValue({
+      model: 'classification-model',
+      providerOptions: {},
+      samplingParams: { temperature: 0 },
+    });
   });
 
   afterEach(() => {

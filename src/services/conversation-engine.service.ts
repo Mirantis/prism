@@ -18,7 +18,7 @@ import type { SteeringMessage } from '../prompts/context-builder';
 import type { ToolLifecycleListener } from '../lib/tool-lifecycle';
 import { logger } from '../logger';
 import prisma from '../lib/prisma';
-import { getClassificationModel } from '../lib/classification';
+import { getGateRequest } from '../lib/classification';
 
 import { isTelemetryEnabled, trackEvent, langfuseTelemetry } from '../lib/telemetry';
 import { agentWorkspaceService } from './agent-workspace.service';
@@ -186,8 +186,10 @@ Reply SKIP when a rating would be noise:
 Respond with exactly one word: WORTHY or SKIP`;
 
     try {
+      const { model, providerOptions, samplingParams } = getGateRequest();
       const result = await generateText({
-        model: getClassificationModel(),
+        model,
+        providerOptions,
         system: systemPrompt,
         messages: [
           {
@@ -195,8 +197,9 @@ Respond with exactly one word: WORTHY or SKIP`;
             content: `## User message\n${userMessage}\n\n## Agent reply\n${agentResponse}`,
           },
         ],
-        maxOutputTokens: 5,
-        temperature: 0,
+        // 16 is the OpenAI Responses API minimum (a cap — the verdict is one word).
+        maxOutputTokens: 16,
+        ...samplingParams,
         abortSignal,
         ...langfuseTelemetry('feedback-worthiness-gate', { userId }),
       });

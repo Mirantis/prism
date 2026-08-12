@@ -71,6 +71,7 @@ describe('Slack thread classification', () => {
     mockGetClassificationRequest.mockReturnValue({
       model: 'mock-classification-model',
       providerOptions: {},
+      samplingParams: { temperature: 0 },
     });
     mockGenerateObject.mockResolvedValue({ object: { action: 'respond' } });
     // The shared config mock (test-utils/setup.ts) carries neither field.
@@ -102,12 +103,24 @@ describe('Slack thread classification', () => {
     );
   });
 
-  it('passes the classification model and a deterministic temperature', async () => {
+  it('passes the classification model and the provider-declared sampling params', async () => {
     await classify(TRANSCRIPT);
 
     expect(mockGenerateObject).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'mock-classification-model', temperature: 0 }),
     );
+  });
+
+  it('omits temperature when the provider declares empty sampling params', async () => {
+    mockGetClassificationRequest.mockReturnValue({
+      model: 'mock-classification-model',
+      providerOptions: {},
+      samplingParams: {},
+    });
+
+    await classify(TRANSCRIPT);
+
+    expect(mockGenerateObject.mock.calls[0][0]).not.toHaveProperty('temperature');
   });
 
   it('returns the reaction emoji the model chose', async () => {

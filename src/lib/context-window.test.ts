@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 vi.mock('../config', () => ({
   config: {
-    llmProvider: 'bedrock' as 'bedrock' | 'azure',
+    llmProvider: 'bedrock' as 'bedrock' | 'azure' | 'openai',
     contextWindowTokens: null as number | null,
     // Importing context-window now transitively pulls in model-catalog; keep the
     // refresh disabled so nothing here can reach the network.
@@ -13,13 +13,15 @@ vi.mock('../config', () => ({
 import { config } from '../config';
 import { contextWindowFor } from './context-window';
 
-// The four IDs `src/config.ts` actually defaults to. If the models.dev snapshot
+// The IDs `src/config.ts` actually defaults to. If the models.dev snapshot
 // ever stops covering these, the indicator silently disappears for every default
 // deployment — so assert them explicitly rather than trusting the generator.
 const BEDROCK_CHAT_DEFAULT = 'us.anthropic.claude-opus-5';
 const BEDROCK_CLASSIFICATION_DEFAULT = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 const AZURE_CHAT_DEFAULT = 'claude-opus-5';
 const AZURE_CLASSIFICATION_DEFAULT = 'claude-haiku-4-5';
+const OPENAI_CHAT_DEFAULT = 'gpt-5.6-sol';
+const OPENAI_CLASSIFICATION_DEFAULT = 'gpt-5.6-luna';
 
 describe('contextWindowFor', () => {
   beforeEach(() => {
@@ -44,6 +46,16 @@ describe('contextWindowFor', () => {
     it('resolves the Azure classification default', () => {
       config.llmProvider = 'azure';
       expect(contextWindowFor(AZURE_CLASSIFICATION_DEFAULT)).toEqual({ tokens: 200_000 });
+    });
+
+    it('resolves the OpenAI chat default', () => {
+      config.llmProvider = 'openai';
+      expect(contextWindowFor(OPENAI_CHAT_DEFAULT)).toEqual({ tokens: 1_050_000 });
+    });
+
+    it('resolves the OpenAI classification default', () => {
+      config.llmProvider = 'openai';
+      expect(contextWindowFor(OPENAI_CLASSIFICATION_DEFAULT)).toEqual({ tokens: 1_050_000 });
     });
   });
 

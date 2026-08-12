@@ -15,7 +15,7 @@
 
 import { EventEmitter } from 'node:events';
 import { generateText } from 'ai';
-import { getClassificationModel } from '../lib/classification';
+import { getGateRequest } from '../lib/classification';
 import { langfuseTelemetry } from '../lib/telemetry';
 import { conversationService } from './conversation.service';
 import { logger } from '../logger';
@@ -49,12 +49,14 @@ async function generateThreadTitle(message: string): Promise<string | null> {
   const text = message.trim();
   if (!text) return null;
   try {
+    const { model, providerOptions, samplingParams } = getGateRequest();
     const result = await generateText({
-      model: getClassificationModel(),
+      model,
+      providerOptions,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user' as const, content: text }],
       maxOutputTokens: 24,
-      temperature: 0,
+      ...samplingParams,
       ...langfuseTelemetry('thread-title'),
     });
     return clampTitle(result.text);

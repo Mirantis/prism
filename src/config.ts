@@ -34,12 +34,14 @@ const awsRegion = process.env.AWS_REGION || 'us-east-1';
 // AGENT_ID per container). Anything unrecognized falls back to `bedrock` so an
 // unset/typo'd value never silently breaks a Bedrock deployment.
 const rawLlmProvider = (process.env.LLM_PROVIDER || 'bedrock').toLowerCase();
-const llmProvider: 'bedrock' | 'azure' | 'bedrock-mantle' =
+const llmProvider: 'bedrock' | 'azure' | 'bedrock-mantle' | 'openai' =
   rawLlmProvider === 'azure'
     ? 'azure'
     : rawLlmProvider === 'bedrock-mantle'
       ? 'bedrock-mantle'
-      : 'bedrock';
+      : rawLlmProvider === 'openai'
+        ? 'openai'
+        : 'bedrock';
 
 // Nexus LLM proxy base URL for native Bedrock (bedrock-runtime). Mirrors the
 // Nexus route mounts:
@@ -87,6 +89,23 @@ const nexusBedrockMantleBaseUrl = nexusApiUrl
       : `${nexusApiUrl}/llm/bedrock-mantle/anthropic/${awsRegion}/v1`)
   : null;
 
+// Nexus LLM proxy base URL for OpenAI, mounted as `…/llm/openai/{path}`
+// (nexus-monorepo#483) and forwarded verbatim to the gateway's configured
+// OpenAI root (`https://api.openai.com` unless the operator points it at an
+// OpenAI-compatible endpoint). Ends at `/v1` because the openai SDK appends
+// `/responses`, `/chat/completions` or `/embeddings` to its base, so the
+// proxied URL lands on `…/v1/responses` etc. One mount carries chat,
+// classification *and* embeddings — OpenAI has no split surface. Keyless —
+// the gateway injects the API key on the outbound leg. Note the Realtime
+// WebSocket is NOT served here (the mount routes POST only); voice meetings
+// keep their pinned direct socket (`services/meeting/openai-endpoint.ts`).
+// null when NEXUS_API_URL is unset (callers talk to api.openai.com directly).
+const nexusOpenAiBaseUrl = nexusApiUrl
+  ? (projectId
+      ? `${nexusApiUrl}/projects/${projectId}/llm/openai/v1`
+      : `${nexusApiUrl}/llm/openai/v1`)
+  : null;
+
 // The selected vendor's Nexus *chat* mount, resolved once so callers that only
 // need "is chat routed through Nexus?" (the startup log, startup telemetry)
 // don't each re-derive the per-vendor branch. null → chat goes direct.
@@ -95,7 +114,9 @@ const nexusChatBaseUrl =
     ? nexusAzureBaseUrl
     : llmProvider === 'bedrock-mantle'
       ? nexusBedrockMantleBaseUrl
-      : nexusLlmBaseUrl;
+      : llmProvider === 'openai'
+        ? nexusOpenAiBaseUrl
+        : nexusLlmBaseUrl;
 
 // Foundry Anthropic chat endpoint for Azure (Claude via Microsoft Foundry).
 // Explicit override wins; else derived from the resource name. Must end at
@@ -149,6 +170,23 @@ const bedrockMantleClassificationModelId =
   process.env.BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID || 'anthropic.claude-haiku-4-5';
 const bedrockMantleEmbeddingModelId =
   process.env.BEDROCK_MANTLE_EMBEDDING_MODEL_ID ?? bedrockEmbeddingModelId;
+// OpenAI model IDs (used when LLM_PROVIDER=openai). Chat defaults to the
+// GPT-5.6 flagship; classification to the fast tier — the provider pins the
+// gates to `reasoningEffort: 'none'` and omits their temperature param (see
+// openai-provider.ts), which is what keeps the gates' tiny token budgets
+// valid on a GPT-5.x model. Embeddings are truncated to 1024 dims by
+// embedding.service to fit the sqlite-vec index; `??` so
+// OPENAI_EMBEDDING_MODEL_ID='' disables them entirely, matching
+// AZURE_EMBEDDING_MODEL_ID.
+const openaiModelId = process.env.OPENAI_MODEL_ID || 'gpt-5.6-sol';
+const openaiClassificationModelId = process.env.OPENAI_CLASSIFICATION_MODEL_ID || 'gpt-5.6-luna';
+const openaiEmbeddingModelId = process.env.OPENAI_EMBEDDING_MODEL_ID ?? 'text-embedding-3-small';
+// Direct OpenAI endpoint override, mirroring AZURE_FOUNDRY_BASE_URL /
+// BEDROCK_MANTLE_BASE_URL: applies to direct mode only (Nexus routing has its
+// own mount), and must serve the Responses API — the SDK appends `/responses`,
+// not just `/chat/completions`. Does NOT move the Realtime WebSocket.
+// undefined → the SDK's own default, https://api.openai.com/v1.
+const openaiBaseUrl = process.env.OPENAI_BASE_URL || undefined;
 
 // Provider-neutral model IDs, resolved once. The runtime (invoke, the
 // classification gate, embeddings, the per-agent model fallback) reads these so
@@ -169,16 +207,23 @@ const modelIds = {
     classification: bedrockMantleClassificationModelId,
     embedding: bedrockMantleEmbeddingModelId,
   },
+  openai: {
+    chat: openaiModelId,
+    classification: openaiClassificationModelId,
+    embedding: openaiEmbeddingModelId,
+  },
 }[llmProvider];
 
-// Live voice meetings (OpenAI Realtime API). This is the one model call that does
-// NOT ride the Nexus LLM gateway: managed inference serves Bedrock, Azure and
-// Bedrock Mantle — the Anthropic Messages and OpenAI Chat Completions surfaces —
-// and none of them serves the Realtime WebSocket, so there is no vendor mount to
-// route through and the socket goes straight to api.openai.com. Still
-// credential-safe in a sandbox: the key may be a `__nexus_cred:<uuid>__` sentinel
-// that the egress MITM swaps on the wire, and it is only ever sent as a header.
-// Unset disables the meeting tools entirely (they're also gated on the browser and
+// The OpenAI API key, serving double duty: live voice meetings (OpenAI
+// Realtime API) and, when LLM_PROVIDER=openai, the chat provider. The
+// *Realtime WebSocket* is the one model call that never rides the Nexus LLM
+// gateway — the `…/llm/openai` mount (nexus-monorepo#483) routes POST only,
+// so the socket goes straight to api.openai.com. Chat/classification/
+// embeddings do ride that mount when NEXUS_API_URL is set, and then need no
+// local key at all (the gateway injects its own). Still credential-safe in a
+// sandbox: the key may be a `__nexus_cred:<uuid>__` sentinel that the egress
+// MITM swaps on the wire, and it is only ever sent as a header. Unset
+// disables the meeting tools entirely (they're also gated on the browser and
 // audio toolchain being present).
 const openaiApiKey = process.env.OPENAI_API_KEY;
 // Pinned to a snapshot rather than the `gpt-realtime` alias. The alias silently
@@ -297,10 +342,10 @@ export const config = {
   awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   awsSessionToken: process.env.AWS_SESSION_TOKEN, // Optional, only needed for temporary credentials
 
-  // LLM provider selection. `bedrock` (default), `azure`, or `bedrock-mantle`.
-  // See the neutral `chatModelId`/`classificationModelId`/`embeddingModelId`
-  // below, which the rest of the runtime reads instead of the vendor-specific
-  // fields.
+  // LLM provider selection. `bedrock` (default), `azure`, `bedrock-mantle`,
+  // or `openai`. See the neutral `chatModelId`/`classificationModelId`/
+  // `embeddingModelId` below, which the rest of the runtime reads instead of
+  // the vendor-specific fields.
   llmProvider,
 
   // Azure — Claude via Microsoft Foundry (used when LLM_PROVIDER=azure).
@@ -334,6 +379,17 @@ export const config = {
   bedrockMantleClassificationModelId,
   bedrockMantleEmbeddingModelId,
   nexusBedrockMantleBaseUrl,
+
+  // OpenAI (used when LLM_PROVIDER=openai). Chat/classification/embeddings all
+  // speak the OpenAI API on one surface — direct to api.openai.com (or
+  // `openaiBaseUrl`), or through the Nexus `…/llm/openai/v1` mount when
+  // NEXUS_API_URL is set. The key is `openaiApiKey` below (shared with voice
+  // meetings); through Nexus no local key is needed.
+  openaiModelId,
+  openaiClassificationModelId,
+  openaiEmbeddingModelId,
+  openaiBaseUrl,
+  nexusOpenAiBaseUrl,
 
   // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
   // either picks up the existing row via findFirst() or creates a fresh

@@ -61,7 +61,6 @@ vi.mock('../../queues/slack-heartbeat-throttle-queue', () => ({
 vi.mock('../../queues/channel-learning.queue', () => ({ channelLearningQueue: {} }));
 vi.mock('../../lib/llm-providers/bedrock/bedrock-provider', () => ({
   isBedrockConfigured: () => false,
-  getClassificationModel: vi.fn(),
 }));
 vi.mock('../../utils/slack-formatter', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../utils/slack-formatter')>()),

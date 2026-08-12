@@ -8,11 +8,12 @@
  * model released since the last build gets a real window instead of being silently
  * unmeasurable.
  *
- * Why models.dev is the source at all: neither provider this runtime talks to
- * reports a context window. Anthropic's Models API — the only source of
+ * Why models.dev is the source at all: none of the providers this runtime talks
+ * to report a context window. Anthropic's Models API — the only source of
  * `max_input_tokens` — is first-party only, unavailable on both Bedrock and
- * Microsoft Foundry, and Bedrock's `GetFoundationModel` returns modalities and
- * lifecycle but no context length.
+ * Microsoft Foundry; Bedrock's `GetFoundationModel` returns modalities and
+ * lifecycle but no context length; and OpenAI's model listing has no limit
+ * fields either.
  *
  * Invariants the rest of the runtime depends on:
  * - **Reads are synchronous and always answerable.** `modelCatalog()` never
@@ -52,7 +53,7 @@ export interface CatalogEntry {
   output: number | null;
 }
 
-/** Provider (`bedrock` | `azure`) -> model ID -> limits. */
+/** Provider (`bedrock` | `azure` | `openai`) -> model ID -> limits. */
 export type ModelCatalog = Record<string, Record<string, CatalogEntry | undefined> | undefined>;
 
 export type CatalogState =
@@ -74,10 +75,23 @@ export type CatalogState =
 export const REGISTRY_PROVIDERS: Record<string, string> = {
   'amazon-bedrock': 'bedrock',
   azure: 'azure',
+  openai: 'openai',
 };
 
-/** Only Claude models reach `invokeStream()`; everything else is noise. */
+/**
+ * The model family each registry provider contributes, scoped per provider:
+ * on the Claude-serving vendors only Claude models reach `invokeStream()`,
+ * and azure's registry entry lists plenty of GPT models that would be noise
+ * in that bucket — while the `openai` bucket exists precisely for GPT (and
+ * o-series/codex) ids and would find no Claude there.
+ */
 const CLAUDE = /claude|fable|mythos/i;
+const OPENAI_FAMILY = /^gpt|^o\d|^codex/i;
+const REGISTRY_FAMILY: Record<string, RegExp> = {
+  'amazon-bedrock': CLAUDE,
+  azure: CLAUDE,
+  openai: OPENAI_FAMILY,
+};
 
 /**
  * Smallest window we'll believe. The generator historically accepted anything
@@ -94,9 +108,13 @@ interface RegistryModel {
   limit?: { context?: number; output?: number };
 }
 
-/** True when a registry entry is a Claude model with a believable window. */
-export function isUsableRegistryEntry(id: string, model: RegistryModel): boolean {
-  if (!CLAUDE.test(id)) return false;
+/**
+ * True when a registry entry is in its provider's model family (see
+ * REGISTRY_FAMILY) with a believable window.
+ */
+export function isUsableRegistryEntry(id: string, model: RegistryModel, registryId: string): boolean {
+  const family = REGISTRY_FAMILY[registryId];
+  if (!family || !family.test(id)) return false;
   const context = model.limit?.context;
   return typeof context === 'number' && Number.isFinite(context) && context >= MIN_PLAUSIBLE_CONTEXT;
 }
@@ -166,7 +184,7 @@ export function reshapeRegistry(raw: unknown): ModelCatalog | null {
     const entries: Record<string, CatalogEntry> = {};
     for (const [id, model] of Object.entries(models)) {
       if (!model || typeof model !== 'object') continue;
-      if (!isUsableRegistryEntry(id, model)) continue;
+      if (!isUsableRegistryEntry(id, model, registryId)) continue;
       entries[id] = { context: model.limit!.context!, output: model.limit?.output ?? null };
       total++;
     }

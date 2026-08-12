@@ -1630,12 +1630,13 @@ class SlackAdapterService implements ChannelAdapter {
       // is the provider's business. Getting it wrong is invisible: the catch
       // below falls back to `respond`, so the bot would answer every threaded
       // message instead of ever reacting or ignoring.
-      const { model, providerOptions } = getClassificationRequest();
+      const { model, providerOptions, samplingParams } = getClassificationRequest();
 
       const { object } = await generateObject({
         model,
         schema: threadClassificationSchema,
-        temperature: 0,
+        // temperature: 0 on the vendors that accept it, omitted elsewhere.
+        ...samplingParams,
         providerOptions,
         system: [
           'You are a Slack thread classifier for an AI assistant bot.',
