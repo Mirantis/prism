@@ -230,8 +230,7 @@ for that.
 
 [Voice meetings](voice-meetings.md) let the agent join a Google Meet call and take
 part by voice. The tools appear only when `OPENAI_API_KEY` is set **and** the host
-has the browser/audio toolchain, which ships in the container image — so a native
-install never grows them.
+has the browser/audio toolchain, which ships in the container image.
 
 The voice model is OpenAI's Realtime API. It is the one model call that does not
 route through your configured provider or the Nexus LLM gateway: managed inference
@@ -240,12 +239,10 @@ surface. The socket goes straight to `api.openai.com`, so an egress-filtered
 deployment must allow that host (plus Google's meeting and accounts hosts, including
 WebRTC UDP). The browser profile — and with it the signed-in session — is persisted
 under the data dir, so sign-in happens once rather than per meeting.
-The key is only ever sent as a request header, so it may be a
-`__nexus_cred:<uuid>__` sentinel that the sandbox rewrites on the wire.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `OPENAI_API_KEY` | Enables voice meetings. May be a Nexus credential sentinel. | — (disabled) |
+| `OPENAI_API_KEY` | Enables voice meetings. | — (disabled) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot so a new one cannot change behaviour under you; `gpt-realtime-mini` is materially cheaper. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `GOOGLE_BOT_EMAIL` | Google account the agent signs into for meetings. **Effectively required**: Google auto-denies automated anonymous guests, so without this the agent reaches the lobby and is refused. Use a dedicated account. | — |

@@ -93,9 +93,9 @@ skills' LibreOffice-backed conversion/recalc/render paths are unavailable.
 The image also carries `chromium`, `xvfb` and `pulseaudio`, which are what
 [voice meetings](voice-meetings.md) need: a real browser joins the call, Xvfb gives
 it a display, and PulseAudio's virtual sinks are the speaker and microphone the
-runtime exchanges audio through. This is the one feature we spend image size on
-rather than leaving out (roughly 400 MB) — unlike LibreOffice above, there is no way
-to join a meeting without a browser and an audio server. It's Debian's `chromium`
+runtime exchanges audio through. They add roughly 400 MB, and unlike LibreOffice
+above there is no way to join a meeting without a browser and an audio server, so
+they are bundled rather than left out. It's Debian's `chromium`
 rather than Google Chrome because only the former is packaged for arm64, and the
 image is multi-arch. Voice meetings additionally need `OPENAI_API_KEY`; without it
 the toolchain sits idle and the meeting tools aren't offered.

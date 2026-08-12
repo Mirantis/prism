@@ -197,6 +197,26 @@ export class MeetingBotService {
     this.startedAt = Date.now();
     const epoch = this.epoch;
 
+    // Built into locals and published onto `this` only once the epoch check below
+    // says the call is still wanted.
+    //
+    // Startup is many awaits long — a sign-in alone can take 45s — and a `leave()`
+    // in that window returns the service to `idle`, so a *second* `join()` can be
+    // well under way by the time this one resumes. Assigning to the fields as we
+    // went would have the dead call overwrite the live call's browser, page and
+    // session, and its own late rejection tear the live call down. Locals also give
+    // the cancellation path something to release by name, since a teardown that ran
+    // in between has already nulled the fields.
+    let audio: AudioStack | null = null;
+    let browser: BrowserStack | null = null;
+    let conversation: VoiceConversation | null = null;
+
+    /** Release a stack that was built for a call nobody is waiting for any more. */
+    const releaseLocals = async (): Promise<void> => {
+      conversation?.stop();
+      await browser?.stop();
+      await audio?.stop();
+    };
 
     try {
       // Instructions and tools first: they need the database and the model
@@ -208,14 +228,14 @@ export class MeetingBotService {
         threadId: input.threadId,
       });
 
-      // Held locally as well as on `this` so the cancellation path below can
-      // release them by name: a concurrent teardown nulls the fields while these
-      // objects are still very much alive.
-      const audio = new AudioStack();
-      this.audio = audio;
+      audio = new AudioStack();
       const handles = await audio.start();
+      // Deaf or mute is not a state to sit in: a dead capture or playback process
+      // leaves the bot in the room unable to hear or speak, which nobody can see
+      // from the inside. Same ending as a lost Realtime session.
+      handles.onLost((reason) => this.onAudioLost(epoch, reason));
 
-      const conversation = new VoiceConversation({
+      conversation = new VoiceConversation({
         instructions,
         tools,
         sink: handles.playbackSink,
@@ -228,39 +248,44 @@ export class MeetingBotService {
         voice: config.openaiRealtimeVoice,
         onSessionLost: (reason) => this.onSessionLost(epoch, reason),
       });
-      this.conversation = conversation;
       await conversation.start();
-      handles.onCapture((pcm) => this.conversation?.pushMeetingAudio(pcm));
+      // Bound to this call's session rather than to `this.conversation`, which at
+      // this point still belongs to whatever ran before — and, if this call is
+      // abandoned, will belong to whatever runs next.
+      const live = conversation;
+      handles.onCapture((pcm) => live.pushMeetingAudio(pcm));
 
-      const browser = new BrowserStack();
-      this.browser = browser;
-      this.page = await browser.start({ env: handles.browserEnv });
+      browser = new BrowserStack();
+      const page = await browser.start({ env: handles.browserEnv });
 
       // Before the epoch check below, deliberately: a login can take 20-45s, and a
       // leave() during it must still find the browser and audio released. The
       // contract says this cannot reject — guarded anyway, because a sign-in failure
       // is not a reason to refuse a join that the profile's cookies might carry.
       try {
-        await provider.signIn?.(this.page);
+        await provider.signIn?.(page);
       } catch (err) {
         logger.warn({ err }, '[Meeting] Sign-in threw, which it should not — joining anyway');
       }
 
       // Setup is several awaits long, and a leave() or shutdown during any of them
-      // already tore this call down — including nulling the fields, so `teardown`
-      // could not have stopped the pieces created after it ran. Release them here
-      // (a metered WebSocket and a browser, so this is not a cosmetic leak) rather
-      // than proceeding to sit in a waiting room for a meeting nobody wants.
+      // already tore this call down. Release the stack here (a metered WebSocket and
+      // a browser, so this is not a cosmetic leak) rather than proceeding to sit in a
+      // waiting room for a meeting nobody wants — and, above all, without publishing
+      // any of it onto the fields, which may already describe a newer call.
       if (this.epoch !== epoch) {
-        conversation.stop();
-        await browser.stop();
-        await audio.stop();
+        await releaseLocals();
         return { state: 'idle', message: 'The meeting was cancelled before I could join.' };
       }
 
+      this.audio = audio;
+      this.conversation = conversation;
+      this.browser = browser;
+      this.page = page;
+
       this.state = 'waiting_admission';
       // Deliberately not awaited: the waiting room can outlast any chat turn.
-      void this.runJoin(provider, this.page, input, epoch);
+      void this.runJoin(provider, page, input, epoch);
 
       return {
         state: this.state,
@@ -271,7 +296,13 @@ export class MeetingBotService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error({ err }, '[Meeting] Failed to start the meeting stack');
-      await this.teardown('error');
+      // Locals first, and unconditionally: the stack reaches the fields only once
+      // the join is under way, so a failure before that leaves `teardown` with
+      // nothing to release — it cannot stop what it cannot see.
+      await releaseLocals();
+      // Then the service's own state, unless this failure belongs to a call that has
+      // already ended, in which case the state describes the one running now.
+      if (this.epoch === epoch) await this.teardown('error');
       return { state: 'idle', message: `Could not join the meeting: ${message}` };
     }
   }
@@ -525,13 +556,42 @@ export class MeetingBotService {
    * ended must not tear down whatever is running now.
    */
   private onSessionLost(epoch: number, reason: string): void {
+    this.endOnLoss(
+      epoch,
+      `Lost the Realtime session mid-call: ${reason}`,
+      `I lost my voice connection to the ${this.provider?.displayName ?? 'meeting'} call, ` +
+        `so I've left it: ${reason}`,
+    );
+  }
+
+  /**
+   * The virtual audio devices died under us — end the call, for the same reason.
+   *
+   * `parec` dying makes the bot deaf and `pacat` dying makes it mute, and neither
+   * announces itself: the browser is still in the call, the Realtime socket is still
+   * open, and the room simply has a participant that stopped responding. Left alone
+   * it sits there until the empty-room poll or the duration cap notices, which can
+   * be the better part of an hour.
+   */
+  private onAudioLost(epoch: number, reason: string): void {
+    const platform = this.provider?.displayName ?? 'meeting';
+    // A process can die while the call is still in the lobby, where "I've left"
+    // would describe a room the agent was never in.
+    const note =
+      this.state === 'in_call'
+        ? `I lost my audio in the ${platform} call (${reason}), so I've left rather ` +
+          `than sit there unable to hear or speak.`
+        : `I gave up on joining the ${platform} call: my audio died on the way in ` +
+          `(${reason}), so I'd have arrived unable to hear or speak.`;
+    this.endOnLoss(epoch, `Lost the meeting's audio pipeline: ${reason}`, note);
+  }
+
+  /** End a call whose voice or audio path has gone, and say so where it was asked for. */
+  private endOnLoss(epoch: number, logLine: string, note: string): void {
     if (this.epoch !== epoch || !this.isActive) return;
-    logger.warn(`[Meeting] Lost the Realtime session mid-call: ${reason}`);
+    logger.warn(`[Meeting] ${logLine}`);
     void (async () => {
-      await this.notifyThread(
-        `I lost my voice connection to the ${this.provider?.displayName ?? 'meeting'} call, ` +
-          `so I've left it: ${reason}`,
-      );
+      await this.notifyThread(note);
       // Re-checked after the note, not just before it: posting one is a database
       // write and a fan-out to every channel adapter, and a `leave()` landing in
       // that window can finish its own teardown and let the user rejoin. Without
