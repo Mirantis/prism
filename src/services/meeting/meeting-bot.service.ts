@@ -105,7 +105,6 @@ export interface JoinMeetingInput {
   agentId: string;
   /** Where progress notes go. Falls back to the agent's latest thread. */
   threadId?: string;
-  displayName?: string
   /** How much the agent speaks up; `auto` follows the participant count. */
   responseMode?: ResponseMode;
 }
@@ -183,21 +182,13 @@ export class MeetingBotService {
       return { state: 'idle', message: `That doesn't look like a supported meeting link.` };
     }
 
-    // Refused here rather than in the lobby. Google Meet auto-denies automated
-    // anonymous guests — `CreateMeetingDevice` 403, the host never even prompted —
-    // so without an account this join cannot succeed, and finding that out the slow
-    // way costs a virtual display, an audio daemon, a browser and a metered Realtime
-    // socket before Google says no. `requiresSignIn` is a property of the platform,
-    // so a provider that admits named guests (Teams, Zoom) simply does not set it.
-    if (provider.requiresSignIn && !(config.googleBotEmail && config.googleBotPassword)) {
-      return {
-        state: 'idle',
-        message:
-          `I can't join ${provider.displayName} without a Google account: it refuses ` +
-          `automated guests before a host is ever asked. Set GOOGLE_BOT_EMAIL and ` +
-          `GOOGLE_BOT_PASSWORD and I'll be able to join.`,
-      };
-    }
+    // Asked before a call's worth of infrastructure is built: a platform that will
+    // not take an unauthenticated bot says so here rather than in the lobby, where
+    // finding out costs a virtual display, an audio daemon, a browser and a metered
+    // Realtime socket first. The provider answers because only it knows what it
+    // needs — this file should not be reading one platform's credentials.
+    const misconfigured = provider.configurationError();
+    if (misconfigured) return { state: 'idle', message: misconfigured };
 
     this.provider = provider;
     this.current = input;
@@ -206,10 +197,6 @@ export class MeetingBotService {
     this.startedAt = Date.now();
     const epoch = this.epoch;
 
-    // Only meaningful to a provider that admits named guests; a signed-in join shows
-    // the Google account's own name. `context.agentName` is not loaded this early,
-    // hence the env fallback.
-    const displayName = input.displayName || config.agentName;
 
     try {
       // Instructions and tools first: they need the database and the model
@@ -249,6 +236,16 @@ export class MeetingBotService {
       this.browser = browser;
       this.page = await browser.start({ env: handles.browserEnv });
 
+      // Before the epoch check below, deliberately: a login can take 20-45s, and a
+      // leave() during it must still find the browser and audio released. The
+      // contract says this cannot reject — guarded anyway, because a sign-in failure
+      // is not a reason to refuse a join that the profile's cookies might carry.
+      try {
+        await provider.signIn?.(this.page);
+      } catch (err) {
+        logger.warn({ err }, '[Meeting] Sign-in threw, which it should not — joining anyway');
+      }
+
       // Setup is several awaits long, and a leave() or shutdown during any of them
       // already tore this call down — including nulling the fields, so `teardown`
       // could not have stopped the pieces created after it ran. Release them here
@@ -263,19 +260,13 @@ export class MeetingBotService {
 
       this.state = 'waiting_admission';
       // Deliberately not awaited: the waiting room can outlast any chat turn.
-      void this.runJoin(provider, this.page, input, displayName, epoch, {
-        signedIn: browser.isAuthenticated,
-        ...(browser.signInFailureReason ? { signInFailureReason: browser.signInFailureReason } : {}),
-      });
+      void this.runJoin(provider, this.page, input, epoch);
 
       return {
         state: this.state,
         message:
-          `Requested to join the ${provider.displayName} call` +
-          // Only meaningful on the guest path: a signed-in agent shows up under its
-          // Google account's own name, so quoting this one would mislead.
-          (browser.isAuthenticated ? '' : ` as "${displayName}"`) +
-          `. A host needs to admit me — I'll report back when I'm in.`,
+          `Requested to join the ${provider.displayName} call. ` +
+          `A host needs to admit me — I'll report back when I'm in.`,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -290,17 +281,15 @@ export class MeetingBotService {
     provider: MeetingProvider,
     page: Page,
     input: JoinMeetingInput,
-    displayName: string,
     epoch: number,
-    auth: { signedIn: boolean; signInFailureReason?: string },
   ): Promise<void> {
+    const joinOptions = {
+      url: input.url,
+      admissionTimeoutMs: config.meetingAdmissionTimeoutMs,
+    };
+
     try {
-      let outcome = await provider.join(page, {
-        url: input.url,
-        displayName,
-        admissionTimeoutMs: config.meetingAdmissionTimeoutMs,
-        ...auth,
-      });
+      let outcome = await provider.join(page, joinOptions);
 
       // The call was ended while we waited (leave, timeout, shutdown). Whatever
       // the waiting room decided is now about a meeting that no longer exists.
@@ -312,25 +301,20 @@ export class MeetingBotService {
       // Once, deliberately: a second failure is a real problem (a challenged
       // account, a changed password) and retrying it in a loop would hammer Google's
       // login with the credentials that just didn't work.
-      if (outcome.status === 'stale_session') {
-        const browser = this.browser;
-        const signedIn = browser ? await browser.reauthenticate(page) : false;
+      if (outcome.status === 'reauth_required') {
+        // `force`, and it matters: the provider's own "am I signed in?" probe is
+        // exactly what got this wrong — a profile whose account page loads happily
+        // is still handed a guest field by the platform. Without it the retry would
+        // re-use the same dead session and fail identically.
+        await provider.signIn?.(page, { force: true });
         if (this.epoch !== epoch) return;
 
-        outcome = await provider.join(page, {
-          url: input.url,
-          displayName,
-          admissionTimeoutMs: config.meetingAdmissionTimeoutMs,
-          signedIn,
-          ...(browser?.signInFailureReason
-            ? { signInFailureReason: browser.signInFailureReason }
-            : {}),
-        });
+        outcome = await provider.join(page, joinOptions);
         if (this.epoch !== epoch) return;
 
         // Twice in a row is not a stale cookie any more. Report it as a refusal
         // rather than looping, and name the session as the cause.
-        if (outcome.status === 'stale_session') {
+        if (outcome.status === 'reauth_required') {
           this.failStep = 'lobby';
           await this.notifyThread(
             `I couldn't join the ${provider.displayName} call: signing in again didn't help — ` +
@@ -365,7 +349,7 @@ export class MeetingBotService {
       // Tell the model where it is and let it introduce itself, so the room isn't
       // joined by a silent participant.
       this.conversation?.notify(
-        `You have just been admitted to the ${provider.displayName} call as "${displayName}". ` +
+        `You have just been admitted to the ${provider.displayName} call. ` +
           `Greet the participants in one short sentence and say what you can help with.`,
       );
       this.conversation?.speakNow();

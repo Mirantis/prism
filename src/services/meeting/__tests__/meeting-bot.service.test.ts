@@ -100,6 +100,8 @@ const trackEvent = vi.fn();
 vi.mock('../../../lib/telemetry', () => ({ trackEvent: (...a: unknown[]) => trackEvent(...a) }));
 
 const providerJoin = vi.fn();
+const providerConfigurationError = vi.fn(() => null as string | null);
+const providerSignIn = vi.fn(async () => {});
 const providerLeave = vi.fn();
 const providerParticipantCount = vi.fn();
 vi.mock('../providers/google-meet.provider', () => ({
@@ -107,7 +109,8 @@ vi.mock('../providers/google-meet.provider', () => ({
     name: 'google-meet',
     displayName: 'Google Meet',
     matchesUrl: (url: string) => url.startsWith('https://meet.google.com/'),
-    requiresSignIn: true,
+    configurationError: (...a: unknown[]) => providerConfigurationError(...a),
+    signIn: (...a: unknown[]) => providerSignIn(...a),
     join: (...a: unknown[]) => providerJoin(...a),
     leave: (...a: unknown[]) => providerLeave(...a),
     participantCount: (...a: unknown[]) => providerParticipantCount(...a),
@@ -166,24 +169,17 @@ describe('a platform that will not take an unauthenticated bot', () => {
   it('says so instead of building a call to be refused', async () => {
     // Meet denies an automated anonymous guest before a host is prompted, so this
     // join cannot succeed — and finding that out in the lobby costs a virtual
-    // display, an audio daemon, a browser and a metered Realtime socket first.
-    const { config } = await import('../../../config');
-    const saved = { email: config.googleBotEmail, password: config.googleBotPassword };
-    (config as { googleBotEmail?: string }).googleBotEmail = '';
-    (config as { googleBotPassword?: string }).googleBotPassword = '';
+    // display, an audio daemon, a browser and a metered Realtime socket first. The
+    // provider answers, so this file no longer knows what a Google account is.
+    providerConfigurationError.mockReturnValueOnce('Set GOOGLE_BOT_EMAIL and GOOGLE_BOT_PASSWORD.');
 
-    try {
-      const result = await service.join(input);
+    const result = await service.join(input);
 
-      expect(result.state).toBe('idle');
-      expect(result.message).toMatch(/GOOGLE_BOT_EMAIL/);
-      // Nothing was started, and nothing to tear down.
-      expect(providerJoin).not.toHaveBeenCalled();
-      expect(service.status().state).toBe('idle');
-    } finally {
-      (config as { googleBotEmail?: string }).googleBotEmail = saved.email;
-      (config as { googleBotPassword?: string }).googleBotPassword = saved.password;
-    }
+    expect(result.state).toBe('idle');
+    expect(result.message).toMatch(/GOOGLE_BOT_EMAIL/);
+    // Nothing was started, and nothing to tear down.
+    expect(providerJoin).not.toHaveBeenCalled();
+    expect(service.status().state).toBe('idle');
   });
 });
 
@@ -231,19 +227,61 @@ describe('joining', () => {
     expect(audioStart).not.toHaveBeenCalled();
   });
 
-  it('reports the agent name as the display name by default', async () => {
+  it('signs in before it asks to join, and before the cancellation check', async () => {
+    // A login takes 20-45s. Run after the epoch check, a leave() during it would
+    // skip the browser and audio release; run after the join, it would be useless.
     await service.join(input);
-    expect(providerJoin).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ displayName: 'Prism' }),
+
+    expect(providerSignIn).toHaveBeenCalledTimes(1);
+    expect(providerSignIn.mock.invocationCallOrder[0]).toBeLessThan(
+      providerJoin.mock.invocationCallOrder[0],
     );
   });
 
-  it('passes an explicit display name through', async () => {
-    await service.join({ ...input, displayName: 'Prism (bot)' });
-    expect(providerJoin).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ displayName: 'Prism (bot)' }),
+  it('joins without a display name — the room sees the account it signed in as', async () => {
+    await service.join(input);
+
+    const [, options] = providerJoin.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(options).not.toHaveProperty('displayName');
+    expect(options).toMatchObject({ url: input.url });
+  });
+});
+
+describe('a session the platform will not accept', () => {
+  it('signs in again with force, then retries the link once', async () => {
+    // `force` is the whole point. The provider's own "am I signed in?" probe is what
+    // got this wrong — a profile whose account page loads happily is still handed a
+    // guest field — so a retry that re-probes would reuse the same dead session and
+    // fail identically.
+    providerJoin
+      .mockResolvedValueOnce({ status: 'reauth_required' })
+      .mockResolvedValueOnce({ status: 'admitted' });
+
+    await service.join(input);
+    await settle();
+
+    expect(providerSignIn).toHaveBeenCalledTimes(2);
+    expect(providerSignIn).toHaveBeenLastCalledWith(expect.anything(), { force: true });
+    expect(providerJoin).toHaveBeenCalledTimes(2);
+    expect(service.status().state).toBe('in_call');
+  });
+
+  it('gives up after one retry rather than hammering the login', async () => {
+    // A second failure is a real problem — a challenged account, a changed password
+    // — and retrying it in a loop would drive repeated logins with credentials that
+    // have just been refused.
+    providerJoin.mockResolvedValue({ status: 'reauth_required' });
+
+    await service.join(input);
+    await settle();
+
+    expect(providerJoin).toHaveBeenCalledTimes(2);
+    expect(service.status().state).toBe('idle');
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/signing in again didn't help/i),
+      'SYSTEM',
     );
   });
 });

@@ -8,9 +8,19 @@
  * is the part most likely to rot.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Page } from 'playwright-core';
 import { GoogleMeetProvider } from '../providers/google-meet.provider';
+import { isAuthenticated, signInFailureReason } from '../providers/google-meet/sign-in';
+
+// The provider reads its own sign-in state rather than being handed it, so the two
+// situations that state distinguishes — "signed in and offered a guest field", and
+// "the catch-all wall after a failed login" — are set here.
+vi.mock('../providers/google-meet/sign-in', () => ({
+  isAuthenticated: vi.fn(() => false),
+  signInFailureReason: vi.fn(() => null),
+  signInToGoogle: vi.fn(async () => {}),
+}));
 
 interface FakePageOptions {
   /** Text the page reports, used for rejection detection. */
@@ -113,6 +123,11 @@ const joinOptions = {
   displayName: 'Prism',
   admissionTimeoutMs: 2_000,
 };
+
+beforeEach(() => {
+  vi.mocked(isAuthenticated).mockReturnValue(false);
+  vi.mocked(signInFailureReason).mockReturnValue(null);
+});
 
 describe('join outcomes', () => {
   it('reports admitted once in-call furniture appears', async () => {
@@ -383,10 +398,9 @@ describe('join outcomes', () => {
     // letting the user chase a link they can see is live.
     const { page } = fakePage({ bodyText: "You can't join this video call" });
 
-    const outcome = await provider.join(page, {
-      ...joinOptions,
-      signInFailureReason: 'Google is challenging this account',
-    });
+    vi.mocked(signInFailureReason).mockReturnValue('Google is challenging this account');
+
+    const outcome = await provider.join(page, joinOptions);
 
     expect(outcome.status).toBe('denied');
     const { reason } = outcome as { reason: string };
@@ -498,9 +512,11 @@ describe('a stale signed-in session', () => {
       visibleButtons: ['Ask to join'],
     });
 
-    const outcome = await provider.join(page, { ...joinOptions, signedIn: true });
+    vi.mocked(isAuthenticated).mockReturnValue(true);
 
-    expect(outcome).toEqual({ status: 'stale_session' });
+    const outcome = await provider.join(page, joinOptions);
+
+    expect(outcome).toEqual({ status: 'reauth_required' });
     // Nothing was typed and nothing was clicked: going further is a guaranteed
     // refusal, and the caller can fix this by signing in again.
     expect(fills).toEqual([]);
@@ -520,7 +536,9 @@ describe('a stale signed-in session', () => {
       visibleButtons: ['Ask to join'],
     });
 
-    const outcome = await provider.join(page, { ...joinOptions, signedIn: false });
+    vi.mocked(isAuthenticated).mockReturnValue(false);
+
+    const outcome = await provider.join(page, joinOptions);
 
     expect(outcome).toEqual({ status: 'admitted' });
     expect(fills).toEqual([]);
@@ -532,7 +550,9 @@ describe('a stale signed-in session', () => {
       visibleSelectors: ['button[aria-label*="Leave call" i]'],
     });
 
-    const outcome = await provider.join(page, { ...joinOptions, signedIn: true });
+    vi.mocked(isAuthenticated).mockReturnValue(true);
+
+    const outcome = await provider.join(page, joinOptions);
 
     expect(outcome).toEqual({ status: 'admitted' });
   });
