@@ -129,6 +129,12 @@ export class BrowserStack {
 
   /** Start the browser on the virtual display and return a blank page. */
   async start(options: BrowserStackOptions): Promise<Page> {
+    // Before the spawn below, not just before the CDP attach that needs it: the
+    // child is handed `{ ...process.env }`, so doing this later would give the
+    // browser of the *first* meeting a different environment from every one after
+    // it. Harmless in itself — Chromium bypasses loopback on its own — but an env
+    // that changes shape once a meeting has run is a trap for the next reader.
+    bypassProxyForLoopback();
     const executablePath = await resolveBrowser();
     const port = await freePort();
     const userDataDir = profileDir();
@@ -284,6 +290,54 @@ export async function resolveBrowser(): Promise<string> {
     `No browser found (looked in ${BROWSER_CANDIDATES.join(', ')}). ` +
       'Voice meetings need the browser toolchain, which ships in the container image.',
   );
+}
+
+/** Addresses that must never be sent to an egress proxy. */
+const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'];
+
+/**
+ * Keep the loopback CDP handshake away from any configured egress proxy.
+ *
+ * `connectOverCDP` fetches `/json/version` over plain HTTP before it opens the
+ * WebSocket, and Playwright honours `HTTP_PROXY`/`HTTPS_PROXY` for that fetch. Where
+ * those are set without a loopback exemption — an ordinary corporate-proxy shape,
+ * not an exotic one — the request to *our own browser* is tunnelled to the proxy,
+ * which answers with an empty reply. The join then fails as `socket hang up` after
+ * burning the full 30s attach deadline, blaming the browser for something the
+ * browser had no part in. It cost an afternoon to find the first time.
+ *
+ * Two details are load-bearing:
+ *
+ * - **Merged, not assigned.** A deployment that already sets `NO_PROXY` keeps its
+ *   own entries; we only widen the bypass. Assigning would silently disable
+ *   whatever exemptions the operator needs.
+ * - **The literal `127.0.0.1`, not just `localhost`.** Playwright string-matches the
+ *   URL host — no name resolution, no CIDR — and this connects to `127.0.0.1`. So
+ *   the conventional `NO_PROXY=localhost` looks correct and still fails, which is
+ *   exactly the trap that makes this worth owning in code rather than leaving to
+ *   deployment config.
+ *
+ * Called from `start()` rather than from the attach itself, so the Chromium child —
+ * spawned with `{ ...process.env }` — sees the same value on the first meeting as on
+ * every one after it. It is unaffected either way, since it bypasses loopback of its
+ * own accord and still proxies everything else, which it must to reach the meeting.
+ *
+ * A lone `*` is left alone. Every proxy client agrees it means "bypass everything",
+ * so there is nothing to add; but curl and Python only honour `*` as the *whole*
+ * value, not as one entry in a list, so appending would narrow the bypass for the
+ * `shell_exec` children that inherit this env — the opposite of the intent.
+ */
+export function bypassProxyForLoopback(): void {
+  for (const key of ['NO_PROXY', 'no_proxy'] as const) {
+    const entries = (process.env[key] ?? '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (entries.includes('*')) continue;
+    const missing = LOOPBACK_HOSTS.filter((host) => !entries.includes(host));
+    if (missing.length === 0) continue;
+    process.env[key] = [...entries, ...missing].join(',');
+  }
 }
 
 /** Whether a browser is available — used to gate the meeting tools. */
