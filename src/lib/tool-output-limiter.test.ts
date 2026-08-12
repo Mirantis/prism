@@ -2,12 +2,21 @@
  * Tool Output Limiter Tests
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const warn = vi.fn();
+vi.mock('../logger', () => ({ logger: { warn: (...args: unknown[]) => warn(...args) } }));
+
 import {
   withOutputLimits,
   truncateHeadTail,
   stringifyToolOutput,
+  renderToolResult,
 } from './tool-output-limiter';
+
+beforeEach(() => {
+  warn.mockClear();
+});
 
 describe('stringifyToolOutput', () => {
   it('returns plain strings as-is', () => {
@@ -59,16 +68,27 @@ describe('truncateHeadTail', () => {
     // Head = 40 chars, tail = 10 chars
     expect(result.startsWith('A'.repeat(40))).toBe(true);
     expect(result.endsWith('A'.repeat(10))).toBe(true);
-    expect(result).toContain('[... 50 chars omitted');
+    expect(result).toContain('50 chars omitted');
     expect(result).toContain('100 chars total');
   });
 
-  it('includes guidance message in truncation notice', () => {
+  it('states that the output is incomplete and forbids stating a count', () => {
     const text = 'X'.repeat(200);
     const result = truncateHeadTail(text, 100);
-    expect(result).toContain(
-      'Use more targeted queries (e.g., filter by namespace, limit output) for complete results.'
-    );
+    // Wording, not decoration: a model handed a silently-clipped list reports the
+    // entries it can see as the whole set.
+    expect(result).toContain('INCOMPLETE OUTPUT');
+    expect(result).toContain('Do not state a count, a total, or that this is all of them.');
+    expect(result).toContain('a filter, fewer fields, or the next page');
+  });
+
+  it('appends channel-specific guidance when given', () => {
+    const result = truncateHeadTail('X'.repeat(200), 100, 'Say it out loud.');
+    expect(result).toContain('the next page. Say it out loud.]');
+  });
+
+  it('omits the guidance sentence when none is given', () => {
+    expect(truncateHeadTail('X'.repeat(200), 100)).toContain('the next page.]');
   });
 
   it('reports correct omitted and total char counts', () => {
@@ -77,6 +97,46 @@ describe('truncateHeadTail', () => {
     // head = 240, tail = 60, omitted = 1000 - 240 - 60 = 700
     expect(result).toContain('700 chars omitted');
     expect(result).toContain('1000 chars total');
+  });
+});
+
+describe('renderToolResult', () => {
+  it('returns text that fits the budget unchanged', () => {
+    expect(renderToolResult('three pods are down', { maxChars: 100 })).toBe(
+      'three pods are down'
+    );
+  });
+
+  it('leaves a result just over the budget alone rather than paying for a notice', () => {
+    // The notice costs more than the handful of chars a cut here would save.
+    const text = 'a'.repeat(1_400);
+    expect(renderToolResult(text, { maxChars: 1_000 })).toBe(text);
+  });
+
+  it('cuts head+tail once the result is well past the budget', () => {
+    const result = renderToolResult('a'.repeat(5_000) + 'END', { maxChars: 1_000 });
+    expect(result.startsWith('a'.repeat(800))).toBe(true);
+    expect(result.endsWith('END')).toBe(true);
+    expect(result).toContain('INCOMPLETE OUTPUT');
+  });
+
+  it('renders the MCP content shape before measuring it', () => {
+    const output = { content: [{ type: 'text', text: 'pod-a' }, { type: 'text', text: 'pod-b' }] };
+    expect(renderToolResult(output, { maxChars: 100 })).toBe('pod-a\npod-b');
+  });
+
+  it('carries channel guidance into the notice', () => {
+    const result = renderToolResult('z'.repeat(5_000), {
+      maxChars: 1_000,
+      extraGuidance: 'The call is your only channel.',
+    });
+    expect(result).toContain('The call is your only channel.');
+  });
+
+  it('coerces a value JSON cannot serialize instead of throwing mid-turn', () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(renderToolResult(cyclic)).toBe('[object Object]');
   });
 });
 
@@ -115,7 +175,7 @@ describe('withOutputLimits', () => {
     const result = await toModelOutput({ output: largeOutput });
 
     expect(result.type).toBe('text');
-    expect(result.value).toContain('[...');
+    expect(result.value).toContain('[INCOMPLETE OUTPUT');
     expect(result.value).toContain('chars omitted');
     // Should be much shorter than original
     expect(result.value.length).toBeLessThan(1000);
@@ -140,7 +200,35 @@ describe('withOutputLimits', () => {
 
     const result = await toModelOutput({ output: mcpResult });
     expect(result.type).toBe('text');
-    expect(result.value).toContain('[...');
+    expect(result.value).toContain('[INCOMPLETE OUTPUT');
+  });
+
+  it('names the tool in the truncation log, so a wrong count can be traced to it', async () => {
+    const tools = {
+      kubectl_get: { description: 'run kubectl', inputSchema: { type: 'object' as const } },
+    };
+
+    const wrapped = withOutputLimits(tools, 100);
+    const toModelOutput = (wrapped.kubectl_get as Record<string, unknown>).toModelOutput as (opts: {
+      output: unknown;
+    }) => Promise<{ type: string; value: string }>;
+
+    await toModelOutput({ output: 'Z'.repeat(1000) });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('kubectl_get'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('kept 100 content chars of 1000'));
+  });
+
+  it('logs nothing when a result fits', async () => {
+    const tools = { small: { description: 'small', inputSchema: { type: 'object' as const } } };
+    const wrapped = withOutputLimits(tools, 100);
+    const toModelOutput = (wrapped.small as Record<string, unknown>).toModelOutput as (opts: {
+      output: unknown;
+    }) => Promise<{ type: string; value: string }>;
+
+    await toModelOutput({ output: 'fine' });
+
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('preserves all original tool properties', () => {

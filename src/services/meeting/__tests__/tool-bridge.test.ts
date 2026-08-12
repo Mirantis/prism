@@ -172,7 +172,8 @@ describe('prepareMeetingTools', () => {
         dump: tool({
           description: 'Dumps',
           inputSchema: z.object({}),
-          execute: async () => 'x'.repeat(20_000),
+          // Head and tail differ, so the cut can be shown to keep both ends.
+          execute: async () => 'x'.repeat(40_000) + 'TAIL',
         }),
       },
       subagents: [],
@@ -181,8 +182,56 @@ describe('prepareMeetingTools', () => {
     const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
     const output = await prepared.execute('dump', '{}');
 
-    expect(output.length).toBeLessThan(20_000);
-    expect(output).toContain('truncated');
+    expect(output.length).toBeLessThan(40_000);
+    // Chat's shape: head AND tail survive, so a payload's closing lines are still
+    // readable. Only the middle goes.
+    expect(output.startsWith('x'.repeat(1000))).toBe(true);
+    expect(output.endsWith('TAIL')).toBe(true);
+    // The notice has to say the result is incomplete, or the model reports what it
+    // can see as the whole of it — the bug this replaced.
+    expect(output).toContain('INCOMPLETE OUTPUT');
+    expect(output).toContain('Do not state a count');
+    // …plus the one instruction that belongs to a live call.
+    expect(output).toContain('this call is your only channel');
+  });
+
+  it('hands over a result that fits the meeting budget whole', async () => {
+    // 8,000 chars is a realistic Jira issue with its description, or a listing of a
+    // few dozen PRs. The old 4,000-char cap beheaded both.
+    mockCollectTools.mockResolvedValue({
+      tools: {
+        issue: tool({
+          description: 'Reads an issue',
+          inputSchema: z.object({}),
+          execute: async () => 'y'.repeat(8_000),
+        }),
+      },
+      subagents: [],
+    });
+
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const output = await prepared.execute('issue', '{}');
+
+    expect(output).toBe('y'.repeat(8_000));
+  });
+
+  it('does not cut a result that only just passes the budget', async () => {
+    // Shared with the chat path: paying ~450 chars of notice to remove 200 costs the
+    // model more than it saves, so a small overshoot is delivered whole.
+    mockCollectTools.mockResolvedValue({
+      tools: {
+        listing: tool({
+          description: 'Lists',
+          inputSchema: z.object({}),
+          execute: async () => 'w'.repeat(12_200),
+        }),
+      },
+      subagents: [],
+    });
+
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+
+    expect(await prepared.execute('listing', '{}')).toBe('w'.repeat(12_200));
   });
 
   it('renders a string result verbatim', async () => {
