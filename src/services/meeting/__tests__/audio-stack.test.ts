@@ -1,0 +1,79 @@
+/**
+ * Reading "is the browser actually listening?" out of `pactl`.
+ *
+ * This one line of parsing is the only evidence that the agent can be heard which
+ * doesn't come from the meeting's own UI — Meet can show a live microphone while
+ * Chromium never opened a capture device, because those are two different systems.
+ * So the failure mode here is a parser that answers "yes" to everything: it would
+ * turn the check into a formality and put a silent participant back in the room.
+ *
+ * The fixtures are real `pactl list short sources` output, not invented shapes.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { AudioStack, sourceIsRunning } from '../audio-stack';
+
+/** Tab-separated, as `pactl` writes it — the mic open, the meeting monitor idle. */
+const CAPTURING = [
+  '0\tmeet_out.monitor\tmodule-null-sink.c\ts16le 1ch 48000Hz\tIDLE',
+  '1\tbot_speak.monitor\tmodule-null-sink.c\ts16le 1ch 48000Hz\tRUNNING',
+  '2\tbot_mic\tmodule-remap-source.c\ts16le 1ch 48000Hz\tRUNNING',
+].join('\n');
+
+describe('sourceIsRunning', () => {
+  it('sees the virtual mic being captured', () => {
+    expect(sourceIsRunning(CAPTURING, 'bot_mic')).toBe(true);
+  });
+
+  it('does not read an idle or suspended source as captured', () => {
+    // The bug this whole check exists for, in its purest form: the devices are up,
+    // the daemon is healthy, and nothing is listening to the agent.
+    const idle = CAPTURING.replace('bot_mic\tmodule-remap-source.c\ts16le 1ch 48000Hz\tRUNNING',
+      'bot_mic\tmodule-remap-source.c\ts16le 1ch 48000Hz\tIDLE');
+    expect(sourceIsRunning(idle, 'bot_mic')).toBe(false);
+
+    const suspended = CAPTURING.replace('bot_mic\tmodule-remap-source.c\ts16le 1ch 48000Hz\tRUNNING',
+      'bot_mic\tmodule-remap-source.c\ts16le 1ch 48000Hz\tSUSPENDED');
+    expect(sourceIsRunning(suspended, 'bot_mic')).toBe(false);
+  });
+
+  it('does not credit one source with another\'s state', () => {
+    // `bot_speak.monitor` is RUNNING in the fixture (our remap reads it) and its name
+    // contains the sink's, so a substring match or a wrong field index would read as
+    // capture on a source nobody has open.
+    const idleMic = CAPTURING.replace('bot_mic\tmodule-remap-source.c\ts16le 1ch 48000Hz\tRUNNING',
+      'bot_mic\tmodule-remap-source.c\ts16le 1ch 48000Hz\tIDLE');
+    expect(sourceIsRunning(idleMic, 'bot_mic')).toBe(false);
+    expect(sourceIsRunning(idleMic, 'bot_speak.monitor')).toBe(true);
+  });
+
+  it('reads space-separated output too', () => {
+    // Some pactl builds align columns with spaces. The sample spec in the middle
+    // ("s16le 1ch 48000Hz") already contains spaces, which is what makes a tab-only
+    // split look correct until it silently matches nothing.
+    const spaced = CAPTURING.replace(/\t/g, '   ');
+    expect(sourceIsRunning(spaced, 'bot_mic')).toBe(true);
+  });
+
+  it('answers no for a source that is not there at all', () => {
+    // What a renamed module or a daemon that never loaded the remap produces. Absent
+    // must not read as fine — that is the reading a broken setup gives.
+    expect(sourceIsRunning(CAPTURING, 'bot_microphone')).toBe(false);
+    expect(sourceIsRunning('', 'bot_mic')).toBe(false);
+  });
+});
+
+describe('waitForMicCapture', () => {
+  it('gives up at once on a stack that has already been torn down', async () => {
+    // The wait can outlive the call that started it. With the daemon gone there is
+    // nothing left to ask — every `pactl` call would throw on the removed runtime dir —
+    // so polling on would spend the whole budget answering a question about a call
+    // that is over.
+    const stack = new AudioStack();
+    await stack.stop();
+
+    const startedAt = Date.now();
+    await expect(stack.waitForMicCapture(10_000)).resolves.toBe(false);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+});

@@ -106,6 +106,99 @@ const STALE_SESSION_PROBE_MS = 2_500;
 const BUTTON_REPORT_INTERVAL_MS = 10_000;
 
 /**
+ * The microphone toggle, matched on the thing about it that doesn't move.
+ *
+ * Not the accessible name: it flips from "Turn on microphone" to "Turn off
+ * microphone" the instant the button is pressed, so a locator built from the label
+ * we clicked matches nothing when we read the result back — and "matches nothing"
+ * is indistinguishable from "still muted".
+ *
+ * `data-is-muted` is both stable and the state itself, so the same locator finds the
+ * button and answers the question. The label narrows it to the microphone because the
+ * camera toggle carries that attribute too, and neither the tag nor the role is
+ * pinned: Meet has rendered these controls as `button` and as `div[role=button]` at
+ * different times, and this needs to survive that.
+ *
+ * Exported for the tests, which drive the stub through this exact string rather than
+ * a copy of it — a copy would keep passing after production changed.
+ */
+export const MIC_TOGGLE_SELECTOR = '[data-is-muted][aria-label*="microphone" i]';
+
+/**
+ * Modals that render over the call controls.
+ *
+ * Meet drops one on a fresh joiner ("Others may see your video differently"), and its
+ * scrim eats pointer events — a click aimed at the mic underneath fails with
+ * Playwright's "subtree intercepts pointer events" and keeps failing until it times
+ * out. So the mic is only reachable once this is gone.
+ */
+export const BLOCKING_DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"]';
+
+/**
+ * Buttons the dialog sweep is allowed to press — anchored, and never a fallback.
+ *
+ * The tempting shortcut is "press whatever button this dialog offers", and it is the
+ * bug this whole change is about: one of the buttons Meet offers is "Continue without
+ * microphone", which joins with no capture device at all and cannot be undone by
+ * unmuting afterwards. So the sweep only presses things whose entire name is a
+ * dismissal, and a dialog it doesn't recognise is left alone and logged. Substring
+ * matching would defeat the point — "Continue without microphone" contains none of
+ * these, but the next unrecognised affirmative might.
+ */
+const DIALOG_DISMISS_PATTERNS = [/^got it$/i, /^dismiss$/i, /^close$/i, /^ok$/i, /^no thanks$/i];
+
+/** Dialogs can be stacked, and dismissing one can reveal the next. */
+const DIALOG_SWEEP_PASSES = 2;
+
+/** How long to look for a dialog, or for a dismiss button inside one. */
+const DIALOG_PROBE_MS = 1_000;
+
+/**
+ * How long to wait for the mic toggle to paint before calling it absent.
+ *
+ * Paid only once per join, right after admission, and the call UI is already up by
+ * then — but Meet paints the control bar in stages and reading too early would report
+ * a rotted selector on a perfectly good call.
+ */
+const MIC_TOGGLE_TIMEOUT_MS = 10_000;
+
+/**
+ * Patience for the reads *after* the toggle has already been found once.
+ *
+ * Short on purpose: the first read establishes the control exists, so spending the
+ * full ten seconds on each confirmation only makes a failing unmute take a minute and
+ * a half to say so — while the room watches a silent tile.
+ */
+const MIC_RECHECK_MS = 1_500;
+
+/** Cap on one unmute click. */
+const MIC_CLICK_TIMEOUT_MS = 3_000;
+
+/**
+ * Tries at unmuting, and how long to let the toggle settle before believing a read.
+ *
+ * Bounded because the alternative to giving up is not "eventually succeeding", it is
+ * an agent sitting in a call it cannot be heard in: at some point the honest answer is
+ * to report the failure and let the runtime leave.
+ */
+const MIC_UNMUTE_ATTEMPTS = 4;
+const MIC_SETTLE_MS = 750;
+
+/**
+ * Wall-clock cap on the whole unmute phase, retries and dialog sweeps included.
+ *
+ * Belt to the attempt count's braces, and the bound that matters: this runs *after*
+ * `waitForAdmission` returns, so `admissionTimeoutMs` no longer caps anything, and a
+ * caller that asked for a short join would otherwise get however long four rounds of
+ * probes happen to take.
+ *
+ * Tested between attempts, not inside one, so the real ceiling is this plus a final
+ * attempt (worst case another ~20s of probes and clicks). Cutting an attempt off
+ * mid-click would buy tighter arithmetic and cost the one thing this phase is for.
+ */
+const MIC_PHASE_TIMEOUT_MS = 30_000;
+
+/**
  * The slice of the DOM the participant-count probe touches.
  *
  * Structural rather than the real `Document`, because this runtime compiles
@@ -367,6 +460,23 @@ export class GoogleMeetProvider implements MeetingProvider {
       if (attempt.rejection) {
         return { status: 'denied', step: 'lobby', reason: this.explainDenial(attempt.rejection) };
       }
+      // One cause is worth telling apart from selector rot, because it is the one an
+      // operator can fix: Meet offering to let us in without a microphone means it
+      // found no working capture device, and its panel sits over the join button. That
+      // used to be clicked, which got us into calls as a participant who could never
+      // say anything; now it stops the join, so the reason had better name the mic
+      // rather than blame the page.
+      if (await this.noMicrophoneOffer(page)) {
+        return {
+          status: 'failed',
+          step: 'microphone',
+          reason:
+            "Google Meet couldn't find a working microphone in my browser — it only " +
+            'offered to let me in without one, which would have put me in the call ' +
+            "unable to say anything, so I didn't join. The container's audio devices " +
+            'are the place to look.',
+        };
+      }
       // Deliberately not split further by "did we run out of time". The button hunt
       // always runs to the lobby deadline, so an elapsed-budget test is true on every
       // failure path and would make the selector-rot message below unreachable —
@@ -414,7 +524,14 @@ export class GoogleMeetProvider implements MeetingProvider {
   private async dismissDeviceDialogs(page: Page): Promise<void> {
     // "Got it" dismisses the sign-in tooltip, which floats over the join column
     // and can otherwise intercept a click meant for the controls beneath it.
-    const labels = ['Got it', 'Continue without microphone and camera', 'Continue without microphone', 'Dismiss'];
+    //
+    // "Continue without microphone" and "Continue without microphone and camera"
+    // used to be on this list, and pressing them is how a bot ends up in a call
+    // with no capture device — silent for the whole meeting, and past the point
+    // where unmuting can help, because there is no device left to unmute. Meet only
+    // offers them when it thinks the mic is unavailable; the answer is to let that
+    // join fail loudly rather than to accept a mute we cannot recover from.
+    const labels = ['Got it', 'Dismiss'];
     for (const label of labels) {
       try {
         const button = page.getByRole('button', { name: new RegExp(label, 'i') }).first();
@@ -425,6 +542,27 @@ export class GoogleMeetProvider implements MeetingProvider {
       } catch {
         // None of these are required — absence is the normal case.
       }
+    }
+  }
+
+  /**
+   * Is Meet offering to let us in without a microphone?
+   *
+   * Read, never pressed — see `dismissDeviceDialogs`. Meet paints this offer when it
+   * has no capture device to give the tab, and the panel carrying it sits over the
+   * join button, so the visible symptom is a join that never finds its button. That
+   * is a true observation and a useless report: it points at Meet's markup when the
+   * fault is the container's audio devices.
+   *
+   * Text rather than a selector because the wording is what we actually know; the
+   * panel's structure we do not. A miss just falls through to the generic message.
+   */
+  private async noMicrophoneOffer(page: Page): Promise<boolean> {
+    try {
+      const text = (await page.locator('body').innerText({ timeout: 2_000 })) ?? '';
+      return /continue without (a )?microphone/i.test(text);
+    } catch {
+      return false;
     }
   }
 
@@ -447,6 +585,166 @@ export class GoogleMeetProvider implements MeetingProvider {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Clear a modal off the call controls, pressing only buttons that just dismiss.
+   *
+   * Returns quietly when there is no dialog, which is the common case. When there is
+   * one it doesn't recognise, it says so and leaves it: the click it would otherwise
+   * guess at is the one that joins without a microphone. See `DIALOG_DISMISS_PATTERNS`.
+   *
+   * The button hunt is page-wide rather than scoped inside the dialog. Scoping reads
+   * better but buys nothing here — the allowlist is anchored to whole names that only
+   * ever mean "dismiss", so pressing one that belongs to something else on the page is
+   * harmless, and the dialog is what we already know is on top.
+   */
+  private async dismissBlockingDialogs(page: Page): Promise<void> {
+    const dialog = page.locator(BLOCKING_DIALOG_SELECTOR).first();
+
+    for (let pass = 1; pass <= DIALOG_SWEEP_PASSES; pass += 1) {
+      if (!(await appears(dialog, DIALOG_PROBE_MS))) return;
+
+      for (const pattern of DIALOG_DISMISS_PATTERNS) {
+        try {
+          const button = page.getByRole('button', { name: pattern }).first();
+          if (!(await appears(button, DIALOG_PROBE_MS))) continue;
+          await button.click({ timeout: 2_000 });
+          logger.info(`[Meeting] Cleared a dialog off the call controls (matched ${pattern})`);
+          break;
+        } catch {
+          // Went stale mid-click, or something else took it — try the next phrasing.
+        }
+      }
+    }
+
+    // Judged on the dialog rather than on "did I click something", because the two
+    // can disagree: the hunt is page-wide, so a match can belong to something else
+    // entirely and leave the modal exactly where it was.
+    if (await appears(dialog, DIALOG_PROBE_MS)) {
+      logger.warn(
+        '[Meeting] A dialog is still covering the call controls — either its buttons ' +
+          'are not ones I will press, or clearing it did not work',
+      );
+    }
+  }
+
+  /**
+   * Is the microphone muted? `null` means the toggle could not be read at all.
+   *
+   * Three-valued on purpose. "Couldn't read it" must not collapse into "it's fine":
+   * that reading is what a rotted selector produces, and treating it as unmuted is
+   * indistinguishable from success right up to the point where nobody can hear the
+   * agent. Anything other than a literal `"false"` counts as muted for the same
+   * reason — an attribute Meet renames is not permission to assume the best.
+   */
+  private async micMuted(page: Page, timeoutMs = MIC_TOGGLE_TIMEOUT_MS): Promise<boolean | null> {
+    const toggle = page.locator(MIC_TOGGLE_SELECTOR).first();
+    if (!(await appears(toggle, timeoutMs))) return null;
+    try {
+      const muted = await toggle.getAttribute('data-is-muted');
+      if (muted === null) return null;
+      return muted !== 'false';
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get the microphone live, and report whether Meet had muted us.
+   *
+   * Meet auto-mutes a new joiner once a call is past a handful of participants, which
+   * is exactly the meeting anyone bothers to send an agent to. Nothing downstream can
+   * see it — admission, the participant count and the Realtime socket all read healthy
+   * while the agent greets a room that hears nothing — so this runs before the join is
+   * reported as successful, and failing it is a failed join.
+   */
+  private async ensureMicOn(page: Page): Promise<{ live: boolean; mutedOnEntry: boolean }> {
+    const initial = await this.micMuted(page);
+
+    if (initial === null) {
+      logger.error(
+        '[Meeting] Could not read the microphone toggle on the call UI — the Meet ' +
+          'controls may have changed, and I cannot tell whether the room can hear me',
+      );
+      // Reported as *not* muted on entry, even though nothing was confirmed. This is
+      // a measurement of how often the platform auto-mutes a joiner, and it is only
+      // ever emitted when the operator has turned the veto off — i.e. exactly during
+      // the outage where an unreadable toggle would otherwise counterfeit a spike in
+      // the number the decision to keep this step will be made on.
+      return { live: false, mutedOnEntry: false };
+    }
+
+    if (!initial) {
+      logger.info('[Meeting] Microphone was already live on arrival');
+      return { live: true, mutedOnEntry: false };
+    }
+
+    logger.info('[Meeting] Meet put me in the call muted — unmuting');
+    const deadline = Date.now() + MIC_PHASE_TIMEOUT_MS;
+    for (let attempt = 1; attempt <= MIC_UNMUTE_ATTEMPTS && Date.now() < deadline; attempt += 1) {
+      // Every attempt, not just the first: the dialog that eats the click can arrive
+      // after the sweep, and a click that was swallowed leaves no trace beyond the
+      // toggle not having moved.
+      await this.dismissBlockingDialogs(page);
+
+      try {
+        await page.locator(MIC_TOGGLE_SELECTOR).first().click({ timeout: MIC_CLICK_TIMEOUT_MS });
+      } catch (err) {
+        // Reported rather than swallowed: "subtree intercepts pointer events" here is
+        // the scrim, and it is the difference between a UI change and a covered button.
+        logger.info(
+          `[Meeting] Unmute attempt ${attempt} did not land: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      await page.waitForTimeout(MIC_SETTLE_MS);
+      // The short patience: the toggle was found on the read above, so a confirmation
+      // that has to wait ten seconds for it is waiting for something else.
+      let after = await this.micMuted(page, MIC_RECHECK_MS);
+      // "Couldn't read it" must not fall through to the next attempt as if it said
+      // muted: if the click did land, clicking again would mute a microphone that is
+      // now live — the original bug, re-entered through the retry. Pay the full
+      // patience once before spending an attempt on it.
+      if (after === null) after = await this.micMuted(page);
+      if (after === false) {
+        logger.info(`[Meeting] Microphone is live (took ${attempt} attempt(s))`);
+        return { live: true, mutedOnEntry: true };
+      }
+    }
+
+    logger.error('[Meeting] Microphone is still muted after every attempt');
+    return { live: false, mutedOnEntry: true };
+  }
+
+  /**
+   * Turn "we're in the room" into "the room can hear us", or into a failed join.
+   *
+   * Both admission paths go through here so neither can grow a `status: 'admitted'`
+   * that skipped the microphone — the point of the interface's contract is that
+   * `admitted` carries that guarantee, and the way it would rot is a second return
+   * added next to the first.
+   */
+  private async confirmAdmitted(page: Page): Promise<JoinOutcome> {
+    const mic = await this.ensureMicOn(page);
+    if (mic.live) return { status: 'admitted', mutedOnEntry: mic.mutedOnEntry };
+
+    if (!config.meetingRequireMicrophone) {
+      logger.warn(
+        '[Meeting] Joining anyway with a microphone I could not confirm is live ' +
+          '(MEETING_REQUIRE_MICROPHONE is off) — the call may hear nothing from me',
+      );
+      return { status: 'admitted', mutedOnEntry: mic.mutedOnEntry };
+    }
+
+    return {
+      status: 'failed',
+      step: 'microphone',
+      reason:
+        "I got into the meeting but couldn't turn my microphone on, so nobody there " +
+        'would have been able to hear me. I left rather than sit in the call silently.',
+    };
   }
 
   /**
@@ -538,7 +836,7 @@ export class GoogleMeetProvider implements MeetingProvider {
     while (Date.now() < deadline) {
       if (await this.isInCall(page)) {
         logger.info(`[Meeting] Admitted to the call after ${Date.now() - startedAt}ms`);
-        return { status: 'admitted' };
+        return this.confirmAdmitted(page);
       }
 
       const rejection = await this.confirmedRejection(page);
@@ -547,7 +845,7 @@ export class GoogleMeetProvider implements MeetingProvider {
         // window. Being in the room outranks any text on it.
         if (await this.isInCall(page)) {
           logger.info('[Meeting] Admitted while a rejection message was being confirmed');
-          return { status: 'admitted' };
+          return this.confirmAdmitted(page);
         }
         return { status: 'denied', step: 'admission', reason: this.explainDenial(rejection) };
       }

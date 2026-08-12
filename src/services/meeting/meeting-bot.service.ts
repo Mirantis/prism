@@ -64,6 +64,17 @@ const SEED_READ_ATTEMPTS = 5;
 const SEED_READ_INTERVAL_MS = 700;
 
 /**
+ * How long to wait for the browser to open the virtual microphone after the unmute.
+ *
+ * Chromium opens the capture device a moment after the toggle flips, not with it, and
+ * on a cold container the first open is the slowest thing in the join. Generous
+ * because the cost of being impatient is abandoning a call that was about to work,
+ * while the cost of waiting is a few seconds added to a join that has already spent
+ * minutes in a lobby.
+ */
+const MIC_CAPTURE_TIMEOUT_MS = 15_000;
+
+/**
  * How long the agent must read as the only one left before it leaves.
  *
  * More than a single reading because a count of 1 is also what a brief UI
@@ -429,11 +440,44 @@ export class MeetingBotService {
         return;
       }
 
+      // The provider has the meeting's word that the microphone is unmuted. This is the
+      // layer under it, which only the runtime can see: whether the browser ever opened
+      // a capture device at all. A live-looking toggle over a device Chromium never
+      // opened is indistinguishable from a working agent right up to the moment
+      // somebody asks it something.
+      if (config.meetingRequireMicrophone) {
+        // Not a silent skip: reaching admission without an audio stack is a bug in this
+        // service, not a condition to tolerate, so let the catch below report it.
+        const audio = this.audio;
+        if (!audio) throw new Error('admitted to a call with no audio stack');
+
+        const capturing = await audio.waitForMicCapture(MIC_CAPTURE_TIMEOUT_MS);
+        // The wait can outlive the call, and the stack it asked about may already be
+        // torn down — reporting this against the next meeting would be worse than
+        // missing it.
+        if (this.epoch !== epoch) return;
+
+        if (!capturing) {
+          this.failStep = 'microphone';
+          await this.notifyThread(
+            `I got into the ${provider.displayName} call but my microphone never opened, ` +
+              `so nobody there would have heard me. I've left rather than sit in it silently.`,
+          );
+          await this.teardown('error');
+          return;
+        }
+      }
+
       this.state = 'in_call';
       this.joinedAt = Date.now();
       trackEvent('meeting joined', input.userId, {
         provider: provider.name,
         response_mode: this.responseMode,
+        // How often the platform auto-mutes a new joiner. Worth a property because it
+        // is the number whose absence let a permanently silent agent go unnoticed: if
+        // it reads near-zero in production, this step is doing nothing and can go, and
+        // if it reads high, it is load-bearing.
+        muted_on_entry: String(outcome.mutedOnEntry),
       });
 
       // Tell the model where it is and let it introduce itself, so the room isn't

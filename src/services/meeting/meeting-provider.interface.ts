@@ -21,12 +21,24 @@ import type { Page } from 'playwright-core';
  * it answers "which step is failing in production" without carrying page text. The
  * `reason` stays the thing a human reads.
  */
-export type JoinStep = 'page_load' | 'lobby' | 'join_button' | 'admission';
+export type JoinStep = 'page_load' | 'lobby' | 'join_button' | 'admission' | 'microphone';
 
 /** Outcome of trying to get into a call. */
 export type JoinOutcome =
-  /** In the room — audio flows from here. */
-  | { status: 'admitted' }
+  /** In the room, unmuted — audio flows from here. */
+  | {
+      status: 'admitted';
+      /**
+       * Whether the platform had us muted on arrival, before the provider unmuted.
+       *
+       * Carried on the outcome rather than read back afterwards because it is a
+       * fact about the join that stops being observable the moment it is fixed.
+       * Emitted as telemetry: how often a platform auto-mutes new joiners is what
+       * says whether this whole step still earns its keep, and it is the number
+       * whose absence let a permanently silent bot go unnoticed.
+       */
+      mutedOnEntry: boolean;
+    }
   /** A host actively refused, or the waiting room timed out. */
   | { status: 'denied'; reason: string; step: JoinStep }
   /** Never got as far as the waiting room (bad link, meeting over, UI changed). */
@@ -101,6 +113,16 @@ export interface MeetingProvider {
    * Resolves with the outcome rather than throwing for the expected endings
    * (denied, timed out) — those are meeting facts to report to the user, not
    * errors. Throwing is reserved for genuine breakage.
+   *
+   * **`admitted` means the room can hear us.** A platform that auto-mutes new
+   * joiners — Meet does, once a call is past a handful of participants — must
+   * unmute before reporting success, and report `failed` with step `microphone`
+   * if it cannot. This is a contract rather than an implementation detail because
+   * getting it wrong is invisible from the inside: the bot sits in the call
+   * greeting a room that hears nothing, and every signal the runtime watches
+   * (admission, participant count, the Realtime socket) looks perfectly healthy.
+   * Whether the capture device then actually opens is the runtime's half of the
+   * check — the provider owns the browser, not the audio stack.
    */
   join(page: Page, options: JoinOptions): Promise<JoinOutcome>;
 

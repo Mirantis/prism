@@ -332,9 +332,20 @@ is between you and your OpenAI account settings.
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used to decide whether the agent was spoken to. Runs on every call, billed per minute; never fed to the model. The default is the only streaming model that also accepts name hints — see [Names](#names). | `gpt-live-transcribe` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |
+| `MEETING_REQUIRE_MICROPHONE` | Leave the call if the microphone can't be confirmed live, instead of staying in it inaudible. Set `false`/`0`/`no`/`off` to join anyway. | on |
 
 Reaching the lobby has its own budget, so a slow-loading Meet page never eats into
 the waiting-room time.
+
+`MEETING_REQUIRE_MICROPHONE` is worth knowing about before you turn it off. Google
+Meet mutes a new joiner automatically once a call is past a handful of people, so the
+agent unmutes itself on the way in — that part always happens — and then checks two
+things: that Meet's own microphone control reads live, and that the browser actually
+opened the virtual capture device. Turning the setting off keeps the unmute and drops
+the check, which means a call the agent cannot be heard in looks like a normal call
+from the outside. The reason to do it anyway is the opposite failure: if a Meet UI
+change breaks the *reading* rather than the microphone, every join fails until the
+selector is fixed, and joining muted beats not joining.
 
 ## When it doesn't work
 
@@ -366,12 +377,32 @@ the next join log in fresh. A screenshot of any failed join lands at
 **Diagnosing which step failed.** Each join logs the elapsed time for page load,
 the join-button hunt and the admission wait, and a failed attempt tags its
 `meeting ended` telemetry event with `fail_step` — one of `page_load`, `lobby`,
-`join_button` or `admission`.
+`join_button`, `admission` or `microphone`.
 
-**It's in the call but silent, or nobody can hear it.** Almost always the audio
-devices: check the runtime log for `parec`/`pacat` warnings. A container needs
-enough `/dev/shm` for Chromium — the runtime already passes
+**It left saying its microphone never opened, or that it couldn't turn it on.**
+Working as intended: it would otherwise have sat in the meeting inaudible while
+looking perfectly healthy. Meet auto-mutes new joiners in larger calls, so the agent
+unmutes itself and then confirms both the meeting's microphone control and the
+browser's capture device before it settles in. The log names which half failed —
+`Microphone is still muted after every attempt` (the control never flipped, usually a
+dialog covering the call controls or a Meet UI change) or `bot_mic is still not being
+captured` (the browser never opened the device, so look for `parec`/`pacat` warnings
+and check `/dev/shm`). `MEETING_REQUIRE_MICROPHONE=false` makes it join anyway.
+
+**It says Meet only offered to let it in without a microphone.** Meet paints that
+offer when it can't find a capture device for the tab at all, and the panel carrying
+it covers the join button — so this used to surface as "the join button never became
+available", which pointed at the wrong thing entirely. Fix the container's audio
+devices (the same `parec`/`pacat` and `/dev/shm` checks as above); no browser-side
+setting will help.
+
+**It's in the call but silent, or nobody can hear it.** If it stayed in the call, the
+audio devices are the usual cause: check the runtime log for `parec`/`pacat` warnings.
+A container needs enough `/dev/shm` for Chromium — the runtime already passes
 `--disable-dev-shm-usage`, but a heavily constrained container can still starve it.
+Note that the agent no longer accepts Meet's "Continue without microphone" offer:
+taking it joined the call with no capture device at all, which nothing later could
+undo.
 
 **It joined but hears nothing.** Confirm the other participants aren't muted, then
 check that the meeting is actually sending audio to the browser (Meet occasionally
