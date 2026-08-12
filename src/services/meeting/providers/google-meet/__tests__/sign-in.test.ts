@@ -119,9 +119,29 @@ describe('sign-in state', () => {
 
     await signInToGoogle(page as never);
 
-    expect(goto).toHaveBeenCalledTimes(2);
+    // Counted by destination, not in total: a failed attempt now parks the page on
+    // about:blank before retrying, so the raw call count includes that too.
+    const probes = goto.mock.calls.filter(([url]) =>
+      String(url).startsWith('https://myaccount.google.com'),
+    );
+    expect(probes).toHaveLength(2);
     // Reused rather than re-entered: no sign-in form was ever asked for.
     expect(signInFailureReason()).toBeNull();
+  });
+
+  it('leaves the page still after a failed sign-in', async () => {
+    // The failure this prevents is reported two steps later and names the wrong
+    // thing: a join told the user their meeting link was interrupted by a Google
+    // sign-in URL, because the abandoned redirect landed on top of it.
+    config.googleBotEmail = 'bot@example.com';
+    config.googleBotPassword = 'hunter2';
+    const goto = vi.fn().mockRejectedValue(new Error('net::ERR_TUNNEL_CONNECTION_FAILED'));
+    const page = { goto, url: () => 'https://www.google.com/', waitForTimeout: async () => {} };
+
+    await signInToGoogle(page as never);
+
+    const [lastUrl] = goto.mock.calls[goto.mock.calls.length - 1];
+    expect(lastUrl).toBe('about:blank');
   });
 
   it('is not authenticated with no account configured', async () => {

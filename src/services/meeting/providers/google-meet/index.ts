@@ -291,11 +291,40 @@ export class GoogleMeetProvider implements MeetingProvider {
     return outcome;
   }
 
+  /**
+   * Load the meeting, once more if another navigation lands on top of it.
+   *
+   * Playwright rejects a `goto` that a *different* navigation interrupts, and one can
+   * still be in flight from the sign-in that ran seconds earlier: Google's redirect
+   * chains outlive the call that started them. The sign-in now parks the page before
+   * handing it over, so this should be rare — but "rare" and "never" are different
+   * things when the cost of being wrong is a user told their meeting link is broken.
+   *
+   * Only that one error is retried. Everything else — a dead link, a timeout, no
+   * network — is a real answer and is reported as it stands.
+   */
+  private async loadMeetingPage(page: Page, url: string): Promise<void> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_READY_TIMEOUT_MS });
+        return;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt > 1 || !/interrupted by another navigation/i.test(message)) throw err;
+        logger.info('[Meeting] Another navigation landed on the meeting page — loading it again');
+        // From a still page, or the interloper's next hop takes the retry down too and
+        // reports the same misleading message this exists to prevent.
+        await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 10_000 })
+          .catch(() => undefined);
+      }
+    }
+  }
+
   private async attemptJoin(page: Page, options: JoinOptions): Promise<JoinOutcome> {
     const startedAt = Date.now();
 
     try {
-      await page.goto(options.url, { waitUntil: 'domcontentloaded', timeout: PAGE_READY_TIMEOUT_MS });
+      await this.loadMeetingPage(page, options.url);
     } catch (err) {
       return { status: 'failed', step: 'page_load', reason: `Could not load the meeting page: ${err instanceof Error ? err.message : String(err)}` };
     }

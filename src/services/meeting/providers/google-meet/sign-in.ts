@@ -221,6 +221,36 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
     state.signInFailure = message;
     logger.warn(`[Meeting] Sign-in failed: ${message}`);
   }
+
+  // Whatever happened above, leave the page still. A sign-in that failed is the one
+  // most likely to be mid-redirect, and the very next thing this browser does is
+  // load the meeting — which is how a sign-in problem came to be reported to users
+  // as a broken meeting link.
+  await quiesce(page);
+}
+
+/**
+ * Park the page on a blank document so that nothing is still navigating.
+ *
+ * A failed sign-in does not leave a still page. Google's redirect chains outlive the
+ * navigation that started them — an error page about to commit, a `ServiceLogin`
+ * bounce still resolving — and whatever navigates next inherits them. The shape this
+ * takes in production is a join reporting
+ *
+ *     Could not load the meeting page: Navigation to "https://meet.google.com/abc"
+ *     is interrupted by another navigation to
+ *     "https://accounts.google.com/v3/signin/identifier?continue=..."
+ *
+ * which reads as a broken meeting link and is nothing of the sort. The sign-in
+ * failure is the real story and it was two steps upstream.
+ *
+ * Best effort: if even `about:blank` will not load, the caller has worse problems
+ * than a page that is still moving.
+ */
+async function quiesce(page: Page): Promise<void> {
+  await page
+    .goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 10_000 })
+    .catch(() => undefined);
 }
 
 /**
@@ -259,6 +289,10 @@ async function isSignedIn(page: Page): Promise<boolean> {
       // Loud, and never at debug: this used to be the quietest line in the file and
       // the one that most often decided a join.
       logger.info(`[Meeting] Sign-in check could not complete (attempt ${attempt}): ${String(err)}`);
+      // Before the retry as well as before returning: the failed navigation is still
+      // settling, and the next `goto` — here or in the sign-in that follows — is
+      // otherwise interrupted by it.
+      await quiesce(page);
     }
   }
   logger.warn('[Meeting] Could not establish whether the profile is signed in — assuming it is not');
