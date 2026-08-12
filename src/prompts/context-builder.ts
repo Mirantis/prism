@@ -688,7 +688,7 @@ You are a subagent invoked by a parent agent. Your task is to execute the specif
 function getConciseDeliveryInstructions(): string {
   return `# Response Delivery (Concise Mode)
 
-Only your **final message** in a multi-step turn is delivered to the user. Intermediate text you produce while using tools is saved but not shown. Therefore your final message must be self-contained: state the outcome of the work you did, include any relevant results, and do not reference earlier narration the user cannot see.`;
+Only your **final message** in a multi-step turn is delivered to the user. Intermediate text you produce while using tools is saved but not shown. Therefore your final message must be self-contained: state the outcome of the work you did, include any relevant results, and do not reference earlier narration the user cannot see, unless specifically asked by the user.`;
 }
 
 // Exported for unit tests: these sections read the filesystem, so asserting on
