@@ -83,10 +83,6 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
         url: z
           .string()
           .describe('The meeting link — a Google Meet URL, e.g. https://meet.google.com/abc-defg-hij'),
-        displayName: z
-          .string()
-          .optional()
-          .describe('Name shown to the other participants. Defaults to your own name.'),
         responseMode: z
           .enum(['auto', 'open', 'addressed'])
           .optional()
@@ -97,7 +93,7 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
             'know stays one-to-one. "addressed" always waits to be named.',
           ),
       }),
-      execute: async ({ url, displayName, responseMode }) => {
+      execute: async ({ url, responseMode }) => {
         const provider = meetingBotService.findProvider(url);
         if (!provider) {
           return {
@@ -113,7 +109,6 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
           userId: input.userId,
           agentId: input.agentId,
           threadId: input.threadId,
-          displayName,
           responseMode,
         });
 

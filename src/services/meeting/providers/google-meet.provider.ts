@@ -21,7 +21,9 @@
  */
 
 import type { Locator, Page } from 'playwright-core';
+import { config } from '../../../config';
 import { logger } from '../../../logger';
+import { isAuthenticated, signInFailureReason, signInToGoogle } from './google-meet/sign-in';
 import type { JoinOptions, JoinOutcome, MeetingProvider } from '../meeting-provider.interface';
 
 /**
@@ -249,10 +251,26 @@ export class GoogleMeetProvider implements MeetingProvider {
    * Meet denies an automated anonymous guest before a host is ever prompted — the
    * `CreateMeetingDevice` RPC answers 403 a second after "Ask to join". Real Chrome,
    * patched automation, human-like pacing and honest user agents all hit the same
-   * wall; a signed-in account walks in. So this is policy, not something a better
-   * guest flow could get past.
+   * wall; a signed-in account walks in. So an account is not a preference, and a
+   * runtime without one cannot join at all.
    */
-  readonly requiresSignIn = true;
+  configurationError(): string | null {
+    if (config.googleBotEmail && config.googleBotPassword) return null;
+    return (
+      `I can't join ${this.displayName} without a Google account: it refuses ` +
+      `automated guests before a host is ever asked. Set GOOGLE_BOT_EMAIL and ` +
+      `GOOGLE_BOT_PASSWORD and I'll be able to join.`
+    );
+  }
+
+  /**
+   * Never rejects — see `sign-in.ts`. A failed login is not a reason to refuse a
+   * join, because the profile's cookies decide whether the browser is signed in,
+   * not this call's opinion of them.
+   */
+  async signIn(page: Page, options?: { force?: boolean }): Promise<void> {
+    await signInToGoogle(page, options);
+  }
 
   matchesUrl(url: string): boolean {
     try {
@@ -292,7 +310,7 @@ export class GoogleMeetProvider implements MeetingProvider {
     // `domcontentloaded` it can equally be a frame the SPA is about to replace, so
     // this has to be the confirmed reading rather than a single glance.
     const earlyRejection = await this.confirmedRejection(page);
-    if (earlyRejection) return { status: 'denied', step: 'lobby', reason: this.explainDenial(earlyRejection, options) };
+    if (earlyRejection) return { status: 'denied', step: 'lobby', reason: this.explainDenial(earlyRejection) };
 
     await this.dismissDeviceDialogs(page);
     // Before the camera toggle and the join click: Meet keeps the join button
@@ -303,12 +321,12 @@ export class GoogleMeetProvider implements MeetingProvider {
     // and let the caller sign in again, rather than spending a lobby wait to be
     // told no. (An unauthenticated join is a different case — that name field is
     // the expected path, not a symptom.)
-    if (options.signedIn === true && (await this.guestNameFieldPresent(page, lobbyDeadline))) {
+    if (isAuthenticated() && (await this.guestNameFieldPresent(page, lobbyDeadline))) {
       logger.warn(
         '[Meeting] Meet is treating this signed-in profile as a guest — ' +
           'the session is stale, so signing in again before trying the link',
       );
-      return { status: 'stale_session' };
+      return { status: 'reauth_required' };
     }
 
     await this.turnOffCamera(page);
@@ -318,7 +336,7 @@ export class GoogleMeetProvider implements MeetingProvider {
       // Already confirmed inside the loop — reported as-is rather than re-confirmed,
       // because the page may have moved on since.
       if (attempt.rejection) {
-        return { status: 'denied', step: 'lobby', reason: this.explainDenial(attempt.rejection, options) };
+        return { status: 'denied', step: 'lobby', reason: this.explainDenial(attempt.rejection) };
       }
       // Deliberately not split further by "did we run out of time". The button hunt
       // always runs to the lobby deadline, so an elapsed-budget test is true on every
@@ -345,13 +363,14 @@ export class GoogleMeetProvider implements MeetingProvider {
    * moments earlier) and used to say nothing, so an expired bot password read to
    * the user as "the meeting has ended".
    */
-  private explainDenial(reason: string, options: JoinOptions): string {
+  private explainDenial(reason: string): string {
     // Only the catch-all wall is ambiguous enough to be worth annotating; "a host
     // denied the request" is already unambiguous and needs no help.
-    if (!options.signInFailureReason || reason !== CATCH_ALL_REJECTION) return reason;
+    const failure = signInFailureReason();
+    if (!failure || reason !== CATCH_ALL_REJECTION) return reason;
     return (
       `${reason} I also couldn't sign in to the Google account configured for me ` +
-      `(${options.signInFailureReason}), and Google refuses automated anonymous guests — ` +
+      `(${failure}), and Google refuses automated anonymous guests — ` +
       `that is the most likely cause.`
     );
   }
@@ -501,7 +520,7 @@ export class GoogleMeetProvider implements MeetingProvider {
           logger.info('[Meeting] Admitted while a rejection message was being confirmed');
           return { status: 'admitted' };
         }
-        return { status: 'denied', step: 'admission', reason: this.explainDenial(rejection, options) };
+        return { status: 'denied', step: 'admission', reason: this.explainDenial(rejection) };
       }
 
       await page.waitForTimeout(1_500);

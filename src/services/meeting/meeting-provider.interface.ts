@@ -32,7 +32,9 @@ export type JoinOutcome =
   /** Never got as far as the waiting room (bad link, meeting over, UI changed). */
   | { status: 'failed'; reason: string; step: JoinStep }
   /**
-   * The profile believed it was signed in and the platform disagreed.
+   * The credentials we hold were not accepted, and signing in again may fix it.
+   *
+   * Platform-neutral by intent — an expired SSO session on Teams is the same shape.
    *
    * Worth its own outcome because it is the one failure that heals itself: sign in
    * again and the same link works. Previously the join went ahead as an anonymous
@@ -41,12 +43,10 @@ export type JoinOutcome =
    * again. Observed three times in one afternoon on a profile whose own account
    * page still loaded, so it is routine rather than exotic.
    */
-  | { status: 'stale_session' };
+  | { status: 'reauth_required' };
 
 export interface JoinOptions {
   url: string;
-  /** Name shown to the other participants. */
-  displayName: string;
   /**
    * Cap on the waiting room, measured from the moment the join request goes in.
    *
@@ -55,26 +55,6 @@ export interface JoinOptions {
    * the provider having waited even once.
    */
   admissionTimeoutMs: number;
-  /**
-   * Whether the browser profile is signed into a Google account.
-   *
-   * Lets a provider tell two very different situations apart. Meet offers a guest
-   * name field both to an anonymous visitor *and* to a signed-in one whose meeting
-   * has ended — so seeing that field while signed in is strong evidence the link is
-   * dead, not that sign-in failed. Without this the two look identical in the logs,
-   * which cost real debugging time.
-   */
-  signedIn?: boolean;
-  /**
-   * Why signing in failed, when an account *was* configured.
-   *
-   * Meet refuses automated anonymous guests behind the same wall it shows for an
-   * ended meeting and a dead link, so without this the runtime reported an expired
-   * bot password as "the meeting has ended" — knowing the real answer and not saying
-   * it. Absent when sign-in succeeded, or when no account is configured at all
-   * (joining as a guest is then a deliberate choice, not a failure).
-   */
-  signInFailureReason?: string;
 }
 
 export interface MeetingProvider {
@@ -85,15 +65,32 @@ export interface MeetingProvider {
   readonly displayName: string;
 
   /**
-   * Whether the platform refuses an unauthenticated bot outright.
+   * Why this provider cannot run at all right now, or null when it can.
    *
-   * Google Meet does: an automated anonymous guest is denied before a host is
-   * prompted, so a join without an account is not a join that might fail — it is one
-   * that cannot succeed. The runtime checks this before building a call's worth of
-   * infrastructure. A platform that admits named guests leaves it false and uses
-   * `JoinOptions.displayName`.
+   * Asked before a call's worth of infrastructure is built. Google Meet answers
+   * when no account is configured: it denies an automated anonymous guest before a
+   * host is ever prompted, so that join cannot succeed, and discovering it in the
+   * lobby costs a virtual display, an audio daemon, a browser and a metered
+   * Realtime socket first.
+   *
+   * The provider answers rather than the runtime because only it knows what it
+   * needs — the lifecycle owner should not be reading one platform's credentials.
    */
-  readonly requiresSignIn: boolean;
+  configurationError(): string | null;
+
+  /**
+   * Authenticate the browser profile, if the platform needs it.
+   *
+   * **Must not reject.** A failed sign-in is non-fatal by design: whether the
+   * browser is signed in is decided by the profile's cookies, not by this call's
+   * opinion of them, and a check reporting a challenge for a session that then
+   * worked is something we have watched happen. Refusing a join on it would refuse
+   * joins that succeed.
+   *
+   * `force` skips any "am I already signed in?" probe. The caller passes it after a
+   * `reauth_required`, where that probe is precisely what was wrong.
+   */
+  signIn?(page: Page, options?: { force?: boolean }): Promise<void>;
 
   /** Whether this provider handles the given link. */
   matchesUrl(url: string): boolean;

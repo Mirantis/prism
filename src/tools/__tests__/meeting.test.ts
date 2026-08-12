@@ -101,16 +101,12 @@ describe('getMeetingTools', () => {
       {
         url: 'https://meet.google.com/abc-defg-hij',
         responseMode: 'addressed',
-        displayName: 'Prism Bot',
       },
       { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
     );
 
     expect(mockJoin).toHaveBeenCalledWith(
-      expect.objectContaining({
-        responseMode: 'addressed',
-        displayName: 'Prism Bot',
-      }),
+      expect.objectContaining({ responseMode: 'addressed' }),
     );
   });
 
