@@ -12,7 +12,9 @@ import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 
-const { resolveBrowser, isBrowserAvailable } = await import('../browser-stack');
+const { resolveBrowser, isBrowserAvailable, bypassProxyForLoopback } = await import(
+  '../browser-stack'
+);
 
 /**
  * A page whose URL advances one step per `waitForTimeout`, standing in for Google's
@@ -115,6 +117,114 @@ describe('stale profile locks', () => {
     // A first-ever run has no locks; clearing must not be an error path.
     for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
       await expect(fs.unlink(path.join(profile, name)).catch(() => 'absent')).resolves.toBe('absent');
+    }
+  });
+});
+
+/**
+ * Keeping the CDP handshake off the proxy.
+ *
+ * Found in production: a sandbox injected `HTTP_PROXY`/`HTTPS_PROXY` with no
+ * loopback exemption, so Playwright tunnelled its `http://127.0.0.1:<port>` fetch to
+ * the proxy, got an empty reply, and every join died as `socket hang up` 30 seconds
+ * in — pointing at the browser, which was healthy the whole time.
+ */
+describe('loopback proxy bypass', () => {
+  const saved = { NO_PROXY: process.env.NO_PROXY, no_proxy: process.env.no_proxy };
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it('exempts loopback when nothing is configured', () => {
+    delete process.env.NO_PROXY;
+    delete process.env.no_proxy;
+
+    bypassProxyForLoopback();
+
+    for (const key of ['NO_PROXY', 'no_proxy'] as const) {
+      expect(process.env[key]?.split(',')).toEqual(
+        expect.arrayContaining(['127.0.0.1', 'localhost', '::1']),
+      );
+    }
+  });
+
+  it('adds the literal address even when localhost is already exempt', () => {
+    // The trap this exists for. `NO_PROXY=localhost` is the conventional value and
+    // reads as correct, but Playwright string-matches the URL host with no name
+    // resolution — and the URL is built from `127.0.0.1`.
+    process.env.NO_PROXY = 'localhost';
+    delete process.env.no_proxy;
+
+    bypassProxyForLoopback();
+
+    expect(process.env.NO_PROXY?.split(',')).toContain('127.0.0.1');
+  });
+
+  it('keeps entries the deployment set for its own reasons', () => {
+    // Widening a bypass list is ours to do; narrowing it is not.
+    process.env.NO_PROXY = '.internal,10.0.0.0/8';
+
+    bypassProxyForLoopback();
+
+    const entries = process.env.NO_PROXY?.split(',') ?? [];
+    expect(entries).toContain('.internal');
+    expect(entries).toContain('10.0.0.0/8');
+    expect(entries).toContain('127.0.0.1');
+  });
+
+  it('does not accumulate duplicates when called for every join', () => {
+    process.env.NO_PROXY = '127.0.0.1';
+
+    bypassProxyForLoopback();
+    bypassProxyForLoopback();
+
+    const entries = process.env.NO_PROXY?.split(',') ?? [];
+    expect(entries.filter((entry) => entry === '127.0.0.1')).toHaveLength(1);
+  });
+
+  it('leaves a total bypass alone rather than narrowing it', () => {
+    // `*` already means "proxy nothing". Appending would be inert for Playwright but
+    // actively wrong for the `shell_exec` children that inherit this env: curl and
+    // Python honour `*` only as the whole value, never as one entry in a list.
+    process.env.NO_PROXY = '*';
+
+    bypassProxyForLoopback();
+
+    expect(process.env.NO_PROXY).toBe('*');
+  });
+
+  it('exempts loopback before it launches anything', async () => {
+    // The wiring, not the helper. The production bug was that `start()` never did
+    // this, and a test on the helper alone stays green if the call site is deleted.
+    //
+    // No browser is launched: resolving the binary is the first thing `start()` does
+    // after the bypass, so failing it there proves the env was already widened by
+    // the time anything could have used it.
+    delete process.env.NO_PROXY;
+    delete process.env.no_proxy;
+    const present = path.join(tmp, 'exists');
+    await fs.writeFile(present, '#!/bin/sh\n');
+    process.env.PRISM_CHROMIUM_PATH = present;
+
+    vi.doMock('fs', async () => {
+      const actual = await vi.importActual<typeof import('fs')>('fs');
+      const promises = { ...actual.promises, access: vi.fn().mockRejectedValue(new Error('ENOENT')) };
+      return { ...actual, promises, default: { ...actual, promises } };
+    });
+    vi.resetModules();
+    const { BrowserStack } = await import('../browser-stack');
+
+    try {
+      await expect(new BrowserStack().start({ env: {} })).rejects.toThrow(/container image/i);
+      expect(process.env.NO_PROXY?.split(',')).toContain('127.0.0.1');
+      expect(process.env.no_proxy?.split(',')).toContain('127.0.0.1');
+    } finally {
+      vi.doUnmock('fs');
+      vi.resetModules();
     }
   });
 });

@@ -56,9 +56,35 @@ docker run -d \
 headers, so in a Lens sandbox they can be managed credentials that the platform
 swaps at the network boundary — no real secret lands in the container.
 `GOOGLE_BOT_PASSWORD` cannot: the browser types it into Google's own sign-in form
-over TLS to Google, so the container has to hold the real value. If your deployment
-filters egress, allow `api.openai.com` along with Google's meeting and accounts
-hosts (including WebRTC UDP).
+over TLS to Google, so the container has to hold the real value.
+
+### Egress
+
+If your deployment filters outbound traffic, a meeting needs these:
+
+| Host | Why |
+|------|-----|
+| `api.openai.com:443` | The Realtime voice session. Goes direct — no managed-inference vendor serves this surface, so it is never proxied through a gateway |
+| `meet.google.com:443` | The call itself |
+| `accounts.google.com:443` | Signing the agent in |
+| `myaccount.google.com:443` | Checking whether the profile is still signed in. Easy to miss, and blocking it makes every join run a full login |
+| `www.google.com:443` | Where a signed-out profile lands; the sign-in check reads this |
+| Google's media servers, **UDP** | The audio itself. WebRTC, so not an HTTPS host |
+
+Chromium also reaches for its own update, variations and optimization-guide
+endpoints (`clients2.google.com`, `redirector.gvt1.com`,
+`optimizationguide-pa.googleapis.com`, `generativelanguage.googleapis.com` and
+similar). **None of these are needed** — meetings work with them denied, and they
+are worth recognising in an audit log so they don't read as the agent reaching for
+something it shouldn't.
+
+**If you use an HTTP proxy, exempt loopback.** The runtime drives Chromium over a
+debugging port on `127.0.0.1`, and a proxy that intercepts that connection breaks
+every join with a `socket hang up` roughly 30 seconds in — a message that blames the
+browser rather than the proxy. The runtime adds `127.0.0.1`, `localhost` and `::1` to
+`NO_PROXY` itself, so this should not bite; if you set `NO_PROXY` in your own
+deployment, include the literal `127.0.0.1` rather than only `localhost`, since the
+match is on the URL host and no name resolution happens.
 
 ### Why the agent needs its own Google account
 
