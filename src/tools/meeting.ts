@@ -114,7 +114,11 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
         });
 
         return {
-          success: result.state !== 'idle',
+          // `leaving` is a refusal, not a join: the previous call's browser is still
+          // being released and nothing was started. Reporting it as a success invites
+          // the model to tell the room it has joined a call it is not in — the message
+          // says otherwise, but a structured flag is the stronger signal of the two.
+          success: result.state !== 'idle' && result.state !== 'leaving',
           state: result.state,
           message: result.message,
         };

@@ -191,14 +191,20 @@ export class MeetingBotService {
    */
   async join(input: JoinMeetingInput): Promise<{ state: MeetingState; message: string }> {
     if (this.state === 'leaving') {
-      // Not "already in a call" — the last one has ended and its abandoned startup
-      // is still letting go of the browser. Saying so is the honest answer, and
-      // starting anyway is the thing this state exists to prevent.
+      // Not "already in a call" — the last one has ended and its browser is still
+      // being let go of. Saying so is the honest answer, and starting anyway is the
+      // thing this state exists to prevent.
+      //
+      // Two different waits share this state, and only one of them is the long one:
+      // an abandoned startup parked in a sign-in, or an ordinary teardown a moment
+      // from finishing. Naming the wrong one tells the room to expect the wrong thing.
       return {
         state: this.state,
         message:
-          `I'm still releasing the previous call — a sign-in in progress has to finish ` +
-          `before I can start another. Give me a moment and ask again.`,
+          this.startupEpoch === null
+            ? `I'm still releasing the previous call's browser. Give me a moment and ask again.`
+            : `I'm still releasing the previous call — a sign-in already in progress has to ` +
+              `finish first. Give me a moment and ask again.`,
       };
     }
     if (this.isActive) {
@@ -665,6 +671,13 @@ export class MeetingBotService {
    * The single exit path for every ending — success, denial, crash, timeout,
    * shutdown — so there is one place to be sure nothing is left running. Never
    * throws: a teardown failure would otherwise mask the reason for the teardown.
+   *
+   * **Do not add an await before the fields are nulled.** A teardown that runs while
+   * a startup is still building finds every field already null, so it reaches the
+   * end without yielding to anything but microtasks — which is what stops a `join()`
+   * landing in the middle of it. Introduce a real await up there (posting a note,
+   * say) and a new call could start in the gap, publish its fields, and have this
+   * teardown null them underneath it and pin the service in `leaving`.
    */
   private async teardown(status: 'completed' | 'denied' | 'timeout' | 'error'): Promise<void> {
     // Re-entrancy guard. Two endings can race — a user's `leave()` and the
