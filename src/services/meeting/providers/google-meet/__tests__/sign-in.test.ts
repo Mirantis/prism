@@ -10,9 +10,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { isAuthenticated, settledUrl, signInFailureReason, signInToGoogle } from '../sign-in';
 
-vi.mock('../../../../../config', () => ({
-  config: { googleBotEmail: undefined, googleBotPassword: undefined },
+// Mutable so a test can put credentials in place: `isAuthenticated()` reads them
+// directly now, rather than reporting what a probe concluded.
+// `vi.hoisted` because the factory below is hoisted above this file's own
+// declarations, so a plain const would not exist yet when it runs.
+const config = vi.hoisted(() => ({
+  googleBotEmail: undefined as string | undefined,
+  googleBotPassword: undefined as string | undefined,
 }));
+vi.mock('../../../../../config', () => ({ config }));
 
 function redirectingPage(chain: string[]) {
   let step = 0;
@@ -77,7 +83,46 @@ describe('settledUrl', () => {
 });
 
 describe('sign-in state', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    config.googleBotEmail = undefined;
+    config.googleBotPassword = undefined;
+  });
+
+  it('counts a configured account as authenticated, without probing for it', () => {
+    // The question this answers is "should a guest name field be read as a stale
+    // session?", and for that, intent is the right test. Confirming it by probing
+    // failed in the direction that costs joins: a probe that says no *disables* the
+    // stale-session path, so the join walks into the lobby and Meet auto-denies it.
+    config.googleBotEmail = 'bot@example.com';
+    config.googleBotPassword = 'hunter2';
+
+    expect(isAuthenticated()).toBe(true);
+  });
+
+  it('reuses a session whose first check was interrupted mid-redirect', async () => {
+    // Watched live: Google's own redirect chain interrupted the check's navigation,
+    // it rejected, and a perfectly live session was reported as signed out — while
+    // the account page it had just loaded was on screen. One retry is the difference
+    // between reusing the session and running a needless full login.
+    config.googleBotEmail = 'bot@example.com';
+    config.googleBotPassword = 'hunter2';
+    const goto = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('net::ERR_ABORTED; navigation interrupted'))
+      .mockResolvedValueOnce(undefined);
+    const page = {
+      goto,
+      url: () => 'https://myaccount.google.com/',
+      waitForTimeout: async () => {},
+    };
+
+    await signInToGoogle(page as never);
+
+    expect(goto).toHaveBeenCalledTimes(2);
+    // Reused rather than re-entered: no sign-in form was ever asked for.
+    expect(signInFailureReason()).toBeNull();
+  });
 
   it('is not authenticated with no account configured', async () => {
     // The provider is a module singleton, so this state outlives a meeting. A
