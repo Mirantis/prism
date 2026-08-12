@@ -3,7 +3,7 @@ import {
   GoogleMeetProvider,
   nameFromOptionsLabel,
   unglueTileName,
-} from '../providers/google-meet.provider';
+} from '../index';
 
 const provider = new GoogleMeetProvider();
 

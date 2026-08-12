@@ -70,7 +70,7 @@ export class AudioStack {
   /** Bring up Xvfb, the PulseAudio daemon, its devices, and the audio pipes. */
   async start(): Promise<AudioStackHandles> {
     try {
-      this.runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'prism-meet-'));
+      this.runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'prism-meeting-'));
       this.display = await this.startXvfb();
       await this.startPulse();
       await this.createDevices();

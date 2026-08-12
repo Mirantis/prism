@@ -29,7 +29,7 @@ import { BrowserStack } from './browser-stack';
 import { VoiceConversation, type VoiceConversationStats } from './voice-conversation';
 import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
-import { googleMeetProvider } from './providers/google-meet.provider';
+import { googleMeetProvider } from './providers/google-meet';
 import type { JoinStep, MeetingProvider } from './meeting-provider.interface';
 import type { Page } from 'playwright-core';
 

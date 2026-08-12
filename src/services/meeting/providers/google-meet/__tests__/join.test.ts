@@ -10,13 +10,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Page } from 'playwright-core';
-import { GoogleMeetProvider } from '../providers/google-meet.provider';
-import { isAuthenticated, signInFailureReason } from '../providers/google-meet/sign-in';
+import { GoogleMeetProvider } from '../index';
+import { isAuthenticated, signInFailureReason } from '../sign-in';
 
 // The provider reads its own sign-in state rather than being handed it, so the two
 // situations that state distinguishes — "signed in and offered a guest field", and
 // "the catch-all wall after a failed login" — are set here.
-vi.mock('../providers/google-meet/sign-in', () => ({
+vi.mock('../sign-in', () => ({
   isAuthenticated: vi.fn(() => false),
   signInFailureReason: vi.fn(() => null),
   signInToGoogle: vi.fn(async () => {}),
@@ -452,7 +452,7 @@ describe('join outcomes', () => {
 });
 
 /**
- * `participantCount` is exercised in `google-meet.provider.test.ts`, against a real
+ * `participantCount` is exercised in `provider.test.ts`, against a real
  * DOM built from the markup Meet actually serves. It reads the page in one
  * `page.evaluate` rather than through locators, so the selector-shaped fake below
  * cannot express what it does — and a fake that only proves "an absent selector

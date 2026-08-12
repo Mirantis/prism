@@ -104,7 +104,7 @@ const providerConfigurationError = vi.fn(() => null as string | null);
 const providerSignIn = vi.fn(async () => {});
 const providerLeave = vi.fn();
 const providerParticipantCount = vi.fn();
-vi.mock('../providers/google-meet.provider', () => ({
+vi.mock('../providers/google-meet', () => ({
   googleMeetProvider: {
     name: 'google-meet',
     displayName: 'Google Meet',
