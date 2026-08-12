@@ -35,21 +35,37 @@ const SESSION_SETTLE_TIMEOUT_MS = 15_000;
 const SESSION_STABLE_MS = 1_000;
 
 /**
- * Whether this profile is signed in, and why not if it isn't.
+ * Why the last sign-in attempt failed, when one did.
  *
  * Module-level because the provider it serves is a module singleton, and reset on
  * every `signInToGoogle` call: the alternative is a failure from one meeting
- * annotating the next meeting's denial, or a stale `authenticated` from an hour ago
- * deciding that this call's session is fine.
+ * annotating the next meeting's denial.
  */
-const state: { authenticated: boolean; signInFailure: string | null } = {
-  authenticated: false,
-  signInFailure: null,
-};
+const state: { signInFailure: string | null } = { signInFailure: null };
 
-/** Whether the profile ended up signed into a Google account. */
+/**
+ * Whether this browser is *meant* to be signed into a Google account.
+ *
+ * Deliberately "meant to be" rather than "was confirmed to be". It answers one
+ * question — should Meet offering a guest name field be read as a stale session? —
+ * and for that, intent is the right test and confirmation is the wrong one.
+ *
+ * Confirmation was the first implementation and it failed in the direction that
+ * costs joins. `isSignedIn()` reports a negative for sessions that then work (its
+ * navigation can be interrupted by Google's own redirect chain), and a negative
+ * here silently *disables* the stale-session probe: the join walks into the lobby
+ * as a guest and Meet auto-denies it, which is precisely the outcome the probe
+ * exists to prevent. Intent has no such failure mode — when credentials are
+ * configured, a guest field always means something is wrong with the session, and
+ * a second forced sign-in is always the right response.
+ *
+ * Nothing is lost by not confirming. A genuinely failed sign-in now surfaces as a
+ * `reauth_required` that does not heal, reported as "signing in again didn't
+ * help" — a truthful message, where the old path produced Meet's catch-all wall
+ * about the meeting having ended.
+ */
 export function isAuthenticated(): boolean {
-  return state.authenticated;
+  return Boolean(config.googleBotEmail && config.googleBotPassword);
 }
 
 /**
@@ -120,7 +136,6 @@ async function appearsVisible(locator: Locator, timeoutMs: number): Promise<bool
 export async function signInToGoogle(page: Page, options?: { force?: boolean }): Promise<void> {
   // Reset first: this module outlives a single meeting, and stale auth state is
   // worse than none — see `state` above.
-  state.authenticated = false;
   state.signInFailure = null;
 
   const email = config.googleBotEmail;
@@ -130,7 +145,6 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
     return;
   }
   if (!options?.force && (await isSignedIn(page))) {
-    state.authenticated = true;
     logger.info('[Meeting] Reusing the signed-in session from the persisted profile');
     return;
   }
@@ -167,7 +181,6 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
       // reporting a failure — the old bare `waitFor` threw here, which is how a
       // good profile ended up flagged as a failed sign-in.
       if (await isSignedIn(page)) {
-        state.authenticated = true;
         logger.info('[Meeting] Already signed in — Google skipped the login form');
         return;
       }
@@ -189,7 +202,6 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
     await settledUrl(page, 45_000);
 
     if (await isSignedIn(page)) {
-      state.authenticated = true;
       logger.info('[Meeting] Signed in; the profile will be reused on later calls');
       return;
     }
@@ -227,19 +239,29 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
  * a fresh login, so a stale profile heals itself.
  */
 async function isSignedIn(page: Page): Promise<boolean> {
-  try {
-    await page.goto('https://myaccount.google.com/', {
-      waitUntil: 'domcontentloaded',
-      timeout: 30_000,
-    });
-    // Judged only once the redirect chain has stopped moving — see `settledUrl`.
-    const url = await settledUrl(page);
-    if (url.startsWith('https://myaccount.google.com/')) return true;
-    logger.info(`[Meeting] Profile is not signed in (settled on ${new URL(url).origin})`);
-    return false;
-  } catch (err) {
-    logger.debug(`[Meeting] Sign-in check failed: ${String(err)}`);
-    return false;
+  // Twice, because the first navigation can be interrupted by a redirect chain that
+  // is still running — Google's own — and reject for a session that is perfectly
+  // alive. Watched live: a profile whose account page was rendering ("Skip to main
+  // content Account") while this reported it signed out, because the rejection was
+  // swallowed at debug level and read as a negative rather than as no answer at all.
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      await page.goto('https://myaccount.google.com/', {
+        waitUntil: 'domcontentloaded',
+        timeout: 30_000,
+      });
+      // Judged only once the redirect chain has stopped moving — see `settledUrl`.
+      const url = await settledUrl(page);
+      if (url.startsWith('https://myaccount.google.com/')) return true;
+      logger.info(`[Meeting] Profile is not signed in (settled on ${new URL(url).origin})`);
+      return false;
+    } catch (err) {
+      // Loud, and never at debug: this used to be the quietest line in the file and
+      // the one that most often decided a join.
+      logger.info(`[Meeting] Sign-in check could not complete (attempt ${attempt}): ${String(err)}`);
+    }
   }
+  logger.warn('[Meeting] Could not establish whether the profile is signed in — assuming it is not');
+  return false;
 }
 

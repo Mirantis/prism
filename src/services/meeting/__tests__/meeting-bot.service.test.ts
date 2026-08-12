@@ -541,39 +541,64 @@ describe('a lost audio pipeline', () => {
 });
 
 describe('a startup that outlives its own call', () => {
-  it('releases its stack instead of overwriting the call running now', async () => {
-    // Startup is many awaits long — a sign-in alone can take 45s — and a leave() in
-    // that window frees the service for a second join. The abandoned startup must
-    // not publish its browser and session over the live call's, nor tear it down.
+  it('refuses a replacement call until the abandoned startup has let go', async () => {
+    // Startup is many awaits long — a sign-in alone can take 45s — and there is no
+    // way to interrupt one from outside. Both startups drive the *same* persistent
+    // browser profile, and launching clears that profile's singleton locks, so a
+    // second Chromium would delete the first's live lock and open the profile
+    // alongside it. Two writers is how a working Google session gets invalidated.
     let finishSignIn: () => void = () => {};
     providerSignIn.mockImplementationOnce(
       () => new Promise<void>((resolve) => { finishSignIn = () => resolve(); }),
     );
-    browserStart.mockResolvedValueOnce({ page: 'abandoned' });
-    browserStart.mockResolvedValueOnce({ page: 'live' });
 
     const abandoned = service.join(input);
     await settle();
 
     await service.leave();
-    await service.join(input);
-    await settle();
-    expect(service.status().state).toBe('in_call');
-    expect(providerJoin).toHaveBeenCalledTimes(1);
-    expect(providerJoin).toHaveBeenCalledWith({ page: 'live' }, expect.anything());
+    // Not idle: the previous startup still holds the profile.
+    expect(service.status().state).toBe('leaving');
+
+    const refused = await service.join(input);
+    expect(refused.message).toMatch(/still releasing/i);
+    // The decisive assertion — no second browser was ever launched.
+    expect(browserStart).toHaveBeenCalledTimes(1);
+    expect(audioStart).toHaveBeenCalledTimes(1);
 
     finishSignIn();
     const result = await abandoned;
     await settle();
 
-    // It never asked to join, it let go of its own browser and session, and the
-    // live call is untouched.
-    expect(result.state).toBe('idle');
+    // It never asked to join, it let go of its own stack, and the service is free.
     expect(result.message).toMatch(/cancelled/i);
-    expect(providerJoin).toHaveBeenCalledTimes(1);
+    expect(providerJoin).not.toHaveBeenCalled();
     expect(browserStop).toHaveBeenCalledTimes(1);
     expect(conversationStop).toHaveBeenCalledTimes(1);
+    expect(service.status().state).toBe('idle');
+  });
+
+  it('accepts a replacement call once the abandoned startup is done', async () => {
+    // The refusal above is a wait, not a dead end: the service has to come back on
+    // its own, or a cancelled sign-in would strand it until a restart.
+    let finishSignIn: () => void = () => {};
+    providerSignIn.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { finishSignIn = () => resolve(); }),
+    );
+
+    const abandoned = service.join(input);
+    await settle();
+    await service.leave();
+
+    finishSignIn();
+    await abandoned;
+    await settle();
+    expect(service.status().state).toBe('idle');
+
+    const second = await service.join(input);
+    await settle();
+    expect(second.state).toBe('waiting_admission');
     expect(service.status().state).toBe('in_call');
+    expect(browserStart).toHaveBeenCalledTimes(2);
   });
 
   it('releases its stack when it fails after the call it belonged to ended', async () => {

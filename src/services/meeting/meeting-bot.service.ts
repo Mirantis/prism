@@ -141,6 +141,26 @@ export class MeetingBotService {
    */
   private epoch = 0;
 
+  /**
+   * The epoch of a startup that is still building, or null when none is.
+   *
+   * The one thing a cancelled call cannot do is stop instantly: it may be parked
+   * inside a sign-in for the better part of a minute, and there is no way to
+   * interrupt that from outside. So `teardown()` returns the service to `leaving`
+   * rather than `idle` while this is set, and `join()` refuses until the abandoned
+   * startup has let go.
+   *
+   * That wait is not caution about resource accounting. Both startups drive the
+   * *same* persistent browser profile, and `BrowserStack.start()` clears the
+   * profile's `SingletonLock`/`SingletonCookie`/`SingletonSocket` before launching —
+   * which is correct for the stale locks a killed container leaves behind, and
+   * catastrophic against a live one: the second Chromium would delete the first's
+   * lock and open the same profile directory alongside it. Two writers to one
+   * profile is how a working Google session gets invalidated, and the session is
+   * the thing every join depends on.
+   */
+  private startupEpoch: number | null = null;
+
   /** The provider that handles this link, if any. */
   findProvider(url: string): MeetingProvider | null {
     return this.providers.find((p) => p.matchesUrl(url)) ?? null;
@@ -170,6 +190,17 @@ export class MeetingBotService {
    * must not block on that.
    */
   async join(input: JoinMeetingInput): Promise<{ state: MeetingState; message: string }> {
+    if (this.state === 'leaving') {
+      // Not "already in a call" — the last one has ended and its abandoned startup
+      // is still letting go of the browser. Saying so is the honest answer, and
+      // starting anyway is the thing this state exists to prevent.
+      return {
+        state: this.state,
+        message:
+          `I'm still releasing the previous call — a sign-in in progress has to finish ` +
+          `before I can start another. Give me a moment and ask again.`,
+      };
+    }
     if (this.isActive) {
       return {
         state: this.state,
@@ -196,6 +227,7 @@ export class MeetingBotService {
     this.state = 'launching';
     this.startedAt = Date.now();
     const epoch = this.epoch;
+    this.startupEpoch = epoch;
 
     // Built into locals and published onto `this` only once the epoch check below
     // says the call is still wanted.
@@ -304,7 +336,28 @@ export class MeetingBotService {
       // already ended, in which case the state describes the one running now.
       if (this.epoch === epoch) await this.teardown('error');
       return { state: 'idle', message: `Could not join the meeting: ${message}` };
+    } finally {
+      this.releaseStartupSlot(epoch);
     }
+  }
+
+  /**
+   * Mark this startup as finished building, and free the service if it was waiting.
+   *
+   * Its own method rather than a few lines in the `finally` because the state it
+   * reads is written from elsewhere — a `teardown()` between the last `await` and
+   * here — and the compiler is happy to narrow `this.state` on the assumption that
+   * nothing did.
+   *
+   * Only the startup that is still the current one clears the marker: a newer
+   * `join()` owns it from the moment it sets its own.
+   */
+  private releaseStartupSlot(epoch: number): void {
+    if (this.startupEpoch !== epoch) return;
+    this.startupEpoch = null;
+    // Held in `leaving` by `teardown()` precisely until this moment: the shared
+    // browser profile was not free until this startup let go of it.
+    if (this.state === 'leaving') this.state = 'idle';
   }
 
   /** Await the join outcome, then either settle into the call or clean up. */
@@ -520,6 +573,9 @@ export class MeetingBotService {
 
   /** Leave on request. Safe when nothing is running. */
   async leave(): Promise<{ message: string }> {
+    if (this.state === 'leaving') {
+      return { message: 'I have left, but I am still releasing the previous call.' };
+    }
     if (!this.isActive) return { message: 'I am not in a meeting right now.' };
     const platform = this.provider?.displayName ?? 'meeting';
     await this.finish('completed', null);
@@ -674,7 +730,11 @@ export class MeetingBotService {
     this.unreadableCounts = 0;
     this.responseMode = 'auto';
     this.failStep = null;
-    this.state = 'idle';
+    // Free only when nothing is still being built. A startup abandoned mid-sign-in
+    // still holds the shared browser profile, and the next `join()` would clear its
+    // live lock and open a second Chromium on it — see `startupEpoch`. It flips this
+    // to `idle` itself once it has let go.
+    this.state = this.startupEpoch === null ? 'idle' : 'leaving';
   }
 
   /**
