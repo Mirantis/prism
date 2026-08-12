@@ -52,9 +52,11 @@ docker run -d \
   ghcr.io/lensapp/prism-agent:latest
 ```
 
-In a Lens sandbox these can be managed credentials — they are only ever sent as
-request headers or typed into Google's own form, so the platform swaps them at the
-network boundary and no real secret lands in the container. If your deployment
+`AWS_BEARER_TOKEN_BEDROCK` and `OPENAI_API_KEY` are only ever sent as request
+headers, so in a Lens sandbox they can be managed credentials that the platform
+swaps at the network boundary — no real secret lands in the container.
+`GOOGLE_BOT_PASSWORD` cannot: the browser types it into Google's own sign-in form
+over TLS to Google, so the container has to hold the real value. If your deployment
 filters egress, allow `api.openai.com` along with Google's meeting and accounts
 hosts (including WebRTC UDP).
 
@@ -219,8 +221,7 @@ or out of someone claiming authority.
 
 **That includes changing itself.** Renaming itself and rewriting its Soul, its user
 profile or its memory are things it will do on a spoken request that the room agrees
-to. It used to refuse those outright; it no longer does, because the refusal also
-turned down its own user asking in a call. So a sentence agreed in an unauthenticated
+to, subject to the same confirmation. So a sentence agreed in an unauthenticated
 meeting can change the agent for every future turn on every channel, not just for the
 duration of the call.
 

@@ -10,6 +10,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const audioStop = vi.fn();
 const audioStart = vi.fn();
+/**
+ * The handler the service registered for a dead capture or playback process.
+ *
+ * Same seam as `onSessionLost` below, for the other half of the audio path: a test
+ * fires it the way `parec` exiting would.
+ */
+let audioLostHandler: ((reason: string) => void) | null = null;
 class FakeAudioStack {
   start = audioStart;
   stop = audioStop;
@@ -137,9 +144,13 @@ let service: InstanceType<typeof MeetingBotService>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  audioLostHandler = null;
   audioStart.mockResolvedValue({
     browserEnv: { DISPLAY: ':99' },
     onCapture: vi.fn(),
+    onLost: (handler: (reason: string) => void) => {
+      audioLostHandler = handler;
+    },
     playbackSink: { write: vi.fn() },
   });
   audioStop.mockResolvedValue(undefined);
@@ -481,6 +492,111 @@ describe('a lost Realtime session', () => {
     await settle();
 
     expect(service.status().state).toBe('in_call');
+  });
+});
+
+describe('a lost audio pipeline', () => {
+  it('leaves the call rather than sit there deaf', async () => {
+    await service.join(input);
+    await settle();
+    expect(service.status().state).toBe('in_call');
+
+    // What `parec` exiting looks like from the outside: the browser is still in the
+    // call and the Realtime socket is still open, so nothing else notices that the
+    // room's audio has stopped reaching a model.
+    audioLostHandler?.('the capture process exited (code 1)');
+    await settle();
+
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/lost my audio.*capture process exited/is),
+      'SYSTEM',
+    );
+    expect(providerLeave).toHaveBeenCalled();
+    expect(browserStop).toHaveBeenCalled();
+    expect(service.status().state).toBe('idle');
+  });
+
+  it('does not tear down a later call', async () => {
+    await service.join(input);
+    await settle();
+    const stale = audioLostHandler;
+    // Asserted, not optional-called: a refactor that stopped registering the
+    // handler would otherwise leave this test passing on a no-op.
+    expect(stale).toBeTypeOf('function');
+
+    await service.leave();
+    await service.join(input);
+    await settle();
+    expect(service.status().state).toBe('in_call');
+
+    // A process from the first call exiting, late — the stack it belonged to is
+    // already gone, and the call running now has its own.
+    stale!('the playback process exited (code null)');
+    await settle();
+
+    expect(service.status().state).toBe('in_call');
+  });
+});
+
+describe('a startup that outlives its own call', () => {
+  it('releases its stack instead of overwriting the call running now', async () => {
+    // Startup is many awaits long — a sign-in alone can take 45s — and a leave() in
+    // that window frees the service for a second join. The abandoned startup must
+    // not publish its browser and session over the live call's, nor tear it down.
+    let finishSignIn: () => void = () => {};
+    providerSignIn.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { finishSignIn = () => resolve(); }),
+    );
+    browserStart.mockResolvedValueOnce({ page: 'abandoned' });
+    browserStart.mockResolvedValueOnce({ page: 'live' });
+
+    const abandoned = service.join(input);
+    await settle();
+
+    await service.leave();
+    await service.join(input);
+    await settle();
+    expect(service.status().state).toBe('in_call');
+    expect(providerJoin).toHaveBeenCalledTimes(1);
+    expect(providerJoin).toHaveBeenCalledWith({ page: 'live' }, expect.anything());
+
+    finishSignIn();
+    const result = await abandoned;
+    await settle();
+
+    // It never asked to join, it let go of its own browser and session, and the
+    // live call is untouched.
+    expect(result.state).toBe('idle');
+    expect(result.message).toMatch(/cancelled/i);
+    expect(providerJoin).toHaveBeenCalledTimes(1);
+    expect(browserStop).toHaveBeenCalledTimes(1);
+    expect(conversationStop).toHaveBeenCalledTimes(1);
+    expect(service.status().state).toBe('in_call');
+  });
+
+  it('releases its stack when it fails after the call it belonged to ended', async () => {
+    // Same window, other ending: nothing on the service points at a stack that was
+    // never published, so the failure path has to let go of it by name.
+    let failBrowser: (err: Error) => void = () => {};
+    browserStart.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => { failBrowser = reject; }),
+    );
+
+    const abandoned = service.join(input);
+    await settle();
+    await service.leave();
+    trackEvent.mockClear();
+
+    failBrowser(new Error('no chromium'));
+    await abandoned;
+    await settle();
+
+    expect(audioStop).toHaveBeenCalled();
+    expect(conversationStop).toHaveBeenCalled();
+    // The call already ended once; it must not be ended a second time.
+    expect(trackEvent.mock.calls.filter((c) => c[0] === 'meeting ended')).toHaveLength(0);
   });
 });
 

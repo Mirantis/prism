@@ -172,7 +172,19 @@ export class Upsampler extends FirResampler {
 
 /** Duration of a pcm16 mono buffer at the given rate, in milliseconds. */
 export function pcm16DurationMs(pcm: Buffer, sampleRate: number): number {
-  return (pcm.length / 2 / sampleRate) * 1000;
+  return pcm16BytesDurationMs(pcm.length, sampleRate);
+}
+
+/**
+ * The same, for a byte count rather than the bytes.
+ *
+ * Callers that track a queue's size rather than holding it as one buffer want
+ * this: the playback loop asks how much audio is waiting on every tick, and
+ * allocating seconds of zeroes just to measure them is work the hot path can do
+ * without.
+ */
+export function pcm16BytesDurationMs(bytes: number, sampleRate: number): number {
+  return (bytes / 2 / sampleRate) * 1000;
 }
 
 /** Byte count of `ms` of pcm16 mono audio at the given rate (even-aligned). */

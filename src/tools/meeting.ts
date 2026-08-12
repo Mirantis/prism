@@ -51,12 +51,13 @@ export async function isMeetingSupported(): Promise<boolean> {
   if (!(await isBrowserAvailable())) return false;
 
   const { promises: fs } = await import('fs');
-  const pathEntries = (process.env.PATH ?? '').split(':').filter(Boolean);
+  const path = await import('path');
+  const pathEntries = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
   for (const binary of AUDIO_STACK_BINARIES) {
     const found = await Promise.all(
       pathEntries.map(async (dir) => {
         try {
-          await fs.access(`${dir}/${binary}`);
+          await fs.access(path.join(dir, binary));
           return true;
         } catch {
           return false;

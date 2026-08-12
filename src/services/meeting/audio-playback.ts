@@ -28,7 +28,12 @@
  */
 
 import { logger } from '../../logger';
-import { MEETING_SAMPLE_RATE, pcm16BytesForMs, pcm16DurationMs } from './resampler';
+import {
+  MEETING_SAMPLE_RATE,
+  pcm16BytesDurationMs,
+  pcm16BytesForMs,
+  pcm16DurationMs,
+} from './resampler';
 
 /**
  * How far ahead of real time audio may be handed to the device.
@@ -249,7 +254,7 @@ export class AudioPlayback {
   /** Hold the first write until there is enough audio to survive a hiccup. */
   private readyToStart(): boolean {
     if (this.startedAt !== null) return true;
-    if (pcm16DurationMs(Buffer.alloc(this.queuedBytes), MEETING_SAMPLE_RATE) >= PREROLL_MS) return true;
+    if (pcm16BytesDurationMs(this.queuedBytes, MEETING_SAMPLE_RATE) >= PREROLL_MS) return true;
     return this.firstEnqueueAt !== null && Date.now() - this.firstEnqueueAt >= PREROLL_DEADLINE_MS;
   }
 

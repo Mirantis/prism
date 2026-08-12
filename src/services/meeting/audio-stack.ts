@@ -47,6 +47,16 @@ export interface AudioStackHandles {
   browserEnv: Record<string, string>;
   /** Meeting audio, 48 kHz pcm16 mono — feed to the conversation. */
   onCapture: (handler: (pcm48k: Buffer) => void) => void;
+  /**
+   * Called once if capture or playback dies while the stack is meant to be running.
+   *
+   * There is no recovery inside the stack: a dead `parec` means nothing the room
+   * says will ever reach a model again, and a dead `pacat` means nothing the model
+   * says will ever be heard, so the owner ends the call rather than leave a
+   * participant that has silently stopped taking part. Fires immediately if the
+   * loss happened before a handler was registered.
+   */
+  onLost: (handler: (reason: string) => void) => void;
   /** Sink for the model's speech, 48 kHz pcm16 mono, with backpressure. */
   playbackSink: PlaybackSink;
 }
@@ -65,6 +75,9 @@ export class AudioStack {
   private runtimeDir: string | null = null;
   private display: string | null = null;
   private captureHandler: ((pcm: Buffer) => void) | null = null;
+  private lostHandler: ((reason: string) => void) | null = null;
+  /** Kept so a loss that beats the handler's registration still gets reported. */
+  private lostReason: string | null = null;
   private stopped = false;
 
   /** Bring up Xvfb, the PulseAudio daemon, its devices, and the audio pipes. */
@@ -93,6 +106,10 @@ export class AudioStack {
       },
       onCapture: (handler) => {
         this.captureHandler = handler;
+      },
+      onLost: (handler) => {
+        this.lostHandler = handler;
+        if (this.lostReason) handler(this.lostReason);
       },
       // No backpressure handling needed: `AudioPlayback` paces writes to stay a
       // fixed, small distance ahead of real time, so the pipe never fills. (An
@@ -251,10 +268,8 @@ export class AudioStack {
     this.parec = proc;
 
     proc.stdout?.on('data', (chunk: Buffer) => this.captureHandler?.(chunk));
-    proc.on('error', (err) => logger.error({ err }, '[Meeting] parec failed'));
-    proc.on('exit', (code) => {
-      if (!this.stopped) logger.warn(`[Meeting] parec exited unexpectedly (code ${code})`);
-    });
+    proc.on('error', (err) => this.noteLoss(`the capture process failed to run: ${err.message}`));
+    proc.on('exit', (code) => this.noteLoss(`the capture process exited (code ${code})`));
   }
 
   /** Play the model's speech into bot_speak, which Chrome hears as its mic. */
@@ -278,10 +293,22 @@ export class AudioStack {
     // The sink write path already drops frames when stdin closes; this keeps an
     // EPIPE from becoming an unhandled error event and taking the runtime down.
     proc.stdin?.on('error', (err) => logger.warn(`[Meeting] pacat stdin: ${err.message}`));
-    proc.on('error', (err) => logger.error({ err }, '[Meeting] pacat failed'));
-    proc.on('exit', (code) => {
-      if (!this.stopped) logger.warn(`[Meeting] pacat exited unexpectedly (code ${code})`);
-    });
+    proc.on('error', (err) => this.noteLoss(`the playback process failed to run: ${err.message}`));
+    proc.on('exit', (code) => this.noteLoss(`the playback process exited (code ${code})`));
+  }
+
+  /**
+   * Record the first unexpected death of capture or playback and tell the owner.
+   *
+   * Once only: `stop()` kills both, so the second exit is our own doing, and a
+   * teardown already under way must not be told twice about a stack it is
+   * dismantling.
+   */
+  private noteLoss(reason: string): void {
+    if (this.stopped || this.lostReason) return;
+    this.lostReason = reason;
+    logger.error(`[Meeting] Audio stack lost: ${reason}`);
+    this.lostHandler?.(reason);
   }
 
   /** Env pointing PulseAudio clients at our private daemon. */
@@ -308,6 +335,8 @@ export class AudioStack {
   async stop(): Promise<void> {
     this.stopped = true;
     this.captureHandler = null;
+    // The owner is already ending the call — the deaths below are its own doing.
+    this.lostHandler = null;
 
     for (const proc of [this.parec, this.pacat, this.pulse, this.xvfb]) {
       if (!proc || proc.exitCode !== null) continue;
