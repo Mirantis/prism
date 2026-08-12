@@ -68,11 +68,30 @@ If your deployment filters outbound traffic, a meeting needs these:
 | `meet.google.com:443` | The call itself |
 | `accounts.google.com:443` | Signing the agent in |
 | `myaccount.google.com:443` | Checking whether the profile is still signed in. Easy to miss, and blocking it makes every join run a full login |
-| `www.google.com:443` | Where a signed-out profile lands; the sign-in check reads this |
-| Google's media servers, **UDP** | The audio itself. WebRTC, so not an HTTPS host |
+| `www.gstatic.com:443`, `fonts.gstatic.com:443` | Where Google's sign-in page loads its scripts and fonts. Without them the login form may not render |
+| `clients6.google.com:443`, `hangouts.clients6.google.com:443` | Meet's signaling backend |
+
+**Audio needs more than an HTTPS allowlist.** Meet carries media over WebRTC, so a
+CONNECT-based allowlist cannot carry it at any hostname — a proxy tunnels TCP.
+Without it the agent is admitted to the call and then dropped, with Meet reporting
+*"Couldn't start the video call because of a network error"*: a participant that
+appears, stays mute, and leaves. Per
+[Google's network requirements](https://knowledge.workspace.google.com/admin/meet/prepare-your-network-for-meet-meetings-and-live-streams),
+allow **UDP 3478 and 19302–19309** to `74.125.250.0/24`, `74.125.247.128/32` and
+`142.250.82.0/24` (plus the IPv6 equivalents). Where UDP cannot be opened, Meet
+falls back to TCP 443 via the TURN relays `meet.turns.goog` and
+`workspace.turns.goog` — those must be **tunnelled, not TLS-inspected**, and Google
+warns that proxied media costs call quality.
+
+`www.google.com` is **not** required, and is worth leaving blocked: it is Search and
+an open redirector (`google.com/url?q=`), so allowing it hands a browser-driving
+agent a general path to the web. A signed-out profile is bounced there by the
+sign-in check, but the check does not need the page to load — the navigation simply
+fails, the agent concludes it is not signed in, and it logs in normally.
 
 Chromium also reaches for its own update, variations and optimization-guide
-endpoints (`clients2.google.com`, `redirector.gvt1.com`,
+endpoints (`clients2.google.com`, `redirector.gvt1.com`, `play.google.com`,
+`android.clients.google.com`, `content-autofill.googleapis.com`,
 `optimizationguide-pa.googleapis.com`, `generativelanguage.googleapis.com` and
 similar). **None of these are needed** — meetings work with them denied, and they
 are worth recognising in an audit log so they don't read as the agent reaching for

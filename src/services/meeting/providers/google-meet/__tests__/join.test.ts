@@ -223,6 +223,54 @@ describe('join outcomes', () => {
     expect((outcome as { reason: string }).reason).toMatch(/could not load/i);
   });
 
+  it('loads the page again when another navigation lands on top of it', async () => {
+    // Observed in production and reported to the user as a broken meeting link: a
+    // sign-in that had just failed was still redirecting, and its navigation landed
+    // on the meeting load. The link was fine.
+    const { page } = fakePage({
+      visibleButtons: ['Ask to join'],
+      visibleSelectors: ['button[aria-label*="Leave call" i]'],
+    });
+    const original = page.goto;
+    const visited: string[] = [];
+    page.goto = async (...args: Parameters<typeof original>) => {
+      visited.push(String(args[0]));
+      if (visited.length === 1) {
+        throw new Error(
+          'page.goto: Navigation to "https://meet.google.com/abc-defg-hij" is interrupted ' +
+            'by another navigation to "https://accounts.google.com/v3/signin/identifier"',
+        );
+      }
+      return original(...args);
+    };
+
+    const outcome = await provider.join(page, joinOptions);
+
+    // Counted by destination: the retry parks the page in between, so the raw call
+    // count includes an about:blank the assertion is not about.
+    expect(visited.filter((url) => url.includes('meet.google.com'))).toHaveLength(2);
+    // And it started the second attempt from a page that had stopped moving.
+    expect(visited[1]).toBe('about:blank');
+    expect(outcome.status).toBe('admitted');
+  });
+
+  it('does not retry a page load that failed for a real reason', async () => {
+    // Only the interruption earns a second go. Retrying a dead link would double the
+    // wait before the user is told anything.
+    const { page } = fakePage({ gotoError: 'net::ERR_NAME_NOT_RESOLVED' });
+    const original = page.goto;
+    let attempts = 0;
+    page.goto = async (...args: Parameters<typeof original>) => {
+      attempts += 1;
+      return original(...args);
+    };
+
+    await provider.join(page, joinOptions);
+
+    // One try, and no parking navigation either — nothing was retried.
+    expect(attempts).toBe(1);
+  });
+
   it('fails with a UI-changed message when no join button is ever found', async () => {
     const { page } = fakePage({});
 
