@@ -231,6 +231,12 @@ a cluster, read a file, search its memory or kick off longer work and tell you t
 answer without leaving the meeting. It's asked to say something like "let me check
 that real quick" before each tool call, so a pause never sounds like it dropped off.
 
+A tool result in a call is capped at **12,000 characters**, lower than chat's 30,000,
+because everything a tool returns stays in the call's live session and the agent has
+to speak its answer. Past that it sees the start and the end of the output with a
+notice that the middle is missing, and it will say the listing was cut rather than
+quote a count it can't stand behind. See [Large tool outputs](tools.md#large-tool-outputs).
+
 The one exception is **file sharing**. `share_file` is unavailable in a call: it only
 stores a file and hands back a reference for the chat machinery to deliver, and a
 meeting doesn't run that machinery — so it would store a file that reached nobody. If

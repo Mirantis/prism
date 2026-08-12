@@ -133,3 +133,19 @@ Beyond the built-in tools, the runtime can connect to an external **MCP** server
 (configured via `NEXUS_MCP_URL`) to expose additional, project-scoped tools to
 the agent. When connected, those tools appear to the agent alongside the
 built-in ones and it can use them the same way.
+
+## Large tool outputs
+
+Every tool result the agent reads is capped, built-in and MCP alike, so one
+oversized payload can't crowd out the rest of the conversation. In chat — web,
+terminal, Slack — the cap is **30,000 characters**. In a [voice
+meeting](voice-meetings.md) it is **12,000**, because a call keeps every result in
+a much smaller live session and the agent has to *say* its answer.
+
+Past the cap, the agent sees the start and the end of the output with the middle
+replaced by a notice that the result is incomplete. The notice tells it not to
+quote a count or a total from what it can see, and to ask again more narrowly — a
+filter, fewer fields, the next page. So if you ask "how many are open?" about a
+long list, expect the agent to either narrow the query itself or tell you the
+listing was cut, rather than answer with a number it can't stand behind. The
+runtime logs a warning naming the tool and the sizes whenever this happens.

@@ -25,17 +25,33 @@
 import { asSchema, type Tool } from 'ai';
 import { logger } from '../../logger';
 import { collectTools } from '../../lib/tool-collection';
+import { renderToolResult } from '../../lib/tool-output-limiter';
 import type { RealtimeFunctionTool } from './realtime-session';
 
 /**
  * Cap on a tool result handed back to the Realtime model.
  *
- * Much smaller than the chat-path limits (`lib/tool-output-limiter.ts`) on
- * purpose: this model speaks its answer, and a 100 kB `kubectl get` dump costs
- * audio tokens and produces a monologue nobody wants. Truncation is announced in
- * the payload so the model says "there's more" instead of inventing an ending.
+ * Smaller than the chat-path budget (`lib/tool-output-limiter.ts`) on purpose, and
+ * for a reason particular to this transport: a tool result stays in the Realtime
+ * session's context for the rest of the call, and that context is far smaller than
+ * the chat model's window. This model also *speaks* its answer, so a 100 kB
+ * `kubectl get` dump only produces a monologue nobody wants.
+ *
+ * It used to be 4,000, which cut a single Jira issue's description in half and beheaded
+ * a PR listing — so the agent stated the count it could see as the total. 12,000
+ * (~3k tokens) holds a long issue or a few dozen listed items while staying a modest
+ * share of the session. The *shape* of the cut is chat's, not this file's: shared
+ * head+tail, and a notice that says outright the result is incomplete.
  */
-const MAX_RESULT_CHARS = 4000;
+export const MEETING_MAX_RESULT_CHARS = 12_000;
+
+/**
+ * The one part of the truncation notice that belongs to this channel: nothing here
+ * can hand the rest over in text, so the model must speak a useful subset.
+ */
+const VOICE_TRUNCATION_GUIDANCE =
+  'You cannot send the rest anywhere — this call is your only channel, so say the part ' +
+  'that answers the question and offer to go into more of it out loud.';
 
 export interface MeetingToolBridgeInput {
   userId: string;
@@ -145,7 +161,11 @@ async function executeTool(
       messages: [],
       abortSignal: new AbortController().signal,
     });
-    return truncate(stringify(result));
+    return renderToolResult(result, {
+      maxChars: MEETING_MAX_RESULT_CHARS,
+      extraGuidance: VOICE_TRUNCATION_GUIDANCE,
+      toolName: name,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn(`[Meeting] Tool ${name} failed: ${message}`);
@@ -153,23 +173,3 @@ async function executeTool(
   }
 }
 
-/** Render whatever a tool returned as a string the model can read. */
-function stringify(result: unknown): string {
-  if (typeof result === 'string') return result;
-  if (result === undefined || result === null) return '';
-  try {
-    return JSON.stringify(result);
-  } catch {
-    return String(result);
-  }
-}
-
-function truncate(text: string): string {
-  if (text.length <= MAX_RESULT_CHARS) return text;
-  return (
-    text.slice(0, MAX_RESULT_CHARS) +
-    `\n\n[truncated ${text.length - MAX_RESULT_CHARS} characters — say the part that answers the ` +
-    `question and offer to go into more of it out loud. You cannot send the rest anywhere; the ` +
-    `call is your only channel]`
-  );
-}
