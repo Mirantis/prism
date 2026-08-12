@@ -21,10 +21,10 @@
  */
 
 import type { Locator, Page } from 'playwright-core';
-import { config } from '../../../config';
-import { logger } from '../../../logger';
-import { isAuthenticated, signInFailureReason, signInToGoogle } from './google-meet/sign-in';
-import type { JoinOptions, JoinOutcome, MeetingProvider } from '../meeting-provider.interface';
+import { config } from '../../../../config';
+import { logger } from '../../../../logger';
+import { isAuthenticated, signInFailureReason, signInToGoogle } from './sign-in';
+import type { JoinOptions, JoinOutcome, MeetingProvider } from '../../meeting-provider.interface';
 
 /**
  * Wait for a locator to actually be visible, returning false instead of throwing.
@@ -556,7 +556,7 @@ export class GoogleMeetProvider implements MeetingProvider {
    */
   private async captureFailure(page: Page): Promise<void> {
     try {
-      const { resolveDataDir } = await import('../../../lib/data-dir');
+      const { resolveDataDir } = await import('../../../../lib/data-dir');
       const path = `${resolveDataDir()}/meeting-join-failure.png`;
       await page.screenshot({ path, timeout: 5_000 });
       logger.info(`[Meeting] Saved a screenshot of the failed join to ${path}`);
