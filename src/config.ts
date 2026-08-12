@@ -225,6 +225,22 @@ const rawAdmissionTimeout = parseInt(process.env.MEETING_ADMISSION_TIMEOUT_SECON
 const meetingAdmissionTimeoutMs =
   (Number.isFinite(rawAdmissionTimeout) && rawAdmissionTimeout > 0 ? rawAdmissionTimeout : 300) * 1000;
 
+// Whether a microphone the runtime can't confirm is live makes the join fail.
+//
+// On by default, because the failure it catches hides perfectly: the agent is in the
+// call, the participant count is right, the voice socket is healthy, and the room
+// hears nothing — so "join anyway" means an agent that looks fine and is useless, in
+// the one situation where somebody is waiting on it. Better to leave and say why.
+//
+// Off is the escape hatch for the other direction: a Meet UI change (or a host
+// PulseAudio quirk) that breaks the *reading* rather than the microphone would
+// otherwise refuse every call. Unmuting still happens either way — this only decides
+// whether an unconfirmed microphone is fatal. Anything but an explicit off is on, so
+// a typo can't quietly disable it.
+const meetingRequireMicrophone = !['false', '0', 'no', 'off'].includes(
+  (process.env.MEETING_REQUIRE_MICROPHONE ?? '').trim().toLowerCase(),
+);
+
 // Parsed defensively: `parseInt` yields NaN for junk, and a zero/negative window
 // would make the context indicator divide by nothing, so both collapse to null
 // (= fall through to the bundled snapshot).
@@ -423,4 +439,8 @@ export const config = {
   googleBotPassword,
   meetingTimeoutMinutes,
   meetingAdmissionTimeoutMs,
+
+  // Whether an unconfirmable microphone fails the join. MEETING_REQUIRE_MICROPHONE,
+  // default on; `false`/`0`/`no`/`off` turns it off. See the derivation above.
+  meetingRequireMicrophone,
 };

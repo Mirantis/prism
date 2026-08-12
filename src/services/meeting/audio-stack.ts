@@ -42,6 +42,32 @@ const BOT_MIC_SOURCE = 'bot_mic';
 /** How long to wait for the daemon's socket before giving up. */
 const DAEMON_READY_TIMEOUT_MS = 10_000;
 
+/** Gap between reads while waiting for the browser to open the virtual mic. */
+const MIC_CAPTURE_POLL_MS = 500;
+
+/**
+ * Is anything capturing this source, per `pactl list short sources`?
+ *
+ * A separate pure function because the value is in the parsing: the interesting
+ * answer ("has the browser actually opened the microphone?") is one word at the end
+ * of a tab-separated line, and a test can pin that against real `pactl` output
+ * without a PulseAudio daemon, which is the only way this gets covered at all.
+ *
+ * Fields are split on whitespace rather than tabs — `pactl` has emitted both, and the
+ * sample spec in the middle ("s16le 1ch 48000Hz") is what makes a naive tab split
+ * look like it works. The name is the second field and the state is the last, which
+ * holds under either separator.
+ */
+export function sourceIsRunning(pactlShortSources: string, sourceName: string): boolean {
+  for (const line of pactlShortSources.split('\n')) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 3 || fields[1] !== sourceName) continue;
+    // RUNNING means a client is reading it; IDLE and SUSPENDED both mean nobody is.
+    return fields[fields.length - 1].toUpperCase() === 'RUNNING';
+  }
+  return false;
+}
+
 export interface AudioStackHandles {
   /** Env vars Chrome needs to use the virtual devices and display. */
   browserEnv: Record<string, string>;
@@ -295,6 +321,55 @@ export class AudioStack {
     proc.stdin?.on('error', (err) => logger.warn(`[Meeting] pacat stdin: ${err.message}`));
     proc.on('error', (err) => this.noteLoss(`the playback process failed to run: ${err.message}`));
     proc.on('exit', (code) => this.noteLoss(`the playback process exited (code ${code})`));
+  }
+
+  /**
+   * Wait until the browser is actually reading the virtual microphone.
+   *
+   * The other half of the unmute check, in the layer the DOM says nothing about:
+   * Meet's UI can report a live mic while Chromium never opened a capture device at
+   * all. `bot_mic` going RUNNING means a client holds the source open, which for this
+   * private daemon can only be Chromium — our own `parec` records `meet_out.monitor`,
+   * a different device, so this reading can't be contaminated by our own capture.
+   *
+   * What it does **not** prove is that the room can hear us. Meet mutes by disabling
+   * the track, not by closing the device, so a muted-but-open mic still reads RUNNING.
+   * This answers "did a capture device ever open", which is the failure the discarded
+   * "continue without microphone" path used to cause; the unmute assertion in the
+   * provider answers the other one.
+   *
+   * Polled rather than awaited on an event because PulseAudio offers no such event to
+   * a shell client, and it is genuinely a wait: the browser opens the device a moment
+   * after the unmute lands. `false` on timeout rather than a throw — the caller
+   * decides what an unheard agent is worth, and one operator's answer is "join
+   * anyway".
+   */
+  async waitForMicCapture(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      // A stack torn down under us has no daemon left to ask — `pulseEnv()` throws on
+      // the nulled runtime dir — so polling on would just burn the whole budget for a
+      // call that is already over.
+      if (this.stopped) return false;
+      let failure: string | null = null;
+      try {
+        const sources = await this.pactl(['list', 'short', 'sources']);
+        if (sourceIsRunning(sources, BOT_MIC_SOURCE)) return true;
+      } catch (err) {
+        // Anomalous rather than expected: `start()` already ran a dozen `pactl` calls,
+        // so one failing now is worth a line even though the loop retries.
+        failure = err instanceof Error ? err.message : String(err);
+      }
+
+      if (Date.now() >= deadline) {
+        logger.warn(
+          `[Meeting] ${BOT_MIC_SOURCE} is still not being captured after ${timeoutMs}ms` +
+            (failure ? ` (last read failed: ${failure})` : ''),
+        );
+        return false;
+      }
+      await new Promise((r) => setTimeout(r, MIC_CAPTURE_POLL_MS));
+    }
   }
 
   /**
