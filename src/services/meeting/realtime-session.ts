@@ -400,10 +400,21 @@ export class RealtimeSession extends EventEmitter {
 
       // Transcription can fail outright. Nothing to judge, but the partial text
       // accumulated so far has to go, or it sits in the map for the rest of the call.
+      //
+      // `warn`, not `debug`: no transcript means no `transcript` event, so the
+      // addressed gate is never consulted and the agent stays silent through an
+      // utterance that may well have named it — the same outward symptom as a gate
+      // that heard the sentence and judged it unaddressed, and the two need opposite
+      // fixes. At `debug` this was invisible in production (the runtime defaults to
+      // `info`), so a count of zero proved only that the level was too low to say.
       case 'conversation.item.input_audio_transcription.failed': {
         const itemId = typeof event.item_id === 'string' ? event.item_id : '';
         if (itemId) this.partialTranscripts.delete(itemId);
-        logger.debug(`[Meeting] Transcription failed for ${itemId || 'an utterance'}`);
+        const err = event.error as { message?: string } | undefined;
+        logger.warn(
+          `[Meeting] Transcription failed for ${itemId || 'an utterance'}` +
+            `${err?.message ? `: ${err.message}` : ''} — the gate never saw it`,
+        );
         return;
       }
 
@@ -413,7 +424,14 @@ export class RealtimeSession extends EventEmitter {
         this.partialTranscripts.delete(itemId);
         if (typeof transcript === 'string' && transcript.trim()) {
           this.emitEvent('transcript', itemId, transcript.trim());
+          return;
         }
+        // A success that carries nothing is the same silence as a failure — no
+        // event, so no gate call — and it used to leave no trace at all.
+        logger.warn(
+          `[Meeting] Transcription came back empty for ${itemId || 'an utterance'} ` +
+            `— the gate never saw it`,
+        );
         return;
       }
 

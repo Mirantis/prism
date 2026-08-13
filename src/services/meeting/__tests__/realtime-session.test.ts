@@ -3,10 +3,23 @@
  * session sends are checked as they'd go over the wire rather than through a mock.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { config } from '../../../config';
+import { logger } from '../../../logger';
 import { RealtimeSession } from '../realtime-session';
+
+vi.mock('../../../logger', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+/** Every `warn` line emitted so far, joined — enough to assert one was written. */
+function warnings(): string {
+  return vi
+    .mocked(logger.warn)
+    .mock.calls.map((c) => String(c[0]))
+    .join('\n');
+}
 
 interface Harness {
   session: RealtimeSession;
@@ -69,6 +82,7 @@ function silenceDelta(ms: number): string {
 let active: Harness | null = null;
 beforeEach(() => {
   active = null;
+  vi.mocked(logger.warn).mockClear();
 });
 afterEach(async () => {
   await active?.close();
@@ -254,6 +268,44 @@ describe('RealtimeSession events', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(partials).toEqual(['Hey ', 'Prism']);
+  });
+
+  // Both of the following leave the agent silent through an utterance without the
+  // gate ever being consulted, which from outside looks exactly like a gate that
+  // heard the sentence and judged it unaddressed. They are logged loudly enough to
+  // be read back from a deployed container, because that is the only thing that
+  // tells the two apart.
+  it('warns when transcription fails, since the gate never sees the utterance', async () => {
+    active = await harness();
+
+    active.emit({
+      type: 'conversation.item.input_audio_transcription.failed',
+      item_id: 'item-8',
+      error: { message: 'audio too short' },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(warnings()).toContain('item-8');
+    expect(warnings()).toContain('audio too short');
+    expect(warnings()).toMatch(/gate never saw it/);
+  });
+
+  it('warns when a completed transcription carries no text', async () => {
+    active = await harness();
+    const seen: string[] = [];
+    active.session.on('transcript', (_id, text) => seen.push(text));
+
+    active.emit({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-6',
+      transcript: '   ',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Still emits nothing — the change is that it no longer does so silently.
+    expect(seen).toEqual([]);
+    expect(warnings()).toContain('item-6');
+    expect(warnings()).toMatch(/came back empty/);
   });
 
   it('tags a transcript with the item it belongs to', async () => {
