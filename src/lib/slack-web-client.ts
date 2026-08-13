@@ -47,8 +47,50 @@ export function stripBodyToken(config: InternalAxiosRequestConfig): InternalAxio
   return config;
 }
 
+/**
+ * Bounded request policy for every Slack call this runtime makes.
+ *
+ * `@slack/web-api`'s defaults are `timeout: 0` (no per-request deadline) and
+ * `tenRetriesInAboutThirtyMinutes`. Combined, one unreachable or hanging Slack
+ * endpoint can keep a single `auth.test` outstanding for the better part of half
+ * an hour — and boot awaits that call, so the whole runtime (HTTP server
+ * included) never starts. Any caller waiting on the port then fails with a
+ * timeout that points at the port, not at Slack.
+ *
+ * So: a request deadline, and a handful of retries measured in seconds — a
+ * couple of minutes at the absolute worst instead of thirty, and it still rides
+ * out the transient 5xx/network blips retries exist for. (A 429 can still push
+ * past that: `retry-after` is slept *inside* the retried attempt, by design —
+ * ignoring Slack's own backoff would be worse than waiting it out.)
+ *
+ * The deadline is sized for the largest thing this client sends, not the
+ * smallest: `files.uploadV2` POSTs the file bytes on this same axios instance,
+ * so `timeout` has to cover a multi-MB upload. Callers that only ever exchange
+ * JSON — the boot `auth.test`, which the port waits behind — pass a tighter one.
+ *
+ * Applied to the steady-state client too (it is the same client): a real outage
+ * should surface as a failed post the caller can see and log, not as an
+ * invisible 30-minute stall.
+ *
+ * **Do not hand these options to a Socket Mode client.** `SocketModeClient`
+ * installs its own `{ retries: 100, factor: 1.3 }` for `apps.connections.open`
+ * *only* when `retryConfig` is undefined, and it classifies a request timeout as
+ * unrecoverable — so a client bounded like this would stop reconnecting after a
+ * blip instead of retrying for hours (see `slack-adapter.service.ts`).
+ */
+export const BOUNDED_SLACK_CLIENT_OPTIONS: WebClientOptions = {
+  timeout: 30_000,
+  retryConfig: {
+    retries: 3,
+    factor: 2,
+    minTimeout: 1_000,
+    maxTimeout: 8_000,
+    randomize: true,
+  },
+};
+
 export class SlackWebClient extends WebClient {
   constructor(token?: string, opts?: WebClientOptions) {
-    super(token, { ...opts, requestInterceptor: stripBodyToken });
+    super(token, { ...BOUNDED_SLACK_CLIENT_OPTIONS, ...opts, requestInterceptor: stripBodyToken });
   }
 }

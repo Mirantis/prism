@@ -146,8 +146,19 @@ export default defineConfig({
       // script's hard-coded `file:./agent.db` prefix.
       command: 'npx tsx src/index.ts',
       cwd: REPO_ROOT,
-      port: RUNTIME_PORT,
-      timeout: 60_000,
+      // `url` rather than `port`: a bare port is satisfied by anything holding
+      // the socket, and this runtime binds *after* `initialize()` — Slack
+      // `auth.test`, MCP, cron. Probing `/health` means "the runtime is serving",
+      // which is what the first scenario actually needs.
+      //
+      // 180s rather than 60s because that initialize step is the slow, network-
+      // dependent part (Slack over the public internet on a shared runner), and
+      // when it overran the old budget Playwright killed the runtime and failed
+      // the whole suite at ~1.1 min with `Timed out waiting 60000ms from config`
+      // — a message that names no cause. tsx also has to compile the runtime's
+      // TypeScript on the way in.
+      url: `http://localhost:${RUNTIME_PORT}/health`,
+      timeout: 180_000,
       reuseExistingServer: !process.env.CI,
       // Playwright's webServer.stdout defaults to 'ignore'; opt in so the
       // runtime's pino logs (which go to stdout) show up with [WebServer]
@@ -193,7 +204,10 @@ export default defineConfig({
       command: 'npm run dev',
       cwd: path.resolve(__dirname, '../web'),
       port: WEB_PORT,
-      timeout: 60_000,
+      // Vite's cold start is the other thing racing a loaded runner. Same
+      // reasoning as the runtime above; `port` is fine here because a listening
+      // Vite is a serving Vite.
+      timeout: 180_000,
       reuseExistingServer: !process.env.CI,
     },
   ],
