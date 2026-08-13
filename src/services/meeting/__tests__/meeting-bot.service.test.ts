@@ -1341,8 +1341,8 @@ describe('reading the room', () => {
 });
 
 /**
- * The tool-mode experiment (AGENT-135) is only comparable if one container can run
- * both, so the mode is a per-join argument over an env default.
+ * The tool-mode experiment is only comparable if one container can run both, so the
+ * mode is a per-join argument over an env default.
  */
 describe('how many tools the voice is given', () => {
   it('gives the model everything by default', async () => {
@@ -1390,5 +1390,39 @@ describe('how many tools the voice is given', () => {
     // Two calls minutes apart on one container is the whole A/B; a mode that stuck
     // would silently make the second half of the comparison a repeat of the first.
     expect(service.status().toolMode).toBe('full');
+  });
+});
+
+/**
+ * The room's record has one writer and one reader, and they are two different objects
+ * — so the only thing that makes it a record of *this* call is that the service hands
+ * both of them the same log.
+ */
+describe('the transcript the call keeps', () => {
+  it('gives the conversation and the tools one and the same log', async () => {
+    await service.join({ ...input, toolMode: 'delegate' });
+    await settle();
+
+    const given = prepareMeetingTools.mock.calls[0][0] as { transcript?: unknown };
+    expect(given.transcript).toBeDefined();
+    // Two logs instead of one is the failure with no visible symptom: the room's
+    // speech goes into one, every handoff reads the other, and the delegate is handed
+    // a call in which nobody ever said anything.
+    expect(conversationOptions?.transcript).toBe(given.transcript);
+  });
+
+  it('starts each call with an empty one', async () => {
+    await service.join(input);
+    await settle();
+    const first = (prepareMeetingTools.mock.calls[0][0] as { transcript?: unknown }).transcript;
+    await service.leave();
+
+    await service.join(input);
+    await settle();
+
+    // A log that outlived its call would open the next one with a stranger's meeting
+    // in it — and it holds people's speech, so that is a leak, not just noise.
+    const second = (prepareMeetingTools.mock.calls[1][0] as { transcript?: unknown }).transcript;
+    expect(second).not.toBe(first);
   });
 });

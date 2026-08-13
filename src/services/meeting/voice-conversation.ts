@@ -80,6 +80,7 @@ const EARLY_JUDGED_LIMIT = 32;
  */
 const KEYWORD_LIMIT = 12;
 import type { DelegationStats, PreparedMeetingTools } from './tool-bridge';
+import type { TranscriptLog } from './call-transcript';
 
 export interface VoiceConversationOptions {
   instructions: string;
@@ -90,6 +91,15 @@ export interface VoiceConversationOptions {
   responseMode: ResponseMode;
   /** The name the agent answers to — the same one the room hears it introduce. */
   agentName: string;
+  /**
+   * The call's running transcript, if the caller keeps one.
+   *
+   * Written here because this is where the room's finished utterances arrive, and read
+   * by the delegation tool, which sends it with every handoff. In `full` mode nothing
+   * reads it — the Realtime model holds the call's history in its own session — so the
+   * caller can leave it unset and pay nothing.
+   */
+  transcript?: TranscriptLog;
   model?: string;
   voice?: string;
   endpointOverride?: RealtimeSessionOptions['endpointOverride'];
@@ -364,6 +374,11 @@ export class VoiceConversation {
     this.session.on('transcript', (itemId, text) => {
       this.earlyJudged.delete(itemId);
       this.remember(this.finalizedItems, itemId);
+      // Finished transcripts only, and before any of the answer decisions below: the
+      // log is the room's record, so an utterance nobody answered still belongs in it.
+      // A partial would be written and then rewritten by its own final text, which is
+      // both a duplicate line and — since the log is append-only — an unfixable one.
+      this.options.transcript?.append(text);
       // The finished transcript is proof the utterance is over, so an answer still
       // waiting on a boundary event has nothing left to wait for. `committed`
       // normally lands first and this never fires; it exists so a missed event

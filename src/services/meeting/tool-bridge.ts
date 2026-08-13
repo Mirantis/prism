@@ -41,6 +41,7 @@ import {
   type DelegationOutcome,
 } from './delegation-tool';
 import type { RealtimeFunctionTool } from './realtime-session';
+import type { TranscriptLog } from './call-transcript';
 
 /**
  * Cap on a tool result handed back to the Realtime model.
@@ -97,6 +98,12 @@ export interface MeetingToolBridgeInput {
    * that hands the request to an ordinary agent turn. See `delegation-tool.ts`.
    */
   toolMode?: MeetingToolMode;
+  /**
+   * The call's running transcript, written by the conversation and read by the
+   * delegation tool, which sends it with every handoff. Ignored in `full` mode, where
+   * the Realtime model has the call's own history in its session context.
+   */
+  transcript?: TranscriptLog;
 }
 
 /**
@@ -220,6 +227,7 @@ export async function prepareMeetingTools(
             userId: input.userId,
             agentId: input.agentId,
             invoker,
+            transcript: input.transcript,
             onOutcome: recordDelegation,
           }),
           ...Object.fromEntries(

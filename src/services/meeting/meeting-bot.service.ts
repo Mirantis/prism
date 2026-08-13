@@ -30,6 +30,7 @@ import { VoiceConversation, type VoiceConversationStats } from './voice-conversa
 import type { EffectiveMode, ResponseMode } from './response-policy';
 import type { MeetingToolMode } from '../../config';
 import { prepareMeetingTools } from './tool-bridge';
+import { createTranscriptLog } from './call-transcript';
 import { googleMeetProvider } from './providers/google-meet';
 import type { JoinStep, MeetingProvider } from './meeting-provider.interface';
 import type { Page } from 'playwright-core';
@@ -310,12 +311,19 @@ export class MeetingBotService {
       // Instructions and tools first: they need the database and the model
       // catalog, and failing here should cost nothing but a message.
       const { instructions, agentName, lockedIn } = await this.buildInstructions(input);
+      // One log, shared by the conversation that writes the room's speech into it and
+      // the delegation tool that sends it with every handoff. Created for every call,
+      // not only delegating ones: it is a bounded in-memory buffer
+      // (`call-transcript.ts`), and in `full` mode nothing reads it — the Realtime
+      // session holds the call's own history.
+      const transcript = createTranscriptLog();
       const tools = await prepareMeetingTools({
         userId: input.userId,
         agentId: input.agentId,
         threadId: input.threadId,
         lockedIn,
         toolMode: this.toolMode,
+        transcript,
       });
 
       audio = new AudioStack();
@@ -336,6 +344,7 @@ export class MeetingBotService {
         // the name it just gave the room, and stay silent.
         agentName,
         voice: config.openaiRealtimeVoice,
+        transcript,
         onSessionLost: (reason) => this.onSessionLost(epoch, reason),
       });
       await conversation.start();

@@ -16,6 +16,7 @@ vi.mock('../../../invoke', () => ({
 
 const { prepareMeetingTools } = await import('../tool-bridge');
 const { DELEGATION_TOOL_NAME } = await import('../delegation-tool');
+const { createTranscriptLog } = await import('../call-transcript');
 
 /** The signal a live call supplies: nothing has aborted it. */
 const live = () => new AbortController().signal;
@@ -371,6 +372,31 @@ describe('prepareMeetingTools in delegate mode', () => {
     // nothing to work with — the experiment is about who chooses, not about access.
     expect(mockCollectTools).toHaveBeenCalledWith(
       expect.objectContaining({ mode: 'meeting', agentId: 'a1' }),
+    );
+  });
+
+  it('hands the call\'s transcript to the delegation tool', async () => {
+    mockCollectTools.mockResolvedValue(catalog());
+    const transcript = createTranscriptLog();
+    transcript.append('the staging deploy looks stuck');
+
+    const prepared = await prepareMeetingTools({
+      userId: 'u1',
+      agentId: 'a1',
+      toolMode: 'delegate',
+      transcript,
+    });
+    mockInvoke.mockResolvedValue({ response: 'Looking now.', toolCalls: [], steps: [] });
+    await prepared.execute(DELEGATION_TOOL_NAME, '{"request":"check the deploy"}', live());
+
+    // The bridge is the only thing holding both the log and the tool, so a handoff
+    // arriving without the transcript is a wiring failure with no other symptom than
+    // a delegate that answers as if it had heard nothing.
+    const request = mockInvoke.mock.calls[0][0] as {
+      cachedPrefix?: { text: string; open?: string };
+    };
+    expect(`${request.cachedPrefix?.text}${request.cachedPrefix?.open}`).toContain(
+      'the staging deploy looks stuck',
     );
   });
 

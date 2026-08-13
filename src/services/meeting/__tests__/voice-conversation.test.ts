@@ -13,6 +13,7 @@ import { logger } from '../../../logger';
 import { VoiceConversation } from '../voice-conversation';
 import type { PreparedMeetingTools } from '../tool-bridge';
 import { classifyAddressed } from '../addressed-classifier';
+import { createTranscriptLog, type TranscriptLog } from '../call-transcript';
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -98,7 +99,10 @@ async function harness(): Promise<Harness> {
  * client sends back — `response.create` being the one that puts the agent's voice
  * in the room.
  */
-async function speakingHarness(execute?: PreparedMeetingTools['execute']): Promise<{
+async function speakingHarness(
+  execute?: PreparedMeetingTools['execute'],
+  transcript?: TranscriptLog,
+): Promise<{
   h: Harness;
   send: (event: Record<string, unknown>) => void;
   sent: Record<string, unknown>[];
@@ -130,6 +134,7 @@ async function speakingHarness(execute?: PreparedMeetingTools['execute']): Promi
     agentName: 'Emma',
     // Named, so the gate decides — the path the early verdict lives on.
     responseMode: 'addressed',
+    transcript,
     endpointOverride: { url: `ws://127.0.0.1:${port}`, headers: {} },
   });
   await conversation.start();
@@ -630,6 +635,79 @@ describe('answering a spoken name without asking the model', () => {
 
     // Their ratio is what the `meeting ended` event reports as `gate_local_share`.
     expect(h.conversation.statistics).toMatchObject({ gateLocalYes: 1, gateModelCalls: 1 });
+  });
+});
+
+/**
+ * The room's record, which the delegation tool sends with every handoff. This is where
+ * the room's finished utterances arrive, so this is where they are written down — and
+ * the log is append-only, so what gets written has to be right the first time.
+ */
+describe('keeping a record of what the room said', () => {
+  it('writes an utterance down once it is finished', async () => {
+    const transcript = createTranscriptLog();
+    const { h, send } = await speakingHarness(undefined, transcript);
+    active = h;
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-1',
+      transcript: 'Emma, is the staging deploy done?',
+    });
+    await settle();
+    await settle();
+
+    expect(transcript.chunks().open).toContain('Room: Emma, is the staging deploy done?');
+    expect(transcript.stats().lines).toBe(1);
+  });
+
+  it('ignores a partial, which its own final text would then duplicate', async () => {
+    const transcript = createTranscriptLog();
+    const { h, send } = await speakingHarness(undefined, transcript);
+    active = h;
+
+    // Partials arrive repeatedly as one sentence grows. Written down, each would be a
+    // line of its own — and since the log is append-only, superseding them is
+    // impossible: the delegate would read the same half-sentence three times.
+    send({
+      type: 'conversation.item.input_audio_transcription.delta',
+      item_id: 'item-2',
+      delta: 'Emma, is the staging',
+    });
+    await settle();
+    await settle();
+
+    expect(transcript.stats().lines).toBe(0);
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-2',
+      transcript: 'Emma, is the staging deploy done?',
+    });
+    await settle();
+
+    expect(transcript.stats().lines).toBe(1);
+  });
+
+  it('records an utterance nobody answered', async () => {
+    const transcript = createTranscriptLog();
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    const { h, send, sent } = await speakingHarness(undefined, transcript);
+    active = h;
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-3',
+      transcript: 'I think the rollout finished an hour ago.',
+    });
+    await settle();
+    await settle();
+
+    // Nothing was said back — and the log is the room's record, not the agent's. The
+    // sentence the agent stayed out of is often exactly the context the next request
+    // only makes sense against.
+    expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(0);
+    expect(transcript.chunks().open).toContain('I think the rollout finished an hour ago.');
   });
 });
 
