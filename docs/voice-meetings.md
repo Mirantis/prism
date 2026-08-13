@@ -268,6 +268,47 @@ to speak its answer. Past that it sees the start and the end of the output with 
 notice that the middle is missing, and it will say the listing was cut rather than
 quote a count it can't stand behind. See [Large tool outputs](tools.md#large-tool-outputs).
 
+### Delegating tool calls instead (experimental)
+
+`MEETING_TOOL_MODE=delegate` changes **who picks the tool**, not what the agent can
+do. Instead of showing the voice the whole catalog and letting it choose mid-sentence,
+it gets one tool — "hand this request to the rest of me" — and an ordinary agent turn
+does the choosing and the work, then hands back an answer to say out loud. The reason
+to want it: a speech model choosing among dozens of tools while talking picks worse
+than the text model does with the same catalog and no clock.
+
+It is **off by default** and it is an experiment, not a recommendation. What you give
+up is real:
+
+- **A second model in the loop on every request**, so a lookup that took one tool call
+  now costs a whole agent turn. The room waits longer, and you pay for both.
+- **A 30-second ceiling.** Past that the delegated work is cancelled and the agent says
+  it stopped and can start again. In `full` mode a slow tool has no deadline at all.
+- **Nothing summarizes.** The handler is asked for a spoken-length answer and the
+  result is capped at 2,000 characters — well under `full` mode's 12,000 — so a
+  handler that writes an essay gets cut rather than condensed.
+- **The request is retyped in the middle.** The voice writes down what it heard, and
+  the handler gets only that: no audio, no transcript, no room. A vague handoff comes
+  back useless, which is a failure mode `full` mode doesn't have.
+
+Two tools stay alongside it — `leave_meeting` and `meeting_status` — because they act
+on the call itself and a delegated turn can't reach it. So "one tool" is three.
+
+Set it per-call rather than per-deployment to compare the two: ask the agent to join
+with `toolMode: "delegate"`. That is how the comparison is meant to be run — two calls
+minutes apart on the same container. `meeting_status` reports which mode the current
+call is in, and both `meeting joined` and `meeting ended` telemetry carry `tool_mode`.
+
+Note this is not a way to restrict the agent. The delegated turn holds the same tools,
+including the destructive ones, and it has **no confirmation rule of its own** — so
+everything below applies unchanged, and the confirmation has to happen in the room
+before the handoff.
+
+There is one thing the modes don't share: a delegated turn cannot set the agent a
+**goal**. So "set yourself a goal to keep an eye on that" works in `full` mode and comes
+back as a refusal in `delegate` mode. Ask for it in chat, or run the call in `full`
+mode.
+
 The one exception is **file sharing**. `share_file` is unavailable in a call: it only
 stores a file and hands back a reference for the chat machinery to deliver, and a
 meeting doesn't run that machinery — so it would store a file that reached nobody. If
@@ -378,6 +419,7 @@ is the same thing to tell them about as the agent's presence.
 | `MEETING_TRANSCRIPT_LOGGING` | Whether what was said may appear in the runtime's log: `off` or `full`. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |
+| `MEETING_TOOL_MODE` | `full` gives the voice every tool and lets it choose. `delegate` gives it one tool that hands each request to an ordinary agent turn — experimental, see [Delegating tool calls](#delegating-tool-calls-instead-experimental). Anything else reads as `full`. Overridable per call. | `full` |
 
 Reaching the lobby has its own budget, so a slow-loading Meet page never eats into
 the waiting-room time.

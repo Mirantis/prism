@@ -177,3 +177,62 @@ describe('who the agent is in a call', () => {
     expect(text).toMatch(/Nothing above this line tells you who\s+you are/i);
   });
 });
+
+/**
+ * The `delegate` tool mode changes one section, and the promise made about it is that
+ * an unset `MEETING_TOOL_MODE` leaves a call's instructions exactly as they were.
+ */
+describe('the tool mode a call runs in', () => {
+  it('gives an unset mode exactly the instructions full mode gets', () => {
+    // The flag is off by default and this is what "off" has to mean: not similar
+    // instructions, the same ones, character for character.
+    for (const responseMode of ['auto', 'open', 'addressed'] as const) {
+      expect(getMeetingInstructions({ ...base, responseMode })).toBe(
+        getMeetingInstructions({ ...base, responseMode, toolMode: 'full' }),
+      );
+    }
+  });
+
+  it('says nothing about a handoff in full mode', () => {
+    const text = getMeetingInstructions({ ...base, toolMode: 'full' });
+
+    expect(text).not.toContain('handle_request');
+    expect(text).toMatch(/Everything else in your toolset works here/);
+  });
+
+  it('tells the delegate mode to speak first and to write the request out in full', () => {
+    const text = getMeetingInstructions({ ...base, toolMode: 'delegate' });
+
+    // Speak-first survives the mode change: it matters more here, not less, since the
+    // pause it covers is now a whole agent turn long.
+    expect(text).toMatch(/Never hand something off in silence — speak first/);
+    expect(text).toContain('handle_request');
+    expect(text).toMatch(/write the request out in full/);
+    // The handler hears nothing, which the model has to be told or it hands over a
+    // fragment ("check the thing they mentioned") and gets nothing usable back.
+    expect(text).toMatch(/it hears nothing/);
+    // And the room must not be told about the machinery.
+    expect(text).toMatch(/Never mention the\s+handoff/);
+  });
+
+  it('keeps the confirmation rule verbatim in delegate mode', () => {
+    // The tool surface shrinking is not a restriction — the same destructive tools run
+    // one step further away, and that step has no confirmation rule of its own. So this
+    // rule is the whole boundary in both modes.
+    const full = getMeetingInstructions({ ...base, toolMode: 'full' });
+    const delegate = getMeetingInstructions({ ...base, toolMode: 'delegate' });
+    const rule = (text: string) => text.slice(text.indexOf('15. **But a meeting is not'));
+
+    expect(rule(delegate)).toBe(rule(full));
+    expect(rule(delegate)).toMatch(/get an explicit "yes" in the room first/);
+  });
+
+  it('warns the delegate mode off the one thing it cannot do', () => {
+    // A delegated turn runs in `subagent` mode, which has never held the goal tools —
+    // so this is the one place the two modes differ in ability, and agreeing to a goal
+    // in a call that cannot set one is a promise broken silently.
+    const text = getMeetingInstructions({ ...base, toolMode: 'delegate' });
+
+    expect(text).toMatch(/cannot do is set you a \*\*goal\*\*/);
+  });
+});

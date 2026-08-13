@@ -93,8 +93,18 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
             'addressed by name. "open" always answers every utterance — only for a call you ' +
             'know stays one-to-one. "addressed" always waits to be named.',
           ),
+        toolMode: z
+          .enum(['full', 'delegate'])
+          .optional()
+          .describe(
+            'Experimental, and only worth setting if you are explicitly asked to compare ' +
+            'the two. "full" (the default unless the deployment says otherwise) gives the ' +
+            'voice every tool and lets it choose. "delegate" gives it one tool that hands ' +
+            'each request back to you to do the work. What differs is who picks the ' +
+            'tool; the one thing you lose in "delegate" is setting yourself a goal.',
+          ),
       }),
-      execute: async ({ url, responseMode }) => {
+      execute: async ({ url, responseMode, toolMode }) => {
         const provider = meetingBotService.findProvider(url);
         if (!provider) {
           return {
@@ -111,6 +121,7 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
           agentId: input.agentId,
           threadId: input.threadId,
           responseMode,
+          toolMode,
         });
 
         return {

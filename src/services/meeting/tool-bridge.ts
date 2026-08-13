@@ -13,6 +13,13 @@
  * single-writer SQLite handle, and OpenAI's servers could not dial into the
  * container anyway.
  *
+ * `MEETING_TOOL_MODE=delegate` (or a per-join `toolMode`) changes what the Realtime
+ * model is *shown* — one delegation tool instead of the catalog, see
+ * `delegation-tool.ts` — and almost nothing about what the agent can ultimately do:
+ * the delegated turn holds the same tools bar the goal tools, which `subagent` mode
+ * has never had. It is an experiment in who does the choosing, not a restriction, so
+ * everything below applies to it unchanged.
+ *
  * Because the bridge runs tools on behalf of whoever is talking, everything a
  * meeting participant says is untrusted input with the agent's full tool authority
  * behind it — nothing destructive is withheld in `meeting` mode. The only guards
@@ -24,8 +31,11 @@
 
 import { asSchema, type Tool } from 'ai';
 import { logger } from '../../logger';
+import type { MeetingToolMode } from '../../config';
 import { collectTools } from '../../lib/tool-collection';
 import { renderToolResult } from '../../lib/tool-output-limiter';
+import type { Invoker } from '../../lib/task-tool';
+import { createDelegationTool, DELEGATION_TOOL_NAME } from './delegation-tool';
 import type { RealtimeFunctionTool } from './realtime-session';
 
 /**
@@ -53,6 +63,20 @@ const VOICE_TRUNCATION_GUIDANCE =
   'You cannot send the rest anywhere — this call is your only channel, so say the part ' +
   'that answers the question and offer to go into more of it out loud.';
 
+/**
+ * The two tools that stay in `delegate` mode alongside the delegation tool.
+ *
+ * They are the call's own controls, not work: `leave_meeting` is how the agent hangs
+ * up when asked, and `meeting_status` is how it answers "how long have you been
+ * here". Delegating either is impossible — a delegated turn runs in `subagent` mode,
+ * which drops the meeting tools precisely so it cannot end the call that spawned it.
+ * So "single tool" is really one delegation tool plus these two.
+ *
+ * `join_meeting` is not among them: the agent is already in a call, one call at a
+ * time is the rule, and it has nothing to do with answering a request.
+ */
+const DELEGATE_MODE_CONTROL_TOOLS = ['leave_meeting', 'meeting_status'] as const;
+
 export interface MeetingToolBridgeInput {
   userId: string;
   agentId: string;
@@ -64,6 +88,11 @@ export interface MeetingToolBridgeInput {
    * tools; a lock turned off does not hand the writers back until the next call.
    */
   lockedIn: boolean;
+  /**
+   * `full` (the default) offers the model everything; `delegate` offers one tool
+   * that hands the request to an ordinary agent turn. See `delegation-tool.ts`.
+   */
+  toolMode?: MeetingToolMode;
 }
 
 export interface PreparedMeetingTools {
@@ -85,16 +114,32 @@ export interface PreparedMeetingTools {
 /**
  * Collect the agent's tools in `meeting` mode and adapt them for the Realtime API.
  *
- * Everything executable is offered, Task included. Be aware of what that means for
- * pacing: `shell_spawn` and `claude_code` do hand back a handle immediately, but
- * `Task` awaits the whole subagent run, so its result can take minutes. The session
- * stays alive and interruptible throughout — but the model is waiting on that
- * result, so the prompt's instruction to say something before a tool call is what
- * keeps the room from sitting in silence.
+ * In `full` mode everything executable is offered, Task included. Be aware of what
+ * that means for pacing: `shell_spawn` and `claude_code` do hand back a handle
+ * immediately, but `Task` awaits the whole subagent run, so its result can take
+ * minutes. The session stays alive and interruptible throughout — but the model is
+ * waiting on that result, so the prompt's instruction to say something before a tool
+ * call is what keeps the room from sitting in silence.
+ *
+ * In `delegate` mode the same collection still happens — the delegated turn needs the
+ * agent's real tools, it just gets them through `invoke()` instead — and what changes
+ * is only what the *Realtime* model is shown: one delegation tool plus the call's own
+ * controls.
  */
 export async function prepareMeetingTools(
   input: MeetingToolBridgeInput,
 ): Promise<PreparedMeetingTools> {
+  const toolMode = input.toolMode ?? 'full';
+
+  // Imported at call time, not at module load: the cycle
+  // invoke -> tool-collection -> tools/meeting -> meeting-bot.service -> here is
+  // real, and a top-level import would close it and leave one module
+  // half-initialized.
+  const invoker = async (request: Parameters<Invoker>[0]) => {
+    const { invoke } = await import('../../invoke');
+    return invoke(request);
+  };
+
   const { tools } = await collectTools({
     userId: input.userId,
     agentId: input.agentId,
@@ -104,14 +149,7 @@ export async function prepareMeetingTools(
     // only global skills apply — the same position autonomous runs are in.
     workspaceRoot: undefined,
     lockedIn: input.lockedIn,
-    // Imported at call time, not at module load: the cycle
-    // invoke -> tool-collection -> tools/meeting -> meeting-bot.service -> here is
-    // real, and a top-level import would close it and leave one module
-    // half-initialized.
-    taskInvoker: async (request) => {
-      const { invoke } = await import('../../invoke');
-      return invoke(request);
-    },
+    taskInvoker: invoker,
   });
 
   const usable: Record<string, Tool> = {};
@@ -125,7 +163,31 @@ export async function prepareMeetingTools(
     usable[name] = tool;
   }
 
-  const declarations: RealtimeFunctionTool[] = Object.entries(usable).map(([name, tool]) => ({
+  // Narrow to the experiment's surface. Deliberately done here rather than in
+  // `filterToolsByMode`: MCP tools arrive already merged into one opaque dict, so
+  // this is the only point that sees the whole catalog the model would otherwise be
+  // handed. Replacing rather than filtering, so a newly-added tool cannot leak in.
+  const offered: Record<string, Tool> =
+    toolMode === 'delegate'
+      ? {
+          [DELEGATION_TOOL_NAME]: createDelegationTool({
+            userId: input.userId,
+            agentId: input.agentId,
+            invoker,
+          }),
+          ...Object.fromEntries(
+            DELEGATE_MODE_CONTROL_TOOLS.filter((name) => {
+              // Loud, because the prompt tells the model to use `leave_meeting` when
+              // asked to leave: renaming one of these would silently leave a delegating
+              // call unable to hang up, which nobody would connect back to a rename.
+              if (!usable[name]) logger.warn(`[Meeting] Control tool ${name} is missing`);
+              return usable[name];
+            }).map((name) => [name, usable[name]]),
+          ),
+        }
+      : usable;
+
+  const declarations: RealtimeFunctionTool[] = Object.entries(offered).map(([name, tool]) => ({
     name,
     description: describeTool(tool) ?? name,
     // asSchema normalizes both shapes the codebase produces: zod schemas from the
@@ -133,13 +195,15 @@ export async function prepareMeetingTools(
     parameters: asSchema(tool.inputSchema).jsonSchema as Record<string, unknown>,
   }));
 
-  logger.info(`[Meeting] Offering ${declarations.length} tool(s) to the Realtime model`);
+  logger.info(
+    `[Meeting] Offering ${declarations.length} tool(s) to the Realtime model (${toolMode} mode)`,
+  );
 
   return {
     declarations,
     count: declarations.length,
     execute: (name, argumentsJson, abortSignal) =>
-      executeTool(usable, name, argumentsJson, abortSignal),
+      executeTool(offered, name, argumentsJson, abortSignal),
   };
 }
 

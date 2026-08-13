@@ -31,6 +31,14 @@ export const dotenvLoadInfo = {
  * Centralized configuration — single place for all env var reads.
  */
 
+/**
+ * How many tools a voice meeting offers the Realtime model.
+ *
+ * Declared here rather than in the meeting code so the per-join argument, the tool
+ * schema and the env var all narrow to the same two words.
+ */
+export type MeetingToolMode = 'full' | 'delegate';
+
 const nexusApiUrl = process.env.NEXUS_API_URL;
 const projectId = process.env.PROJECT_ID;
 const awsRegion = process.env.AWS_REGION || 'us-east-1';
@@ -410,6 +418,21 @@ const rawMeetingTimeout = parseInt(process.env.MEETING_TIMEOUT_MINUTES ?? '', 10
 const meetingTimeoutMinutes =
   Number.isFinite(rawMeetingTimeout) && rawMeetingTimeout > 0 ? rawMeetingTimeout : 60;
 
+// How many tools the Realtime model sees in a call.
+//
+// `full` (the default) offers it the agent's whole tool surface and lets it pick.
+// `delegate` is an experiment: offer one tool that hands the request to an ordinary
+// agent turn, which does the picking and the work, plus the two meeting-control
+// tools the voice must keep. The premise is that a speech model asked to choose
+// among dozens of tools mid-sentence picks worse than the text model does with the
+// same catalog and no clock.
+//
+// Unrecognized values fall back to `full`, so a typo cannot quietly move a
+// deployment onto the experiment. Overridable per join, which is the only way to
+// A/B it: two calls minutes apart on one container.
+const rawMeetingToolMode = (process.env.MEETING_TOOL_MODE || 'full').toLowerCase();
+const meetingToolMode: MeetingToolMode = rawMeetingToolMode === 'delegate' ? 'delegate' : 'full';
+
 // How long to wait in the waiting room for a host to click "Admit". Generous by
 // default: a guest often waits out the host's own join.
 const rawAdmissionTimeout = parseInt(process.env.MEETING_ADMISSION_TIMEOUT_SECONDS ?? '', 10);
@@ -680,4 +703,6 @@ export const config = {
   googleBotPassword,
   meetingTimeoutMinutes,
   meetingAdmissionTimeoutMs,
+  // MEETING_TOOL_MODE: `full` (default) or `delegate`. See the derivation above.
+  meetingToolMode,
 };

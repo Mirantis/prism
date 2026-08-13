@@ -124,6 +124,16 @@ vi.mock('../../../prompts/context-builder', () => ({
   buildSystemPromptParts: (...a: unknown[]) => buildSystemPromptParts(...a),
 }));
 
+/**
+ * Mocked to observe what the service asked for, not to replace the prompt: the
+ * instructions have to describe the tools the model was actually given, and this is
+ * the only place that decision is visible.
+ */
+const getMeetingInstructions = vi.fn(() => '# Live Voice Meeting');
+vi.mock('../../../prompts/meeting-prompt', () => ({
+  getMeetingInstructions: (...a: unknown[]) => getMeetingInstructions(...a),
+}));
+
 const publish = vi.fn();
 const publishToLatestThread = vi.fn();
 vi.mock('../../message-delivery.service', () => ({
@@ -163,6 +173,9 @@ vi.mock('../../../config', () => ({
     googleBotPassword: 'hunter2',
     meetingTimeoutMinutes: 60,
     meetingAdmissionTimeoutMs: 5_000,
+    // The shipped default: the experiment is opt-in, so an unset MEETING_TOOL_MODE
+    // has to leave a call exactly where it is today.
+    meetingToolMode: 'full',
     openaiRealtimeVoice: undefined,
   },
 }));
@@ -1019,6 +1032,7 @@ describe('telemetry', () => {
       response_mode: 'auto',
       muted_on_entry: 'false',
       mic_confirmed: 'true',
+      tool_mode: 'full',
     });
 
     await service.leave();
@@ -1258,4 +1272,57 @@ describe('reading the room', () => {
     expect(conversationOptions).toMatchObject({ agentName: 'Atlas', responseMode: 'auto' });
   });
 
+});
+
+/**
+ * The tool-mode experiment (AGENT-135) is only comparable if one container can run
+ * both, so the mode is a per-join argument over an env default.
+ */
+describe('how many tools the voice is given', () => {
+  it('gives the model everything by default', async () => {
+    await service.join(input);
+    await settle();
+
+    // `MEETING_TOOL_MODE` is unset in tests, so this is the shipped default — and it
+    // has to be today's behaviour, or every existing deployment moves onto the
+    // experiment by upgrading.
+    expect(prepareMeetingTools).toHaveBeenCalledWith(expect.objectContaining({ toolMode: 'full' }));
+    expect(service.status().toolMode).toBe('full');
+  });
+
+  it('takes the mode from the join that asked for it', async () => {
+    await service.join({ ...input, toolMode: 'delegate' });
+    await settle();
+
+    expect(prepareMeetingTools).toHaveBeenCalledWith(
+      expect.objectContaining({ toolMode: 'delegate' }),
+    );
+    // Reported, so a call can be told apart from the outside — `meeting_status`
+    // spreads this straight through, which is how an A/B is checked mid-call.
+    expect(service.status().toolMode).toBe('delegate');
+  });
+
+  it('builds the prompt for the mode the call is running in', async () => {
+    await service.join({ ...input, toolMode: 'delegate' });
+    await settle();
+
+    // The instructions describe the tools the model actually has. A `full`-mode
+    // section in a `delegate`-mode call tells it to use tools it cannot see.
+    expect(getMeetingInstructions).toHaveBeenCalledWith(
+      expect.objectContaining({ toolMode: 'delegate' }),
+    );
+  });
+
+  it('does not carry a per-join mode into the next call', async () => {
+    await service.join({ ...input, toolMode: 'delegate' });
+    await settle();
+    await service.leave();
+
+    await service.join(input);
+    await settle();
+
+    // Two calls minutes apart on one container is the whole A/B; a mode that stuck
+    // would silently make the second half of the comparison a repeat of the first.
+    expect(service.status().toolMode).toBe('full');
+  });
 });

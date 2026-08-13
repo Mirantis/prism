@@ -28,6 +28,7 @@ import { AudioStack } from './audio-stack';
 import { BrowserStack } from './browser-stack';
 import { VoiceConversation, type VoiceConversationStats } from './voice-conversation';
 import type { EffectiveMode, ResponseMode } from './response-policy';
+import type { MeetingToolMode } from '../../config';
 import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet';
 import type { JoinStep, MeetingProvider } from './meeting-provider.interface';
@@ -108,6 +109,8 @@ export interface MeetingStatus {
    */
   effectiveResponseMode: EffectiveMode | null;
   joinedAt: string | null;
+  /** How many tools the Realtime model was given: everything, or one delegating one. */
+  toolMode: MeetingToolMode;
   /** Present once the call is under way. */
   stats?: VoiceConversationStats;
 }
@@ -120,6 +123,13 @@ export interface JoinMeetingInput {
   threadId?: string;
   /** How much the agent speaks up; `auto` follows the participant count. */
   responseMode?: ResponseMode;
+  /**
+   * Whether the Realtime model picks tools itself (`full`) or hands the request to
+   * an ordinary agent turn that picks (`delegate`). Defaults to `MEETING_TOOL_MODE`.
+   * Per-join because comparing the two is the point of the experiment, and the only
+   * way to compare them is two calls minutes apart on one container.
+   */
+  toolMode?: MeetingToolMode;
 }
 
 /**
@@ -152,6 +162,7 @@ export class MeetingBotService {
   private startedAt: number | null = null;
   private current: JoinMeetingInput | null = null;
   private responseMode: ResponseMode = 'auto';
+  private toolMode: MeetingToolMode = config.meetingToolMode;
   private unreadableCounts = 0;
   /**
    * Whether the room can hear the agent, as far as anything can tell.
@@ -212,6 +223,7 @@ export class MeetingBotService {
       state: this.state,
       provider: this.provider?.name ?? null,
       responseMode: this.responseMode,
+      toolMode: this.toolMode,
       effectiveResponseMode: this.conversation?.responseMode ?? null,
       joinedAt: this.joinedAt ? new Date(this.joinedAt).toISOString() : null,
       ...(this.conversation ? { stats: this.conversation.statistics } : {}),
@@ -267,6 +279,7 @@ export class MeetingBotService {
     this.provider = provider;
     this.current = input;
     this.responseMode = input.responseMode ?? 'auto';
+    this.toolMode = input.toolMode ?? config.meetingToolMode;
     this.state = 'launching';
     this.startedAt = Date.now();
     const epoch = this.epoch;
@@ -302,6 +315,7 @@ export class MeetingBotService {
         agentId: input.agentId,
         threadId: input.threadId,
         lockedIn,
+        toolMode: this.toolMode,
       });
 
       audio = new AudioStack();
@@ -507,6 +521,7 @@ export class MeetingBotService {
         // entry and confirmed is the fix earning its keep, unconfirmed is a room that
         // heard nothing — which used to be indistinguishable from a good call.
         mic_confirmed: String(audible),
+        tool_mode: this.toolMode,
       });
 
       if (audible) {
@@ -908,6 +923,7 @@ export class MeetingBotService {
         provider: this.provider.name,
         status,
         response_mode: this.responseMode,
+        tool_mode: this.toolMode,
         // Which step a failed join got to. A bounded enum, never the prose reason —
         // that would put page text into telemetry.
         ...(this.failStep ? { fail_step: this.failStep } : {}),
@@ -951,6 +967,7 @@ export class MeetingBotService {
     // A poll still in flight belongs to the call being torn down; its own epoch check
     // stops it acting, but leaving this set would deadlock the next call's polling.
     this.pollInFlight = false;
+    this.toolMode = config.meetingToolMode;
     this.failStep = null;
     // Free only when nothing is still being built. A startup abandoned mid-sign-in
     // still holds the shared browser profile, and the next `join()` would clear its
@@ -983,6 +1000,7 @@ export class MeetingBotService {
         agentName: context.agentName,
         platform: this.provider?.displayName ?? 'video call',
         responseMode: this.responseMode,
+        toolMode: this.toolMode,
       }),
     ].join('\n\n---\n\n');
     // Handed back so the caller can give the same name to the gate that decides

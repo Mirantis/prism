@@ -292,3 +292,86 @@ describe('prepareMeetingTools', () => {
     expect(JSON.parse(output)).toEqual({ error: 'The meeting ended before this could run' });
   });
 });
+
+/**
+ * `delegate` mode changes what the *Realtime* model is shown, not what the agent can
+ * do: the catalog still gets collected, because the delegated turn needs it.
+ */
+describe('prepareMeetingTools in delegate mode', () => {
+  const catalog = () => ({
+    tools: {
+      memory_search: tool({ description: 'Search', inputSchema: z.object({}), execute: async () => 'y' }),
+      shell_exec: tool({ description: 'Shell', inputSchema: z.object({}), execute: async () => 'y' }),
+      join_meeting: tool({ description: 'Join', inputSchema: z.object({}), execute: async () => 'y' }),
+      leave_meeting: tool({ description: 'Leave', inputSchema: z.object({}), execute: async () => 'left' }),
+      meeting_status: tool({ description: 'Status', inputSchema: z.object({}), execute: async () => 'fine' }),
+    },
+    subagents: [],
+  });
+
+  it('offers one delegation tool plus the call\'s own controls', async () => {
+    mockCollectTools.mockResolvedValue(catalog());
+
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', toolMode: 'delegate' });
+
+    // Three, not one: `leave_meeting` and `meeting_status` cannot be delegated —
+    // a delegated turn runs in `subagent` mode, which drops the meeting tools
+    // precisely so it cannot end the call that spawned it.
+    expect(prepared.declarations.map((d) => d.name).sort()).toEqual([
+      'handle_request',
+      'leave_meeting',
+      'meeting_status',
+    ]);
+    expect(prepared.count).toBe(3);
+  });
+
+  it('does not offer join_meeting: the agent is already in a call', async () => {
+    mockCollectTools.mockResolvedValue(catalog());
+
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', toolMode: 'delegate' });
+
+    expect(prepared.declarations.map((d) => d.name)).not.toContain('join_meeting');
+  });
+
+  it('refuses a tool it is no longer offering, rather than running it anyway', async () => {
+    mockCollectTools.mockResolvedValue(catalog());
+
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', toolMode: 'delegate' });
+
+    // The declarations and what `execute` will run have to be the same set, or a
+    // model working from a stale session config could still reach the whole catalog.
+    expect(JSON.parse(await prepared.execute('shell_exec', '{}', live()))).toEqual({
+      error: 'Unknown tool: shell_exec',
+    });
+  });
+
+  it('still runs the call controls it does offer', async () => {
+    mockCollectTools.mockResolvedValue(catalog());
+
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', toolMode: 'delegate' });
+
+    expect(await prepared.execute('leave_meeting', '{}', live())).toBe('left');
+  });
+
+  it('still collects the whole catalog, which the delegated turn needs', async () => {
+    mockCollectTools.mockResolvedValue(catalog());
+
+    await prepareMeetingTools({ userId: 'u1', agentId: 'a1', toolMode: 'delegate' });
+
+    // Same collection as `full` mode. Narrowing here would leave the delegate with
+    // nothing to work with — the experiment is about who chooses, not about access.
+    expect(mockCollectTools).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'meeting', agentId: 'a1' }),
+    );
+  });
+
+  it('offers the whole catalog when the mode is not set', async () => {
+    mockCollectTools.mockResolvedValue(catalog());
+
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+
+    // The default has to be today's behaviour, unchanged.
+    expect(prepared.declarations.map((d) => d.name)).not.toContain('handle_request');
+    expect(prepared.count).toBe(5);
+  });
+});
