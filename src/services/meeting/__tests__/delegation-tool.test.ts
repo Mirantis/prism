@@ -17,6 +17,7 @@ import {
   DELEGATED_RESULT_MAX_CHARS,
   DELEGATION_TOOL_NAME,
 } from '../delegation-tool';
+import { createTranscriptLog } from '../call-transcript';
 
 /** The AI SDK's second argument to `execute`. */
 const callOptions = (abortSignal?: AbortSignal) => ({
@@ -70,32 +71,118 @@ describe('the request handed to the agent', () => {
     expect(request.threadId).toBeUndefined();
   });
 
-  it('tells the handler it did not hear the call, and passes the request in full', async () => {
+  it('tells the handler it was not in the room, in the part that gets cached', async () => {
     invoker.mockResolvedValue(answer('ok'));
     const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker });
 
-    await run(tool, {
-      request: 'Restart the api deployment in staging',
-      context: 'They mentioned the staging cluster earlier',
-    });
+    await run(tool, { request: 'Restart the api deployment in staging' });
 
-    const { prompt } = invoker.mock.calls[0][0] as InvokeRequest;
-    expect(prompt).toContain('You did not hear it');
-    expect(prompt).toContain('Restart the api deployment in staging');
-    expect(prompt).toContain('They mentioned the staging cluster earlier');
+    const { prompt, cachedPrefix } = invoker.mock.calls[0][0] as InvokeRequest;
+    // The standing instructions belong in the prefix, not the prompt: they are the
+    // same bytes on every handoff in a call, which is the only reason a cache can
+    // read them instead of re-processing them.
+    expect(cachedPrefix?.text).toContain('You were not in the room');
     // It must not come back with a question: nobody on this side can answer one, and
     // it would be read out in the room as the agent's own reply.
-    expect(prompt).toContain('Do not ask a clarifying question');
+    expect(cachedPrefix?.text).toContain('Do not ask a clarifying question');
+    // And the prompt is only what varies.
+    expect(prompt).toContain('Restart the api deployment in staging');
+    expect(prompt).not.toContain('You were not in the room');
   });
 
-  it('omits the context line when there is none, rather than sending an empty one', async () => {
+  it('carries the sealed transcript in the cached part and the open tail beside it', async () => {
+    const transcript = createTranscriptLog({ chunkChars: 200 });
+    transcript.append('the staging cluster is unhappy again');
+    transcript.append('x'.repeat(200)); // seals everything above
+    transcript.append('can you restart the api deployment');
+
     invoker.mockResolvedValue(answer('ok'));
-    const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker });
+    const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, transcript });
 
-    await run(tool, { request: 'What time is standup' });
+    await run(tool, { request: 'Restart the api deployment in staging' });
 
-    const { prompt } = invoker.mock.calls[0][0] as InvokeRequest;
-    expect(prompt).not.toContain('Context from the meeting');
+    const { cachedPrefix } = invoker.mock.calls[0][0] as InvokeRequest;
+    expect(cachedPrefix?.text).toContain('the staging cluster is unhappy again');
+    // The newest line is in the tail, not the cached block — putting it there would
+    // change those bytes on every handoff and make the breakpoint worthless.
+    expect(cachedPrefix?.text).not.toContain('can you restart the api deployment');
+    expect(cachedPrefix?.open).toContain('can you restart the api deployment');
+    // The two arrive as adjacent content blocks with nothing between them, so the tail
+    // brings its own separator or it runs into the last sealed line.
+    expect(cachedPrefix?.open?.startsWith('\n')).toBe(true);
+  });
+
+  it('is byte-identical between handoffs while nothing new is sealed', async () => {
+    // The property Panu's review is about: two delegations in the same stretch of a
+    // call send the same prefix, so the second one reads it from cache.
+    const transcript = createTranscriptLog({ chunkChars: 200 });
+    transcript.append('x'.repeat(200));
+    transcript.append('first question');
+
+    invoker.mockResolvedValue(answer('ok'));
+    const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, transcript });
+
+    await run(tool, { request: 'the first thing' });
+    transcript.append('and one more thing');
+    await run(tool, { request: 'the second thing' });
+
+    const first = (invoker.mock.calls[0][0] as InvokeRequest).cachedPrefix;
+    const second = (invoker.mock.calls[1][0] as InvokeRequest).cachedPrefix;
+    expect(second?.text).toBe(first?.text);
+    // Only the tail moved — and it now also holds the answer the room already heard.
+    expect(second?.open).not.toBe(first?.open);
+    expect(second?.open).toContain('and one more thing');
+    expect(second?.open).toContain('You: ok');
+  });
+
+  it('explains the transcript labels once, and only when there is a transcript', async () => {
+    invoker.mockResolvedValue(answer('ok'));
+
+    const empty = createDelegationTool({
+      userId: 'u1',
+      agentId: 'a1',
+      invoker,
+      transcript: createTranscriptLog(),
+    });
+    await run(empty, { request: 'What time is standup' });
+
+    // Nothing said yet: a heading over an empty transcript reads as a silent call.
+    const first = (invoker.mock.calls[0][0] as InvokeRequest).cachedPrefix;
+    expect(first?.text).not.toContain('as transcribed');
+    expect(first?.open).toBeUndefined();
+
+    const transcript = createTranscriptLog();
+    transcript.append('is anyone looking at the alert');
+    const wired = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, transcript });
+    await run(wired, { request: 'Check the alert' });
+
+    const second = (invoker.mock.calls[1][0] as InvokeRequest).cachedPrefix;
+    expect(second?.text).toContain('as transcribed');
+    expect(second?.text).toContain('one mixed channel');
+  });
+
+  it('writes its own answer back, since the agent\'s speech is never transcribed', async () => {
+    const transcript = createTranscriptLog();
+    invoker.mockResolvedValue(answer('Two pods are crashlooping in staging.'));
+    const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, transcript });
+
+    await run(tool, { request: 'Check staging' });
+
+    expect(transcript.chunks().open).toContain('You: Two pods are crashlooping in staging.');
+  });
+
+  it('does not write an instruction to the voice into the transcript', async () => {
+    // Every non-answer return is guidance for the voice ("say so briefly"), not a
+    // sentence the room heard — logged as speech, the next delegate would read it back
+    // as something the agent said.
+    const transcript = createTranscriptLog();
+    invoker.mockResolvedValue(answer('   '));
+    const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, transcript });
+
+    await run(tool, { request: 'Check staging' });
+
+    expect(transcript.chunks().open).toBe('');
+    expect(transcript.stats().lines).toBe(0);
   });
 });
 
@@ -225,6 +312,46 @@ describe('what it reports about how the handoff went', () => {
     expect(onOutcome.mock.calls[0][0].ms).toBeGreaterThanOrEqual(0);
   });
 
+  it('reports how much transcript the handoff carried, and how much of it was cached', async () => {
+    // The one number that says whether the caching this design is built around is
+    // happening at all: a handoff whose transcript is all in the open tail is paying
+    // full price for it every time.
+    const transcript = createTranscriptLog({ chunkChars: 200 });
+    transcript.append('x'.repeat(200));
+    transcript.append('and a line said since');
+
+    invoker.mockResolvedValue(answer('done'));
+    const onOutcome = vi.fn();
+    const tool = createDelegationTool({
+      userId: 'u1',
+      agentId: 'a1',
+      invoker,
+      transcript,
+      onOutcome,
+    });
+
+    await run(tool, { request: 'Check staging' });
+
+    const outcome = onOutcome.mock.calls[0][0];
+    expect(outcome.transcriptCachedChars).toBeGreaterThan(200);
+    expect(outcome.transcriptChars).toBeGreaterThan(outcome.transcriptCachedChars);
+    // Counted before the answer went in, so it is the transcript this handoff sent.
+    expect(outcome.transcriptChars).toBeLessThan(transcript.stats().chars);
+  });
+
+  it('reports zeroes rather than nothing when no transcript is wired in', async () => {
+    invoker.mockResolvedValue(answer('done'));
+    const onOutcome = vi.fn();
+    const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, onOutcome });
+
+    await run(tool, { request: 'Check staging' });
+
+    expect(onOutcome.mock.calls[0][0]).toMatchObject({
+      transcriptChars: 0,
+      transcriptCachedChars: 0,
+    });
+  });
+
   it('flags an answer that had to be cut', async () => {
     invoker.mockResolvedValue(answer('x'.repeat(20_000)));
     const onOutcome = vi.fn();
@@ -282,12 +409,15 @@ describe('what it reports about how the handoff went', () => {
 });
 
 describe('what the Realtime model is shown', () => {
-  it('names the tool and asks for a request that stands on its own', () => {
+  it('names the tool and asks only for what is being asked now', () => {
     const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker });
 
     expect(DELEGATION_TOOL_NAME).toBe('handle_request');
-    // The one thing the voice model has to get right in this mode is writing the
-    // request down completely — it is the only thing the handler will ever see.
-    expect(tool.description).toContain('in full');
+    // What the voice model is bad at is writing down, while talking, what it just
+    // heard — so it is told the transcript travels with the call and it does not have
+    // to. There is no `context` parameter for it to fill in either.
+    expect(tool.description).toContain('transcript');
+    expect(tool.description).toContain('do not retell the conversation');
+    expect(Object.keys((tool.inputSchema as { shape: object }).shape)).toEqual(['request']);
   });
 });

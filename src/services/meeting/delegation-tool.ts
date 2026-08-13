@@ -1,8 +1,8 @@
 /**
  * The one tool a meeting offers in `delegate` mode: hand the request to the agent.
  *
- * The premise of the experiment (AGENT-135) is that picking a tool is a text
- * model's job. In `full` mode the Realtime model sees the whole catalog — dozens of
+ * The premise of the experiment is that picking a tool is a text model's job. In
+ * `full` mode the Realtime model sees the whole catalog — dozens of
  * MCP tools plus every built-in — and has to choose one mid-sentence, while talking,
  * from a schema list it is holding in an audio context. It picks badly: the wrong
  * tool, plausible-looking arguments it invented, or a chain it abandons halfway. In
@@ -29,12 +29,24 @@
  * The reusable part is the `Invoker` seam — the same injected function, so this
  * module never imports invoke.ts.
  *
+ * What the delegate is *told* is the meeting itself. Handing over only the request
+ * the voice model retyped put the whole experiment on the one thing that model is
+ * worst at — writing down, mid-sentence, what it just heard — so the handoff carries
+ * the call's transcript (`call-transcript.ts`) and the retyped request is demoted to
+ * what it is good for: naming the ask at the end.
+ *
+ * The transcript rides as `InvokeRequest.cachedPrefix`, not as part of the prompt,
+ * because a user message cannot be a cached prefix here: the system prompt's dynamic
+ * part renders after the tools and system blocks and before the messages, and it
+ * carries a per-call timestamp. So a call that delegates ten times pays for the
+ * transcript roughly once — the log hands out a sealed part that only changes in
+ * quanta and an open tail that is re-sent uncached.
+ *
  * The delegate has no thread. `invoke()` persists nothing and this passes no
  * `threadId`, so a delegated turn reads no conversation history and leaves no
  * messages behind. That is on purpose: the thread that started the meeting holds a
- * text conversation, not the room's audio, so it would be tokens of unrelated
- * context — and the room's own history lives in the Realtime session, which is the
- * only place it can.
+ * text conversation, not the room's, so it would be tokens of unrelated context. The
+ * room's history is the transcript, and it lives for the length of the call.
  */
 
 import { tool, type Tool } from 'ai';
@@ -42,6 +54,7 @@ import { z } from 'zod';
 import { logger } from '../../logger';
 import { renderToolResult } from '../../lib/tool-output-limiter';
 import type { Invoker } from '../../lib/task-tool';
+import type { TranscriptLog } from './call-transcript';
 
 export const DELEGATION_TOOL_NAME = 'handle_request';
 
@@ -73,19 +86,23 @@ export const DELEGATION_DEADLINE_MS = 30_000;
 export const DELEGATED_RESULT_MAX_CHARS = 2_000;
 
 /**
- * What the delegate is told before the request.
+ * What the delegate is told before the transcript.
  *
- * It did not hear the call: it gets this string and nothing else, no audio, no
- * transcript, no participant list. So it must be told that plainly, or it answers
- * as if it had context it does not have ("as we discussed…"), and it must not ask
- * clarifying questions — there is no one on this side to answer them, and a question
- * comes back to the room as the agent's own reply.
+ * It was not in the room, and what it has instead is a transcription — imperfect,
+ * unattributed, and silent about everything that was not said. It must be told that
+ * plainly, or it answers as if it had been listening. And it must not ask clarifying
+ * questions: there is no one on this side to answer them, and a question comes back
+ * to the room as the agent's own reply.
+ *
+ * First in the cached prefix, so the bytes the transcript is appended to never move.
  */
 const DELEGATE_PREAMBLE = [
   'You are handling a request that someone spoke out loud in a live voice meeting.',
   '',
-  'You did not hear it. Everything you know about it is written below — there is no',
-  'audio, no transcript and no participant list beyond that. Work with what is there.',
+  'You were not in the room. What you have is the call transcribed as it happened,',
+  'below, and that is all: transcription mishears words, cannot always tell one',
+  'speaker from another, and holds nothing that was not said out loud. Read it, then',
+  'do what is being asked at the end.',
   '',
   'Do the work: pick the tools, run them, and answer. Then write the answer the way',
   'you would say it, because that is what happens to it — another model reads it out',
@@ -97,6 +114,50 @@ const DELEGATE_PREAMBLE = [
   'that, and say in one clause what you took it to mean. If you could not do it, say',
   'what stopped you.',
 ].join('\n');
+
+/**
+ * What introduces the transcript.
+ *
+ * The labels need explaining once: the room is one mixed audio channel, so a line
+ * attributed to "Room" is whoever was loudest, and the agent's own speech is never
+ * transcribed — the `You:` lines are the answers this tool sent back, which the voice
+ * read out. Without that the delegate reads its own past answers as someone else's
+ * claims.
+ */
+const TRANSCRIPT_HEADING = [
+  '--- The call so far, as transcribed ---',
+  '"Room:" is what was said out loud, on one mixed channel that cannot reliably tell',
+  'speakers apart. "You:" is an answer you already sent back through this tool, which',
+  'the voice then read out in the room.',
+].join('\n');
+
+/**
+ * Split the standing part of the handoff from the part that has changed since the
+ * last one.
+ *
+ * `text` is what gets the cache breakpoint, so everything in it has to be stable
+ * between delegations in a call: the preamble, the heading, and the sealed transcript
+ * — which the log only ever changes in ~4,000-character quanta. `open` is the lines
+ * said since the last seal, re-sent uncached. It carries its own leading newline
+ * because the two arrive as adjacent content blocks, with nothing between them.
+ */
+function buildCachedPrefix(transcript?: TranscriptLog): { text: string; open?: string } {
+  const chunks = transcript?.chunks();
+  if (!chunks || (!chunks.sealed && !chunks.open)) {
+    // Nothing said yet (or no log wired in): a heading over an empty transcript reads
+    // as if the call had been silent, which is not the same as having no record of it.
+    return { text: DELEGATE_PREAMBLE };
+  }
+
+  const text = [
+    DELEGATE_PREAMBLE,
+    '',
+    TRANSCRIPT_HEADING,
+    ...(chunks.sealed ? ['', chunks.sealed] : []),
+  ].join('\n');
+
+  return { text, ...(chunks.open ? { open: `\n${chunks.open}` } : {}) };
+}
 
 /**
  * How one delegated turn went, reported to whoever is counting.
@@ -113,6 +174,13 @@ export interface DelegationOutcome {
   ms: number;
   /** Whether the answer had to be cut to fit `DELEGATED_RESULT_MAX_CHARS`. */
   truncated: boolean;
+  /**
+   * Transcript characters this handoff carried, and how many of them were in the
+   * cached part — the pair that says whether the caching this design is built around
+   * is actually happening. A size, not the text.
+   */
+  transcriptChars: number;
+  transcriptCachedChars: number;
 }
 
 export interface DelegationToolInput {
@@ -120,6 +188,15 @@ export interface DelegationToolInput {
   agentId: string;
   /** Runs the delegated turn; injected so this module never imports invoke.ts. */
   invoker: Invoker;
+  /**
+   * The call's running transcript, shared with the conversation that writes the room's
+   * speech into it. Every handoff carries it, and the tool writes its own answers back
+   * so the next one knows what the room was already told.
+   *
+   * Optional so the tool stands alone in a test — without it the delegate is handed
+   * the request and nothing else, which is what this mode used to do.
+   */
+  transcript?: TranscriptLog;
   /**
    * Called exactly once per delegation, whatever happens to it.
    *
@@ -143,28 +220,27 @@ export function createDelegationTool(input: DelegationToolInput): Tool {
       'Hand a request to yourself — the rest of you, the part with all the tools. ' +
       'Use this for anything that needs real work: looking something up, checking a ' +
       'system, reading or changing a file, remembering something, scheduling something. ' +
-      'It comes back with the answer, which you then say out loud. Pass the request in ' +
-      'full: it did not hear the meeting and knows only what you write here.',
+      'It comes back with the answer, which you then say out loud. The transcript of ' +
+      'this call goes with it, so do not retell the conversation — just say what is ' +
+      'being asked now.',
     inputSchema: z.object({
       request: z
         .string()
         .describe(
-          'The request, in full and in your own words. Write it as a complete ' +
-            'instruction someone could act on with no other information — not a ' +
-            'fragment, not "the thing they asked about".',
-        ),
-      context: z
-        .string()
-        .optional()
-        .describe(
-          'Anything from the conversation needed to make sense of the request: what ' +
-            'was being discussed, a name or number mentioned earlier, what was already ' +
-            'tried in this call.',
+          'What is being asked, right now, in a sentence or two. The call transcript ' +
+            'travels with this, so do not recap it — name the thing to be done. If the ' +
+            'ask only makes sense together with something said earlier, say which part.',
         ),
     }),
     execute: async (args, options) => {
-      const { request, context } = args as { request: string; context?: string };
+      const { request } = args as { request: string };
       const started = Date.now();
+
+      // Read once, so what is reported is the transcript this handoff actually carried
+      // — the tool appends to the same log on its way out.
+      const cachedPrefix = buildCachedPrefix(input.transcript);
+      const transcriptCachedChars = input.transcript?.stats().sealedChars ?? 0;
+      const transcriptChars = input.transcript?.stats().chars ?? 0;
 
       // One report per delegation, on whichever path gets there first, so a count
       // of delegations and a sum of their durations can never disagree.
@@ -172,7 +248,13 @@ export function createDelegationTool(input: DelegationToolInput): Tool {
       const report = (status: DelegationOutcome['status'], truncated = false): void => {
         if (reported) return;
         reported = true;
-        input.onOutcome?.({ status, ms: Date.now() - started, truncated });
+        input.onOutcome?.({
+          status,
+          ms: Date.now() - started,
+          truncated,
+          transcriptChars,
+          transcriptCachedChars,
+        });
       };
 
       // Two ways this stops early, and they need different answers, so the tool
@@ -190,20 +272,23 @@ export function createDelegationTool(input: DelegationToolInput): Tool {
       callSignal?.addEventListener('abort', onCallEnded, { once: true });
 
       try {
-        const prompt = [
-          DELEGATE_PREAMBLE,
-          '',
-          `Request: ${request}`,
-          ...(context ? ['', `Context from the meeting: ${context}`] : []),
-        ].join('\n');
+        // The whole of what varies between one handoff and the next, and therefore the
+        // only part that cannot be cached. Everything else — preamble, transcript — is
+        // in the prefix above.
+        const prompt = `Right now they are asking: ${request}`;
 
-        logger.info(`[Meeting:Delegate] handling a spoken request (${request.length} chars)`);
+        logger.info(
+          `[Meeting:Delegate] handling a spoken request (${request.length} chars) with ` +
+            `${transcriptCachedChars} cached + ${transcriptChars - transcriptCachedChars} ` +
+            'open transcript chars',
+        );
 
         const result = await input.invoker({
           userId: input.userId,
           agentId: input.agentId,
           mode: 'subagent',
           prompt,
+          cachedPrefix,
           abortSignal: inner.signal,
         });
 
@@ -261,6 +346,15 @@ export function createDelegationTool(input: DelegationToolInput): Tool {
             `tool call(s), ${text.length} chars${truncated ? ' (cut to fit)' : ''}`,
         );
         report('answered', truncated);
+        // Into the log, so the next handoff knows what the room was already told — the
+        // agent's own speech is never transcribed, so this is the only way an answer
+        // reaches the transcript. The rendered text, being what the voice was handed.
+        //
+        // Only the answered path: every other return above is an instruction to the
+        // voice ("say so briefly, and offer to try again"), not a sentence the room
+        // heard, and writing those down would have the next delegate read them as
+        // things the agent said.
+        input.transcript?.append(rendered, 'agent');
         return rendered;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
