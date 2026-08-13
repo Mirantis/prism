@@ -27,6 +27,18 @@ permissions:
   contents: read
   packages: read
 
+# 54 of the last 195 completed runs (28%) were already superseded by a newer
+# push to the same branch while they were still going; 23 of those went on to
+# produce a red nobody needed to read. The key is the PR number rather than
+# just `github.ref` because a `pull_request` run's ref is the merge ref, so
+# ref-only keying groups and ungroups surprisingly across event types.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Only PR runs are superseded: a newer push makes the older run's verdict
+  # irrelevant. Pushes to main are never cancelled — a post-merge red on main
+  # is the signal we most need, and cancelling it would hide it.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
