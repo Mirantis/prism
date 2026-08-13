@@ -452,10 +452,12 @@ export class MeetingBotService {
         return;
       }
 
-      // The provider has the meeting's word for the microphone. This is the layer under
+      // The provider has the platform's word for the microphone. This is the layer under
       // it, which only the runtime can see: whether the browser ever opened a capture
-      // device at all. The two can disagree — Meet mutes by disabling the track, not by
-      // closing the device — so neither answers the question alone.
+      // device at all. The two can disagree in both directions — WebRTC mute disables the
+      // track rather than closing the device, so an open device proves nothing about
+      // transmission, and a platform that believes it is transmitting proves nothing
+      // about the device. Hence both, every time.
       //
       // Not a silent skip: reaching admission without an audio stack is a bug in this
       // service, not a condition to tolerate, so let the catch below report it.
@@ -525,9 +527,13 @@ export class MeetingBotService {
           : `I'm in the ${provider.displayName} call, but I couldn't confirm my microphone is ` +
               `on, so the room may not be hearing me. I can hear the meeting, so I'll stay, ` +
               `follow it, and keep trying to unmute — tell me if you'd rather I left. ` +
+              // Named through the provider, not hard-coded: this service does not know
+              // which platform it is on, and a Teams call explaining itself in terms of
+              // Meet's controls would be a small lie in the one message somebody reads
+              // when something is wrong.
               (outcome.micConfirmed
-                ? `(The meeting says I'm unmuted, but my browser never opened its capture device.)`
-                : `(Meet's own microphone control never read as live.)`),
+                ? `(${provider.displayName} says I'm unmuted, but my browser never opened its capture device.)`
+                : `(${provider.displayName}'s own microphone control never read as live.)`),
       );
       // Failing to read the room is not a reason to abandon a call already
       // joined, so this cannot be allowed to reach the catch below.

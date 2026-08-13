@@ -384,14 +384,30 @@ describe('a call the room cannot hear the agent in', () => {
       expect.stringMatching(/couldn't confirm my microphone/i),
       'SYSTEM',
     );
-    // And which half, because the two send you to different places: Meet's UI, or the
-    // container's audio devices.
+    // And which half, because the two send you to different places: the platform's UI, or
+    // the container's audio devices.
     expect(publish).toHaveBeenCalledWith(
       'u1',
       't1',
       expect.stringMatching(/never opened its capture device/i),
       'SYSTEM',
     );
+  });
+
+  it('names the platform through the provider rather than hard-coding it', async () => {
+    // This service has no idea which platform it is on — that is the whole point of
+    // `MeetingProvider`. A Teams call explaining itself in terms of Meet's controls would
+    // be a small lie in the one message somebody reads when something is wrong.
+    providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+
+    await service.join(input);
+    await settle();
+
+    // "Google Meet" is what the mocked provider declares as its `displayName`, and the
+    // service has no other source for it — so finding the full name here is what shows
+    // the sentence was built from the provider rather than typed in.
+    const notes = publish.mock.calls.map((c) => String(c[2]));
+    expect(notes.some((n) => n.includes("Google Meet's own microphone control"))).toBe(true);
   });
 
   it('does not greet a room that cannot hear it, and tells the model why', async () => {

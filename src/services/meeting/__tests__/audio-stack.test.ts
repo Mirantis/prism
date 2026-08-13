@@ -2,8 +2,8 @@
  * Reading "is the browser actually listening?" out of `pactl`.
  *
  * This one line of parsing is the only evidence that the agent can be heard which
- * doesn't come from the meeting's own UI — Meet can show a live microphone while
- * Chromium never opened a capture device, because those are two different systems.
+ * doesn't come from the meeting's own UI — a platform can show a live microphone while
+ * the browser never opened a capture device, because those are two different systems.
  * So the failure mode here is a parser that answers "yes" to everything: it would
  * turn the check into a formality and put a silent participant back in the room.
  *
