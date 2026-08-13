@@ -78,6 +78,14 @@ jobs:
           SLACK_E2E_TEAM_NAME: ${{ secrets.SLACK_E2E_TEAM_NAME }}
 
       - name: Run TUI E2E tests
+        # The two suites are independent, and a red Playwright step used to
+        # skip this one — throwing away every TUI result for that run, which
+        # is where most of the failures actually are. A later step running
+        # does not mask the earlier failure: the job still ends up red.
+        # `!cancelled()` rather than `always()` so cancelling a superseded run
+        # doesn't keep the (per-token exclusive) Socket Mode connection held
+        # for another ~9 minutes while its replacement boots.
+        if: ${{ !cancelled() }}
         run: npm run test:e2e:tui --workspace=prism-agent-e2e
         env:
           CI: true
