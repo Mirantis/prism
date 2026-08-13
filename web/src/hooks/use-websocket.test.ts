@@ -168,6 +168,30 @@ describe('useWebSocket', () => {
     expect(result.current.isTyping).toBe(false);
   });
 
+  it('sends a mid-turn followup with its thread id instead of suppressing it', async () => {
+    const { result, ws } = await renderConnected({ onMessage: vi.fn() });
+
+    act(() => ws.deliver({ type: 'status', payload: { processing: true } }));
+    expect(result.current.isTyping).toBe(true);
+
+    act(() => result.current.sendFollowup('change of plan', 'a1', 't1', []));
+
+    // The hook must not gate on isTyping: this frame is what the gateway offers
+    // to the turn that owns t1, and the thread id is what makes that offer
+    // possible at all.
+    expect(JSON.parse(ws.sent.at(-1)!)).toEqual({
+      type: 'chat',
+      payload: {
+        mode: 'followup',
+        content: 'change of plan',
+        agentId: 'a1',
+        threadId: 't1',
+        attachmentIds: [],
+      },
+    });
+    expect(result.current.isTyping).toBe(true);
+  });
+
   it('ignores the connect handshake status, which carries no processing flag', async () => {
     const { result, ws } = await renderConnected({ onMessage: vi.fn() });
 

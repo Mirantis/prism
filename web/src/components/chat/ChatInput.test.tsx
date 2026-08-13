@@ -35,13 +35,27 @@ describe('ChatInput', () => {
     expect(document.querySelector('button[type="submit"]')).not.toBeNull();
   });
 
-  it('swaps in an enabled STOP button while pending', () => {
-    render(<ChatInput {...baseProps} isPending />);
+  it('adds STOP next to a still-enabled send button while pending', () => {
+    // The composer stays usable for the whole turn: a message sent now is
+    // handed to the running turn (steering), so send must not be replaced.
+    render(<ChatInput {...baseProps} value="hi" isPending />);
     const stop = screen.getByTestId('chat-stop-button');
-    expect(stop).toBeInTheDocument();
     expect(stop).toBeEnabled();
-    // The submit button is replaced, not just hidden.
-    expect(document.querySelector('button[type="submit"]')).toBeNull();
+    expect(document.querySelector('button[type="submit"]')).toBeEnabled();
+  });
+
+  it('sends on Enter while the agent is responding', () => {
+    const onSend = vi.fn();
+    render(<ChatInput {...baseProps} value="change of plan" isPending onSend={onSend} />);
+    fireEvent.keyDown(screen.getByPlaceholderText('Message your agent...'), { key: 'Enter' });
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('still disables send on an empty composer while pending', () => {
+    // Only the isPending term was dropped from the gate — the empty/uploading
+    // guards stay, so STOP is not a way to send nothing.
+    render(<ChatInput {...baseProps} value="" isPending />);
+    expect(document.querySelector('button[type="submit"]')).toBeDisabled();
   });
 
   it('fires onCancel when the STOP button is clicked', () => {
@@ -51,13 +65,36 @@ describe('ChatInput', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('disables STOP when disconnected (cancel cannot reach the runtime)', () => {
+  it('disables both buttons when disconnected (neither can reach the runtime)', () => {
     const onCancel = vi.fn();
-    render(<ChatInput {...baseProps} isPending connectionStatus="disconnected" onCancel={onCancel} />);
+    render(
+      <ChatInput {...baseProps} value="hi" isPending connectionStatus="disconnected" onCancel={onCancel} />,
+    );
     const stop = screen.getByTestId('chat-stop-button');
     expect(stop).toBeDisabled();
     fireEvent.click(stop);
     expect(onCancel).not.toHaveBeenCalled();
+    // Send goes too: the parent clears the composer and echoes the message
+    // optimistically, so an accepted click on a closed socket would destroy the
+    // text and then show it as sent.
+    expect(document.querySelector('button[type="submit"]')).toBeDisabled();
+  });
+
+  it('says why send is inert while disconnected', () => {
+    // The button is icon-only and the connection notice sits in the meta strip,
+    // so without a disabled-state tooltip the reason is easy to miss.
+    render(<ChatInput {...baseProps} value="hi" connectionStatus="connecting" />);
+    expect(document.querySelector('button[type="submit"]')).toHaveAttribute(
+      'aria-label',
+      'Not connected',
+    );
+  });
+
+  it('does not send on Enter while disconnected', () => {
+    const onSend = vi.fn();
+    render(<ChatInput {...baseProps} value="hi" connectionStatus="disconnected" onSend={onSend} />);
+    fireEvent.keyDown(screen.getByPlaceholderText('Message your agent...'), { key: 'Enter' });
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   describe('context meter in the meta strip', () => {

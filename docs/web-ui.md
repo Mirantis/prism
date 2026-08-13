@@ -51,8 +51,20 @@ The main conversation surface.
   other files are hydrated to disk and read with shell tools. File content is
   kept for 7 days; after that the chip shows **Expired** and the file can no
   longer be downloaded — share it again if needed.
-- **Stopping.** While the agent is responding, the send button becomes a stop
-  button that cancels the in-flight turn.
+- **Stopping.** While the agent is responding, a stop button appears next to
+  send. It cancels the in-flight turn.
+- **Steering a response in progress.** You can keep typing while the agent
+  works, and **Enter sends** — send stays live for the whole turn, alongside
+  stop. A message sent mid-response is handed to the turn already running: the
+  agent picks it up at its next step and changes course, instead of a second
+  turn queueing behind the first. Anything that arrives too late for the running
+  turn is answered together in one follow-up rather than one reply per message.
+  Stop still means "stop the turn" — it never clears what you have typed. One
+  caveat: if you stop a turn before it has picked your mid-turn message up, that
+  turn never answers it. The message stays in the conversation and the agent
+  reads it as history next time, but nothing replies to it there and then. The
+  **[Terminal UI](terminal-ui.md#chatting)** and [Slack](slack.md) behave the
+  same way.
 - **Tool calls.** When the agent uses a tool, the message shows an
   expandable section with the tool name, its input, and its output — so you can
   see exactly what it did.
@@ -68,7 +80,9 @@ The main conversation surface.
   on your first message, and gets an auto-generated title once it has content.
 - **Connection status.** A small indicator shows the live WebSocket connection
   state (connected / connecting / disconnected / error); it reconnects
-  automatically.
+  automatically. Send and stop are both disabled while the connection is down —
+  neither can reach the agent — and re-enable on reconnect. What you have typed
+  is left alone.
 - **Context used.** Above the input, the right-hand side shows how much of the
   model's context window this conversation has consumed — e.g. `58% context
   used`. Hover it for the exact token counts and the model they were measured

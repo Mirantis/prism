@@ -332,6 +332,10 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     };
     setLocalMessages((prev) => [...prev, tempMessage]);
 
+    // No `isTyping` guard: sending during a turn is steering, not a second
+    // turn. The runtime hands the message to the turn that owns `activeThreadId`
+    // — which is why the thread id has to travel with it, since the gateway only
+    // offers a message to a live turn when it carries one.
     sendFollowup(
       userMessage,
       agent.agentId,

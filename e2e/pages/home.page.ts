@@ -50,7 +50,8 @@ export class HomePage extends BasePage {
     super(page);
     this.chatInput = page.getByPlaceholder('Message your agent...');
     this.sendButton = page.locator('button[type="submit"]');
-    // STOP button shown in place of send while the agent is responding.
+    // STOP button shown *next to* send while the agent is responding — send
+    // stays live so a message can be steered into the running turn.
     this.stopButton = page.getByTestId('chat-stop-button');
     this.typingIndicator = page.getByTestId('chat-typing-indicator');
     // Hidden file input behind the paperclip button in ChatInput.
@@ -143,11 +144,17 @@ export class HomePage extends BasePage {
   }
 
   /**
-   * Cancel the in-flight response: wait for the STOP button to replace send
-   * (the agent is working), then click it.
+   * Block until the agent is demonstrably working. The STOP button only renders
+   * while a turn is in flight, so its appearance is the composer's own proof
+   * that there is a live turn to cancel or steer.
    */
-  async stopResponse(timeout = 10_000) {
+  async waitForResponding(timeout = 10_000) {
     await this.stopButton.waitFor({ state: 'visible', timeout });
+  }
+
+  /** Cancel the in-flight response. */
+  async stopResponse(timeout = 10_000) {
+    await this.waitForResponding(timeout);
     await this.stopButton.click();
   }
 
