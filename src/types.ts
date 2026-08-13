@@ -122,6 +122,34 @@ interface InvokeRequestBase {
    * Bedrock/Anthropic reject.
    */
   appendPrompt?: boolean;
+  /**
+   * Bulk context to send *ahead* of `prompt`, in a form a prompt cache can hit.
+   *
+   * For a caller that invokes the same agent repeatedly with the same large body of
+   * text and a short varying ask — today the voice-meeting delegation tool, whose
+   * every handoff carries the same call's transcript. Passing it as part of `prompt`
+   * would cache nothing: the system prompt's dynamic part renders *after* the tools
+   * and system blocks and before the messages, and it carries a per-call timestamp,
+   * so nothing in a user message can be a stable cached prefix.
+   *
+   * So it goes in as its own system block, spliced in behind the stable part:
+   *
+   * - `text` is the part the caller promises is byte-identical between calls, and
+   *   gets the breakpoint. It must therefore be *append-only in quanta*, not
+   *   append-only per sentence — a block that grows every call is a different block
+   *   every call and would never be read from cache.
+   * - `open` is the tail that has changed since, sent uncached. Optional.
+   *
+   * Setting this **demotes the dynamic system part** (recalled memories + timestamp)
+   * to uncached, so the request still spends at most four breakpoints: the tools
+   * block, the stable system part, this, and the last message via `prepareStep`.
+   * Recalled memories are re-sent rather than cached — a few hundred tokens, against
+   * a transcript worth thousands.
+   */
+  cachedPrefix?: {
+    text: string;
+    open?: string;
+  };
 }
 
 /**

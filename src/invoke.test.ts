@@ -605,6 +605,116 @@ describe('invoke', () => {
     expect(dynamicPart!.providerOptions).toBeUndefined();
   });
 
+  /**
+   * `cachedPrefix` exists for a caller that re-sends a large body of text with a small
+   * varying ask — the voice-meeting delegation tool and its transcript. What the tests
+   * pin is placement and the breakpoint budget, because those are what make it a cache
+   * hit rather than four thousand tokens re-processed every time.
+   */
+  describe('cachedPrefix', () => {
+    const systemOf = (call: number = 0) =>
+      mockGenerateText.mock.calls[call][0].system as Array<{
+        role: string;
+        content: string;
+        providerOptions?: unknown;
+      }>;
+    const CACHE_CONTROL = { anthropic: { cacheControl: { type: 'ephemeral' } } };
+
+    beforeEach(() => {
+      // A cacheable dynamic part, as recalled memories produce — that is the slot the
+      // prefix has to take over, so the default two-part mock would not show it.
+      mockBuildSystemPromptParts.mockResolvedValue([
+        { text: 'stable system prompt', cacheable: true },
+        { text: 'dynamic system prompt', cacheable: true },
+      ]);
+    });
+
+    it('sends the prefix behind the stable part and ahead of the dynamic one', async () => {
+      // Order is the whole mechanism: a cache read requires everything before the
+      // breakpoint to be unchanged, and the dynamic part carries a per-call timestamp.
+      await invoke(createTestInvokeRequest({ cachedPrefix: { text: 'sealed transcript' } }));
+
+      expect(systemOf().map((p) => p.content)).toEqual([
+        'stable system prompt',
+        'sealed transcript',
+        'dynamic system prompt',
+      ]);
+    });
+
+    it('breakpoints the prefix and demotes the dynamic part to pay for it', async () => {
+      // Four breakpoints exist per request. Tools and the last message hold two, the
+      // stable part a third — so the prefix can only have the fourth by taking it.
+      await invoke(createTestInvokeRequest({ cachedPrefix: { text: 'sealed transcript' } }));
+
+      const system = systemOf();
+      expect(system.find((p) => p.content === 'stable system prompt')!.providerOptions).toEqual(CACHE_CONTROL);
+      expect(system.find((p) => p.content === 'sealed transcript')!.providerOptions).toEqual(CACHE_CONTROL);
+      expect(system.find((p) => p.content === 'dynamic system prompt')!.providerOptions).toBeUndefined();
+    });
+
+    it('sends the open tail as its own uncached part, after the cached one', async () => {
+      // Appending the tail to the cached block would change those bytes on every call
+      // and make the breakpoint above it worthless.
+      await invoke(
+        createTestInvokeRequest({ cachedPrefix: { text: 'sealed transcript', open: 'said since' } }),
+      );
+
+      const system = systemOf();
+      expect(system.map((p) => p.content)).toEqual([
+        'stable system prompt',
+        'sealed transcript',
+        'said since',
+        'dynamic system prompt',
+      ]);
+      expect(system.find((p) => p.content === 'said since')!.providerOptions).toBeUndefined();
+    });
+
+    it('leaves the prompt itself alone — the ask still arrives as the user message', async () => {
+      await invoke(
+        createTestInvokeRequest({
+          mode: 'subagent',
+          prompt: 'what did they decide about the rollout',
+          cachedPrefix: { text: 'sealed transcript' },
+        }),
+      );
+
+      const messages = mockGenerateText.mock.calls[0][0].messages as Array<{ role: string; content: string }>;
+      expect(messages.at(-1)).toEqual({
+        role: 'user',
+        content: 'what did they decide about the rollout',
+      });
+    });
+
+    it('changes nothing when it is absent', async () => {
+      // Every other caller: the dynamic part keeps its breakpoint.
+      await invoke(createTestInvokeRequest());
+
+      const system = systemOf();
+      expect(system.map((p) => p.content)).toEqual(['stable system prompt', 'dynamic system prompt']);
+      expect(system.find((p) => p.content === 'dynamic system prompt')!.providerOptions).toEqual(CACHE_CONTROL);
+    });
+
+    it('still appends channel and task instructions to the stable part, not the prefix', async () => {
+      // Both are found via the first cacheable part, and the prefix is now also
+      // cacheable — so the splice has to happen after they are appended.
+      mockGetSubagents.mockResolvedValue([{ name: 'helper', description: 'helps' }]);
+
+      await invoke(
+        createTestInvokeRequest({
+          isChannelMessage: true,
+          channelName: 'general',
+          cachedPrefix: { text: 'sealed transcript' },
+        }),
+      );
+
+      const system = systemOf();
+      expect(system[0].content).toContain('stable system prompt');
+      expect(system[0].content).toContain('channel instructions');
+      expect(system[0].content).toContain('task tool instructions');
+      expect(system[1].content).toBe('sealed transcript');
+    });
+  });
+
   describe('tool filtering by mode', () => {
     beforeEach(() => {
       mockGetMemoryTools.mockReturnValue({

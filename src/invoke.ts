@@ -25,6 +25,7 @@ import {
   buildSystemPromptParts,
   buildConversationMessages,
   buildSteeringMessage,
+  type SystemPromptPart,
 } from './prompts/context-builder';
 import { getChannelBehaviorInstructions } from './prompts/channel-prompt';
 import { getTaskToolInstructions } from './prompts/task-tool-prompt';
@@ -186,6 +187,34 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       );
     }
 
+    // A caller-supplied cached prefix (today: a meeting's transcript) goes in as its
+    // own system part, behind the stable one. Deliberately after the two appends
+    // above, so `find(cacheable)` above cannot pick it up instead of the stable part.
+    //
+    // The breakpoint budget is fixed at four, so making room is part of the same act:
+    // everything after the inserted parts is demoted to uncached, which in practice
+    // means the dynamic part (recalled memories + timestamp). That leaves the tools
+    // block, the stable part, this, and the last message via `prepareStep` — four.
+    if (request.cachedPrefix) {
+      const stableIdx = systemParts.findIndex((p) => p.cacheable);
+      const insertAt = stableIdx === -1 ? systemParts.length : stableIdx + 1;
+      const inserted: SystemPromptPart[] = [{ text: request.cachedPrefix.text, cacheable: true }];
+      // The tail is what has changed since the caller last sealed its prefix. Its own
+      // part rather than appended to the block above, which would change those bytes
+      // on every call and make the breakpoint above it worthless.
+      if (request.cachedPrefix.open) {
+        inserted.push({ text: request.cachedPrefix.open, cacheable: false });
+      }
+      systemParts.splice(insertAt, 0, ...inserted);
+      for (const part of systemParts.slice(insertAt + inserted.length)) {
+        part.cacheable = false;
+      }
+      logger.info(
+        `Cached prefix: ${request.cachedPrefix.text.length} cached + ` +
+        `${request.cachedPrefix.open?.length ?? 0} open chars`,
+      );
+    }
+
     // 7. Build messages (already ModelMessage[] with structured tool call/result pairs)
     let messages: ModelMessage[] = buildConversationMessages(context);
 
@@ -199,7 +228,8 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
     // Prompt caching: system prompt parts marked cacheable get cache breakpoints.
     // [0] stable prefix (identity, soul, memory, instructions) — cached across conversations
-    // [1] recalled memories + timestamp — cached within multi-step invocations
+    // [1] recalled memories + timestamp — cached within multi-step invocations, unless a
+    //     `cachedPrefix` took that slot above, in which case this is re-sent uncached
     // Bedrock allows max 4 breakpoints: 2 system + last message (via prepareStep) + last tool.
     const cachedSystem: SystemModelMessage[] = systemParts.map((part) => ({
       role: 'system' as const,
