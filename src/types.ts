@@ -191,6 +191,14 @@ export interface ToolCallRecord {
   rendered?: true;
   /** Present only when the model-facing view was cut. */
   truncated?: ToolOutputTruncation;
+  /**
+   * A display-only copy of a call already recorded on an earlier step.
+   *
+   * Concise mode hides the steps that made the calls, so the final message
+   * carries a summary of the turn's calls for the UI. The prompt builder skips
+   * these — replaying them would show the model each call a second time.
+   */
+  summary?: boolean;
 }
 
 export interface InvokeError {

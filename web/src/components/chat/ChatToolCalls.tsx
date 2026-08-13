@@ -102,6 +102,7 @@ function ToolCallCard({ tc }: { tc: ToolCallRecord }) {
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger
+        data-testid="chat-tool-call"
         className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors hover:bg-muted/50 ${
           !tc.success ? 'bg-destructive/5' : ''
         }`}
@@ -173,7 +174,10 @@ export default function ChatToolCalls({ toolCalls }: ChatToolCallsProps) {
   const failCount = toolCalls.filter((tc) => !tc.success).length;
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+      <CollapsibleTrigger
+        data-testid="chat-tool-calls"
+        className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      >
         <ChevronRight className={`size-3.5 transition-transform ${open ? 'rotate-90' : ''}`} />
         <Wrench className="size-3.5" />
         <span>

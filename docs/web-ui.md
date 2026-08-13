@@ -75,7 +75,10 @@ The main conversation surface.
   same way.
 - **Tool calls.** When the agent uses a tool, the message shows an
   expandable section with the tool name, its input, and its output — so you can
-  see exactly what it did.
+  see exactly what it did. The reply carries the tools its whole turn ran, not
+  just the last step's: in concise mode the intermediate steps aren't shown, so
+  this is the only place that work appears. Expand it to check what the agent
+  actually did rather than what it says it did.
 - **Markdown & downloads.** Agent messages render as markdown (headings, lists,
   code blocks with highlighting, links). Files the agent shares back appear as
   downloadable chips.

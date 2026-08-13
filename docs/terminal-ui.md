@@ -31,7 +31,9 @@ Type your message and press **Enter** to send. While the agent is working, a
 spinner above the input reads "thinking… (esc to stop · enter sends)" — press
 **Escape** to cancel the in-flight response. Each agent message shows which tools
 it used; press **Ctrl+O** to expand the latest message's tool calls and see their
-inputs and outputs.
+inputs and outputs. The reply carries the tools its whole turn ran, not just the
+last step's: in concise mode the intermediate steps aren't shown, so this is the
+only place that work appears.
 
 **You can keep typing while the agent works, and Enter sends.** A message sent
 mid-response is handed to the turn already running: the agent picks it up at its

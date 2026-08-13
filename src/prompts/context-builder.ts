@@ -655,6 +655,11 @@ function parseToolCalls(msg: ConversationMessage): Array<{
   for (let i = 0; i < msg.toolCalls.length; i++) {
     const tc = msg.toolCalls[i] as Record<string, unknown> | null | undefined;
     if (!tc || typeof tc.tool !== 'string' || !tc.tool) continue;
+    // A summary record is a display-only copy of a call already recorded on an
+    // earlier step (concise mode attaches one to the final message so the UI can
+    // show work the hidden steps did). Replaying it would put the same call in
+    // the model's history twice — once where it happened, once here.
+    if (tc.summary === true) continue;
 
     let parsedInput: unknown = {};
     try {

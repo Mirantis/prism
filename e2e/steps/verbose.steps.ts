@@ -70,6 +70,55 @@ Then('the intermediate steps are flagged internal in the database', async () => 
   expect(delivered).toBeGreaterThan(0);
 });
 
+Then('the delivered message lists the tool calls the turn ran', async ({ page }) => {
+  const homePage = new HomePage(page);
+  // Concise mode hides the steps that made the calls, so the one delivered
+  // message is the only place the turn's tool use can appear.
+  const message = homePage.getAgentMessages().first();
+  const trigger = message.getByTestId('chat-tool-calls');
+  await expect(trigger).toBeVisible({ timeout: 15_000 });
+  await expect(trigger).toContainText(/\d+ tools? used/);
+  await trigger.click();
+  // A per-call row previews the command the hidden step ran. Targeted by testid
+  // rather than text: the reply itself may quote the same command.
+  await expect(
+    message.getByTestId('chat-tool-call').filter({ hasText: 'echo web-e2e-marker' }).first(),
+  ).toBeVisible();
+});
+
+Then("the delivered row carries the hidden steps' calls as summary copies", async () => {
+  const prisma = dbHelper.getPrisma();
+  const rows = await prisma.conversationMessage.findMany({
+    where: { role: 'AGENT' },
+    orderBy: { createdAt: 'asc' },
+  });
+  type Call = { tool: string; summary?: boolean };
+  const callsOf = (toolCalls: unknown): Call[] => (Array.isArray(toolCalls) ? (toolCalls as Call[]) : []);
+
+  const internalCalls = rows.filter((r) => r.internalStep).flatMap((r) => callsOf(r.toolCalls));
+  const delivered = rows.filter((r) => !r.internalStep);
+  expect(delivered).toHaveLength(1);
+  const deliveredCalls = callsOf(delivered[0].toolCalls);
+
+  // Premise: the multi-step prompt puts at least one call on a hidden row (the
+  // narration step carries the shell call). Without it this scenario proves
+  // nothing — fail loudly rather than pass vacuously.
+  expect(internalCalls.length).toBeGreaterThan(0);
+
+  // The fix: every call recorded on a hidden row reappears on the delivered
+  // message, marked as a display-only summary copy.
+  for (const tc of internalCalls) {
+    expect(deliveredCalls).toContainEqual(expect.objectContaining({ tool: tc.tool, summary: true }));
+  }
+
+  // And only copies are marked: a summary flag on a call stored nowhere else
+  // would delete that tool round from the model's replayed history (the prompt
+  // builder skips summary records).
+  for (const tc of deliveredCalls.filter((c) => c.summary === true)) {
+    expect(internalCalls.some((ic) => ic.tool === tc.tool)).toBe(true);
+  }
+});
+
 // Note: the "I reload the chat page" step is defined once in file-sharing.steps.ts
 // and shared across features — don't redefine it here (playwright-bdd errors on
 // duplicate step definitions).

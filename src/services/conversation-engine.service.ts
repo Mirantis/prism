@@ -532,6 +532,11 @@ Respond with exactly one word: WORTHY or SKIP`;
     const responseTexts: string[] = [];
     const allBlocks: UIBlock[] = [];
     const allToolCalls: ToolCallRecord[] = [];
+    // The calls already written to a hidden `internalStep` row, by identity.
+    // Only these may be summarized on the final message — anything else is
+    // stored nowhere but there, so a summary marker would delete it from the
+    // model's replayed history rather than merely from the display.
+    const storedOnInternalRow = new Set<ToolCallRecord>();
     // Files the agent shared (share_file) accrue across steps and ride out on
     // the final delivered message, so they appear alongside the answer.
     const allAttachmentIds: string[] = [];
@@ -581,6 +586,10 @@ Respond with exactly one word: WORTHY or SKIP`;
             // Concise mode: persist without delivering to the channel. Marked
             // internalStep so client history hides it, while the model-context
             // read still replays it (tool rounds must survive for the model).
+            // Recorded as they are written, not inferred afterwards: this row is
+            // what makes these calls replayable, so it is the only honest answer
+            // to "which calls are stored somewhere the model will see".
+            for (const tc of bufferedToolCalls) storedOnInternalRow.add(tc);
             const { message: persisted } = await conversationService.addMessage(threadId, {
               content: bufferedStep.text,
               role: 'AGENT',
@@ -604,13 +613,30 @@ Respond with exactly one word: WORTHY or SKIP`;
       const includeFeedback = await this.shouldShowFeedback(
         threadId, prompt, bufferedStep.text, userId, agentId, params.abortSignal,
       );
+      // Concise mode hides the intermediate steps, and the tool calls rode on
+      // those — so the answer arrives asserting work the user cannot see. Ride
+      // the whole turn's calls out here, the way blocks and attachments do.
+      //
+      // The split is by what was actually persisted elsewhere, not by position.
+      // Only a call already on a hidden row may be marked a copy; every other
+      // call is stored *here and nowhere else*, so marking it would delete that
+      // tool round from the model's replayed history rather than merely from
+      // the display. Two shapes make the distinction non-obvious, and both have
+      // tests: a tool-only step whose calls carry onto the final text step, and
+      // a tool-only step that runs *after* the last text step.
+      const deliveredToolCalls = params.verbose
+        ? bufferedToolCalls
+        : [
+            ...summarizeTurnToolCalls(allToolCalls.filter((tc) => storedOnInternalRow.has(tc))),
+            ...allToolCalls.filter((tc) => !storedOnInternalRow.has(tc)),
+          ];
       agentMessage = await messageDeliveryService.publish(
         userId,
         threadId,
         bufferedStep.text,
         'USER_INPUT',
         {
-          toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
+          toolCalls: deliveredToolCalls.length > 0 ? deliveredToolCalls : undefined,
           blocks: allBlocks.length > 0 ? allBlocks : undefined,
           attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
           channelContext: channelContext ? { ...channelContext, includeFeedback } : undefined,
@@ -644,5 +670,38 @@ Respond with exactly one word: WORTHY or SKIP`;
   }
 }
 
+/**
+ * How much of a tool's output the turn summary keeps.
+ *
+ * The summary is a duplicate of records already stored on the internal-step
+ * rows, and output is where the bytes are — measured across a real thread it
+ * was 96% of the column, with one response at 1.4 MB. A prefix is enough to
+ * recognize what came back; the untruncated value stays on the internal row.
+ */
+const SUMMARY_OUTPUT_CHARS = 2_000;
+
+/**
+ * Condense calls for display on the final delivered message.
+ *
+ * Callers must pass ONLY calls already written to a hidden `internalStep` row —
+ * the caller tracks that as it writes, rather than inferring it from position.
+ * The `summary` marker means "the model has this from somewhere else", and
+ * `parseToolCalls` in the prompt builder acts on it by skipping the record.
+ * Pass a call that is stored nowhere else and the marker stops being a display
+ * concern: it deletes that tool round from the model's replayed history.
+ */
+function summarizeTurnToolCalls(toolCalls: ToolCallRecord[]): ToolCallRecord[] {
+  return toolCalls.map((tc) => {
+    const output =
+      tc.output.length > SUMMARY_OUTPUT_CHARS
+        ? `${tc.output.slice(0, SUMMARY_OUTPUT_CHARS)}… [truncated]`
+        : tc.output;
+    return { ...tc, output, summary: true };
+  });
+}
+
 // Export singleton instance
 export const conversationEngineService = new ConversationEngineService();
+
+// Exported for unit tests.
+export const __test = { summarizeTurnToolCalls, SUMMARY_OUTPUT_CHARS };

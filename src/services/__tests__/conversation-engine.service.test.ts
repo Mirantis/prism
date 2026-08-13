@@ -435,6 +435,156 @@ describe('Requirement: Conversation Engine', () => {
       expect((userCall?.[1] as { internalStep?: boolean }).internalStep).toBeUndefined();
     });
 
+    it('rides the whole turn\'s tool calls out on the final message when verbose is false', async () => {
+      // The steps that made the calls are hidden in concise mode, so without
+      // this the answer asserts work the user has no way to see.
+      mockGetAgent.mockResolvedValue({ verbose: false });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: 'Let me check...',
+          toolCalls: [
+            { tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+        { text: 'Here are the results.', toolCalls: [] },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Show me pods',
+      });
+
+      const opts = mockPublish.mock.calls[0][4] as { toolCalls?: Array<Record<string, unknown>> };
+      expect(opts.toolCalls).toHaveLength(1);
+      expect(opts.toolCalls?.[0]).toMatchObject({ tool: 'kubectl', summary: true });
+    });
+
+    it('keeps the final step\'s own tool calls replayable by the model', async () => {
+      // The last text step's calls live ONLY on the delivered message — no
+      // internal row carries them. Marking them summary (which the prompt
+      // builder skips) would delete that tool round from the model's history.
+      mockGetAgent.mockResolvedValue({ verbose: false });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: 'First I look.',
+          toolCalls: [
+            { tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+        {
+          text: 'Now I answer.',
+          toolCalls: [
+            { tool: 'describe_pod', input: '{}', output: 'ok', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Show me pods',
+      });
+
+      const opts = mockPublish.mock.calls[0][4] as { toolCalls?: Array<Record<string, unknown>> };
+      const byTool = Object.fromEntries((opts.toolCalls ?? []).map((tc) => [tc.tool, tc]));
+
+      // The earlier step's call is a display-only copy — its real record is on
+      // the hidden row, so replaying this one would double it.
+      expect(byTool.kubectl).toMatchObject({ summary: true });
+      // The final step's call has no other home, so it must stay replayable.
+      expect(byTool.describe_pod?.summary).toBeUndefined();
+    });
+
+    it('keeps a tool-only step\'s calls replayable when the next step is the last', async () => {
+      // The commonest shape: step 1 calls a tool and says nothing, step 2
+      // answers. `pendingToolCalls` carries the call onto step 2, which is
+      // final — so it is stored only here and must stay unmarked.
+      mockGetAgent.mockResolvedValue({ verbose: false });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: '',
+          toolCalls: [
+            { tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+        { text: 'Here are your pods.', toolCalls: [] },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'list my pods',
+      });
+
+      const opts = mockPublish.mock.calls[0][4] as { toolCalls?: Array<Record<string, unknown>> };
+      expect(opts.toolCalls).toHaveLength(1);
+      expect(opts.toolCalls?.[0]).toMatchObject({ tool: 'kubectl' });
+      expect(opts.toolCalls?.[0].summary).toBeUndefined();
+    });
+
+    it('keeps a trailing tool-only step\'s calls, exactly once', async () => {
+      // A tool call after the last TEXT step never becomes `bufferedToolCalls`,
+      // so it is neither on an internal row nor in the buffered tail.
+      mockGetAgent.mockResolvedValue({ verbose: false });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: 'Let me check.',
+          toolCalls: [
+            { tool: 'first_tool', input: '{}', output: 'a', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+        {
+          text: '',
+          toolCalls: [
+            { tool: 'trailing_tool', input: '{}', output: 'b', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'list my pods',
+      });
+
+      const opts = mockPublish.mock.calls[0][4] as { toolCalls?: Array<Record<string, unknown>> };
+      const names = (opts.toolCalls ?? []).map((tc) => tc.tool);
+      // No duplicates, and nothing dropped.
+      expect(names).toEqual(['first_tool', 'trailing_tool']);
+      const byTool = Object.fromEntries((opts.toolCalls ?? []).map((tc) => [tc.tool, tc]));
+      // first_tool is on the delivered message only — the step that made it is
+      // the one being published, so it must stay replayable.
+      expect(byTool.first_tool.summary).toBeUndefined();
+      expect(byTool.trailing_tool.summary).toBeUndefined();
+    });
+
+    it('does not summarize onto the final message in verbose mode', async () => {
+      // Verbose delivers each step with its own calls, so a summary would show
+      // every call twice.
+      mockGetAgent.mockResolvedValue({ verbose: true });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: 'Let me check...',
+          toolCalls: [
+            { tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+        { text: 'Here are the results.', toolCalls: [] },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Show me pods',
+      });
+
+      const finalOpts = mockPublish.mock.calls.at(-1)?.[4] as {
+        toolCalls?: Array<Record<string, unknown>>;
+      };
+      expect(finalOpts.toolCalls).toBeUndefined();
+    });
+
     it('should accumulate tool calls from tool-only steps onto the next text message', async () => {
       mockInvokeStream.mockReturnValue(streamFromSteps([
         {

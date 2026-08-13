@@ -64,6 +64,31 @@ function agentRows(dbPath: string): string[] {
   }
 }
 
+interface AgentCallRow {
+  content: string;
+  internalStep: number;
+  toolCalls: { tool: string; summary?: boolean }[];
+}
+
+/** Persisted AGENT rows with their internalStep flag and parsed toolCalls. */
+function agentCallRows(dbPath: string): AgentCallRow[] {
+  const db = new Database(dbPath);
+  try {
+    const rows = db
+      .prepare(
+        "SELECT content, internalStep, toolCalls FROM conversation_messages WHERE role = 'AGENT' ORDER BY rowid ASC",
+      )
+      .all() as { content: string; internalStep: number; toolCalls: string | null }[];
+    return rows.map((r) => ({
+      content: r.content,
+      internalStep: r.internalStep,
+      toolCalls: r.toolCalls ? (JSON.parse(r.toolCalls) as AgentCallRow['toolCalls']) : [],
+    }));
+  } finally {
+    db.close();
+  }
+}
+
 /** Poll the DB until the final message (carrying the sentinel) is persisted. */
 async function waitForTurnComplete(dbPath: string, timeoutMs = 120_000): Promise<string[]> {
   const deadline = Date.now() + timeoutMs;
@@ -187,6 +212,64 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       expect(out, `intermediate narration "${phrase}" must stay hidden after --resume`).not.toContain(
         normalize(phrase),
       );
+    });
+  });
+
+  Scenario('Concise mode still shows the tools the hidden steps ran', ({ Given, When, Then, And }) => {
+    let phrase = '';
+
+    Given('verbose is false', async () => {
+      await runtimeRequest(env.port, 'PATCH', '/agents/verbose', { verbose: false });
+    });
+
+    When('I send a multi-step prompt', async () => {
+      ({ phrase } = await runMultiStepTurn());
+    });
+
+    Then('the intermediate narration is not shown in the TUI', async () => {
+      // The tool summary must come from the delivered message's own toolCalls,
+      // not from the hidden steps leaking through.
+      const out = normalize(session!.output());
+      expect(out, `intermediate narration "${phrase}" should NOT be delivered in concise mode`).not.toContain(
+        normalize(phrase),
+      );
+    });
+
+    And('the delivered message lists the tools the turn used', async () => {
+      // Premise: the narration step carries the shell call, so the tool work
+      // lives on a hidden row. Fail loudly rather than pass vacuously.
+      const hiddenCalls = agentCallRows(env.dbPath)
+        .filter((r) => r.internalStep)
+        .flatMap((r) => r.toolCalls);
+      expect(hiddenCalls.length, 'the narration step should carry the shell call').toBeGreaterThan(0);
+      // The delivered bubble renders "· used <names>" from its toolCalls — in
+      // concise mode the only visible trace of the work the hidden steps did.
+      for (const tc of hiddenCalls) {
+        await session!.waitForFrame(new RegExp(`used [^\\n]*${tc.tool}`), 15_000);
+      }
+    });
+
+    And("the delivered row carries the hidden steps' calls as summary copies", async () => {
+      const rows = agentCallRows(env.dbPath);
+      const internalCalls = rows.filter((r) => r.internalStep).flatMap((r) => r.toolCalls);
+      const delivered = rows.filter((r) => !r.internalStep);
+      expect(delivered).toHaveLength(1);
+      const deliveredCalls = delivered[0]!.toolCalls;
+      for (const tc of internalCalls) {
+        expect(
+          deliveredCalls.some((dc) => dc.tool === tc.tool && dc.summary === true),
+          `hidden step's ${tc.tool} call should ride the delivered message as a summary copy`,
+        ).toBe(true);
+      }
+      // Only copies may be marked: the prompt builder skips summary records, so
+      // a marker on a call stored nowhere else would delete that tool round
+      // from the model's replayed history.
+      for (const dc of deliveredCalls.filter((c) => c.summary === true)) {
+        expect(
+          internalCalls.some((ic) => ic.tool === dc.tool),
+          `summary-marked ${dc.tool} call has no hidden-row original`,
+        ).toBe(true);
+      }
     });
   });
 

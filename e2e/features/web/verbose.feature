@@ -14,6 +14,15 @@ Feature: Verbose / concise delivery mode
     When I reload the chat page
     Then only one agent message is shown
 
+  Scenario: Concise mode shows the tools the hidden steps ran, even after reload
+    Given the agent is in concise mode
+    When a multi-step chat turn completes
+    Then only one agent message is delivered via the channel
+    And the delivered message lists the tool calls the turn ran
+    And the delivered row carries the hidden steps' calls as summary copies
+    When I reload the chat page
+    Then the delivered message lists the tool calls the turn ran
+
   Scenario: Verbose mode streams every intermediate step
     Given the agent is in verbose mode
     When a multi-step chat turn completes

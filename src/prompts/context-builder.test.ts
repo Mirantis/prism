@@ -958,6 +958,48 @@ describe('buildConversationMessages', () => {
     expect(toolContent[1]).toEqual(expect.objectContaining({ toolCallId: 'msg-multi-tc-1' }));
   });
 
+  it('skips summary tool calls so the model never replays a call twice', () => {
+    // Concise mode hides the step that made the call and attaches a display-only
+    // copy to the final message. Both rows are in the model view, so without the
+    // skip the model would see `list_pods` run twice.
+    const context = createTestAgentContext({
+      recentMessages: [
+        { id: 'u1', role: 'USER', content: 'list pods' },
+        {
+          id: 'step-1',
+          role: 'AGENT',
+          content: 'Let me check.',
+          internalStep: true,
+          toolCalls: [
+            { tool: 'list_pods', input: '{}', output: '["pod-1"]', success: true, timestamp: '2026-01-01T00:00:00Z' },
+          ],
+        },
+        {
+          id: 'final-1',
+          role: 'AGENT',
+          content: 'Here they are.',
+          toolCalls: [
+            { tool: 'list_pods', input: '{}', output: '["pod-1"]', success: true, timestamp: '2026-01-01T00:00:00Z', summary: true },
+          ],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+
+    const toolCallNames = messages.flatMap((m) =>
+      Array.isArray(m.content)
+        ? (m.content as Array<{ type: string; toolName?: string }>)
+            .filter((p) => p.type === 'tool-call')
+            .map((p) => p.toolName)
+        : [],
+    );
+    expect(toolCallNames).toEqual(['list_pods']);
+
+    // The summary row still contributes its text, just not the call.
+    const last = messages.at(-1);
+    expect(last).toEqual({ role: 'assistant', content: 'Here they are.' });
+  });
+
   it('treats null toolCalls as plain text message', () => {
     const context = createTestAgentContext({
       recentMessages: [
