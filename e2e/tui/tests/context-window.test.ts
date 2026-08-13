@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
-import { startPrism, KEYS, type TuiSession } from '../harness';
+import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, resetThread, runtimeRequest, type RuntimeTestEnv } from '../setup';
 
 const feature = loadFeatureFromText(
@@ -30,16 +30,6 @@ const PROMPT = `Reply with one short sentence ending in the token ${DONE_SENTINE
 
 /** Matches "| context 58%" anywhere in the accumulated stream. */
 const CONTEXT_PATTERN = /context \d+%/;
-
-/**
- * Waits for a CLI to render its first frame. Deliberately generous: this suite's
- * dominant flake is the boot frame never arriving under CI load — it has blown a
- * 90s budget in share-file.test.ts — and a stalled boot fails the scenario with a
- * timeout that says nothing about the feature. Matches the budget attach.test.ts
- * and chat.test.ts already use. It costs nothing on a healthy run, because
- * waitForFrame returns the moment the frame matches.
- */
-const BOOT_TIMEOUT_MS = 120_000;
 
 let env: RuntimeTestEnv;
 let session: TuiSession | undefined;
@@ -125,7 +115,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
   Scenario('The status bar shows context used after a turn', ({ Given, When, Then, And }) => {
     Given('a fresh CLI session', async () => {
       session = startPrism({ env: env.prismEnv, runtime: env.runtime });
-      await session.waitForFrame(/Prism/, BOOT_TIMEOUT_MS);
+      await session.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
     });
 
     Then('the status bar shows no context percentage yet', async () => {
@@ -175,7 +165,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
   Scenario('A resumed session shows the last known percentage', ({ Given, When, Then, And }) => {
     Given('a fresh CLI session', async () => {
       session = startPrism({ env: env.prismEnv, runtime: env.runtime });
-      await session.waitForFrame(/Prism/, BOOT_TIMEOUT_MS);
+      await session.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
     });
 
     When('I send a message and the turn completes', async () => {
@@ -187,9 +177,9 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       // from the stored snapshot travelling through GET /threads.
       await session?.stop();
       session = startPrism({ env: env.prismEnv, runtime: env.runtime, args: ['--resume'] });
-      await session.waitForFrame(/Resume session/, BOOT_TIMEOUT_MS);
+      await session.waitForFrame(/Resume session/, BOOT_FRAME_TIMEOUT_MS);
       session.send(KEYS.ENTER); // newest thread (the turn just run) is row 1
-      await session.waitForFrame(/▌\s+Prism\b/, BOOT_TIMEOUT_MS);
+      await session.waitForFrame(/▌\s+Prism\b/, BOOT_FRAME_TIMEOUT_MS);
       await sleep(1_000);
     });
 

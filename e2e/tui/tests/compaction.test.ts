@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
-import { startPrism, KEYS, type TuiSession } from '../harness';
+import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, resetThread, type RuntimeTestEnv } from '../setup';
 
 const feature = loadFeatureFromText(
@@ -29,7 +29,6 @@ const feature = loadFeatureFromText(
 
 const DONE_SENTINEL = 'CMPDONE7Q';
 const PROMPT = `Reply with one short sentence ending in the token ${DONE_SENTINEL}.`;
-const BOOT_TIMEOUT_MS = 120_000;
 /** The summarize call is a real model call queued behind the turn — allow for it. */
 const COMPACTION_TIMEOUT_MS = 180_000;
 
@@ -126,7 +125,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
   Scenario('A full context window triggers compaction after a turn', ({ Given, When, Then, And }) => {
     Given('a fresh CLI session against a tiny context window', async () => {
       session = startPrism({ env: env.prismEnv, runtime: env.runtime });
-      await session.waitForFrame(/Prism/, BOOT_TIMEOUT_MS);
+      await session.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
     });
 
     When('I send a message and the turn completes', async () => {
