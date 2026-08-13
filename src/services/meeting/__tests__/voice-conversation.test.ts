@@ -11,6 +11,7 @@ import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { VoiceConversation } from '../voice-conversation';
+import type { PreparedMeetingTools } from '../tool-bridge';
 import { classifyAddressed } from '../addressed-classifier';
 
 vi.mock('../../../logger', () => ({
@@ -97,7 +98,7 @@ async function harness(): Promise<Harness> {
  * client sends back — `response.create` being the one that puts the agent's voice
  * in the room.
  */
-async function speakingHarness(): Promise<{
+async function speakingHarness(execute?: PreparedMeetingTools['execute']): Promise<{
   h: Harness;
   send: (event: Record<string, unknown>) => void;
   sent: Record<string, unknown>[];
@@ -124,7 +125,7 @@ async function speakingHarness(): Promise<{
 
   const conversation = new VoiceConversation({
     instructions: 'You are Emma.',
-    tools: { declarations: [], count: 0, execute: vi.fn() },
+    tools: { declarations: [], count: 0, execute: execute ?? vi.fn() },
     sink: { write: vi.fn() },
     agentName: 'Emma',
     // Named, so the gate decides — the path the early verdict lives on.
@@ -190,6 +191,57 @@ describe('losing the Realtime session', () => {
     await settle();
 
     expect(active.lost).toHaveLength(1);
+  });
+});
+
+/**
+ * A tool call is fire-and-forget — nothing awaits `runTool` — so ending the call is
+ * the only thing that can stop one, and until it could, nothing did: the bridge
+ * handed every tool a signal that was never aborted, so a `shell_exec` or a
+ * delegated LLM turn ran to completion for a room the agent had already left, and
+ * only its output was discarded.
+ */
+describe('a tool call that outlives the call it was for', () => {
+  it('cancels the tool on teardown and sends nothing back afterwards', async () => {
+    let seen: AbortSignal | null = null;
+    let finish: (output: string) => void = () => {};
+    const execute = vi.fn((_name: string, _args: string, signal: AbortSignal) => {
+      seen = signal;
+      return new Promise<string>((resolve) => {
+        finish = resolve;
+      });
+    });
+
+    const { h, send, sent } = await speakingHarness(execute);
+    active = h;
+
+    send({
+      type: 'response.function_call_arguments.done',
+      call_id: 'call-1',
+      name: 'shell_exec',
+      arguments: '{"command":"sleep 600"}',
+    });
+    await settle();
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(seen).not.toBeNull();
+    expect(seen!.aborted).toBe(false);
+
+    h.conversation.stop();
+
+    // The signal the tool is holding, not a copy of it — this is the whole point.
+    expect(seen!.aborted).toBe(true);
+
+    // And a tool that ignores the abort still must not answer a closed session.
+    finish('too late');
+    await settle();
+    expect(
+      sent.filter(
+        (e) =>
+          e.type === 'conversation.item.create' &&
+          (e.item as { type?: string } | undefined)?.type === 'function_call_output',
+      ),
+    ).toHaveLength(0);
   });
 });
 

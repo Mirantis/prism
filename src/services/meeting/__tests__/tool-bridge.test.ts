@@ -9,6 +9,9 @@ vi.mock('../../../lib/tool-collection', () => ({
 
 const { prepareMeetingTools } = await import('../tool-bridge');
 
+/** The signal a live call supplies: nothing has aborted it. */
+const live = () => new AbortController().signal;
+
 beforeEach(() => {
   mockCollectTools.mockReset();
 });
@@ -119,7 +122,7 @@ describe('prepareMeetingTools', () => {
     });
 
     const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
-    const output = await prepared.execute('list_tasks', '{"limit":5}');
+    const output = await prepared.execute('list_tasks', '{"limit":5}', live());
 
     expect(execute).toHaveBeenCalledWith({ limit: 5 }, expect.objectContaining({ toolCallId: expect.any(String) }));
     expect(JSON.parse(output)).toEqual({ count: 2, tasks: ['a', 'b'] });
@@ -133,7 +136,7 @@ describe('prepareMeetingTools', () => {
     });
 
     const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
-    expect(await prepared.execute('ping', '')).toBe('done');
+    expect(await prepared.execute('ping', '', live())).toBe('done');
     expect(execute).toHaveBeenCalledWith({}, expect.anything());
   });
 
@@ -152,7 +155,7 @@ describe('prepareMeetingTools', () => {
     });
 
     const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
-    const output = await prepared.execute('boom', '{}');
+    const output = await prepared.execute('boom', '{}', live());
 
     // The model must be able to say "I couldn't check that" rather than go silent.
     expect(JSON.parse(output)).toEqual({ error: 'cluster unreachable' });
@@ -162,7 +165,7 @@ describe('prepareMeetingTools', () => {
     mockCollectTools.mockResolvedValue({ tools: {}, subagents: [] });
     const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
 
-    expect(JSON.parse(await prepared.execute('nope', '{}'))).toEqual({ error: 'Unknown tool: nope' });
+    expect(JSON.parse(await prepared.execute('nope', '{}', live()))).toEqual({ error: 'Unknown tool: nope' });
   });
 
   it('reports malformed arguments rather than throwing', async () => {
@@ -172,7 +175,7 @@ describe('prepareMeetingTools', () => {
     });
     const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
 
-    expect(JSON.parse(await prepared.execute('ping', '{not json'))).toEqual({
+    expect(JSON.parse(await prepared.execute('ping', '{not json', live()))).toEqual({
       error: 'Invalid JSON arguments for ping',
     });
   });
@@ -191,7 +194,7 @@ describe('prepareMeetingTools', () => {
     });
 
     const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
-    const output = await prepared.execute('dump', '{}');
+    const output = await prepared.execute('dump', '{}', live());
 
     expect(output.length).toBeLessThan(40_000);
     // Chat's shape: head AND tail survive, so a payload's closing lines are still
@@ -221,7 +224,7 @@ describe('prepareMeetingTools', () => {
     });
 
     const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
-    const output = await prepared.execute('issue', '{}');
+    const output = await prepared.execute('issue', '{}', live());
 
     expect(output).toBe('y'.repeat(8_000));
   });
@@ -242,7 +245,7 @@ describe('prepareMeetingTools', () => {
 
     const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
 
-    expect(await prepared.execute('listing', '{}')).toBe('w'.repeat(12_200));
+    expect(await prepared.execute('listing', '{}', live())).toBe('w'.repeat(12_200));
   });
 
   it('renders a string result verbatim', async () => {
@@ -252,6 +255,40 @@ describe('prepareMeetingTools', () => {
     });
 
     const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
-    expect(await prepared.execute('say', '{}')).toBe('three pods are down');
+    expect(await prepared.execute('say', '{}', live())).toBe('three pods are down');
+  });
+
+  it('hands the call-scoped signal to the tool, so leaving cancels its work', async () => {
+    const execute = vi.fn().mockResolvedValue('ok');
+    mockCollectTools.mockResolvedValue({
+      tools: { slow: tool({ description: 'Slow', inputSchema: z.object({}), execute }) },
+      subagents: [],
+    });
+
+    const controller = new AbortController();
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
+    await prepared.execute('slow', '{}', controller.signal);
+
+    const passed = execute.mock.calls[0][1].abortSignal as AbortSignal;
+    expect(passed.aborted).toBe(false);
+    controller.abort();
+    // The same signal, not a copy — this is what makes teardown reach a running tool.
+    expect(passed.aborted).toBe(true);
+  });
+
+  it('does not start a tool for a call that has already ended', async () => {
+    const execute = vi.fn().mockResolvedValue('ok');
+    mockCollectTools.mockResolvedValue({
+      tools: { check: tool({ description: 'Check', inputSchema: z.object({}), execute }) },
+      subagents: [],
+    });
+
+    const controller = new AbortController();
+    controller.abort();
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
+    const output = await prepared.execute('check', '{}', controller.signal);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(JSON.parse(output)).toEqual({ error: 'The meeting ended before this could run' });
   });
 });

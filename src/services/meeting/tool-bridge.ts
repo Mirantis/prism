@@ -69,8 +69,15 @@ export interface MeetingToolBridgeInput {
 export interface PreparedMeetingTools {
   /** Declarations for `session.update`. */
   declarations: RealtimeFunctionTool[];
-  /** Executes a call by name; never throws — errors come back as text. */
-  execute: (name: string, argumentsJson: string) => Promise<string>;
+  /**
+   * Executes a call by name; never throws — errors come back as text.
+   *
+   * `abortSignal` is the call's, not the tool call's: it is aborted when the
+   * meeting ends, so work started for a room that no longer exists stops instead
+   * of running to completion against a closed session. Required rather than
+   * optional so there is no way to reach a tool without one.
+   */
+  execute: (name: string, argumentsJson: string, abortSignal: AbortSignal) => Promise<string>;
   /** Tool count, for logging and telemetry. */
   count: number;
 }
@@ -131,7 +138,8 @@ export async function prepareMeetingTools(
   return {
     declarations,
     count: declarations.length,
-    execute: (name, argumentsJson) => executeTool(usable, name, argumentsJson),
+    execute: (name, argumentsJson, abortSignal) =>
+      executeTool(usable, name, argumentsJson, abortSignal),
   };
 }
 
@@ -154,12 +162,15 @@ function describeTool(tool: Tool): string | undefined {
  *
  * Never throws: a rejected tool becomes an error string the model can speak
  * ("I couldn't check that because…"), which is far better in a live call than a
- * silent session or a dropped turn.
+ * silent session or a dropped turn. That includes the abort itself — a tool that
+ * rejects because the call ended lands in the same catch, and the output is
+ * dropped by the caller rather than spoken into a session that is gone.
  */
 async function executeTool(
   tools: Record<string, Tool>,
   name: string,
   argumentsJson: string,
+  abortSignal: AbortSignal,
 ): Promise<string> {
   const tool = tools[name];
   if (!tool || typeof tool.execute !== 'function') {
@@ -173,17 +184,25 @@ async function executeTool(
     return JSON.stringify({ error: `Invalid JSON arguments for ${name}` });
   }
 
+  // A call can end between the model asking for a tool and this running — the
+  // function-call event and the teardown race. Don't start the work at all.
+  if (abortSignal.aborted) {
+    logger.info(`[Meeting] Skipping tool ${name}: the call has ended`);
+    return JSON.stringify({ error: 'The meeting ended before this could run' });
+  }
+
   try {
     logger.info(`[Meeting] Executing tool ${name}`);
     // The AI SDK passes a call context (toolCallId, messages) that built-in tools
-    // ignore; MCP tools only read `abortSignal`. A fresh signal keeps the shape
-    // valid without giving the bridge a cancellation story it doesn't have yet.
+    // ignore; MCP tools and the delegating invoke both read `abortSignal`. It is
+    // the meeting's, so leaving the call stops work started for it instead of
+    // letting a shell command or an LLM turn run on against a closed session.
     // `context` carries per-tool state a caller can pass through `generateText`;
     // no tool here declares one, so it stays undefined.
     const result = await tool.execute(args, {
       toolCallId: `meeting-${Date.now()}`,
       messages: [],
-      abortSignal: new AbortController().signal,
+      abortSignal,
       context: undefined,
     });
     return renderToolResult(result, {

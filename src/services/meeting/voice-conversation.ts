@@ -204,6 +204,17 @@ export class VoiceConversation {
    * rather than nothing.
    */
   private keywords: string[] = [];
+  /**
+   * Cancels tool calls when the call ends.
+   *
+   * A tool call is fire-and-forget — `runTool` isn't awaited — and until this
+   * existed nothing stopped one: the bridge handed each tool a fresh, never-aborted
+   * signal, so a `shell_exec`, a `claude_code` run or a delegated LLM turn kept
+   * going after the agent left the room, and only its *output* was dropped
+   * post-hoc. That is billed work and real side effects on behalf of a meeting
+   * that is over, with nobody left to hear the result.
+   */
+  private readonly toolAbort = new AbortController();
   private stopped = false;
 
   constructor(private readonly options: VoiceConversationOptions) {
@@ -511,7 +522,7 @@ export class VoiceConversation {
   }
 
   private async runTool(callId: string, name: string, argumentsJson: string): Promise<void> {
-    const output = await this.options.tools.execute(name, argumentsJson);
+    const output = await this.options.tools.execute(name, argumentsJson, this.toolAbort.signal);
     if (this.stopped) return;
     this.session.sendFunctionOutput(callId, output);
   }
@@ -649,10 +660,13 @@ export class VoiceConversation {
     };
   }
 
-  /** Tear down the session, playback timer and pending barge-in timer. */
+  /** Tear down the session, playback timer, pending barge-in timer and tool calls. */
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
+    // Before closing the session: a tool that observes the abort rejects, and
+    // `runTool` then finds `stopped` set and sends nothing on a closed socket.
+    this.toolAbort.abort();
     this.bargeIn.dispose();
     this.playback.dispose();
     this.session.close();

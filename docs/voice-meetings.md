@@ -295,7 +295,10 @@ to be addressed narrows what it *responds* to, not what it can be asked to do �
 anyone who says its name has its full toolset. For a real restriction, start the
 agent with a narrower tool surface.
 
-It also leaves on request — "you can drop off now" works, and it hangs up.
+It also leaves on request — "you can drop off now" works, and it hangs up. Anything
+it had started for the room is cancelled as it goes: a command still running, a
+search still going. Side effects already applied stay applied, so "leave" is not an
+undo — but nothing new happens on the room's behalf after the agent is gone.
 
 ### Reasoning effort
 
