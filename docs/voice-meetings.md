@@ -287,9 +287,22 @@ up is real:
 - **Nothing summarizes.** The handler is asked for a spoken-length answer and the
   result is capped at 2,000 characters — well under `full` mode's 12,000 — so a
   handler that writes an essay gets cut rather than condensed.
-- **The request is retyped in the middle.** The voice writes down what it heard, and
-  the handler gets only that: no audio, no transcript, no room. A vague handoff comes
-  back useless, which is a failure mode `full` mode doesn't have.
+- **The handler was not in the room.** It gets the call transcribed rather than heard:
+  transcription mishears words, one mixed audio channel can't reliably tell speakers
+  apart, and nothing that wasn't said out loud is in there. It is told all of that and
+  told to take the most likely reading, because it cannot ask a question — there is
+  nobody on that side to answer one.
+
+**What the handler is given** is the call, not just the sentence: every handoff carries
+the transcript of the meeting so far, and the voice's job shrinks to naming what is being
+asked right now. The transcript is kept in memory for the length of the call, is never
+written to disk or to telemetry, and is capped at 40,000 characters — past that the
+oldest of it is dropped and the handler sees an `[earlier conversation omitted]` marker
+rather than a silently shortened call. Because the standing part of it only changes in
+large steps, repeated handoffs in one call re-read most of it from the provider's prompt
+cache instead of paying for it again. The agent's own speech is never transcribed by the
+room, so the answers it sent back are written into the transcript as `You:` lines and
+everything else as `Room:`.
 
 Two tools stay alongside it — `leave_meeting` and `meeting_status` — because they act
 on the call itself and a delegated turn can't reach it. So "one tool" is three.
@@ -302,11 +315,13 @@ call is in, and both `meeting joined` and `meeting ended` telemetry carry `tool_
 To read the result rather than guess at it, each handoff logs a `[Meeting:Delegate]`
 line with how long it took, how many tool calls it made and whether the answer had to
 be cut, and a delegating call's `meeting ended` event carries `delegations`,
-`delegation_failures`, `delegation_timeouts`, `delegation_truncated` and
-`delegation_ms_avg` — the average being the silence the room actually sat through.
-A `full`-mode call omits those properties entirely, so an off deployment doesn't read
-as one that delegated nothing. Counts and durations only: nothing said in the room,
-and no part of a request, ever leaves the process.
+`delegation_failures`, `delegation_timeouts`, `delegation_truncated`,
+`delegation_ms_avg` — the average being the silence the room actually sat through —
+plus `delegation_transcript_chars_avg` and `delegation_transcript_cached_pct`, how much
+call each handoff carried and how much of it came from the cache rather than being paid
+for again. A `full`-mode call omits those properties entirely, so an off deployment
+doesn't read as one that delegated nothing. Counts and durations only: nothing said in
+the room, and no part of a request or a transcript, ever leaves the process.
 
 Note this is not a way to restrict the agent. The delegated turn holds the same tools,
 including the destructive ones, and it has **no confirmation rule of its own** — so
