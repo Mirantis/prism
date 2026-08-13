@@ -14,7 +14,13 @@ export default defineConfig({
     // turns a harness timeout (which names the frame it wanted) into a bare
     // vitest one, which is the less useful of the two failures.
     testTimeout: 600_000,
-    hookTimeout: 60_000,
+    // Same trade as testTimeout, which the ceiling above already makes for
+    // tests but this line used to undercut for hooks: `beforeAll` runs
+    // `npx prisma db push` and then boots a runtime behind
+    // `waitForReady(60_000)` (tui/setup.ts), so any boot slower than ~55s hit
+    // vitest's hook ceiling first and reported a bare hook timeout instead of
+    // the harness error that names the phase and prints the runtime log tail.
+    hookTimeout: 180_000,
     // pty + child processes don't parallelize cleanly without explicit
     // isolation; serialize files (each file owns one runtime).
     pool: 'forks',
@@ -27,5 +33,18 @@ export default defineConfig({
     setupFiles: ['tui/vitest.setup.ts'],
     globalSetup: ['tui/vitest.global-setup.ts'],
     globals: false,
+    // Which spec and which wait expired has to be readable from the run page,
+    // not just from a 400KB step log: `github-actions` annotates each failure
+    // on the run, and the JUnit file carries the same names for anything
+    // reading the uploaded artifact. Vitest adds `github-actions` implicitly
+    // only while `reporters` is unset, so it has to be named here. Paths are
+    // relative to the vitest root (`e2e/`, the workspace dir the npm script
+    // runs from) and deliberately not Playwright's `test-results/`, which
+    // Playwright wipes at the start of its own run.
+    reporters: [
+      'default',
+      ['junit', { outputFile: 'tui-test-results/junit.xml' }],
+      ...(process.env.GITHUB_ACTIONS === 'true' ? (['github-actions'] as const) : []),
+    ],
   },
 });
