@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { expect } from 'vitest';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
-import { startPrism, PRISM_CLI_DIR, type TuiSession } from '../harness';
+import { BOOT_FRAME_TIMEOUT_MS, startPrism, PRISM_CLI_DIR, type TuiSession } from '../harness';
 import { setupRuntime, type RuntimeTestEnv } from '../setup';
 
 const feature = loadFeatureFromText(
@@ -56,7 +56,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     // Default cwd is PRISM_CLI_DIR (the cli/ package), which becomes the CLI's
     // process.cwd() and thus the new thread's workspaceRoot.
     session = startPrism({ env: env.prismEnv, runtime: env.runtime });
-    await session.waitForFrame(/Prism/, 30_000);
+    await session.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
   });
   AfterEachScenario(async () => {
     await session.stop();

@@ -14,7 +14,7 @@ import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { expect } from 'vitest';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
-import { startPrism, KEYS, type TuiSession } from '../harness';
+import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, resetThread, type RuntimeTestEnv } from '../setup';
 
 const feature = loadFeatureFromText(
@@ -59,7 +59,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     resetThread(env.dbPath);
     saveDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-save-out-'));
     session = startPrism({ env: env.prismEnv, runtime: env.runtime });
-    await session.waitForFrame(/Prism/, 30_000);
+    await session.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
   });
   AfterEachScenario(async () => {
     await session.stop();

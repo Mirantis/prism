@@ -23,6 +23,20 @@ const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '../..');
 // the node binary that's already running this process.
 const TSX_CLI = path.join(WORKSPACE_ROOT, 'node_modules/tsx/dist/cli.mjs');
 
+/**
+ * Budget for a CLI's *first* frame — the `waitForFrame(/Prism/, …)` every spec
+ * opens with. Deliberately generous: this suite's dominant flake is the boot
+ * frame never arriving under CI load (it has blown a 90s budget in
+ * share-file.test.ts), and a stalled boot fails the scenario with a timeout
+ * that says nothing about the feature under test. It costs nothing on a
+ * healthy run, because `waitForFrame` returns the moment the frame matches.
+ *
+ * This is a boot budget, not a round-trip one — chat replies, share-file's
+ * 300s and compaction's 180s are sized against a model call and stay local to
+ * their specs.
+ */
+export const BOOT_FRAME_TIMEOUT_MS = 120_000;
+
 function sanitizeEnv(env: NodeJS.ProcessEnv): { [key: string]: string } {
   const out: { [key: string]: string } = {};
   for (const [k, v] of Object.entries(env)) {

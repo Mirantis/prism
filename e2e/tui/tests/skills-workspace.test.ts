@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
-import { startPrism, KEYS, type TuiSession } from '../harness';
+import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, resetThread, type RuntimeTestEnv } from '../setup';
 
 const feature = loadFeatureFromText(
@@ -87,7 +87,7 @@ describeFeature(
       resetThread(env.dbPath);
       // Launch the CLI *inside the repo* so its thread's workspaceRoot = repoDir.
       session = startPrism({ env: env.prismEnv, runtime: env.runtime, cwd: repoDir });
-      await session.waitForFrame(/Prism/, 30_000);
+      await session.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
     });
     AfterEachScenario(async () => {
       await session.stop();

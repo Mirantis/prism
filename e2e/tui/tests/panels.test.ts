@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect } from 'vitest';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
-import { startPrism, KEYS, type TuiSession } from '../harness';
+import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, clearCronTasks, runtimeRequest, type RuntimeTestEnv } from '../setup';
 
 const feature = loadFeatureFromText(
@@ -48,7 +48,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     // Order-independence: every scenario starts with no cron tasks.
     await clearCronTasks(env.port);
     session = startPrism({ env: env.prismEnv, runtime: env.runtime });
-    await session.waitForFrame(/Prism/, 30_000);
+    await session.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
   });
   AfterEachScenario(async () => {
     await session.stop();

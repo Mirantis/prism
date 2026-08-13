@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import Database from 'better-sqlite3';
 import { expect } from 'vitest';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
-import { startPrism, KEYS, type TuiSession } from '../harness';
+import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, runtimeRequest, type RuntimeTestEnv } from '../setup';
 
 const GIT_BRANCH = 'e2e-resume-branch';
@@ -115,7 +115,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       launchResume();
     });
     Then('the resume picker lists both sessions', async () => {
-      await session!.waitForFrame(/Resume session \(1 of 2\)/, 30_000);
+      await session!.waitForFrame(/Resume session \(1 of 2\)/, BOOT_FRAME_TIMEOUT_MS);
       const out = session!.output();
       expect(out).toContain(olderThreadId);
       expect(out).toContain(newerThreadId);
@@ -137,7 +137,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
     And('I move down and select the older session', async () => {
       // Newest first: the plain-dir thread is row 1, the older git thread row 2.
-      await session!.waitForFrame(/Resume session \(1 of 2\)/, 30_000);
+      await session!.waitForFrame(/Resume session \(1 of 2\)/, BOOT_FRAME_TIMEOUT_MS);
       session!.send(KEYS.DOWN);
       await session!.waitForFrame(/Resume session \(2 of 2\)/, 5_000);
       session!.send(KEYS.ENTER);
@@ -164,7 +164,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       launchResume();
     });
     And('I press Escape in the picker', async () => {
-      await session!.waitForFrame(/Resume session/, 30_000);
+      await session!.waitForFrame(/Resume session/, BOOT_FRAME_TIMEOUT_MS);
       session!.send(KEYS.ESC);
     });
     Then('the CLI shuts down with exit code 0', async () => {

@@ -25,7 +25,7 @@ import { join } from 'node:path';
 import { expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
-import { startPrism, KEYS, type TuiSession } from '../harness';
+import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, resetThread, runtimeRequest, type RuntimeTestEnv } from '../setup';
 
 const feature = loadFeatureFromText(
@@ -101,7 +101,7 @@ function distinctivePhrase(intermediate: string, avoid: string[]): string | null
 /** Run one multi-step turn and return { rows, phrase } for the assertions. */
 async function runMultiStepTurn(): Promise<{ rows: string[]; phrase: string }> {
   session = startPrism({ env: env.prismEnv, runtime: env.runtime });
-  await session.waitForFrame(/Prism/, 30_000);
+  await session.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
   session.send(MULTI_STEP_PROMPT);
   await sleep(200);
   session.send(KEYS.ENTER);
@@ -174,7 +174,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       // hide the internal steps.
       await session?.stop();
       session = startPrism({ env: env.prismEnv, runtime: env.runtime, args: ['--resume'] });
-      await session.waitForFrame(/Resume session/, 30_000);
+      await session.waitForFrame(/Resume session/, BOOT_FRAME_TIMEOUT_MS);
       session.send(KEYS.ENTER); // newest thread (the turn we just ran) is row 1
       // History has replayed once the agent reply prefix appears.
       await session.waitForFrame(/▌\s+Prism\b/, 30_000);
