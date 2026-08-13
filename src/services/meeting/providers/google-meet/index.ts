@@ -193,10 +193,23 @@ const MIC_SETTLE_MS = 750;
  * probes happen to take.
  *
  * Tested between attempts, not inside one, so the real ceiling is this plus a final
- * attempt (worst case another ~20s of probes and clicks). Cutting an attempt off
- * mid-click would buy tighter arithmetic and cost the one thing this phase is for.
+ * attempt — worst case another ~25s, near all of it timeouts on probes that find
+ * nothing (a dialog sweep that recognises no button, then the patient re-read).
+ * Cutting an attempt off mid-click would buy tighter arithmetic and cost the one
+ * thing this phase is for.
  */
 const MIC_PHASE_TIMEOUT_MS = 30_000;
+
+/**
+ * Whether the room can hear us, and — only when it can — how we got there.
+ *
+ * `mutedOnEntry` rides the live case alone because it is a measurement of how often
+ * the platform auto-mutes a joiner, and a join that failed never reaches the
+ * telemetry that would carry it. Modelling it that way is what stops the awkward
+ * question of what to report for a toggle nobody could read: there is nothing to
+ * report, because that call is over.
+ */
+type MicOutcome = { live: false } | { live: true; mutedOnEntry: boolean };
 
 /**
  * The slice of the DOM the participant-count probe touches.
@@ -659,7 +672,7 @@ export class GoogleMeetProvider implements MeetingProvider {
    * while the agent greets a room that hears nothing — so this runs before the join is
    * reported as successful, and failing it is a failed join.
    */
-  private async ensureMicOn(page: Page): Promise<{ live: boolean; mutedOnEntry: boolean }> {
+  private async ensureMicOn(page: Page): Promise<MicOutcome> {
     const initial = await this.micMuted(page);
 
     if (initial === null) {
@@ -667,12 +680,7 @@ export class GoogleMeetProvider implements MeetingProvider {
         '[Meeting] Could not read the microphone toggle on the call UI — the Meet ' +
           'controls may have changed, and I cannot tell whether the room can hear me',
       );
-      // Reported as *not* muted on entry, even though nothing was confirmed. This is
-      // a measurement of how often the platform auto-mutes a joiner, and it is only
-      // ever emitted when the operator has turned the veto off — i.e. exactly during
-      // the outage where an unreadable toggle would otherwise counterfeit a spike in
-      // the number the decision to keep this step will be made on.
-      return { live: false, mutedOnEntry: false };
+      return { live: false };
     }
 
     if (!initial) {
@@ -715,7 +723,7 @@ export class GoogleMeetProvider implements MeetingProvider {
     }
 
     logger.error('[Meeting] Microphone is still muted after every attempt');
-    return { live: false, mutedOnEntry: true };
+    return { live: false };
   }
 
   /**
@@ -729,14 +737,6 @@ export class GoogleMeetProvider implements MeetingProvider {
   private async confirmAdmitted(page: Page): Promise<JoinOutcome> {
     const mic = await this.ensureMicOn(page);
     if (mic.live) return { status: 'admitted', mutedOnEntry: mic.mutedOnEntry };
-
-    if (!config.meetingRequireMicrophone) {
-      logger.warn(
-        '[Meeting] Joining anyway with a microphone I could not confirm is live ' +
-          '(MEETING_REQUIRE_MICROPHONE is off) — the call may hear nothing from me',
-      );
-      return { status: 'admitted', mutedOnEntry: mic.mutedOnEntry };
-    }
 
     return {
       status: 'failed',

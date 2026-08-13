@@ -445,27 +445,25 @@ export class MeetingBotService {
       // a capture device at all. A live-looking toggle over a device Chromium never
       // opened is indistinguishable from a working agent right up to the moment
       // somebody asks it something.
-      if (config.meetingRequireMicrophone) {
-        // Not a silent skip: reaching admission without an audio stack is a bug in this
-        // service, not a condition to tolerate, so let the catch below report it.
-        const audio = this.audio;
-        if (!audio) throw new Error('admitted to a call with no audio stack');
+      // Not a silent skip: reaching admission without an audio stack is a bug in this
+      // service, not a condition to tolerate, so let the catch below report it.
+      const audio = this.audio;
+      if (!audio) throw new Error('admitted to a call with no audio stack');
 
-        const capturing = await audio.waitForMicCapture(MIC_CAPTURE_TIMEOUT_MS);
-        // The wait can outlive the call, and the stack it asked about may already be
-        // torn down — reporting this against the next meeting would be worse than
-        // missing it.
-        if (this.epoch !== epoch) return;
+      const capturing = await audio.waitForMicCapture(MIC_CAPTURE_TIMEOUT_MS);
+      // The wait can outlive the call, and the stack it asked about may already be
+      // torn down — reporting this against the next meeting would be worse than
+      // missing it.
+      if (this.epoch !== epoch) return;
 
-        if (!capturing) {
-          this.failStep = 'microphone';
-          await this.notifyThread(
-            `I got into the ${provider.displayName} call but my microphone never opened, ` +
-              `so nobody there would have heard me. I've left rather than sit in it silently.`,
-          );
-          await this.teardown('error');
-          return;
-        }
+      if (!capturing) {
+        this.failStep = 'microphone';
+        await this.notifyThread(
+          `I got into the ${provider.displayName} call but my microphone never opened, ` +
+            `so nobody there would have heard me. I've left rather than sit in it silently.`,
+        );
+        await this.teardown('error');
+        return;
       }
 
       this.state = 'in_call';

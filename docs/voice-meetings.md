@@ -332,20 +332,27 @@ is between you and your OpenAI account settings.
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used to decide whether the agent was spoken to. Runs on every call, billed per minute; never fed to the model. The default is the only streaming model that also accepts name hints — see [Names](#names). | `gpt-live-transcribe` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |
-| `MEETING_REQUIRE_MICROPHONE` | Leave the call if the microphone can't be confirmed live, instead of staying in it inaudible. Set `false`/`0`/`no`/`off` to join anyway. | on |
 
 Reaching the lobby has its own budget, so a slow-loading Meet page never eats into
 the waiting-room time.
 
-`MEETING_REQUIRE_MICROPHONE` is worth knowing about before you turn it off. Google
-Meet mutes a new joiner automatically once a call is past a handful of people, so the
-agent unmutes itself on the way in — that part always happens — and then checks two
-things: that Meet's own microphone control reads live, and that the browser actually
-opened the virtual capture device. Turning the setting off keeps the unmute and drops
-the check, which means a call the agent cannot be heard in looks like a normal call
-from the outside. The reason to do it anyway is the opposite failure: if a Meet UI
-change breaks the *reading* rather than the microphone, every join fails until the
-selector is fixed, and joining muted beats not joining.
+### The agent will not join a call it cannot speak in
+
+Google Meet mutes a new joiner automatically once a call is past a handful of people,
+so the agent unmutes itself on the way in and then confirms two things before it
+settles: that Meet's own microphone control reads live, and that the browser really
+opened the virtual capture device. Failing either, it leaves and says which half
+failed — there is no setting to make it stay.
+
+That is deliberate, and it is the one behavior here worth understanding, because the
+alternative hides perfectly: the agent is in the call, the participant count is right,
+the voice socket is healthy, and the room hears nothing at all. A join that fails says
+so. A join that succeeds silently does not, and nobody finds out until somebody asks
+the agent a question and waits.
+
+The cost is that a Meet UI change which breaks the *reading* rather than the
+microphone stops every join until the selector is fixed. That is a loud, obvious
+outage with an obvious fix, which is the trade being made.
 
 ## When it doesn't work
 
@@ -387,7 +394,7 @@ browser's capture device before it settles in. The log names which half failed �
 `Microphone is still muted after every attempt` (the control never flipped, usually a
 dialog covering the call controls or a Meet UI change) or `bot_mic is still not being
 captured` (the browser never opened the device, so look for `parec`/`pacat` warnings
-and check `/dev/shm`). `MEETING_REQUIRE_MICROPHONE=false` makes it join anyway.
+and check `/dev/shm`).
 
 **It says Meet only offered to let it in without a microphone.** Meet paints that
 offer when it can't find a capture device for the tab at all, and the panel carrying
