@@ -182,6 +182,14 @@ export class VoiceConversation {
   private pendingAnswer: { at: number; via: string } | null = null;
   /** Last keyword list sent, so the poll doesn't resend an unchanged roster. */
   private keywordSignature: string | null = null;
+  /**
+   * The keyword list currently in force, for the diagnostic line below.
+   *
+   * Starts as the session's connect-time list — the agent's name alone — so a
+   * verdict logged before the first roster poll names what was actually seeded
+   * rather than nothing.
+   */
+  private keywords: string[] = [];
   private stopped = false;
 
   constructor(private readonly options: VoiceConversationOptions) {
@@ -193,6 +201,9 @@ export class VoiceConversation {
       agentName: options.agentName,
       endpointOverride: options.endpointOverride,
     });
+
+    // Mirrors what `RealtimeSession` seeds at connect time.
+    this.keywords = [options.agentName];
 
     this.responsePolicy = new ResponsePolicy({ mode: options.responseMode });
 
@@ -366,11 +377,37 @@ export class VoiceConversation {
     stage: 'partial' | 'final',
   ): Promise<void> {
     const asked = Date.now();
+    // Read before the await: the roster poll runs on its own timer, and a refresh
+    // landing during the ~1s gate call would otherwise make the line report the
+    // list that replaced the one the utterance was actually transcribed under.
+    const keywords = this.keywords;
     const addressed = await classifyAddressed({
       transcript,
       agentName: this.options.agentName,
       stage,
     });
+
+    // The sentence the verdict was reached on, recorded next to the verdict.
+    //
+    // Without it a `no` on a sentence that named the agent and a `no` on a sentence
+    // that never mentioned it are the same log line, which is what made a live
+    // report of "it stopped answering to its name" impossible to diagnose after the
+    // fact: the gate's own reasoning is cut off at eight output tokens, so the only
+    // way to know what it was judging is to write the sentence down. The keyword
+    // list rides along because it is the one input that changes across a call — the
+    // agent's name is seeded to the transcriber alongside the room's, and a name
+    // that fails to survive transcription cannot be recognised however good the
+    // gate is.
+    //
+    // `info`, deliberately: production runs at `info`, and this line exists to be
+    // read back from a deployed container. It is also why none of it reaches
+    // telemetry — an utterance is user speech, and counters are what that surface
+    // gets.
+    logger.info(
+      `[Meeting:Gate] ${stage} verdict addressed=${addressed} ` +
+        `item=${itemId || 'none'} mode=${this.responsePolicy.effectiveMode} ` +
+        `keywords=[${keywords.join(', ')}] transcript=${JSON.stringify(transcript)}`,
+    );
 
     if (this.stopped) return;
 
@@ -538,6 +575,7 @@ export class VoiceConversation {
     const signature = keywords.join('\u0000');
     if (signature === this.keywordSignature) return;
     this.keywordSignature = signature;
+    this.keywords = keywords;
 
     this.session.setTranscriptionKeywords(keywords);
     logger.info(`[Meeting] Transcriber now expects ${keywords.length} name(s) in the room`);

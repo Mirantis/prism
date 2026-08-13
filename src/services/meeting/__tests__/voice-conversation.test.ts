@@ -35,6 +35,7 @@ vi.mock('../addressed-classifier', async (importOriginal) => ({
 
 beforeEach(() => {
   vi.mocked(classifyAddressed).mockResolvedValue(true);
+  vi.mocked(logger.info).mockClear();
 });
 
 interface Harness {
@@ -273,6 +274,51 @@ describe('answering a request judged early', () => {
     await settle();
 
     expect(infoLines()).toMatch(/voice started \d+ms after asking .*effort high/);
+  });
+});
+
+describe('recording what each verdict was reached on', () => {
+  it('logs the sentence, the verdict and the keywords in force', async () => {
+    const { h, send } = await speakingHarness();
+    active = h;
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-4',
+      transcript: 'Emma, can you take a look?',
+    });
+    await settle();
+    await settle();
+
+    // A `no` on a sentence that names the agent and a `no` on one that never
+    // mentions it are the same line without the transcript, which is what made a
+    // live report of "it stopped answering to its name" undiagnosable after the fact.
+    const line = infoLines();
+    expect(line).toContain('Emma, can you take a look?');
+    expect(line).toContain('addressed=false');
+    expect(line).toContain('item=item-4');
+    // The roster is seeded to the transcriber, so it is an input to whether the name
+    // survived at all — and it is the one that changes across a call.
+    expect(line).toMatch(/keywords=\[Emma, Lee, Mario Sarcher\]/);
+  });
+
+  it('names the connect-time keyword list before any roster arrives', async () => {
+    const { h, send } = await speakingHarness();
+    active = h;
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-5',
+      transcript: 'Emma, hello',
+    });
+    await settle();
+    await settle();
+
+    // The session seeds the agent's own name at connect; a verdict logged before the
+    // first participant poll must say so rather than claim nothing was set.
+    expect(infoLines()).toMatch(/keywords=\[Emma\]/);
   });
 });
 
