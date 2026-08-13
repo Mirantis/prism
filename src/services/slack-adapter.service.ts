@@ -46,7 +46,7 @@ import { channelLearningQueue } from '../queues/channel-learning.queue';
 import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
 import { attachmentService, detectMediaType, classifyMediaType } from './attachment.service';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
-import { stripBodyToken } from '../lib/slack-web-client';
+import { BOUNDED_SLACK_CLIENT_OPTIONS, stripBodyToken } from '../lib/slack-web-client';
 import { getProxyDispatcher } from '../lib/proxy-dispatcher';
 import { config } from '../config';
 import {
@@ -599,19 +599,40 @@ class SlackAdapterService implements ChannelAdapter {
     const isSocketMode = Boolean(appToken);
 
     // Create Bolt app. clientOptions forwards to the internal WebClient:
-    //   - `agent`: routes axios through the Nexus sandbox proxy when
-    //     `HTTPS_PROXY` is set (axios does not auto-honor it).
     //   - `requestInterceptor: stripBodyToken`: drops the `token` field
     //     from outbound bodies so bot-token auth flows only via
     //     `Authorization` header — required when the bot token is a
     //     Nexus `__nexus_cred:<uuid>__` sentinel (header-only rewrite).
+    //   - `BOUNDED_SLACK_CLIENT_OPTIONS`: a request deadline and a few
+    //     seconds-scale retries instead of the SDK's `timeout: 0` +
+    //     ~30 minutes of them. This client is not only used for posting:
+    //     `app.start()` runs its own `auth.test` through it, and boot awaits
+    //     that, so an unbounded call here holds the whole runtime — and every
+    //     client waiting for its port — behind one hanging Slack request. Note
+    //     it does not make boot bounded: `app.start()` below still waits on
+    //     `apps.connections.open` under the SDK's own `timeout: 0`.
+    //
+    // `installerOptions.clientOptions` is deliberately *not* those bounds. Bolt
+    // defaults that field to `clientOptions` (App.js: `{ clientOptions: this.clientOptions,
+    // ...installerOptions }`) and `SocketModeReceiver` hands it straight to
+    // `SocketModeClient`, which (a) keeps its own `{ retries: 100, factor: 1.3 }`
+    // policy for `apps.connections.open` only while `retryConfig` is undefined and
+    // (b) treats a request timeout as unrecoverable — no reconnect, and the
+    // rejection lands in an uncaught `setTimeout` on the reconnect path. Bounding
+    // that client would trade a rare 30-minute boot stall for a bot that silently
+    // stops receiving after any blip, so the socket keeps the SDK's policy and
+    // only inherits the body-token strip. Consequences of it being a separate
+    // literal: anything the socket leg also needs — `agent` for a proxy, say —
+    // has to be added to *both*, and its WebClient logs through a plain
+    // level-matched logger rather than Bolt's named one.
     const app = new App({
       token: botToken,
       ...(isSocketMode && {
         appToken,
         socketMode: true,
       }),
-      clientOptions: { requestInterceptor: stripBodyToken },
+      clientOptions: { ...BOUNDED_SLACK_CLIENT_OPTIONS, requestInterceptor: stripBodyToken },
+      installerOptions: { clientOptions: { requestInterceptor: stripBodyToken } },
       logLevel: process.env.NODE_ENV === 'production' ? LogLevel.WARN : LogLevel.INFO,
     });
 

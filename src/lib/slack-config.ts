@@ -39,7 +39,14 @@ async function loadFromEnv(): Promise<SlackConnectionRecord | null> {
   // `__nexus_cred:<uuid>__` sentinels that get rewritten to real tokens at
   // the MITM proxy on outbound Slack calls. auth.test() below is the real
   // validation — it goes through the proxy and sees the swapped-in token.
-  const client = new SlackWebClient(botToken);
+  //
+  // Boot awaits this call, and nothing else in the process starts until it
+  // resolves — the HTTP server included. `SlackWebClient` therefore bounds it
+  // (see BOUNDED_SLACK_CLIENT_OPTIONS); the SDK's own defaults would let one
+  // hanging Slack request hold the port for ~30 minutes. A tighter deadline than
+  // the shared default here: this is a JSON round trip with the port waiting on
+  // it, not the file upload the default is sized for.
+  const client = new SlackWebClient(botToken, { timeout: 10_000 });
   const authResult = await client.auth.test({});
   const teamId = authResult.team_id || '';
   const teamName = authResult.team || 'Unknown Workspace';
