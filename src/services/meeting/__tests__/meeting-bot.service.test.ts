@@ -26,10 +26,19 @@ let audioLostHandler: ((reason: string) => void) | null = null;
  * left, not settled into.
  */
 const audioWaitForMicCapture = vi.fn();
+/**
+ * The same question as `waitForMicCapture`, asked once and quietly.
+ *
+ * Separate because the mid-call retry has to re-check *this* half too: the join reads
+ * the meeting's toggle and the capture device independently, and re-reading only the
+ * one that never broke is how a retry declares a recovery that did not happen.
+ */
+const audioIsMicCaptured = vi.fn();
 class FakeAudioStack {
   start = audioStart;
   stop = audioStop;
   waitForMicCapture = audioWaitForMicCapture;
+  isMicCaptured = audioIsMicCaptured;
 }
 vi.mock('../audio-stack', () => ({
   AudioStack: FakeAudioStack,
@@ -50,6 +59,14 @@ const conversationNotify = vi.fn();
 const conversationSpeak = vi.fn();
 const conversationSetParticipantCount = vi.fn();
 /**
+ * Told whether the room can hear the agent.
+ *
+ * Only the response policy acts on it (an inaudible agent must not answer every
+ * sentence in `open` mode), so what matters here is that the service reports the
+ * state honestly and updates it when a retry succeeds.
+ */
+const conversationSetAudible = vi.fn();
+/**
  * The options the service last built a conversation with.
  *
  * Captured for two reasons: a test can fire `onSessionLost` the way the real
@@ -69,6 +86,7 @@ class FakeVoiceConversation {
   notify = conversationNotify;
   speakNow = conversationSpeak;
   setParticipantCount = conversationSetParticipantCount;
+  setAudible = conversationSetAudible;
   pushMeetingAudio = vi.fn();
   get responseMode() {
     return 'addressed';
@@ -121,6 +139,7 @@ const providerConfigurationError = vi.fn(() => null as string | null);
 const providerSignIn = vi.fn(async () => {});
 const providerLeave = vi.fn();
 const providerParticipantCount = vi.fn();
+const providerEnsureUnmuted = vi.fn();
 vi.mock('../providers/google-meet', () => ({
   googleMeetProvider: {
     name: 'google-meet',
@@ -131,6 +150,7 @@ vi.mock('../providers/google-meet', () => ({
     join: (...a: unknown[]) => providerJoin(...a),
     leave: (...a: unknown[]) => providerLeave(...a),
     participantCount: (...a: unknown[]) => providerParticipantCount(...a),
+    ensureUnmuted: (...a: unknown[]) => providerEnsureUnmuted(...a),
   },
 }));
 
@@ -165,6 +185,7 @@ beforeEach(() => {
   });
   audioStop.mockResolvedValue(undefined);
   audioWaitForMicCapture.mockResolvedValue(true);
+  audioIsMicCaptured.mockResolvedValue(true);
   browserStart.mockResolvedValue({ mockPage: true });
   browserStop.mockResolvedValue(undefined);
   conversationStart.mockResolvedValue(undefined);
@@ -173,9 +194,10 @@ beforeEach(() => {
   buildSystemPromptParts.mockResolvedValue([{ text: '# Identity', cacheable: true }]);
   publish.mockResolvedValue(undefined);
   publishToLatestThread.mockResolvedValue(undefined);
-  providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false });
+  providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   providerLeave.mockResolvedValue(undefined);
   providerParticipantCount.mockResolvedValue(3);
+  providerEnsureUnmuted.mockResolvedValue(false);
   conversationOptions = {};
   service = new MeetingBotService();
 });
@@ -216,7 +238,7 @@ describe('joining', () => {
     expect(result.message).toMatch(/host needs to admit me/i);
     expect(service.status().state).toBe('waiting_admission');
 
-    admit({ status: 'admitted', mutedOnEntry: false });
+    admit({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     await settle();
 
     expect(service.status().state).toBe('in_call');
@@ -277,7 +299,7 @@ describe('a session the platform will not accept', () => {
     // fail identically.
     providerJoin
       .mockResolvedValueOnce({ status: 'reauth_required' })
-      .mockResolvedValueOnce({ status: 'admitted', mutedOnEntry: false });
+      .mockResolvedValueOnce({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
 
     await service.join(input);
     await settle();
@@ -308,48 +330,246 @@ describe('a session the platform will not accept', () => {
   });
 });
 
-describe('a microphone the browser never opened', () => {
+describe('a call the room cannot hear the agent in', () => {
   /**
-   * The provider's unmute is the meeting's word for it; this is the browser's.
+   * Two independent readings, and either one failing means the same thing.
    *
-   * They come from different systems and can disagree: Meet's toggle can read live
-   * over a capture device Chromium never opened, and every other signal the runtime
-   * watches — admission, the participant count, the Realtime socket — looks perfect
-   * while the room hears nothing. So the call is only settled into once PulseAudio
-   * says somebody is reading the virtual mic.
+   * The provider's unmute is the meeting's word for it; `waitForMicCapture` is the
+   * browser's. They come from different systems and can disagree — Meet's toggle can
+   * read live over a capture device Chromium never opened — so neither answers alone.
+   *
+   * What the agent does about it is the interesting part, and it is *not* to leave. The
+   * room's audio arrives on `meet_out.monitor`, which has nothing to do with the
+   * microphone, so an inaudible agent is still listening and still holds its whole tool
+   * surface. Leaving would discard that to avoid one of its failure modes — and both of
+   * these readings are unvalidated enough to produce false alarms, which would then cost
+   * a meeting each. So: stay, and make sure somebody knows.
    */
-  it('leaves instead of sitting silently in the call', async () => {
+  it('stays in the call when the browser never opened the microphone', async () => {
     audioWaitForMicCapture.mockResolvedValue(false);
 
     await service.join(input);
     await settle();
 
-    expect(service.status().state).toBe('idle');
+    expect(service.status().state).toBe('in_call');
+    expect(audioStop).not.toHaveBeenCalled();
+    expect(browserStop).not.toHaveBeenCalled();
+  });
+
+  it('stays in the call when the meeting never confirmed the unmute', async () => {
+    // The other half, reported by the provider rather than read from PulseAudio. Same
+    // conclusion, so it must not matter which one noticed.
+    providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+
+    await service.join(input);
+    await settle();
+
+    expect(service.status().state).toBe('in_call');
+  });
+
+  it('tells the user, and says which half failed', async () => {
+    // The whole point of not leaving is that somebody still finds out. A note that just
+    // said "I'm in the call" would put this back where it started.
+    audioWaitForMicCapture.mockResolvedValue(false);
+
+    await service.join(input);
+    await settle();
+
+    // "Couldn't confirm", never "am muted". The readings behind this are a scraped DOM
+    // attribute and a `pactl` line, so a confident claim is one the user would act on
+    // and one that can be wrong.
     expect(publish).toHaveBeenCalledWith(
       'u1',
       't1',
-      expect.stringMatching(/microphone never opened/i),
+      expect.stringMatching(/couldn't confirm my microphone/i),
       'SYSTEM',
     );
-    // And the call's resources go with it, as any other failed join's would.
-    expect(audioStop).toHaveBeenCalled();
-    expect(browserStop).toHaveBeenCalled();
+    // And which half, because the two send you to different places: Meet's UI, or the
+    // container's audio devices.
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/never opened its capture device/i),
+      'SYSTEM',
+    );
   });
 
-  it('does not greet a room that cannot hear it', async () => {
-    // Speaking here is worse than useless: it spends Realtime tokens, and the model
-    // is left believing it introduced itself to people who heard nothing.
+  it('does not greet a room that cannot hear it, and tells the model why', async () => {
+    // Greeting here spends Realtime tokens on audio nobody receives and leaves the model
+    // believing it introduced itself — so the model is told the standing condition
+    // instead, which also stops it answering the next question into the void.
     audioWaitForMicCapture.mockResolvedValue(false);
 
     await service.join(input);
     await settle();
 
     expect(conversationSpeak).not.toHaveBeenCalled();
-    expect(trackEvent).not.toHaveBeenCalledWith('meeting joined', expect.anything(), expect.anything());
+    expect(conversationNotify).not.toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
+    expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/may not hear you/i));
+    // Told not to repair it, and that matters more than it looks: the meeting toolset
+    // includes the shell, PulseAudio is running in this container, and a model that
+    // decides to fix its own microphone can kill the daemon carrying the call.
+    expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/don't try to repair/i));
+  });
+
+  it('keeps trying the unmute, and greets the room once it lands', async () => {
+    // The whole reason staying is defensible: this is what a human does when they
+    // notice the mute icon. One unlucky moment during admission — a dialog that
+    // outlived the sweep, a control bar mid-paint — should cost a poll interval, not
+    // the meeting. The greeting waits for this rather than being skipped outright, so
+    // a recovered call is introduced properly instead of joining mid-conversation.
+    providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(conversationSpeak).not.toHaveBeenCalled();
+
+      providerEnsureUnmuted.mockResolvedValue(true);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
+      expect(conversationSpeak).toHaveBeenCalled();
+      expect(conversationSetAudible).toHaveBeenCalledWith(true);
+      expect(publish).toHaveBeenCalledWith(
+        'u1',
+        't1',
+        expect.stringMatching(/microphone is working now/i),
+        'SYSTEM',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not call itself recovered on the strength of the half that never broke', async () => {
+    // The join reads two independent things: Meet's toggle, and whether Chromium opened
+    // the capture device. Here the toggle was live all along and the device never opened
+    // — the `parec`/`/dev/shm` failure. A retry that only re-reads the toggle finds it
+    // live, and would declare victory on evidence it already had: silencing the warning,
+    // disarming the retry, restoring `open` mode and greeting a room that still hears
+    // nothing. The one recovery that must be verified is the one that was broken.
+    providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
+    audioWaitForMicCapture.mockResolvedValue(false);
+    audioIsMicCaptured.mockResolvedValue(false);
+    providerEnsureUnmuted.mockResolvedValue(true);
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(conversationSpeak).not.toHaveBeenCalled();
+      expect(conversationSetAudible).not.toHaveBeenCalledWith(true);
+      expect(publish).not.toHaveBeenCalledWith(
+        'u1',
+        't1',
+        expect.stringMatching(/microphone is working now/i),
+        'SYSTEM',
+      );
+      // And it kept asking, rather than settling into a call it cannot be heard in.
+      expect(providerEnsureUnmuted.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers when the capture device is what comes up late', async () => {
+    // The same shape, resolved: the device opens a few seconds after the toggle did.
+    providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
+    audioWaitForMicCapture.mockResolvedValue(false);
+    audioIsMicCaptured.mockResolvedValue(false);
+    providerEnsureUnmuted.mockResolvedValue(true);
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+
+      audioIsMicCaptured.mockResolvedValue(true);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(conversationSetAudible).toHaveBeenCalledWith(true);
+      expect(conversationSpeak).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not run two unmute retries at once', async () => {
+    // `setInterval` re-fires on the wall clock, not on the last callback finishing, so a
+    // retry slower than the interval can overlap the next one. On a *toggle* that is not
+    // a wasted call, it is one tick switching on what the next switches off.
+    providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+    let inFlight = 0;
+    let overlapped = false;
+    providerEnsureUnmuted.mockImplementation(async () => {
+      inFlight += 1;
+      if (inFlight > 1) overlapped = true;
+      // Longer than the 10s poll interval, which is the condition that produces the race
+      // — a dialog sweep on a stuck control is exactly this slow.
+      await new Promise((r) => setTimeout(r, 25_000));
+      inFlight -= 1;
+      return false;
+    });
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(overlapped).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops retrying once the room can hear it', async () => {
+    // A toggle toggles, so a retry that keeps firing after it has succeeded is not
+    // harmless persistence — the next click would mute what the last one fixed.
+    audioWaitForMicCapture.mockResolvedValue(false);
+    providerEnsureUnmuted.mockResolvedValue(true);
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(providerEnsureUnmuted).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(providerEnsureUnmuted).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never asks the provider to unmute a call it is already audible in', async () => {
+    // The common case: the join confirmed the microphone, so the poll has no business
+    // clicking at the control bar every ten seconds.
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(providerEnsureUnmuted).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still reports the join, tagged as inaudible', async () => {
+    // `meeting joined` fires — the agent is in the call — but carrying the fact that
+    // nothing it says will arrive. That pair is the measurement the original bug hid.
+    audioWaitForMicCapture.mockResolvedValue(false);
+
+    await service.join(input);
+    await settle();
+
     expect(trackEvent).toHaveBeenCalledWith(
-      'meeting ended',
+      'meeting joined',
       'u1',
-      expect.objectContaining({ status: 'error', fail_step: 'microphone' }),
+      expect.objectContaining({ mic_confirmed: 'false' }),
     );
   });
 });
@@ -692,7 +912,7 @@ describe('a late admission cannot resurrect a torn-down call', () => {
     expect(service.status().state).toBe('idle');
 
     // The waiting room finally answers — for a meeting that no longer exists.
-    admit({ status: 'admitted', mutedOnEntry: false });
+    admit({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     await settle();
 
     expect(service.status().state).toBe('idle');
@@ -780,6 +1000,7 @@ describe('telemetry', () => {
       provider: 'google-meet',
       response_mode: 'auto',
       muted_on_entry: 'false',
+      mic_confirmed: 'true',
     });
 
     await service.leave();
@@ -808,7 +1029,7 @@ describe('telemetry', () => {
     // The measurement whose absence let this bug live in production: if Meet rarely
     // auto-mutes, the unmute step is dead weight; if it usually does, it is the only
     // reason the agent is audible at all. Either way it should be visible.
-    providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true });
+    providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: true });
 
     await service.join(input);
     await settle();

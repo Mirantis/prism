@@ -336,23 +336,34 @@ is between you and your OpenAI account settings.
 Reaching the lobby has its own budget, so a slow-loading Meet page never eats into
 the waiting-room time.
 
-### The agent will not join a call it cannot speak in
+### The microphone
 
-Google Meet mutes a new joiner automatically once a call is past a handful of people,
-so the agent unmutes itself on the way in and then confirms two things before it
-settles: that Meet's own microphone control reads live, and that the browser really
-opened the virtual capture device. Failing either, it leaves and says which half
-failed — there is no setting to make it stay.
+Google Meet mutes a new joiner automatically once a call is past a handful of people.
+The agent unmutes itself on the way in — the same click you would make — and then
+checks two things: that Meet's own microphone control reads live, and that the browser
+really opened the virtual capture device.
 
-That is deliberate, and it is the one behavior here worth understanding, because the
-alternative hides perfectly: the agent is in the call, the participant count is right,
-the voice socket is healthy, and the room hears nothing at all. A join that fails says
-so. A join that succeeds silently does not, and nobody finds out until somebody asks
-the agent a question and waits.
+If it cannot confirm both, **it stays in the call and tells you.** You get a message in
+the conversation saying it may not be audible and which half failed, and it keeps
+trying to unmute itself, once every ten seconds, for as long as the call lasts. When
+that works it says so, and introduces itself to the room then — a greeting nobody could
+hear was never a greeting.
 
-The cost is that a Meet UI change which breaks the *reading* rather than the
-microphone stops every join until the selector is fixed. That is a loud, obvious
-outage with an obvious fix, which is the trade being made.
+It stays rather than leaving because the microphone is only half of what it is doing
+there. It hears the room through a different device entirely, so an agent that cannot
+be heard is still following the meeting, still being asked things, and still able to
+act on them; the reply just doesn't arrive by voice. Leaving would throw that away to
+avoid one of its failure modes. Nor would leaving be safe on this evidence: both checks
+read things that can break on their own — a Google UI change, a quirk in the container's
+audio — and treating either as proof would turn a cosmetic change into an agent that
+refuses every meeting.
+
+While it cannot confirm it is audible, the agent answers only when somebody says its
+name, even in a one-to-one call where it would normally answer everything. Answering
+every sentence into a void costs exactly what answering it aloud costs.
+
+The one case it will not join at all is a meeting where Meet offers *only* to let it in
+without a microphone — see below.
 
 ## When it doesn't work
 
@@ -384,17 +395,24 @@ the next join log in fresh. A screenshot of any failed join lands at
 **Diagnosing which step failed.** Each join logs the elapsed time for page load,
 the join-button hunt and the admission wait, and a failed attempt tags its
 `meeting ended` telemetry event with `fail_step` — one of `page_load`, `lobby`,
-`join_button`, `admission` or `microphone`.
+`join_button`, `admission` or `microphone`. A successful join carries
+`muted_on_entry` (whether Meet had muted the agent) and `mic_confirmed` (whether the
+room can hear it) on `meeting joined`.
 
-**It left saying its microphone never opened, or that it couldn't turn it on.**
-Working as intended: it would otherwise have sat in the meeting inaudible while
-looking perfectly healthy. Meet auto-mutes new joiners in larger calls, so the agent
-unmutes itself and then confirms both the meeting's microphone control and the
-browser's capture device before it settles in. The log names which half failed —
-`Microphone is still muted after every attempt` (the control never flipped, usually a
-dialog covering the call controls or a Meet UI change) or `bot_mic is still not being
+**It says it's in the call but couldn't confirm its microphone.** It is still in the
+meeting, still listening, and still retrying the unmute every ten seconds — so the
+first thing to do is wait a few seconds and see whether it reports itself working. If
+it doesn't, the log names which half failed: `Microphone is still muted after every
+attempt` (Meet's control never flipped — usually a dialog covering the call controls,
+or a Meet UI change that has broken the selector) or `bot_mic is still not being
 captured` (the browser never opened the device, so look for `parec`/`pacat` warnings
 and check `/dev/shm`).
+
+Watch `mic_confirmed` on the `meeting joined` event if you run more than one of these.
+The whole bug behind this behavior was a silent agent nobody measured, and a fleet
+where that property turns false everywhere is the same outage wearing a different hat —
+a rotted selector, degrading quietly into meetings the agent attends but cannot speak
+in.
 
 **It says Meet only offered to let it in without a microphone.** Meet paints that
 offer when it can't find a capture device for the tab at all, and the panel carrying
@@ -403,13 +421,13 @@ available", which pointed at the wrong thing entirely. Fix the container's audio
 devices (the same `parec`/`pacat` and `/dev/shm` checks as above); no browser-side
 setting will help.
 
-**It's in the call but silent, or nobody can hear it.** If it stayed in the call, the
-audio devices are the usual cause: check the runtime log for `parec`/`pacat` warnings.
-A container needs enough `/dev/shm` for Chromium — the runtime already passes
-`--disable-dev-shm-usage`, but a heavily constrained container can still starve it.
-Note that the agent no longer accepts Meet's "Continue without microphone" offer:
-taking it joined the call with no capture device at all, which nothing later could
-undo.
+**It's in the call but silent, and said nothing about its microphone.** Then both
+checks passed and the fault is further down: the audio devices are the usual cause, so
+check the runtime log for `parec`/`pacat` warnings. A container needs enough `/dev/shm`
+for Chromium — the runtime already passes `--disable-dev-shm-usage`, but a heavily
+constrained container can still starve it. Note that the agent no longer accepts Meet's
+"Continue without microphone" offer: taking it joined the call with no capture device
+at all, which nothing later could undo.
 
 **It joined but hears nothing.** Confirm the other participants aren't muted, then
 check that the meeting is actually sending audio to the browser (Meet occasionally

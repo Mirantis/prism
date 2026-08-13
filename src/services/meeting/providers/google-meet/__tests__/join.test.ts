@@ -213,7 +213,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     expect(clicks).toContain('Ask to join');
     // Nothing is typed any more: Meet refuses automated anonymous guests, so a join
     // without an account is rejected before a browser is ever launched.
@@ -231,7 +231,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(harness.page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   });
 
   it('reports a denial in the user\'s terms, not as an exception', async () => {
@@ -366,7 +366,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     expect(clicks).toContain('Ask to join without camera');
   });
 
@@ -385,7 +385,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(harness.page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   });
 
   it('reports a join button that never became available', async () => {
@@ -407,7 +407,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     expect(clicks).toContain('Join now');
   });
 
@@ -426,7 +426,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(harness.page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   });
 
   it('reports a rejection confirmed during the button hunt even if the text then clears', async () => {
@@ -462,7 +462,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   });
 
   it('does not read "meeting ended" in unrelated text as a rejection', async () => {
@@ -478,7 +478,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   });
 
   it('does not mistake an unrelated named input for the guest name field', async () => {
@@ -493,7 +493,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     expect(fills).toEqual([]);
   });
 
@@ -507,7 +507,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     expect(clicks).toContain('Join anyway');
     expect(fills).toEqual([]);
   });
@@ -554,7 +554,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(harness.page, { ...joinOptions, admissionTimeoutMs: 100 });
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   });
 
   it('joins a meeting with no name field', async () => {
@@ -566,7 +566,7 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     expect(fills).toEqual([]);
   });
 });
@@ -660,7 +660,7 @@ describe('a stale signed-in session', () => {
 
     const outcome = await provider.join(page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     expect(fills).toEqual([]);
   });
 
@@ -674,7 +674,7 @@ describe('a stale signed-in session', () => {
 
     const outcome = await provider.join(page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   });
 });
 
@@ -714,7 +714,7 @@ describe('the microphone', () => {
 
     // Reported as admitted *and* as having arrived muted — the second half is the
     // measurement that would have caught this bug on the first call.
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: true });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: true, micConfirmed: true });
     expect(harness.clicks).toContain(MIC_TOGGLE_SELECTOR);
   });
 
@@ -723,7 +723,7 @@ describe('the microphone', () => {
 
     const outcome = await provider.join(harness.page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     // Clicking a live mic would mute it — the exact bug, inverted.
     expect(harness.clicks).not.toContain(MIC_TOGGLE_SELECTOR);
   });
@@ -746,7 +746,7 @@ describe('the microphone', () => {
 
     const outcome = await provider.join(harness.page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: true });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: true, micConfirmed: true });
     // The order is the point: unmuting is only reachable once the scrim is gone.
     expect(harness.clicks.indexOf(MIC_TOGGLE_SELECTOR)).toBeGreaterThan(
       harness.clicks.indexOf('Got it'),
@@ -775,7 +775,7 @@ describe('the microphone', () => {
 
     const outcome = await provider.join(harness.page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: true });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: true, micConfirmed: true });
     expect(thrown).toBe(1);
   });
 
@@ -799,34 +799,40 @@ describe('the microphone', () => {
 
     const outcome = await provider.join(harness.page, joinOptions);
 
-    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: true });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: true, micConfirmed: true });
     expect(harness.clicks.filter((c) => c === MIC_TOGGLE_SELECTOR)).toHaveLength(1);
   });
 
-  it('fails with the microphone step when the toggle never goes live', async () => {
-    // The toggle is there and clickable, it just never flips — a device Chromium
-    // cannot open. Staying would put a permanently silent participant in the room.
+  it('joins anyway when the toggle never goes live, and says it is not confirmed', async () => {
+    // A toggle that is there and clickable but never flips. The agent joins: it still
+    // hears the room, which arrives on a device that has nothing to do with the
+    // microphone, and it keeps every tool it has. What it must not do is claim the room
+    // can hear it — the runtime decides who to tell, and it can only do that if this is
+    // reported rather than smoothed over.
     const harness = inCall({ mic: 'off' });
 
     const outcome = await provider.join(harness.page, joinOptions);
 
-    expect(outcome.status).toBe('failed');
-    expect(outcome).toMatchObject({ step: 'microphone' });
-    expect((outcome as { reason: string }).reason).toMatch(/microphone|hear me/i);
-    // Bounded: it gave up rather than clicking forever.
-    expect(harness.clicks.filter((c) => c === MIC_TOGGLE_SELECTOR).length).toBeLessThan(10);
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+    // And it stopped clicking. This control is a toggle, so an unbounded retry is not
+    // persistence, it is a coin-flip on the state it is trying to fix.
+    expect(harness.clicks.filter((c) => c === MIC_TOGGLE_SELECTOR)).toHaveLength(2);
   });
 
-  it('fails with the microphone step when there is no toggle at all', async () => {
-    // Selector rot. Reported rather than assumed fine: "no toggle" is the one
-    // reading that must not be taken for "already unmuted", because that is
-    // indistinguishable from success right up until nobody can hear the agent.
+  it('joins unconfirmed when there is no toggle at all, without inventing an auto-mute', async () => {
+    // Selector rot. Two things must not happen: "no toggle" must not read as "already
+    // unmuted" (that is indistinguishable from success until nobody can hear the agent),
+    // and it must not be filed as `mutedOnEntry` either — that number exists to decide
+    // whether the unmute step earns its keep, and a reading nobody took would inflate it
+    // during exactly the outage that produced it.
     const harness = inCall({ mic: 'absent' });
 
     const outcome = await provider.join(harness.page, joinOptions);
 
-    expect(outcome.status).toBe('failed');
-    expect(outcome).toMatchObject({ step: 'microphone' });
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: false });
+    // Nothing was clicked: there was nothing to click, and guessing at coordinates on a
+    // UI we cannot read is how a bot turns a camera on.
+    expect(harness.clicks).not.toContain(MIC_TOGGLE_SELECTOR);
   });
 
   it('never clicks its way into a call with no microphone', async () => {
@@ -865,8 +871,9 @@ describe('the microphone', () => {
     const outcome = await provider.join(harness.page, joinOptions);
 
     expect(harness.clicks).not.toContain('Continue without microphone');
-    // And it still reports the failure rather than pretending the mic came up.
-    expect(outcome).toMatchObject({ status: 'failed', step: 'microphone' });
+    // And it still reports the microphone as unconfirmed rather than pretending the
+    // click it never landed had worked.
+    expect(outcome).toMatchObject({ status: 'admitted', micConfirmed: false });
   });
 
   it('names the microphone, not the page, when Meet only offers to join without one', async () => {

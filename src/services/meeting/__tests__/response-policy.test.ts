@@ -84,6 +84,72 @@ describe('choosing a mode from the room', () => {
   });
 });
 
+/**
+ * A call the room cannot hear the agent in.
+ *
+ * `open` mode answers every utterance at its turn boundary, which is the right call
+ * for one human talking to the agent and an expensive way to say nothing when the
+ * microphone is not live: a full Realtime response per sentence, for an hour, none of
+ * it heard. `addressed` is bounded by somebody choosing to say the agent's name, and
+ * staying responsive there is deliberate — an agent that cannot be heard can still
+ * *act* on what it is asked, and the action lands even when the confirmation doesn't.
+ */
+describe('an agent nobody can hear', () => {
+  it('stops answering everything said in the room', () => {
+    const p = policy();
+    p.setParticipantCount(2);
+    expect(p.effectiveMode).toBe('open');
+
+    p.setAudible(false);
+
+    expect(p.effectiveMode).toBe('addressed');
+    expect(p.onUtteranceCommitted('i1')).toBe(false);
+  });
+
+  it('does not drift back into open mode on the next count reading', () => {
+    // The count keeps arriving every ten seconds while this is true, and each one is a
+    // fresh chance to undo the decision.
+    const p = policy();
+    p.setAudible(false);
+    p.setParticipantCount(2);
+
+    expect(p.effectiveMode).toBe('addressed');
+  });
+
+  it('goes back to open mode once the room can hear it again', () => {
+    // The retry succeeds mid-call, so this is a real transition rather than a
+    // theoretical one.
+    const p = policy();
+    p.setParticipantCount(2);
+    p.setAudible(false);
+    p.setAudible(true);
+    p.setParticipantCount(2);
+
+    expect(p.effectiveMode).toBe('open');
+  });
+
+  it('restores a mode that was asked for explicitly, which no count would bring back', () => {
+    // `setParticipantCount` is inert for an explicit mode, so recovery cannot be left
+    // to the poll the way it is for `auto`.
+    const p = policy({ mode: 'open' });
+    p.setAudible(false);
+    expect(p.effectiveMode).toBe('addressed');
+
+    p.setAudible(true);
+
+    expect(p.effectiveMode).toBe('open');
+  });
+
+  it('still answers when it is addressed by name', () => {
+    // Not a lobotomy: the agent is inaudible, not absent, and the tools still work.
+    const p = policy();
+    p.setParticipantCount(4);
+    p.setAudible(false);
+
+    expect(utterance(p, 'i1')).toBe('classify');
+  });
+});
+
 describe('being addressed', () => {
   const crowded = () => {
     const p = policy();

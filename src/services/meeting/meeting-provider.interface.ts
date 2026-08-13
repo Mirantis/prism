@@ -25,7 +25,7 @@ export type JoinStep = 'page_load' | 'lobby' | 'join_button' | 'admission' | 'mi
 
 /** Outcome of trying to get into a call. */
 export type JoinOutcome =
-  /** In the room, unmuted — audio flows from here. */
+  /** In the room — audio flows from here, in at least one direction. */
   | {
       status: 'admitted';
       /**
@@ -36,8 +36,22 @@ export type JoinOutcome =
        * Emitted as telemetry: how often a platform auto-mutes new joiners is what
        * says whether this whole step still earns its keep, and it is the number
        * whose absence let a permanently silent bot go unnoticed.
+       *
+       * `false` when the control could not be read at all — a reading nobody took
+       * is not evidence of an auto-mute, and counting it would inflate the number
+       * during precisely the outage that produces it.
        */
       mutedOnEntry: boolean;
+      /**
+       * Whether the room can actually hear us.
+       *
+       * Separate from `status` on purpose, and the distinction matters: an agent
+       * that cannot speak still hears the meeting and keeps its whole tool surface,
+       * so being inaudible is a degraded call rather than a failed one. The runtime
+       * says so — to the user, and to the model, which would otherwise spend the
+       * call talking to a room that hears nothing.
+       */
+      micConfirmed: boolean;
     }
   /** A host actively refused, or the waiting room timed out. */
   | { status: 'denied'; reason: string; step: JoinStep }
@@ -114,17 +128,38 @@ export interface MeetingProvider {
    * (denied, timed out) — those are meeting facts to report to the user, not
    * errors. Throwing is reserved for genuine breakage.
    *
-   * **`admitted` means the room can hear us.** A platform that auto-mutes new
-   * joiners — Meet does, once a call is past a handful of participants — must
-   * unmute before reporting success, and report `failed` with step `microphone`
-   * if it cannot. This is a contract rather than an implementation detail because
-   * getting it wrong is invisible from the inside: the bot sits in the call
-   * greeting a room that hears nothing, and every signal the runtime watches
-   * (admission, participant count, the Realtime socket) looks perfectly healthy.
+   * **A platform that auto-mutes new joiners must unmute, and must say whether it
+   * worked.** Meet does this once a call is past a handful of participants. Getting
+   * in muted is not a failed join — the agent still hears the room and keeps every
+   * tool it has — but it is invisible from the inside, and that is the part a
+   * provider cannot leave to the runtime: admission, the participant count and the
+   * Realtime socket all read perfectly healthy while the room hears nothing. So
+   * unmute, then report `micConfirmed` honestly, including `false` when the control
+   * could not be read. Never infer it from the absence of evidence: a selector that
+   * has rotted looks exactly like a microphone that is already fine.
+   *
    * Whether the capture device then actually opens is the runtime's half of the
    * check — the provider owns the browser, not the audio stack.
    */
   join(page: Page, options: JoinOptions): Promise<JoinOutcome>;
+
+  /**
+   * Try again to get the microphone live, mid-call. `true` when it is confirmed.
+   *
+   * The runtime calls this on its existing participant poll while `micConfirmed` is
+   * false, which is what a human does when they notice they are muted: click it, and
+   * click it again later. Without it, one unlucky moment during admission — a dialog
+   * that outlived the sweep, a control bar still painting — would cost the whole
+   * meeting, and the note the user got would be true for an hour rather than for a
+   * few seconds.
+   *
+   * Must not click a control it cannot read. The toggle is a *toggle*, so acting on an
+   * uncertain reading is how a retry mutes a microphone that had just come on; "I
+   * don't know" has to mean "leave it alone and answer false".
+   *
+   * Optional: a platform that never mutes a joiner needs none of this.
+   */
+  ensureUnmuted?(page: Page): Promise<boolean>;
 
   /**
    * Names of the people in the call, best effort, empty when unavailable.

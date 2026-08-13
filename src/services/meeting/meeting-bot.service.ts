@@ -67,10 +67,12 @@ const SEED_READ_INTERVAL_MS = 700;
  * How long to wait for the browser to open the virtual microphone after the unmute.
  *
  * Chromium opens the capture device a moment after the toggle flips, not with it, and
- * on a cold container the first open is the slowest thing in the join. Generous
- * because the cost of being impatient is abandoning a call that was about to work,
- * while the cost of waiting is a few seconds added to a join that has already spent
- * minutes in a lobby.
+ * on a cold container the first open is the slowest thing in the join.
+ *
+ * Generous, and it stayed generous when this stopped being a veto, because being
+ * impatient is still expensive: a false "never opened" puts the agent in listen-only
+ * mode for the whole meeting over a microphone that was seconds from working. The cost
+ * of waiting is a few more seconds on a join that has already spent minutes in a lobby.
  */
 const MIC_CAPTURE_TIMEOUT_MS = 15_000;
 
@@ -137,6 +139,16 @@ export class MeetingBotService {
   private current: JoinMeetingInput | null = null;
   private responseMode: ResponseMode = 'auto';
   private unreadableCounts = 0;
+  /**
+   * Whether the room can hear the agent, as far as anything can tell.
+   *
+   * `false` is a degraded call, not a failed one — the agent still hears the meeting
+   * and still acts on it. Kept here because it is retried on the participant poll and
+   * because it decides whether the agent bothers speaking at all.
+   */
+  private micConfirmed = false;
+  /** Whether a participant poll is still running; see `checkParticipants`. */
+  private pollInFlight = false;
   /** Step a failed join reached, carried to the `meeting ended` event. */
   private failStep: JoinStep | null = null;
   /**
@@ -440,11 +452,11 @@ export class MeetingBotService {
         return;
       }
 
-      // The provider has the meeting's word that the microphone is unmuted. This is the
-      // layer under it, which only the runtime can see: whether the browser ever opened
-      // a capture device at all. A live-looking toggle over a device Chromium never
-      // opened is indistinguishable from a working agent right up to the moment
-      // somebody asks it something.
+      // The provider has the meeting's word for the microphone. This is the layer under
+      // it, which only the runtime can see: whether the browser ever opened a capture
+      // device at all. The two can disagree — Meet mutes by disabling the track, not by
+      // closing the device — so neither answers the question alone.
+      //
       // Not a silent skip: reaching admission without an audio stack is a bug in this
       // service, not a condition to tolerate, so let the catch below report it.
       const audio = this.audio;
@@ -456,15 +468,13 @@ export class MeetingBotService {
       // missing it.
       if (this.epoch !== epoch) return;
 
-      if (!capturing) {
-        this.failStep = 'microphone';
-        await this.notifyThread(
-          `I got into the ${provider.displayName} call but my microphone never opened, ` +
-            `so nobody there would have heard me. I've left rather than sit in it silently.`,
-        );
-        await this.teardown('error');
-        return;
-      }
+      // Audible only if both halves agree. Either one failing is a call the agent can
+      // hear but not speak in — degraded, not over. It keeps listening (the room's audio
+      // arrives on a different device entirely) and keeps every tool it has; what it
+      // must not do is carry on as though it had been heard.
+      const audible = outcome.micConfirmed && capturing;
+      this.micConfirmed = audible;
+      this.conversation?.setAudible(audible);
 
       this.state = 'in_call';
       this.joinedAt = Date.now();
@@ -476,17 +486,49 @@ export class MeetingBotService {
         // it reads near-zero in production, this step is doing nothing and can go, and
         // if it reads high, it is load-bearing.
         muted_on_entry: String(outcome.mutedOnEntry),
+        // And whether the unmute worked. The pair is the whole diagnosis: muted on
+        // entry and confirmed is the fix earning its keep, unconfirmed is a room that
+        // heard nothing — which used to be indistinguishable from a good call.
+        mic_confirmed: String(audible),
       });
 
-      // Tell the model where it is and let it introduce itself, so the room isn't
-      // joined by a silent participant.
-      this.conversation?.notify(
-        `You have just been admitted to the ${provider.displayName} call. ` +
-          `Greet the participants in one short sentence and say what you can help with.`,
-      );
-      this.conversation?.speakNow();
+      if (audible) {
+        this.greetTheRoom(provider.displayName);
+      } else {
+        // No greeting, and the model is told why. Speaking here is worse than useless:
+        // it spends Realtime tokens on audio nobody receives and leaves the model
+        // believing it introduced itself. Said as a standing condition rather than a
+        // one-off so it doesn't answer the next question into the void either.
+        logger.warn(
+          `[Meeting] In the call but not audibly (mic control confirmed: ${outcome.micConfirmed}, ` +
+            `capture device open: ${capturing}) — listening, and retrying the unmute`,
+        );
+        // Hedged deliberately, in both directions. It is stated as *unconfirmed* rather
+        // than muted because the readings behind it are a scraped attribute and a
+        // `pactl` line, either of which can be wrong — and the model is told not to fix
+        // it because it holds the shell tools, and PulseAudio is one plausible train of
+        // thought away: killing the daemon it would be "repairing" is the one action
+        // here that could actually end the call.
+        this.conversation?.notify(
+          `You are in the ${provider.displayName} call, but I could not confirm your ` +
+            `microphone is on, so the participants may not hear you. Don't greet anyone ` +
+            `and don't try to repair this — it is not something your tools can reach, and ` +
+            `it is being retried for you. Keep listening, and act on what you hear. If ` +
+            `somebody responds to something you said, you are audible after all and can ` +
+            `carry on normally. The person who sent you has been told.`,
+        );
+      }
 
-      await this.notifyThread(`I'm in the ${provider.displayName} call now.`);
+      await this.notifyThread(
+        audible
+          ? `I'm in the ${provider.displayName} call now.`
+          : `I'm in the ${provider.displayName} call, but I couldn't confirm my microphone is ` +
+              `on, so the room may not be hearing me. I can hear the meeting, so I'll stay, ` +
+              `follow it, and keep trying to unmute — tell me if you'd rather I left. ` +
+              (outcome.micConfirmed
+                ? `(The meeting says I'm unmuted, but my browser never opened its capture device.)`
+                : `(Meet's own microphone control never read as live.)`),
+      );
       // Failing to read the room is not a reason to abandon a call already
       // joined, so this cannot be allowed to reach the catch below.
       await this.seedParticipantCount(epoch).catch((err) => {
@@ -568,7 +610,97 @@ export class MeetingBotService {
    * the shape of the call, and it answers both "is anyone still here?" and
    * "am I talking to one person or interrupting a group?".
    */
+  /**
+   * Introduce the agent to the room.
+   *
+   * Held in one place because it happens at either of two moments: on admission when
+   * the microphone came up with the call, or later, the first time a mid-call retry
+   * gets it live. A room that could not hear the greeting was never greeted, so
+   * deferring it to the moment somebody can hear it is the honest reading of "so the
+   * room isn't joined by a silent participant".
+   */
+  private greetTheRoom(displayName: string): void {
+    this.conversation?.notify(
+      `You have just been admitted to the ${displayName} call. ` +
+        `Greet the participants in one short sentence and say what you can help with.`,
+    );
+    this.conversation?.speakNow();
+  }
+
+  /**
+   * Try again to get the microphone live, on the poll that is already running.
+   *
+   * The analogue of a human noticing the mute icon and clicking it. Without this, one
+   * unlucky moment during admission — a dialog that outlived the sweep, a control bar
+   * mid-paint — costs the entire meeting; with it, the usual cost is one poll interval
+   * of silence. The greeting waits for this, so a recovered call is introduced properly
+   * rather than sliding in mid-conversation.
+   */
+  private async retryUnmute(epoch: number): Promise<void> {
+    const page = this.page;
+    const provider = this.provider;
+    const audio = this.audio;
+    if (!page || !provider?.ensureUnmuted) return;
+
+    let live: boolean;
+    try {
+      live = await provider.ensureUnmuted(page);
+    } catch (err) {
+      // The page can go out from under this — a teardown closes it mid-click. Never a
+      // reason to disturb a call, and the next poll will ask again if there is one.
+      logger.debug(`[Meeting] Unmute retry failed: ${String(err)}`);
+      return;
+    }
+    if (!live || this.epoch !== epoch || this.state !== 'in_call') return;
+
+    // Both halves, every time — not just the one the provider can see. The join decides
+    // audibility from the meeting's toggle *and* the capture device, and those fail
+    // independently: a call that got in with a live toggle over a device Chromium never
+    // opened would otherwise be declared recovered by the very first retry, on the
+    // strength of re-reading the half that was never broken. That would stand the whole
+    // arrangement on its head — it would silence the warning, disarm the retry, restore
+    // `open` mode and greet the room, for a call that still cannot be heard.
+    if (!(await audio?.isMicCaptured())) return;
+
+    // Re-checked after the note as well as before it: posting is a database write and a
+    // channel fan-out, and a call that ends inside it leaves the greeting below aimed at
+    // whatever call owns the conversation by then.
+    if (this.epoch !== epoch || this.state !== 'in_call') return;
+
+    logger.info('[Meeting] Microphone is live after a mid-call retry — the room can hear me now');
+    this.micConfirmed = true;
+    this.conversation?.setAudible(true);
+    await this.notifyThread(`My microphone is working now — the ${provider.displayName} call can hear me.`);
+    if (this.epoch !== epoch || this.state !== 'in_call') return;
+    this.greetTheRoom(provider.displayName);
+  }
+
   private async checkParticipants(): Promise<void> {
+    if (this.state !== 'in_call' || !this.page || !this.provider) return;
+
+    // `setInterval` re-fires on a wall clock, not on the previous callback finishing, so
+    // without this two ticks can be inside this method at once. Harmless for the count —
+    // it is a read — and not harmless at all for the unmute retry: that clicks a
+    // *toggle*, so an overlap is how one tick switches on what the next switches back
+    // off. Reachable in the environment that causes a stuck mute in the first place, a
+    // slow dialog sweep being exactly what pushes one retry past ten seconds.
+    //
+    // Skipping a tick outright rather than queueing it: everything here is a fresh
+    // reading of a live page, so a delayed one has no value the next one lacks.
+    if (this.pollInFlight) return;
+    this.pollInFlight = true;
+    try {
+      await this.pollOnce();
+    } finally {
+      this.pollInFlight = false;
+    }
+  }
+
+  /** One poll: get the microphone live if it isn't, then read the room. */
+  private async pollOnce(): Promise<void> {
+    // The microphone first, because it is the more urgent of the two: an agent nobody
+    // can hear is not really taking part.
+    if (!this.micConfirmed) await this.retryUnmute(this.epoch);
     if (this.state !== 'in_call' || !this.page || !this.provider) return;
 
     let count: number | null;
@@ -784,6 +916,13 @@ export class MeetingBotService {
     this.emptyReadings = 0;
     this.unreadableCounts = 0;
     this.responseMode = 'auto';
+    // Reset to the pessimistic value, not the optimistic one: the next call has to earn
+    // "the room can hear me" the same way this one did, and inheriting a `true` would
+    // skip the retry for a meeting that needed it.
+    this.micConfirmed = false;
+    // A poll still in flight belongs to the call being torn down; its own epoch check
+    // stops it acting, but leaving this set would deadlock the next call's polling.
+    this.pollInFlight = false;
     this.failStep = null;
     // Free only when nothing is still being built. A startup abandoned mid-sign-in
     // still holds the shared browser profile, and the next `join()` would clear its
