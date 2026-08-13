@@ -355,7 +355,6 @@ restarts.
 | `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) (OpenAI Realtime API, connected directly — not via Nexus) | — (disabled) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice (pinned snapshot) | `gpt-realtime-2.1` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one meeting call | `60` |
-| `MEETING_REQUIRE_MICROPHONE` | Leave a call the agent can't be heard in rather than sitting in it inaudible | on |
 | `LANGFUSE_SECRET_KEY` | Enables Langfuse tracing when set | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server | `http://localhost:3100` |

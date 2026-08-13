@@ -886,45 +886,4 @@ describe('the microphone', () => {
     expect(harness.clicks).not.toContain('Continue without microphone');
   });
 
-  it('joins an unconfirmable microphone anyway when the operator allows it', async () => {
-    // MEETING_REQUIRE_MICROPHONE off. The unmute attempt still runs — the flag only
-    // stops it being a veto, which is what an operator wants when what broke is the
-    // reading rather than the device.
-    const { config } = await import('../../../../../config');
-    const original = config.meetingRequireMicrophone;
-    config.meetingRequireMicrophone = false;
-
-    try {
-      const harness = inCall({ mic: 'off' });
-
-      const outcome = await provider.join(harness.page, joinOptions);
-
-      // Still reported as muted on entry: the flag changes what we do about it, not
-      // what we observed.
-      expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: true });
-      expect(harness.clicks).toContain(MIC_TOGGLE_SELECTOR);
-    } finally {
-      config.meetingRequireMicrophone = original;
-    }
-  });
-
-  it('does not count an unreadable toggle as an auto-mute', async () => {
-    // Selector rot with the veto off — the only way an unreadable toggle reaches
-    // telemetry at all. `muted_on_entry` exists to decide whether this whole step is
-    // load-bearing, so a reading nobody took must not be filed as "Meet muted me":
-    // that inflates the number in exactly the outage that produces it.
-    const { config } = await import('../../../../../config');
-    const original = config.meetingRequireMicrophone;
-    config.meetingRequireMicrophone = false;
-
-    try {
-      const harness = inCall({ mic: 'absent' });
-
-      const outcome = await provider.join(harness.page, joinOptions);
-
-      expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false });
-    } finally {
-      config.meetingRequireMicrophone = original;
-    }
-  });
 });

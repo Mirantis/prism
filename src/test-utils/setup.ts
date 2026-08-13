@@ -35,9 +35,5 @@ vi.mock('../config', () => ({
     // Voice meetings. The transcriber is named here because the Realtime session
     // sends it in `session.update`, so an undefined value would be asserted on.
     openaiTranscriptionModel: 'gpt-realtime-whisper',
-    // Production's default, restated because this mock replaces config wholesale:
-    // left out, it reads `undefined` and every test would exercise the off path —
-    // i.e. the one where a call the agent can't be heard in is joined anyway.
-    meetingRequireMicrophone: true,
   },
 }));

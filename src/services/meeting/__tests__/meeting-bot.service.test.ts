@@ -141,16 +141,11 @@ vi.mock('../../../config', () => ({
     googleBotPassword: 'hunter2',
     meetingTimeoutMinutes: 60,
     meetingAdmissionTimeoutMs: 5_000,
-    // Production's default: an agent nobody can hear leaves instead of settling in.
-    meetingRequireMicrophone: true,
     openaiRealtimeVoice: undefined,
   },
 }));
 
 const { MeetingBotService } = await import('../meeting-bot.service');
-// The mocked config object itself, so a test can flip a flag the service reads at
-// call time. Mutated rather than re-mocked: `vi.mock` is hoisted once per file.
-const { config } = await import('../../../config');
 
 const URL = 'https://meet.google.com/abc-defg-hij';
 const input = { url: URL, userId: 'u1', agentId: 'a1', threadId: 't1' };
@@ -356,26 +351,6 @@ describe('a microphone the browser never opened', () => {
       'u1',
       expect.objectContaining({ status: 'error', fail_step: 'microphone' }),
     );
-  });
-
-  it('joins anyway when the operator has turned the requirement off', async () => {
-    // The escape hatch, and the reason it exists: this check reads a device through
-    // `pactl`, so a host quirk could refuse every call over a microphone that was
-    // working. Off means the unmute still happens — only the veto goes away.
-    audioWaitForMicCapture.mockResolvedValue(false);
-    const restore = config.meetingRequireMicrophone;
-    config.meetingRequireMicrophone = false;
-
-    try {
-      await service.join(input);
-      await settle();
-
-      expect(service.status().state).toBe('in_call');
-      // Not even asked: the answer could not change the outcome.
-      expect(audioWaitForMicCapture).not.toHaveBeenCalled();
-    } finally {
-      config.meetingRequireMicrophone = restore;
-    }
   });
 });
 
