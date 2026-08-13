@@ -727,7 +727,15 @@ describe('the statistics a call ends with', () => {
     });
 
   it('carries the delegation tally through from the bridge', () => {
-    const tally = { total: 3, failures: 1, timeouts: 1, truncated: 0, msTotal: 9_000 };
+    const tally = {
+      total: 3,
+      failures: 1,
+      timeouts: 1,
+      truncated: 0,
+      msTotal: 9_000,
+      transcriptCharsTotal: 12_000,
+      transcriptCachedCharsTotal: 8_000,
+    };
 
     expect(conversationFor(() => tally).statistics.delegation).toEqual(tally);
   });

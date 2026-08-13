@@ -410,6 +410,8 @@ describe('prepareMeetingTools in delegate mode', () => {
       timeouts: 0,
       truncated: 0,
       msTotal: 0,
+      transcriptCharsTotal: 0,
+      transcriptCachedCharsTotal: 0,
     });
 
     mockInvoke.mockResolvedValue({ response: 'Three pods are restarting.', toolCalls: [], steps: [] });
@@ -422,6 +424,29 @@ describe('prepareMeetingTools in delegate mode', () => {
     // errored turn — the agent said it could not do the thing.
     expect(stats).toMatchObject({ total: 2, failures: 1, timeouts: 0, truncated: 0 });
     expect(stats!.msTotal).toBeGreaterThanOrEqual(0);
+  });
+
+  it('sums how much transcript the handoffs carried, and how much was cached', async () => {
+    mockCollectTools.mockResolvedValue(catalog());
+    const transcript = createTranscriptLog({ chunkChars: 200 });
+    transcript.append('x'.repeat(200)); // sealed, so cacheable
+    transcript.append('and a line said since');
+    const prepared = await prepareMeetingTools({
+      userId: 'u1',
+      agentId: 'a1',
+      toolMode: 'delegate',
+      transcript,
+    });
+
+    mockInvoke.mockResolvedValue({ response: 'done', toolCalls: [], steps: [] });
+    await prepared.execute(DELEGATION_TOOL_NAME, '{"request":"one"}', live());
+    await prepared.execute(DELEGATION_TOOL_NAME, '{"request":"two"}', live());
+
+    // The pair the design is judged on: handing over the whole call is only affordable
+    // if most of it is read from cache, and the ratio of these two is what says so.
+    const stats = prepared.delegationStats()!;
+    expect(stats.transcriptCachedCharsTotal).toBeGreaterThan(400);
+    expect(stats.transcriptCharsTotal).toBeGreaterThan(stats.transcriptCachedCharsTotal);
   });
 
   it('hands out a copy of the tally, not the tally itself', async () => {

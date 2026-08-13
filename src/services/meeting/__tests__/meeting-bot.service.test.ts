@@ -89,6 +89,8 @@ let conversationDelegation: {
   timeouts: number;
   truncated: number;
   msTotal: number;
+  transcriptCharsTotal: number;
+  transcriptCachedCharsTotal: number;
 } | null = null;
 class FakeVoiceConversation {
   constructor(options: Record<string, unknown>) {
@@ -1133,7 +1135,15 @@ describe('telemetry', () => {
   });
 
   it('reports how the delegated turns went, averaging the wait', async () => {
-    conversationDelegation = { total: 4, failures: 1, timeouts: 1, truncated: 2, msTotal: 30_000 };
+    conversationDelegation = {
+      total: 4,
+      failures: 1,
+      timeouts: 1,
+      truncated: 2,
+      msTotal: 30_000,
+      transcriptCharsTotal: 40_000,
+      transcriptCachedCharsTotal: 30_000,
+    };
 
     await service.join({ ...input, toolMode: 'delegate' });
     await settle();
@@ -1151,6 +1161,37 @@ describe('telemetry', () => {
         // A mean, not a per-request event: in this mode every sentence delegates, so
         // one event per handoff would drown the metric.
         delegation_ms_avg: '7500',
+        // How much call each handoff carried, and the share of it that could be read
+        // from the provider's cache — the number the whole design rests on.
+        delegation_transcript_chars_avg: '10000',
+        delegation_transcript_cached_pct: '75',
+      }),
+    );
+  });
+
+  it('reports a zero cached share rather than dividing by no transcript', async () => {
+    // A call that delegated before anyone spoke: the tally is real, the transcript is
+    // empty, and a NaN in a telemetry property is a broken metric rather than a zero.
+    conversationDelegation = {
+      total: 1,
+      failures: 0,
+      timeouts: 0,
+      truncated: 0,
+      msTotal: 900,
+      transcriptCharsTotal: 0,
+      transcriptCachedCharsTotal: 0,
+    };
+
+    await service.join({ ...input, toolMode: 'delegate' });
+    await settle();
+    await service.leave();
+
+    expect(trackEvent).toHaveBeenCalledWith(
+      'meeting ended',
+      'u1',
+      expect.objectContaining({
+        delegation_transcript_chars_avg: '0',
+        delegation_transcript_cached_pct: '0',
       }),
     );
   });
@@ -1168,7 +1209,15 @@ describe('telemetry', () => {
   });
 
   it('never puts a spoken request in the delegation properties', async () => {
-    conversationDelegation = { total: 1, failures: 0, timeouts: 0, truncated: 0, msTotal: 1_200 };
+    conversationDelegation = {
+      total: 1,
+      failures: 0,
+      timeouts: 0,
+      truncated: 0,
+      msTotal: 1_200,
+      transcriptCharsTotal: 800,
+      transcriptCachedCharsTotal: 0,
+    };
 
     await service.join({ ...input, toolMode: 'delegate' });
     await settle();

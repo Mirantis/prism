@@ -974,6 +974,24 @@ export class MeetingBotService {
                   ? Math.round(stats.delegation.msTotal / stats.delegation.total)
                   : 0,
               ),
+              // How much call each handoff carried, and how much of it the provider
+              // could read from cache. The share is what says whether sending the whole
+              // transcript is as cheap as it was designed to be — a call whose handoffs
+              // are mostly uncached is paying full price for the room's history every
+              // time. Sizes only; the speech itself never leaves the process.
+              delegation_transcript_chars_avg: String(
+                stats.delegation.total
+                  ? Math.round(stats.delegation.transcriptCharsTotal / stats.delegation.total)
+                  : 0,
+              ),
+              delegation_transcript_cached_pct: String(
+                stats.delegation.transcriptCharsTotal
+                  ? Math.round(
+                      (stats.delegation.transcriptCachedCharsTotal * 100) /
+                        stats.delegation.transcriptCharsTotal,
+                    )
+                  : 0,
+              ),
             }
           : {}),
       });

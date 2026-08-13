@@ -118,6 +118,11 @@ export interface MeetingToolBridgeInput {
  *
  * `msTotal` is the wall-clock the room waited, summed — averaged at the end rather
  * than kept per-call, since a per-request event would flood the metric.
+ *
+ * The two transcript sums are the other half of the design's premise: handing over the
+ * whole call only stays affordable if most of it is read from the provider's cache, and
+ * the cached *share* is the only thing that says whether that is happening. Sizes, never
+ * text — the transcript is participants' speech and does not leave the process.
  */
 export interface DelegationStats {
   total: number;
@@ -125,6 +130,8 @@ export interface DelegationStats {
   timeouts: number;
   truncated: number;
   msTotal: number;
+  transcriptCharsTotal: number;
+  transcriptCachedCharsTotal: number;
 }
 
 export interface PreparedMeetingTools {
@@ -206,11 +213,23 @@ export async function prepareMeetingTools(
   // of the call it belongs to. Stays null in `full` mode so a reader can tell "the
   // experiment was off" from "it was on and nothing was delegated".
   const delegation: DelegationStats | null =
-    toolMode === 'delegate' ? { total: 0, failures: 0, timeouts: 0, truncated: 0, msTotal: 0 } : null;
+    toolMode === 'delegate'
+      ? {
+          total: 0,
+          failures: 0,
+          timeouts: 0,
+          truncated: 0,
+          msTotal: 0,
+          transcriptCharsTotal: 0,
+          transcriptCachedCharsTotal: 0,
+        }
+      : null;
   const recordDelegation = (outcome: DelegationOutcome): void => {
     if (!delegation) return;
     delegation.total += 1;
     delegation.msTotal += outcome.ms;
+    delegation.transcriptCharsTotal += outcome.transcriptChars;
+    delegation.transcriptCachedCharsTotal += outcome.transcriptCachedChars;
     if (outcome.status === 'timeout') delegation.timeouts += 1;
     if (outcome.status === 'error' || outcome.status === 'empty') delegation.failures += 1;
     if (outcome.truncated) delegation.truncated += 1;
