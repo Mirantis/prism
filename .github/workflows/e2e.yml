@@ -27,11 +27,9 @@ permissions:
   contents: read
   packages: read
 
-# 54 of the last 195 completed runs (28%) were already superseded by a newer
-# push to the same branch while they were still going; 23 of those went on to
-# produce a red nobody needed to read. The key is the PR number rather than
-# just `github.ref` because a `pull_request` run's ref is the merge ref, so
-# ref-only keying groups and ungroups surprisingly across event types.
+# Keyed on the PR number rather than just `github.ref`: a `pull_request` run's
+# ref is the merge ref, so ref-only keying groups and ungroups surprisingly
+# across event types.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   # Only PR runs are superseded: a newer push makes the older run's verdict
