@@ -285,6 +285,25 @@ agent with a narrower tool surface.
 
 It also leaves on request — "you can drop off now" works, and it hangs up.
 
+### Reasoning effort
+
+How hard the model thinks before it answers or reaches for a tool is a setting:
+`OPENAI_REALTIME_REASONING_EFFORT`, one of `minimal`, `low`, `medium`, `high`,
+`xhigh`.
+
+The API's own default is `low`. That is the right level for the voice agents the
+surface was built for — take an order, read out a status — and the wrong one here:
+this model has shell access, kubectl, the agent's integrations and the agent's own
+configuration, and picking the wrong tool with it is a command that runs, not a
+clumsy sentence. So the default is `high`.
+
+It is a trade, and the currency is silence. A higher level means a longer pause
+before the agent starts speaking, and a room full of people notices that pause. If
+the agent starts to feel slow to answer, step down to `medium` — the runtime logs
+what each answer cost under `[Meeting:Latency]`, with the effort in force on the
+same line, so two calls at different levels can be compared directly. Setting the
+variable empty sends no level at all and takes whatever the API defaults to.
+
 ## Cost
 
 Realtime audio is billed per audio token, in both directions, and a meeting bot
@@ -292,6 +311,9 @@ hears everything — a quiet hour still costs. Expect roughly **$0.10–0.30 per
 minute** with the default `gpt-realtime-2.1`. Two levers:
 
 - `OPENAI_REALTIME_MODEL=gpt-realtime-mini` is materially cheaper.
+- `OPENAI_REALTIME_REASONING_EFFORT` moves the bill too: thinking is output tokens,
+  so a lower level spends less per answer as well as answering sooner. See
+  [Reasoning effort](#reasoning-effort) for what it costs in accuracy.
 - In a call with several people, staying quiet unless addressed cuts the expensive
   half — spoken responses — down to the turns actually meant for the agent. That
   happens on its own; there is nothing to switch on.
@@ -329,6 +351,7 @@ is between you and your OpenAI account settings.
 | `OPENAI_API_KEY` | Enables voice meetings. May be a managed-credential sentinel. | — (disabled) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
+| `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model thinks before answering or picking a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults higher than the API's own `low` — see [Reasoning effort](#reasoning-effort). Empty takes the API default. | `high` |
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used to decide whether the agent was spoken to. Runs on every call, billed per minute; never fed to the model. The default is the only streaming model that also accepts name hints — see [Names](#names). | `gpt-live-transcribe` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |

@@ -188,6 +188,35 @@ const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2
 // `marin` is markedly better for conversation than the API's `alloy` default.
 // Overridable because a future model may retire a voice name.
 const openaiRealtimeVoice = process.env.OPENAI_REALTIME_VOICE || 'marin';
+// How hard the in-meeting model thinks before it answers or picks a tool.
+//
+// The API's own default is `low`, which is the right call for the voice agents
+// that surface was built for — book a table, read out an order status. This one
+// holds the agent's real toolset: shell, kubectl, GitHub, cron, its own
+// configuration. Choosing the wrong tool there is not a clumsy sentence, it is a
+// command run against a cluster, so the default here is `high` instead.
+//
+// It is not free. Effort buys reasoning with latency and output tokens, and in a
+// call the latency is silence in a room full of people waiting — which is why the
+// level is an env var and the `[Meeting:Latency]` line records the one in force.
+// Drop it if the room notices the pause more than it notices the mistakes.
+//
+// Empty means send nothing and let the API pick, the same opt-out the embedding
+// model vars use. An unrecognized level falls back to the default rather than
+// failing the boot: a typo here should cost accuracy, not the meeting.
+const REALTIME_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+export type RealtimeReasoningEffort = (typeof REALTIME_REASONING_EFFORTS)[number];
+// Trimmed and lowercased before the match: an unrecognized value falls back to
+// `high`, so `Medium` or a stray trailing space from a compose file would quietly
+// raise the effort of an operator who was asking to lower it.
+const rawRealtimeReasoningEffort = process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim()
+  .toLowerCase();
+const openaiRealtimeReasoningEffort: RealtimeReasoningEffort | null =
+  rawRealtimeReasoningEffort === ''
+    ? null
+    : REALTIME_REASONING_EFFORTS.includes(rawRealtimeReasoningEffort as RealtimeReasoningEffort)
+      ? (rawRealtimeReasoningEffort as RealtimeReasoningEffort)
+      : 'high';
 // Transcriber feeding the addressed gate (billed per audio minute, on for every
 // call). `gpt-live-transcribe` streams as the sentence unfolds *and* accepts
 // `keywords`, which is what lets the agent's own name be seeded into the decoder
@@ -418,6 +447,9 @@ export const config = {
   openaiApiKey,
   openaiRealtimeModel,
   openaiRealtimeVoice,
+  // OPENAI_REALTIME_REASONING_EFFORT, default 'high' (the API's own default is
+  // 'low'); '' sends no setting at all and leaves the choice to the API.
+  openaiRealtimeReasoningEffort,
   openaiTranscriptionModel,
   googleBotEmail,
   googleBotPassword,

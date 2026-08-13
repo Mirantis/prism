@@ -8,8 +8,21 @@
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
+import { logger } from '../../../logger';
 import { VoiceConversation } from '../voice-conversation';
 import { classifyAddressed } from '../addressed-classifier';
+
+vi.mock('../../../logger', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+/** Every `info` line emitted so far, joined — the latency figures live here. */
+function infoLines(): string {
+  return vi
+    .mocked(logger.info)
+    .mock.calls.map((c) => String(c[0]))
+    .join('\n');
+}
 
 // The gate is a network call to a classification model; what these tests exercise
 // is the ordering around its verdict, not the verdict itself. `CLASSIFY_DEADLINE_MS`
@@ -234,6 +247,32 @@ describe('answering a request judged early', () => {
     await settle();
 
     expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(1);
+  });
+
+  it('records the reasoning effort beside the latency it bought', async () => {
+    const { h, send } = await speakingHarness();
+    active = h;
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-6',
+      transcript: 'Prism, how many pods are unhealthy?',
+    });
+    await settle();
+    await settle();
+
+    // The first audio is when the room stops waiting, so this is the figure the
+    // effort level moves. Without the level on the same line, a call at `high` and
+    // a call at `medium` produce indistinguishable logs and the trade cannot be
+    // judged after the fact.
+    send({
+      type: 'response.output_audio.delta',
+      item_id: 'item-6',
+      delta: Buffer.alloc(960).toString('base64'),
+    });
+    await settle();
+
+    expect(infoLines()).toMatch(/voice started \d+ms after asking .*effort high/);
   });
 });
 
