@@ -150,8 +150,15 @@ const DIALOG_DISMISS_PATTERNS = [/^got it$/i, /^dismiss$/i, /^close$/i, /^ok$/i,
 /** Dialogs can be stacked, and dismissing one can reveal the next. */
 const DIALOG_SWEEP_PASSES = 2;
 
-/** How long to look for a dialog, or for a dismiss button inside one. */
-const DIALOG_PROBE_MS = 1_000;
+/**
+ * How long to look for a dialog, or for a dismiss button inside one.
+ *
+ * Short because it is paid up to `DIALOG_SWEEP_PASSES` × the pattern list per unmute
+ * attempt, and every one of those probes is looking for something that is usually not
+ * there. A dialog that needs longer than this to paint has not finished covering the
+ * button we are about to click either.
+ */
+const DIALOG_PROBE_MS = 500;
 
 /**
  * How long to wait for the mic toggle to paint before calling it absent.
@@ -177,39 +184,41 @@ const MIC_CLICK_TIMEOUT_MS = 3_000;
 /**
  * Tries at unmuting, and how long to let the toggle settle before believing a read.
  *
- * Bounded because the alternative to giving up is not "eventually succeeding", it is
- * an agent sitting in a call it cannot be heard in: at some point the honest answer is
- * to report the failure and let the runtime leave.
+ * Two, not more, and the reason is that this control is a *toggle*: every attempt is
+ * another chance to switch off a microphone that had just come on. One click plus one
+ * retry covers the failure actually seen in production — a dialog scrim swallowing the
+ * first click — and past that, more attempts trade a known hazard for a shrinking
+ * chance of success. A human clicks it once and looks.
  */
-const MIC_UNMUTE_ATTEMPTS = 4;
+const MIC_UNMUTE_ATTEMPTS = 2;
 const MIC_SETTLE_MS = 750;
 
 /**
  * Wall-clock cap on the whole unmute phase, retries and dialog sweeps included.
  *
- * Belt to the attempt count's braces, and the bound that matters: this runs *after*
- * `waitForAdmission` returns, so `admissionTimeoutMs` no longer caps anything, and a
- * caller that asked for a short join would otherwise get however long four rounds of
- * probes happen to take.
+ * This runs *after* `waitForAdmission` returns, so `admissionTimeoutMs` no longer caps
+ * anything and something has to. Modest, because failing to unmute no longer ends the
+ * call — the agent joins, says it cannot be heard, and listens — so patience here buys
+ * very little and is paid in front of a room watching a silent tile.
  *
- * Tested between attempts, not inside one, so the real ceiling is this plus a final
- * attempt — worst case another ~25s, near all of it timeouts on probes that find
- * nothing (a dialog sweep that recognises no button, then the patient re-read).
- * Cutting an attempt off mid-click would buy tighter arithmetic and cost the one
- * thing this phase is for.
+ * Tested between attempts, not inside one, so the true ceiling is this plus a final
+ * attempt (~20s worst case, nearly all of it probes timing out on things that are not
+ * there).
  */
-const MIC_PHASE_TIMEOUT_MS = 30_000;
+const MIC_PHASE_TIMEOUT_MS = 15_000;
 
 /**
- * Whether the room can hear us, and — only when it can — how we got there.
+ * What happened to the microphone on the way in.
  *
- * `mutedOnEntry` rides the live case alone because it is a measurement of how often
- * the platform auto-mutes a joiner, and a join that failed never reaches the
- * telemetry that would carry it. Modelling it that way is what stops the awkward
- * question of what to report for a toggle nobody could read: there is nothing to
- * report, because that call is over.
+ * `confirmed` is the only load-bearing field: it says whether the room can hear us,
+ * and it is deliberately *not* a veto — see `confirmAdmitted`. `mutedOnEntry` measures
+ * how often the platform auto-mutes a joiner, and stays `false` when the toggle could
+ * not be read at all, since a reading nobody took must not be filed as an auto-mute.
  */
-type MicOutcome = { live: false } | { live: true; mutedOnEntry: boolean };
+interface MicOutcome {
+  confirmed: boolean;
+  mutedOnEntry: boolean;
+}
 
 /**
  * The slice of the DOM the participant-count probe touches.
@@ -669,8 +678,12 @@ export class GoogleMeetProvider implements MeetingProvider {
    * Meet auto-mutes a new joiner once a call is past a handful of participants, which
    * is exactly the meeting anyone bothers to send an agent to. Nothing downstream can
    * see it — admission, the participant count and the Realtime socket all read healthy
-   * while the agent greets a room that hears nothing — so this runs before the join is
-   * reported as successful, and failing it is a failed join.
+   * while the agent greets a room that hears nothing — so the unmute is part of getting
+   * in, and what came of it is reported rather than assumed.
+   *
+   * This is the same click a human makes when Meet mutes them on the way in, and it
+   * carries the same consequence: if it does not work, you are in a meeting nobody can
+   * hear you in. What the agent does about that is `confirmAdmitted`'s business.
    */
   private async ensureMicOn(page: Page): Promise<MicOutcome> {
     const initial = await this.micMuted(page);
@@ -680,12 +693,14 @@ export class GoogleMeetProvider implements MeetingProvider {
         '[Meeting] Could not read the microphone toggle on the call UI — the Meet ' +
           'controls may have changed, and I cannot tell whether the room can hear me',
       );
-      return { live: false };
+      // Not filed as an auto-mute: this is a reading nobody took, and counting it would
+      // inflate `muted_on_entry` in exactly the outage that produces it.
+      return { confirmed: false, mutedOnEntry: false };
     }
 
     if (!initial) {
       logger.info('[Meeting] Microphone was already live on arrival');
-      return { live: true, mutedOnEntry: false };
+      return { confirmed: true, mutedOnEntry: false };
     }
 
     logger.info('[Meeting] Meet put me in the call muted — unmuting');
@@ -718,32 +733,73 @@ export class GoogleMeetProvider implements MeetingProvider {
       if (after === null) after = await this.micMuted(page);
       if (after === false) {
         logger.info(`[Meeting] Microphone is live (took ${attempt} attempt(s))`);
-        return { live: true, mutedOnEntry: true };
+        return { confirmed: true, mutedOnEntry: true };
       }
     }
 
     logger.error('[Meeting] Microphone is still muted after every attempt');
-    return { live: false };
+    return { confirmed: false, mutedOnEntry: true };
   }
 
   /**
-   * Turn "we're in the room" into "the room can hear us", or into a failed join.
+   * Mid-call retry, for a microphone the join could not get live.
    *
-   * Both admission paths go through here so neither can grow a `status: 'admitted'`
-   * that skipped the microphone — the point of the interface's contract is that
-   * `admitted` carries that guarantee, and the way it would rot is a second return
-   * added next to the first.
+   * Deliberately thinner than `ensureMicOn`: one reading, and a click only if that
+   * reading says muted in as many words. A `null` — the control not found — returns
+   * false without touching anything, because this runs every ten seconds against a live
+   * call, and a selector that has rotted would otherwise become a clicker loose on
+   * Meet's control bar. The one-shot patience is short for the same reason: the call is
+   * already up, so a control that isn't there now isn't about to paint.
+   */
+  async ensureUnmuted(page: Page): Promise<boolean> {
+    const muted = await this.micMuted(page, MIC_RECHECK_MS);
+    if (muted === null) return false;
+    if (!muted) return true;
+
+    await this.dismissBlockingDialogs(page);
+    try {
+      await page.locator(MIC_TOGGLE_SELECTOR).first().click({ timeout: MIC_CLICK_TIMEOUT_MS });
+    } catch {
+      // Still covered, or gone. Either way there is another poll along shortly.
+      return false;
+    }
+
+    await page.waitForTimeout(MIC_SETTLE_MS);
+    // Only a confirmed read counts. An unreadable one must not be reported as success
+    // — that is the reading a rotted selector gives, and it would silence the retry and
+    // the warning together.
+    return (await this.micMuted(page, MIC_RECHECK_MS)) === false;
+  }
+
+  /**
+   * Report the admission, with what became of the microphone attached.
+   *
+   * Both admission paths go through here so neither can grow an `admitted` that never
+   * tried the microphone at all — the unmute is part of getting in, not something the
+   * call does later.
+   *
+   * A microphone it could not confirm is **not** a failed join. The agent hears the
+   * room through a different device entirely (`meet_out.monitor`, nothing to do with
+   * the mic), so a muted agent is still a listener with its full tool surface, and
+   * leaving would throw that away. It is also a scraped DOM attribute: taking Google
+   * renaming it as grounds to abandon meetings would turn a cosmetic UI change into a
+   * total outage. So this reports what it knows and lets the runtime tell somebody —
+   * which is the property the veto was really after, without the amputation.
    */
   private async confirmAdmitted(page: Page): Promise<JoinOutcome> {
     const mic = await this.ensureMicOn(page);
-    if (mic.live) return { status: 'admitted', mutedOnEntry: mic.mutedOnEntry };
+
+    if (!mic.confirmed) {
+      logger.warn(
+        '[Meeting] Joining with a microphone I could not confirm is live — the room ' +
+          'may hear nothing from me',
+      );
+    }
 
     return {
-      status: 'failed',
-      step: 'microphone',
-      reason:
-        "I got into the meeting but couldn't turn my microphone on, so nobody there " +
-        'would have been able to hear me. I left rather than sit in the call silently.',
+      status: 'admitted',
+      mutedOnEntry: mic.mutedOnEntry,
+      micConfirmed: mic.confirmed,
     };
   }
 

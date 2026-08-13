@@ -63,6 +63,19 @@ describe('sourceIsRunning', () => {
   });
 });
 
+describe('isMicCaptured', () => {
+  it('answers no once the stack is gone, rather than asking a dead daemon', async () => {
+    // The mid-call retry asks this every ten seconds for the length of a call, so it can
+    // easily outlive one. With the runtime dir nulled, `pactl` would throw — and a throw
+    // here reads as "not captured" anyway, so the only thing at stake is whether the
+    // answer costs a spawned process. It should not.
+    const stack = new AudioStack();
+    await stack.stop();
+
+    await expect(stack.isMicCaptured()).resolves.toBe(false);
+  });
+});
+
 describe('waitForMicCapture', () => {
   it('gives up at once on a stack that has already been torn down', async () => {
     // The wait can outlive the call that started it. With the daemon gone there is

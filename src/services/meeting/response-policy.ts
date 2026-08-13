@@ -81,7 +81,14 @@ export interface ResponsePolicyStats {
   suppressed: number;
   /** Answers in `addressed` mode — times the agent was called by name. */
   addressedMatches: number;
-  /** How often the effective mode changed as people joined or left. */
+  /**
+   * How often the effective mode changed during the call.
+   *
+   * Usually people joining or leaving, but a call the agent cannot be heard in also
+   * holds it in `addressed` — counted the same, because the two paths can each undo the
+   * other and a tally that saw only one of them would report an odd number of switches
+   * for a call that ended in the mode it started in.
+   */
   modeSwitches: number;
 }
 
@@ -94,6 +101,18 @@ export class ResponsePolicy {
    * a full room; guessing `addressed` costs a one-to-one caller one spoken name.
    */
   private mode: EffectiveMode = 'addressed';
+  /**
+   * Whether the room can hear the agent at all.
+   *
+   * Only `open` mode cares. `open` answers every utterance at its turn boundary,
+   * which is right when one human is talking to the agent and ruinous when nothing
+   * the agent says arrives: a full Realtime response per sentence, for the length of
+   * the call, all of it billed and none of it heard. `addressed` is already bounded
+   * by somebody choosing to say the agent's name, and staying responsive there is
+   * deliberate — a muted agent still *acts* on what it is asked, and the action lands
+   * even when the confirmation does not.
+   */
+  private audible = true;
   /** An id-less utterance was answered at the boundary; see `onTranscript`. */
   private answeredIdlessInOpenMode = false;
   private readonly handledItems: string[] = [];
@@ -124,8 +143,41 @@ export class ResponsePolicy {
    * behaviour — the last known mode stands. Ignored entirely unless the caller
    * asked for `auto`.
    */
+  /**
+   * Say whether the room can hear the agent.
+   *
+   * Gates the *transition* into `open` rather than filtering its decisions, so
+   * `mode` stays the one answer to "how am I behaving" and nothing downstream has to
+   * ask a second question. Recovery restores whatever the mode would have been: an
+   * `auto` policy gets it back from the next count reading seconds later, an explicit
+   * one from the option it was built with.
+   */
+  setAudible(audible: boolean): void {
+    if (audible === this.audible) return;
+    this.audible = audible;
+
+    if (!audible) {
+      if (this.mode === 'open') {
+        this.mode = 'addressed';
+        this.stats.modeSwitches += 1;
+        logger.info('[Meeting] Nothing I say is reaching the room — answering only when addressed');
+      }
+      return;
+    }
+
+    if (this.options.mode !== 'auto' && this.mode !== this.options.mode) {
+      this.mode = this.options.mode;
+      this.stats.modeSwitches += 1;
+      logger.info(`[Meeting] The room can hear me again — back to "${this.mode}" mode`);
+    }
+  }
+
   setParticipantCount(count: number | null): void {
     if (count === null || this.options.mode !== 'auto') return;
+    // Nothing the agent says is arriving, so `open` would answer a room that hears
+    // none of it. Held here rather than at the decision sites so `mode` remains the
+    // single description of how the agent is behaving.
+    if (!this.audible) return;
 
     // The agent is one of them, so two means one human: everything said in the
     // room is said to the agent.

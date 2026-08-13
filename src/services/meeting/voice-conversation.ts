@@ -476,6 +476,19 @@ export class VoiceConversation {
   }
 
   /**
+   * Report whether the room can hear the agent.
+   *
+   * Only the response policy cares: answering everything said in the room is a
+   * reasonable default for a one-to-one call and an expensive way to say nothing when
+   * the microphone is not live. The audio path itself is unaffected — playback still
+   * runs, so the moment the mic does come up the agent is ready to be heard.
+   */
+  setAudible(audible: boolean): void {
+    if (this.stopped) return;
+    this.responsePolicy.setAudible(audible);
+  }
+
+  /**
    * Tell the transcriber how the room's names are spelled.
    *
    * Names are the words a meeting transcript gets wrong most often and the ones this

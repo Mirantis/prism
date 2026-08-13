@@ -351,24 +351,42 @@ export class AudioStack {
       // the nulled runtime dir — so polling on would just burn the whole budget for a
       // call that is already over.
       if (this.stopped) return false;
-      let failure: string | null = null;
-      try {
-        const sources = await this.pactl(['list', 'short', 'sources']);
-        if (sourceIsRunning(sources, BOT_MIC_SOURCE)) return true;
-      } catch (err) {
-        // Anomalous rather than expected: `start()` already ran a dozen `pactl` calls,
-        // so one failing now is worth a line even though the loop retries.
-        failure = err instanceof Error ? err.message : String(err);
-      }
+      const read = await this.readMicCapture();
+      if (read.capturing) return true;
 
       if (Date.now() >= deadline) {
         logger.warn(
           `[Meeting] ${BOT_MIC_SOURCE} is still not being captured after ${timeoutMs}ms` +
-            (failure ? ` (last read failed: ${failure})` : ''),
+            (read.failure ? ` (last read failed: ${read.failure})` : ''),
         );
         return false;
       }
       await new Promise((r) => setTimeout(r, MIC_CAPTURE_POLL_MS));
+    }
+  }
+
+  /**
+   * One read of the same question, for a caller that will ask again anyway.
+   *
+   * The mid-call unmute retry runs every ten seconds for the length of a call, so it
+   * wants the reading without the waiting and — more to the point — without the warning
+   * line, which `waitForMicCapture` is right to log once on a join and would be wrong to
+   * log a hundred times on one meeting.
+   */
+  async isMicCaptured(): Promise<boolean> {
+    if (this.stopped) return false;
+    return (await this.readMicCapture()).capturing;
+  }
+
+  /** Is anything reading `bot_mic` right now, and if the question failed, why. */
+  private async readMicCapture(): Promise<{ capturing: boolean; failure: string | null }> {
+    try {
+      const sources = await this.pactl(['list', 'short', 'sources']);
+      return { capturing: sourceIsRunning(sources, BOT_MIC_SOURCE), failure: null };
+    } catch (err) {
+      // Anomalous rather than expected: `start()` already ran a dozen `pactl` calls, so
+      // one failing now is worth reporting even though every caller retries.
+      return { capturing: false, failure: err instanceof Error ? err.message : String(err) };
     }
   }
 
