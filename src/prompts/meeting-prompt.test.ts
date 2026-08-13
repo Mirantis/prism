@@ -32,6 +32,17 @@ describe('getMeetingInstructions', () => {
     expect(text).toMatch(/vary the phrasing/i);
   });
 
+  it('says what to do when a tool fails, rather than leaving it to be inferred', () => {
+    // The bridge hands failures back as an error string, so the model does see
+    // them. Without an instruction the failure modes are guessing an answer,
+    // reading the raw error out, or retrying the same call in a loop — and a room
+    // cannot see that a lookup failed unless the agent says so.
+    const text = getMeetingInstructions(base);
+    expect(text).toMatch(/when a tool fails, say so/i);
+    expect(text).toMatch(/never fill the gap with what you expected/i);
+    expect(text).toMatch(/do not run the same call again unchanged/i);
+  });
+
   it('tells the model it really does have the destructive tools here', () => {
     // `meeting` mode withholds no destructive tool, so the prompt must not imply
     // otherwise — a model that thinks a tool is unavailable refuses instead of

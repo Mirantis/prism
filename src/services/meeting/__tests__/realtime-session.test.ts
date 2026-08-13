@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
+import { config } from '../../../config';
 import { RealtimeSession } from '../realtime-session';
 
 interface Harness {
@@ -92,6 +93,36 @@ describe('RealtimeSession configuration', () => {
       type: 'semantic_vad',
       eagerness: 'medium',
     });
+  });
+
+  it('asks the model to reason before it answers or picks a tool', async () => {
+    // Sending nothing here is not neutral: the API's own default is `low`, and
+    // this model drives the agent's real toolset from an unauthenticated room.
+    active = await harness();
+    const update = active.sent.find((f) => f.type === 'session.update') as {
+      session: Record<string, any>;
+    };
+
+    expect(update.session.reasoning).toEqual({ effort: 'high' });
+  });
+
+  it('sends no reasoning block at all when the level is handed back to the API', async () => {
+    // The opt-out has to omit the key, not send an empty one: `effort: null` is a
+    // rejected session parameter, which ends the call rather than lowering it.
+    const restore = config.openaiRealtimeReasoningEffort;
+    (config as { openaiRealtimeReasoningEffort: string | null }).openaiRealtimeReasoningEffort =
+      null;
+    try {
+      active = await harness();
+      const update = active.sent.find((f) => f.type === 'session.update') as {
+        session: Record<string, any>;
+      };
+
+      expect('reasoning' in update.session).toBe(false);
+    } finally {
+      (config as { openaiRealtimeReasoningEffort: string | null }).openaiRealtimeReasoningEffort =
+        restore;
+    }
   });
 
   it('never lets the server answer or interrupt on its own', async () => {

@@ -244,6 +244,13 @@ export class RealtimeSession extends EventEmitter {
         type: 'realtime',
         instructions: this.options.instructions,
         output_modalities: ['audio'],
+        // Read from config rather than threaded through as an option, the same
+        // way the transcription model below is: it is a deployment-wide setting,
+        // not something a single join decides. Omitted entirely when config says
+        // so, which hands the level back to the API's own default of `low`.
+        ...(config.openaiRealtimeReasoningEffort
+          ? { reasoning: { effort: config.openaiRealtimeReasoningEffort } }
+          : {}),
         audio: {
           input: {
             format: pcm,

@@ -24,6 +24,7 @@
  */
 
 import { logger } from '../../logger';
+import { config } from '../../config';
 import { Downsampler, Upsampler } from './resampler';
 import { RealtimeSession, type RealtimeSessionOptions } from './realtime-session';
 import { AudioPlayback, type PlaybackSink } from './audio-playback';
@@ -226,12 +227,18 @@ export class VoiceConversation {
       // asking for a response is not the same as the room hearing one, and the model
       // takes its own time to start. Reported separately so the part we control (the
       // decision) stays distinguishable from the part we don't (the model).
+      //
+      // The reasoning effort is on this line because it is the number effort moves:
+      // thinking harder shows up here and nowhere else, so two calls at different
+      // levels are only comparable if the level is written down beside the figure.
       if (this.pendingAnswer) {
         const { at, via } = this.pendingAnswer;
         this.pendingAnswer = null;
         const total = this.silenceSince === null ? null : Date.now() - this.silenceSince;
+        const effort = config.openaiRealtimeReasoningEffort ?? 'api default';
         logger.info(
-          `[Meeting:Latency] voice started ${Date.now() - at}ms after asking (via ${via})` +
+          `[Meeting:Latency] voice started ${Date.now() - at}ms after asking (via ${via},` +
+            ` effort ${effort})` +
             (total === null ? '' : `, ${total}ms of silence in the room`),
         );
       }

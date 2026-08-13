@@ -410,6 +410,53 @@ describe('config', () => {
       expect(cfg.openaiRealtimeVoice).toBe('cedar');
     });
 
+    it('asks for high reasoning effort rather than taking the API default', async () => {
+      // The API defaults to `low`, which suits a voice agent that reads out an
+      // order status. This one runs shell commands and kubectl from a call.
+      delete process.env.OPENAI_REALTIME_REASONING_EFFORT;
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeReasoningEffort).toBe('high');
+    });
+
+    it('reads a reasoning effort override', async () => {
+      for (const level of ['minimal', 'low', 'medium', 'high', 'xhigh']) {
+        process.env.OPENAI_REALTIME_REASONING_EFFORT = level;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.openaiRealtimeReasoningEffort).toBe(level);
+      }
+    });
+
+    it('hands the level back to the API when set empty', async () => {
+      for (const empty of ['', '   ']) {
+        process.env.OPENAI_REALTIME_REASONING_EFFORT = empty;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.openaiRealtimeReasoningEffort).toBeNull();
+      }
+    });
+
+    it('tolerates case and stray whitespace around a level', async () => {
+      // The fallback raises the effort, so a mangled `medium` would cost the
+      // operator latency they were explicitly trying to buy back.
+      for (const messy of [' medium', 'Medium', 'MEDIUM ']) {
+        process.env.OPENAI_REALTIME_REASONING_EFFORT = messy;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.openaiRealtimeReasoningEffort).toBe('medium');
+      }
+    });
+
+    it('falls back to the default on an unrecognized level', async () => {
+      // A typo should cost accuracy in a call, not the boot.
+      for (const bad of ['very-high', 'none', 'off', '3']) {
+        process.env.OPENAI_REALTIME_REASONING_EFFORT = bad;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.openaiRealtimeReasoningEffort).toBe('high');
+      }
+    });
+
     it('defaults the call duration cap to 60 minutes', async () => {
       delete process.env.MEETING_TIMEOUT_MINUTES;
       const cfg = await loadConfig();
