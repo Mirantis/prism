@@ -713,6 +713,17 @@ describe('invoke', () => {
       expect(system[0].content).toContain('task tool instructions');
       expect(system[1].content).toBe('sealed transcript');
     });
+
+    it('sends no block at all for an empty prefix', async () => {
+      // An empty content block is rejected outright by the Anthropic surfaces, and a
+      // breakpoint on nothing buys nothing — so a caller whose prefix has not filled up
+      // yet must not cost the request its validity.
+      await invoke(createTestInvokeRequest({ cachedPrefix: { text: '' } }));
+
+      const system = systemOf();
+      expect(system.map((p) => p.content)).toEqual(['stable system prompt', 'dynamic system prompt']);
+      expect(system.find((p) => p.content === 'dynamic system prompt')!.providerOptions).toEqual(CACHE_CONTROL);
+    });
   });
 
   describe('tool filtering by mode', () => {

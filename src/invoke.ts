@@ -195,9 +195,13 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // everything after the inserted parts is demoted to uncached, which in practice
     // means the dynamic part (recalled memories + timestamp). That leaves the tools
     // block, the stable part, this, and the last message via `prepareStep` — four.
-    if (request.cachedPrefix) {
-      const stableIdx = systemParts.findIndex((p) => p.cacheable);
-      const insertAt = stableIdx === -1 ? systemParts.length : stableIdx + 1;
+    // Empty text is skipped rather than inserted: an empty content block is rejected
+    // outright by the Anthropic surfaces, and a breakpoint on nothing buys nothing.
+    if (request.cachedPrefix?.text) {
+      // `-1 + 1 = 0`, which is the point: with no stable part to sit behind, the prefix
+      // goes first. Appending it at the end would put it behind the dynamic part's
+      // per-call timestamp, where it is no longer a prefix of anything.
+      const insertAt = systemParts.findIndex((p) => p.cacheable) + 1;
       const inserted: SystemPromptPart[] = [{ text: request.cachedPrefix.text, cacheable: true }];
       // The tail is what has changed since the caller last sealed its prefix. Its own
       // part rather than appended to the block above, which would change those bytes

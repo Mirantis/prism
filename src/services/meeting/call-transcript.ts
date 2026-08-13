@@ -137,6 +137,10 @@ export function createTranscriptLog(options: TranscriptLogOptions = {}): Transcr
     // Drop from the front until the cap holds. Whole chunks, so what stays keeps its
     // bytes — a partial trim would rewrite the chunk it cut into and cost a cache
     // write on every delegation after it, rather than one write here.
+    //
+    // Counted on the chunks' own lengths, so the rendered block can sit a few tens of
+    // characters over the cap: the newlines joining the chunks and the omission marker
+    // are not in the sum. The cap is a budget, not a boundary anything depends on.
     while (sealedChars > maxChars && sealed.length > 1) {
       const dropped = sealed.shift();
       /* c8 ignore next -- length is checked above; this satisfies the type */

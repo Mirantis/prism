@@ -128,7 +128,9 @@ const TRANSCRIPT_HEADING = [
   '--- The call so far, as transcribed ---',
   '"Room:" is what was said out loud, on one mixed channel that cannot reliably tell',
   'speakers apart. "You:" is an answer you already sent back through this tool, which',
-  'the voice then read out in the room.',
+  'the voice then read out in the room. Anything the voice answered by itself, without',
+  'asking you, is not in here — so a question with no answer after it may already have',
+  'been answered out loud.',
 ].join('\n');
 
 /**
@@ -239,8 +241,9 @@ export function createDelegationTool(input: DelegationToolInput): Tool {
       // Read once, so what is reported is the transcript this handoff actually carried
       // — the tool appends to the same log on its way out.
       const cachedPrefix = buildCachedPrefix(input.transcript);
-      const transcriptCachedChars = input.transcript?.stats().sealedChars ?? 0;
-      const transcriptChars = input.transcript?.stats().chars ?? 0;
+      const stats = input.transcript?.stats();
+      const transcriptCachedChars = stats?.sealedChars ?? 0;
+      const transcriptChars = stats?.chars ?? 0;
 
       // One report per delegation, on whichever path gets there first, so a count
       // of delegations and a sum of their durations can never disagree.

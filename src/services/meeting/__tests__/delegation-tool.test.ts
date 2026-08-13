@@ -113,8 +113,8 @@ describe('the request handed to the agent', () => {
   });
 
   it('is byte-identical between handoffs while nothing new is sealed', async () => {
-    // The property Panu's review is about: two delegations in the same stretch of a
-    // call send the same prefix, so the second one reads it from cache.
+    // The property the whole design rests on: two delegations in the same stretch of a
+    // call send the same prefix, so the second one can read it from cache.
     const transcript = createTranscriptLog({ chunkChars: 200 });
     transcript.append('x'.repeat(200));
     transcript.append('first question');

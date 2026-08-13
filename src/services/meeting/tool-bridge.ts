@@ -122,7 +122,7 @@ export interface MeetingToolBridgeInput {
  * The two transcript sums are the other half of the design's premise: handing over the
  * whole call only stays affordable if most of it is read from the provider's cache, and
  * the cached *share* is the only thing that says whether that is happening. Sizes, never
- * text — the transcript is participants' speech and does not leave the process.
+ * text — the transcript is participants' speech and never becomes a telemetry property.
  */
 export interface DelegationStats {
   total: number;

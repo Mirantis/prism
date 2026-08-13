@@ -296,7 +296,9 @@ up is real:
 **What the handler is given** is the call, not just the sentence: every handoff carries
 the transcript of the meeting so far, and the voice's job shrinks to naming what is being
 asked right now. The transcript is kept in memory for the length of the call, is never
-written to disk or to telemetry, and is capped at 40,000 characters — past that the
+written to disk and never appears in a product telemetry event (if you have LLM tracing
+configured, it rides along in the trace like any other prompt text), and it is capped at
+40,000 characters — past that the
 oldest of it is dropped and the handler sees an `[earlier conversation omitted]` marker
 rather than a silently shortened call. Because the standing part of it only changes in
 large steps, repeated handoffs in one call re-read most of it from the provider's prompt
@@ -317,11 +319,14 @@ line with how long it took, how many tool calls it made and whether the answer h
 be cut, and a delegating call's `meeting ended` event carries `delegations`,
 `delegation_failures`, `delegation_timeouts`, `delegation_truncated`,
 `delegation_ms_avg` — the average being the silence the room actually sat through —
-plus `delegation_transcript_chars_avg` and `delegation_transcript_cached_pct`, how much
-call each handoff carried and how much of it came from the cache rather than being paid
-for again. A `full`-mode call omits those properties entirely, so an off deployment
-doesn't read as one that delegated nothing. Counts and durations only: nothing said in
-the room, and no part of a request or a transcript, ever leaves the process.
+plus `delegation_transcript_chars_avg` and `delegation_transcript_sealed_pct`, how much
+call each handoff carried and how much of that was in the settled part the provider's
+cache can serve. (Sealed, not hit: whether a cache read happened also depends on the
+provider's own expiry, which the runtime can't see. A low share is the conclusive one —
+it means the room's history is being paid for in full on every request.) A `full`-mode
+call omits those properties entirely, so an off deployment doesn't read as one that
+delegated nothing. Counts and durations only: no part of a request or a transcript is
+ever put in a telemetry property.
 
 Note this is not a way to restrict the agent. The delegated turn holds the same tools,
 including the destructive ones, and it has **no confirmation rule of its own** — so

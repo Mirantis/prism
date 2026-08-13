@@ -962,7 +962,8 @@ export class MeetingBotService {
         // `delegate` mode only, and omitted entirely in `full` mode rather than sent
         // as zeroes — this is what the experiment is judged on, so "the mode was off"
         // must not read as "it delegated nothing". Counts and a mean duration; the
-        // requests themselves are participants' speech and never leave the process.
+        // requests and the transcript they carry are participants' speech, and never
+        // become a property here.
         ...(stats?.delegation
           ? {
               delegations: String(stats.delegation.total),
@@ -974,17 +975,18 @@ export class MeetingBotService {
                   ? Math.round(stats.delegation.msTotal / stats.delegation.total)
                   : 0,
               ),
-              // How much call each handoff carried, and how much of it the provider
-              // could read from cache. The share is what says whether sending the whole
-              // transcript is as cheap as it was designed to be — a call whose handoffs
-              // are mostly uncached is paying full price for the room's history every
-              // time. Sizes only; the speech itself never leaves the process.
+              // How much call each handoff carried, and how much of it was in the sealed
+              // part — the share that is *eligible* to be read from the provider's cache.
+              // Deliberately not called a hit rate: whether a sealed prefix was actually
+              // read depends on the provider's TTL and on a seal not having just landed,
+              // neither of which is visible from here. A low share is conclusive though —
+              // it means the room's history is being paid for in full every time.
               delegation_transcript_chars_avg: String(
                 stats.delegation.total
                   ? Math.round(stats.delegation.transcriptCharsTotal / stats.delegation.total)
                   : 0,
               ),
-              delegation_transcript_cached_pct: String(
+              delegation_transcript_sealed_pct: String(
                 stats.delegation.transcriptCharsTotal
                   ? Math.round(
                       (stats.delegation.transcriptCachedCharsTotal * 100) /

@@ -1164,7 +1164,7 @@ describe('telemetry', () => {
         // How much call each handoff carried, and the share of it that could be read
         // from the provider's cache — the number the whole design rests on.
         delegation_transcript_chars_avg: '10000',
-        delegation_transcript_cached_pct: '75',
+        delegation_transcript_sealed_pct: '75',
       }),
     );
   });
@@ -1191,7 +1191,7 @@ describe('telemetry', () => {
       'u1',
       expect.objectContaining({
         delegation_transcript_chars_avg: '0',
-        delegation_transcript_cached_pct: '0',
+        delegation_transcript_sealed_pct: '0',
       }),
     );
   });
