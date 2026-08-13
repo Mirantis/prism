@@ -116,5 +116,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-results
-          path: e2e/test-results/
+          # Playwright's traces/screenshots/videos + its JSON report, and the
+          # TUI suite's JUnit report (a separate dir: Playwright wipes its own
+          # outputDir when it starts, and it starts first).
+          path: |
+            e2e/test-results/
+            e2e/tui-test-results/
           retention-days: 7

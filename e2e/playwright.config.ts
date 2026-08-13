@@ -1,4 +1,4 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig, devices, type ReporterDescription } from '@playwright/test';
 import { defineBddConfig } from 'playwright-bdd';
 import path from 'path';
 import fs from 'fs';
@@ -91,6 +91,22 @@ function isRuntimeAlive(port: number): boolean {
   }
 }
 
+// A failing run has to be triageable from the run page alone. `html` needs the
+// artifact downloaded and `list` needs the raw step log, so add:
+//   - `github`, which turns each failure into a workflow annotation (test
+//     title + message + file/line) visible on the run and in the job summary;
+//   - `json`, a machine-readable copy of the same thing for anyone reading the
+//     run through the API. It lands under the outputDir Playwright already
+//     uploads as the `test-results` artifact.
+// `github` is CI-only: locally it just prints ::error workflow commands next
+// to the list reporter's own output.
+const reporters: ReporterDescription[] = [
+  ['html', { open: 'never' }],
+  ['list'],
+  ['json', { outputFile: 'test-results/results.json' }],
+];
+if (process.env.CI) reporters.push(['github']);
+
 const testDir = defineBddConfig({
   features: 'features/**/*.feature',
   steps: 'steps/**/*.steps.ts'
@@ -104,7 +120,7 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   workers: 1,
-  reporter: [['html', { open: 'never' }], ['list']],
+  reporter: reporters,
 
   globalSetup: require.resolve('./global-setup'),
   globalTeardown: require.resolve('./global-teardown'),
