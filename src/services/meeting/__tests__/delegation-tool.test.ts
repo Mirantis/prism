@@ -111,6 +111,27 @@ describe('an answer the room cannot use', () => {
     expect(output).toContain('bedrock throttled the request');
   });
 
+  it('does not speak a failed turn as if it were the answer', async () => {
+    // The shape a real LLM failure arrives in: `invoke()` resolves, with the friendly
+    // text `invokeStream` built and a structured tag beside it. Read the response only
+    // and a throttle or an exhausted spending limit gets read out as the answer — and
+    // counted as one.
+    const onOutcome = vi.fn();
+    invoker.mockResolvedValue({
+      response: "I've reached the spending limit for this agent.",
+      toolCalls: [],
+      steps: [],
+      error: { type: 'budget_exceeded', detail: 'monthly budget exhausted' },
+    });
+    const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, onOutcome });
+
+    const output = await run(tool, { request: 'Check the cluster' });
+
+    expect(output).not.toContain('spending limit');
+    expect(output).toContain('could not finish');
+    expect(onOutcome).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' }));
+  });
+
   it('turns an empty answer into something sayable', async () => {
     invoker.mockResolvedValue(answer('   '));
     const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker });
@@ -156,10 +177,13 @@ describe('a handoff the room is waiting on', () => {
     const output = await pending;
 
     expect(seen!.aborted).toBe(true);
-    // Not the answer that arrived after the deadline: the room has been holding a
-    // pause, and "still running" is the useful thing to say.
+    // Not the answer that arrived after the deadline: the room has been holding a pause,
+    // and what it needs to hear is that the work stopped. Deliberately not "it's still
+    // running" — the turn was aborted, so that would be the unkeepable promise the
+    // prompt's own rules forbid.
     expect(output).not.toContain('too late to matter');
-    expect(output).toContain('still running');
+    expect(output).toContain('stopped it');
+    expect(output).not.toContain('still running');
   });
 
   it('stops when the call ends, and says so rather than answering an empty room', async () => {
@@ -180,6 +204,80 @@ describe('a handoff the room is waiting on', () => {
     // agent turn running for it.
     expect((invoker.mock.calls[0][0] as InvokeRequest).abortSignal?.aborted).toBe(true);
     expect(output).toContain('meeting ended');
+  });
+});
+
+/**
+ * The comparison the experiment exists for is a comparison of latency and
+ * reliability, so it has to be measurable off real calls — a reviewer's impression of
+ * how a call went is not a number. Every ending reports itself, once.
+ */
+describe('what it reports about how the handoff went', () => {
+  it('reports an answer with the time the room waited', async () => {
+    invoker.mockResolvedValue(answer('Three pods are restarting.'));
+    const onOutcome = vi.fn();
+    const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, onOutcome });
+
+    await run(tool, { request: 'Check staging' });
+
+    expect(onOutcome).toHaveBeenCalledTimes(1);
+    expect(onOutcome.mock.calls[0][0]).toMatchObject({ status: 'answered', truncated: false });
+    expect(onOutcome.mock.calls[0][0].ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('flags an answer that had to be cut', async () => {
+    invoker.mockResolvedValue(answer('x'.repeat(20_000)));
+    const onOutcome = vi.fn();
+    const tool = createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, onOutcome });
+
+    await run(tool, { request: 'Summarize the incident' });
+
+    // A cut answer means the delegate wrote for a reader, which is the failure this
+    // mode's prompt is trying to prevent — the room hears a sentence that stops dead.
+    expect(onOutcome).toHaveBeenCalledWith(expect.objectContaining({ status: 'answered', truncated: true }));
+  });
+
+  it('distinguishes a timeout, an error, an empty answer and a call that ended', async () => {
+    const outcomes: string[] = [];
+    const onOutcome = vi.fn((o: { status: string }) => outcomes.push(o.status));
+
+    invoker.mockRejectedValue(new Error('throttled'));
+    await run(createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, onOutcome }), {
+      request: 'a',
+    });
+
+    invoker.mockResolvedValue(answer(''));
+    await run(createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, onOutcome }), {
+      request: 'b',
+    });
+
+    const call = new AbortController();
+    invoker.mockImplementation(async (request: InvokeRequest) => {
+      await new Promise<void>((resolve) =>
+        request.abortSignal?.addEventListener('abort', () => resolve(), { once: true }),
+      );
+      return answer('unheard');
+    });
+    const abandoned = run(
+      createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, onOutcome }),
+      { request: 'c' },
+      call.signal,
+    );
+    call.abort();
+    await abandoned;
+
+    vi.useFakeTimers();
+    const timedOut = run(
+      createDelegationTool({ userId: 'u1', agentId: 'a1', invoker, onOutcome }),
+      { request: 'd' },
+    );
+    await vi.advanceTimersByTimeAsync(DELEGATION_DEADLINE_MS + 1);
+    await timedOut;
+
+    // Four separate readings, because they mean different things: a timeout is a
+    // latency result, an abandoned handoff is nobody's failure, and the other two are
+    // the same event to a participant.
+    expect(outcomes).toEqual(['error', 'empty', 'abandoned', 'timeout']);
   });
 });
 

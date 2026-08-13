@@ -7,13 +7,22 @@ vi.mock('../../../lib/tool-collection', () => ({
   collectTools: (...args: unknown[]) => mockCollectTools(...args),
 }));
 
+// The bridge imports invoke.ts lazily (a real module cycle), and the delegation tool
+// calls it through the injected seam. Mocked so a delegated turn runs no model.
+const mockInvoke = vi.fn();
+vi.mock('../../../invoke', () => ({
+  invoke: (...args: unknown[]) => mockInvoke(...args),
+}));
+
 const { prepareMeetingTools } = await import('../tool-bridge');
+const { DELEGATION_TOOL_NAME } = await import('../delegation-tool');
 
 /** The signal a live call supplies: nothing has aborted it. */
 const live = () => new AbortController().signal;
 
 beforeEach(() => {
   mockCollectTools.mockReset();
+  mockInvoke.mockReset();
 });
 
 describe('prepareMeetingTools', () => {
@@ -363,6 +372,54 @@ describe('prepareMeetingTools in delegate mode', () => {
     expect(mockCollectTools).toHaveBeenCalledWith(
       expect.objectContaining({ mode: 'meeting', agentId: 'a1' }),
     );
+  });
+
+  it('counts how the delegated turns went', async () => {
+    mockCollectTools.mockResolvedValue(catalog());
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', toolMode: 'delegate' });
+
+    expect(prepared.delegationStats()).toEqual({
+      total: 0,
+      failures: 0,
+      timeouts: 0,
+      truncated: 0,
+      msTotal: 0,
+    });
+
+    mockInvoke.mockResolvedValue({ response: 'Three pods are restarting.', toolCalls: [], steps: [] });
+    await prepared.execute(DELEGATION_TOOL_NAME, '{"request":"check staging"}', live());
+    mockInvoke.mockResolvedValue({ response: '', toolCalls: [], steps: [] });
+    await prepared.execute(DELEGATION_TOOL_NAME, '{"request":"check prod"}', live());
+
+    const stats = prepared.delegationStats();
+    // An empty answer counts as a failure: to the room it is the same event as an
+    // errored turn — the agent said it could not do the thing.
+    expect(stats).toMatchObject({ total: 2, failures: 1, timeouts: 0, truncated: 0 });
+    expect(stats!.msTotal).toBeGreaterThanOrEqual(0);
+  });
+
+  it('hands out a copy of the tally, not the tally itself', async () => {
+    mockCollectTools.mockResolvedValue(catalog());
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', toolMode: 'delegate' });
+
+    const before = prepared.delegationStats()!;
+    mockInvoke.mockResolvedValue({ response: 'done', toolCalls: [], steps: [] });
+    await prepared.execute(DELEGATION_TOOL_NAME, '{"request":"check staging"}', live());
+
+    // Read at teardown, while a delegation may still be resolving — a live reference
+    // would change under the caller between reading it and emitting it.
+    expect(before.total).toBe(0);
+    expect(prepared.delegationStats()!.total).toBe(1);
+  });
+
+  it('has no tally at all in the default mode', async () => {
+    mockCollectTools.mockResolvedValue(catalog());
+
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+
+    // Null rather than zeroes: "the experiment was off" must not read as "it was on
+    // and delegated nothing".
+    expect(prepared.delegationStats()).toBeNull();
   });
 
   it('offers the whole catalog when the mode is not set', async () => {

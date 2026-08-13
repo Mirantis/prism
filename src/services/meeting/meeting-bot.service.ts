@@ -918,6 +918,10 @@ export class MeetingBotService {
     await this.audio?.stop();
 
     if (wasActive && this.startedAt && this.current && this.provider) {
+      // Read after `stop()`, so a delegation still in flight usually loses the race to
+      // report itself and is missing from the tally. Left as is: the alternative is
+      // waiting on work whose answer nobody is in the room to hear, and the undercount
+      // is at most one handoff per call.
       const stats = this.conversation?.statistics;
       trackEvent('meeting ended', this.current.userId, {
         provider: this.provider.name,
@@ -946,6 +950,23 @@ export class MeetingBotService {
         gate_local_yes: String(stats?.gateLocalYes ?? 0),
         gate_model_calls: String(stats?.gateModelCalls ?? 0),
         gate_local_share: String(localGateShare(stats)),
+        // `delegate` mode only, and omitted entirely in `full` mode rather than sent
+        // as zeroes — this is what the experiment is judged on, so "the mode was off"
+        // must not read as "it delegated nothing". Counts and a mean duration; the
+        // requests themselves are participants' speech and never leave the process.
+        ...(stats?.delegation
+          ? {
+              delegations: String(stats.delegation.total),
+              delegation_failures: String(stats.delegation.failures),
+              delegation_timeouts: String(stats.delegation.timeouts),
+              delegation_truncated: String(stats.delegation.truncated),
+              delegation_ms_avg: String(
+                stats.delegation.total
+                  ? Math.round(stats.delegation.msTotal / stats.delegation.total)
+                  : 0,
+              ),
+            }
+          : {}),
       });
     }
 

@@ -77,6 +77,19 @@ const conversationSetAudible = vi.fn();
 let conversationOptions: Record<string, unknown> & {
   onSessionLost?: (reason: string) => void;
 } = {};
+/**
+ * What the bridge counted, as the conversation would report it.
+ *
+ * Null is `full` mode — there were no delegations to count — and a test that cares
+ * sets it before the call ends.
+ */
+let conversationDelegation: {
+  total: number;
+  failures: number;
+  timeouts: number;
+  truncated: number;
+  msTotal: number;
+} | null = null;
 class FakeVoiceConversation {
   constructor(options: Record<string, unknown>) {
     conversationOptions = options;
@@ -102,6 +115,7 @@ class FakeVoiceConversation {
       modeSwitches: 1,
       gateLocalYes: 3,
       gateModelCalls: 1,
+      delegation: conversationDelegation,
     };
   }
 }
@@ -190,6 +204,7 @@ let service: InstanceType<typeof MeetingBotService>;
 beforeEach(() => {
   vi.clearAllMocks();
   audioLostHandler = null;
+  conversationDelegation = null;
   audioStart.mockResolvedValue({
     browserEnv: { DISPLAY: ':99' },
     onCapture: vi.fn(),
@@ -1115,6 +1130,57 @@ describe('telemetry', () => {
       'u1',
       expect.objectContaining({ status: 'denied', fail_step: 'admission' }),
     );
+  });
+
+  it('reports how the delegated turns went, averaging the wait', async () => {
+    conversationDelegation = { total: 4, failures: 1, timeouts: 1, truncated: 2, msTotal: 30_000 };
+
+    await service.join({ ...input, toolMode: 'delegate' });
+    await settle();
+    await service.leave();
+
+    expect(trackEvent).toHaveBeenCalledWith(
+      'meeting ended',
+      'u1',
+      expect.objectContaining({
+        tool_mode: 'delegate',
+        delegations: '4',
+        delegation_failures: '1',
+        delegation_timeouts: '1',
+        delegation_truncated: '2',
+        // A mean, not a per-request event: in this mode every sentence delegates, so
+        // one event per handoff would drown the metric.
+        delegation_ms_avg: '7500',
+      }),
+    );
+  });
+
+  it('omits the delegation counters entirely on a call that did not delegate', async () => {
+    await service.join(input);
+    await settle();
+    await service.leave();
+
+    // Zeroes would read as "it was on and delegated nothing", which is a different
+    // and far more interesting result than "the experiment was off".
+    const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
+    expect(ended?.[2]).not.toHaveProperty('delegations');
+    expect(ended?.[2]).not.toHaveProperty('delegation_ms_avg');
+  });
+
+  it('never puts a spoken request in the delegation properties', async () => {
+    conversationDelegation = { total: 1, failures: 0, timeouts: 0, truncated: 0, msTotal: 1_200 };
+
+    await service.join({ ...input, toolMode: 'delegate' });
+    await settle();
+    await service.leave();
+
+    // The request and the answer are whatever a participant said out loud. Counts and
+    // durations only — every value on the event has to be a number or a bounded enum.
+    const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
+    for (const [key, value] of Object.entries(ended?.[2] as Record<string, string>)) {
+      if (!key.startsWith('delegation')) continue;
+      expect(value).toMatch(/^\d+$/);
+    }
   });
 
   it('omits the step entirely for a call that ended normally', async () => {

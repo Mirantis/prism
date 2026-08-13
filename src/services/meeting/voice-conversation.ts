@@ -79,7 +79,7 @@ const EARLY_JUDGED_LIMIT = 32;
  * failure this feature exists to prevent.
  */
 const KEYWORD_LIMIT = 12;
-import type { PreparedMeetingTools } from './tool-bridge';
+import type { DelegationStats, PreparedMeetingTools } from './tool-bridge';
 
 export interface VoiceConversationOptions {
   instructions: string;
@@ -124,6 +124,13 @@ export interface VoiceConversationStats {
    */
   gateLocalYes: number;
   gateModelCalls: number;
+  /**
+   * How the handoffs went in `delegate` mode; null when the mode was off.
+   *
+   * Surfaced through here rather than read off the bridge by the service, so a call's
+   * numbers all arrive from one object and `meeting ended` has one thing to read.
+   */
+  delegation: DelegationStats | null;
 }
 
 export class VoiceConversation {
@@ -657,6 +664,7 @@ export class VoiceConversation {
       modeSwitches: policy.modeSwitches,
       gateLocalYes: this.gateLocalYes,
       gateModelCalls: this.gateModelCalls,
+      delegation: this.options.tools.delegationStats(),
     };
   }
 

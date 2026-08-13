@@ -10,13 +10,19 @@
  * and no microphone.
  *
  * What the delegate is: an ordinary `invoke()` turn in `subagent` mode, on the *same*
- * agent — same soul, same memory, same tools minus the three a delegated turn must
- * not have. `subagent` is deliberate rather than a new mode, and it closes three
- * doors at once (`lib/tool-collection.ts#filterToolsByMode`):
+ * agent — same soul, same memory, nearly the same tools. `subagent` is deliberate
+ * rather than a new mode, and what it withholds
+ * (`lib/tool-collection.ts#filterToolsByMode`) is mostly what a delegated turn must
+ * not have:
  *
  * - no meeting tools, so a delegated turn cannot hang up on the call that spawned it;
  * - no `Task`, so delegation cannot nest into an unbounded tree of turns;
- * - no `share_file`, which a meeting could not deliver anyway.
+ * - no `share_file`, which a meeting could not deliver anyway;
+ * - no goal tools — which is the one real gap, since `meeting` mode keeps them. A
+ *   spoken "set yourself a goal to track this" works in `full` mode and comes back
+ *   as a refusal here. Reusing `subagent` is worth that while this is an experiment;
+ *   making the two modes equal means giving the goal tools back to `subagent`
+ *   generally, which is a change to every `Task` call and not this one's to make.
  *
  * What it is not: it is not the `Task` tool. `Task` delegates to a *different*
  * agent and only exists when subagents are configured, so it could not carry this.
@@ -92,11 +98,36 @@ const DELEGATE_PREAMBLE = [
   'what stopped you.',
 ].join('\n');
 
+/**
+ * How one delegated turn went, reported to whoever is counting.
+ *
+ * `status` is the room's view of it, not the turn's: `timeout` means the room was
+ * told to wait rather than given an answer, `empty` that the turn came back with
+ * nothing sayable, `abandoned` that the call ended first (so nobody heard either
+ * way). Counts and durations only — the request and the answer never leave here,
+ * both being whatever a participant said out loud.
+ */
+export interface DelegationOutcome {
+  status: 'answered' | 'timeout' | 'empty' | 'error' | 'abandoned';
+  /** Wall-clock the room waited, which is the number the experiment is about. */
+  ms: number;
+  /** Whether the answer had to be cut to fit `DELEGATED_RESULT_MAX_CHARS`. */
+  truncated: boolean;
+}
+
 export interface DelegationToolInput {
   userId: string;
   agentId: string;
   /** Runs the delegated turn; injected so this module never imports invoke.ts. */
   invoker: Invoker;
+  /**
+   * Called exactly once per delegation, whatever happens to it.
+   *
+   * The tool reports rather than emits: a per-request telemetry event in a call
+   * that delegates every sentence would be a flood, and `meeting ended` already
+   * owns the call's metrics. Optional so the tool stands alone in a test.
+   */
+  onOutcome?: (outcome: DelegationOutcome) => void;
 }
 
 /**
@@ -134,6 +165,15 @@ export function createDelegationTool(input: DelegationToolInput): Tool {
     execute: async (args, options) => {
       const { request, context } = args as { request: string; context?: string };
       const started = Date.now();
+
+      // One report per delegation, on whichever path gets there first, so a count
+      // of delegations and a sum of their durations can never disagree.
+      let reported = false;
+      const report = (status: DelegationOutcome['status'], truncated = false): void => {
+        if (reported) return;
+        reported = true;
+        input.onOutcome?.({ status, ms: Date.now() - started, truncated });
+      };
 
       // Two ways this stops early, and they need different answers, so the tool
       // tracks which fired rather than reading `signal.aborted` after the fact.
@@ -174,34 +214,58 @@ export function createDelegationTool(input: DelegationToolInput): Tool {
         // a short or empty answer. The flag is what distinguishes it.
         if (timedOut) {
           logger.warn(`[Meeting:Delegate] deadline hit after ${elapsed}ms`);
-          return "That's taking longer than I can hold the line for — tell them it's " +
-            'still running and offer to come back to it.';
+          report('timeout');
+          // Not "it's still running": the turn was aborted, and promising a result that
+          // no longer exists is the unkeepable promise the prompt's own rules forbid.
+          return 'That took longer than I can hold the line for, so I stopped it — tell ' +
+            'them that and offer to start it again.';
         }
         if (callSignal?.aborted) {
           // Nobody is listening; the bridge drops this either way.
+          report('abandoned');
           return 'The meeting ended before this finished.';
+        }
+
+        // `invoke()` does not reject when the model call fails: `invokeStream` turns the
+        // failure into a friendly step plus this structured tag (`lib/llm-errors.ts`),
+        // which is the same signal the cron gate routes on. Read it, or a throttle or an
+        // exhausted spending limit arrives here looking like an answer — counted as one
+        // and spoken as one.
+        if (result.error) {
+          logger.warn(`[Meeting:Delegate] turn failed (${result.error.type}) after ${elapsed}ms`);
+          report('error');
+          return 'I hit a problem doing that and could not finish it — say so briefly, ' +
+            'and offer to try again.';
         }
 
         const text = result.response?.trim();
         if (!text) {
           logger.warn(`[Meeting:Delegate] empty answer after ${elapsed}ms`);
+          report('empty');
           return 'I came back with nothing usable on that — say so, and offer to try it ' +
             'a different way.';
         }
 
-        logger.info(
-          `[Meeting:Delegate] answered in ${elapsed}ms with ${result.toolCalls.length} ` +
-            `tool call(s), ${text.length} chars`,
-        );
-        return renderToolResult(text, {
+        const rendered = renderToolResult(text, {
           maxChars: DELEGATED_RESULT_MAX_CHARS,
           toolName: DELEGATION_TOOL_NAME,
           extraGuidance:
             'Say the part that answers the question and offer to go into the rest out loud.',
         });
+        // A cut answer is the delegate writing for a reader rather than a listener,
+        // which is the failure mode this mode's prompt is trying to prevent — worth
+        // counting, since the room hears a sentence that stops mid-thought.
+        const truncated = rendered !== text;
+        logger.info(
+          `[Meeting:Delegate] answered in ${elapsed}ms with ${result.toolCalls.length} ` +
+            `tool call(s), ${text.length} chars${truncated ? ' (cut to fit)' : ''}`,
+        );
+        report('answered', truncated);
+        return rendered;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.warn(`[Meeting:Delegate] failed after ${Date.now() - started}ms: ${message}`);
+        report('error');
         return `I couldn't get that done — ${message}. Say that out loud, briefly.`;
       } finally {
         clearTimeout(timer);

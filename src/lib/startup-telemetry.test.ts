@@ -49,6 +49,9 @@ const BEDROCK_CONFIG = {
   slackBotToken: 'xoxb-test',
   langfuseSecretKey: undefined,
   langfusePublicKey: undefined,
+  // Voice meetings off, and the default tool arrangement.
+  openaiApiKey: undefined,
+  meetingToolMode: 'full',
 };
 
 const AGENT = { id: 'agent-1', userId: 'user-1', webhooksEnabled: false };
@@ -93,6 +96,8 @@ describe('trackAgentStarted', () => {
       'nexus.enabled': 'true',
       'nexus.mcp_enabled': 'true',
       'langfuse.enabled': 'false',
+      'meeting.enabled': 'false',
+      'meeting.tool_mode': 'full',
       'runtime.sea': 'false',
       'runtime.node_version': process.version,
       'runtime.platform': process.platform,
@@ -240,6 +245,19 @@ describe('trackAgentStarted', () => {
     // should run on a boot that isn't reporting.
     expect(mockGetCatalog).not.toHaveBeenCalled();
     expect(mockGetSubagents).not.toHaveBeenCalled();
+  });
+
+  it('reports a deployment that has voice meetings on the delegation experiment', async () => {
+    setConfig({ openaiApiKey: 'sk-test', meetingToolMode: 'delegate' });
+
+    await trackAgentStarted(AGENT, { cronTasks: 0 });
+
+    // The census is how the rollout is read: how many deployments have the
+    // experiment on, which no per-call event can answer.
+    expect(emittedProps()).toMatchObject({
+      'meeting.enabled': 'true',
+      'meeting.tool_mode': 'delegate',
+    });
   });
 
   it('never throws when gathering the census fails', async () => {

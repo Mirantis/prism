@@ -299,6 +299,15 @@ with `toolMode: "delegate"`. That is how the comparison is meant to be run — t
 minutes apart on the same container. `meeting_status` reports which mode the current
 call is in, and both `meeting joined` and `meeting ended` telemetry carry `tool_mode`.
 
+To read the result rather than guess at it, each handoff logs a `[Meeting:Delegate]`
+line with how long it took, how many tool calls it made and whether the answer had to
+be cut, and a delegating call's `meeting ended` event carries `delegations`,
+`delegation_failures`, `delegation_timeouts`, `delegation_truncated` and
+`delegation_ms_avg` — the average being the silence the room actually sat through.
+A `full`-mode call omits those properties entirely, so an off deployment doesn't read
+as one that delegated nothing. Counts and durations only: nothing said in the room,
+and no part of a request, ever leaves the process.
+
 Note this is not a way to restrict the agent. The delegated turn holds the same tools,
 including the destructive ones, and it has **no confirmation rule of its own** — so
 everything below applies unchanged, and the confirmation has to happen in the room

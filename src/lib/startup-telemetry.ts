@@ -65,6 +65,12 @@ export async function trackAgentStarted(
       'nexus.enabled': String(Boolean(config.nexusApiUrl)),
       'nexus.mcp_enabled': String(Boolean(config.nexusMcpUrl)),
       'langfuse.enabled': String(Boolean(config.langfuseSecretKey && config.langfusePublicKey)),
+      // Voice meetings: whether a key is set at all, and which tool arrangement the
+      // deployment defaults to. The mode is here as well as on `meeting ended` because
+      // that is how the experiment's rollout is read — how many deployments have it on,
+      // not just how the calls that happened went.
+      'meeting.enabled': String(Boolean(config.openaiApiKey)),
+      'meeting.tool_mode': config.meetingToolMode,
       // The packaged `prism-server` binary vs a container/source run.
       'runtime.sea': String(sea.isSea()),
       'runtime.node_version': process.version,

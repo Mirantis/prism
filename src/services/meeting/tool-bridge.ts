@@ -35,7 +35,11 @@ import type { MeetingToolMode } from '../../config';
 import { collectTools } from '../../lib/tool-collection';
 import { renderToolResult } from '../../lib/tool-output-limiter';
 import type { Invoker } from '../../lib/task-tool';
-import { createDelegationTool, DELEGATION_TOOL_NAME } from './delegation-tool';
+import {
+  createDelegationTool,
+  DELEGATION_TOOL_NAME,
+  type DelegationOutcome,
+} from './delegation-tool';
 import type { RealtimeFunctionTool } from './realtime-session';
 
 /**
@@ -95,6 +99,27 @@ export interface MeetingToolBridgeInput {
   toolMode?: MeetingToolMode;
 }
 
+/**
+ * What the delegated turns of one call added up to.
+ *
+ * The whole point of the experiment is a comparison, and it is a comparison about
+ * latency and reliability — so the numbers have to come off real calls rather than a
+ * reviewer's impression of them. `failures` is the room's view: an errored turn and
+ * one that produced nothing sayable are the same event to a participant, so they are
+ * counted together; a `timeout` is separate because it is a *latency* result, and
+ * `truncated` says how often the delegate wrote for a reader instead of a listener.
+ *
+ * `msTotal` is the wall-clock the room waited, summed — averaged at the end rather
+ * than kept per-call, since a per-request event would flood the metric.
+ */
+export interface DelegationStats {
+  total: number;
+  failures: number;
+  timeouts: number;
+  truncated: number;
+  msTotal: number;
+}
+
 export interface PreparedMeetingTools {
   /** Declarations for `session.update`. */
   declarations: RealtimeFunctionTool[];
@@ -109,6 +134,13 @@ export interface PreparedMeetingTools {
   execute: (name: string, argumentsJson: string, abortSignal: AbortSignal) => Promise<string>;
   /** Tool count, for logging and telemetry. */
   count: number;
+  /**
+   * The running delegation tally, or `null` in `full` mode where there are none.
+   *
+   * A snapshot, read at teardown: `null` and all-zero mean different things (the mode
+   * was off vs. the model never delegated), and only the first is uninteresting.
+   */
+  delegationStats: () => DelegationStats | null;
 }
 
 /**
@@ -163,6 +195,20 @@ export async function prepareMeetingTools(
     usable[name] = tool;
   }
 
+  // Owned here rather than in the tool, which is rebuilt per call and has no notion
+  // of the call it belongs to. Stays null in `full` mode so a reader can tell "the
+  // experiment was off" from "it was on and nothing was delegated".
+  const delegation: DelegationStats | null =
+    toolMode === 'delegate' ? { total: 0, failures: 0, timeouts: 0, truncated: 0, msTotal: 0 } : null;
+  const recordDelegation = (outcome: DelegationOutcome): void => {
+    if (!delegation) return;
+    delegation.total += 1;
+    delegation.msTotal += outcome.ms;
+    if (outcome.status === 'timeout') delegation.timeouts += 1;
+    if (outcome.status === 'error' || outcome.status === 'empty') delegation.failures += 1;
+    if (outcome.truncated) delegation.truncated += 1;
+  };
+
   // Narrow to the experiment's surface. Deliberately done here rather than in
   // `filterToolsByMode`: MCP tools arrive already merged into one opaque dict, so
   // this is the only point that sees the whole catalog the model would otherwise be
@@ -174,6 +220,7 @@ export async function prepareMeetingTools(
             userId: input.userId,
             agentId: input.agentId,
             invoker,
+            onOutcome: recordDelegation,
           }),
           ...Object.fromEntries(
             DELEGATE_MODE_CONTROL_TOOLS.filter((name) => {
@@ -204,6 +251,9 @@ export async function prepareMeetingTools(
     count: declarations.length,
     execute: (name, argumentsJson, abortSignal) =>
       executeTool(offered, name, argumentsJson, abortSignal),
+    // Copied on read: the caller reads this at teardown and must not be handed a
+    // reference a still-resolving delegation can mutate underneath it.
+    delegationStats: () => (delegation ? { ...delegation } : null),
   };
 }
 

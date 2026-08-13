@@ -73,7 +73,7 @@ async function harness(): Promise<Harness> {
   const lost: string[] = [];
   const conversation = new VoiceConversation({
     instructions: 'You are Prism.',
-    tools: { declarations: [], count: 0, execute: vi.fn() },
+    tools: { declarations: [], count: 0, execute: vi.fn(), delegationStats: () => null },
     sink: { write: vi.fn() },
     agentName: 'Prism',
     endpointOverride: { url: `ws://127.0.0.1:${port}`, headers: {} },
@@ -125,7 +125,7 @@ async function speakingHarness(execute?: PreparedMeetingTools['execute']): Promi
 
   const conversation = new VoiceConversation({
     instructions: 'You are Emma.',
-    tools: { declarations: [], count: 0, execute: execute ?? vi.fn() },
+    tools: { declarations: [], count: 0, execute: execute ?? vi.fn(), delegationStats: () => null },
     sink: { write: vi.fn() },
     agentName: 'Emma',
     // Named, so the gate decides — the path the early verdict lives on.
@@ -630,5 +630,32 @@ describe('answering a spoken name without asking the model', () => {
 
     // Their ratio is what the `meeting ended` event reports as `gate_local_share`.
     expect(h.conversation.statistics).toMatchObject({ gateLocalYes: 1, gateModelCalls: 1 });
+  });
+});
+
+/**
+ * The call's numbers are read once, at teardown, off this one object — so what the
+ * bridge counted has to arrive here rather than the service reaching for it itself.
+ */
+describe('the statistics a call ends with', () => {
+  const conversationFor = (delegationStats: PreparedMeetingTools['delegationStats']) =>
+    // Never started: `statistics` reads counters, so it needs no socket.
+    new VoiceConversation({
+      instructions: 'You are Prism.',
+      tools: { declarations: [], count: 0, execute: vi.fn(), delegationStats },
+      sink: { write: vi.fn() },
+      agentName: 'Prism',
+      endpointOverride: { url: 'ws://127.0.0.1:1', headers: {} },
+    });
+
+  it('carries the delegation tally through from the bridge', () => {
+    const tally = { total: 3, failures: 1, timeouts: 1, truncated: 0, msTotal: 9_000 };
+
+    expect(conversationFor(() => tally).statistics.delegation).toEqual(tally);
+  });
+
+  it('reports no tally when the call was not delegating', () => {
+    // `full` mode: null, not zeroes, so a reader can tell the mode was off.
+    expect(conversationFor(() => null).statistics.delegation).toBeNull();
   });
 });
