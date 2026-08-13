@@ -5,6 +5,7 @@
 import { createBdd, DataTable } from 'playwright-bdd';
 import * as dbHelper from '../support/db-helper';
 import { clearTelemetryBucket } from '../support/s3-helper';
+import { resetScheduledWork } from '../support/runtime-helper';
 
 const { Given, Before } = createBdd();
 
@@ -17,6 +18,10 @@ export function getCurrentAgentId(): string {
 }
 
 Before(async () => {
+  // Unschedule first, wipe second. The DB wipe alone leaves the runtime's
+  // in-memory cron timers and goal loops alive with no rows behind them, so a
+  // task one scenario scheduled fires inside a later one. See runtime-helper.
+  await resetScheduledWork();
   // Reset DB and telemetry bucket before each scenario, then re-seed
   await dbHelper.resetAll();
   await clearTelemetryBucket();
