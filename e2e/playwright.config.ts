@@ -5,7 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import { execSync } from 'child_process';
 import { config } from 'dotenv';
-import { DEFAULT_AGENT_ID, TEST_USER } from './fixtures/test-data';
+import { DEFAULT_AGENT_ID, E2E_WORKSPACE, TEST_USER } from './fixtures/test-data';
 
 // Load e2e environment variables (.env.e2e.local overrides for secrets)
 config({ path: path.resolve(__dirname, '.env.e2e') });
@@ -27,7 +27,6 @@ const E2E_DATABASE_URL = 'file:./e2e.db';
 // default isn't writable on CI, so outbound file-sharing (create-then-share)
 // would fail without this. Created at config load so it exists before the
 // runtime webServer boots.
-const E2E_WORKSPACE = path.join(os.tmpdir(), 'prism-e2e-workspace');
 fs.mkdirSync(E2E_WORKSPACE, { recursive: true });
 
 // Persistent data dir for the runtime (skills live at <dir>/skills). Pointed at

@@ -606,13 +606,17 @@ thread id at launch (`startNewSession()`) and adopts one from a `thread` envelop
 as a backstop; without an id a mid-turn message lands in the gateway queue
 instead of steering — answered late rather than reported.
 
-**Reachable from Slack and the terminal UI; not from the web.** The TUI composer
+**Reachable from all three surfaces.** Slack gates nothing. The TUI composer
 stays live for the whole turn — the in-flight spinner moved out of the input box
-into `ThinkingRow`, above it — so Enter sends into the running turn. Slack gates
-nothing. The **web** composer still swaps send for a stop button while `isPending`
-(`ChatInput.tsx`), which also gates its Enter path, so a user cannot send
-mid-response there; opening it is its own change, and `docs/web-ui.md` describes
-only what that UI actually does.
+into `ThinkingRow`, above it — so Enter sends into the running turn. The **web**
+composer shows stop *next to* send while `isPending` rather than swapping them,
+and `isDisabled` (`ChatInput.tsx`) no longer folds in `isPending`, which is what
+re-opens its Enter path too. Send keeps the rightmost slot in both states so its
+hit target doesn't move mid-turn. `isDisabled` does gate on the connection, so a
+socket that is down disables send and stop alike rather than accepting a click
+`sendMessage()` would drop. Nothing server-side differs per surface: the web
+already sent a `threadId`, which is the gateway's only precondition for offering
+a message to a live turn.
 
 Keeping the TUI composer mounted for a whole turn cost one thing worth knowing.
 Ink dispatches `useInput` handlers child-before-parent, so the text input sees a

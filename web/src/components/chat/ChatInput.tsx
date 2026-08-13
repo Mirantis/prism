@@ -28,7 +28,11 @@ interface ChatInputProps {
   onChange: (value: string) => void;
   onSend: (e: FormEvent) => void;
   isPending: boolean;
-  /** Stop the in-flight turn — fired by the STOP button shown while pending. */
+  /**
+   * Stop the in-flight turn — fired by the STOP button, which appears next to
+   * (never in place of) send while pending, so a message can still be sent into
+   * the running turn.
+   */
   onCancel: () => void;
   connectionStatus: ConnectionStatus;
   attachments: PendingAttachment[];
@@ -74,7 +78,29 @@ export default function ChatInput({
 
   const hasReady = attachments.some((a) => a.status === 'ready');
   const isUploading = attachments.some((a) => a.status === 'uploading');
-  const isDisabled = (!value.trim() && !hasReady) || isPending || isUploading;
+  // Deliberately not gated on `isPending`: a message sent while the agent is
+  // responding is handed to the turn that already owns the thread, which picks
+  // it up at its next step. Blocking it here is what kept steering out of the
+  // web while Slack and the terminal UI had it.
+  //
+  // Gated on the connection for the same reason STOP is: the send can't reach
+  // the runtime, so don't imply the message went out. `sendMessage()` would
+  // early-return on a closed socket while `handleSend` had already cleared the
+  // composer and echoed the message locally — the text would be gone and the
+  // echo would be a lie. That hole predates steering, but keeping send live for
+  // the whole turn is what makes a mid-turn disconnect reachable.
+  const isDisabled =
+    (!value.trim() && !hasReady) || isUploading || connectionStatus !== 'connected';
+
+  // The button is icon-only, so its tooltip carries the whole explanation. A
+  // disconnected composer is inert on every mount and every reconnect, and
+  // without this the reason lived only in the meta strip.
+  const sendLabel =
+    connectionStatus !== 'connected'
+      ? 'Not connected'
+      : isPending
+        ? 'Send — the running turn will pick this up'
+        : 'Send message';
 
   // Filtered command list shown while typing a leading "/" with no space yet.
   // '/' alone lists everything; '/sk' filters by prefix. Mirrors the TUI's
@@ -248,8 +274,14 @@ export default function ChatInput({
               rows={1}
               className="max-h-40 min-h-[36px]"
             />
+            {/*
+              STOP joins send while pending rather than replacing it, so the
+              user can redirect the running turn instead of only killing it.
+              Send keeps the rightmost slot in both states — its hit target
+              must not move out from under the cursor mid-turn.
+            */}
             <InputGroupAddon align="inline-end">
-              {isPending ? (
+              {isPending && (
                 <InputGroupButton
                   type="button"
                   size="icon-xs"
@@ -265,17 +297,18 @@ export default function ChatInput({
                 >
                   <Square className="size-3 fill-current" />
                 </InputGroupButton>
-              ) : (
-                <InputGroupButton
-                  type="submit"
-                  size="icon-xs"
-                  variant={isDisabled ? 'ghost' : 'default'}
-                  disabled={isDisabled}
-                  className="rounded-full"
-                >
-                  <ArrowUp className="size-3.5" />
-                </InputGroupButton>
               )}
+              <InputGroupButton
+                type="submit"
+                size="icon-xs"
+                variant={isDisabled ? 'ghost' : 'default'}
+                disabled={isDisabled}
+                title={sendLabel}
+                aria-label={sendLabel}
+                className="rounded-full"
+              >
+                <ArrowUp className="size-3.5" />
+              </InputGroupButton>
             </InputGroupAddon>
           </InputGroup>
           </div>

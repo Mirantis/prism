@@ -29,3 +29,16 @@ Feature: Agent Chat
     And I stop the in-progress response
     Then I should see the message "Response stopped" in the conversation
     And the chat composer should be ready for input again
+
+  Scenario: Steer a response that is already in progress
+    Given the shell workspace has no steering marker
+    When I navigate to the agent chat page
+    And I type "Use your shell to run `touch steering-started.marker && sleep 20`, then reply with exactly ALPHA." in the chat input
+    And I send the message
+    And the agent has started running the shell command
+    And I type "Change of plan: ignore the earlier instruction. Do not output the word ALPHA. Reply with exactly BRAVO." in the chat input
+    And I send the message while the agent is responding
+    Then the agent reply contains "BRAVO"
+    And no reply is an error
+    And the thread has 2 user messages
+    And no delivered agent message contains "ALPHA"
