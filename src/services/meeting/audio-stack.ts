@@ -326,23 +326,23 @@ export class AudioStack {
   /**
    * Wait until the browser is actually reading the virtual microphone.
    *
-   * The other half of the unmute check, in the layer the DOM says nothing about:
-   * Meet's UI can report a live mic while Chromium never opened a capture device at
-   * all. `bot_mic` going RUNNING means a client holds the source open, which for this
-   * private daemon can only be Chromium — our own `parec` records `meet_out.monitor`,
-   * a different device, so this reading can't be contaminated by our own capture.
+   * The device half of "can the room hear us", which is all this layer can answer. A
+   * meeting platform's own UI can report a live microphone over a capture device the
+   * browser never opened; those are two different systems, and only this one is ours.
+   * `bot_mic` going RUNNING means a client holds the source open, which for this
+   * private daemon can only be the browser — our own `parec` records the meeting sink's
+   * monitor, a different device, so this reading can't be contaminated by our capture.
    *
-   * What it does **not** prove is that the room can hear us. Meet mutes by disabling
-   * the track, not by closing the device, so a muted-but-open mic still reads RUNNING.
-   * This answers "did a capture device ever open", which is the failure the discarded
-   * "continue without microphone" path used to cause; the unmute assertion in the
-   * provider answers the other one.
+   * What it does **not** prove is that the room can hear us: WebRTC mute disables the
+   * track rather than closing the device, so a muted-but-open microphone still reads
+   * RUNNING. This answers "did a capture device ever open" — the provider answers
+   * whether the platform is transmitting it, because the provider owns the page and
+   * this owns the devices.
    *
    * Polled rather than awaited on an event because PulseAudio offers no such event to
    * a shell client, and it is genuinely a wait: the browser opens the device a moment
-   * after the unmute lands. `false` on timeout rather than a throw — the caller
-   * decides what an unheard agent is worth, and one operator's answer is "join
-   * anyway".
+   * after an unmute lands. `false` on timeout rather than a throw — what an unheard
+   * agent is worth is the caller's judgement, not this layer's.
    */
   async waitForMicCapture(timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
