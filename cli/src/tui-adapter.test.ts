@@ -110,7 +110,10 @@ describe('TuiAdapter.loadHistory', () => {
 
     await tuiAdapterService.loadHistory({ userId: 'u1', agentId: 'a1' });
 
-    expect(fetchMock).toHaveBeenCalledWith('http://example.test:3003/messages?limit=50');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://example.test:3003/messages?limit=50',
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it('pins the request to a specific thread when threadId is given', async () => {
@@ -118,7 +121,10 @@ describe('TuiAdapter.loadHistory', () => {
 
     await tuiAdapterService.loadHistory({ userId: 'u1', agentId: 'a1', threadId: 'thread-x' });
 
-    expect(fetchMock).toHaveBeenCalledWith('http://example.test:3003/messages?limit=50&threadId=thread-x');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://example.test:3003/messages?limit=50&threadId=thread-x',
+      { signal: expect.any(AbortSignal) },
+    );
   });
 });
 
@@ -289,6 +295,17 @@ describe('TuiAdapter.listSessions context usage', () => {
     workspaceRoot: null,
     branch: null,
   };
+
+  it('time-boxes the /threads fetch so --resume cannot hang before the picker renders', async () => {
+    respond([]);
+
+    await tuiAdapterService.listSessions();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://example.test:3003/threads',
+      { signal: expect.any(AbortSignal) },
+    );
+  });
 
   it('carries a thread snapshot through so a resumed session shows a percentage', async () => {
     const contextUsage = {
