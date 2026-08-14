@@ -178,8 +178,11 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       await session?.stop();
       session = startPrism({ env: env.prismEnv, runtime: env.runtime, args: ['--resume'] });
       await session.waitForFrame(/Resume session/, BOOT_FRAME_TIMEOUT_MS);
-      session.send(KEYS.ENTER); // newest thread (the turn just run) is row 1
-      await session.waitForFrame(/▌\s+Prism\b/, BOOT_FRAME_TIMEOUT_MS);
+      // Newest thread (the turn just run) is row 1. Retried because the
+      // picker's first keystroke can be lost, leaving it on screen forever.
+      // 30s per attempt: this wait replaced a BOOT_FRAME_TIMEOUT_MS one, so
+      // it keeps a budget in the same caution class for CI stalls.
+      await session.sendUntilFrame(KEYS.ENTER, /▌\s+Prism\b/, { timeoutMs: 30_000 });
       await sleep(1_000);
     });
 
