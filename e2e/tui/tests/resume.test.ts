@@ -138,8 +138,9 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     And('I move down and select the older session', async () => {
       // Newest first: the plain-dir thread is row 1, the older git thread row 2.
       await session!.waitForFrame(/Resume session \(1 of 2\)/, BOOT_FRAME_TIMEOUT_MS);
-      session!.send(KEYS.DOWN);
-      await session!.waitForFrame(/Resume session \(2 of 2\)/, 5_000);
+      // Retried because the picker's first keystroke can be lost; ENTER is
+      // safe unretried after the DOWN's echo proves input is flowing.
+      await session!.sendUntilFrame(KEYS.DOWN, /Resume session \(2 of 2\)/, { timeoutMs: 5_000 });
       session!.send(KEYS.ENTER);
     });
     Then('that thread becomes the active conversation', async () => {
@@ -165,7 +166,18 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
     And('I press Escape in the picker', async () => {
       await session!.waitForFrame(/Resume session/, BOOT_FRAME_TIMEOUT_MS);
-      session!.send(KEYS.ESC);
+      // Retried like the other picker keys: a lost first ESC leaves the
+      // picker up forever. The effect is an exit rather than a frame, so
+      // sendUntilFrame doesn't fit — retry on a short exit wait instead.
+      for (let attempt = 1; ; attempt++) {
+        session!.send(KEYS.ESC);
+        try {
+          await session!.waitForExit(10_000);
+          return;
+        } catch (err) {
+          if (attempt >= 3) throw err;
+        }
+      }
     });
     Then('the CLI shuts down with exit code 0', async () => {
       const code = await session!.waitForExit(30_000);

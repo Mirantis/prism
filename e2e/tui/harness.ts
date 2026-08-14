@@ -210,6 +210,23 @@ export interface TuiSession {
   send(input: string): void;
   /** Wait until the stripped output matches the given string or regex. */
   waitForFrame(matcher: string | RegExp, timeoutMs?: number): Promise<void>;
+  /**
+   * Send input and wait for its visible effect, resending when it never
+   * shows. A keystroke sent right as an Ink screen mounts is occasionally
+   * lost under CI load (nothing is subscribed to stdin yet), and a lost key
+   * strands screens that only advance on input — the --resume picker sat
+   * on screen for a full 120s timeout this way. Only safe for input whose
+   * repeat is a no-op in the current screen: ENTER on a picker row, or an
+   * arrow already at its clamp boundary. Never for composer text, and not
+   * for an arrow mid-list — a resend after a merely *late* frame would move
+   * the selection one row further, and the matcher (tested against the
+   * grow-only buffer) would still pass on the earlier frame.
+   */
+  sendUntilFrame(
+    input: string,
+    matcher: string | RegExp,
+    opts?: { attempts?: number; timeoutMs?: number },
+  ): Promise<void>;
   /** Wait until the child process has exited. */
   waitForExit(timeoutMs?: number): Promise<number>;
   /** Send SIGTERM, then SIGKILL after a grace period. */
@@ -292,6 +309,28 @@ export function startPrism(opts: StartPrismOptions): TuiSession {
         throw new Error(`prism-cli did not exit within ${timeoutMs}ms`);
       }
       return result;
+    },
+
+    async sendUntilFrame(input, matcher, options = {}) {
+      const attempts = options.attempts ?? 3;
+      const timeoutMs = options.timeoutMs ?? 15_000;
+      for (let attempt = 1; ; attempt++) {
+        session.send(input);
+        try {
+          await session.waitForFrame(matcher, timeoutMs);
+          return;
+        } catch (err) {
+          // A dead child can't be helped by resending; the last attempt
+          // propagates waitForFrame's error, which carries the pty dump.
+          if (exitCode !== null || attempt >= attempts) throw err;
+          if (process.env.CI) {
+            process.stderr.write(
+              `\n[harness] no frame matching ${matcher} within ${timeoutMs}ms of input; ` +
+                `resending (attempt ${attempt + 1}/${attempts})\n`,
+            );
+          }
+        }
+      }
     },
 
     async stop() {

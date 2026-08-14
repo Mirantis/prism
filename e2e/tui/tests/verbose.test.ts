@@ -175,9 +175,10 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       await session?.stop();
       session = startPrism({ env: env.prismEnv, runtime: env.runtime, args: ['--resume'] });
       await session.waitForFrame(/Resume session/, BOOT_FRAME_TIMEOUT_MS);
-      session.send(KEYS.ENTER); // newest thread (the turn we just ran) is row 1
-      // History has replayed once the agent reply prefix appears.
-      await session.waitForFrame(/▌\s+Prism\b/, 30_000);
+      // Newest thread (the turn we just ran) is row 1; history has replayed
+      // once the agent reply prefix appears. Retried because the picker's
+      // first keystroke can be lost, leaving it on screen forever.
+      await session.sendUntilFrame(KEYS.ENTER, /▌\s+Prism\b/);
       await sleep(1_000);
     });
 
