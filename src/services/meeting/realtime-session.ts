@@ -280,11 +280,16 @@ export class RealtimeSession extends EventEmitter {
               // mid-sentence.
               interrupt_response: false,
             },
-            // Meeting audio is room audio — several people at conversational
-            // distance from a laptop mic, not one person on a headset. Far-field
-            // reduction is what the room case wants, and it feeds cleaner audio to
-            // both the turn detector and the transcriber.
-            noise_reduction: { type: 'far_field' },
+            // `far_field` reads like the right fit for a meeting, but it describes
+            // the *humans'* microphones rather than this input: what arrives here is
+            // Meet's mixed output, already suppressed, echo-cancelled and levelled per
+            // participant. Reducing it again is a second pass over a cleaned mix, and
+            // it cost a live agent minutes of not hearing a person in the room. `off`
+            // omits the whole key rather than sending a null one, which the API
+            // rejects — that would end the call instead of disabling the filter.
+            ...(config.noiseReduction === 'off'
+              ? {}
+              : { noise_reduction: { type: config.noiseReduction } }),
             // Only ever used to decide who was addressed — never fed back as the
             // model's input. On for every call, because the mode can change under
             // a live session as people join, and transcription cannot be turned on

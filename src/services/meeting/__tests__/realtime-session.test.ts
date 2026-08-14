@@ -174,11 +174,25 @@ describe('RealtimeSession configuration', () => {
     });
   });
 
-  it('asks for far-field noise reduction, because meeting audio is room audio', async () => {
+  it('sends no noise-reduction key by default, because Meet has already cleaned this audio', async () => {
+    // The whole key has to go, not a null one: the API rejects a null here, which
+    // would end the call rather than disable the filter. Reducing again is a second
+    // pass over a mix Meet has already suppressed, cancelled and levelled — and under
+    // `far_field` a live agent stopped reacting to a person in the room while still
+    // answering the other agent's much louder synthesized voice.
     active = await harness();
     const update = active.sent.find((f) => f.type === 'session.update') as { session: Record<string, any> };
 
-    // Several people at conversational distance from a laptop mic — not a headset.
+    expect(update.session.audio.input).not.toHaveProperty('noise_reduction');
+    // The rest of the input config must survive the omission.
+    expect(update.session.audio.input.turn_detection.type).toBe('semantic_vad');
+  });
+
+  it('asks for reduction when an operator sets one', async () => {
+    vi.mocked(config).noiseReduction = 'far_field';
+    active = await harness();
+    const update = active.sent.find((f) => f.type === 'session.update') as { session: Record<string, any> };
+
     expect(update.session.audio.input.noise_reduction).toEqual({ type: 'far_field' });
   });
 

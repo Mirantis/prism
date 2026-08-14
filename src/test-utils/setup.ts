@@ -52,6 +52,7 @@ vi.mock('../config', () => ({
     // Voice meetings. The transcriber is named here because the Realtime session
     // sends it in `session.update`, so an undefined value would be asserted on.
     openaiTranscriptionModel: 'gpt-realtime-whisper',
+    noiseReduction: 'off',
     // Same reason: the session sends a reasoning level, and undefined here would
     // silently drop the field rather than fail. The real default lives in
     // config.ts and is asserted in config.test.ts, which loads the module itself.

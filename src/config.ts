@@ -272,6 +272,33 @@ const openaiRealtimeReasoningEffort: RealtimeReasoningEffort | null =
 const openaiTranscriptionModel =
   process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-live-transcribe';
 
+// Server-side noise reduction over meeting audio, before turn detection and
+// transcription see it: `off` (send no setting), `near_field`, or `far_field`.
+//
+// **Off by default, which is not the obvious choice.** `far_field` reads like the
+// right fit — a meeting is several people at conversational distance from a laptop
+// mic — but that describes the *humans'* microphones, not this input. What arrives
+// here is Meet's mixed output, already noise-suppressed, echo-cancelled and
+// gain-levelled per participant: a broadcast mix rather than a raw room. Reducing it
+// again is a second pass over audio that has been cleaned once.
+//
+// The second pass was not harmless. Under `far_field` a live agent went minutes
+// without reacting to a person in the room while answering the other agent's
+// synthesized voice instantly — the signature of an adaptive noise floor lifted by
+// loud speech, where the loud voice clears the threshold and a quieter human is
+// suppressed as noise. Run side by side on the same room, the agent with reduction
+// off registered seven utterances to the other's two and never idled more than ten
+// seconds; the `far_field` one sat idle for 28s through speech.
+//
+// A meeting agent that mishears is recoverable — someone repeats themselves. One that
+// cannot hear is not, so the trade favours the noisier input. `near_field` is the
+// middle setting and is **untested**; reach for it before going back to `far_field`
+// if a room turns out to be too noisy for the turn detector.
+const noiseReduction = (() => {
+  const raw = (process.env.OPENAI_NOISE_REDUCTION || 'off').trim().toLowerCase();
+  return raw === 'near_field' || raw === 'far_field' ? raw : 'off';
+})();
+
 // Google account the meeting bot signs in as.
 //
 // Not optional in practice for Google Meet: Google auto-denies automated
@@ -507,6 +534,7 @@ export const config = {
   // 'low'); '' sends no setting at all and leaves the choice to the API.
   openaiRealtimeReasoningEffort,
   openaiTranscriptionModel,
+  noiseReduction,
   googleBotEmail,
   googleBotPassword,
   meetingTimeoutMinutes,
