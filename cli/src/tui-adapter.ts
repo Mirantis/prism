@@ -253,7 +253,12 @@ class TuiAdapter {
     try {
       const params = new URLSearchParams({ limit: String(limit) });
       if (args.threadId) params.set('threadId', args.threadId);
-      const res = await fetch(`${this.httpUrl}/messages?${params.toString()}`);
+      // Time-boxed: the --resume picker awaits this before handing over to
+      // the chat UI, so a runtime that accepts the connection but never
+      // answers must degrade to an empty history, not strand the picker.
+      const res = await fetch(`${this.httpUrl}/messages?${params.toString()}`, {
+        signal: AbortSignal.timeout(15_000),
+      });
       if (!res.ok) return [];
       const body = (await res.json()) as unknown;
       if (!Array.isArray(body)) return [];
@@ -299,7 +304,11 @@ class TuiAdapter {
    */
   async listSessions(): Promise<ThreadSummary[]> {
     try {
-      const res = await fetch(`${this.httpUrl}/threads`);
+      // Time-boxed for the same reason as loadHistory: `--resume` blocks on
+      // this before rendering anything at all.
+      const res = await fetch(`${this.httpUrl}/threads`, {
+        signal: AbortSignal.timeout(15_000),
+      });
       if (!res.ok) return [];
       const body = (await res.json()) as unknown;
       if (!Array.isArray(body)) return [];
