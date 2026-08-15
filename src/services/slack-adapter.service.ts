@@ -1657,7 +1657,10 @@ class SlackAdapterService implements ChannelAdapter {
       }
       return { action: object.action };
     } catch (error) {
-      logger.warn('Thread classification failed, falling back to respond: %s', error instanceof Error ? error.message : String(error));
+      // Under `err`, not interpolated into the message: a string built from
+      // `error.message` is the one shape the redacting serializer cannot see, and it
+      // loses the status and the error type an operator would diagnose from.
+      logger.warn({ err: error }, 'Thread classification failed, falling back to respond');
       // Sole emitter of `slack thread classification failed`. Props stay to
       // ids, the active model, and the error's shape — never the transcript or
       // the message text the classifier ran on.
@@ -2159,7 +2162,7 @@ class SlackAdapterService implements ChannelAdapter {
       }
     } catch (error) {
       logger.warn(
-        { error, teamId: connection.teamId, teamName: connection.teamName, connectionId },
+        { err: error, teamId: connection.teamId, teamName: connection.teamName, connectionId },
         'Failed to stop Slack app during disconnect; continuing with cleanup',
       );
     } finally {

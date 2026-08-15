@@ -418,6 +418,7 @@ src/
 │   ├── classification.ts       # Classification-gate request factories (`getGateRequest()` for the generateText gates, `getClassificationRequest()` for generateObject) — model + the active vendor's merged `providerOptions`
 │   ├── classification-gate.ts  # Shared one-word-verdict gate call (`runClassificationGate`) + `isRecentDuplicate`, used by the heartbeat and cron DELIVER/SUPPRESS gates
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
+│   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
 │   └── prisma.ts               # Prisma client singleton (runtime database)
 ├── prisma/
@@ -633,6 +634,25 @@ The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature
 `lib/llm-errors.ts#buildErrorStep(error)` is the **single owner** of LLM/runtime error → user-facing text. It distinguishes Nexus RFC 7807 `budget-exceeded` 429s (returns a friendly "spending limit reached" message and tags the step with `error: { type: 'budget_exceeded', detail }`) from generic errors (returns a "I encountered an error…" step tagged `error: { type: 'generic', detail }`, with the response body's `detail` field when present). The SDK wraps retried failures with a `lastError` field — `buildErrorStep` unwraps it before classifying. The cron scheduler uses the tag to route error results **around** the DELIVER/SUPPRESS gate: an error message is never "nothing to report", so it always delivers.
 
 It's used only inside `invokeStream()`'s catch paths (context-fetch failure, `generateText` rejection). Errors are pushed onto the step channel rather than thrown, so consumers don't need a separate error-handling path: chat just sees a final friendly step and delivers it; `invoke()` aggregates the text and surfaces the structured `error` field on `InvokeResponse` so heartbeat/cron can detect budget exhaustion programmatically.
+
+**No error is logged raw.** `logger` installs one global pino serializer for the `err`
+key (`lib/log-redaction.ts`), and it is an **allow-list**: `name`/`message`/`stack`/
+`code`/`errno`/`syscall`/`statusCode`/`url`/`isRetryable`/`reason`, plus `cause`,
+`lastError` and each entry of `errors` reduced to `{ name, message }` (that list
+bounded at five), plus `$metadata.httpStatusCode` lifted out as `statusCode` since an AWS
+SDK error carries its status nowhere else. Every other field is dropped and merely *named*
+in a `redacted: [...]` array. No request body, no response body and no headers reach a log;
+`message` is kept, so an error the SDK *builds* by interpolating content (a
+`JSONParseError` quotes the text it could not parse) still quotes that much. Pino's default
+`err` serializer copies every own property of an
+error, and the AI SDK's `APICallError` hangs `requestBodyValues` (the whole prompt) and
+`responseBody` off it — so a single `logger.error({ err }, …)` wrote the conversation,
+the system prompt and any provider tokens in the headers into the log. Allow-list rather
+than deny-list because the SDKs add fields over time and a new one must not leak by
+default; one serializer rather than per-call-site edits because the risk is a *future*
+`logger.error(err)`, not just today's. Pass errors as `err` (either
+`logger.error(err, msg)` or `logger.error({ err }, msg)`) — a message built by
+interpolating an error into a template string bypasses this entirely.
 
 ## Heartbeat Design
 
