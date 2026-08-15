@@ -235,7 +235,9 @@ message, not a file, not a link, and not to the meeting's own chat panel. It is
 instructed never to offer, so if you want something as text, ask it again in a chat
 session afterwards. Nothing about the call is kept either: no transcript, no summary,
 and no record in your conversation history beyond a note that it joined and left. Ask
-it "what did we decide in the meeting?" afterwards and it won't know.
+it "what did we decide in the meeting?" afterwards and it won't know. Its own log says
+no more than that by default — see [Settings](#settings) if you need to turn the words
+on to diagnose something.
 
 **It can't tell who is speaking.** The meeting audio arrives as one mixed channel
 with no speaker labels, so it won't attribute anything to a specific person — and
@@ -345,6 +347,12 @@ Nothing is recorded: the call's audio goes to the Realtime model and is not stor
 the runtime, and no transcript or summary is written. Whether OpenAI retains anything
 is between you and your OpenAI account settings.
 
+That includes the runtime's own log, which by default carries no word anyone said and
+no attendee's name — it records that an utterance was judged, not what it was. The one
+way to change that is `MEETING_TRANSCRIPT_LOGGING`, below; if you turn it up, the
+people in the room are being written down in a place that outlives the call, and that
+is the same thing to tell them about as the agent's presence.
+
 ## Settings
 
 | Variable | Purpose | Default |
@@ -354,11 +362,37 @@ is between you and your OpenAI account settings.
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model thinks before answering or picking a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults higher than the API's own `low` — see [Reasoning effort](#reasoning-effort). Empty takes the API default. | `high` |
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used to decide whether the agent was spoken to. Runs on every call, billed per minute; never fed to the model. The default is the only streaming model that also accepts name hints — see [Names](#names). | `gpt-live-transcribe` |
+| `OPENAI_NOISE_REDUCTION` | Server-side noise reduction over the meeting audio before turn detection and transcription see it: `off`, `near_field`, `far_field`. Off by default on purpose — what arrives is Meet's already-cleaned mix, and reducing it again cost a live agent most of what a quieter person in the room said. | `off` |
+| `MEETING_TRANSCRIPT_LOGGING` | How much of what was said may appear in the runtime's log: `off`, `redacted`, `full`. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |
 
 Reaching the lobby has its own budget, so a slow-loading Meet page never eats into
 the waiting-room time.
+
+### What ends up in the log
+
+Every utterance the agent judges produces one line in the runtime's log, and
+`MEETING_TRANSCRIPT_LOGGING` decides how much of the utterance goes on it.
+
+| Value | What a line carries |
+|-------|---------------------|
+| `off` (default) | The verdict, which utterance it belongs to, whether the agent was answering everything or only when named, and **how many** names were seeded to the transcriber. No words, no attendee names. |
+| `redacted` | The above, plus the sentence's length and a short fingerprint of it — enough to see when two lines were judged on the *same words*: a transcriber stuck on a sentence, or the room repeating itself. (Which lines belong to one utterance is the utterance id, at every setting — a partial transcript is a prefix of the finished one, so it has a fingerprint of its own.) The fingerprint is salted per process, so it can't be checked against a guess and doesn't survive a restart. |
+| `full` | The above, plus the sentence itself, the room's roster, and the gate model's own one-line reasoning. |
+
+`off` is the default because a call is not an authenticated surface: whoever is in
+the room did not agree to be written into a log that outlives it, and a mishearing
+("Prism" → "Pritham") means the words recorded are not even reliably theirs. Most
+diagnosis doesn't need them — `off` still separates "the gate said no" from "the gate
+never ran", and shows whether a roster had reached the transcriber at all.
+
+Turn it up to `full` only for as long as you need it, and tell the room. None of it
+reaches product telemetry at any setting — that surface gets counts. It is a
+*log* setting, though, and one other destination is out of its reach: if
+Langfuse is configured, the tracing there records the prompts and
+completions of every model call, the addressed-gate one included, whatever
+`MEETING_TRANSCRIPT_LOGGING` says. Leave Langfuse off for calls you would not log.
 
 ### The microphone
 
@@ -395,6 +429,17 @@ without a microphone — see below.
 registered when the toolchain and the key are both present — check the startup log
 for `Voice meetings available` or `Voice meetings unavailable`, and confirm
 `OPENAI_API_KEY` is set and you're running the container image.
+
+**It isn't answering to its name.** In a call with more than one other person the
+agent answers only when it is named, and a transcriber that mishears the name is
+indistinguishable from a gate that decided no. Each verdict is logged — look for
+`[Meeting:Gate]`. By default the line says what was decided but not what it was
+decided on, which is enough to tell a verdict that never happened from one that said
+no, and not enough to say why. The utterance id on the line pairs a partial verdict
+with the final one at every setting; `MEETING_TRANSCRIPT_LOGGING=redacted` adds a
+length, which is usually enough to see that the transcriber produced a sentence at
+all. To read the sentence and the gate's own reasoning you need `full` — with the
+room's agreement, and turn it back off afterwards.
 
 **It waits forever to be admitted.** Nobody clicked Admit, or the meeting blocks
 anonymous guests. It gives up after `MEETING_ADMISSION_TIMEOUT_SECONDS` and says

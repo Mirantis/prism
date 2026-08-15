@@ -34,6 +34,7 @@ import { generateText } from 'ai';
 import { getGateRequest } from '../../lib/classification';
 import { langfuseTelemetry } from '../../lib/telemetry';
 import { logger } from '../../logger';
+import { formatGateReasoning } from './transcript-log';
 
 /**
  * How long a verdict stays worth acting on.
@@ -146,9 +147,14 @@ export async function classifyAddressed(input: ClassifyAddressedInput): Promise<
     const addressed = readVerdict(result.text);
     // The elapsed time is the point of logging this at all in production: it sits
     // between someone finishing a sentence and the agent starting to answer, so it
-    // is the one number that says whether the room is being kept waiting.
+    // is the one number that says whether the room is being kept waiting. That
+    // number, the verdict and the stage are always written.
+    //
+    // The model's own words are not, unless asked for — see `transcript-log.ts`,
+    // which owns that decision for every line a call produces.
+    const reasoning = formatGateReasoning(result.text);
     logger.info(
-      `[Meeting:Gate] ${result.text.trim().replace(/\s+/g, ' ')} ` +
+      `[Meeting:Gate] ${reasoning === '' ? '' : `${reasoning} `}` +
         `(addressed=${addressed}, ${input.stage}, ${Date.now() - started}ms)`,
     );
     return addressed;

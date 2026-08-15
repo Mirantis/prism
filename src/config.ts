@@ -304,6 +304,37 @@ const noiseReduction = (() => {
   return raw === 'near_field' || raw === 'far_field' ? raw : 'off';
 })();
 
+// How much of what is said in a meeting the runtime writes to its own logs:
+// `off`, `redacted`, or `full`.
+//
+// **Off by default**, and this one is not a trade-off between two goods. A meeting is
+// unauthenticated — anybody in the room speaks to the agent, and nobody in the room
+// agreed to anything about this deployment's logs. An utterance is third-party speech
+// rather than the operator's own data, the gate sees every sentence and not just the
+// ones aimed at the agent, and a log line outlives the call by whatever the log
+// retention is. Writing the room's conversation there by default is the sort of
+// decision that has to be made deliberately, which is what this variable is for.
+//
+// `redacted` is the middle setting: a length and a short digest of the sentence,
+// without recording what the sentence was. The length says whether the transcriber
+// produced a plausible sentence at all, and the digest says when two lines were
+// judged on the same words — a transcriber stuck on a sentence, or a room repeating
+// itself. It is not what pairs a partial verdict with the final one; the item id does
+// that at every setting, since a partial is a prefix and digests differently. Salted
+// per process, so it compares within one run and says nothing across them.
+//
+// `full` writes the sentence itself. Reach for it in a room that knows, on a
+// deployment whose logs you are willing to treat as a recording of the meeting.
+//
+// An unrecognized value is `off` rather than a boot failure: a typo here should cost
+// a diagnostic, not the container. `''` is `off` too — unlike
+// OPENAI_REALTIME_REASONING_EFFORT, where empty means "let the API choose", there is
+// nobody else to defer to.
+const meetingTranscriptLogging = ((): 'off' | 'redacted' | 'full' => {
+  const raw = (process.env.MEETING_TRANSCRIPT_LOGGING || 'off').trim().toLowerCase();
+  return raw === 'redacted' || raw === 'full' ? raw : 'off';
+})();
+
 // Google account the meeting bot signs in as.
 //
 // Not optional in practice for Google Meet: Google auto-denies automated
@@ -555,6 +586,9 @@ export const config = {
   openaiRealtimeReasoningEffort,
   openaiTranscriptionModel,
   noiseReduction,
+  // MEETING_TRANSCRIPT_LOGGING, default 'off': what a meeting's speech may appear as
+  // in the runtime's logs ('off' | 'redacted' | 'full').
+  meetingTranscriptLogging,
   googleBotEmail,
   googleBotPassword,
   meetingTimeoutMinutes,

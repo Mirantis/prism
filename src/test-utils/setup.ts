@@ -57,5 +57,8 @@ vi.mock('../config', () => ({
     // silently drop the field rather than fail. The real default lives in
     // config.ts and is asserted in config.test.ts, which loads the module itself.
     openaiRealtimeReasoningEffort: 'high',
+    // Read at log time rather than at startup, so leaving it out would silently take
+    // whichever branch `undefined` happens to fall into.
+    meetingTranscriptLogging: 'off',
   },
 }));

@@ -550,6 +550,60 @@ describe('config', () => {
       }
     });
 
+    it('keeps a meeting out of the logs unless asked', async () => {
+      // The room is unauthenticated and consented to nothing about this deployment's
+      // logs, so the words are opt-in rather than opt-out.
+      delete process.env.MEETING_TRANSCRIPT_LOGGING;
+      const cfg = await loadConfig();
+      expect(cfg.meetingTranscriptLogging).toBe('off');
+    });
+
+    it('reads the two settings that log something', async () => {
+      for (const mode of ['redacted', 'full']) {
+        process.env.MEETING_TRANSCRIPT_LOGGING = mode;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.meetingTranscriptLogging).toBe(mode);
+      }
+    });
+
+    it('tolerates case and stray whitespace around a mode', async () => {
+      for (const messy of [' Redacted', 'REDACTED ']) {
+        process.env.MEETING_TRANSCRIPT_LOGGING = messy;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.meetingTranscriptLogging).toBe('redacted');
+      }
+      for (const messy of ['FULL ', 'Full']) {
+        process.env.MEETING_TRANSCRIPT_LOGGING = messy;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.meetingTranscriptLogging).toBe('full');
+      }
+    });
+
+    it('falls back to logging nothing on a value it does not recognize', async () => {
+      // Including every plausible way of writing "on": a typo here should cost a
+      // diagnostic, not the boot — and it must not fail *open* into a transcript.
+      for (const bad of ['on', 'true', '1', 'verbose']) {
+        process.env.MEETING_TRANSCRIPT_LOGGING = bad;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.meetingTranscriptLogging).toBe('off');
+      }
+    });
+
+    it('treats an empty value as off rather than as a default to defer', async () => {
+      // Deliberately unlike OPENAI_REALTIME_REASONING_EFFORT, where empty means "let
+      // the API choose". There is no API to defer to here, so empty means no logging.
+      for (const empty of ['', '   ']) {
+        process.env.MEETING_TRANSCRIPT_LOGGING = empty;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.meetingTranscriptLogging).toBe('off');
+      }
+    });
+
     it('has no display-name setting', async () => {
       // Removed rather than defaulted: participants see the Google account's own
       // name, and the only path the setting applied to is the guest join Meet
