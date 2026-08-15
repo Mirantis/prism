@@ -31,6 +31,7 @@ import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { BargeInPolicy } from './barge-in';
 import { ResponsePolicy, type EffectiveMode, type ResponseMode } from './response-policy';
 import { classifyAddressed, CLASSIFY_DEADLINE_MS } from './addressed-classifier';
+import { formatKeywords, formatTranscript } from './transcript-log';
 
 /**
  * How much of a partial transcript is worth judging.
@@ -387,26 +388,32 @@ export class VoiceConversation {
       stage,
     });
 
-    // The sentence the verdict was reached on, recorded next to the verdict.
-    //
-    // Without it a `no` on a sentence that named the agent and a `no` on a sentence
-    // that never mentioned it are the same log line, which is what made a live
-    // report of "it stopped answering to its name" impossible to diagnose after the
-    // fact: the gate's own reasoning is cut off at eight output tokens, so the only
-    // way to know what it was judging is to write the sentence down. The keyword
-    // list rides along because it is the one input that changes across a call — the
-    // agent's name is seeded to the transcriber alongside the room's, and a name
-    // that fails to survive transcription cannot be recognised however good the
-    // gate is.
+    // Every verdict is recorded; how much of the sentence goes with it is a setting,
+    // and `transcript-log.ts` is where that decision and its reasoning live.
     //
     // `info`, deliberately: production runs at `info`, and this line exists to be
-    // read back from a deployed container. It is also why none of it reaches
-    // telemetry — an utterance is user speech, and counters are what that surface
-    // gets.
+    // read back from a deployed container. Which is exactly why the words are not on
+    // it by default — the room is unauthenticated and did not agree to be written
+    // down.
+    //
+    // What is always written is most of the diagnostic: the verdict, the item it
+    // belongs to (which is what pairs a partial verdict with the final one), the mode
+    // in force, and the *number* of names seeded to the transcriber. The agent's own
+    // name always leads that list, so `keywords=1` means no participants have been
+    // read yet.
+    //
+    // Tokens rather than one template, because a formatter that has nothing to say
+    // returns `''` and an empty token reads as a field with no value in it.
     logger.info(
-      `[Meeting:Gate] ${stage} verdict addressed=${addressed} ` +
-        `item=${itemId || 'none'} mode=${this.responsePolicy.effectiveMode} ` +
-        `keywords=[${keywords.join(', ')}] transcript=${JSON.stringify(transcript)}`,
+      [
+        `[Meeting:Gate] ${stage} verdict addressed=${addressed}`,
+        `item=${itemId || 'none'}`,
+        `mode=${this.responsePolicy.effectiveMode}`,
+        formatKeywords(keywords),
+        formatTranscript(transcript),
+      ]
+        .filter(Boolean)
+        .join(' '),
     );
 
     if (this.stopped) return;

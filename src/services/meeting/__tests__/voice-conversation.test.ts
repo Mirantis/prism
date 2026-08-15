@@ -8,6 +8,7 @@
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
+import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { VoiceConversation } from '../voice-conversation';
 import { classifyAddressed } from '../addressed-classifier';
@@ -278,7 +279,18 @@ describe('answering a request judged early', () => {
 });
 
 describe('recording what each verdict was reached on', () => {
-  it('logs the sentence, the verdict and the keywords in force', async () => {
+  /** The sentence used throughout — 26 characters, which `redacted` reports. */
+  const UTTERANCE = 'Emma, can you take a look?';
+
+  afterEach(() => {
+    // Put the default back by hand. `mockReset`/`restoreMocks` restore spies, not a
+    // plain property assigned on the mocked config object, so a test that left this
+    // at `full` would un-redact every test that ran after it — and the one that
+    // asserts nothing leaks would pass for the wrong reason.
+    vi.mocked(config).meetingTranscriptLogging = 'off';
+  });
+
+  it('records the verdict, the item and the keyword count, but not the words', async () => {
     const { h, send } = await speakingHarness();
     active = h;
     vi.mocked(classifyAddressed).mockResolvedValue(false);
@@ -287,16 +299,142 @@ describe('recording what each verdict was reached on', () => {
     send({
       type: 'conversation.item.input_audio_transcription.completed',
       item_id: 'item-4',
-      transcript: 'Emma, can you take a look?',
+      transcript: UTTERANCE,
+    });
+    await settle();
+    await settle();
+
+    // What the default keeps: enough to tell "the gate said no" from "the gate never
+    // ran", to pair a partial verdict with the final one, and to see whether a roster
+    // had arrived — the agent's own name leads the list, so a count of 3 means two
+    // participants were read.
+    const line = infoLines();
+    expect(line).toContain('addressed=false');
+    expect(line).toContain('item=item-4');
+    expect(line).toContain('mode=addressed');
+    expect(line).toContain('keywords=3');
+    // What it drops: the sentence, and any hint of it. A `chars=`/`sha256=` pair is
+    // the `redacted` mode's, not the default's.
+    expect(line).not.toContain(UTTERANCE);
+    expect(line).not.toContain('sha256');
+    expect(line).not.toContain('chars=');
+    // Not even an empty `transcript=`: a token with nothing after it reads as a
+    // sentence that failed to transcribe rather than one deliberately not written.
+    expect(line).not.toContain('transcript=');
+  });
+
+  it('keeps the roster out of the log even once the participants have been read', async () => {
+    const { h, send } = await speakingHarness();
+    active = h;
+    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-7',
+      transcript: UTTERANCE,
+    });
+    await settle();
+    await settle();
+
+    // Attendee names are the other half of what a meeting log was leaking, and they
+    // arrive from a scrape of the call's UI — nobody in the room asked for them to be
+    // written down. Asserted across every line, not just the gate's: the roster is
+    // also seeded to the transcriber, and that line used to be the count it is now.
+    const line = infoLines();
+    expect(line).not.toContain('Mario Sarcher');
+    expect(line).not.toContain('Lee');
+  });
+
+  it('fingerprints the sentence under redacted rather than writing it', async () => {
+    const { h, send } = await speakingHarness();
+    active = h;
+    vi.mocked(config).meetingTranscriptLogging = 'redacted';
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-4',
+      transcript: UTTERANCE,
+    });
+    await settle();
+    await settle();
+
+    const line = infoLines();
+    expect(line).toMatch(/chars=26 sha256=[0-9a-f]{8}/);
+    // A length and a digest, and still nothing readable — including the roster, which
+    // this mode counts exactly as the default does.
+    expect(line).not.toContain(UTTERANCE);
+    expect(line).not.toContain('Mario Sarcher');
+    expect(line).toContain('keywords=3');
+  });
+
+  it('fingerprints the words, and leaves pairing the two verdicts to the item id', async () => {
+    const { h, send } = await speakingHarness();
+    active = h;
+    vi.mocked(config).meetingTranscriptLogging = 'redacted';
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+
+    // One utterance judged twice: once from a partial transcript (long enough to earn
+    // an early verdict), then from the finished one. A partial is a *prefix*, so the
+    // two digests differ — which is the point of asserting it, because `item=` is what
+    // pairs those two lines and this mode must not be read as doing that job.
+    send({
+      type: 'conversation.item.input_audio_transcription.delta',
+      item_id: 'item-8',
+      delta: 'Emma, can you take a look',
+    });
+    await settle();
+    await settle();
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-8',
+      transcript: UTTERANCE,
+    });
+    await settle();
+    await settle();
+
+    // A second utterance, transcribed to the same words as the first. That is what the
+    // digest is for: a transcriber stuck on a sentence, or a room repeating itself,
+    // shows up as one digest twice — a `chars=` alone could not tell it from a
+    // different sentence of the same length.
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-9',
+      transcript: UTTERANCE,
+    });
+    await settle();
+    await settle();
+
+    const lines = infoLines();
+    const digests = lines.match(/sha256=[0-9a-f]{8}/g) ?? [];
+    expect(digests).toHaveLength(3);
+    expect(digests[0]).not.toBe(digests[1]);
+    expect(digests[2]).toBe(digests[1]);
+    expect(lines.match(/item=item-8/g)).toHaveLength(2);
+  });
+
+  it('writes the sentence and the roster only when asked for them', async () => {
+    const { h, send } = await speakingHarness();
+    active = h;
+    vi.mocked(config).meetingTranscriptLogging = 'full';
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-4',
+      transcript: UTTERANCE,
     });
     await settle();
     await settle();
 
     // A `no` on a sentence that names the agent and a `no` on one that never
     // mentions it are the same line without the transcript, which is what made a
-    // live report of "it stopped answering to its name" undiagnosable after the fact.
+    // live report of "it stopped answering to its name" undiagnosable after the
+    // fact. This is the mode to turn on for that, in a room that knows.
     const line = infoLines();
-    expect(line).toContain('Emma, can you take a look?');
+    expect(line).toContain(UTTERANCE);
     expect(line).toContain('addressed=false');
     expect(line).toContain('item=item-4');
     // The roster is seeded to the transcriber, so it is an input to whether the name
@@ -304,7 +442,7 @@ describe('recording what each verdict was reached on', () => {
     expect(line).toMatch(/keywords=\[Emma, Lee, Mario Sarcher\]/);
   });
 
-  it('names the connect-time keyword list before any roster arrives', async () => {
+  it('reports the connect-time keyword list before any roster arrives', async () => {
     const { h, send } = await speakingHarness();
     active = h;
 
@@ -317,7 +455,20 @@ describe('recording what each verdict was reached on', () => {
     await settle();
 
     // The session seeds the agent's own name at connect; a verdict logged before the
-    // first participant poll must say so rather than claim nothing was set.
+    // first participant poll must say so rather than claim nothing was set. Under the
+    // default that is what `keywords=1` means, and it is the reason the count is
+    // written at all when the names are not.
+    expect(infoLines()).toContain('keywords=1');
+
+    vi.mocked(config).meetingTranscriptLogging = 'full';
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-6',
+      transcript: 'Emma, still there?',
+    });
+    await settle();
+    await settle();
+
     expect(infoLines()).toMatch(/keywords=\[Emma\]/);
   });
 });

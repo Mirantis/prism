@@ -7,7 +7,13 @@
  * one-off, and failing open would mean answering an entire room.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { config } from '../../../config';
+import { logger } from '../../../logger';
+
+vi.mock('../../../logger', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 
 const generateText = vi.fn();
 vi.mock('ai', () => ({ generateText: (...a: unknown[]) => generateText(...a) }));
@@ -28,6 +34,12 @@ beforeEach(() => {
     providerOptions: {},
     samplingParams: { temperature: 0 },
   });
+});
+
+afterEach(() => {
+  // By hand: `clearAllMocks` and vitest's `restoreMocks` put spies back, not a plain
+  // property assigned on the mocked config object.
+  vi.mocked(config).meetingTranscriptLogging = 'off';
 });
 
 describe('classifyAddressed', () => {
@@ -117,6 +129,56 @@ describe('classifyAddressed', () => {
     // wider cap measured ~700ms slower per call. Enough for the verdict plus a few
     // words, not enough to fund an explanation.
     expect(call.maxOutputTokens).toBeLessThanOrEqual(12);
+  });
+
+  it('hands the failure to the logger whole, rather than flattening it into text', async () => {
+    // The failure is an SDK error carrying the request it was made from — which is
+    // this prompt plus the sentence someone said. Passed as `err` it goes through the
+    // global serializer that drops those fields; interpolated into the message string
+    // it would bypass the serializer entirely, so the shape of this call is the fix.
+    const failure = new Error('bedrock unavailable');
+    generateText.mockRejectedValue(failure);
+
+    await classifyAddressed({ transcript: 'add apples', agentName: 'Prism', stage: 'final' });
+
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      { err: failure },
+      expect.stringContaining('[Meeting:Gate]'),
+    );
+  });
+
+  it("leaves the model's own words off the line unless they were asked for", async () => {
+    // Its clearest refusals name people — "NO, the speaker addresses Isaac" — so the
+    // reasoning leaked attendee names on the same terms as the transcript, and is
+    // gated on the same setting. The verdict, the stage and the elapsed time are
+    // written either way: that time is silence in a room, and the one number worth
+    // reading back from production.
+    generateText.mockResolvedValue({ text: 'NO, the speaker addresses Isaac' });
+    await classifyAddressed({ transcript: 'Isaac, can you look?', agentName: 'Prism', stage: 'final' });
+
+    const line = String(vi.mocked(logger.info).mock.calls.at(-1)?.[0]);
+    expect(line).not.toContain('Isaac');
+    expect(line).toContain('addressed=false');
+    expect(line).toMatch(/final, \d+ms/);
+
+    // `redacted` reduces the sentence to a digest, so writing the model's prose about
+    // that same sentence would hand back in full what the mode exists to withhold.
+    // This is the one setting where the two halves of a verdict line disagree.
+    vi.mocked(config).meetingTranscriptLogging = 'redacted';
+    await classifyAddressed({ transcript: 'Isaac, can you look?', agentName: 'Prism', stage: 'final' });
+
+    const redactedLine = String(vi.mocked(logger.info).mock.calls.at(-1)?.[0]);
+    expect(redactedLine).not.toContain('Isaac');
+    expect(redactedLine).toContain('addressed=false');
+
+    vi.mocked(config).meetingTranscriptLogging = 'full';
+    await classifyAddressed({ transcript: 'Isaac, can you look?', agentName: 'Prism', stage: 'final' });
+
+    // Eight output tokens is the cheapest explanation of a verdict there is, and by
+    // this point the sentence itself is already being written down.
+    expect(String(vi.mocked(logger.info).mock.calls.at(-1)?.[0])).toContain(
+      'NO, the speaker addresses Isaac',
+    );
   });
 
   it('keeps every agent name out of the system prompt', async () => {
