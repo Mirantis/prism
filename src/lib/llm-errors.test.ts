@@ -267,12 +267,18 @@ describe('buildErrorStep', () => {
     expect(step.error).toEqual({ type: 'generic', detail: null });
   });
 
-  it('logs the error message and responseBody on failure', () => {
+  it('hands the failure to the logger as an error, not as text', () => {
     vi.mocked(logger.error).mockClear();
-    buildErrorStep(Object.assign(new Error('boom'), { responseBody: '{"x":1}' }));
+    const failure = Object.assign(new Error('boom'), { responseBody: '{"x":1}' });
+    buildErrorStep(failure);
 
-    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('boom'));
-    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('{"x":1}'));
+    // This used to log `responseBody` interpolated into a string — the one field
+    // guaranteed to quote back what was sent, and a template string bypasses the
+    // redacting serializer entirely. Passed as `err`, the serializer decides.
+    expect(logger.error).toHaveBeenCalledWith({ err: failure }, 'Invocation failed');
+    for (const [first] of vi.mocked(logger.error).mock.calls) {
+      if (typeof first === 'string') expect(first).not.toContain('{"x":1}');
+    }
   });
 });
 

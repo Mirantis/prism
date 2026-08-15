@@ -182,11 +182,10 @@ export function isContextOverflowError(error: unknown): boolean {
 export function buildErrorStep(error: unknown): InvokeStep {
   const message = error instanceof Error ? error.message : 'Unknown error';
 
-  logger.error(`Invocation failed: ${message}`);
-
-  if (error && typeof error === 'object' && 'responseBody' in error) {
-    logger.error(`Response body: ${(error as { responseBody: unknown }).responseBody}`);
-  }
+  // Handed over as `err` so the redacting serializer sees it. This used to also log
+  // `responseBody` verbatim, which is the one field guaranteed to quote back whatever
+  // was sent — including a meeting's transcript on a failed gate call.
+  logger.error({ err: error }, 'Invocation failed');
 
   // The SDK wraps retried errors — unwrap lastError to check the original
   const originalError = (error && typeof error === 'object' && 'lastError' in error)

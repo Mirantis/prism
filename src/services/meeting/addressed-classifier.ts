@@ -60,8 +60,12 @@ export const CLASSIFY_DEADLINE_MS = 6_000;
  * this one the moment it is renamed. The name arrives as data in the user message
  * instead — which also keeps user-settable text out of the system prompt, where a
  * name chosen to read as an instruction would carry more weight.
+ *
+ * Exported only so the log-redaction test can assert on the real text: this prompt
+ * travels on a failed request as `requestBodyValues`, alongside the sentence someone
+ * said, and a test that used a stand-in string would prove nothing about this one.
  */
-const SYSTEM = `
+export const SYSTEM = `
 You are given an AI assistant's name and one sentence transcribed from a live
 meeting. Did the speaker call that assistant by name?
 
