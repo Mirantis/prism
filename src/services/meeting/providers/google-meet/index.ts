@@ -539,9 +539,9 @@ export class GoogleMeetProvider implements MeetingProvider {
   /**
    * Grant/dismiss the permission and device-preview dialogs.
    *
-   * `--use-fake-ui-for-media-stream` auto-grants the browser permission prompt,
-   * but Meet has its own "allow microphone" and "continue without" panels that sit
-   * on top of the join UI.
+   * The browser grants its own permission prompt (see `browser-stack.ts`), but Meet
+   * has its own "allow microphone" and "continue without" panels that sit on top of
+   * the join UI.
    */
   private async dismissDeviceDialogs(page: Page): Promise<void> {
     // "Got it" dismisses the sign-in tooltip, which floats over the join column

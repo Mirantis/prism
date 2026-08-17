@@ -432,6 +432,18 @@ every sentence into a void costs exactly what answering it aloud costs.
 The one case it will not join at all is a meeting where Meet offers *only* to let it in
 without a microphone — see below.
 
+### The screen
+
+The agent does not share its screen. Nothing in its toolset asks to, and there is no
+setting that turns it on.
+
+Chromium used to be started with one flag that granted the microphone and also
+answered every screen-capture request — with a source that did not exist. So a capture
+attempt failed with `Could not start video source`, and Meet reported "Can't share your
+screen". The microphone grant is now its own flag, and a second one picks the virtual
+display. A capture started from the page therefore succeeds, and it captures the Xvfb
+display, which holds nothing but the agent's own browser window.
+
 ## When it doesn't work
 
 **The agent says it can't join meetings, or doesn't offer to.** The tool is only
