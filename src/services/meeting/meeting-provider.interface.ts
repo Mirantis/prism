@@ -71,6 +71,20 @@ export type JoinOutcome =
    */
   | { status: 'reauth_required' };
 
+/**
+ * What the microphone reads, after a mid-call attempt to get it live.
+ *
+ * `live` was never muted. `recovered` was muted and one click cleared it. `muted`
+ * survived the click. `unknown` could not be read.
+ *
+ * Not a boolean, because "muted" and "could not read the control" need different
+ * answers: acting on that pair demotes a healthy call every time the platform repaints
+ * its control bar. `recovered` is apart from `live` because it is the only report of a
+ * mute the runtime never sees for itself, and how often a platform mutes a participant
+ * mid-call is the number that measures this whole watch.
+ */
+export type MicState = 'live' | 'recovered' | 'muted' | 'unknown';
+
 export interface JoinOptions {
   url: string;
   /**
@@ -144,22 +158,25 @@ export interface MeetingProvider {
   join(page: Page, options: JoinOptions): Promise<JoinOutcome>;
 
   /**
-   * Try again to get the microphone live, mid-call. `true` when it is confirmed.
+   * Read the microphone mid-call, and click it live again if it is muted.
    *
-   * The runtime calls this on its existing participant poll while `micConfirmed` is
-   * false, which is what a human does when they notice they are muted: click it, and
-   * click it again later. Without it, one unlucky moment during admission — a dialog
-   * that outlived the sweep, a control bar still painting — would cost the whole
-   * meeting, and the note the user got would be true for an hour rather than for a
-   * few seconds.
+   * Asked on every participant poll for the life of the call, not only while the join
+   * is unconfirmed. A platform mutes a participant whenever it wants to — Meet does it
+   * to a new joiner, and again when the call grows — and the call reads healthy while
+   * it happens, so one reading at admission proves nothing about the next hour.
+   *
+   * Answer what the control says after the attempt: `live`, `recovered` when a mute was
+   * found and the click cleared it, `muted` when it did not, and `unknown` when the
+   * control could not be read. Never fold `unknown` into any of the others. A platform
+   * repaints its control bar, and a reading nobody took must not report a working call as
+   * muted, nor a muted one as working.
    *
    * Must not click a control it cannot read. The toggle is a *toggle*, so acting on an
-   * uncertain reading is how a retry mutes a microphone that had just come on; "I
-   * don't know" has to mean "leave it alone and answer false".
+   * uncertain reading is how a retry mutes a microphone that had just come on.
    *
-   * Optional: a platform that never mutes a joiner needs none of this.
+   * Optional: a platform that never mutes a participant needs none of this.
    */
-  ensureUnmuted?(page: Page): Promise<boolean>;
+  ensureUnmuted?(page: Page): Promise<MicState>;
 
   /**
    * Names of the people in the call, best effort, empty when unavailable.

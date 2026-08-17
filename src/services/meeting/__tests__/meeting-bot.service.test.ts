@@ -199,7 +199,9 @@ beforeEach(() => {
   providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   providerLeave.mockResolvedValue(undefined);
   providerParticipantCount.mockResolvedValue(3);
-  providerEnsureUnmuted.mockResolvedValue(false);
+  // A healthy call, which is what the mid-call watcher reads on nearly every poll.
+  // Cases about a stuck or a lost microphone say `muted` or `unknown` themselves.
+  providerEnsureUnmuted.mockResolvedValue('live');
   conversationOptions = {};
   service = new MeetingBotService();
 });
@@ -444,7 +446,7 @@ describe('a call the room cannot hear the agent in', () => {
 
       expect(conversationSpeak).not.toHaveBeenCalled();
 
-      providerEnsureUnmuted.mockResolvedValue(true);
+      providerEnsureUnmuted.mockResolvedValue('live');
       await vi.advanceTimersByTimeAsync(10_000);
 
       expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
@@ -471,7 +473,7 @@ describe('a call the room cannot hear the agent in', () => {
     providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     audioWaitForMicCapture.mockResolvedValue(false);
     audioIsMicCaptured.mockResolvedValue(false);
-    providerEnsureUnmuted.mockResolvedValue(true);
+    providerEnsureUnmuted.mockResolvedValue('live');
     vi.useFakeTimers();
     try {
       await service.join(input);
@@ -498,7 +500,7 @@ describe('a call the room cannot hear the agent in', () => {
     providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     audioWaitForMicCapture.mockResolvedValue(false);
     audioIsMicCaptured.mockResolvedValue(false);
-    providerEnsureUnmuted.mockResolvedValue(true);
+    providerEnsureUnmuted.mockResolvedValue('live');
     vi.useFakeTimers();
     try {
       await service.join(input);
@@ -528,7 +530,7 @@ describe('a call the room cannot hear the agent in', () => {
       // — a dialog sweep on a stuck control is exactly this slow.
       await new Promise((r) => setTimeout(r, 25_000));
       inFlight -= 1;
-      return false;
+      return 'muted';
     });
     vi.useFakeTimers();
     try {
@@ -542,35 +544,184 @@ describe('a call the room cannot hear the agent in', () => {
     }
   });
 
-  it('stops retrying once the room can hear it', async () => {
-    // A toggle toggles, so a retry that keeps firing after it has succeeded is not
-    // harmless persistence — the next click would mute what the last one fixed.
+  it('stops clicking once the room can hear it, but keeps reading the control', async () => {
+    // A toggle toggles, so a click that keeps firing after the microphone came up is
+    // not harmless persistence — the next one would mute what the last one fixed. The
+    // reading is a different matter and never stops: it costs nothing, and it is the
+    // only way to see Meet mute the agent again later.
     audioWaitForMicCapture.mockResolvedValue(false);
-    providerEnsureUnmuted.mockResolvedValue(true);
+    let muted = true;
+    let clicks = 0;
+    providerEnsureUnmuted.mockImplementation(async () => {
+      if (muted) {
+        clicks += 1;
+        muted = false;
+      }
+      return 'live';
+    });
     vi.useFakeTimers();
     try {
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10);
       await vi.advanceTimersByTimeAsync(10_000);
-      expect(providerEnsureUnmuted).toHaveBeenCalledTimes(1);
+      expect(clicks).toBe(1);
 
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(providerEnsureUnmuted).toHaveBeenCalledTimes(1);
+      expect(clicks).toBe(1);
+      expect(providerEnsureUnmuted.mock.calls.length).toBeGreaterThan(1);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('never asks the provider to unmute a call it is already audible in', async () => {
-    // The common case: the join confirmed the microphone, so the poll has no business
-    // clicking at the control bar every ten seconds.
+  it('unmutes a call it was already audible in, once the control reads muted', async () => {
+    // The regression, and the assertion here used to say the opposite: the watcher was
+    // gated on the join's unconfirmed microphone, so a healthy call was never watched
+    // at all. Meet mutes a participant again mid-call — a 10-person call did it to a
+    // live agent — and nothing else in the runtime can see it happen.
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(conversationSetAudible).toHaveBeenCalledWith(true);
+
+      providerEnsureUnmuted.mockResolvedValue('muted');
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(providerEnsureUnmuted).toHaveBeenCalled();
+      // The room cannot hear it, so it must stop answering as though it could.
+      expect(conversationSetAudible).toHaveBeenLastCalledWith(false);
+      expect(publish).toHaveBeenCalledWith(
+        'u1',
+        't1',
+        expect.stringMatching(/muted me in the/i),
+        'SYSTEM',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tells the user about a mid-call mute once, not once every ten seconds', async () => {
+    providerEnsureUnmuted.mockResolvedValue('muted');
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const notes = publish.mock.calls.filter((c) => /muted me in the/i.test(String(c[2])));
+      expect(notes).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not greet the room again when a mid-call mute clears', async () => {
+    // The room has already met the agent. A second greeting reads as a second arrival,
+    // and it spends a response on saying nothing new.
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      const greetings = () =>
+        conversationNotify.mock.calls.filter((c) => /just been admitted/i.test(String(c[0])));
+      expect(greetings()).toHaveLength(1);
+
+      providerEnsureUnmuted.mockResolvedValue('muted');
+      await vi.advanceTimersByTimeAsync(10_000);
+      providerEnsureUnmuted.mockResolvedValue('recovered');
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      // Audible again, and the model is told so — but the room is not greeted twice.
+      expect(conversationSetAudible).toHaveBeenLastCalledWith(true);
+      expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/microphone works again/i));
+      expect(greetings()).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says nothing about a mid-call mute its own click clears', async () => {
+    // The common case, and the quiet one: Meet mutes the agent, the next poll clicks it
+    // live again inside ten seconds, and the room hears one clipped sentence at most.
+    // Worth counting, not worth a message.
+    providerEnsureUnmuted.mockResolvedValue('recovered');
     vi.useFakeTimers();
     try {
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10);
       await vi.advanceTimersByTimeAsync(30_000);
 
-      expect(providerEnsureUnmuted).not.toHaveBeenCalled();
+      expect(conversationSetAudible).not.toHaveBeenCalledWith(false);
+      expect(publish).not.toHaveBeenCalledWith(
+        'u1',
+        't1',
+        expect.stringMatching(/muted me in the|microphone is working now/i),
+        'SYSTEM',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tells the user nothing about a mute on a call the room never heard', async () => {
+    // The join already said the room cannot hear the agent. Reporting the same thing
+    // every ten seconds from the poll adds nothing.
+    providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+    providerEnsureUnmuted.mockResolvedValue('muted');
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(publish).not.toHaveBeenCalledWith(
+        'u1',
+        't1',
+        expect.stringMatching(/muted me in the/i),
+        'SYSTEM',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('greets the room in the call after the one it greeted', async () => {
+    // The greeting is remembered for the life of a call, so the memory has to go with
+    // the call. A second meeting joined by a silent agent is the same failure over.
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      await service.leave();
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+
+      const greetings = conversationNotify.mock.calls.filter((c) => /just been admitted/i.test(String(c[0])));
+      expect(greetings).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('treats a control it cannot read as no news, not as a mute', async () => {
+    // `unknown` is the reading a repaint or a rotted selector gives. Folding it into
+    // "muted" would demote every healthy call the moment Meet reshapes its control bar.
+    providerEnsureUnmuted.mockResolvedValue('unknown');
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(conversationSetAudible).not.toHaveBeenCalledWith(false);
+      expect(publish).not.toHaveBeenCalledWith(
+        'u1',
+        't1',
+        expect.stringMatching(/muted me in the/i),
+        'SYSTEM',
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -1040,6 +1191,61 @@ describe('telemetry', () => {
         addressed_matches: '2',
         mode_switches: '1',
       }),
+    );
+  });
+
+  it('records that the platform muted the agent again mid-call', async () => {
+    // The measurement for the bug above: a call can start audible and go silent, and
+    // `mic_confirmed` on the join event says nothing about that. A fleet where this
+    // reads true often is a fleet of meetings the agent half attended.
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      providerEnsureUnmuted.mockResolvedValue('muted');
+      await vi.advanceTimersByTimeAsync(10_000);
+      await service.leave();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(trackEvent).toHaveBeenCalledWith(
+      'meeting ended',
+      'u1',
+      expect.objectContaining({ remuted_mid_call: 'true' }),
+    );
+  });
+
+  it('records a mid-call mute that its own click cleared', async () => {
+    // The number would be close to useless without this: the click usually works, so
+    // counting only the mutes that defeat it would report almost none of them.
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      providerEnsureUnmuted.mockResolvedValue('recovered');
+      await vi.advanceTimersByTimeAsync(10_000);
+      await service.leave();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(trackEvent).toHaveBeenCalledWith(
+      'meeting ended',
+      'u1',
+      expect.objectContaining({ remuted_mid_call: 'true' }),
+    );
+  });
+
+  it('reports a call that stayed audible as never re-muted', async () => {
+    await service.join(input);
+    await settle();
+    await service.leave();
+
+    expect(trackEvent).toHaveBeenCalledWith(
+      'meeting ended',
+      'u1',
+      expect.objectContaining({ remuted_mid_call: 'false' }),
     );
   });
 

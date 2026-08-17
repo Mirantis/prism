@@ -30,7 +30,7 @@ import { VoiceConversation, type VoiceConversationStats } from './voice-conversa
 import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet';
-import type { JoinStep, MeetingProvider } from './meeting-provider.interface';
+import type { JoinStep, MeetingProvider, MicState } from './meeting-provider.interface';
 import type { Page } from 'playwright-core';
 
 /**
@@ -161,6 +161,18 @@ export class MeetingBotService {
    * because it decides whether the agent bothers speaking at all.
    */
   private micConfirmed = false;
+  /** Whether the room was ever told the agent is there. */
+  private greeted = false;
+  /**
+   * What the user was last told about the microphone in this call.
+   *
+   * One note for each of the two things worth hearing, and no more: a mute that lasts
+   * an hour must not post an hour of notes, and a call that keeps flapping must not
+   * report a recovery from a mute the user was never told about.
+   */
+  private micNotice: 'nothing' | 'muted' | 'live' = 'nothing';
+  /** Whether Meet muted the agent after admission; carried to `meeting ended`. */
+  private remutedMidCall = false;
   /** Whether a participant poll is still running; see `checkParticipants`. */
   private pollInFlight = false;
   /** Step a failed join reached, carried to the `meeting ended` event. */
@@ -641,6 +653,7 @@ export class MeetingBotService {
    * room isn't joined by a silent participant".
    */
   private greetTheRoom(displayName: string): void {
+    this.greeted = true;
     this.conversation?.notify(
       `You have just been admitted to the ${displayName} call. ` +
         `Greet the participants in one short sentence and say what you can help with.`,
@@ -649,13 +662,14 @@ export class MeetingBotService {
   }
 
   /**
-   * Try again to get the microphone live, on the poll that is already running.
+   * Keep the microphone live, on the poll that is already running.
    *
-   * The analogue of a human noticing the mute icon and clicking it. Without this, one
-   * unlucky moment during admission — a dialog that outlived the sweep, a control bar
-   * mid-paint — costs the entire meeting; with it, the usual cost is one poll interval
-   * of silence. The greeting waits for this, so a recovered call is introduced properly
-   * rather than sliding in mid-conversation.
+   * The analogue of a human noticing the mute icon and clicking it. Asked on every poll,
+   * for the whole call, including on a call that is audible right now. Watching only
+   * while the join was unconfirmed meant a healthy call was never watched at all.
+   *
+   * `unknown` is a no-op: a control that could not be read is a repaint or a rotted
+   * selector, not a mute, and treating it as one would demote every healthy call.
    */
   private async retryUnmute(epoch: number): Promise<void> {
     const page = this.page;
@@ -663,24 +677,33 @@ export class MeetingBotService {
     const audio = this.audio;
     if (!page || !provider?.ensureUnmuted) return;
 
-    let live: boolean;
+    let mic: MicState;
     try {
-      live = await provider.ensureUnmuted(page);
+      mic = await provider.ensureUnmuted(page);
     } catch (err) {
       // The page can go out from under this — a teardown closes it mid-click. Never a
       // reason to disturb a call, and the next poll will ask again if there is one.
       logger.debug(`[Meeting] Unmute retry failed: ${String(err)}`);
       return;
     }
-    if (!live || this.epoch !== epoch || this.state !== 'in_call') return;
+    if (mic === 'unknown' || this.epoch !== epoch || this.state !== 'in_call') return;
 
-    // Both halves, every time — not just the one the provider can see. The join decides
-    // audibility from the meeting's toggle *and* the capture device, and those fail
-    // independently: a call that got in with a live toggle over a device Chromium never
-    // opened would otherwise be declared recovered by the very first retry, on the
-    // strength of re-reading the half that was never broken. That would stand the whole
-    // arrangement on its head — it would silence the warning, disarm the retry, restore
-    // `open` mode and greet the room, for a call that still cannot be heard.
+    if (mic === 'muted') {
+      await this.reportMuted(provider.displayName);
+      return;
+    }
+    // A mute the click cleared. Invisible to everything else here — the call is audible
+    // again by the time this returns — so it is counted where it is reported.
+    if (mic === 'recovered' && this.micConfirmed) this.remutedMidCall = true;
+
+    // Live, and the call already knew it. Nothing to announce.
+    if (this.micConfirmed) return;
+
+    // Both halves before calling a call recovered — not just the one the provider can
+    // see. The join decides audibility from the meeting's toggle *and* the capture
+    // device, and those fail independently: a call that got in with a live toggle over a
+    // device Chromium never opened would otherwise be declared recovered on the strength
+    // of re-reading the half that was never broken.
     if (!(await audio?.isMicCaptured())) return;
 
     // Re-checked after the note as well as before it: posting is a database write and a
@@ -691,9 +714,45 @@ export class MeetingBotService {
     logger.info('[Meeting] Microphone is live after a mid-call retry — the room can hear me now');
     this.micConfirmed = true;
     this.conversation?.setAudible(true);
-    await this.notifyThread(`My microphone is working now — the ${provider.displayName} call can hear me.`);
-    if (this.epoch !== epoch || this.state !== 'in_call') return;
+    if (this.micNotice !== 'live') {
+      this.micNotice = 'live';
+      await this.notifyThread(`My microphone is working now — the ${provider.displayName} call can hear me.`);
+      if (this.epoch !== epoch || this.state !== 'in_call') return;
+    }
+    // A room that has already met the agent is not greeted again.
+    if (this.greeted) {
+      this.conversation?.notify(`Your microphone works again, so the ${provider.displayName} call can hear you.`);
+      return;
+    }
     this.greetTheRoom(provider.displayName);
+  }
+
+  /**
+   * The microphone is muted and one click did not clear it.
+   *
+   * Runs on the first such reading only: the poll comes round every ten seconds, and a
+   * mute that lasts an hour must not post an hour of notes. Later readings find the call
+   * already marked inaudible and stop at the first line.
+   */
+  private async reportMuted(displayName: string): Promise<void> {
+    if (!this.micConfirmed) return;
+
+    logger.warn('[Meeting] The microphone went muted mid-call and one click did not clear it');
+    this.micConfirmed = false;
+    this.remutedMidCall = true;
+    this.conversation?.setAudible(false);
+    this.conversation?.notify(
+      `Your microphone is muted in the ${displayName} call, so the participants cannot hear ` +
+        `you. Don't try to repair it — it is being retried for you. Keep listening, and act ` +
+        `on what you hear.`,
+    );
+
+    if (this.micNotice === 'muted') return;
+    this.micNotice = 'muted';
+    await this.notifyThread(
+      `Something muted me in the ${displayName} call and my own click did not clear it, so ` +
+        `the room may not be hearing me now. I can still hear the meeting, and I keep trying.`,
+    );
   }
 
   private async checkParticipants(): Promise<void> {
@@ -719,10 +778,13 @@ export class MeetingBotService {
 
   /** One poll: get the microphone live if it isn't, then read the room. */
   private async pollOnce(): Promise<void> {
-    // The microphone first, because it is the more urgent of the two: an agent nobody
-    // can hear is not really taking part.
-    if (!this.micConfirmed) await this.retryUnmute(this.epoch);
-    if (this.state !== 'in_call' || !this.page || !this.provider) return;
+    const epoch = this.epoch;
+    // The microphone first, because it is the more urgent of the two: an agent nobody can
+    // hear is not really taking part.
+    await this.retryUnmute(epoch);
+    // The poll can outlive its own call — the provider is parked on a page a teardown is
+    // about to close — and a stale reading must not count against the call that follows.
+    if (this.epoch !== epoch || this.state !== 'in_call' || !this.page || !this.provider) return;
 
     let count: number | null;
     try {
@@ -930,6 +992,10 @@ export class MeetingBotService {
         gate_local_yes: String(stats?.gateLocalYes ?? 0),
         gate_model_calls: String(stats?.gateModelCalls ?? 0),
         gate_local_share: String(localGateShare(stats)),
+        // Whether Meet muted the agent after admission, whether or not the click cleared
+        // it. How often a call that started audible goes silent is the failure the poll
+        // watches for — and the one that hid behind a healthy-looking call before.
+        remuted_mid_call: String(this.remutedMidCall),
       });
     }
 
@@ -948,6 +1014,9 @@ export class MeetingBotService {
     // "the room can hear me" the same way this one did, and inheriting a `true` would
     // skip the retry for a meeting that needed it.
     this.micConfirmed = false;
+    this.greeted = false;
+    this.micNotice = 'nothing';
+    this.remutedMidCall = false;
     // A poll still in flight belongs to the call being torn down; its own epoch check
     // stops it acting, but leaving this set would deadlock the next call's polling.
     this.pollInFlight = false;

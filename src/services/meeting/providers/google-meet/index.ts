@@ -24,7 +24,7 @@ import type { Locator, Page } from 'playwright-core';
 import { config } from '../../../../config';
 import { logger } from '../../../../logger';
 import { isAuthenticated, signInFailureReason, signInToGoogle } from './sign-in';
-import type { JoinOptions, JoinOutcome, MeetingProvider } from '../../meeting-provider.interface';
+import type { JoinOptions, JoinOutcome, MeetingProvider, MicState } from '../../meeting-provider.interface';
 
 /**
  * Wait for a locator to actually be visible, returning false instead of throwing.
@@ -661,12 +661,22 @@ export class GoogleMeetProvider implements MeetingProvider {
    * reason — an attribute Meet renames is not permission to assume the best.
    */
   private async micMuted(page: Page, timeoutMs = MIC_TOGGLE_TIMEOUT_MS): Promise<boolean | null> {
+    const muted = await this.readMicToggle(page, timeoutMs);
+    if (muted === null) return null;
+    return muted !== 'false';
+  }
+
+  /**
+   * Read the `data-is-muted` attribute. `null` means the toggle could not be read.
+   *
+   * The raw value, so a caller that must not act on a value Meet has renamed can see
+   * that it did so.
+   */
+  private async readMicToggle(page: Page, timeoutMs: number): Promise<string | null> {
     const toggle = page.locator(MIC_TOGGLE_SELECTOR).first();
     if (!(await appears(toggle, timeoutMs))) return null;
     try {
-      const muted = await toggle.getAttribute('data-is-muted');
-      if (muted === null) return null;
-      return muted !== 'false';
+      return await toggle.getAttribute('data-is-muted');
     } catch {
       return null;
     }
@@ -742,33 +752,53 @@ export class GoogleMeetProvider implements MeetingProvider {
   }
 
   /**
-   * Mid-call retry, for a microphone the join could not get live.
+   * Read the microphone mid-call, and click it live again if Meet muted it.
    *
-   * Deliberately thinner than `ensureMicOn`: one reading, and a click only if that
-   * reading says muted in as many words. A `null` — the control not found — returns
-   * false without touching anything, because this runs every ten seconds against a live
-   * call, and a selector that has rotted would otherwise become a clicker loose on
-   * Meet's control bar. The one-shot patience is short for the same reason: the call is
-   * already up, so a control that isn't there now isn't about to paint.
+   * Thinner than `ensureMicOn`: one reading, and one click. The reading is strict —
+   * only a literal `"true"` earns the click. `ensureMicOn` treats a value it does not
+   * know as muted, which is the safe reading for two attempts at admission; here it
+   * would arm a click on a live call for the whole meeting, and the control is a
+   * toggle, so a value Meet renames would mute the agent every ten seconds.
+   *
+   * The patience is short: the call is already up, so a control that is not there now
+   * is not about to paint.
+   *
+   * Every branch logs. Success was silent before, and so was a mute that lasted the
+   * whole meeting.
    */
-  async ensureUnmuted(page: Page): Promise<boolean> {
-    const muted = await this.micMuted(page, MIC_RECHECK_MS);
-    if (muted === null) return false;
-    if (!muted) return true;
+  async ensureUnmuted(page: Page): Promise<MicState> {
+    const before = await this.readMicToggle(page, MIC_RECHECK_MS);
+    if (before === 'false') return 'live';
+    if (before !== 'true') {
+      logger.debug(`[Meeting] The microphone toggle reads ${String(before)} on this poll — leaving it alone`);
+      return 'unknown';
+    }
 
+    logger.warn('[Meeting] The microphone reads muted mid-call — clicking it live again');
     await this.dismissBlockingDialogs(page);
     try {
       await page.locator(MIC_TOGGLE_SELECTOR).first().click({ timeout: MIC_CLICK_TIMEOUT_MS });
-    } catch {
-      // Still covered, or gone. Either way there is another poll along shortly.
-      return false;
+    } catch (err) {
+      logger.info(
+        `[Meeting] Mid-call unmute click did not land: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 'muted';
     }
 
     await page.waitForTimeout(MIC_SETTLE_MS);
-    // Only a confirmed read counts. An unreadable one must not be reported as success
-    // — that is the reading a rotted selector gives, and it would silence the retry and
-    // the warning together.
-    return (await this.micMuted(page, MIC_RECHECK_MS)) === false;
+    const after = await this.micMuted(page, MIC_RECHECK_MS);
+    if (after === null) {
+      // Not reported as either state. The click may well have worked, and calling it
+      // muted would spend the next poll's attempt on a microphone that is already live.
+      logger.debug('[Meeting] Could not read the microphone toggle after the mid-call click');
+      return 'unknown';
+    }
+    if (!after) {
+      logger.info('[Meeting] The microphone is live again after a mid-call click');
+      return 'recovered';
+    }
+    logger.warn('[Meeting] The microphone still reads muted after the mid-call click');
+    return 'muted';
   }
 
   /**

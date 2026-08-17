@@ -44,13 +44,14 @@ interface FakePageOptions {
    *
    * `on` — live, `off` — muted (what Meet does to a new joiner once a call is past
    * a handful of people), `absent` — no toggle in the DOM at all, i.e. the
-   * selector has rotted.
+   * selector has rotted, `renamed` — a toggle whose `data-is-muted` carries a value
+   * this code has never seen.
    *
    * Defaults to `on` so the join-state-machine cases, which are about admission
    * and rejection rather than audio, stay about that. The microphone cases below
    * opt in explicitly, so the default cannot hide a regression in them.
    */
-  mic?: 'on' | 'off' | 'absent';
+  mic?: 'on' | 'off' | 'absent' | 'renamed';
   /** Whether a modal dialog is on screen, scrim and all. */
   dialog?: boolean;
   /**
@@ -76,7 +77,7 @@ interface FakeState {
   visibleButtons: Set<string>;
   visibleSelectors: Set<string>;
   attributes: Record<string, string | null>;
-  mic: 'on' | 'off' | 'absent';
+  mic: 'on' | 'off' | 'absent' | 'renamed';
   dialog: boolean;
 }
 
@@ -141,6 +142,7 @@ function fakePage(options: FakePageOptions) {
       // Derived rather than stored, so `state.mic` is the single place a test (or
       // an `onClick`) has to change to move the microphone.
       if (k === MIC_TOGGLE_SELECTOR && attr === 'data-is-muted' && state.mic !== 'absent') {
+        if (state.mic === 'renamed') return 'muted';
         return state.mic === 'off' ? 'true' : 'false';
       }
       return state.attributes[`${k}|${attr}`] ?? null;
@@ -874,6 +876,109 @@ describe('the microphone', () => {
     // And it still reports the microphone as unconfirmed rather than pretending the
     // click it never landed had worked.
     expect(outcome).toMatchObject({ status: 'admitted', micConfirmed: false });
+  });
+
+  it('reads muted, clicks once, and confirms — mid-call', async () => {
+    // Meet mutes a participant again after admission, so this reading is asked for on
+    // every poll of a live call, not only on a join that arrived unconfirmed.
+    const harness = inCall({
+      mic: 'off',
+      onClick: (key, state) => {
+        if (key === MIC_TOGGLE_SELECTOR) state.mic = 'on';
+      },
+    });
+
+    expect(await provider.ensureUnmuted(harness.page)).toBe('recovered');
+    expect(harness.clicks.filter((c) => c === MIC_TOGGLE_SELECTOR)).toHaveLength(1);
+  });
+
+  it('leaves a live microphone alone mid-call', async () => {
+    // The common reading, and the one that runs every ten seconds for an hour. Clicking
+    // here would mute the call it is watching over.
+    const harness = inCall({ mic: 'on' });
+
+    expect(await provider.ensureUnmuted(harness.page)).toBe('live');
+    expect(harness.clicks).toEqual([]);
+  });
+
+  it('reports a mid-call mute one click could not clear', async () => {
+    // Said in as many words, because this is what the runtime acts on: it stops the
+    // agent answering into a room that cannot hear it, and tells the user once.
+    const harness = inCall({ mic: 'off' });
+
+    expect(await provider.ensureUnmuted(harness.page)).toBe('muted');
+    // One click per poll, not the join's two attempts: the next poll is ten seconds away.
+    expect(harness.clicks.filter((c) => c === MIC_TOGGLE_SELECTOR)).toHaveLength(1);
+  });
+
+  it('answers unknown when there is no toggle to read, and clicks nothing', async () => {
+    // Selector rot, mid-call. `muted` here would demote a healthy call every poll, and
+    // `live` would hide a real mute — so the third answer exists, and it does nothing.
+    const harness = inCall({ mic: 'absent' });
+
+    expect(await provider.ensureUnmuted(harness.page)).toBe('unknown');
+    expect(harness.clicks).toEqual([]);
+  });
+
+  it('clicks nothing mid-call when the toggle reads a value it does not know', async () => {
+    // The control is a toggle, and this reading runs for the whole call. A value Meet
+    // renames must not become a click every ten seconds, which would mute the agent on
+    // every other poll of a call that was working.
+    const harness = inCall({ mic: 'renamed' });
+
+    expect(await provider.ensureUnmuted(harness.page)).toBe('unknown');
+    expect(harness.clicks).toEqual([]);
+  });
+
+  it('answers unknown when the read after the click comes back empty', async () => {
+    // The click may well have worked. Calling it muted spends the next poll's click on a
+    // microphone that is already live, and a toggle turns that into a mute.
+    const harness = inCall({
+      mic: 'off',
+      onClick: (key, state) => {
+        if (key === MIC_TOGGLE_SELECTOR) state.mic = 'on';
+      },
+      // 1 is the reading that finds it muted; 2 is the confirmation after the click.
+      onMicRead: (reads, state) => {
+        if (reads === 2) state.mic = 'absent';
+      },
+    });
+
+    expect(await provider.ensureUnmuted(harness.page)).toBe('unknown');
+  });
+
+  it('clears a dialog off the controls before it clicks, mid-call too', async () => {
+    const harness = inCall({
+      mic: 'off',
+      dialog: true,
+      visibleButtons: ['Got it'],
+      onClick: (key, state) => {
+        if (key === MIC_TOGGLE_SELECTOR) {
+          if (state.dialog) throw new Error('element intercepts pointer events');
+          state.mic = 'on';
+        }
+        if (key === 'Got it') state.dialog = false;
+      },
+    });
+
+    expect(await provider.ensureUnmuted(harness.page)).toBe('recovered');
+    expect(harness.clicks.indexOf(MIC_TOGGLE_SELECTOR)).toBeGreaterThan(
+      harness.clicks.indexOf('Got it'),
+    );
+  });
+
+  it('reports a mute whose click the scrim swallowed', async () => {
+    // A dialog that outlived the sweep. There is another poll along in ten seconds, so
+    // this reports what it knows rather than clicking again now.
+    const harness = inCall({
+      mic: 'off',
+      dialog: true,
+      onClick: (key) => {
+        if (key === MIC_TOGGLE_SELECTOR) throw new Error('element intercepts pointer events');
+      },
+    });
+
+    expect(await provider.ensureUnmuted(harness.page)).toBe('muted');
   });
 
   it('names the microphone, not the page, when Meet only offers to join without one', async () => {
