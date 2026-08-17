@@ -419,11 +419,19 @@ The agent unmutes itself on the way in — the same click you would make — and
 checks two things: that Meet's own microphone control reads live, and that the browser
 really opened the virtual capture device.
 
-If it cannot confirm both, **it stays in the call and tells you.** You get a message in
-the conversation saying it may not be audible and which half failed, and it keeps
-trying to unmute itself, once every ten seconds, for as long as the call lasts. When
-that works it says so, and introduces itself to the room then — a greeting nobody could
-hear was never a greeting.
+Meet also mutes a participant **again, mid-call**, so one check at the door is not
+enough. The agent reads its own microphone control every ten seconds for the whole
+call, whether or not the join went well, and clicks it live again when it reads muted.
+Sometimes it cannot take that reading, because Meet repaints its control bar or changes
+it. Such a reading counts as no news. It is written to the log, and nothing else
+happens: the control is a toggle, so a click on a reading nobody trusts is how a working
+microphone gets muted.
+
+If it cannot confirm both checks, **it stays in the call and tells you.** You get a
+message in the conversation saying it may not be audible and which half failed. When
+the microphone comes up it says so, and introduces itself to the room then — a greeting
+nobody could hear was never a greeting. A call that goes muted later gets one message
+too, and no greeting when it recovers, because the room has already met the agent.
 
 It stays rather than leaving because the microphone is only half of what it is doing
 there. It hears the room through a different device entirely, so an agent that cannot
@@ -501,7 +509,9 @@ the join-button hunt and the admission wait, and a failed attempt tags its
 `meeting ended` telemetry event with `fail_step` — one of `page_load`, `lobby`,
 `join_button`, `admission` or `microphone`. A successful join carries
 `muted_on_entry` (whether Meet had muted the agent) and `mic_confirmed` (whether the
-room can hear it) on `meeting joined`.
+room can hear it) on `meeting joined`, and every call carries `remuted_mid_call` on
+`meeting ended` — whether Meet muted the agent after admission, whether or not the
+agent's own click cleared it.
 
 **It says it's in the call but couldn't confirm its microphone.** It is still in the
 meeting, still listening, and still retrying the unmute every ten seconds — so the
@@ -512,11 +522,11 @@ or a Meet UI change that has broken the selector) or `bot_mic is still not being
 captured` (the browser never opened the device, so look for `parec`/`pacat` warnings
 and check `/dev/shm`).
 
-Watch `mic_confirmed` on the `meeting joined` event if you run more than one of these.
-The whole bug behind this behavior was a silent agent nobody measured, and a fleet
-where that property turns false everywhere is the same outage wearing a different hat —
-a rotted selector, degrading quietly into meetings the agent attends but cannot speak
-in.
+Watch `mic_confirmed` on `meeting joined` and `remuted_mid_call` on `meeting ended` if
+you run more than one of these. The whole bug behind this behavior was a silent agent
+nobody measured, and a fleet where either property turns bad everywhere is the same
+outage wearing a different hat — a rotted selector, degrading quietly into meetings the
+agent attends but cannot speak in.
 
 **It says Meet only offered to let it in without a microphone.** Meet paints that
 offer when it can't find a capture device for the tab at all, and the panel carrying
@@ -525,13 +535,28 @@ available", which pointed at the wrong thing entirely. Fix the container's audio
 devices (the same `parec`/`pacat` and `/dev/shm` checks as above); no browser-side
 setting will help.
 
-**It's in the call but silent, and said nothing about its microphone.** Then both
-checks passed and the fault is further down: the audio devices are the usual cause, so
-check the runtime log for `parec`/`pacat` warnings. A container needs enough `/dev/shm`
-for Chromium — the runtime already passes `--disable-dev-shm-usage`, but a heavily
-constrained container can still starve it. Note that the agent no longer accepts Meet's
-"Continue without microphone" offer: taking it joined the call with no capture device
-at all, which nothing later could undo.
+**It's in the call but silent, and said nothing about its microphone.** The usual cause
+is Meet muting the agent after it was admitted, not the audio devices. Meet does this
+on its own, most often as a call grows, and it used to be invisible: the join had
+already confirmed the microphone, so nothing looked at the control again for the rest
+of the meeting. The agent now re-reads it every ten seconds and clicks it live again,
+and it says so in the log — `The microphone reads muted mid-call` and then either
+`The microphone is live again after a mid-call click` or `The microphone still reads
+muted after the mid-call click`. Either way the `meeting ended` event carries
+`remuted_mid_call=true`. A mute that one click cannot clear also gets one message in
+the conversation; a mute the click clears is only logged and counted, because the room
+lost a few seconds at most.
+
+Triage it from `muted_on_entry` on the `meeting joined` event. `false` means Meet let
+the agent in unmuted and muted it later. `true` means the join's own click worked, and
+something muted the agent after that. Either way the agent's microphone is the subject,
+not the container's audio.
+
+Only after that, look further down: the audio devices, with `parec`/`pacat` warnings in
+the runtime log. A container needs enough `/dev/shm` for Chromium — the runtime already
+passes `--disable-dev-shm-usage`, but a heavily constrained container can still starve
+it. Note that the agent never accepts Meet's "Continue without microphone" offer:
+taking it joined the call with no capture device at all, which nothing later could undo.
 
 **It joined but hears nothing.** Confirm the other participants aren't muted, then
 check that the meeting is actually sending audio to the browser (Meet occasionally
