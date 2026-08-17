@@ -279,7 +279,6 @@ describe('answering a request judged early', () => {
 });
 
 describe('recording what each verdict was reached on', () => {
-  /** The sentence used throughout — 26 characters, which `redacted` reports. */
   const UTTERANCE = 'Emma, can you take a look?';
 
   afterEach(() => {
@@ -313,8 +312,7 @@ describe('recording what each verdict was reached on', () => {
     expect(line).toContain('item=item-4');
     expect(line).toContain('mode=addressed');
     expect(line).toContain('keywords=3');
-    // What it drops: the sentence, and any hint of it. A `chars=`/`sha256=` pair is
-    // the `redacted` mode's, not the default's.
+    // What it drops: the sentence, and any stand-in for it — no length, no digest.
     expect(line).not.toContain(UTTERANCE);
     expect(line).not.toContain('sha256');
     expect(line).not.toContain('chars=');
@@ -345,40 +343,15 @@ describe('recording what each verdict was reached on', () => {
     expect(line).not.toContain('Lee');
   });
 
-  it('fingerprints the sentence under redacted rather than writing it', async () => {
+  it('pairs the partial verdict with the final one by item id alone', async () => {
     const { h, send } = await speakingHarness();
     active = h;
-    vi.mocked(config).meetingTranscriptLogging = 'redacted';
-    vi.mocked(classifyAddressed).mockResolvedValue(false);
-    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
-
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-4',
-      transcript: UTTERANCE,
-    });
-    await settle();
-    await settle();
-
-    const line = infoLines();
-    expect(line).toMatch(/chars=26 sha256=[0-9a-f]{8}/);
-    // A length and a digest, and still nothing readable — including the roster, which
-    // this mode counts exactly as the default does.
-    expect(line).not.toContain(UTTERANCE);
-    expect(line).not.toContain('Mario Sarcher');
-    expect(line).toContain('keywords=3');
-  });
-
-  it('fingerprints the words, and leaves pairing the two verdicts to the item id', async () => {
-    const { h, send } = await speakingHarness();
-    active = h;
-    vi.mocked(config).meetingTranscriptLogging = 'redacted';
     vi.mocked(classifyAddressed).mockResolvedValue(false);
 
     // One utterance judged twice: once from a partial transcript (long enough to earn
-    // an early verdict), then from the finished one. A partial is a *prefix*, so the
-    // two digests differ — which is the point of asserting it, because `item=` is what
-    // pairs those two lines and this mode must not be read as doing that job.
+    // an early verdict), then from the finished one. With the words off the line,
+    // `item=` is the only thing tying those two verdicts to the same sentence — so it
+    // is the one token whose absence would make the default setting undiagnosable.
     send({
       type: 'conversation.item.input_audio_transcription.delta',
       item_id: 'item-8',
@@ -394,24 +367,11 @@ describe('recording what each verdict was reached on', () => {
     await settle();
     await settle();
 
-    // A second utterance, transcribed to the same words as the first. That is what the
-    // digest is for: a transcriber stuck on a sentence, or a room repeating itself,
-    // shows up as one digest twice — a `chars=` alone could not tell it from a
-    // different sentence of the same length.
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-9',
-      transcript: UTTERANCE,
-    });
-    await settle();
-    await settle();
-
     const lines = infoLines();
-    const digests = lines.match(/sha256=[0-9a-f]{8}/g) ?? [];
-    expect(digests).toHaveLength(3);
-    expect(digests[0]).not.toBe(digests[1]);
-    expect(digests[2]).toBe(digests[1]);
     expect(lines.match(/item=item-8/g)).toHaveLength(2);
+    expect(lines).toContain('partial verdict');
+    expect(lines).toContain('final verdict');
+    expect(lines).not.toContain(UTTERANCE);
   });
 
   it('writes the sentence and the roster only when asked for them', async () => {

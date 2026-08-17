@@ -304,8 +304,7 @@ const noiseReduction = (() => {
   return raw === 'near_field' || raw === 'far_field' ? raw : 'off';
 })();
 
-// How much of what is said in a meeting the runtime writes to its own logs:
-// `off`, `redacted`, or `full`.
+// Whether what is said in a meeting reaches the runtime's own logs: `off` or `full`.
 //
 // **Off by default**, and this one is not a trade-off between two goods. A meeting is
 // unauthenticated — anybody in the room speaks to the agent, and nobody in the room
@@ -315,24 +314,23 @@ const noiseReduction = (() => {
 // retention is. Writing the room's conversation there by default is the sort of
 // decision that has to be made deliberately, which is what this variable is for.
 //
-// `redacted` is the middle setting: a length and a short digest of the sentence,
-// without recording what the sentence was. The length says whether the transcriber
-// produced a plausible sentence at all, and the digest says when two lines were
-// judged on the same words — a transcriber stuck on a sentence, or a room repeating
-// itself. It is not what pairs a partial verdict with the final one; the item id does
-// that at every setting, since a partial is a prefix and digests differently. Salted
-// per process, so it compares within one run and says nothing across them.
-//
 // `full` writes the sentence itself. Reach for it in a room that knows, on a
 // deployment whose logs you are willing to treat as a recording of the meeting.
+//
+// A variable of its own rather than a log level, which is the tempting shortcut: an
+// operator raises the level to chase something unrelated — a browser failure, an audio
+// drop — and under a level-gated design that would quietly start transcribing the room
+// as a side effect. Recording a meeting has to be its own decision. It also means the
+// words arrive without the rest of the meeting's debug noise, which is the state you
+// want while diagnosing "it stopped answering to its name".
 //
 // An unrecognized value is `off` rather than a boot failure: a typo here should cost
 // a diagnostic, not the container. `''` is `off` too — unlike
 // OPENAI_REALTIME_REASONING_EFFORT, where empty means "let the API choose", there is
 // nobody else to defer to.
-const meetingTranscriptLogging = ((): 'off' | 'redacted' | 'full' => {
+const meetingTranscriptLogging = ((): 'off' | 'full' => {
   const raw = (process.env.MEETING_TRANSCRIPT_LOGGING || 'off').trim().toLowerCase();
-  return raw === 'redacted' || raw === 'full' ? raw : 'off';
+  return raw === 'full' ? 'full' : 'off';
 })();
 
 // Google account the meeting bot signs in as.
@@ -586,8 +584,8 @@ export const config = {
   openaiRealtimeReasoningEffort,
   openaiTranscriptionModel,
   noiseReduction,
-  // MEETING_TRANSCRIPT_LOGGING, default 'off': what a meeting's speech may appear as
-  // in the runtime's logs ('off' | 'redacted' | 'full').
+  // MEETING_TRANSCRIPT_LOGGING, default 'off': whether a meeting's speech may appear
+  // in the runtime's logs ('off' | 'full').
   meetingTranscriptLogging,
   googleBotEmail,
   googleBotPassword,

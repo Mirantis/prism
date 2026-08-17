@@ -558,23 +558,14 @@ describe('config', () => {
       expect(cfg.meetingTranscriptLogging).toBe('off');
     });
 
-    it('reads the two settings that log something', async () => {
-      for (const mode of ['redacted', 'full']) {
-        process.env.MEETING_TRANSCRIPT_LOGGING = mode;
-        vi.resetModules();
-        const cfg = await loadConfig();
-        expect(cfg.meetingTranscriptLogging).toBe(mode);
-      }
+    it('reads the setting that logs the words', async () => {
+      process.env.MEETING_TRANSCRIPT_LOGGING = 'full';
+      const cfg = await loadConfig();
+      expect(cfg.meetingTranscriptLogging).toBe('full');
     });
 
     it('tolerates case and stray whitespace around a mode', async () => {
-      for (const messy of [' Redacted', 'REDACTED ']) {
-        process.env.MEETING_TRANSCRIPT_LOGGING = messy;
-        vi.resetModules();
-        const cfg = await loadConfig();
-        expect(cfg.meetingTranscriptLogging).toBe('redacted');
-      }
-      for (const messy of ['FULL ', 'Full']) {
+      for (const messy of ['FULL ', ' Full']) {
         process.env.MEETING_TRANSCRIPT_LOGGING = messy;
         vi.resetModules();
         const cfg = await loadConfig();
@@ -585,7 +576,9 @@ describe('config', () => {
     it('falls back to logging nothing on a value it does not recognize', async () => {
       // Including every plausible way of writing "on": a typo here should cost a
       // diagnostic, not the boot — and it must not fail *open* into a transcript.
-      for (const bad of ['on', 'true', '1', 'verbose']) {
+      // `redacted` is in the list because it is the obvious guess at a middle
+      // setting, and guessing wrong must land on silence rather than on the words.
+      for (const bad of ['on', 'true', '1', 'verbose', 'redacted']) {
         process.env.MEETING_TRANSCRIPT_LOGGING = bad;
         vi.resetModules();
         const cfg = await loadConfig();

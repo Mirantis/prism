@@ -363,7 +363,7 @@ is the same thing to tell them about as the agent's presence.
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model thinks before answering or picking a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults higher than the API's own `low` — see [Reasoning effort](#reasoning-effort). Empty takes the API default. | `high` |
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used to decide whether the agent was spoken to. Runs on every call, billed per minute; never fed to the model. The default is the only streaming model that also accepts name hints — see [Names](#names). | `gpt-live-transcribe` |
 | `OPENAI_NOISE_REDUCTION` | Server-side noise reduction over the meeting audio before turn detection and transcription see it: `off`, `near_field`, `far_field`. Off by default on purpose — what arrives is Meet's already-cleaned mix, and reducing it again cost a live agent most of what a quieter person in the room said. | `off` |
-| `MEETING_TRANSCRIPT_LOGGING` | How much of what was said may appear in the runtime's log: `off`, `redacted`, `full`. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |
+| `MEETING_TRANSCRIPT_LOGGING` | Whether what was said may appear in the runtime's log: `off` or `full`. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |
 
@@ -373,26 +373,31 @@ the waiting-room time.
 ### What ends up in the log
 
 Every utterance the agent judges produces one line in the runtime's log, and
-`MEETING_TRANSCRIPT_LOGGING` decides how much of the utterance goes on it.
+`MEETING_TRANSCRIPT_LOGGING` decides whether the utterance itself goes on it.
 
 | Value | What a line carries |
 |-------|---------------------|
 | `off` (default) | The verdict, which utterance it belongs to, whether the agent was answering everything or only when named, and **how many** names were seeded to the transcriber. No words, no attendee names. |
-| `redacted` | The above, plus the sentence's length and a short fingerprint of it — enough to see when two lines were judged on the *same words*: a transcriber stuck on a sentence, or the room repeating itself. (Which lines belong to one utterance is the utterance id, at every setting — a partial transcript is a prefix of the finished one, so it has a fingerprint of its own.) The fingerprint is salted per process, so it can't be checked against a guess and doesn't survive a restart. |
 | `full` | The above, plus the sentence itself, the room's roster, and the gate model's own one-line reasoning. |
 
 `off` is the default because a call is not an authenticated surface: whoever is in
 the room did not agree to be written into a log that outlives it, and a mishearing
 ("Prism" → "Pritham") means the words recorded are not even reliably theirs. Most
 diagnosis doesn't need them — `off` still separates "the gate said no" from "the gate
-never ran", and shows whether a roster had reached the transcriber at all.
+never ran", pairs the two verdicts on one sentence by its utterance id, and shows
+whether a roster had reached the transcriber at all.
 
-Turn it up to `full` only for as long as you need it, and tell the room. None of it
-reaches product telemetry at any setting — that surface gets counts. It is a
-*log* setting, though, and one other destination is out of its reach: if
-Langfuse is configured, the tracing there records the prompts and
-completions of every model call, the addressed-gate one included, whatever
-`MEETING_TRANSCRIPT_LOGGING` says. Leave Langfuse off for calls you would not log.
+It is a setting of its own rather than a log level on purpose. Raising the log level
+is something you do to chase an unrelated problem, and it should never be the thing
+that starts recording a meeting. It also means `full` gives you the sentences without
+the rest of the runtime's debug output.
+
+Turn it on only for as long as you need it, and tell the room. Nothing here reaches
+product telemetry either way — that surface gets counts. One other destination is out
+of this setting's reach, though: if Langfuse is configured, the tracing there records
+the prompts and completions of every model call, the addressed-gate one included,
+whatever `MEETING_TRANSCRIPT_LOGGING` says. Leave Langfuse off for calls you would
+not log.
 
 ### The microphone
 
@@ -436,10 +441,10 @@ indistinguishable from a gate that decided no. Each verdict is logged — look f
 `[Meeting:Gate]`. By default the line says what was decided but not what it was
 decided on, which is enough to tell a verdict that never happened from one that said
 no, and not enough to say why. The utterance id on the line pairs a partial verdict
-with the final one at every setting; `MEETING_TRANSCRIPT_LOGGING=redacted` adds a
-length, which is usually enough to see that the transcriber produced a sentence at
-all. To read the sentence and the gate's own reasoning you need `full` — with the
-room's agreement, and turn it back off afterwards.
+with the final one either way, and the keyword count says whether the room's names had
+reached the transcriber at all. To read the sentence and the gate's own reasoning you
+need `MEETING_TRANSCRIPT_LOGGING=full` — with the room's agreement, and turn it back
+off afterwards.
 
 **It waits forever to be admitted.** Nobody clicked Admit, or the meeting blocks
 anonymous guests. It gives up after `MEETING_ADMISSION_TIMEOUT_SECONDS` and says

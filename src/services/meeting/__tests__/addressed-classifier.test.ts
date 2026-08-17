@@ -161,16 +161,6 @@ describe('classifyAddressed', () => {
     expect(line).toContain('addressed=false');
     expect(line).toMatch(/final, \d+ms/);
 
-    // `redacted` reduces the sentence to a digest, so writing the model's prose about
-    // that same sentence would hand back in full what the mode exists to withhold.
-    // This is the one setting where the two halves of a verdict line disagree.
-    vi.mocked(config).meetingTranscriptLogging = 'redacted';
-    await classifyAddressed({ transcript: 'Isaac, can you look?', agentName: 'Prism', stage: 'final' });
-
-    const redactedLine = String(vi.mocked(logger.info).mock.calls.at(-1)?.[0]);
-    expect(redactedLine).not.toContain('Isaac');
-    expect(redactedLine).toContain('addressed=false');
-
     vi.mocked(config).meetingTranscriptLogging = 'full';
     await classifyAddressed({ transcript: 'Isaac, can you look?', agentName: 'Prism', stage: 'final' });
 
