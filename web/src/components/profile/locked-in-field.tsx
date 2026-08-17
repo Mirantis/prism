@@ -32,9 +32,9 @@ export function LockedInField({ details }: { details: AgentDetails }) {
     <div className="flex flex-col gap-0.5">
       <span className="text-xs text-muted-foreground">Locked-in mode</span>
       {/* Not a <label> wrapper: Base UI points the switch's aria-labelledby at
-          an enclosing label, and aria-labelledby overrides aria-label — the
-          accessible name would become the adjacent state text ("Unlocked") in-
-          stead of "Locked-in mode". The text beside it is a state readout,
+          an enclosing label, and aria-labelledby overrides aria-label — so the
+          accessible name would become the adjacent state text ("Unlocked")
+          instead of "Locked-in mode". The text beside it is a state readout,
           not a name. */}
       <div className="inline-flex items-center gap-2 text-sm">
         <Switch
