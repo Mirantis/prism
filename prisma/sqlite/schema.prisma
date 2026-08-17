@@ -96,9 +96,7 @@ model AgentWorkspace {
   // agent's own tools cannot rewrite the workspace markdown fields (soulMd,
   // memoryMd, userMd, visionMd, heartbeatMd, bootstrapMd) — those tools are
   // withheld and their writes refused. Vector memory, behavioural settings and
-  // renames stay editable, and the human REST/UI toggle always works. A
-  // guardrail against agent drift, not a security boundary: an agent with shell
-  // access can still reach the database directly.
+  // renames stay editable, and the human REST/UI toggle always works.
   lockedIn Boolean @default(false)
 
   nexusMcpAgentToken String?

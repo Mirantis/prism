@@ -37,19 +37,15 @@ type WorkspaceFileField = 'soulMd' | 'memoryMd' | 'userMd' | 'heartbeatMd' | 'vi
 
 /**
  * Refusal returned to the model when a workspace-markdown write is attempted
- * while locked-in mode is on. Names the way out so the model can tell the user
- * what to do instead of retrying.
+ * while locked-in mode is on.
  */
 const LOCKED_IN_REFUSAL =
   'Locked-in mode is on, so your workspace files are read-only and this change was not saved. ' +
   'Tell the user what you would have changed and that they can turn locked-in mode off in their agent settings.';
 
 /**
- * The one emitter for a refused locked write, so both guard sites report it
- * identically and neither can double-count. Worth a durable event rather than
- * only a log line: an agent repeatedly pushing against the lock is the signal
- * that the lock is holding back something the user actually wants, and the
- * counter is the only place that shows up.
+ * The one emitter for the refused-write event, so a refusal is never
+ * double-counted.
  */
 function refuseLockedWrite(
   agentId: string,
@@ -77,12 +73,9 @@ async function resolveWorkspaceFileUpdate(
 ): Promise<{ success: boolean; message?: string; error?: string }> {
   const { newContent, edits, changeDescription } = input;
 
-  // Layer 1, the actual invariant: every markdown-writing tool funnels through
-  // here, so one live read of the lock covers all of them in every invocation
-  // mode. The tools are also withheld from the tool set while locked (see
-  // lib/tool-collection.ts), but that is only to stop the model wasting turns —
-  // this check is what makes the guarantee hold, including for a lock switched
-  // on mid-turn.
+  // Every markdown-writing tool funnels through here, so one live read of the
+  // lock covers all of them in every invocation mode. This check enforces the
+  // lock, including when it is switched on mid-turn.
   if (await agentWorkspaceService.isLockedIn()) {
     return refuseLockedWrite(agentId, field);
   }
@@ -273,8 +266,8 @@ export function getAgentConfigTools(): Record<string, Tool> {
       }),
       execute: async ({ confirmationMessage }) => {
         // Writes bootstrapMd, so it is part of the locked set. Guarded here
-        // rather than in resolveWorkspaceFileUpdate because it clears the field
-        // with its own direct write instead of going through that helper.
+        // because it clears the field with a direct write instead of going
+        // through resolveWorkspaceFileUpdate.
         if (await agentWorkspaceService.isLockedIn()) {
           return refuseLockedWrite(agentId, 'bootstrapMd');
         }

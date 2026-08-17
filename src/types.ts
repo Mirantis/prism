@@ -38,8 +38,8 @@ export interface AgentContext {
   /**
    * When true, the workspace markdown files are read-only: the tools that write
    * them are withheld from the tool set and their writes refused. A snapshot for
-   * prompt-building and tool collection only — the enforcing check re-reads the
-   * flag at write time (see `agentWorkspaceService.isLockedIn`).
+   * prompt-building and tool collection; `agentWorkspaceService.isLockedIn()`
+   * re-reads the flag at write time.
    */
   lockedIn: boolean;
   isBootstrapPhase: boolean;

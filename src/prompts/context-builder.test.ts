@@ -90,8 +90,8 @@ describe('buildSystemPrompt', () => {
 
     const prompt = await buildSystemPrompt(context, 'chat');
 
-    // Onboarding tells the model to write soul/user then clear_bootstrap — all
-    // refused while locked, so it must not be asked to try every turn.
+    // Onboarding writes soul/user then calls clear_bootstrap, all refused while
+    // locked.
     expect(prompt).not.toContain('# Bootstrap Phase');
     expect(prompt).toContain('# Locked-In Mode');
   });
@@ -100,7 +100,7 @@ describe('buildSystemPrompt', () => {
     const prompt = await buildSystemPrompt(createTestAgentContext({ lockedIn: true }), 'chat');
 
     // getChatInstructions() tells the model to record facts with update_memory,
-    // so the notice that those tools are gone has to be the later word.
+    // so the notice that those tools are gone must come after it.
     expect(prompt.indexOf('# Locked-In Mode')).toBeGreaterThan(prompt.indexOf('# Chat Mode'));
   });
 

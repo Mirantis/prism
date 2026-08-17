@@ -651,8 +651,8 @@ describe('invoke', () => {
       mockGetAgentContext.mockResolvedValue(createTestAgentContext({ lockedIn: true }));
     });
 
-    // Every mode, because a lock that only held for chat would be bypassable by
-    // asking a subagent — or by waiting for the next heartbeat.
+    // Every mode: a lock that held for chat only could be bypassed with a
+    // subagent or the next heartbeat.
     const modes = ['chat', 'subagent', 'heartbeat', 'cron', 'goal', 'webhook'] as const;
 
     it.each(modes)('%s mode omits every workspace-markdown writer while locked', async (mode) => {
@@ -668,8 +668,7 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ mode }));
 
       const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
-      // Renames and behavioural settings stay editable; vector memory is out of
-      // scope entirely so the agent keeps learning while locked.
+      // Renames, behavioural settings and vector memory stay editable.
       expect(toolNames).toContain('rename_self');
       expect(toolNames).toContain('update_settings');
       expect(toolNames).toContain('memory_search');

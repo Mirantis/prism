@@ -406,8 +406,7 @@ class AgentWorkspaceService {
    * the workspace markdown files (soul, memory summary, user profile, vision,
    * heartbeat config, bootstrap) — those tools are withheld from the tool set
    * and their writes refused. Vector memory, behavioural settings and renames
-   * stay editable, and this setter itself is never reachable from a tool, so a
-   * locked agent cannot unlock itself.
+   * stay editable.
    */
   async updateLockedIn(lockedIn: unknown): Promise<boolean> {
     if (typeof lockedIn !== 'boolean') {
@@ -425,11 +424,7 @@ class AgentWorkspaceService {
     return updated.lockedIn;
   }
 
-  /**
-   * Read locked-in mode. Called at every guarded write rather than snapshotted
-   * per turn, so toggling the lock takes effect immediately — including
-   * part-way through a turn that already collected its tools.
-   */
+  /** Read locked-in mode from the live agent row. */
   async isLockedIn(): Promise<boolean> {
     const agent = await this.getAgent();
     return agent.lockedIn;

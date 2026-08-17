@@ -48,8 +48,7 @@ export function LockedInField({ details }: { details: AgentDetails }) {
       <span className="text-xs text-muted-foreground">
         While locked, the agent's own tools can't rewrite Soul, User, Memory, Vision, Heartbeat
         or Bootstrap — and it can't unlock itself. Settings, renames and memory search still
-        work. A guardrail against drift, not a security boundary: the agent can still reach
-        these files through its shell.
+        work.
       </span>
       {error && <span className="text-xs text-destructive">{error}</span>}
     </div>

@@ -645,10 +645,8 @@ describe('compactNow (manual)', () => {
   });
 
   // The tools block is the provider's cache prefix. A chat turn on a locked
-  // agent withholds the six workspace-markdown writers (invoke.ts passes
-  // `lockedIn` from the same context), so a compaction that forgot to pass it
-  // would assemble a different — larger — block and miss the shared prefix on
-  // every compaction the locked agent ever runs.
+  // agent withholds the six workspace-markdown writers, so a compaction that
+  // did not pass the flag would assemble a larger block and miss the prefix.
   it('reflects the lock in the tool set, so the block matches the chat turn byte-for-byte', async () => {
     mockGetAgentContext.mockResolvedValue(makeContext(8, { lockedIn: true }));
 

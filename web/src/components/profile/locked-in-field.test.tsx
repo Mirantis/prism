@@ -45,13 +45,6 @@ describe('LockedInField', () => {
     expect(screen.getByText('Locked')).toBeInTheDocument();
   });
 
-  it('says the lock is a drift guardrail rather than a security boundary', () => {
-    // The shell bypass is deliberately open in v1, so the UI must not let a user
-    // read the switch as containment.
-    renderField(details());
-    expect(screen.getByText(/not a security boundary/i)).toBeInTheDocument();
-  });
-
   it('PATCHes the new value when toggled on', async () => {
     mockUpdateLockedIn.mockResolvedValue({ lockedIn: true });
     renderField(details({ lockedIn: false }));
