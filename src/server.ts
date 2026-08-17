@@ -19,6 +19,7 @@ import { managementRouter } from './routes/management';
 import { threadsRouter } from './routes/threads';
 import { messagesRouter } from './routes/messages';
 import { webhookRouter } from './routes/webhook';
+import { lockedInRouter } from './routes/locked-in';
 
 export function createApp() {
   const app = express();
@@ -35,6 +36,9 @@ export function createApp() {
 
   // Inbound webhook ingestion (POST /agents/webhooks/:name)
   app.use('/agents', webhookRouter);
+
+  // Locked-in mode (PATCH /agents/locked-in)
+  app.use('/agents', lockedInRouter);
 
   // Thread and message routes: /threads, /latest-thread and /messages.
   // Mounted at the root and registered before the SPA fallback so these

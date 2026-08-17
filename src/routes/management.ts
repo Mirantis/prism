@@ -18,7 +18,6 @@
  *   GET    /agents/cron-model                      - Cron model override + resolved effective
  *   PATCH  /agents/cron-model                      - Set/clear cron model override
  *   PATCH  /agents/verbose                         - Set per-step delivery flag
- *   PATCH  /agents/locked-in                       - Set locked-in mode (freeze workspace markdown)
  *   GET    /agents/details                         - Full agent record (markdown fields, verbose, lockedIn)
  *   DELETE /agents                                 - Delete agent
  *
@@ -358,34 +357,6 @@ router.patch('/verbose', async (req: Request, res: Response) => {
     }
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to update verbose for agent: ${msg}`);
-    res.status(500).json({ error: msg });
-  }
-});
-
-/**
- * PATCH /agents/locked-in
- * Set locked-in mode: while on, the agent's own tools cannot rewrite the
- * workspace markdown files. This human route is the only way to toggle it —
- * no tool reaches it, so a locked agent cannot unlock itself, and the route
- * keeps working while locked so the user is never shut out.
- * Body: { lockedIn: boolean }
- */
-router.patch('/locked-in', async (req: Request, res: Response) => {
-  try {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    if (!('lockedIn' in body)) {
-      res.status(400).json({ error: "missing required field 'lockedIn'" });
-      return;
-    }
-    const lockedIn = await agentWorkspaceService.updateLockedIn(body.lockedIn);
-    res.json({ lockedIn });
-  } catch (error: unknown) {
-    if (error instanceof ValidationError) {
-      res.status(400).json({ error: error.message });
-      return;
-    }
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to update locked-in mode for agent: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });
