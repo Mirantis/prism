@@ -23,8 +23,10 @@ Use `latest` or a `vYYYY.M.DDHHMMSS` tag for a normal deployment. `canary` is
 built from every merge to `main`, so it carries changes that no release has
 shipped yet. A commit-SHA tag pins one exact build, which is what to use when a
 deployment must not change under it. The pull-request tags are for trying a
-change before it merges — see
-[Deploying a pull request's image](#deploying-a-pull-requests-image).
+change before it merges. They move with every push that rebuilds the image, so a
+docs-only push leaves them on the previous commit. They are deleted when the pull
+request closes. A pull request from a fork publishes no image, because its
+registry token is read-only.
 
 ## Run the agent and boot into the terminal UI
 
@@ -90,40 +92,6 @@ By default the container generates a fresh agent UUID on first boot and reuses
 it on later boots (it's stored in the database). To pin a specific identity —
 useful when re-creating a container against an existing data volume — set
 `AGENT_ID` to a UUID.
-
-## Deploying a pull request's image
-
-Every pull request that builds the image also pushes it, so a change can be
-deployed and tried out before it merges. The image is built only when the pull
-request touches the `Dockerfile` or application code, so a docs-only pull request
-publishes nothing. Two tags are published per pull request:
-
-- `pr-<number>-<branch-slug>` — e.g. `pr-142-feat-agent-105-locked-in-mode`.
-  Read this one; it says which branch it came from.
-- `pr-<number>` — e.g. `pr-142`. Use this one in a deployment config: it stays
-  correct when the branch is renamed.
-
-```bash
-docker run -d --name prism-pr \
-  -p 3003:3003 \
-  -v prism-pr-data:/data \
-  -e AWS_BEARER_TOKEN_BEDROCK=<your-key> \
-  ghcr.io/lensapp/prism-agent:pr-142
-```
-
-Two things to know:
-
-- **Both tags move.** Each push to the branch overwrites them, so a deployment
-  that pulls again gets the newer commit. No commit-SHA tag is published for a
-  pull request, so there is no way to pin one of its builds — wait for the merge
-  if you need a fixed image.
-- **Both tags are deleted when the pull request closes**, merged or not. A
-  deployment still pointing at one then fails to pull. Move it to `canary`,
-  `latest` or a version tag after the merge.
-
-A pull request from a **fork** builds the image but pushes nothing: a fork's
-build runs with a read-only registry token. Push the branch to this repository
-to get an image for it.
 
 ## What's in the image
 

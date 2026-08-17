@@ -102,12 +102,11 @@ One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
 under five tag families: `latest` and `vYYYY.M.DDHHMMSS` (production),
 `canary` (every merge to `main`), a commit-SHA tag from both release workflows,
 and `pr-<n>` + `pr-<n>-<branch-slug>` from `docker-build.yml` on every pull
-request. The PR pair moves with each push to the branch and
-`pr-image-cleanup.yml` deletes it when the PR closes (`ghcr-prune.yml` is the
-weekly backstop). A fork's PR builds the image and pushes nothing — its token is
-read-only. Slack creds come from env (`SLACK_BOT_TOKEN`,
-`SLACK_APP_TOKEN`), validated via `auth.test` on boot; may be Nexus
-credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
+request that rebuilds the image. The PR pair moves with each such push and
+`pr-image-cleanup.yml` deletes it when the PR closes. A fork's PR builds the
+image and pushes nothing — its token is read-only. Slack creds come from env
+(`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`), validated via `auth.test` on boot; may
+be Nexus credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy.
 
 One LLM provider per container, selected by `LLM_PROVIDER` (`bedrock`

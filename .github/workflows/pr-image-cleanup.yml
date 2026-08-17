@@ -1,8 +1,7 @@
 name: PR Image Cleanup
 
 # Deletes the container image docker-build.yml pushed for a pull request, as
-# soon as the pull request closes. ghcr-prune.yml is the weekly backstop for
-# anything this run misses.
+# soon as the pull request closes.
 
 on:
   pull_request:
@@ -48,7 +47,7 @@ jobs:
             # A 403 here means the token cannot read the package (it is not
             # linked to this repo, or the repo lacks admin on it). That is a
             # configuration problem to fix once, not a reason to fail every
-            # closed PR, and ghcr-prune.yml reports it weekly too.
+            # closed PR.
             echo "::warning::Could not list versions of $PACKAGE — $(tr '\n' ' ' < "$errlog")"
             {
               printf '### PR image cleanup skipped\n\n'
@@ -101,9 +100,10 @@ jobs:
               cat "$report"
             fi
             if [ "$failed" -gt 0 ]; then
-              printf '\n%d version(s) could not be deleted; ' "$failed"
-              printf 'the weekly `GHCR Prune` run will retry them.\n'
+              printf '\n%d version(s) could not be deleted and were left ' "$failed"
+              printf 'behind. Delete them by hand from the package settings page.\n'
             fi
             printf '\nThe per-platform child manifests these lists referenced are'
-            printf ' untagged and stay behind; `GHCR Prune` reaps those.\n'
+            printf ' untagged and stay behind. They accumulate, and nothing'
+            printf ' collects them at present.\n'
           } >> "$GITHUB_STEP_SUMMARY"
