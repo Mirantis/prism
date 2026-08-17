@@ -20,12 +20,8 @@
  *   cheapest bot check there is; an honest Chromium is quieter than a mismatched
  *   pair.
  *
- * The media flags matter too. `--use-fake-ui-for-media-stream` auto-grants the
- * mic/camera prompt (nobody is there to click "Allow"), while the device behind it
- * is a real PulseAudio source. The similar-looking
- * `--use-fake-device-for-media-stream` is deliberately absent: it substitutes a
- * synthetic tone or a fixed WAV and cannot carry live audio, which would silently
- * make the bot mute.
+ * The media flags matter too — see `buildBrowserArgs` below, where the reason each
+ * one is present or absent is written down.
  *
  * Authentication is deliberately *not* here: signing in is platform-specific and
  * belongs to the provider (`providers/google-meet/sign-in.ts`). What this file owns
@@ -108,6 +104,103 @@ export interface BrowserStackOptions {
   env: Record<string, string>;
 }
 
+/**
+ * The browser's command line.
+ *
+ * Extracted from `start()` so the media flags are assertable without a browser:
+ * getting them wrong costs a whole capability and says nothing about why.
+ */
+export function buildBrowserArgs(port: number, userDataDir: string): string[] {
+  return [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${userDataDir}`,
+    // Chromium's own sandbox needs unprivileged user namespaces, which the
+    // container usually cannot get: we run as non-root `node` under a default
+    // seccomp profile with no `SYS_ADMIN`, so the zygote fails to fork and the
+    // browser dies at launch. Disabled deliberately rather than discovered in
+    // production. The isolation that matters is the outer one — this whole
+    // runtime already runs inside the Nexus sandbox with filtered egress, and
+    // the browser visits exactly one origin we chose.
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    // Auto-grant the mic/camera prompt — nobody is there to click "Allow". The
+    // devices behind it are the real PulseAudio ones, not fakes.
+    //
+    // This was one flag, `--use-fake-ui-for-media-stream`, and that flag also
+    // answered `getDisplayMedia` — with a synthetic source it never supplied. So
+    // every capture attempt rejected as `NotReadableError: Could not start video
+    // source`, and no picker appeared for anyone to pick a real screen in. Measured
+    // on Chromium 151 against the Xvfb display: fake-UI rejects with and without
+    // the auto-select flag below, while this pair resolves with the real screen.
+    // Adding `--use-fake-device-for-media-stream` also makes it resolve, and is the
+    // wrong fix: it replaces the live PulseAudio source with a tone, which is a bot
+    // that sits in the call mute.
+    '--auto-accept-camera-and-microphone-capture',
+    // Pick the screen for `getDisplayMedia` instead of opening a picker that nobody
+    // can click. The value is matched against the names in Chromium's own picker
+    // list, so it depends on two things below and nearby: `--lang=en-US`, which
+    // keeps those names English, and a single-monitor display, which is what
+    // `audio-stack.ts` gives us — one screen is named "Entire screen". The space in
+    // it is safe because `spawn` is handed an array and no shell.
+    '--auto-select-desktop-capture-source=Entire screen',
+    // Meet starts playing before any user gesture exists.
+    '--autoplay-policy=no-user-gesture-required',
+    // Containers give /dev/shm 64 MB by default, which Chrome exhausts and
+    // then crashes on; this moves the shared memory to /tmp instead.
+    '--disable-dev-shm-usage',
+    // No crash reports out of an agent container. Note these do NOT stop the
+    // crashpad *handler* from starting — it re-parents itself to PID 1
+    // regardless, which is why the image runs under tini to reap it (see the
+    // ENTRYPOINT comment in the Dockerfile).
+    '--disable-breakpad',
+    '--disable-crash-reporter',
+    // Meet localizes from Accept-Language or IP geolocation, which would serve
+    // a differently-worded lobby and break every selector in the provider.
+    '--lang=en-US',
+    '--accept-lang=en-US,en',
+    '--window-size=1280,720',
+    '--no-first-run',
+    '--no-default-browser-check',
+    // Force PulseAudio rather than letting Chrome pick ALSA and find nothing.
+    '--alsa-output-device=pulse',
+    'about:blank',
+  ];
+}
+
+/**
+ * Camera and microphone permission for every origin the profile visits.
+ *
+ * The flag above answers the permission *request*, but leaves
+ * `navigator.permissions.query({ name: 'microphone' })` reporting `prompt`, where
+ * the old fake-UI flag reported `granted`. Meet reads permission state to decide
+ * whether to offer its "continue without microphone" panels, so the state is worth
+ * keeping as it was.
+ *
+ * The two mechanisms are not the same thing, which is why both are here. The flag
+ * answers a prompt; this writes the stored setting, so it is also what recovers a
+ * profile that once recorded a block — and the profile is persistent, so such a
+ * state would outlive the call that created it. Either one alone was measured to
+ * open the microphone, so this is the backstop if a browser build drops the flag. A
+ * prompt nobody can click is a bot that joins deaf.
+ *
+ * The call carries no origin, which grants these two everywhere and *denies* every
+ * other permission everywhere. Measured: notifications and geolocation move from
+ * `prompt` (an unanswerable prompt in a browser nobody watches) to `denied`, while
+ * clipboard and screen wake lock move from `granted` to `denied`. Both are
+ * acceptable losses here — the agent never copies anything, and there is no real
+ * screen to keep awake. Screen capture is not affected.
+ *
+ * Best effort — a failure here is not a reason to abandon a join the flag can
+ * carry on its own.
+ */
+async function grantMediaPermissions(context: BrowserContext): Promise<void> {
+  try {
+    await context.grantPermissions(['microphone', 'camera']);
+  } catch (err) {
+    logger.warn(`[Meeting] Could not pre-grant the media permissions: ${String(err)}`);
+  }
+}
+
 /** An unused localhost port for the browser's debugging endpoint. */
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -145,43 +238,7 @@ export class BrowserStack {
     // module comment: Playwright's launch path is what Meet answers 403 to.
     this.proc = spawn(
       executablePath,
-      [
-        `--remote-debugging-port=${port}`,
-        `--user-data-dir=${userDataDir}`,
-        // Chromium's own sandbox needs unprivileged user namespaces, which the
-        // container usually cannot get: we run as non-root `node` under a default
-        // seccomp profile with no `SYS_ADMIN`, so the zygote fails to fork and the
-        // browser dies at launch. Disabled deliberately rather than discovered in
-        // production. The isolation that matters is the outer one — this whole
-        // runtime already runs inside the Nexus sandbox with filtered egress, and
-        // the browser visits exactly one origin we chose.
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        // Auto-grant the mic/camera permission prompt. The devices behind it are
-        // the real PulseAudio ones, not fakes.
-        '--use-fake-ui-for-media-stream',
-        // Meet starts playing before any user gesture exists.
-        '--autoplay-policy=no-user-gesture-required',
-        // Containers give /dev/shm 64 MB by default, which Chrome exhausts and
-        // then crashes on; this moves the shared memory to /tmp instead.
-        '--disable-dev-shm-usage',
-        // No crash reports out of an agent container. Note these do NOT stop the
-        // crashpad *handler* from starting — it re-parents itself to PID 1
-        // regardless, which is why the image runs under tini to reap it (see the
-        // ENTRYPOINT comment in the Dockerfile).
-        '--disable-breakpad',
-        '--disable-crash-reporter',
-        // Meet localizes from Accept-Language or IP geolocation, which would serve
-        // a differently-worded lobby and break every selector in the provider.
-        '--lang=en-US',
-        '--accept-lang=en-US,en',
-        '--window-size=1280,720',
-        '--no-first-run',
-        '--no-default-browser-check',
-        // Force PulseAudio rather than letting Chrome pick ALSA and find nothing.
-        '--alsa-output-device=pulse',
-        'about:blank',
-      ],
+      buildBrowserArgs(port, userDataDir),
       { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, ...options.env } },
     );
     this.proc.on('error', (err) => logger.error({ err }, '[Meeting] Browser process failed'));
@@ -196,6 +253,7 @@ export class BrowserStack {
     // A CDP-attached browser already has a context; making another would lose the
     // persistent profile, and with it the signed-in session.
     this.context = this.browser.contexts()[0] ?? (await this.browser.newContext());
+    await grantMediaPermissions(this.context);
 
     const page = await this.context.newPage();
     page.on('crash', () => logger.error('[Meeting] Browser page crashed'));

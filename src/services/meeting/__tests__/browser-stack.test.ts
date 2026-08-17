@@ -12,9 +12,8 @@ import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 
-const { resolveBrowser, isBrowserAvailable, bypassProxyForLoopback } = await import(
-  '../browser-stack'
-);
+const { resolveBrowser, isBrowserAvailable, bypassProxyForLoopback, buildBrowserArgs } =
+  await import('../browser-stack');
 
 /**
  * A page whose URL advances one step per `waitForTimeout`, standing in for Google's
@@ -118,6 +117,46 @@ describe('stale profile locks', () => {
     for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
       await expect(fs.unlink(path.join(profile, name)).catch(() => 'absent')).resolves.toBe('absent');
     }
+  });
+});
+
+/**
+ * The media flags on the browser's command line.
+ *
+ * Measured on Chromium 151 against the Xvfb display: `--use-fake-ui-for-media-stream`
+ * takes the fake-UI capture path, so every `getDisplayMedia` call rejected with
+ * `NotReadableError: Could not start video source` — with *and* without the
+ * auto-select flag — while the pair asserted here resolved with the real screen. The
+ * flags are the whole behaviour, and nothing else here can catch a bad edit to them.
+ */
+describe('browser media flags', () => {
+  const args = buildBrowserArgs(4711, '/tmp/profile');
+
+  it('grants camera and microphone without the fake-UI path', () => {
+    expect(args).toContain('--auto-accept-camera-and-microphone-capture');
+    // The regression this replaces: the fake-UI flag answers `getDisplayMedia` too,
+    // and answers it with a synthetic source that does not exist.
+    expect(args).not.toContain('--use-fake-ui-for-media-stream');
+  });
+
+  it('selects the whole virtual screen, so no picker has to be clicked', () => {
+    // The value is matched against Chromium's own picker source names, where a
+    // single-monitor display — which is what Xvfb gives us — is "Entire screen".
+    expect(args).toContain('--auto-select-desktop-capture-source=Entire screen');
+  });
+
+  it('never substitutes a fake capture device', () => {
+    // This is the flag that makes `getDisplayMedia` resolve on the fake-UI path, and
+    // it is the wrong fix: it replaces the live PulseAudio source with a synthetic
+    // tone, which is a bot that sits in the call mute.
+    expect(args.some((arg) => arg.startsWith('--use-fake-device-for-media-stream'))).toBe(false);
+  });
+
+  it('carries the debugging port and profile it was given', () => {
+    // `start()` passes these; the browser attaches to the wrong place, or loses the
+    // signed-in session, if either is dropped.
+    expect(args).toContain('--remote-debugging-port=4711');
+    expect(args).toContain('--user-data-dir=/tmp/profile');
   });
 });
 
