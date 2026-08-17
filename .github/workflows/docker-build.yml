@@ -18,11 +18,61 @@ on:
 
 permissions:
   contents: read
-  packages: read
+  packages: write # push the PR image to ghcr.io (same-repo PRs only)
   pull-requests: read
 
+# The PR's tags move with every push, so two runs in flight would race in
+# `imagetools create` and the tag would end up on whichever build finished
+# last rather than on the newest commit.
+concurrency:
+  # The `|| github.ref` fallback keeps one group per ref if this workflow ever
+  # gains a non-pull_request trigger, where the PR number is empty and every run
+  # would otherwise share (and cancel) one group.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # One job so the tag has a single definition that the build matrix and the
+  # merge both read, rather than the same sed in two places.
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.slug.outputs.tag }}
+      push: ${{ steps.slug.outputs.push }}
+    steps:
+      - name: Derive the image tag from the branch name
+        id: slug
+        env:
+          # Passed as env, never inlined into the script: a fork chooses its own
+          # branch names, so the value is untrusted text.
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # A fork PR gets a read-only token, so it cannot push. The build still
+          # runs; only the push is skipped. This holds as long as
+          # Settings → Actions → "Send write tokens to workflows from fork pull
+          # requests" stays off — that setting is what the whole guard rests on.
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          set -euo pipefail
+          # A Docker tag must match [A-Za-z0-9_][A-Za-z0-9._-]{0,127}. Lowercase
+          # it, turn every other character into `-`, collapse repeats, drop a
+          # leading or trailing `.`/`-`, and cut the slug to 100 so the
+          # `pr-<number>-` prefix always fits inside 128.
+          slug=$(printf '%s' "$HEAD_REF" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9._-]+/-/g; s/-{2,}/-/g; s/^[.-]+//; s/[.-]+$//' \
+            | cut -c1-100)
+          # The cut can leave a trailing `.`/`-` the sed above already removed.
+          slug=${slug%[.-]}
+          # A branch of only invalid characters leaves no slug, so the number
+          # alone is the tag.
+          tag="pr-${PR_NUMBER}${slug:+-${slug}}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "push=$SAME_REPO" >> "$GITHUB_OUTPUT"
+          echo "Image tag: \`$tag\` (push: $SAME_REPO)" >> "$GITHUB_STEP_SUMMARY"
+
   build-prism:
+    needs: tag
     # Native runner per platform — published images are multi-arch
     # (linux/amd64 + linux/arm64), so PRs validate both to catch
     # arch-specific breakage (native module rebuilds, mise tool installs)
@@ -39,6 +89,16 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Login to GitHub Container Registry
+        if: needs.tag.outputs.push == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
       - name: Prepare build secrets
         run: |
           printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.npmrc-secret"
@@ -47,12 +107,101 @@ jobs:
           printf '%s' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.gh-token-secret"
 
       - name: Build Docker image
-        run: |
-          docker build \
-            --secret id=npmrc,src="$RUNNER_TEMP/.npmrc-secret" \
-            --secret id=github_token,src="$RUNNER_TEMP/.gh-token-secret" \
-            -f Dockerfile \
-            .
+        id: build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          # A fork PR validates the build and pushes nothing. No otel_api_key
+          # secret and no OTEL build-args here, unlike the release workflows:
+          # this builds a Dockerfile taken from PR head, so the collector key
+          # must stay out of its reach. The Dockerfile's own defaults leave
+          # telemetry off, and an operator sets the OTel env at `docker run`.
+          outputs: ${{ needs.tag.outputs.push == 'true' && 'type=image,name=ghcr.io/lensapp/prism-agent,push-by-digest=true,name-canonical=true,push=true' || 'type=cacheonly' }}
+          secret-files: |
+            npmrc=${{ runner.temp }}/.npmrc-secret
+            github_token=${{ runner.temp }}/.gh-token-secret
+          build-args: |
+            SERVICE_VERSION=${{ needs.tag.outputs.image_tag }}
+          # Reads the release scope too, so a PR's first build warms from main
+          # instead of starting cold. Writes only the PR scope, so a PR can
+          # never poison the release cache.
+          cache-from: |
+            type=gha,scope=pr-prism-${{ matrix.platform }}
+            type=gha,scope=release-prism-${{ matrix.platform }}
+          cache-to: type=gha,scope=pr-prism-${{ matrix.platform }},mode=max
 
       - if: always()
         run: rm -f "$RUNNER_TEMP/.npmrc-secret" "$RUNNER_TEMP/.gh-token-secret"
+
+      - name: Export digest
+        if: needs.tag.outputs.push == 'true'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Prepare platform pair
+        if: needs.tag.outputs.push == 'true'
+        run: echo "PLATFORM_PAIR=${PLATFORM//\//-}" >> "$GITHUB_ENV"
+        env:
+          PLATFORM: ${{ matrix.platform }}
+
+      - name: Upload digest
+        if: needs.tag.outputs.push == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pr-prism-digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Merge the per-platform images into one multi-arch manifest list and apply
+  # the PR's tags. Skipped on a fork PR, and skipped when either platform
+  # failed — a manifest carrying one arch, under a tag an environment is about
+  # to deploy, is worse than no manifest at all. The second half of that comes
+  # from the `if:` below holding no status function, which keeps the default
+  # skip-on-failed-`needs`: adding `always()` or `!cancelled()` here would
+  # publish a single-arch image under a live tag.
+  merge:
+    needs: [tag, build-prism]
+    if: needs.tag.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: /tmp/digests
+          pattern: pr-prism-digests-*
+          merge-multiple: true
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Create and push manifest
+        env:
+          GHCR_REPO: ghcr.io/lensapp/prism-agent
+          IMAGE_TAG: ${{ needs.tag.outputs.image_tag }}
+          # Short alias for a deployment config that should follow the PR's head
+          # without being edited when the branch is renamed.
+          PR_ALIAS: pr-${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          cd /tmp/digests
+          docker buildx imagetools create \
+            -t "$GHCR_REPO:$IMAGE_TAG" \
+            -t "$GHCR_REPO:$PR_ALIAS" \
+            $(printf "$GHCR_REPO@sha256:%s " *)
+          {
+            printf '### PR image pushed\n\n'
+            printf '```\ndocker pull %s:%s\n```\n' "$GHCR_REPO" "$IMAGE_TAG"
+            printf '\nAlso tagged `%s`. Both tags follow this PR' "$PR_ALIAS"
+            printf ' and are deleted when it closes.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
