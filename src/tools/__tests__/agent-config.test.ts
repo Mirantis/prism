@@ -458,7 +458,7 @@ describe('getAgentConfigTools', () => {
   });
 
   // ==========================================================================
-  // Locked-in mode (Layer 1 — the enforcing check)
+  // Locked-in mode
   // ==========================================================================
 
   describe('locked-in mode', () => {
@@ -484,7 +484,6 @@ describe('getAgentConfigTools', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Locked-in mode is on');
-      // The refusal has to name the way out, or the model can't tell the user.
       expect(result.error).toContain('turn locked-in mode off');
       expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
     });
@@ -500,8 +499,6 @@ describe('getAgentConfigTools', () => {
       );
     });
 
-    // An agent repeatedly pushing against the lock means the lock is holding
-    // back something the user wants; the counter is where that shows up.
     it.each(guarded)('%s records the refusal as telemetry', async (name, input) => {
       await tools[name].execute(input);
 
@@ -512,7 +509,7 @@ describe('getAgentConfigTools', () => {
       );
     });
 
-    it('names the refused field, so the metric shows which document is being fought over', async () => {
+    it('names the refused field in the refusal event', async () => {
       await tools.update_soul.execute({ newContent: '# Soul', changeDescription: 'rewrite' });
       await tools.clear_bootstrap.execute({ confirmationMessage: 'done' });
 
@@ -591,9 +588,8 @@ describe('getAgentConfigTools', () => {
       });
     });
 
-    // The agent must not be able to unlock itself: `lockedIn` is deliberately
-    // absent from update_settings' setting enum, so it isn't a writable setting
-    // and the schema rejects it before any handler runs.
+    // The agent must not be able to unlock itself: `lockedIn` is not in
+    // update_settings' setting enum, so the schema rejects it.
     it('does not accept lockedIn as a writable setting', () => {
       const schema = (tools.update_settings as unknown as {
         inputSchema: { safeParse: (v: unknown) => { success: boolean } };

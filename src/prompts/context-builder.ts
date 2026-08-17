@@ -88,11 +88,9 @@ export async function buildSystemPromptParts(
   const dynamicSections: string[] = [];
 
   // Bootstrap phase — dynamic (only during onboarding, chat mode only).
-  // Suppressed while locked in: onboarding's whole script is to write the soul
-  // and user profile then call `clear_bootstrap`, all three refused while
-  // locked, so showing it would send the model at the guard every turn.
-  // `bootstrapMd` is left intact, so onboarding resumes where it left off if the
-  // lock is lifted.
+  // Suppressed while locked in: the onboarding script writes the soul and user
+  // profile then calls `clear_bootstrap`, all refused while locked. `bootstrapMd`
+  // is left intact, so onboarding resumes if the lock is lifted.
   if (context.isBootstrapPhase && mode === 'chat' && !context.lockedIn) {
     dynamicSections.push(`# Bootstrap Phase\n\n${context.bootstrapMd}`);
   }
@@ -144,8 +142,8 @@ export async function buildSystemPromptParts(
   // loads a skill's full instructions on demand. Includes the repo's workspace
   // skills when this turn has a workspaceRoot. Cacheable: stable within a thread
   // (a thread's workspaceRoot is fixed) and rescans only when a skills dir changes.
-  // While locked in, the "how to install more skills" guidance is suppressed —
-  // it exists to send the agent at its own config via the shell.
+  // While locked in, the guidance on installing more skills is suppressed — it
+  // points the agent at its own config directory.
   stableSections.push(buildSkillsSection(workspaceRoot, context.lockedIn));
 
   // Plugins — Agent Plugins (agent-plugins.org). Deliberately not a second
@@ -190,10 +188,9 @@ export async function buildSystemPromptParts(
   }
 
   // Locked-in mode: the workspace-markdown writers are absent from the tool set,
-  // so say why. Without this the model sees no `update_soul` and is left to guess
-  // whether it's broken or forbidden. Last of the stable sections deliberately —
-  // the mode instructions above it tell the model to record things with
-  // `update_memory`, so the constraint has to be what it reads afterwards.
+  // so say why. Last of the stable sections: the mode instructions above ask the
+  // model to record things with `update_memory`, so the constraint must come
+  // after them.
   if (context.lockedIn) {
     stableSections.push(getLockedInInstructions());
   }
@@ -278,10 +275,9 @@ function buildSkillsSection(workspaceRoot?: string, lockedIn = false): string {
   // it's correct regardless of where an ecosystem installer fetches to — the
   // agent just needs the bundle to end up under `skillsDir`.
   //
-  // Suppressed while locked in: this paragraph's whole job is to send the agent
-  // at its own config directory with the shell tools, which is the drift the
-  // lock exists to discourage. The catalog itself stays — installed skills
-  // remain listed and usable, only the "go install more" guidance goes away.
+  // Suppressed while locked in: it points the agent at its own config directory
+  // with the shell tools. The catalog itself stays, so installed skills remain
+  // listed and usable.
   const install =
     `Global skills are installed in \`${skillsDir}\` — each is a \`<name>/SKILL.md\` bundle ` +
     `(the agentskills.io standard, optionally with \`scripts/\`/\`references/\`/\`assets/\`). ` +
@@ -293,7 +289,6 @@ function buildSkillsSection(workspaceRoot?: string, lockedIn = false): string {
     `\`<name>/\` folder into \`${skillsDir}\`. Newly added skills are detected automatically — ` +
     `no restart needed.`;
 
-  // Trailing block, dropped entirely while locked in.
   const installSuffix = lockedIn ? '' : `\n\n${install}`;
 
   if (skills.length === 0) {
@@ -727,17 +722,15 @@ Only your **final message** in a multi-step turn is delivered to the user. Inter
 }
 
 /**
- * Locked-in mode notice. The workspace-markdown writers are withheld from the
- * tool set while the lock is on, so this explains their absence — otherwise the
- * model has to infer whether it is broken or forbidden. Also tells it what to do
- * instead: say what it would have changed, and who can lift the lock.
+ * Locked-in mode notice: why the workspace-markdown writers are absent from the
+ * tool set, what to do instead, and who can lift the lock.
  */
 function getLockedInInstructions(): string {
   return `# Locked-In Mode
 
-Locked-in mode is **on**, so your workspace files — soul, memory summary, user profile, vision, heartbeat config, and bootstrap notes — are read-only. This is a persistent setting, not a limit on this turn: the tools that edit those files are unavailable, and any such edit would be refused.
+Locked-in mode is **on**, so your workspace files — soul, memory summary, user profile, vision, heartbeat config, and bootstrap notes — are read-only.
 
-This is the user's deliberate choice, not a fault. When you notice something you would normally have written to one of those files, say so in your reply — describe the change you would have made and why — and note that the user can turn locked-in mode off in their agent settings. Do not try to work around it by editing files through the shell.
+This is the user's choice, not a fault. When you notice something you would normally have written to one of those files, say so in your reply — describe the change you would have made and why — and note that the user can turn locked-in mode off in their agent settings. Do not try to work around it by editing files through the shell.
 
 Everything else is unaffected: you can still search and write long-term memories, run tools, and change behavioural settings such as your heartbeat interval or timezone.`;
 }

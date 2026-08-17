@@ -267,7 +267,7 @@ describe('AgentWorkspaceService telemetry', () => {
     mockPrisma.agentWorkspace.findUnique.mockResolvedValueOnce(createAgentRow({ lockedIn: false }));
     expect(await agentWorkspaceService.isLockedIn()).toBe(false);
 
-    // A toggle between reads must be observed — the lock is never snapshotted.
+    // A toggle between reads must be observed.
     mockPrisma.agentWorkspace.findUnique.mockResolvedValueOnce(createAgentRow({ lockedIn: true }));
     expect(await agentWorkspaceService.isLockedIn()).toBe(true);
   });

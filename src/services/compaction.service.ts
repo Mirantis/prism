@@ -273,8 +273,6 @@ class CompactionService {
           mode: 'chat',
           workspaceRoot: thread?.workspaceRoot ?? undefined,
           taskInvoker: neverInvoke,
-          // Must match the chat turn's tools block byte-for-byte, so the lock
-          // has to be reflected here too.
           lockedIn: context.lockedIn,
         });
         const cachedTools = withToolsCacheControl(withOutputLimits(tools), cachePoint);
