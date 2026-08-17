@@ -281,6 +281,14 @@ VOLUME ["/data"]
 # so the container points it at the mounted /data volume here.
 ENV PRISM_DATA_DIR=/data
 
+# Where Chromium reads managed policies. Debian's chromium package ships
+# /etc/chromium root-owned, and the runtime user has no sudo, so the directory is
+# pre-created node-owned on purpose: the runtime writes its own policy files here
+# at run time, such as the CA-trust drop-in a proxied host needs. Keep it
+# node-owned — root ownership makes that write fail. The image itself bakes in no
+# policy.
+RUN mkdir -p /etc/chromium/policies/managed && chown node:node /etc/chromium/policies/managed
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD wget -q --spider http://127.0.0.1:3003/health || exit 1
