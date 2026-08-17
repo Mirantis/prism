@@ -99,6 +99,22 @@ describe('serializing an error into a log', () => {
     expect(entry.err.redacted).not.toContain('cause');
   });
 
+  it('names a dropped field that was hidden from an enumeration', () => {
+    const { lines, log } = capturing();
+    // Own but non-enumerable, which is how `AggregateError` keeps `errors` — so the
+    // read loop sees fields an `Object.keys` walk does not. If the report of what was
+    // dropped were built from that walk instead, such a field would vanish with no
+    // trace, which is the one thing this array exists to prevent.
+    const err = new Error('upload failed');
+    Object.defineProperty(err, 'payload', { value: TRANSCRIPT, enumerable: false });
+
+    log.error({ err }, 'hidden field');
+
+    const entry = JSON.parse(lines[0]) as { err: { redacted?: string[] } };
+    expect(entry.err.redacted).toContain('payload');
+    expect(lines[0]).not.toContain(TRANSCRIPT);
+  });
+
   it('reduces a nested error to a name and a message', () => {
     const { lines, log } = capturing();
 

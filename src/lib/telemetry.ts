@@ -117,17 +117,35 @@ export async function shutdownTelemetry(): Promise<void> {
  * so call sites can spread it unconditionally:
  *
  *   generateText({ ..., ...langfuseTelemetry('thread-title') })
+ *
+ * `recordContent: false` traces the call without its prompt or its completion —
+ * the timing, the model and the token counts still arrive, the words do not. For
+ * a call whose input is somebody else's speech rather than the operator's own
+ * data, which is why the meeting gate passes it. Langfuse is a *stronger*
+ * disclosure than a log line, not a weaker one: it is a durable store on another
+ * host, so a call the log deliberately does not record must not arrive there
+ * either.
  */
 export function langfuseTelemetry(
   functionId: string,
   metadata?: Record<string, string>,
-): { experimental_telemetry?: { isEnabled: true; functionId: string; metadata?: Record<string, string> } } {
+  options?: { recordContent?: boolean },
+): {
+  experimental_telemetry?: {
+    isEnabled: true;
+    functionId: string;
+    metadata?: Record<string, string>;
+    recordInputs?: boolean;
+    recordOutputs?: boolean;
+  };
+} {
   if (!isLangfuseEnabled()) return {};
   return {
     experimental_telemetry: {
       isEnabled: true,
       functionId,
       ...(metadata ? { metadata } : {}),
+      ...(options?.recordContent === false ? { recordInputs: false, recordOutputs: false } : {}),
     },
   };
 }

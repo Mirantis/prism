@@ -279,8 +279,13 @@ under the data dir, so sign-in happens once rather than per meeting.
 ## Observability
 
 All optional; each is off until its variable is set. Langfuse traces every LLM
-call (model, tokens, tool calls, latency); OpenTelemetry exports product
-telemetry to a collector. Structured logs (Pino) are always on.
+call (model, tokens, tool calls, latency), with prompts and completions included
+— the one exception is the in-meeting call that decides whether the agent was
+named, whose content follows
+[`MEETING_TRANSCRIPT_LOGGING`](voice-meetings.md#what-ends-up-in-the-log) because
+it is a sentence somebody said out loud. OpenTelemetry exports product telemetry
+to a collector; that surface carries no prompts at all. Structured logs (Pino)
+are always on, and no error written to them carries a request or response body.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|

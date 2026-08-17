@@ -23,12 +23,16 @@ vi.mock('../../../lib/classification', () => ({
   getGateRequest: () => getGateRequest(),
 }));
 
-vi.mock('../../../lib/telemetry', () => ({ langfuseTelemetry: () => ({}) }));
+const langfuseTelemetry = vi.fn();
+vi.mock('../../../lib/telemetry', () => ({
+  langfuseTelemetry: (...a: unknown[]) => langfuseTelemetry(...a),
+}));
 
 const { classifyAddressed } = await import('../addressed-classifier');
 
 beforeEach(() => {
   vi.clearAllMocks();
+  langfuseTelemetry.mockReturnValue({});
   getGateRequest.mockReturnValue({
     model: { id: 'haiku' },
     providerOptions: {},
@@ -145,6 +149,28 @@ describe('classifyAddressed', () => {
       { err: failure },
       expect.stringContaining('[Meeting:Gate]'),
     );
+  });
+
+  it('keeps the sentence out of the trace store on the same terms as the log', async () => {
+    // Langfuse is the other place this call's prompt can land, and the prompt *is*
+    // what someone said. A trace is a durable record on another host, so a call the
+    // log deliberately does not record must not arrive there in full either —
+    // otherwise `off` would move the room's speech rather than withhold it.
+    generateText.mockResolvedValue({ text: 'NO' });
+    await classifyAddressed({ transcript: 'Isaac, can you look?', agentName: 'Prism', stage: 'final' });
+
+    expect(langfuseTelemetry).toHaveBeenCalledWith('meeting-addressed-gate', undefined, {
+      recordContent: false,
+    });
+
+    // Turned on, the sentence is already being written down, so the trace may hold it
+    // too — a verdict is far easier to explain with the call that produced it.
+    vi.mocked(config).meetingTranscriptLogging = 'full';
+    await classifyAddressed({ transcript: 'Isaac, can you look?', agentName: 'Prism', stage: 'final' });
+
+    expect(langfuseTelemetry).toHaveBeenLastCalledWith('meeting-addressed-gate', undefined, {
+      recordContent: true,
+    });
   });
 
   it("leaves the model's own words off the line unless they were asked for", async () => {
