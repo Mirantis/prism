@@ -388,8 +388,8 @@ export class VoiceConversation {
       stage,
     });
 
-    // Every verdict is recorded; how much of the sentence goes with it is a setting,
-    // and `transcript-log.ts` is where that decision and its reasoning live.
+    // Every verdict is recorded; whether the sentence goes with it is a setting, and
+    // `transcript-log.ts` is where that decision and its reasoning live.
     //
     // `info`, deliberately: production runs at `info`, and this line exists to be
     // read back from a deployed container. Which is exactly why the words are not on
