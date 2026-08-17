@@ -17,11 +17,22 @@ describe('prepareMeetingTools', () => {
   it('collects tools in meeting mode with no workspace', async () => {
     mockCollectTools.mockResolvedValue({ tools: {}, subagents: [] });
 
-    await prepareMeetingTools({ userId: 'u1', agentId: 'a1', threadId: 't1' });
+    await prepareMeetingTools({ userId: 'u1', agentId: 'a1', threadId: 't1', lockedIn: false });
 
     expect(mockCollectTools).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 'u1', agentId: 'a1', threadId: 't1', mode: 'meeting', workspaceRoot: undefined }),
     );
+  });
+
+  // Declarations are sent once per session, so a call that did not pass the flag
+  // would offer a locked agent the six workspace writers for the whole meeting
+  // and leave the refusal in the tools as the only guard.
+  it('passes the lock through, so the writers are withheld from the declarations', async () => {
+    mockCollectTools.mockResolvedValue({ tools: {}, subagents: [] });
+
+    await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: true });
+
+    expect(mockCollectTools).toHaveBeenCalledWith(expect.objectContaining({ lockedIn: true }));
   });
 
   it('converts a zod tool schema to JSON Schema the Realtime API can read', async () => {
@@ -36,7 +47,7 @@ describe('prepareMeetingTools', () => {
       subagents: [],
     });
 
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
 
     expect(prepared.count).toBe(1);
     expect(prepared.declarations[0]).toMatchObject({
@@ -61,7 +72,7 @@ describe('prepareMeetingTools', () => {
       subagents: [],
     });
 
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
 
     expect(prepared.declarations[0].parameters).toMatchObject({
       type: 'object',
@@ -80,7 +91,7 @@ describe('prepareMeetingTools', () => {
       subagents: [{ name: 'helper', description: 'A helper' }],
     });
 
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
 
     expect(prepared.declarations.map((d) => d.name).sort()).toEqual(['Task', 'memory_search']);
   });
@@ -95,7 +106,7 @@ describe('prepareMeetingTools', () => {
       subagents: [],
     });
 
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
 
     expect(prepared.declarations.map((d) => d.name)).toEqual(['real']);
   });
@@ -107,7 +118,7 @@ describe('prepareMeetingTools', () => {
       subagents: [],
     });
 
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
     const output = await prepared.execute('list_tasks', '{"limit":5}');
 
     expect(execute).toHaveBeenCalledWith({ limit: 5 }, expect.objectContaining({ toolCallId: expect.any(String) }));
@@ -121,7 +132,7 @@ describe('prepareMeetingTools', () => {
       subagents: [],
     });
 
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
     expect(await prepared.execute('ping', '')).toBe('done');
     expect(execute).toHaveBeenCalledWith({}, expect.anything());
   });
@@ -140,7 +151,7 @@ describe('prepareMeetingTools', () => {
       subagents: [],
     });
 
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
     const output = await prepared.execute('boom', '{}');
 
     // The model must be able to say "I couldn't check that" rather than go silent.
@@ -149,7 +160,7 @@ describe('prepareMeetingTools', () => {
 
   it('reports an unknown tool rather than throwing', async () => {
     mockCollectTools.mockResolvedValue({ tools: {}, subagents: [] });
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
 
     expect(JSON.parse(await prepared.execute('nope', '{}'))).toEqual({ error: 'Unknown tool: nope' });
   });
@@ -159,7 +170,7 @@ describe('prepareMeetingTools', () => {
       tools: { ping: tool({ description: 'Ping', inputSchema: z.object({}), execute: async () => 'ok' }) },
       subagents: [],
     });
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
 
     expect(JSON.parse(await prepared.execute('ping', '{not json'))).toEqual({
       error: 'Invalid JSON arguments for ping',
@@ -179,7 +190,7 @@ describe('prepareMeetingTools', () => {
       subagents: [],
     });
 
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
     const output = await prepared.execute('dump', '{}');
 
     expect(output.length).toBeLessThan(40_000);
@@ -209,7 +220,7 @@ describe('prepareMeetingTools', () => {
       subagents: [],
     });
 
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
     const output = await prepared.execute('issue', '{}');
 
     expect(output).toBe('y'.repeat(8_000));
@@ -229,7 +240,7 @@ describe('prepareMeetingTools', () => {
       subagents: [],
     });
 
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
 
     expect(await prepared.execute('listing', '{}')).toBe('w'.repeat(12_200));
   });
@@ -240,7 +251,7 @@ describe('prepareMeetingTools', () => {
       subagents: [],
     });
 
-    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
     expect(await prepared.execute('say', '{}')).toBe('three pods are down');
   });
 });

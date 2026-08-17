@@ -282,11 +282,12 @@ export class MeetingBotService {
     try {
       // Instructions and tools first: they need the database and the model
       // catalog, and failing here should cost nothing but a message.
-      const { instructions, agentName } = await this.buildInstructions(input);
+      const { instructions, agentName, lockedIn } = await this.buildInstructions(input);
       const tools = await prepareMeetingTools({
         userId: input.userId,
         agentId: input.agentId,
         threadId: input.threadId,
+        lockedIn,
       });
 
       audio = new AudioStack();
@@ -949,7 +950,7 @@ export class MeetingBotService {
    */
   private async buildInstructions(
     input: JoinMeetingInput,
-  ): Promise<{ instructions: string; agentName: string }> {
+  ): Promise<{ instructions: string; agentName: string; lockedIn: boolean }> {
     const context = await contextService.getAgentContext(input.userId, {
       agentId: input.agentId,
       includeConversation: false,
@@ -965,8 +966,9 @@ export class MeetingBotService {
     ].join('\n\n---\n\n');
     // Handed back so the caller can give the same name to the gate that decides
     // whether the agent was called — the room hears this one, so it is the one
-    // people will actually say.
-    return { instructions, agentName: context.agentName };
+    // people will actually say. `lockedIn` rides along from this same context so
+    // the tool set matches the prompt built beside it.
+    return { instructions, agentName: context.agentName, lockedIn: context.lockedIn };
   }
 
   /** Post a progress note where the user asked from, or the latest thread. */

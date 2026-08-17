@@ -47,8 +47,11 @@ export interface CollectToolsInput {
    * Locked-in mode, taken from the caller's context. Not re-read here: two
    * requests built from the same context must produce a byte-identical tools
    * block, or they miss the shared prompt-cache prefix.
+   *
+   * Required, not optional: a caller that omits the flag would leave the
+   * writers in its schema and lean on the runtime refusal alone.
    */
-  lockedIn?: boolean;
+  lockedIn: boolean;
 }
 
 /**
