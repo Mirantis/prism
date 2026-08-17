@@ -78,14 +78,6 @@ New behavior should ship with tests. The suite runs on [vitest](https://vitest.d
 - Update documentation when you change public behavior, configuration, or env
   vars. Keep [`CLAUDE.md`](CLAUDE.md) in sync when you touch architecture.
 
-A pull request that builds the container image also pushes it to
-`ghcr.io/lensapp/prism-agent`, tagged `pr-<number>` and
-`pr-<number>-<branch-slug>`, so reviewers can deploy the change and try it. Both
-tags move with each push to the branch and are deleted when the pull request
-closes. A fork's pull request builds the image but pushes nothing, because its
-registry token is read-only. See
-[Run with Docker](docs/docker.md#deploying-a-pull-requests-image).
-
 ## Commit Style
 
 This repo uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
