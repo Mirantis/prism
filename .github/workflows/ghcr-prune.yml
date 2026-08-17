@@ -1,0 +1,179 @@
+name: GHCR Prune
+
+# Weekly backstop for the container registry. pr-image-cleanup.yml deletes a
+# PR's image the moment the PR closes; this sweeps what that missed — a
+# cancelled run, a workflow error, a PR closed while Actions were off, and every
+# PR that closed before that workflow existed.
+
+on:
+  schedule:
+    - cron: '17 4 * * 1' # Mondays 04:17 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List what would be deleted without deleting it
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write # delete container package versions
+  pull-requests: read # decide whether a pr-<n> tag is still live
+
+jobs:
+  prune-closed-pr-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete pr-<n> tags whose PR is no longer open
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PACKAGE: prism-agent
+          VERSIONS_API: /orgs/${{ github.repository_owner }}/packages/container/prism-agent/versions
+          # A scheduled run has no inputs, so it deletes. A manual run defaults
+          # to listing only, which is how to inspect the sweep before trusting
+          # it.
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+
+          tagged=$(mktemp)
+          errlog=$(mktemp)
+
+          # Every tagged version of the package, as `id <TAB> tags`.
+          if ! gh api --paginate "$VERSIONS_API?per_page=100" --jq '
+                .[]
+                | select(((.metadata.container.tags // []) | length) > 0)
+                | [(.id | tostring), ((.metadata.container.tags // []) | join(" "))]
+                | @tsv' > "$tagged" 2> "$errlog"; then
+            echo "::error::Could not list versions of $PACKAGE — $(tr '\n' ' ' < "$errlog")"
+            echo "Check that the package is linked to this repository and that the repository has admin on it."
+            exit 1
+          fi
+
+          # Only a PR GitHub reports as `closed` (which covers merged) releases
+          # its image. Everything else keeps it: still open, or any failure to
+          # read the state at all. A 404 means "this token cannot see the PR",
+          # not "the PR is gone" — GitHub never deletes a pull request — so
+          # treating it as gone would delete every live PR's image the first time
+          # the token lost `pull-requests: read`.
+          is_closed() {
+            local state
+            if ! state=$(gh api "repos/$GH_REPO/pulls/$1" --jq .state 2> "$errlog"); then
+              echo "::warning::Could not read PR #$1 — $(tr '\n' ' ' < "$errlog")"
+              return 1
+            fi
+            [ "$state" = closed ]
+          }
+
+          deleted=0
+          failed=0
+          kept=0
+          report=$(mktemp)
+
+          while IFS=$'\t' read -r id tags; do
+            # Consider a version only when every one of its tags is a pr-<n>
+            # tag. A version also carrying `latest`, `canary` or a version tag
+            # is shared (identical content shares a digest) and must survive.
+            prs=""
+            foreign=0
+            for tag in $tags; do
+              pr=$(printf '%s' "$tag" | sed -nE 's/^pr-([0-9]+)(-.*)?$/\1/p')
+              if [ -z "$pr" ]; then
+                foreign=1
+                break
+              fi
+              prs="$prs $pr"
+            done
+            if [ "$foreign" -eq 1 ] || [ -z "$prs" ]; then
+              continue
+            fi
+
+            # One version can carry tags from two PRs, so it survives unless
+            # every one of them is closed.
+            live=""
+            for pr in $(printf '%s\n' $prs | sort -u); do
+              is_closed "$pr" || live="$live #$pr"
+            done
+            if [ -n "$live" ]; then
+              echo "keep    version $id ($tags) — not closed:$live"
+              kept=$((kept + 1))
+              continue
+            fi
+
+            if [ "$DRY_RUN" = true ]; then
+              echo "dry-run version $id ($tags) — would delete"
+              printf -- '- `%s` (version %s) — would delete\n' "$tags" "$id" >> "$report"
+              continue
+            fi
+
+            if gh api -X DELETE "$VERSIONS_API/$id" > /dev/null 2> "$errlog"; then
+              echo "delete  version $id ($tags)"
+              printf -- '- `%s` (version %s)\n' "$tags" "$id" >> "$report"
+              deleted=$((deleted + 1))
+            else
+              echo "::warning::Could not delete version $id ($tags) — $(tr '\n' ' ' < "$errlog")"
+              failed=$((failed + 1))
+            fi
+          done < "$tagged"
+
+          {
+            if [ "$DRY_RUN" = true ]; then
+              printf '### Closed-PR image tags (dry run)\n\n'
+            else
+              printf '### Closed-PR image tags\n\n'
+            fi
+            if [ -s "$report" ]; then
+              cat "$report"
+            else
+              printf 'Nothing to prune.\n'
+            fi
+            printf '\nKept %d version(s) whose pull request is not closed, or' "$kept"
+            printf ' whose state could not be read this run.\n'
+            if [ "$failed" -gt 0 ]; then
+              printf '\n%d version(s) could not be deleted. See the run log.\n' "$failed"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Untagged manifests are the other half of the problem, and they are NOT
+  # handled here yet — deliberately.
+  #
+  # Both release workflows push with `push-by-digest=true` and no `tags:`, so
+  # every run leaves two untagged per-platform manifests behind; deleting the
+  # tagged manifest list does not delete its children. docker-build.yml now adds
+  # the same per PR push. So the package accumulates untagged versions and
+  # something has to reap them.
+  #
+  # It is not done with a hand-rolled loop because deciding whether an untagged
+  # manifest is safe to delete means knowing the complete set of children every
+  # live tag still references. Get that wrong and `latest` breaks for one
+  # architecture — the failure is silent at delete time and only shows up on a
+  # user's `docker pull`. `dataaxiom/ghcr-cleanup-action` computes that set,
+  # unlike `actions/delete-package-versions`, which is manifest-list-unaware.
+  #
+  # The block below is what to enable, but it is commented out because the
+  # action could not be verified from the environment this was written in
+  # (api.github.com and raw.githubusercontent.com are both unreachable there for
+  # third-party repositories). Before enabling it:
+  #
+  #   1. Read the action's own README/action.yml and confirm the input names —
+  #      `owner`, `package`, `delete-untagged`, `dry-run` and `token` are what
+  #      the docs showed historically, not something verified for the version
+  #      you are pinning.
+  #   2. Replace `<commit-sha>` with a real commit SHA and keep the version
+  #      comment, as every other action in this repository is pinned.
+  #   3. Leave `dry-run: true` for at least one scheduled run and read the
+  #      output. This job touches the release package's own history, not just PR
+  #      images, so it is a bigger decision than the sweep above. Flip the
+  #      default in a separate change once a real run has been inspected.
+  #
+  # prune-untagged:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: dataaxiom/ghcr-cleanup-action@<commit-sha> # vX.Y.Z
+  #       with:
+  #         owner: ${{ github.repository_owner }}
+  #         package: prism-agent
+  #         delete-untagged: true
+  #         dry-run: ${{ inputs.dry_run || 'true' }}
+  #         token: ${{ secrets.GITHUB_TOKEN }}

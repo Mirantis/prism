@@ -1,0 +1,109 @@
+name: PR Image Cleanup
+
+# Deletes the container image docker-build.yml pushed for a pull request, as
+# soon as the pull request closes. ghcr-prune.yml is the weekly backstop for
+# anything this run misses.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  packages: write # delete container package versions
+
+# A close/reopen/close burst would otherwise run two deleters over the same
+# version list, and the loser reports failures for versions the winner deleted.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+
+jobs:
+  delete-pr-image:
+    # Only a same-repo PR ever pushed an image (see docker-build.yml), and a
+    # fork-originated event carries a read-only token that could not delete one.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete this PR's image versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE: prism-agent
+          VERSIONS_API: /orgs/${{ github.repository_owner }}/packages/container/prism-agent/versions
+          PR_PREFIX: pr-${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          tagged=$(mktemp)
+          errlog=$(mktemp)
+
+          # Every tagged version of the package, as `id <TAB> tags`. The tag
+          # matching happens in shell below rather than in this jq program, so
+          # the program stays constant and no PR-supplied text is interpolated
+          # into it.
+          if ! gh api --paginate "$VERSIONS_API?per_page=100" --jq '
+                .[]
+                | select(((.metadata.container.tags // []) | length) > 0)
+                | [(.id | tostring), ((.metadata.container.tags // []) | join(" "))]
+                | @tsv' > "$tagged" 2> "$errlog"; then
+            # A 403 here means the token cannot read the package (it is not
+            # linked to this repo, or the repo lacks admin on it). That is a
+            # configuration problem to fix once, not a reason to fail every
+            # closed PR, and ghcr-prune.yml reports it weekly too.
+            echo "::warning::Could not list versions of $PACKAGE — $(tr '\n' ' ' < "$errlog")"
+            {
+              printf '### PR image cleanup skipped\n\n'
+              printf 'Could not read the `%s` package versions. See the run log.\n' "$PACKAGE"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          deleted=0
+          failed=0
+          report=$(mktemp)
+
+          while IFS=$'\t' read -r id tags; do
+            # Delete a version only when every tag on it belongs to this PR. Two
+            # builds of identical content share a digest, so one version can
+            # carry another tag as well — deleting it would take `latest`,
+            # `canary` or another PR's tag with it.
+            mine=0
+            others=0
+            for tag in $tags; do
+              case "$tag" in
+                "$PR_PREFIX" | "$PR_PREFIX"-*) mine=1 ;;
+                *) others=1 ;;
+              esac
+            done
+            if [ "$mine" -eq 0 ]; then
+              continue
+            fi
+            if [ "$others" -eq 1 ]; then
+              echo "keep    version $id ($tags) — also carries a tag outside $PR_PREFIX"
+              continue
+            fi
+
+            if gh api -X DELETE "$VERSIONS_API/$id" > /dev/null 2> "$errlog"; then
+              echo "delete  version $id ($tags)"
+              printf -- '- `%s` (version %s)\n' "$tags" "$id" >> "$report"
+              deleted=$((deleted + 1))
+            else
+              echo "::warning::Could not delete version $id ($tags) — $(tr '\n' ' ' < "$errlog")"
+              failed=$((failed + 1))
+            fi
+          done < "$tagged"
+
+          {
+            printf '### PR image cleanup\n\n'
+            if [ "$deleted" -eq 0 ]; then
+              printf 'No image versions tagged `%s`* were found.\n' "$PR_PREFIX"
+            else
+              printf 'Deleted %d image version(s):\n\n' "$deleted"
+              cat "$report"
+            fi
+            if [ "$failed" -gt 0 ]; then
+              printf '\n%d version(s) could not be deleted; ' "$failed"
+              printf 'the weekly `GHCR Prune` run will retry them.\n'
+            fi
+            printf '\nThe per-platform child manifests these lists referenced are'
+            printf ' untagged and stay behind; `GHCR Prune` reaps those.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
