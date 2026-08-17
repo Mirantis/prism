@@ -57,6 +57,13 @@ export interface MeetingToolBridgeInput {
   userId: string;
   agentId: string;
   threadId?: string;
+  /**
+   * Locked-in mode, read from the same context the instructions were built
+   * from. Declarations go out once in `session.update`, so the set is fixed for
+   * the call. A lock turned on mid-call is still enforced by the refusal in the
+   * tools; a lock turned off does not hand the writers back until the next call.
+   */
+  lockedIn: boolean;
 }
 
 export interface PreparedMeetingTools {
@@ -89,6 +96,7 @@ export async function prepareMeetingTools(
     // A meeting has no workspace: it is not launched from a repo checkout, so
     // only global skills apply — the same position autonomous runs are in.
     workspaceRoot: undefined,
+    lockedIn: input.lockedIn,
     // Imported at call time, not at module load: the cycle
     // invoke -> tool-collection -> tools/meeting -> meeting-bot.service -> here is
     // real, and a top-level import would close it and leave one module
