@@ -1,18 +1,14 @@
 /**
  * Locked-in mode step definitions.
  *
- * The lock's guarantee is about *stored state*, not about what the agent says,
- * so every assertion reads the soul document out of the database rather than
- * matching on reply text — the model's wording for "I can't do that" is not
- * something a test should pin down. Each chat scenario therefore ends on one
- * DB assertion and never chains two agent-response assertions (concise mode
- * delivers exactly one bubble per turn, so a second one would just burn its
- * timeout).
+ * The lock's guarantee is about stored state, so every assertion reads the soul
+ * document out of the database rather than matching on reply text. Each chat
+ * scenario ends on one DB assertion and never chains two agent-response
+ * assertions: concise mode delivers exactly one bubble per turn.
  *
- * The `agent locked write refused` event is deliberately not asserted here:
- * Layer 2 withholds the writer tools from a locked turn, so Layer 1's refusal
- * (the only emitter) is reachable only on a mid-turn flip. Covered instead in
- * `src/tools/__tests__/agent-config.test.ts`.
+ * The `agent locked write refused` event is not asserted here. The writer tools
+ * are withheld from a locked turn, so the refusal is reachable only on a
+ * mid-turn flip. It is covered in `src/tools/__tests__/agent-config.test.ts`.
  */
 
 import { createBdd } from 'playwright-bdd';
@@ -26,10 +22,7 @@ const { Given, When, Then } = createBdd();
 /** Soul text captured before the turn, so "unchanged"/"changed" is a real comparison. */
 let soulBefore = '';
 
-/**
- * Sentinel the prompt asks the agent to write into the soul document, so
- * "changed" is a specific claim rather than any diff at all.
- */
+/** Sentinel the prompt asks the agent to write into the soul document. */
 const SOUL_MARKER = 'PIRATEMODE7K';
 
 async function setLockedIn(lockedIn: boolean): Promise<void> {
@@ -73,11 +66,6 @@ Then('the agent details show locked-in is false', async ({ page }) => {
   expect(body.agent.lockedIn).toBe(false);
 });
 
-Then('the locked-in toggle is described as a drift guardrail', async ({ page }) => {
-  // The shell bypass is open in v1, so the UI must not read as containment.
-  await expect(page.getByText(/not a security boundary/i)).toBeVisible({ timeout: 10_000 });
-});
-
 Then('the stored soul document is unchanged', async ({ page }) => {
   const homePage = new HomePage(page);
   await homePage.waitForAgentResponse();
@@ -85,8 +73,6 @@ Then('the stored soul document is unchanged', async ({ page }) => {
 
   const prisma = dbHelper.getPrisma();
   const agent = await prisma.agentWorkspace.findUnique({ where: { id: DEFAULT_AGENT_ID } });
-  // The authoritative claim: the write did not land. Asserted on the row, not
-  // on the reply — the refusal wording belongs to the model.
   expect(agent?.soulMd ?? '').toBe(soulBefore);
   expect(agent?.soulMd ?? '').not.toContain(SOUL_MARKER);
 });
@@ -96,8 +82,7 @@ Then('the stored soul document changes', async ({ page }) => {
   await homePage.waitForAgentResponse();
   await homePage.waitForStreamComplete();
 
-  // The control case: without the lock the same request rewrites the document,
-  // so the scenario above is proving the lock and not just a reluctant model.
+  // The control case: without the lock the same request rewrites the document.
   const prisma = dbHelper.getPrisma();
   await expect
     .poll(

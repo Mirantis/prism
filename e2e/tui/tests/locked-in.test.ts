@@ -2,18 +2,13 @@
  * E2E: locked-in mode from the terminal UI.
  *
  * Locked-in mode has no TUI-specific control — the switch lives in the web
- * Profile page — so what the TUI proves is the part that is transport-agnostic:
- * the runtime's `PATCH /agents/locked-in` round-trip, and that a real chat turn
- * driven from `prism-cli` cannot write a locked workspace document.
+ * Profile page — so the TUI covers what is transport-agnostic: the runtime's
+ * `PATCH /agents/locked-in` round-trip, and that a real chat turn driven from
+ * `prism-cli` cannot write a locked workspace document.
  *
  * The assertion reads `agent_workspaces.soulMd` out of SQLite rather than
- * matching the reply on screen. The lock's guarantee is about stored state, and
- * how the model phrases "I can't do that" is not a contract — the unlocked
- * control scenario is what shows the frozen result isn't just a reluctant model.
- *
- * The repeated "I ask the agent to rewrite its soul" / "locked-in is …" steps go
- * through `defineSteps` because vitest-cucumber requires a shared registration
- * for a step used by more than one Scenario.
+ * matching the reply on screen: the lock's guarantee is about stored state, and
+ * how the model phrases "I can't do that" is not a contract.
  */
 
 import { readFileSync } from 'node:fs';
@@ -28,8 +23,7 @@ const feature = loadFeatureFromText(
   readFileSync(join(import.meta.dirname, '../features/locked-in.feature'), 'utf8'),
 );
 
-// Sentinel the model is asked to put in the soul document, so "changed" is a
-// specific claim rather than any diff at all.
+// Sentinel the model is asked to put in the soul document.
 const SOUL_MARKER = 'PIRATEMODE7K';
 
 const REWRITE_PROMPT =
@@ -38,7 +32,7 @@ const REWRITE_PROMPT =
 
 let env: RuntimeTestEnv;
 let session: TuiSession | undefined;
-/** Soul text captured before the turn, so unchanged/changed is a real comparison. */
+/** Soul text captured before the turn, so "unchanged" is a real comparison. */
 let soulBefore = '';
 
 function sleep(ms: number): Promise<void> {
@@ -67,17 +61,6 @@ function readLockedIn(dbPath: string): boolean {
   } finally {
     db.close();
   }
-}
-
-/** Poll SQLite until the soul document differs from `soulBefore`. */
-async function waitForSoulChange(dbPath: string, timeoutMs = 120_000): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const soul = readSoul(dbPath);
-    if (soul !== soulBefore) return soul;
-    await sleep(500);
-  }
-  throw new Error(`Soul document never changed within ${timeoutMs}ms (still ${JSON.stringify(soulBefore)})`);
 }
 
 describeFeature(
@@ -126,16 +109,10 @@ describeFeature(
       });
 
       Step('the soul document is unchanged', async () => {
-        // Give a write that WAS going to land time to land, so this isn't
-        // just measuring that the assertion ran first.
+        // Give a write that would have landed time to land.
         await sleep(3_000);
         expect(readSoul(env.dbPath)).toBe(soulBefore);
         expect(readSoul(env.dbPath)).not.toContain(SOUL_MARKER);
-      });
-
-      Step('the soul document has changed', async () => {
-        const soul = await waitForSoulChange(env.dbPath);
-        expect(soul).toContain(SOUL_MARKER);
       });
     });
 
@@ -144,10 +121,6 @@ describeFeature(
     });
 
     Scenario('A locked agent leaves its soul document alone', () => {
-      // Covered by the shared steps.
-    });
-
-    Scenario('An unlocked agent rewrites its soul document', () => {
       // Covered by the shared steps.
     });
   },

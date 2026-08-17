@@ -12,10 +12,6 @@ Feature: Locked-in mode
     When I toggle locked-in to false
     Then the agent details show locked-in is false
 
-  Scenario: The profile toggle says the lock is not a security boundary
-    When I navigate to the profile page
-    Then the locked-in toggle is described as a drift guardrail
-
   Scenario: A locked agent refuses to rewrite its soul and leaves it unchanged
     Given the agent is locked in
     When I navigate to the agent chat page

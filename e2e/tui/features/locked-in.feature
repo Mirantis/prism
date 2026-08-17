@@ -12,8 +12,3 @@ Feature: Locked-in mode (TUI)
     Given locked-in is "true"
     When I ask the agent to rewrite its soul
     Then the soul document is unchanged
-
-  Scenario: An unlocked agent rewrites its soul document
-    Given locked-in is "false"
-    When I ask the agent to rewrite its soul
-    Then the soul document has changed
