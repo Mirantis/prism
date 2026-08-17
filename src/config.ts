@@ -838,6 +838,14 @@ export const config = {
   slackBotToken: process.env.SLACK_BOT_TOKEN,
   slackExpectedAppId: process.env.SLACK_EXPECTED_APP_ID,
 
+  // Microsoft Teams — a Single Tenant Entra app registration behind an Azure
+  // Bot resource. TEAMS_APP_PASSWORD must be the real client secret: the OAuth
+  // client-credentials grant sends it in the POST body, and credential
+  // sentinels are rewritten on headers only (same class as GOOGLE_BOT_PASSWORD).
+  teamsAppId: process.env.TEAMS_APP_ID,
+  teamsAppPassword: process.env.TEAMS_APP_PASSWORD,
+  teamsAppTenantId: process.env.TEAMS_APP_TENANT_ID,
+
   // External MCP server URL — injected directly as NEXUS_MCP_URL by the Lens
   // Agents sandbox (project-scoped /projects/:id/mcp; the MITM proxy injects the
   // Authorization header for that path). Already a complete URL — do NOT append

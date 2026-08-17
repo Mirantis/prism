@@ -81,11 +81,12 @@ Each subscription's **Deliver to** setting controls both where the message is
 sent and where it's recorded:
 
 - **All channels** (default) — broadcast, exactly like a heartbeat alert: the
-  message appears in web chat and is sent to Slack. On Slack that means your
-  **DM** (personal mode) or the agent's **main channel** (team mode — the one
-  flagged on the [Channels page](web-ui.md#channels-slack), else the oldest
-  linked channel), not every linked channel.
-- **Chat** — web chat only; nothing is sent to Slack.
+  message appears in web chat and is sent to every linked integration. On
+  Slack and Teams that means your **DM** (personal mode) or the agent's
+  **main channel** (team mode — the one flagged on the
+  [Channels page](web-ui.md#channels), else the oldest linked channel), not
+  every linked channel.
+- **Chat** — web chat only; nothing is sent to Slack or Teams.
 - **Slack** — Slack only. The message is delivered to your DM (personal mode)
   or the main channel (team mode) and is **kept out of web chat**: it's stored
   in that Slack destination's own conversation thread (the DM conversation in
@@ -93,6 +94,8 @@ sent and where it's recorded:
   Recents list and CLI resume picker don't show. If no Slack DM or channel is
   linked, the message falls back to the web thread (and the runtime logs a
   warning) so a triggered event is never silently lost.
+- **Microsoft Teams** — Teams only; same semantics as the Slack target, using
+  the Teams personal chat or main channel.
 
 ## Prompt templates
 

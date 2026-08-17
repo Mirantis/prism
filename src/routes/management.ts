@@ -1164,7 +1164,8 @@ router.post('/goals', async (req: Request, res: Response) => {
       threadId,
       objective,
       tokenBudget: typeof tokenBudget === 'number' ? tokenBudget : null,
-      originChannel: originChannel === 'slack' ? 'slack' : 'websocket',
+      originChannel:
+        originChannel === 'slack' || originChannel === 'teams' ? originChannel : 'websocket',
       originChannelId: typeof originChannelId === 'string' ? originChannelId : null,
     });
     res.status(201).json(goal);

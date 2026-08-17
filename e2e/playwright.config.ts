@@ -258,6 +258,14 @@ export default defineConfig({
         // The coding sub-agent scenario spawns the `claude` CLI, which runs on
         // the same Bedrock token as the runtime rather than on an Anthropic login.
         CLAUDE_CODE_USE_BEDROCK: '1',
+        // Teams adapter credentials for the @teams suite (empty = adapter
+        // idle, suite self-skips). The Azure Bot's messaging endpoint must
+        // separately point at this runtime for live runs, through a
+        // path-restricted proxy + tunnel exposing only the bot endpoint
+        // (see e2e/README.md).
+        TEAMS_APP_ID: process.env.TEAMS_E2E_APP_ID || '',
+        TEAMS_APP_PASSWORD: process.env.TEAMS_E2E_APP_PASSWORD || '',
+        TEAMS_APP_TENANT_ID: process.env.TEAMS_E2E_TENANT_ID || '',
         // Off by default, but pinned explicitly because this block inherits
         // process.env: a developer who opts in via the repo-root .env would
         // otherwise leak the refresh in here. The context-window scenarios compute

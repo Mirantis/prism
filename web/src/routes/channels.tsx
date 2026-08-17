@@ -10,7 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Hash, ScrollText, Plus, Trash2, Slack, Star } from 'lucide-react';
+import { Hash, MessagesSquare, ScrollText, Plus, Trash2, Slack, Star } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Page } from '@/components/layout/page';
 import { PageHeader } from '@/components/layout/page-header';
@@ -36,6 +36,7 @@ import { useAgent } from '@/lib/agent-context';
 import { useFormErrors } from '@/hooks/use-form-errors';
 import { CreateModal } from '@/components/shared/create-modal';
 import { DeleteConfirm } from '@/components/shared/delete-confirm';
+import { TeamsModeSections } from '@/components/channels/teams-mode-sections';
 import type { SlackChannelMapping, SlackHeartbeatTrigger } from '@/types';
 
 export const Route = createFileRoute('/channels')({
@@ -65,10 +66,16 @@ function ChannelsPage() {
     queryKey: ['slack-workspaces'],
     queryFn: () => runtimeApi.slackWorkspaces(),
   });
+  const { data: teamsWorkspacesResp } = useQuery({
+    queryKey: ['teams-workspaces'],
+    queryFn: () => runtimeApi.teamsWorkspaces(),
+  });
   const workspace = workspacesResp?.workspaces[0];
+  const teamsWorkspace = teamsWorkspacesResp?.workspaces[0];
   // `!== undefined` (not Boolean(workspace)) so TS narrows `workspace` to
   // defined where `isConfigured` is used as a guard below.
   const isConfigured = workspace !== undefined;
+  const isTeamsConfigured = teamsWorkspace !== undefined;
 
   return (
     <Page>
@@ -77,57 +84,98 @@ function ChannelsPage() {
         description="Link the agent to messaging channels and set up a heartbeat trigger."
       />
 
-      {!isConfigured ? (
+      {!isConfigured && !isTeamsConfigured ? (
         <Card>
           <EmptyState
             icon={Slack}
-            title="No Slack workspace configured"
+            title="No messaging channel configured"
             description={
               <>
-                Set <code>SLACK_BOT_TOKEN</code> and <code>SLACK_APP_TOKEN</code> in the runtime
-                environment and restart.
+                Set <code>SLACK_BOT_TOKEN</code> and <code>SLACK_APP_TOKEN</code> (Slack), or{' '}
+                <code>TEAMS_APP_ID</code>, <code>TEAMS_APP_PASSWORD</code> and{' '}
+                <code>TEAMS_APP_TENANT_ID</code> (Microsoft Teams), in the runtime environment and
+                restart.
               </>
             }
           />
         </Card>
       ) : (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10">
-            <div className="flex items-center gap-3">
-              <IconTile icon={Slack} tone="primary" size="md" />
-              <div>
-                <h3 className="text-base font-semibold">Slack</h3>
-                <p className="text-xs text-muted-foreground">Connected workspace</p>
+        <div className="space-y-6">
+          {isConfigured && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10">
+                <div className="flex items-center gap-3">
+                  <IconTile icon={Slack} tone="primary" size="md" />
+                  <div>
+                    <h3 className="text-base font-semibold">Slack</h3>
+                    <p className="text-xs text-muted-foreground">Connected workspace</p>
+                  </div>
+                </div>
+                <Badge variant="secondary" className="h-6 gap-1.5 px-2.5 text-xs">
+                  <span className="size-1.5 rounded-full bg-success" aria-hidden="true" />
+                  {workspace.teamName}
+                </Badge>
               </div>
-            </div>
-            <Badge variant="secondary" className="h-6 gap-1.5 px-2.5 text-xs">
-              <span className="size-1.5 rounded-full bg-success" aria-hidden="true" />
-              {workspace.teamName}
-            </Badge>
-          </div>
 
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Channels</CardTitle>
-                <Hash className="h-4 w-4 text-muted-foreground" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <SlackModeSections
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Channels</CardTitle>
+                    <Hash className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <SlackModeSections
+                    agentId={agent.agentId}
+                    userId={agent.userId}
+                    agentName={agent.name}
+                    connectionId={workspace.teamId}
+                  />
+                </CardContent>
+              </Card>
+
+              <HeartbeatTriggersCard
                 agentId={agent.agentId}
                 userId={agent.userId}
-                agentName={agent.name}
                 connectionId={workspace.teamId}
               />
-            </CardContent>
-          </Card>
+            </div>
+          )}
 
-          <HeartbeatTriggersCard
-            agentId={agent.agentId}
-            userId={agent.userId}
-            connectionId={workspace.teamId}
-          />
+          {isTeamsConfigured && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10">
+                <div className="flex items-center gap-3">
+                  <IconTile icon={MessagesSquare} tone="primary" size="md" />
+                  <div>
+                    <h3 className="text-base font-semibold">Microsoft Teams</h3>
+                    <p className="text-xs text-muted-foreground">Connected tenant</p>
+                  </div>
+                </div>
+                <Badge variant="secondary" className="h-6 gap-1.5 px-2.5 font-mono text-xs">
+                  <span className="size-1.5 rounded-full bg-success" aria-hidden="true" />
+                  {teamsWorkspace.tenantId}
+                </Badge>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Channels</CardTitle>
+                    <Hash className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <TeamsModeSections
+                    agentId={agent.agentId}
+                    userId={agent.userId}
+                    agentName={agent.name}
+                    connectionId={teamsWorkspace.tenantId}
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
       )}
     </Page>

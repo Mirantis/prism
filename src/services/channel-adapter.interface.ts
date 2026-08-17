@@ -22,8 +22,9 @@ export type DeliverableMessage = ConversationMessage & {
  * Channel context for routing responses back to the originating channel
  */
 export interface ChannelContext {
-  channel: 'slack' | 'websocket';
+  channel: 'slack' | 'websocket' | 'teams';
   channelId?: string;
+  /** Slack thread_ts, or the Teams thread-root activity id. */
   threadTs?: string;
   /** Internal database thread ID */
   threadId: string;

@@ -22,7 +22,7 @@ export interface ComputerHelp {
   /** Where those go: the origin of the tab that asked, as it read when it asked. */
   site?: string;
   threadId?: string;
-  originChannel?: 'slack' | 'websocket';
+  originChannel?: 'slack' | 'websocket' | 'teams';
   originChannelId?: string;
   status: 'waiting' | 'continued' | 'dismissed';
 }

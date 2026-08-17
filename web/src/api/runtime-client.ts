@@ -14,6 +14,9 @@ import type {
   SlackHeartbeatTrigger,
   SlackLinkStatus,
   SlackWorkspace,
+  TeamsChannelMapping,
+  TeamsLinkStatus,
+  TeamsWorkspace,
   ModelInfo,
   OverrideModelInfo,
   SkillSummary,
@@ -215,6 +218,37 @@ export const runtimeApi = {
     request<{ ok: true }>(`/agents/slack/channel-mapping/${channelId}/main`, {
       method: 'PUT',
     }),
+
+  // Teams mappings — mirror of the Slack block. Conversation ids contain `:`
+  // and `@` (`19:…@thread.tacv2`), hence the encodeURIComponent on path params.
+  teamsWorkspaces: () => request<{ workspaces: TeamsWorkspace[] }>('/agents/teams/workspaces'),
+  teamsLinkStatus: () => request<TeamsLinkStatus>('/agents/teams-link-status'),
+  teamsChannelMappings: () =>
+    request<{ channels: TeamsChannelMapping[] }>('/agents/teams-channel-mappings'),
+  createTeamsVerificationCode: (body: {
+    type: 'DM' | 'CHANNEL';
+    lensUserId: string;
+    connectionId: string;
+    agentId: string;
+    agentName?: string;
+    expiresAt: string;
+  }) =>
+    request<{ code: string }>('/agents/teams/create-verification-code', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deleteTeamsDmMapping: () =>
+    request<{ deleted: number }>('/agents/teams/dm-mapping', { method: 'DELETE' }),
+  deleteTeamsChannelMapping: (conversationId: string) =>
+    request<{ deleted: number }>(
+      `/agents/teams/channel-mapping/${encodeURIComponent(conversationId)}`,
+      { method: 'DELETE' },
+    ),
+  setTeamsMainChannel: (conversationId: string) =>
+    request<{ ok: true }>(
+      `/agents/teams/channel-mapping/${encodeURIComponent(conversationId)}/main`,
+      { method: 'PUT' },
+    ),
 
   // Heartbeat triggers
   listHeartbeatTriggers: (userId: string) => {

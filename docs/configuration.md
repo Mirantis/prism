@@ -110,8 +110,15 @@ grouped per platform.
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). Enables the Slack adapter; validated via `auth.test` on boot. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-…`) for Socket Mode. |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check — the bot token's app ID must match this if set. |
+| `TEAMS_APP_ID` | Microsoft Teams: the Entra app registration's client ID. All three Teams variables must be set to enable the adapter. |
+| `TEAMS_APP_PASSWORD` | Microsoft Teams: the app registration's client secret. Must be the real secret value. |
+| `TEAMS_APP_TENANT_ID` | Microsoft Teams: the Entra tenant of the app registration. |
 
-See **[Slack](slack.md)** for how the tokens are used.
+See **[Slack](slack.md)** and **[Microsoft Teams](teams.md)** for how the
+credentials are used. Note that Teams, unlike Slack, needs the runtime's
+`POST /agents/teams/messages` endpoint reachable over public HTTPS — expose
+only that path (see [Microsoft Teams](teams.md#the-public-messaging-endpoint)),
+never the whole runtime port.
 
 ## Core
 
@@ -629,4 +636,4 @@ These affect the native [installer](installation.md), not the running agent:
 
 ## Public Web UI address
 
-Computer help links use the public address supplied by Lens through `NEXUS_INGRESS_ORIGINS_WEB` (or the name of the exposed Web UI port). Set `PRISM_PUBLIC_URL` for standalone deployments or to override that address, including any path prefix.
+Computer help links and file links in Microsoft Teams use the public address supplied by Lens through `NEXUS_INGRESS_ORIGINS_WEB` (or the name of the exposed Web UI port). Set `PRISM_PUBLIC_URL` for standalone deployments or to override that address, including any path prefix.

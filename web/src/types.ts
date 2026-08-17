@@ -273,6 +273,29 @@ export interface SlackHeartbeatTrigger {
   updatedAt: string;
 }
 
+export interface TeamsLinkStatus {
+  hasDmMapping: boolean;
+  hasChannelMapping: boolean;
+  teamsUserId: string | null;
+}
+
+export interface TeamsWorkspace {
+  tenantId: string;
+  clientId: string;
+  name: string;
+}
+
+export interface TeamsChannelMapping {
+  id: string;
+  conversationId: string;
+  channelName: string | null;
+  agentName: string;
+  linkedAt: string;
+  /** True for the channel that receives heartbeat alerts (and scheduled-task
+   *  output with no resolvable origin channel). Exactly one per agent. */
+  isMain: boolean;
+}
+
 export interface CronTask {
   id: string;
   userId: string;
@@ -289,7 +312,7 @@ export interface CronTask {
   updatedAt: string;
 }
 
-export type WebhookDeliverTo = 'all' | 'chat' | 'slack';
+export type WebhookDeliverTo = 'all' | 'chat' | 'slack' | 'teams';
 
 export interface WebhookSubscription {
   id: string;

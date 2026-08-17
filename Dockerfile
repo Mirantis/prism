@@ -222,7 +222,13 @@ RUN --mount=type=secret,id=github_token,uid=1000,required=false \
     curl -fsSL https://mise.jdx.dev/install.sh | MISE_VERSION=${MISE_VERSION} sh \
  && ~/.local/bin/mise use -g \
         awscli@latest \
-        kubectl@latest \
+        # kubectl is pinned to an exact patch, not @latest and not a minor:
+        # kubernetes publishes no GitHub releases, so aqua resolves @latest by
+        # tag and can land on an alpha/rc (e.g. v1.38.0-alpha.0) whose registry
+        # entry is amd64-only — which breaks the linux/arm64 image build. And a
+        # bare minor ("1.36") is substituted literally into the dl.k8s.io
+        # download URL, which 404s. Bump when a new stable patch ships.
+        kubectl@1.36.3 \
         gh@latest \
         jq@latest \
         yq@latest \

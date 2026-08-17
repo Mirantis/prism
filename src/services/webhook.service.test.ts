@@ -20,8 +20,10 @@ const {
   mockGetOrCreateThreadByExternalId,
   mockGetAgent,
   mockGetMainChannel,
+  mockGetTeamsMainChannel,
   mockSubscriptionFindUnique,
   mockSlackMappingFindFirst,
+  mockTeamsMappingFindFirst,
   mockTrackEvent,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -31,8 +33,10 @@ const {
   mockGetOrCreateThreadByExternalId: vi.fn(),
   mockGetAgent: vi.fn(),
   mockGetMainChannel: vi.fn(),
+  mockGetTeamsMainChannel: vi.fn(),
   mockSubscriptionFindUnique: vi.fn(),
   mockSlackMappingFindFirst: vi.fn(),
+  mockTeamsMappingFindFirst: vi.fn(),
   mockTrackEvent: vi.fn(),
 }));
 
@@ -66,6 +70,12 @@ vi.mock('./slack-mapping.service', () => ({
   },
 }));
 
+vi.mock('./teams/teams-mapping.service', () => ({
+  teamsMappingService: {
+    getMainChannel: mockGetTeamsMainChannel,
+  },
+}));
+
 vi.mock('../lib/prisma', () => ({
   prisma: {
     webhookSubscription: {
@@ -73,6 +83,9 @@ vi.mock('../lib/prisma', () => ({
     },
     slackMapping: {
       findFirst: mockSlackMappingFindFirst,
+    },
+    teamsMapping: {
+      findFirst: mockTeamsMappingFindFirst,
     },
   },
 }));
@@ -140,9 +153,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetAgent.mockResolvedValue(AGENT);
   mockGetOrCreateLatestThread.mockResolvedValue({ id: 'thread-1' });
-  // Default: no Slack destination linked. Slack-scoped tests override these.
+  // Default: no Slack/Teams destination linked. Scoped tests override these.
   mockSlackMappingFindFirst.mockResolvedValue(null);
   mockGetMainChannel.mockResolvedValue(null);
+  mockTeamsMappingFindFirst.mockResolvedValue(null);
+  mockGetTeamsMainChannel.mockResolvedValue(null);
   mockGetOrCreateThreadByExternalId.mockImplementation((_u, _a, ext) =>
     Promise.resolve({ id: `thread-for-${ext}` }),
   );
@@ -431,6 +446,70 @@ describe('handleInbound agent mode', () => {
       'WEBHOOK',
       expect.objectContaining({}),
     );
+  });
+
+  it('personal mode: stores teams-scoped output in the DM-conversation thread, hidden from web', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'teams' }));
+    mockTeamsMappingFindFirst.mockResolvedValue({ dmConversationId: 'a:dm-1' });
+    mockInvoke.mockResolvedValue(invokeResult('handled'));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockPublish).toHaveBeenCalled());
+
+    expect(mockGetOrCreateThreadByExternalId).toHaveBeenCalledWith('user-1', 'agent-1', 'a:dm-1');
+    expect(mockGetTeamsMainChannel).not.toHaveBeenCalled();
+    expect(mockPublish).toHaveBeenCalledWith(
+      'user-1',
+      'thread-for-a:dm-1',
+      '**Webhook: alerts**\n\nhandled',
+      'WEBHOOK',
+      expect.objectContaining({
+        channelContext: { channel: 'teams', threadId: 'thread-for-a:dm-1' },
+      }),
+    );
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+  });
+
+  it('team mode: stores teams-scoped output in a thread keyed by the main channel conversation id', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'teams' }));
+    mockTeamsMappingFindFirst.mockResolvedValue(null); // no DM link
+    mockGetTeamsMainChannel.mockResolvedValue('19:main@thread.tacv2');
+    mockInvoke.mockResolvedValue(invokeResult('handled'));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockPublish).toHaveBeenCalled());
+
+    expect(mockGetOrCreateThreadByExternalId).toHaveBeenCalledWith(
+      'user-1',
+      'agent-1',
+      '19:main@thread.tacv2',
+    );
+    // A channel destination MUST carry channelId: a Teams channelContext
+    // without one is DM-scoped in the adapter and would deliver nothing in
+    // Team Mode (no DM link).
+    expect(mockPublish).toHaveBeenCalledWith(
+      'user-1',
+      'thread-for-19:main@thread.tacv2',
+      '**Webhook: alerts**\n\nhandled',
+      'WEBHOOK',
+      expect.objectContaining({
+        channelContext: {
+          channel: 'teams',
+          channelId: '19:main@thread.tacv2',
+          threadId: 'thread-for-19:main@thread.tacv2',
+        },
+      }),
+    );
+  });
+
+  it('no Teams linked: falls back to the web latest thread and warns', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'teams' }));
+    mockInvoke.mockResolvedValue(invokeResult('handled'));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
+
+    expect(mockGetOrCreateThreadByExternalId).not.toHaveBeenCalled();
   });
 
   it('delivers a friendly budget note when the run hits the spending limit', async () => {

@@ -77,6 +77,10 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
           PLAYWRIGHT_BLOB_OUTPUT_NAME: web-${{ matrix.shard }}.zip
+          # The @teams suite is not run here: Bot Framework cannot reach this
+          # runner, and its delegated Graph token expires in about an hour, so a
+          # static CI secret cannot keep it green. Without TEAMS_E2E_* the suite
+          # skips. It runs locally against a test tenant — see e2e/README.md.
 
       - name: Upload blob report
         if: ${{ !cancelled() }}

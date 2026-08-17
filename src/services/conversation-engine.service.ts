@@ -79,12 +79,14 @@ export interface ChatInput {
    */
   stored?: { titleSet: string | null };
   metadata?: {
-    channel?: 'websocket' | 'slack';
+    channel?: 'websocket' | 'slack' | 'teams';
     channelId?: string;
-    /** Human-readable Slack channel name (no `#`), surfaced to the model. */
+    /** Human-readable channel name (Slack: no `#`), surfaced to the model. */
     channelName?: string;
     slackThreadTs?: string;
-    /** The sender's id in the originating channel (Slack: `U…`), stored as-is. */
+    /** Teams thread-root activity id — becomes the delivery `threadTs`. */
+    teamsThreadId?: string;
+    /** The sender's id in the originating channel (Slack: `U…`, Teams: AAD object id), stored as-is. */
     senderExternalId?: string;
     senderName?: string;
   };
@@ -354,18 +356,26 @@ Respond with exactly one word: WORTHY or SKIP`;
       };
     }
 
-    // A Slack channel turn carries its channel's display name so the system
-    // prompt can name it; the two travel together as a discriminated union
-    // (channelName is guaranteed present wherever isChannelMessage is true).
-    // Fall back to the channel id when no name is stored on the mapping.
-    const slackChannelId = metadata?.channel === 'slack' ? metadata.channelId : undefined;
-    const channelOrigin: ChannelOrigin = slackChannelId
-      ? { isChannelMessage: true, channelName: metadata?.channelName ?? slackChannelId }
+    // A Slack/Teams channel turn carries its channel's display name so the
+    // system prompt can name it; the two travel together as a discriminated
+    // union (channelName is guaranteed present wherever isChannelMessage is
+    // true). Fall back to the channel id when no name is stored on the mapping.
+    const platformChannelId =
+      metadata?.channel === 'slack' || metadata?.channel === 'teams'
+        ? metadata.channelId
+        : undefined;
+    const channelOrigin: ChannelOrigin = platformChannelId
+      ? {
+          isChannelMessage: true,
+          channelName: metadata?.channelName ?? platformChannelId,
+          channelPlatform: metadata?.channel === 'teams' ? 'teams' : 'slack',
+        }
       : { isChannelMessage: false };
 
     // Build channel context for delivery — scopes response to the originating channel.
-    // For Slack, channelId/threadTs may be undefined (DM case — routing falls back
-    // to SlackMapping.dmChannelId lookup in the adapter).
+    // For Slack/Teams, channelId/threadTs may be undefined (DM case — routing
+    // falls back to the adapter's own mapping lookup: SlackMapping.dmChannelId
+    // or TeamsMapping.dmConversationId).
     const channelContext = metadata?.channel === 'slack'
       ? {
           channel: 'slack' as const,
@@ -373,9 +383,16 @@ Respond with exactly one word: WORTHY or SKIP`;
           threadTs: metadata.slackThreadTs,
           threadId,
         }
-      : metadata?.channel === 'websocket'
-        ? { channel: 'websocket' as const, threadId }
-        : undefined;
+      : metadata?.channel === 'teams'
+        ? {
+            channel: 'teams' as const,
+            channelId: metadata.channelId,
+            threadTs: metadata.teamsThreadId,
+            threadId,
+          }
+        : metadata?.channel === 'websocket'
+          ? { channel: 'websocket' as const, threadId }
+          : undefined;
 
     const responseTexts: string[] = [];
     const allBlocks: UIBlock[] = [];
@@ -531,11 +548,11 @@ Respond with exactly one word: WORTHY or SKIP`;
     // kick off the cheap-model upgrade (fire-and-forget, never blocks the
     // turn). Channel-agnostic — transports subscribe to threadTitleService.
     //
-    // Gated to non-Slack turns: Slack messages live in SLACK threads, which the
-    // web Recents and CLI resume picker (both `threadSource: DATABASE`) never
+    // Gated to web/CLI turns: Slack and Teams messages live in threads keyed by
+    // an externalThreadId, which the web Recents and CLI resume picker never
     // show — so a generated title for them would cost a Haiku call + DB write
     // nobody ever sees.
-    if (titleSet && metadata?.channel !== 'slack') {
+    if (titleSet && metadata?.channel !== 'slack' && metadata?.channel !== 'teams') {
       threadTitleService.onFirstUserMessage(agentId, userId, threadId, message, titleSet);
     }
 

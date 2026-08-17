@@ -225,7 +225,9 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // Append channel/task instructions to the stable (cacheable) part
     const stablePart = systemParts.find((p) => p.cacheable);
     if (request.isChannelMessage && request.mode !== 'subagent' && stablePart) {
-      stablePart.text += '\n\n' + getChannelBehaviorInstructions(request.channelName);
+      stablePart.text +=
+        '\n\n' +
+        getChannelBehaviorInstructions(request.channelName, request.channelPlatform ?? 'slack');
     }
 
     if (subagents.length > 0 && request.mode !== 'subagent' && stablePart) {

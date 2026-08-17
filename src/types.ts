@@ -79,7 +79,7 @@ interface InvokeRequestBase {
    * tool can record where to deliver a goal's autonomous turns. Defaults to
    * 'websocket' when unset.
    */
-  originChannel?: 'slack' | 'websocket';
+  originChannel?: 'slack' | 'websocket' | 'teams';
   originChannelId?: string;
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
@@ -132,8 +132,8 @@ interface InvokeRequestBase {
  * guaranteed to be a `string` (no null-checking needed downstream).
  */
 export type ChannelOrigin =
-  | { isChannelMessage: true; channelName: string }
-  | { isChannelMessage?: false; channelName?: undefined };
+  | { isChannelMessage: true; channelName: string; channelPlatform?: 'slack' | 'teams' }
+  | { isChannelMessage?: false; channelName?: undefined; channelPlatform?: undefined };
 
 export type InvokeRequest = InvokeRequestBase & ChannelOrigin;
 

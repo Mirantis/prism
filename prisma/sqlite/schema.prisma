@@ -127,6 +127,8 @@ model AgentWorkspace {
   slackVerificationCodes SlackVerificationCode[]
   slackHeartbeatTriggers SlackHeartbeatTrigger[]
   pendingSlackMessages   PendingSlackMessage[]
+  teamsMappings          TeamsMapping[]
+  teamsVerificationCodes TeamsVerificationCode[]
   webhookSubscriptions   WebhookSubscription[]
   subagentLinks          AgentSubagent[]         @relation("ParentAgent")
   parentAgentLinks       AgentSubagent[]         @relation("ChildAgent")
@@ -512,6 +514,75 @@ model SlackVerificationCode {
   @@index([connectionId])
   @@index([agentId])
   @@map("slack_verification_codes")
+}
+
+// ============================================================================
+// Microsoft Teams mappings + verification codes — deliberate mirror of the
+// Slack models rather than a generalized "channel mapping" table. The one
+// structural difference: Teams proactive sends are addressed by a stored
+// conversation id, so both mapping kinds persist one.
+// ============================================================================
+
+model TeamsMapping {
+  id           String @id @default(uuid())
+  connectionId String
+  agentId      String
+  tenantId     String?
+
+  // Personal (DM) mapping: the Teams user (AAD object id when present, else
+  // the Bot Framework id) linked to a Lens user, plus the personal-scope
+  // conversation id — the target every proactive DM send is addressed to.
+  teamsUserId      String?
+  lensUserId       String?
+  dmConversationId String?
+
+  // Team mode: a linked channel. The conversation id is stored WITHOUT any
+  // ";messageid=" thread suffix so lookups and broadcast targeting stay stable.
+  channelConversationId String? @unique
+  channelName           String?
+
+  // Team mode: the agent's "main" channel — where heartbeat alerts (and
+  // scheduled tasks with no resolvable origin channel) are posted. At most one
+  // channel mapping per agent is flagged; delivery falls back to the oldest
+  // linked channel when none is flagged (see teamsMappingService.getMainChannel).
+  isMainChannel Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, teamsUserId])
+  @@index([connectionId])
+  @@index([lensUserId])
+  @@index([agentId])
+  @@map("teams_mappings")
+}
+
+enum TeamsVerificationType {
+  DM
+  CHANNEL
+}
+
+model TeamsVerificationCode {
+  id           String                @id @default(uuid())
+  code         String
+  type         TeamsVerificationType
+  lensUserId   String
+  connectionId String
+  agentId      String
+  agentName    String?
+  expiresAt    DateTime
+
+  agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([code, type])
+  @@index([expiresAt])
+  @@index([connectionId])
+  @@index([agentId])
+  @@map("teams_verification_codes")
 }
 
 model AgentSubagent {
