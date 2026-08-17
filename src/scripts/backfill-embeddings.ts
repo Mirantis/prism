@@ -16,6 +16,7 @@
  */
 
 import prisma from '../lib/prisma';
+import { serializeError } from '../lib/log-redaction';
 import { embeddingService } from '../services/embedding.service';
 
 const BATCH_SIZE = 1;
@@ -105,7 +106,10 @@ export async function runBackfill(): Promise<BackfillResult> {
             await embeddingService.storeEmbedding(batch[j].id, embeddings[j]);
             processed++;
           } catch (err) {
-            console.error(`Failed to store embedding for entry ${batch[j].id}:`, err);
+            // Through the same serializer the logger uses. This script talks to the
+            // embeddings endpoint, so a failure here is an SDK error carrying the
+            // request that produced it — which is the memory entry's own text.
+            console.error(`Failed to store embedding for entry ${batch[j].id}:`, serializeError(err));
             failed++;
           }
         }
@@ -122,7 +126,7 @@ export async function runBackfill(): Promise<BackfillResult> {
 if (require.main === module) {
   runBackfill()
     .catch(err => {
-      console.error('Backfill failed:', err);
+      console.error('Backfill failed:', serializeError(err));
       process.exit(1);
     })
     .finally(() => prisma.$disconnect());

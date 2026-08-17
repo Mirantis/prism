@@ -393,11 +393,15 @@ that starts recording a meeting. It also means `full` gives you the sentences wi
 the rest of the runtime's debug output.
 
 Turn it on only for as long as you need it, and tell the room. Nothing here reaches
-product telemetry either way — that surface gets counts. One other destination is out
-of this setting's reach, though: if Langfuse is configured, the tracing there records
-the prompts and completions of every model call, the addressed-gate one included,
-whatever `MEETING_TRANSCRIPT_LOGGING` says. Leave Langfuse off for calls you would
-not log.
+product telemetry either way — that surface gets counts.
+
+The setting covers the other place a sentence could surface, too. Langfuse traces
+every model call's prompt and completion when it is configured, and the call that
+decides whether the agent was named is made *from* the sentence — so under `off` that
+one call is traced without its content: the timing, the model and the token counts
+arrive, the words do not. A trace lives on another host and outlasts a log, so `off`
+had to mean off there as well rather than quietly relocating the room's speech. Every
+other model call the agent makes traces as it always did.
 
 ### The microphone
 

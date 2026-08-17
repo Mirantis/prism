@@ -31,6 +31,7 @@
  */
 
 import { generateText } from 'ai';
+import { config } from '../../config';
 import { getGateRequest } from '../../lib/classification';
 import { langfuseTelemetry } from '../../lib/telemetry';
 import { logger } from '../../logger';
@@ -141,7 +142,13 @@ export async function classifyAddressed(input: ClassifyAddressedInput): Promise<
       // is illegal (OpenAI's Responses API rejects anything under 16).
       maxOutputTokens: Math.max(8, minOutputTokens),
       ...samplingParams,
-      ...langfuseTelemetry('meeting-addressed-gate'),
+      // The prompt on this call *is* the sentence someone said, so it follows the
+      // same switch as the log line below. Otherwise `MEETING_TRANSCRIPT_LOGGING=off`
+      // would keep the room out of the log and send it to a trace store instead —
+      // which is a durable record on another host, so the weaker outcome of the two.
+      ...langfuseTelemetry('meeting-addressed-gate', undefined, {
+        recordContent: config.meetingTranscriptLogging === 'full',
+      }),
     });
 
     const addressed = readVerdict(result.text);

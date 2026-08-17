@@ -36,6 +36,12 @@
  * them is content we sent to a model or content a model sent back. Anything whose
  * value is not a primitive is dropped even when its key is listed here, so a key
  * cannot smuggle an object graph in behind a safe name.
+ *
+ * `url` carries one assumption worth stating: that a request URL holds no secret.
+ * True for every provider here — Bedrock, mantle and Foundry routes are path-based
+ * and every key travels as a header — but a vendor that puts a credential in a query
+ * string would be logging it in full. Check that before adding one, and strip the
+ * query here if it is ever not true.
  */
 const ALLOWED_KEYS = [
   'name',
@@ -171,7 +177,13 @@ export function serializeError(err: unknown): Record<string, unknown> {
   // ["requestBodyValues","responseBody"]` knows the vendor did answer and where to
   // look for the body (the vendor's own logs, or a local reproduction) instead of
   // assuming the request never left.
-  const redacted = Object.keys(source)
+  //
+  // `getOwnPropertyNames` rather than `Object.keys`, so the promise holds for a
+  // non-enumerable field too. The read loop above already sees those — that is how
+  // `AggregateError.errors` is kept at all — so listing only the enumerable ones
+  // would leave a dropped field invisible, which is the exact failure this array
+  // exists to prevent.
+  const redacted = Object.getOwnPropertyNames(source)
     .filter((key) => !kept.has(key))
     .sort();
   if (redacted.length > 0) out.redacted = redacted;
