@@ -41,10 +41,10 @@ There are two ways the documents change:
 
 The Web UI and TUI panels show these documents as **read-only viewers**.
 
-Both routes are off while **[locked-in mode](configuration.md#locked-in-mode)** is
-on: the agent's document writers are withheld and refused, and the bootstrap
-script is paused. Ask a locked agent to change its soul and it tells you what it
-would have changed instead of changing it.
+Editing the documents is disabled in
+**[locked-in mode](configuration.md#locked-in-mode)**: the agent's document
+writers are refused and the bootstrap script is paused. Ask a locked agent to
+change its soul and it tells you what it would have changed instead.
 
 ## The bootstrap flow
 
@@ -67,4 +67,4 @@ Beyond the documents, a few dials shape behavior and are stored on the agent:
   **[Configuration → Locked-in mode](configuration.md#locked-in-mode)**.
 
 You can adjust these by asking the agent, or via the Web UI / TUI where exposed.
-Locked-in mode is the exception: only you can change it.
+Locked-in mode is the exception: only the user can change it.
