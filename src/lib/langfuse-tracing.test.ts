@@ -120,7 +120,7 @@ describe('Langfuse tracing pipeline', () => {
       experimental_telemetry: { isEnabled: false },
     });
 
-    // The Slack thread classifier relies on this: its prompt is a channel
+    // The thread reply classifier relies on this: its prompt is a channel
     // transcript, and an integration being registered must not start recording
     // it. Under this SDK an *absent* telemetry option means enabled, so the
     // opt-out has to be written down — and has to work.

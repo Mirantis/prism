@@ -52,6 +52,7 @@ const DELIVER_LABELS: Record<WebhookDeliverTo, string> = {
   all: 'All channels',
   chat: 'Chat',
   slack: 'Slack',
+  teams: 'Microsoft Teams',
 };
 
 const EMPTY_FORM = {
@@ -350,6 +351,7 @@ function WebhooksPage() {
                   <SelectItem value="all">All channels</SelectItem>
                   <SelectItem value="chat">Chat</SelectItem>
                   <SelectItem value="slack">Slack</SelectItem>
+                  <SelectItem value="teams">Microsoft Teams</SelectItem>
                 </SelectContent>
               </Select>
               {fieldErrors.deliverTo && <FieldError>{fieldErrors.deliverTo}</FieldError>}

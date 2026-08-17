@@ -27,7 +27,8 @@ its own calendar, and can act over a shell.
 
 Full user docs live in **[`docs/`](docs/README.md)** — installation (native,
 Docker, Lens Sandbox), the [Web UI](docs/web-ui.md) and
-[Terminal UI](docs/terminal-ui.md), [Slack](docs/slack.md), and a guide to every
+[Terminal UI](docs/terminal-ui.md), [Slack](docs/slack.md),
+[Microsoft Teams](docs/teams.md), and a guide to every
 feature: [identity](docs/agent-identity.md), [memory](docs/memory.md),
 [heartbeat](docs/heartbeat.md), [scheduled tasks](docs/scheduled-tasks.md),
 [tools](docs/tools.md), and [configuration](docs/configuration.md).
@@ -132,8 +133,8 @@ parent shell. The agent's SQLite database is persisted in the
 
 ### Conversational interface
 
-Real-time chat over WebSocket and Slack. Supports DMs and channel
-conversations and multi-turn threads.
+Real-time chat over WebSocket, Slack, and Microsoft Teams. Supports DMs and
+channel conversations and multi-turn threads.
 
 ### LLM models
 
@@ -353,6 +354,7 @@ restarts.
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key. The AI SDK auto-selects bearer auth when this is set |
 | `SLACK_BOT_TOKEN` | Slack bot token. Validated via `auth.test` on boot when set |
 | `SLACK_APP_TOKEN` | Slack app-level token for Socket Mode |
+| `TEAMS_APP_ID` / `TEAMS_APP_PASSWORD` / `TEAMS_APP_TENANT_ID` | Microsoft Teams: Entra app registration client ID, client secret, and tenant. All three enable the Teams adapter; needs the messaging endpoint reachable over public HTTPS — see [Microsoft Teams](docs/teams.md) |
 
 ### Optional
 
@@ -402,9 +404,15 @@ Prism Agent exposes the following surfaces:
   up, DMs and channel mentions reach the agent directly without a public
   webhook. Six-character verification codes link Slack identities to the
   agent's user.
+- **Microsoft Teams** — Azure Bot Service delivers messages to the runtime's
+  `POST /agents/teams/messages` endpoint. Public HTTPS is required: front the
+  container with a proxy or tunnel that exposes **only** that path (the other
+  routes are unauthenticated — see [Microsoft Teams](docs/teams.md)). Personal
+  chats and channel @mentions, threaded replies, the same six-character
+  verification-code linking as Slack.
 - **Management API** — REST endpoints for agent lifecycle, scheduling,
-  thread management, and Slack mappings. Useful for building a UI or driving
-  Prism Agent from a control plane.
+  thread management, and Slack/Teams mappings. Useful for building a UI or
+  driving Prism Agent from a control plane.
 - **Health endpoint** — `GET /health` for orchestrators.
 
 ## Development

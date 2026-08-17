@@ -166,6 +166,40 @@ permissions it was granted.
 
 **CI (GitHub Actions):** Add each value as a repository secret (prefixed with `SLACK_E2E_` — see `.github/workflows/e2e.yml`).
 
+## Teams E2E Setup
+
+The `@teams` tagged tests require a dedicated Microsoft 365 test tenant and run
+**locally only**. CI does not run them: Bot Framework cannot reach the CI
+runner, and the delegated Graph token (step 4) expires in about an hour, so a
+static CI secret cannot keep the suite green. Without the `TEAMS_E2E_*` values
+the suite skips automatically.
+
+1. Register the bot per **[docs/teams.md](../docs/teams.md)** (Entra app +
+   client secret, Single Tenant Azure Bot, Teams channel enabled, app package
+   with the `ChannelMessage.Read.Group` permission sideloaded into the test
+   tenant).
+2. Point the Azure Bot's **messaging endpoint** at the e2e runtime — Bot
+   Framework cannot reach localhost. Expose **only** `POST
+   /agents/teams/messages`: put a path-restricting proxy in front of the
+   runtime and tunnel the proxy's port, never the runtime port itself — the
+   e2e runtime's management routes are unauthenticated, so a whole-port tunnel
+   would put agent-deleting operations on the internet. See
+   **[docs/teams.md](../docs/teams.md#the-public-messaging-endpoint)** for a
+   Caddy + devtunnel example, then set the endpoint to
+   `https://<tunnel>/agents/teams/messages`.
+3. Provision the targets the suite posts into: a **team + channel** with the
+   bot app added, and a **personal chat** between the human test user and the
+   bot (send it any message once to create the chat, then read the chat id via
+   Graph `GET /me/chats`).
+4. Get a **delegated Graph token** for the human test user with
+   `ChannelMessage.Send`, `ChannelMessage.Read.All`, and `Chat.ReadWrite` —
+   this is what makes the suite's messages come from a real person, not the
+   bot.
+5. Fill in the `TEAMS_E2E_*` values in `.env.e2e.local` (see
+   `.env.e2e.local.example`) and run the suite locally. Do not add them as CI
+   secrets — the token is short-lived, so the CI job deliberately does not set
+   them.
+
 ## How It Works
 
 1. Playwright config provisions `prisma/sqlite/e2e.db` and runs Prisma migrations (at config load).

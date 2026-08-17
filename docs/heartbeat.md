@@ -75,7 +75,7 @@ transient — it skips that tick without counting against the error streak).
 
 Heartbeats don't only run on a timer — they can also be **woken by Slack
 activity**. Designate a Slack channel as a heartbeat trigger (from the
-**[Web UI → Channels](web-ui.md#channels-slack)** page), and incoming messages in
+**[Web UI → Channels](web-ui.md#channels)** page), and incoming messages in
 that channel wake the heartbeat with those messages as context. This lets the
 agent react to real-time events between scheduled runs.
 

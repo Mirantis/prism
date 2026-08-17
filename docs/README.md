@@ -41,6 +41,8 @@ How you talk to the agent.
   the schedules/config panels.
 - **[Slack](slack.md)** — run the agent in Slack DMs and channels: linking,
   threads, formatting, and Slack-triggered heartbeats.
+- **[Microsoft Teams](teams.md)** — run the agent in Teams personal chats and
+  channels: Azure setup, the public messaging endpoint, linking, and threads.
 
 ## Features
 

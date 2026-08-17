@@ -18,6 +18,7 @@ import { messageDeliveryService, PublishOptions } from './message-delivery.servi
 import { conversationService } from './conversation.service';
 import { agentWorkspaceService } from './agent-workspace.service';
 import { slackMappingService } from './slack-mapping.service';
+import { teamsMappingService } from './teams/teams-mapping.service';
 import { prisma } from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
@@ -26,7 +27,7 @@ import { logger } from '../logger';
 // Types
 // ============================================================================
 
-export const WEBHOOK_DELIVER_TARGETS = ['all', 'chat', 'slack'] as const;
+export const WEBHOOK_DELIVER_TARGETS = ['all', 'chat', 'slack', 'teams'] as const;
 export type WebhookDeliverTo = (typeof WEBHOOK_DELIVER_TARGETS)[number];
 
 /** Subscription name rule, borrowed from hermes: lowercase slug. */
@@ -352,7 +353,34 @@ export class WebhookService {
       return;
     }
 
-    // 'all' — broadcast (web + Slack DM/main channel).
+    if (deliverTo === 'teams') {
+      const dest = await this.resolveTeamsDestination(agentId, userId);
+      if (dest) {
+        // Mirror of the Slack branch: reuse the destination's own conversation
+        // thread, keyed by the conversation id, hidden from web/CLI Recents.
+        // A DM destination carries no channelId (the adapter's DM-scoped path
+        // posts to the user's personal conversation); a channel destination
+        // must carry it — a Teams channelContext without a channelId is
+        // DM-scoped by design and would deliver nothing in Team Mode.
+        const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, dest.conversationId);
+        await messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
+          ...options,
+          channelContext: {
+            channel: 'teams',
+            ...(dest.kind === 'channel' ? { channelId: dest.conversationId } : {}),
+            threadId: thread.id,
+          },
+        });
+        return;
+      }
+      logger.warn(
+        "[Webhook] deliverTo:'teams' but no Teams DM or channel is linked — storing in the web thread instead",
+      );
+      await messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
+      return;
+    }
+
+    // 'all' — broadcast (web + Slack/Teams DM/main channel).
     await messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
   }
 
@@ -368,6 +396,25 @@ export class WebhookService {
     });
     if (dm?.dmChannelId) return dm.dmChannelId;
     return slackMappingService.getMainChannel(agentId);
+  }
+
+  /**
+   * Resolve the Teams destination for a teams-scoped delivery: the user's
+   * personal conversation if linked, else the agent's main linked channel,
+   * else null when Teams isn't linked. The kind matters downstream — channel
+   * destinations must ride channelContext.channelId.
+   */
+  private async resolveTeamsDestination(
+    agentId: string,
+    userId: string,
+  ): Promise<{ conversationId: string; kind: 'dm' | 'channel' } | null> {
+    const dm = await prisma.teamsMapping.findFirst({
+      where: { lensUserId: userId, agentId, dmConversationId: { not: null } },
+      select: { dmConversationId: true },
+    });
+    if (dm?.dmConversationId) return { conversationId: dm.dmConversationId, kind: 'dm' };
+    const mainChannel = await teamsMappingService.getMainChannel(agentId);
+    return mainChannel ? { conversationId: mainChannel, kind: 'channel' } : null;
   }
 }
 

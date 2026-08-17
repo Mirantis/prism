@@ -20,7 +20,7 @@ export function getGoalTools(
   userId: string,
   agentId: string,
   threadId: string | undefined,
-  originChannel: 'slack' | 'websocket',
+  originChannel: 'slack' | 'websocket' | 'teams',
   originChannelId: string | undefined,
 ): Record<string, Tool> {
   return {

@@ -320,7 +320,7 @@ class CronSchedulerService {
         ...(boundThreadId
           ? {
               threadId: boundThreadId,
-              originChannel: (task.originChannel as 'slack' | 'websocket' | null) ?? undefined,
+              originChannel: (task.originChannel as 'slack' | 'websocket' | 'teams' | null) ?? undefined,
               originChannelId: task.originChannelId ?? undefined,
             }
           : {}),

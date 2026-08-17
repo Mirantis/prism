@@ -87,6 +87,16 @@ const {
       create: vi.fn(),
       deleteMany: vi.fn(),
     },
+    teamsMapping: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
+    },
+    teamsVerificationCode: {
+      create: vi.fn(),
+      deleteMany: vi.fn(),
+    },
     cronTask: {
       create: vi.fn(),
       delete: vi.fn(),
@@ -177,6 +187,22 @@ vi.mock('../services/slack-heartbeat-trigger.service', () => ({
 
 vi.mock('../services/slack-mapping.service', () => ({
   slackMappingService: mockSlackMappingService,
+}));
+
+const { mockTeamsMappingService, mockGetTeamsConfig } = vi.hoisted(() => ({
+  mockTeamsMappingService: {
+    setMainChannel: vi.fn(),
+    getMainChannel: vi.fn(),
+  },
+  mockGetTeamsConfig: vi.fn(),
+}));
+
+vi.mock('../services/teams/teams-mapping.service', () => ({
+  teamsMappingService: mockTeamsMappingService,
+}));
+
+vi.mock('../lib/teams-config', () => ({
+  getTeamsConfig: mockGetTeamsConfig,
 }));
 
 const { mockExportAgent, mockImportAgent } = vi.hoisted(() => ({
@@ -1628,6 +1654,13 @@ describe('Management Routes', () => {
       });
     });
   });
+
+  // ==========================================================================
+  // Teams routes — mirror of the Slack mapping block. Conversation ids carry
+  // `:` and `@` (`19:…@thread.tacv2`), so the path-param cases use a
+  // real-shaped, URI-encoded id.
+  // ==========================================================================
+
 
   // ==========================================================================
   // POST /threads/get-or-create-latest

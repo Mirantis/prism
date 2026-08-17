@@ -266,7 +266,39 @@ class ConversationService {
     threadId: string,
     originChannel?: string | null,
     originChannelId?: string | null,
-  ): Promise<{ channel: 'slack' | 'websocket'; channelId?: string; threadTs?: string; threadId: string }> {
+  ): Promise<{ channel: 'slack' | 'websocket' | 'teams'; channelId?: string; threadTs?: string; threadId: string }> {
+    if (originChannel === 'teams') {
+      const thread = await prisma.conversationThread.findUnique({
+        where: { id: threadId },
+        select: { userId: true, agentId: true, externalThreadId: true },
+      });
+      // A channel thread stores `${channelConversationId};messageid=${rootMessageId}`,
+      // so a continuation posts into the original reply chain, as Slack does.
+      const [channelConversationId, channelThreadTs] = (thread?.externalThreadId ?? '').split(';messageid=');
+      if (channelConversationId && channelThreadTs) {
+        return { channel: 'teams', channelId: channelConversationId, threadTs: channelThreadTs, threadId };
+      }
+      let channelId = originChannelId ?? undefined;
+      // A DM-originated Teams thread carries no channel id. Resolve the user's
+      // personal conversation so the continuation stays scoped to the DM
+      // instead of falling back to the adapter's mapping broadcast.
+      if (!channelId && thread) {
+        const dm = await prisma.teamsMapping.findFirst({
+          where: { lensUserId: thread.userId, agentId: thread.agentId, dmConversationId: { not: null } },
+          select: { dmConversationId: true },
+        });
+        channelId = dm?.dmConversationId ?? undefined;
+      }
+      if (!channelId) {
+        logger.warn(
+          'No Teams conversation resolved for thread %s (no origin channel id and no DM mapping) — a "continue in thread" resume will not be delivered',
+          threadId,
+        );
+      }
+      // A DM thread stores no external thread id; personal chats have no reply
+      // chains, so the continuation posts top-level in the resolved DM.
+      return { channel: 'teams', channelId, threadId };
+    }
     if (originChannel === 'slack') {
       const thread = await prisma.conversationThread.findUnique({
         where: { id: threadId },
@@ -362,6 +394,19 @@ class ConversationService {
     }
 
     return thread;
+  }
+
+  /** The thread bound to an external thread ID, without creating one. */
+  async findThreadByExternalId(
+    userId: string,
+    agentId: string,
+    externalThreadId: string,
+  ): Promise<ConversationThread | null> {
+    return prisma.conversationThread.findUnique({
+      where: {
+        agentId_userId_externalThreadId: { agentId, userId, externalThreadId },
+      },
+    });
   }
 
   /**

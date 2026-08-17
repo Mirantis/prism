@@ -51,9 +51,9 @@ export interface CreateAttachmentInput {
   sizeBytes: number;
   data: Buffer;
   category: AttachmentCategory;
-  // 'web'/'slack' = inbound user uploads; 'agent' = a file the agent shared
-  // outbound via the share_file tool.
-  source: 'web' | 'slack' | 'agent';
+  // 'web'/'slack'/'teams' = inbound user uploads; 'agent' = a file the agent
+  // shared outbound via the share_file tool.
+  source: 'web' | 'slack' | 'teams' | 'agent';
   threadId?: string;
   messageId?: string;
   slackFileId?: string;

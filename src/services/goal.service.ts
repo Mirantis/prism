@@ -486,7 +486,10 @@ class GoalService {
       ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
       ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
       channelContext: {
-        channel: goal.originChannel === 'slack' ? 'slack' : 'websocket',
+        channel:
+          goal.originChannel === 'slack' || goal.originChannel === 'teams'
+            ? goal.originChannel
+            : 'websocket',
         channelId: goal.originChannelId ?? undefined,
         threadId: goal.threadId,
       },

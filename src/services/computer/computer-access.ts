@@ -11,7 +11,7 @@ export interface ComputerCaller {
   agentId: string;
   threadId?: string;
   mode: string;
-  originChannel?: 'slack' | 'websocket';
+  originChannel?: 'slack' | 'websocket' | 'teams';
   originChannelId?: string;
 }
 

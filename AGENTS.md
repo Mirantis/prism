@@ -320,7 +320,7 @@ registered, so `initLangfuse()` registers one (`@ai-sdk/otel`'s
 `LegacyOpenTelemetry`, whose span shape `LangfuseSpanProcessor` reads). With an
 integration registered a call is traced **with its prompt recorded unless it
 says otherwise**, so a *gate* whose whole prompt is somebody else's words opts
-out in writing: `isEnabled: false` for the Slack thread classifier,
+out in writing: `isEnabled: false` for the thread reply classifier,
 `langfuseTelemetry(…, { recordContent: false })` for the meeting gate. The chat
 path traces its content deliberately and is not covered by that. Per-call
 identifiers ride `runtimeContext` plus `includeRuntimeContext`, never a
@@ -809,6 +809,9 @@ tools block.
 | **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; reads every recurring schedule in the agent's time zone (`useTimezone`, set at boot and by the settings tool, which re-registers the running jobs); manages cron task state directly via Prisma (list, update run timestamps, delete); skips a tick that would overlap a still-running execution of the same task; runs each result through the instruction-aware DELIVER/SUPPRESS gate before delivering (empty results suppressed, error results bypass the gate and always deliver, in-memory per-task last-delivered baseline fed to the gate as context — cleared when a suppressed run observes a different situation so a recurrence re-alerts — fail-open) |
 | **SlackAdapterService** | `services/slack-adapter.service.ts` | Full Slack implementation: Bolt apps, Socket Mode, message handling, verification codes |
 | **SlackMappingService** | `services/slack-mapping.service.ts` | SlackMapping CRUD for user and channel mappings via Prisma |
+| **ThreadReplyClassifierService** | `services/thread-reply-classifier.service.ts` | Respond / react / ignore for a reply without a mention, in a chat thread the bot takes part in. Each adapter owns its own participation rule and transcript, then asks here. One structured-output call on the classification model, tracing off, fail-open to `respond`; owns each platform's `<platform> thread classification failed` event and `<platform>-thread-gate` purpose |
+| **TeamsAdapterService** | `services/teams/teams-adapter.service.ts` | Microsoft Teams channel adapter on the Teams SDK (`@microsoft/teams.apps`). Inbound: Azure Bot Service POSTs activities to `/agents/teams/messages` — the SDK registers that route on the runtime's own Express app (via `ExpressAdapter`; `attachExpressApp()` from `index.ts`, never `app.start()`) and validates the Bot Framework JWT before the handler runs. The handler acks fast (fire-and-forget; the typing cue goes out once the adapter knows it answers) because a Prism turn runs minutes against Bot Framework's ~15s window; every reply is a **proactive send** addressed by a stored conversation id (`app.send`/`app.reply` — never a persisted serviceUrl, which is attacker-suppliable). Channel activities carry the thread root as a `;messageid=` suffix on `conversation.id`: stripped for mapping storage/lookup, kept as the reply thread root. The manifest's `ChannelMessage.Read.Group` permission makes Teams deliver every channel message: one that @mentions the bot (a mention entity naming `recipient.id`) runs a turn, a reply in a reply chain that already has a thread row goes to `threadReplyClassifierService` (stored in the thread when it is not answered, so the next turn and the next classification read it), and every other message is ignored. Broadcast = all DM mappings + the one main channel (flagged-else-oldest). Inbound files go through `teams-attachments.ts`, one credential per source: a personal-chat file's pre-authenticated SharePoint `downloadUrl` gets none, a pasted image gets the bot token (Bot Framework attachment hosts only) or the Graph token (`hostedContents` only), and a channel file goes through Graph `/shares`, which needs an admin-granted `Files.Read.All`; every failed read becomes a runtime notice and the turn runs anyway. Outbound files are download links to `/agents/attachments/:id` at `config.publicUrl`, else `localhost:PORT`. v1 defers Adaptive Cards/feedback, file uploads into Teams, reactions, group chats, and a live thread provider (threads stay `ThreadSource.DATABASE` — Teams pushes every activity, so no Slack-style read-consistency wait) |
+| **TeamsMappingService** | `services/teams/teams-mapping.service.ts` | TeamsMapping CRUD for user and channel mappings via Prisma (mirror of SlackMappingService; both mapping kinds persist the conversation id proactive sends are addressed to) |
 | **SlackMessageQueueService** | `services/slack-message-queue.service.ts` | Direct Prisma drain of pending Slack messages for heartbeat triggers |
 | **SlackHeartbeatTriggerService** | `services/slack-heartbeat-trigger.service.ts` | CRUD for per-agent Slack heartbeat trigger config, atomic claim logic |
 | **SessionManagerService** | `services/session-manager.service.ts` | Daily session resets, idle timeout management |
@@ -854,6 +857,11 @@ src/
 │   ├── cron-scheduler.service.ts # Cron job scheduling and execution
 │   ├── slack-adapter.service.ts   # Full Slack implementation: Bolt apps, Socket Mode, message handling
 │   ├── slack-mapping.service.ts   # SlackMapping CRUD for user & channel mappings via Prisma
+│   ├── thread-reply-classifier.service.ts # Respond/react/ignore for an unmentioned thread reply (Slack and Teams)
+│   ├── teams/                  # Microsoft Teams channel (mirrors the Slack services)
+│   │   ├── teams-adapter.service.ts # SDK webhook mounted on our Express app, proactive sends
+│   │   ├── teams-attachments.ts # Inbound files: which URL, which credential, what a failed read becomes
+│   │   └── teams-mapping.service.ts # TeamsMapping CRUD for user & channel mappings via Prisma
 │   ├── slack-message-queue.service.ts # Direct Prisma drain of pending Slack messages
 │   ├── slack-heartbeat-trigger.service.ts # CRUD for per-agent Slack heartbeat trigger config, atomic claim logic
 │   ├── session-manager.service.ts # Daily session resets, idle timeout management
@@ -909,7 +917,9 @@ src/
 │   └── document-revisions.ts   # Per identity document: the write, the history, one revision with its content, and the restore
 ├── utils/
 │   ├── async-channel.ts        # Bridges SDK push-based onStepFinish into async iteration (used by invokeStream)
-│   └── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
+│   ├── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
+│   ├── teams-formatter.ts      # Teams message formatting (markdown; tables pass through, unlike Slack)
+│   └── text-chunker.ts         # Channel-agnostic long-text chunking shared by both formatters
 ├── lib/
 │   ├── attachment-boot.ts      # Boot-time attachment storage reconciliation, in order: missing media files → content expiry → legacy BLOB backfill
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
@@ -977,6 +987,7 @@ src/
 │   ├── model-call.ts           # The only module calling `generateText`/`generateObject`; records every call's usage
 │   ├── step-usage.ts           # Token usage: SDK usage → the recorded shape, and folding a turn's steps for the invocation total
 │   ├── media-store.ts          # Attachment bytes as files under `<data dir>/media`: write/read/remove, filename sanitizing, stray-file reaper
+│   ├── teams-config.ts         # Env-sourced Teams connection singleton (no network validation — the SDK validates on initialize)
 │   ├── tool-output-store.ts    # The saved whole copy of an oversized tool result under `<data dir>/tool-outputs`: write/read/remove, TTL reaper. The notice hands the agent the path and it reads the file with the shell. No DB row, so mtime is the whole lifecycle
 │   ├── prisma.ts               # Prisma client singleton (runtime database)
 │   └── tool-names.ts           # Single owner of what a tool may be *called* for a model: charset, no leading digit, 64-char cap (`toModelToolName`, `capToolNames`)
@@ -1016,6 +1027,9 @@ What the operator sets on `docker run`:
 | `NEXUS_API_URL` | Lens Agents server URL (LLM proxy + MCP tools) | — |
 | `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
 | `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
+| `TEAMS_APP_ID` | Entra app registration client id; with the password + tenant, enables the Teams adapter | — (Teams disabled) |
+| `TEAMS_APP_PASSWORD` | Entra client secret. **Cannot be a `__nexus_cred:…__` sentinel**: the OAuth client-credentials grant sends it in the POST body, and the MITM proxy rewrites headers only — same class as `GOOGLE_BOT_PASSWORD` | — |
+| `TEAMS_APP_TENANT_ID` | Entra tenant of the app registration | — |
 | `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, or `anthropic` (one per container) | `bedrock` |
 | `CODING_AGENT` | Default coding agent: `claude-code` or `codex`. Each task may override it with `agent`. | Claude credentials first, then an OpenAI key, else `claude-code` |
 | `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` |
@@ -1369,6 +1383,19 @@ The agent-runtime owns the full Slack adapter implementation. It manages Bolt ap
 | `DELETE /agents/slack/channel-mapping/:channelId` | Delete a channel mapping |
 | `DELETE /agents/:agentId/slack/dm-mapping` | Delete DM mapping for an agent |
 | `GET /agents/:agentId/slack-connection-id` | Find connectionId via SlackMapping for an agent |
+
+### Management API Endpoints (for Teams)
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /agents/teams/messages` | The Bot Framework messaging endpoint (registered on the Azure Bot resource; JWT-validated by the Teams SDK). Never define a management route at this path |
+| `GET /agents/teams/workspaces` | The configured Teams connection (empty when Teams is disabled) |
+| `GET /agents/teams-link-status` | Check DM + channel mapping status |
+| `GET /agents/teams-channel-mappings` | List channel mappings (with the effective main channel) |
+| `POST /agents/teams/create-verification-code` | Generate a 6-hex DM/CHANNEL link code |
+| `DELETE /agents/teams/dm-mapping` | Delete the DM mapping(s) |
+| `DELETE /agents/teams/channel-mapping/:conversationId` | Delete a channel mapping (URI-encoded conversation id) |
+| `PUT /agents/teams/channel-mapping/:conversationId/main` | Flag the main channel |
 
 ### Key Files
 

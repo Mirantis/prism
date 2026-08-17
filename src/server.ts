@@ -26,6 +26,7 @@ import { logger } from './logger';
 import { managementRouter } from './routes/management';
 import { threadsRouter } from './routes/threads';
 import { messagesRouter } from './routes/messages';
+import { teamsRouter } from './routes/teams';
 import { webhookRouter } from './routes/webhook';
 import { lockedInRouter } from './routes/locked-in';
 import { agentGuideRouter } from './routes/agent-guide';
@@ -49,6 +50,7 @@ export function createApp() {
 
   // Management routes (heartbeat, cron lifecycle)
   app.use('/agents', managementRouter);
+  app.use('/agents', teamsRouter);
   app.use('/agents', computerRouter);
 
   // Inbound webhook ingestion (POST /agents/webhooks/:name)

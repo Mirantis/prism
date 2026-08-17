@@ -98,7 +98,7 @@ export function getCronTools(
   userId: string,
   agentId: string,
   threadId?: string,
-  originChannel: 'slack' | 'websocket' = 'websocket',
+  originChannel: 'slack' | 'websocket' | 'teams' = 'websocket',
   originChannelId?: string,
 ): Record<string, Tool> {
   return {

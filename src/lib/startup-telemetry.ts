@@ -75,6 +75,9 @@ export async function trackAgentStarted(
       'coding_agent': config.codingAgent,
       'execution_environment': getExecutionEnvironment().id,
       'slack.enabled': String(Boolean(config.slackBotToken)),
+      'teams.enabled': String(
+        Boolean(config.teamsAppId && config.teamsAppPassword && config.teamsAppTenantId)
+      ),
       'nexus.enabled': String(Boolean(config.nexusApiUrl)),
       'nexus.mcp_enabled': String(Boolean(config.nexusMcpUrl)),
       'langfuse.enabled': String(Boolean(config.langfuseSecretKey && config.langfusePublicKey)),

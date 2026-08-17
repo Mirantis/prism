@@ -38,6 +38,7 @@ import { cronSchedulerService } from './services/cron-scheduler.service';
 import { goalService } from './services/goal.service';
 import { sessionManagerService } from './services/session-manager.service';
 import { slackAdapterService } from './services/slack-adapter.service';
+import { teamsAdapterService } from './services/teams/teams-adapter.service';
 import { webSocketAdapterService } from './services/websocket-adapter.service';
 import { webSocketGatewayService } from './services/websocket-gateway.service';
 import { messageDeliveryService } from './services/message-delivery.service';
@@ -86,6 +87,14 @@ let fileJanitorTimer: NodeJS.Timeout | undefined;
 // Note: Must be registered BEFORE server starts accepting connections
 messageDeliveryService.register(webSocketAdapterService);
 messageDeliveryService.register(slackAdapterService);
+messageDeliveryService.register(teamsAdapterService);
+
+// The Teams SDK registers its JWT-validated POST /agents/teams/messages route
+// on our own Express app during initializeAll() — which runs before listen(),
+// so the route is live before the first request. The SPA catch-all is GET-only
+// and its regex already excludes /agents/*; never define a management route at
+// that exact path.
+teamsAdapterService.attachExpressApp(app);
 
 // Initialize WebSocket gateway before listening
 webSocketGatewayService.initialize(httpServer);

@@ -953,5 +953,24 @@ describe('ConversationService', () => {
       // main channel — it's logged and left undelivered.
       expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('No Slack channel resolved'), 'thread-1');
     });
+
+    it('continues a Teams channel thread in its reply chain', async () => {
+      // A channel thread stores `${conversationId};messageid=${rootMessageId}`,
+      // so the continuation posts into the chain, as Slack does — not top-level.
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        externalThreadId: '19:chan@thread.tacv2;messageid=1755000000000',
+      });
+
+      const ctx = await conversationService.getChannelContext('thread-1', 'teams');
+
+      expect(ctx).toEqual({
+        channel: 'teams',
+        channelId: '19:chan@thread.tacv2',
+        threadTs: '1755000000000',
+        threadId: 'thread-1',
+      });
+    });
   });
 });

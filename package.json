@@ -47,6 +47,8 @@
     "@ai-sdk/otel": "^1.0.70",
     "@aws-sdk/credential-provider-node": "^3.972.17",
     "@langfuse/otel": "^4.6.1",
+    "@microsoft/teams.api": "^2.0.15",
+    "@microsoft/teams.apps": "^2.0.15",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@opentelemetry/api-logs": "^0.217.0",
     "@opentelemetry/exporter-logs-otlp-http": "^0.217.0",

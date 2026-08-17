@@ -140,11 +140,13 @@ The main conversation surface.
   summarized.`) lands in the chat when it finishes. `/compact` triggers the same
   thing manually.
 
-## Channels (Slack)
+## Channels
 
-Link the agent to Slack here. The page reflects whether a Slack workspace is
-configured at all (it needs `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` in the
-runtime's environment — see **[Slack](slack.md)**).
+Link the agent to Slack and Microsoft Teams here. Each configured integration
+gets its own section; the page reflects whether one is configured at all
+(Slack needs `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN`, Teams needs
+`TEAMS_APP_ID` + `TEAMS_APP_PASSWORD` + `TEAMS_APP_TENANT_ID` in the runtime's
+environment — see **[Slack](slack.md)** and **[Microsoft Teams](teams.md)**).
 
 Two modes:
 
@@ -162,9 +164,14 @@ Two modes:
 Personal and Team modes are mutually exclusive — unlink one before switching to
 the other.
 
-The page also manages **heartbeat triggers**: designate a Slack channel so that
-incoming messages wake the agent's heartbeat, with a configurable throttle
-(minutes : seconds) between triggers. See
+The **Microsoft Teams** section works the same way: **Link Account** issues a
+code you send to the agent in a Teams personal chat; **Add channel** issues a
+code you @mention the agent with in a Teams channel; linked channels list with
+**Set main** / **Unlink** actions. See **[Microsoft Teams](teams.md)**.
+
+The page also manages **heartbeat triggers** (Slack only): designate a Slack
+channel so that incoming messages wake the agent's heartbeat, with a
+configurable throttle (minutes : seconds) between triggers. See
 **[Heartbeat](heartbeat.md#slack-triggered-heartbeats)**.
 
 ## Scheduled Tasks

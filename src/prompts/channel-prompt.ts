@@ -2,7 +2,7 @@
  * Channel-specific behavioral instructions for the AI agent
  *
  * These instructions are added to the system prompt when the agent is
- * participating in a Slack channel (team mode) vs. a DM (personal mode).
+ * participating in a Slack or Teams channel (team mode) vs. a DM (personal mode).
  */
 
 /**
@@ -12,9 +12,18 @@
  * channel it's in (e.g. to behave differently in `#alerts` vs `#general`). It's
  * a required string because callers only reach this in a channel turn, where
  * `InvokeRequest`'s `ChannelOrigin` discriminant guarantees the name is present.
+ *
+ * `platform` picks the wording: Slack channels carry the `#` convention,
+ * Microsoft Teams channels don't.
  */
-export function getChannelBehaviorInstructions(channelName: string): string {
-  const where = `the team Slack channel **#${channelName.replace(/^#/, '')}**`;
+export function getChannelBehaviorInstructions(
+  channelName: string,
+  platform: 'slack' | 'teams' = 'slack'
+): string {
+  const where =
+    platform === 'teams'
+      ? `the Microsoft Teams channel **${channelName}**`
+      : `the team Slack channel **#${channelName.replace(/^#/, '')}**`;
   return `
 ## Channel Participation Guidelines
 

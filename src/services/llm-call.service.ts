@@ -33,7 +33,8 @@ export type LlmCallPurpose =
   | 'feedback-gate'
   | 'goal-gate'
   | 'risk-gate'
-  | 'slack-thread-gate';
+  | 'slack-thread-gate'
+  | 'teams-thread-gate';
 
 /**
  * Every purpose, so a test can assert the union and the recorders agree. A
@@ -54,6 +55,7 @@ export const LLM_CALL_PURPOSES: readonly LlmCallPurpose[] = [
   'goal-gate',
   'risk-gate',
   'slack-thread-gate',
+  'teams-thread-gate',
 ];
 
 interface RecordInput {

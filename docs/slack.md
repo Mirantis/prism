@@ -45,7 +45,7 @@ environment (the `.env` file for a native install, `-e` flags for Docker). See
 ## Linking your identity
 
 Before the agent will talk to you, it needs to know who you are. Linking is
-started from the **[Web UI → Channels](web-ui.md#channels-slack)** page, which
+started from the **[Web UI → Channels](web-ui.md#channels)** page, which
 issues a short-lived six-character code.
 
 ### Personal Mode — DM the agent

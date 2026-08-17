@@ -1,17 +1,10 @@
 /**
- * Slack thread classification — structured-output wiring.
+ * Slack thread classification — the Slack side of the decision.
  *
- * The classifier is the one `generateObject` caller in the runtime, and some
- * platforms reject the SDK's native structured-output path (bedrock-mantle
- * answers 400 "output_config.format: Extra inputs are not permitted";
- * Foundry-hosted Azure rejects by design). Which ones is the *provider's*
- * business — the adapter only forwards what the active provider asks for, and
- * these tests pin that indirection rather than any vendor's value.
- *
- * Worth testing at the request shape because the failure is invisible in
- * behavior: `classifyThreadMessage` swallows the error and falls back to
- * `respond`, so a regression just makes the bot answer every threaded message
- * and never react or ignore.
+ * The participation rule (`isBotInThread`) reads the thread from Slack and
+ * builds the transcript that `classifyThreadMessage` hands to the shared
+ * classifier. The classifier itself is tested in
+ * `thread-reply-classifier.test.ts`.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -114,146 +107,6 @@ describe('Slack thread classification', () => {
     // The shared config mock (test-utils/setup.ts) carries neither field.
     config.llmProvider = 'bedrock-mantle';
     config.classificationModelId = 'anthropic.claude-haiku-4-5';
-  });
-
-  it('forwards whatever structured-output options the active provider asks for', async () => {
-    // A deliberately fictional vendor key: the point is that the adapter passes
-    // the provider's answer through untouched, not that it knows about
-    // Anthropic. Each provider's own value is asserted in its own test.
-    mockGetClassificationRequest.mockReturnValue({
-      model: 'mock-classification-model',
-      providerOptions: { acme: { mode: 'widget' } },
-    });
-
-    await classify(TRANSCRIPT);
-
-    expect(mockGenerateObject).toHaveBeenCalledWith(
-      expect.objectContaining({ providerOptions: { acme: { mode: 'widget' } } }),
-    );
-  });
-
-  it('sends an empty bag when the provider needs nothing special', async () => {
-    await classify(TRANSCRIPT);
-
-    expect(mockGenerateObject).toHaveBeenCalledWith(
-      expect.objectContaining({ providerOptions: {} }),
-    );
-  });
-
-  it('passes the classification model and the provider-declared sampling params', async () => {
-    await classify(TRANSCRIPT);
-
-    expect(mockGenerateObject).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'mock-classification-model', temperature: 0 }),
-    );
-  });
-
-  it('omits temperature when the provider declares empty sampling params', async () => {
-    mockGetClassificationRequest.mockReturnValue({
-      model: 'mock-classification-model',
-      providerOptions: {},
-      samplingParams: {},
-    });
-
-    await classify(TRANSCRIPT);
-
-    expect(mockGenerateObject.mock.calls[0][0]).not.toHaveProperty('temperature');
-  });
-
-  it('opts out of LLM tracing', async () => {
-    // The prompt here is a transcript of a Slack channel, and a registered
-    // telemetry integration traces every call that does not say otherwise. No
-    // behavior of the bot changes if this opt-out goes missing — the messages
-    // just start arriving in the trace store.
-    await classify(TRANSCRIPT);
-
-    expect(mockGenerateObject).toHaveBeenCalledWith(
-      expect.objectContaining({ experimental_telemetry: { isEnabled: false } }),
-    );
-  });
-
-  it('returns the reaction emoji the model chose', async () => {
-    mockGenerateObject.mockResolvedValue({ object: { action: 'react', emoji: 'thumbsup' } });
-
-    await expect(classify(TRANSCRIPT)).resolves.toEqual({ action: 'react', emoji: 'thumbsup' });
-  });
-
-  it('defaults the emoji when the model omits it', async () => {
-    mockGenerateObject.mockResolvedValue({ object: { action: 'react' } });
-
-    await expect(classify(TRANSCRIPT)).resolves.toEqual({ action: 'react', emoji: 'eyes' });
-  });
-
-  it('falls back to respond when the call throws', async () => {
-    // The fail-open path that made the mantle 400 invisible in the first place.
-    mockGenerateObject.mockRejectedValue(new Error('output_config.format: Extra inputs'));
-
-    await expect(classify(TRANSCRIPT)).resolves.toEqual({ action: 'respond' });
-  });
-
-  describe('failure telemetry', () => {
-    it('emits `slack thread classification failed` with the active model and error shape', async () => {
-      const err = Object.assign(new Error('output_config.format: Extra inputs'), {
-        name: 'AI_APICallError',
-        statusCode: 400,
-      });
-      mockGenerateObject.mockRejectedValue(err);
-
-      await classify(TRANSCRIPT);
-
-      expect(mockTrackEvent).toHaveBeenCalledWith(
-        'slack thread classification failed',
-        null,
-        expect.objectContaining({
-          'agent.id': 'agent-1',
-          'llm.classification_model': 'anthropic.claude-haiku-4-5',
-          'error.name': 'AI_APICallError',
-          'error.status': '400',
-        }),
-      );
-    });
-
-    it('never puts the transcript or the error message in the event', async () => {
-      // The whole point of the shape helper: a provider's error text can quote
-      // the request back, and the transcript is user content.
-      mockGenerateObject.mockRejectedValue(new Error('rejected: what broke the build?'));
-
-      await classify(TRANSCRIPT);
-
-      const props = JSON.stringify(mockTrackEvent.mock.calls[0][2]);
-      expect(props).not.toContain('what broke the build');
-      expect(props).not.toContain('rejected:');
-    });
-
-    it('omits error.status when the thrown value carries none', async () => {
-      mockGenerateObject.mockRejectedValue(new Error('boom'));
-
-      await classify(TRANSCRIPT);
-
-      expect(mockTrackEvent.mock.calls[0][2]).not.toHaveProperty('error.status');
-      expect(mockTrackEvent.mock.calls[0][2]).toMatchObject({ 'error.name': 'Error' });
-    });
-
-    it('emits nothing on a successful classification', async () => {
-      await classify(TRANSCRIPT);
-
-      expect(mockTrackEvent).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('respond criteria', () => {
-    it('names an approval a respond and tells the model to prefer respond when unsure', async () => {
-      // An assertion on wording, deliberately: the classifier's verdict is not
-      // traced, so the criteria the model is given are visible nowhere else,
-      // and a message the gate drops leaves only an emoji behind.
-      await classify(TRANSCRIPT);
-
-      const { system } = mockGenerateObject.mock.calls[0][0];
-      expect(system).toContain('an approval');
-      expect(system).toContain(
-        'When you are unsure whether the last message asks the bot for something, choose "respond".',
-      );
-    });
   });
 
   describe('the transcript the gate judges', () => {
