@@ -98,7 +98,14 @@ slash command, or UI surface, update the relevant doc page (and the root
 ## Deployment shape
 
 One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
-`file:/data/agent.db`. Slack creds come from env (`SLACK_BOT_TOKEN`,
+`file:/data/agent.db`. The image is `ghcr.io/lensapp/prism-agent`, published
+under five tag families: `latest` and `vYYYY.M.DDHHMMSS` (production),
+`canary` (every merge to `main`), a commit-SHA tag from both release workflows,
+and `pr-<n>` + `pr-<n>-<branch-slug>` from `docker-build.yml` on every pull
+request. The PR pair moves with each push to the branch and
+`pr-image-cleanup.yml` deletes it when the PR closes (`ghcr-prune.yml` is the
+weekly backstop). A fork's PR builds the image and pushes nothing — its token is
+read-only. Slack creds come from env (`SLACK_BOT_TOKEN`,
 `SLACK_APP_TOKEN`), validated via `auth.test` on boot; may be Nexus
 credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy.
@@ -498,7 +505,7 @@ What the operator sets on `docker run`:
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP collector for product telemetry (unset/empty = disabled) | baked into published images via `vars.OTEL_EXPORTER_OTLP_ENDPOINT`; empty otherwise |
 | `OTEL_EXPORTER_OTLP_API_KEY` | Collector auth, sent as `x-api-key` header | baked into published images as a file (`/app/.otel-api-key`, exported by `start.sh`) from `secrets.OTEL_EXPORTER_OTLP_API_KEY`; empty otherwise |
 | `DEPLOYMENT_ENVIRONMENT` | Tags OTel records (production \| staging \| development) | `production` in published images, `development` otherwise |
-| `SERVICE_VERSION` | Build identifier emitted as the OTel `service.version` resource attribute | release tag (e.g. `v2026.6.18060952`) for release-production.yml; `canary-<sha>` for release-canary.yml; empty otherwise |
+| `SERVICE_VERSION` | Build identifier emitted as the OTel `service.version` resource attribute | release tag (e.g. `v2026.6.18060952`) for release-production.yml; `canary-<sha>` for release-canary.yml; the image tag (`pr-<n>-<slug>`) for docker-build.yml; empty otherwise |
 
 ## Chat Flow
 
