@@ -190,7 +190,7 @@ async function grantMediaPermissions(context: BrowserContext): Promise<void> {
   try {
     await context.grantPermissions(['microphone', 'camera']);
   } catch (err) {
-    logger.warn(`[Meeting] Could not pre-grant the media permissions: ${String(err)}`);
+    logger.warn({ err }, '[Meeting] Could not pre-grant the media permissions');
   }
 }
 
