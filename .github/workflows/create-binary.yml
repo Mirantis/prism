@@ -58,7 +58,7 @@ jobs:
           # SEA build is pinned to Node 22: Node 23+ enforces the documented
           # ban on dynamic-importing file URLs from the injected main, which
           # is exactly what our CJS stub does to load the ESM bundle (see
-          # scripts/build-sea.mjs and CLAUDE.md). Bumping requires a real
+          # scripts/build-sea.mjs and AGENTS.md). Bumping requires a real
           # refactor of how externals get into the bundle.
           node-version: '22'
           cache: 'npm'

@@ -119,7 +119,7 @@ await build({
   platform: 'node',
   format: 'esm',
   // Match the SEA runtime pin (Node 22 — see .github/workflows/create-binary.yml
-  // and the "SEA binaries" note in CLAUDE.md for why we can't go higher yet).
+  // and the "SEA binaries" note in AGENTS.md for why we can't go higher yet).
   target: 'node22',
   outfile: bundlePath,
   external: cfg.external,

@@ -1,4 +1,4 @@
-// See CLAUDE.md → "Commit messages". Enforced in CI by lint.yml.
+// See AGENTS.md → "Commit messages". Enforced in CI by lint.yml.
 //
 // NOTE: this file must be `.mjs`. lint.yml runs the repo's own pinned
 // commitlint (`@commitlint/cli@^21`) and points `--config` at this file, so
