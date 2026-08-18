@@ -35,7 +35,7 @@ router.patch('/locked-in', async (req: Request, res: Response) => {
       return;
     }
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[LockedIn] Failed to update locked-in mode for agent: ${msg}`);
+    logger.error({ err: error }, '[LockedIn] Failed to update locked-in mode');
     res.status(500).json({ error: msg });
   }
 });
