@@ -149,9 +149,10 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   const modeFilteredTools = filterToolsByMode(merged, input.mode);
 
   // Locked-in mode: withhold the workspace-markdown writers. Applied after the
-  // mode filter so it holds for every mode, and over the merged map so an MCP or
-  // plugin tool cannot answer to a withheld name. The refusal in agent-config.ts
-  // is what enforces the lock.
+  // mode filter so it holds for every mode, and over the merged map so a Nexus
+  // MCP tool cannot answer to a withheld name — those names are un-namespaced.
+  // A plugin tool is `<plugin>__<server>__<tool>`, so it never collides either
+  // way. The refusal in agent-config.ts is what enforces the lock.
   const tools = input.lockedIn
     ? omitLockedWorkspaceTools(modeFilteredTools)
     : modeFilteredTools;

@@ -9,6 +9,13 @@
  * The `agent locked write refused` event is not asserted here. The writer tools
  * are withheld from a locked turn, so the refusal is reachable only on a
  * mid-turn flip. It is covered in `src/tools/__tests__/agent-config.test.ts`.
+ *
+ * The locked and unlocked scenarios are a pair, and neither half stands alone.
+ * "The stored soul document is unchanged" also passes when the turn failed for a
+ * reason that has nothing to do with the lock — a model error, a lost socket, a
+ * refusal to use the tool at all. The unlocked control is what rules that out: it
+ * sends the same prompt and requires the write to land. Delete either scenario and
+ * the other stops proving anything.
  */
 
 import { createBdd } from 'playwright-bdd';
