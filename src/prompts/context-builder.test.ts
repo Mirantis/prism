@@ -96,6 +96,28 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('# Locked-In Mode');
   });
 
+  it('tells a locked agent that has not onboarded that its script is paused', async () => {
+    const context = createTestAgentContext({ isBootstrapPhase: true, lockedIn: true });
+
+    const prompt = await buildSystemPrompt(context, 'chat');
+
+    // The bootstrap script is dropped from the prompt, so this is the only place
+    // an agent locked before its first turn can learn why it never onboarded.
+    expect(prompt).toContain('onboarding script is paused');
+    expect(prompt).toContain('runs when the user unlocks you');
+  });
+
+  it('does not claim a paused onboarding for a locked agent that already onboarded', async () => {
+    const context = createTestAgentContext({ isBootstrapPhase: false, lockedIn: true });
+
+    const prompt = await buildSystemPrompt(context, 'chat');
+
+    // There is no script left to pause, so saying so would be false and the model
+    // would repeat it when asked about the lock.
+    expect(prompt).toContain('# Locked-In Mode');
+    expect(prompt).not.toContain('onboarding script is paused');
+  });
+
   it('states the locked-in constraint after the mode instructions that ask for writes', async () => {
     const prompt = await buildSystemPrompt(createTestAgentContext({ lockedIn: true }), 'chat');
 

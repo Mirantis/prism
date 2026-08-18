@@ -45,6 +45,11 @@ describe('LockedInField', () => {
     expect(screen.getByText('Locked')).toBeInTheDocument();
   });
 
+  it('says that onboarding is paused while locked', () => {
+    renderField(details({ lockedIn: false }));
+    expect(screen.getByText(/First-run onboarding is paused/)).toBeInTheDocument();
+  });
+
   it('PATCHes the new value when toggled on', async () => {
     mockUpdateLockedIn.mockResolvedValue({ lockedIn: true });
     renderField(details({ lockedIn: false }));
