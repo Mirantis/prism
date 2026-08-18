@@ -135,7 +135,10 @@ agent's own tools may no longer rewrite the six workspace markdown files:
 
 | Frozen while locked | Still editable while locked |
 |---------------------|-----------------------------|
-| **Soul**, **User**, **Memory** (the curated summary), **Vision**, **Heartbeat** config, **Bootstrap** | **Behavioural settings** — heartbeat interval, timezone, `verbose`; the agent's **name** (`rename_self`); **vector memory** (search/write/delete), so it keeps learning; the **Agent Guide** |
+| **Soul**, **User**, **Memory** (the curated summary), **Vision**, **Heartbeat** config, **Bootstrap** | **Behavioural settings** — heartbeat interval, timezone, `verbose`; the agent's **name** (`rename_self`); **vector memory** (search/write/delete), so it keeps learning |
+
+The **Agent Guide** is in neither column. No tool and no route writes it, so it
+is read-only to the agent whether the lock is on or off.
 
 The lock works in two layers. The workspace-writing tools (`update_soul`,
 `update_memory`, `update_user_profile`, `update_vision`,
