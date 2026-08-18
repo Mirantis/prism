@@ -2,12 +2,13 @@
  * Locked-In Mode Route
  *
  * PATCH /agents/locked-in — freeze the workspace markdown files against the
- * agent's own tools. No tool reaches this route, so a locked agent cannot
- * unlock itself, and the route keeps working while locked so the user is never
- * shut out.
+ * agent's own tools. No tool reaches this route, so a locked agent cannot unlock
+ * itself with a tool call. The route keeps working while locked, so the user is
+ * never shut out.
  *
  * Auth is terminated by the platform in front of the container (same as every
- * other route).
+ * other route), so the route takes no credential from inside it. A shell can
+ * therefore reach it — see the known holes in `docs/configuration.md`.
  */
 
 import { Router, Request, Response } from 'express';

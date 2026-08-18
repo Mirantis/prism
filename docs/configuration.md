@@ -137,8 +137,8 @@ agent's own tools may no longer rewrite the six workspace markdown files:
 |---------------------|-----------------------------|
 | **Soul**, **User**, **Memory** (the curated summary), **Vision**, **Heartbeat** config, **Bootstrap** | **Behavioural settings** — heartbeat interval, timezone, `verbose`; the agent's **name** (`rename_self`); **vector memory** (search/write/delete), so it keeps learning |
 
-The **Agent Guide** is in neither column. No tool and no route writes it, so it
-is read-only to the agent whether the lock is on or off.
+The **Agent Guide** is in neither column. No tool writes it, so it is read-only to
+the agent whether the lock is on or off.
 
 The lock works in two layers. The workspace-writing tools (`update_soul`,
 `update_memory`, `update_user_profile`, `update_vision`,
@@ -154,7 +154,23 @@ files says what it would have changed and points you at the setting.
 
 Onboarding is paused while the lock is on: a locked agent with a non-empty
 Bootstrap document does not run the first-run script, because it could not clear
-it afterwards.
+it afterwards. The document is kept, so onboarding runs when you unlock the agent.
+
+**The lock is a guardrail against drift, not a security boundary.** It has three
+known holes:
+
+- **The [shell](tools.md#shell) is never withheld.** Every agent has `shell_exec`,
+  in every mode. The lock takes away the document tools, not the shell, and a
+  shell writes the documents straight into `/data/agent.db`.
+- **The Management API takes no credential from inside the container.** Auth is
+  terminated in front of the container, so a shell can `PATCH
+  localhost:3003/agents/locked-in` and turn the lock off. "The agent cannot unlock
+  itself" is a statement about its tools.
+- **`POST /agents/import` is not gated.** It stages a whole replacement
+  database — documents, memories, threads, and the lock's own setting — which the
+  runtime swaps in on its next boot.
+
+Lock an agent you want to hold still. Do not lock one you do not trust.
 
 ## Models
 

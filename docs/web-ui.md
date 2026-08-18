@@ -161,7 +161,7 @@ The agent's identity and runtime controls.
   own tools — Soul, User, Memory, Vision, Heartbeat and Bootstrap become
   read-only to it, while settings, renames and vector memory keep working. The
   agent cannot turn this off itself. It is a guardrail against drift, not a
-  security boundary (the agent can still reach the files through its shell). See
+  security boundary; the known ways around it are listed under
   **[Configuration → Locked-in mode](configuration.md#locked-in-mode)**.
 - **Identity documents.** Seven tabs show the agent's markdown documents —
   **Agent** (guide), **Soul**, **User**, **Heartbeat**, **Memory**, **Vision**,
