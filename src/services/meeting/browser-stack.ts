@@ -135,6 +135,12 @@ export function buildBrowserArgs(port: number, userDataDir: string): string[] {
     // display, which is what `audio-stack.ts` gives us — one screen is named
     // "Entire screen". The space in it is safe because `spawn` is handed an array
     // and no shell.
+    //
+    // The flag is a browser-wide switch, not a Meet one: *every* page this browser
+    // loads gets the auto-selection, so any origin that calls `getDisplayMedia()`
+    // receives the whole virtual display — no picker, and no user gesture of any
+    // kind. Before this flag that call simply failed. Acceptable only because the
+    // browser is ours and visits the one origin we send it to.
     '--auto-select-desktop-capture-source=Entire screen',
     // Meet starts playing before any user gesture exists.
     '--autoplay-policy=no-user-gesture-required',
