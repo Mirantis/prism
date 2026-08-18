@@ -8,7 +8,7 @@ own embedded database, connects to MCP servers for tools, runs heartbeat and
 cron scheduling in-process, manages Slack connections, runs the conversation
 engine, and delivers results to users over local channel adapters (WebSocket,
 Slack). The runtime is bundled with a Web UI (`web/`) and a TUI (`cli/`).
-[`CLAUDE.md`](CLAUDE.md) at the repo root is the authoritative guide to the
+[`AGENTS.md`](AGENTS.md) at the repo root is the authoritative guide to the
 architecture, the services, and the project conventions; this file is the short
 on-ramp.
 
@@ -76,7 +76,7 @@ New behavior should ship with tests. The suite runs on [vitest](https://vitest.d
 - Changing a runtime HTTP endpoint means updating its callers too — the Web SPA
   under `web/` and the TUI under `cli/`.
 - Update documentation when you change public behavior, configuration, or env
-  vars. Keep [`CLAUDE.md`](CLAUDE.md) in sync when you touch architecture.
+  vars. Keep [`AGENTS.md`](AGENTS.md) in sync when you touch architecture.
 
 ## Commit Style
 
