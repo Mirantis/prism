@@ -64,6 +64,8 @@
     "prisma": "^6.19.2",
     "sqlite-vec": "^0.1.9",
     "uuid": "^13.0.0",
+    "wink-eng-lite-web-model": "^1.8.1",
+    "wink-nlp": "^2.4.0",
     "ws": "^8.19.0",
     "zod": "^4.3.6"
   },

@@ -53,15 +53,39 @@ const version = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')
  */
 const UNBUNDLABLE = ['playwright-core', 'fsevents'];
 
+/**
+ * Deps only a voice meeting reaches, kept out for size rather than because they break.
+ *
+ * The English POS tagger and its model bundle perfectly well and cost **3.8MB** of
+ * binary (15.58MB against 11.77MB, measured) for code a SEA cannot run: the meeting
+ * path needs Chromium, Xvfb and PulseAudio, none of which a binary ships, and
+ * `playwright-core` above is already external for the same reason — so anything that
+ * could reach the tagger has failed to open a browser long before. Left in, every
+ * `prism` download pays for a tagger it will never load.
+ *
+ * Safe by the same argument as `UNBUNDLABLE`, and one step safer: an unresolvable
+ * `import()` here is caught in `services/meeting/vocative.ts`, which logs once and
+ * sends every utterance to the classification model instead — the behaviour before
+ * the tagger existed.
+ */
+const MEETING_ONLY = ['wink-nlp', 'wink-eng-lite-web-model'];
+
 const TARGETS = {
   prism: {
     entry: 'cli/src/index.tsx',
-    external: [...UNBUNDLABLE],
+    external: [...UNBUNDLABLE, ...MEETING_ONLY],
   },
   'prism-server': {
     entry: 'src/sea/server-entry.ts',
     // Native addons + sidecar-loaded modules + pino's worker-thread transport.
-    external: ['better-sqlite3', '@prisma/client', 'sqlite-vec', 'pino-pretty', ...UNBUNDLABLE],
+    external: [
+      'better-sqlite3',
+      '@prisma/client',
+      'sqlite-vec',
+      'pino-pretty',
+      ...UNBUNDLABLE,
+      ...MEETING_ONLY,
+    ],
   },
 };
 const cfg = TARGETS[target];
