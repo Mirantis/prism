@@ -192,7 +192,7 @@ export async function buildSystemPromptParts(
   // model to record things with `update_memory`, so the constraint must come
   // after them.
   if (context.lockedIn) {
-    stableSections.push(getLockedInInstructions());
+    stableSections.push(getLockedInInstructions(context.isBootstrapPhase));
   }
 
   // Recalled memories — auto-retrieved from memory_entries via embedding search.
@@ -724,13 +724,24 @@ Only your **final message** in a multi-step turn is delivered to the user. Inter
 /**
  * Locked-in mode notice: why the workspace-markdown writers are absent from the
  * tool set, what to do instead, and who can lift the lock.
+ *
+ * `inBootstrapPhase` adds the paused-onboarding paragraph. The bootstrap script
+ * is dropped from a locked prompt, so this is the only way an agent locked before
+ * its first turn can explain its own silence. Withheld from an agent that already
+ * onboarded, for which it is false. The flag cannot change while locked —
+ * `clear_bootstrap` is the only thing that empties `bootstrapMd` and it is
+ * refused — so the section stays cacheable.
  */
-function getLockedInInstructions(): string {
+function getLockedInInstructions(inBootstrapPhase: boolean): string {
+  const onboarding = inBootstrapPhase
+    ? `\n\nYour first-run onboarding script is paused while this is on, because it ends by clearing your bootstrap notes and that write is refused too. Say that it is paused and that it runs when the user unlocks you.`
+    : '';
+
   return `# Locked-In Mode
 
 Locked-in mode is **on**, so your workspace files — soul, memory summary, user profile, vision, heartbeat config, and bootstrap notes — are read-only.
 
-This is the user's choice, not a fault. When you notice something you would normally have written to one of those files, say so in your reply — describe the change you would have made and why — and note that the user can turn locked-in mode off in their agent settings. Do not try to work around it by editing files through the shell.
+This is the user's choice, not a fault. When you notice something you would normally have written to one of those files, say so in your reply — describe the change you would have made and why — and note that the user can turn locked-in mode off in their agent settings. Do not try to work around it by editing files through the shell.${onboarding}
 
 Everything else is unaffected: you can still search and write long-term memories, run tools, and change behavioural settings such as your heartbeat interval or timezone.`;
 }
