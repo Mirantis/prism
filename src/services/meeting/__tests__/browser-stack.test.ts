@@ -143,6 +143,13 @@ describe('browser media flags', () => {
     // The value is matched against Chromium's own picker source names, where a
     // single-monitor display — which is what Xvfb gives us — is "Entire screen".
     expect(args).toContain('--auto-select-desktop-capture-source=Entire screen');
+    // Asserted in the same test, not a separate one: the source name above is
+    // Chromium's own English picker string, so it matches only while the browser's UI
+    // language is English. The image installs one locale pack (`en-US.pak`; no
+    // `chromium-l10n`), so today the name holds even under another `--lang` — this
+    // keeps the pair honest if a locale pack ever arrives, and fails loudly if the
+    // flag is dropped or its value changed.
+    expect(args).toContain('--lang=en-US');
   });
 
   it('never substitutes a fake capture device', () => {
