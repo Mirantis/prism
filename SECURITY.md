@@ -1,10 +1,12 @@
 # Security Policy
 
-Prism Agent is security-sensitive software. It runs an autonomous LLM agent that
-invokes powerful tools on a user's behalf — kubectl, GitHub, and AWS via MCP —
-holds credentials for Slack and AWS Bedrock, and owns its own conversation and
-memory store. Credential handling, the MCP tool surface, agent access control,
-and the boundaries between agents are all security boundaries.
+Prism Agent is security-sensitive software. It runs an autonomous LLM agent that executes shell
+commands and edits files on the host it runs on, and reaches external systems through MCP — kubectl,
+GitHub and AWS through the Nexus MCP server, plus whatever an installed Agent Plugin adds. It holds
+credentials for Slack, for its model provider, and — when voice meetings are enabled — for OpenAI
+and a Google account. It owns its own conversation, memory and attachment store. Credential
+handling, the tool surface, the network surface, and what untrusted input can drive the agent to do
+are all security boundaries.
 
 ## Reporting Vulnerabilities
 
@@ -21,40 +23,54 @@ Include as much detail as possible:
 - Affected component or file path, if known
 - Impact and the security boundary you believe is crossed
 - Reproduction steps or proof of concept
-- Environment details: deployment mode (single-agent vs. multi-tenant), runtime
-  version, and the channel involved (WebSocket, Slack, heartbeat, or cron)
-- Whether the issue involves credential exposure, cross-agent access, MCP tool
-  abuse, or prompt-driven exfiltration
+- Environment details: how the runtime is deployed (container, native install, or SEA binary),
+  which `LLM_PROVIDER` is configured, whether it reaches the model directly or through the Nexus
+  gateway, the runtime version, and the channel involved (WebSocket, Slack, webhook, heartbeat,
+  cron, or a voice meeting)
+- Whether the issue involves credential exposure, tool abuse, or prompt-driven exfiltration
 
-We will acknowledge reports as quickly as practical and coordinate remediation
-before public disclosure.
+We will acknowledge reports as quickly as practical and coordinate remediation before public
+disclosure.
 
 ## Security Scope
 
 Security-sensitive areas include:
 
-- **The MCP tool surface** — the internal MCP server (memory, config, cron) and
-  the external Nexus MCP (kubectl, GitHub, AWS). Whether the agent can be driven
-  to invoke a tool, or reach a resource, beyond what its configuration intends.
-- **The WebSocket gateway** — the backend verifies the JWT and proxies the
-  upgrade; the runtime only decodes it. Whether a forged or replayed token can
-  reach `conversationEngineService.chat()`.
-- **The HTTP API surface** (`/agents/*`, `/threads`, `/latest-thread`,
-  `/messages`, `/api/ws`) — the runtime trusts inbound connections, so any
-  unintended network exposure can allow callers to drive heartbeat, cron,
-  Slack, or thread operations.
-- **Prompt-driven actions** — whether untrusted content arriving over a channel
-  (a Slack message, thread history, a tool result) can steer the agent into
-  unsafe tool use or data exfiltration.
+- **The built-in tool surface** — the tools the runtime registers in-process: shell execution and
+  file editing (`shell_exec`, `shell_write_file`, `shell_edit_file`, `claude_code`), memory, agent
+  configuration, cron, goals, skills, attachments, file sharing, and meetings. The shell tools run
+  with the runtime's own privileges, so anything that can steer the agent can reach them.
+- **The MCP tool surface** — the external Nexus MCP server (kubectl, GitHub, AWS) and the MCP
+  servers an installed Agent Plugin declares. Whether the agent can be driven to invoke a tool, or
+  reach a resource, beyond what its configuration intends. Plugin servers are started as child
+  processes from the plugins directory, so what is placed in that directory is a trust decision.
+- **The network surface** — the runtime authenticates nothing itself, and assumes the platform in
+  front of the container terminates auth. The WebSocket gateway pins every connection to the
+  configured owner without inspecting a token, and the HTTP API (`/agents/*`, `/threads`,
+  `/messages`, `/latest-thread`, `/agents/webhooks/:name`, `/api/ws`) has no authentication
+  middleware. Any unintended network exposure therefore lets a caller drive chat, heartbeat, cron,
+  Slack, webhook or thread operations directly.
+- **Webhook intake** — `POST /agents/webhooks/:name` accepts JSON from external systems, and an
+  agent-mode subscription turns that payload into a model invocation. No signature is verified, so
+  a reachable endpoint is an unauthenticated path into the agent's prompt.
+- **Prompt-driven actions** — whether untrusted content arriving over a channel (a Slack message,
+  thread history, a tool result, a webhook payload) can steer the agent into unsafe tool use or
+  data exfiltration.
+- **Voice meetings** — in a call the Realtime model carries the agent's real tools, and the runtime
+  does not authenticate the people in the room. The in-meeting prompt's confirmation rule is the
+  only guard, self-configuration included, so a sentence agreed in a call can change the agent for
+  later turns on every channel.
+- **Credential handling** — tokens arrive through the environment and must stay on request headers,
+  never in prompts, logs, tool results, or message bodies. Some secrets may be Nexus credential
+  sentinels that only the gateway can resolve; the Slack client strips the request body's `token`
+  field so Slack auth rides the `Authorization` header alone.
 
 ## Security Boundaries
 
-The intended boundary is: each agent runs scoped to its own `AGENT_ID` and its
-own data store; credentials stay in env and on the `Authorization` header, never
-in prompts, logs, or message bodies; access to an agent is gated by ownership and
-the backend's access-control check; and MCP tools are exercised only within the
-agent's configured intent.
+The intended boundary is: one container owns exactly one agent, identified by `AGENT_ID`, with its
+own embedded database and data directory; credentials stay in the environment and on request
+headers; the tool surface is exercised only within the agent's configured intent; and the runtime is
+never exposed directly to an untrusted network, because it performs no authentication of its own.
 
-When in doubt, treat any change touching credential handling, the MCP tool
-surface, agent access control, agent isolation, or the API surface as
-security-sensitive.
+When in doubt, treat any change touching credential handling, the tool surface, the HTTP or
+WebSocket surface, webhook intake, or the meeting path as security-sensitive.
