@@ -107,8 +107,7 @@ export interface BrowserStackOptions {
 /**
  * The browser's command line.
  *
- * Extracted from `start()` so the media flags are assertable without a browser:
- * getting them wrong costs a whole capability and says nothing about why.
+ * Extracted from `start()` so the media flags are assertable without a browser.
  */
 export function buildBrowserArgs(port: number, userDataDir: string): string[] {
   return [
@@ -124,24 +123,18 @@ export function buildBrowserArgs(port: number, userDataDir: string): string[] {
     '--no-sandbox',
     '--disable-setuid-sandbox',
     // Auto-grant the mic/camera prompt — nobody is there to click "Allow". The
-    // devices behind it are the real PulseAudio ones, not fakes.
-    //
-    // This was one flag, `--use-fake-ui-for-media-stream`, and that flag also
-    // answered `getDisplayMedia` — with a synthetic source it never supplied. So
-    // every capture attempt rejected as `NotReadableError: Could not start video
-    // source`, and no picker appeared for anyone to pick a real screen in. Measured
-    // on Chromium 151 against the Xvfb display: fake-UI rejects with and without
-    // the auto-select flag below, while this pair resolves with the real screen.
-    // Adding `--use-fake-device-for-media-stream` also makes it resolve, and is the
-    // wrong fix: it replaces the live PulseAudio source with a tone, which is a bot
-    // that sits in the call mute.
+    // devices behind it are the real PulseAudio ones, not fakes. This flag has to
+    // be exactly this one: `--use-fake-ui-for-media-stream` also answers
+    // `getDisplayMedia` and rejects the capture, and
+    // `--use-fake-device-for-media-stream` alongside it replaces the live
+    // PulseAudio source with a tone.
     '--auto-accept-camera-and-microphone-capture',
-    // Pick the screen for `getDisplayMedia` instead of opening a picker that nobody
-    // can click. The value is matched against the names in Chromium's own picker
-    // list, so it depends on two things below and nearby: `--lang=en-US`, which
-    // keeps those names English, and a single-monitor display, which is what
-    // `audio-stack.ts` gives us — one screen is named "Entire screen". The space in
-    // it is safe because `spawn` is handed an array and no shell.
+    // Pick the screen for `getDisplayMedia`. The value is matched against the names
+    // in Chromium's own picker list, so it depends on two things below and nearby:
+    // `--lang=en-US`, which keeps those names English, and a single-monitor
+    // display, which is what `audio-stack.ts` gives us — one screen is named
+    // "Entire screen". The space in it is safe because `spawn` is handed an array
+    // and no shell.
     '--auto-select-desktop-capture-source=Entire screen',
     // Meet starts playing before any user gesture exists.
     '--autoplay-policy=no-user-gesture-required',

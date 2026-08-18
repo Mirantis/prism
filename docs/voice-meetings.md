@@ -434,15 +434,16 @@ without a microphone — see below.
 
 ### The screen
 
-The agent does not share its screen. Nothing in its toolset asks to, and there is no
-setting that turns it on.
+The agent can share its screen. Meet's **Share screen** control works in its browser,
+and what it shares is the virtual display the browser runs on — so the room sees the
+agent's own browser windows.
 
-Chromium used to be started with one flag that granted the microphone and also
-answered every screen-capture request — with a source that did not exist. So a capture
-attempt failed with `Could not start video source`, and Meet reported "Can't share your
-screen". The microphone grant is now its own flag, and a second one picks the virtual
-display. A capture started from the page therefore succeeds, and it captures the Xvfb
-display, which holds nothing but the agent's own browser window.
+No tool in the agent's toolset starts a share yet, so a share has to be started from
+outside, over the browser's debugging port.
+
+The shared display contains the Meet window itself, so Meet warns about the self-view
+and offers **Show my screen anyway**. Click it to keep the presentation up; the warning
+can also appear later in a call, not only when the share starts.
 
 ## When it doesn't work
 
