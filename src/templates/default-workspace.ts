@@ -122,7 +122,6 @@ and can begin proactively helping the team.
 
 /**
  * Default Agent Guide - Agent's operating manual
- * Adapted from OpenClaw's AGENTS.md for Lens platform context
  */
 export const DEFAULT_AGENT_MD = `Your workspace files (Soul, User, Memory, Vision, Heartbeat) are loaded into your context automatically each session.
 
