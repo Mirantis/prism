@@ -397,3 +397,7 @@ Prism exposes the following surfaces:
 | `npm run test:coverage` | Coverage report |
 | `npm run db:migrate` | Apply database migrations |
 | `npm run prisma:generate` | Regenerate the database client |
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
