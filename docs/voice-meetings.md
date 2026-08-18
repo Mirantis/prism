@@ -192,6 +192,19 @@ decides whether you called it, allowing for a clear mishearing. The same check
 knows the difference between talking *to* it and talking *about* it, so "I asked
 Prism about that yesterday" doesn't summon it.
 
+There are two of those checks, and the first one is instant. A plain address —
+the name at the start or the end of what you said — is recognised on the spot,
+without asking anything, by reading the sentence's grammar: a name being *called*
+sits at the edge of a clause and has no job in it, while a name being *talked about*
+is the subject or the object of a verb ("Prism said", "ask Prism later"). It declines
+the near-misses too: a question *about* the agent ("Who is Prism?", "Where's Prism?"), an
+aside that names it ("Prism, our agent, flagged it first"), a list it happens to head
+("Prism, Slack and Bedrock are all down"), and one person telling another what it said
+("Prism said you should check the deploy"). That read can only ever answer **yes**. Anything it doesn't recognise — a mangled name, a name
+buried mid-sentence, a sentence in another language — goes to the second check, a
+small model, exactly as before. So the shortcut can make the agent quicker but never
+quieter, and never makes it answer something the model would have refused.
+
 It answers to whatever it's called in its workspace, so renaming the agent renames
 what you say to get its attention.
 
@@ -203,11 +216,12 @@ transcriber as hints, and refreshed as people come and go. Without that, "Hey Em
 has come back as "Hey, I'm", and a direct question went unanswered because the name
 never reached the text.
 
-**Where you put the name changes how fast it answers.** Say it early — "Prism, can
-you check the deploy?" — and the decision is made while you're still talking, so the
-reply starts as soon as you stop. Leave it to the end, or say the name on its own,
-and the decision can only start once you've finished, which adds a second or two of
-silence. Both work; one is quicker.
+**Where you put the name barely matters any more.** "Prism, can you check the
+deploy?" and "can you check the deploy, Prism?" are both recognised without a model
+call, so the reply starts as soon as you stop talking. What still costs a second or
+two is a name the shortcut can't read as an address — buried in the middle of a
+clause, or mangled far enough by the transcriber that only a model can see it was
+meant. Those are answered too, just after a pause.
 
 It deliberately does **not** try to work out whether a sentence sounds like a
 request for an assistant. A call is a single mixed audio channel with no speaker
@@ -377,15 +391,18 @@ Every utterance the agent judges produces one line in the runtime's log, and
 
 | Value | What a line carries |
 |-------|---------------------|
-| `off` (default) | The verdict, which utterance it belongs to, whether the agent was answering everything or only when named, and **how many** names were seeded to the transcriber. No words, no attendee names. |
+| `off` (default) | The verdict, which utterance it belongs to, whether the agent was answering everything or only when named, which of the two checks decided it, and **how many** names were seeded to the transcriber. No words, no attendee names. |
 | `full` | The above, plus the sentence itself, the room's roster, and the gate model's own one-line reasoning. |
 
 `off` is the default because a call is not an authenticated surface: whoever is in
 the room did not agree to be written into a log that outlives it, and a mishearing
 ("Prism" → "Pritham") means the words recorded are not even reliably theirs. Most
 diagnosis doesn't need them — `off` still separates "the gate said no" from "the gate
-never ran", pairs the two verdicts on one sentence by its utterance id, and shows
-whether a roster had reached the transcriber at all.
+never ran", pairs the two verdicts on one sentence by its utterance id, says which
+check decided and, when it was the model, why the local read declined, and shows
+whether a roster had reached the transcriber at all. The reasons the local read gives
+are a fixed set of names for grammatical shapes, never a quote from the sentence, so
+they are safe to write down under `off`.
 
 It is a setting of its own rather than a log level on purpose. Raising the log level
 is something you do to chase an unrelated problem, and it should never be the thing

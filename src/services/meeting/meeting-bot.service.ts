@@ -122,6 +122,20 @@ export interface JoinMeetingInput {
   responseMode?: ResponseMode;
 }
 
+/**
+ * Share of "was I addressed" decisions the local vocative read answered by itself,
+ * as a whole percentage.
+ *
+ * Zero when nothing was ever judged, rather than absent: a call where the agent was
+ * never spoken to is a real, common outcome, and a missing property would be
+ * indistinguishable from a build that never emitted it.
+ */
+function localGateShare(stats: VoiceConversationStats | undefined): number {
+  const total = (stats?.gateLocalYes ?? 0) + (stats?.gateModelCalls ?? 0);
+  if (total === 0) return 0;
+  return Math.round(((stats?.gateLocalYes ?? 0) / total) * 100);
+}
+
 export class MeetingBotService {
   private readonly providers: MeetingProvider[] = [googleMeetProvider];
 
@@ -909,6 +923,13 @@ export class MeetingBotService {
         suppressed: String(stats?.suppressed ?? 0),
         addressed_matches: String(stats?.addressedMatches ?? 0),
         mode_switches: String(stats?.modeSwitches ?? 0),
+        // What the local vocative read saved. `gate_local_share` is a whole
+        // percentage of the utterances that skipped the classification model
+        // entirely, and it is emitted rather than left to be derived so the one
+        // number the feature is judged on needs no arithmetic in a dashboard.
+        gate_local_yes: String(stats?.gateLocalYes ?? 0),
+        gate_model_calls: String(stats?.gateModelCalls ?? 0),
+        gate_local_share: String(localGateShare(stats)),
       });
     }
 

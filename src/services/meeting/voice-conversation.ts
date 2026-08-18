@@ -31,6 +31,7 @@ import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { BargeInPolicy } from './barge-in';
 import { ResponsePolicy, type EffectiveMode, type ResponseMode } from './response-policy';
 import { classifyAddressed, CLASSIFY_DEADLINE_MS } from './addressed-classifier';
+import { isVocativeAddress } from './vocative';
 import { formatKeywords, formatTranscript } from './transcript-log';
 
 /**
@@ -113,6 +114,17 @@ export interface VoiceConversationStats {
   suppressed: number;
   addressedMatches: number;
   modeSwitches: number;
+  /**
+   * How the "was I addressed" question got answered.
+   *
+   * `gateLocalYes` is the number of times the local tagger recognised a vocative and
+   * no model call was made; `gateModelCalls` the number of times one was. Their
+   * ratio is the point: it says how much of the gate's per-utterance latency the
+   * fast path is actually taking off the room, on real speech rather than on a
+   * corpus.
+   */
+  gateLocalYes: number;
+  gateModelCalls: number;
 }
 
 export class VoiceConversation {
@@ -125,6 +137,8 @@ export class VoiceConversation {
   private responses = 0;
   private toolCalls = 0;
   private interruptions = 0;
+  private gateLocalYes = 0;
+  private gateModelCalls = 0;
   private currentItemId: string | null = null;
   /**
    * Utterances already judged from a partial transcript, so it happens once.
@@ -382,11 +396,22 @@ export class VoiceConversation {
     // landing during the ~1s gate call would otherwise make the line report the
     // list that replaced the one the utterance was actually transcribed under.
     const keywords = this.keywords;
-    const addressed = await classifyAddressed({
-      transcript,
-      agentName: this.options.agentName,
-      stage,
-    });
+
+    // The local read first. It can only ever say *yes* — see `vocative.ts` — so a
+    // sentence it recognises as a vocative skips the model entirely and the room
+    // waits 0ms instead of the gate's measured 0.9–1.5s, while everything else
+    // reaches the model exactly as it did before. That asymmetry is the whole design:
+    // a bug here costs latency, never a wrong answer.
+    const local = await isVocativeAddress(transcript, this.options.agentName);
+    if (local.addressed) this.gateLocalYes += 1;
+    else this.gateModelCalls += 1;
+    const addressed =
+      local.addressed ||
+      (await classifyAddressed({
+        transcript,
+        agentName: this.options.agentName,
+        stage,
+      }));
 
     // Every verdict is recorded; whether the sentence goes with it is a setting, and
     // `transcript-log.ts` is where that decision and its reasoning live.
@@ -409,6 +434,10 @@ export class VoiceConversation {
         `[Meeting:Gate] ${stage} verdict addressed=${addressed}`,
         `item=${itemId || 'none'}`,
         `mode=${this.responsePolicy.effectiveMode}`,
+        // Which path decided, and — when it was the model — what the local read made
+        // of the sentence. `VocativeReason` is a bounded enum precisely so this token
+        // is safe to write with the transcript switched off.
+        local.addressed ? 'path=local' : `path=model local="${local.why}"`,
         formatKeywords(keywords),
         formatTranscript(transcript),
       ]
@@ -616,6 +645,8 @@ export class VoiceConversation {
       suppressed: policy.suppressed,
       addressedMatches: policy.addressedMatches,
       modeSwitches: policy.modeSwitches,
+      gateLocalYes: this.gateLocalYes,
+      gateModelCalls: this.gateModelCalls,
     };
   }
 

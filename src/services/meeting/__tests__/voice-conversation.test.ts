@@ -6,7 +6,7 @@
  * for — only exists at the socket level.
  */
 
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, beforeEach, vi } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
@@ -33,6 +33,16 @@ vi.mock('../addressed-classifier', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../addressed-classifier')>()),
   classifyAddressed: vi.fn(),
 }));
+
+beforeAll(async () => {
+  // These tests run the *real* vocative read — the point of several of them is which
+  // path decides — and its POS tagger is imported lazily, measured at ~59ms. Paid inside
+  // a test, that import lands in the same few milliseconds as the assertion window built
+  // out of two 20ms settles, so a slow runner would see no response at all. Warmed once
+  // here so no test is racing a module load.
+  const { isVocativeAddress } = await import('../vocative');
+  await isVocativeAddress('warm the tagger', 'nobody');
+});
 
 beforeEach(() => {
   vi.mocked(classifyAddressed).mockResolvedValue(true);
@@ -279,7 +289,13 @@ describe('answering a request judged early', () => {
 });
 
 describe('recording what each verdict was reached on', () => {
-  const UTTERANCE = 'Emma, can you take a look?';
+  // Names the agent without addressing it, so the local vocative read defers and these
+  // tests keep exercising the model path they are about. A vocative ("Emma, can you take
+  // a look?") is decided locally, which makes the mocked gate irrelevant and every
+  // `addressed=false` assertion below unreachable. The verdict line itself is still
+  // written either way — it carries `path=local` — so what changes is the verdict, not
+  // whether there is a line to redact.
+  const UTTERANCE = 'I asked Emma about that yesterday';
 
   afterEach(() => {
     // Put the default back by hand. `mockReset`/`restoreMocks` restore spies, not a
@@ -355,7 +371,7 @@ describe('recording what each verdict was reached on', () => {
     send({
       type: 'conversation.item.input_audio_transcription.delta',
       item_id: 'item-8',
-      delta: 'Emma, can you take a look',
+      delta: 'I asked Emma about that',
     });
     await settle();
     await settle();
@@ -497,5 +513,71 @@ describe('a roster read from a moving UI', () => {
 
     expect(JSON.stringify(sent)).not.toContain('alone');
     expect(sent.filter((e) => e.type === 'conversation.item.create')).toHaveLength(0);
+  });
+});
+
+describe('answering a spoken name without asking the model', () => {
+  it('skips the gate entirely when the sentence is a vocative', async () => {
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+    // Made to say no, so a response can only come from the local read. If the gate
+    // were still consulted the agent would stay silent here.
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-30',
+      transcript: 'Emma, can you take a look?',
+    });
+    await settle();
+    await settle();
+
+    expect(vi.mocked(classifyAddressed)).not.toHaveBeenCalled();
+    expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(1);
+    expect(infoLines()).toContain('path=local');
+  });
+
+  it('still asks the model about a sentence that only mentions the agent', async () => {
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-31',
+      transcript: 'I asked Emma about that yesterday',
+    });
+    await settle();
+    await settle();
+
+    // The local read only ever says yes, so everything it declines has to reach the
+    // model — otherwise the fast path would be silencing utterances, which is the one
+    // thing its YES-only contract promises it cannot do.
+    expect(vi.mocked(classifyAddressed)).toHaveBeenCalledTimes(1);
+    expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(0);
+    expect(infoLines()).toContain('path=model');
+  });
+
+  it('counts which path decided, so the saving is measurable on a real call', async () => {
+    const { h, send } = await speakingHarness();
+    active = h;
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-32',
+      transcript: 'Emma, are you there?',
+    });
+    await settle();
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-33',
+      transcript: 'the deploy went out at four',
+    });
+    await settle();
+    await settle();
+
+    // Their ratio is what the `meeting ended` event reports as `gate_local_share`.
+    expect(h.conversation.statistics).toMatchObject({ gateLocalYes: 1, gateModelCalls: 1 });
   });
 });

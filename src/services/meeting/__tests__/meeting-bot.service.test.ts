@@ -100,6 +100,8 @@ class FakeVoiceConversation {
       suppressed: 6,
       addressedMatches: 2,
       modeSwitches: 1,
+      gateLocalYes: 3,
+      gateModelCalls: 1,
     };
   }
 }
@@ -1108,6 +1110,44 @@ describe('telemetry', () => {
 
     const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
     expect(ended?.[2]).not.toHaveProperty('fail_step');
+  });
+
+  it('reports how much of the addressed gate ran locally', async () => {
+    await service.join(input);
+    await settle();
+    await service.leave();
+
+    // The share is emitted rather than derived, so the one number this feature is
+    // judged on needs no arithmetic in a dashboard. Three of four here.
+    const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
+    expect(ended?.[2]).toMatchObject({
+      gate_local_yes: '3',
+      gate_model_calls: '1',
+      gate_local_share: '75',
+    });
+  });
+
+  it('reports a zero share for a call nobody spoke to the agent in', async () => {
+    // A real and common outcome. Absent properties would be indistinguishable from a
+    // build that never emitted them.
+    vi.spyOn(FakeVoiceConversation.prototype, 'statistics', 'get').mockReturnValue({
+      responses: 0,
+      toolCalls: 0,
+      interruptions: 0,
+      utterances: 0,
+      suppressed: 0,
+      addressedMatches: 0,
+      modeSwitches: 0,
+      gateLocalYes: 0,
+      gateModelCalls: 0,
+    });
+
+    await service.join(input);
+    await settle();
+    await service.leave();
+
+    const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
+    expect(ended?.[2]).toMatchObject({ gate_local_share: '0' });
   });
 });
 
