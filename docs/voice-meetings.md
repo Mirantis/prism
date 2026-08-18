@@ -432,18 +432,22 @@ every sentence into a void costs exactly what answering it aloud costs.
 The one case it will not join at all is a meeting where Meet offers *only* to let it in
 without a microphone — see below.
 
-### The screen
+### The screen — not yet exposed to the agent (developer notes)
 
-The agent can share its screen. Meet's **Share screen** control works in its browser,
-and what it shares is the virtual display the browser runs on — so the room sees the
-agent's own browser windows.
+**The agent cannot share its screen.** No tool asks it to, and no setting turns one on.
+Ask it to present and it will not be able to. The rest of this section is a note for
+whoever adds that tool, not something you can do today.
 
-No tool in the agent's toolset starts a share yet, so a share has to be started from
-outside, over the browser's debugging port.
+Its browser *can* share. Meet's **Share screen** control resolves in it, and what it
+shares is the virtual display the browser runs on — so the room would see the agent's
+own browser windows. Driving that needs the browser's debugging port, which stays
+inside the container.
 
-The shared display contains the Meet window itself, so Meet warns about the self-view
-and offers **Show my screen anyway**. Click it to keep the presentation up; the warning
-can also appear later in a call, not only when the share starts.
+Two details a share tool will have to handle. The shared display holds the Meet window
+itself, so Meet warns about the self-view and offers **Show my screen anyway**; that
+button keeps the presentation up, and the warning can return later in a call. And the
+capture is the whole screen rather than one window, so whatever the agent means to show
+has to be the window on top.
 
 ## When it doesn't work
 
