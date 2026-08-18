@@ -176,11 +176,23 @@ export function buildBrowserArgs(port: number, userDataDir: string): string[] {
  * keeping as it was.
  *
  * The two mechanisms are not the same thing, which is why both are here. The flag
- * answers a prompt; this writes the stored setting, so it is also what recovers a
- * profile that once recorded a block — and the profile is persistent, so such a
- * state would outlive the call that created it. Either one alone was measured to
- * open the microphone, so this is the backstop if a browser build drops the flag. A
- * prompt nobody can click is a bot that joins deaf.
+ * answers a prompt; this overrides the state the page reads. It is a *session*
+ * override, not a stored content setting: Playwright issues
+ * `Browser.grantPermissions` over CDP, and that writes nothing into the persistent
+ * profile. It still recovers a profile that once recorded a block — measured, a
+ * stored block reads `denied` and the override turns it into `granted` — but only
+ * because `start()` re-applies it on every call. Nothing here clears the stored
+ * block itself.
+ *
+ * The override lives as long as the **CDP connection**, not as long as the browser.
+ * Measured: detach and re-attach to the same browser process and both read `prompt`
+ * again. So a second CDP client that grants any permission and then disconnects
+ * clears these two as well, which would leave a live call deaf and mute. Worth
+ * knowing before anything else is driven over the debugging port.
+ *
+ * Either mechanism alone was measured to open the microphone, so this is the
+ * backstop if a browser build drops the flag. A prompt nobody can click is a bot
+ * that joins deaf.
  *
  * The call carries no origin, which grants these two everywhere and *denies* every
  * other permission everywhere. Measured: notifications and geolocation move from
