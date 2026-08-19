@@ -66,8 +66,8 @@ if [ -n "${SSL_CERT_FILE:-}" ] && [ -r "$CA_BUNDLE" ] && [ -r "$CA_COUNT" ]; the
   if [ -n "$sandbox_cas" ]; then
     for policy_dir in /etc/chromium/policies/managed /etc/opt/chrome/policies/managed; do
       if [ -w "$policy_dir" ]; then
-        printf '{"CACertificates":[%s]}' "$sandbox_cas" > "$policy_dir/lens-ca.json" \
-          || echo "failed writing $policy_dir/lens-ca.json; continuing startup" >&2
+        printf '{"CACertificates":[%s]}' "$sandbox_cas" > "$policy_dir/prism-ca.json" \
+          || echo "failed writing $policy_dir/prism-ca.json; continuing startup" >&2
       fi
     done
   fi
