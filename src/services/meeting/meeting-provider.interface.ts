@@ -71,6 +71,45 @@ export type JoinOutcome =
    */
   | { status: 'reauth_required' };
 
+/**
+ * Who the platform last showed as speaking.
+ *
+ * `id` is what callers compare, and `name` is only ever for people to read — a log line,
+ * or telling the agent who asked it something. Two participants can share a display name,
+ * a display name can change mid-call, and "was that the same person as before?" has to be
+ * exact, so an identity the platform assigns is the only sound basis for it. On Meet that
+ * is the per-device path off the participants panel.
+ *
+ * `isSelf` is separate because "that was the agent" and "nobody can be identified" are
+ * different answers, and a caller that folds them together keeps reporting a stale human
+ * as the floor holder for the whole time the agent is talking.
+ */
+export interface SpeakerReading {
+  id: string;
+  name: string;
+  isSelf: boolean;
+  /**
+   * Several people sharing one audio source, rather than one person.
+   *
+   * Not a Meet quirk: any room system mixes the people in front of it, and the platform
+   * can then only say the group made a sound. Worth a flag of its own because `name` is a
+   * *label* in that case ("Merged audio") and not somebody who can be addressed — a
+   * caller that reads it out has the agent talking to a person who does not exist. As an
+   * identity it is perfectly sound, so the same-speaker test needs no special case.
+   */
+  isGroup: boolean;
+  /**
+   * Who shares the microphone, when `isGroup`. Absent otherwise.
+   *
+   * Part of describing a group rather than a separate question, so it costs no second read.
+   * `name` on its own is a platform label, and while an agent can say something true with it
+   * ("I can't tell who spoke, it was the merged audio"), naming the two people who actually
+   * share the microphone is more use to the room. Best effort: a platform that mixes people
+   * without saying which of them may leave this empty.
+   */
+  members?: readonly string[];
+}
+
 export interface JoinOptions {
   url: string;
   /**
@@ -169,6 +208,41 @@ export interface MeetingProvider {
    * room's names are spelled.
    */
   participantNames?(page: Page): Promise<string[]>;
+
+  /**
+   * Put the platform's UI into whatever state lets speech be attributed to a speaker.
+   *
+   * **Must not reject**, and must be safe to call repeatedly. The runtime calls it once
+   * immediately after a successful join — before the agent has a voice, so before anything
+   * could be attributed — and then keeps calling it on the participant poll for as long as
+   * no speaker has ever been read. That is the same shape as `ensureUnmuted`, and for the
+   * same reason: one unlucky moment while the control bar is still painting would otherwise
+   * cost attribution for the whole meeting, silently.
+   *
+   * Whether such state survives between calls is the platform's business, and Meet's does
+   * not — its participants panel starts shut, and with it shut the roster is not in the
+   * page at all — so the runtime asks on every join rather than once per profile. A
+   * provider that needs no such preparation may simply not implement this.
+   */
+  enableSpeakerAttribution?(page: Page): Promise<void>;
+
+  /**
+   * Who the platform last showed as speaking, or null when it cannot be told.
+   *
+   * The audio a meeting bot receives is one mixed channel, so this is the only route to
+   * attribution — and it is a *hint*: it lags real speech, it stops working if the UI
+   * moves, and a platform need not offer it at all. Nothing may become unsafe when it
+   * returns null; a caller that cannot work without a speaker has to fall back to
+   * behaving as though the room were anonymous, which is what it did before.
+   *
+   * It used to be handed the roster, so that a scraped label could be checked against who
+   * was actually in the call — a caption line and a fragment of a sentence being
+   * indistinguishable by shape. Reading the participant list directly removes the
+   * ambiguity rather than compensating for it: a row's own label cannot be a sentence
+   * fragment, and the identity attribute beside it is a second structural check. So the
+   * parameter is gone.
+   */
+  currentSpeaker?(page: Page): Promise<SpeakerReading | null>;
 
   /**
    * How many people are in the call, or null when it can't be determined.

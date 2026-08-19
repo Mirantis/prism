@@ -24,7 +24,14 @@ import type { Locator, Page } from 'playwright-core';
 import { config } from '../../../../config';
 import { logger } from '../../../../logger';
 import { isAuthenticated, signInFailureReason, signInToGoogle } from './sign-in';
-import type { JoinOptions, JoinOutcome, MeetingProvider } from '../../meeting-provider.interface';
+import { judgeSpeaker, namesFrom, openParticipants, readRoom } from './participants';
+import { withTimeout } from './with-timeout';
+import type {
+  JoinOptions,
+  JoinOutcome,
+  MeetingProvider,
+  SpeakerReading,
+} from '../../meeting-provider.interface';
 
 /**
  * Wait for a locator to actually be visible, returning false instead of throwing.
@@ -231,39 +238,12 @@ interface MicOutcome {
 interface CountElement {
   getAttribute(name: string): string | null;
   readonly textContent: string | null;
+  querySelectorAll(selectors: string): ArrayLike<CountElement>;
 }
 
 interface CountDocument {
   querySelector(selectors: string): CountElement | null;
   querySelectorAll(selectors: string): ArrayLike<CountElement>;
-}
-
-/**
- * Undo Meet's doubled tile text.
- *
- * A participant tile renders the name twice — once visibly, once for assistive
- * tech — so `textContent` reads "Mario SarcherMario Sarcher" with a control label
- * glued on the end. Read from the live DOM rather than assumed: the last set of
- * selectors written from first principles matched nothing Meet actually serves.
- */
-export function unglueTileName(raw: string): string | null {
-  const text = raw.trim();
-
-  // Only the doubling is trusted. Stripping trailing lowercase runs as "control
-  // labels" was tried first and ate real names — "Miska" became "M" — which would
-  // have handed the transcriber a single letter to bias towards. A tile that isn't
-  // doubled is left to the menu-label reading rather than guessed at.
-  for (let half = Math.floor(text.length / 2); half >= 2; half--) {
-    const candidate = text.slice(0, half);
-    if (text.slice(half, half * 2) === candidate) return candidate.trim() || null;
-  }
-  return null;
-}
-
-/** Strip Meet's per-participant menu label down to the name it names. */
-export function nameFromOptionsLabel(label: string): string | null {
-  const match = label.match(/^more options for\s+(.+?)\s*$/i);
-  return match ? match[1] : null;
 }
 
 /**
@@ -286,21 +266,6 @@ function plausibleName(name: string): boolean {
  * freezing both the response mode and the empty-room check.
  */
 const COUNT_READ_TIMEOUT_MS = 2_000;
-
-/** Reject if `promise` hasn't settled within `ms`. */
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
 
 /**
  * The guest name field.
@@ -916,14 +881,17 @@ export class GoogleMeetProvider implements MeetingProvider {
     };
   }
 
-  /** In-call furniture — the closest thing Meet gives us to an "admitted" flag. */
+  /**
+   * In-call furniture — the closest thing Meet gives us to an "admitted" flag.
+   *
+   * Two more markers used to be listed here, `button[aria-label*="People"]` and
+   * `[data-participant-count]`. A live probe of every `aria-label` on the page found neither,
+   * which is the same finding that removed them from `participantCount` — and here they were
+   * not merely inert: each one costs its own 400ms wait on the *not* in-call path, which is
+   * the path every admission poll and every rejection check takes.
+   */
   private async isInCall(page: Page): Promise<boolean> {
-    const markers = [
-      'button[aria-label*="Leave call" i]',
-      'button[aria-label*="Leave meeting" i]',
-      'button[aria-label*="People" i]',
-      '[data-participant-count]',
-    ];
+    const markers = ['button[aria-label*="Leave call" i]', 'button[aria-label*="Leave meeting" i]'];
     for (const selector of markers) {
       if (await appears(page.locator(selector).first(), 400)) return true;
     }
@@ -993,88 +961,71 @@ export class GoogleMeetProvider implements MeetingProvider {
   }
 
   /**
-   * Read the participant count from the UI, the agent included.
+   * Who is in the room, as far as the panel will say.
    *
-   * Two things ride on this: leaving once the room has emptied, and deciding
-   * whether the agent answers everything or waits to be addressed. It is
-   * therefore read four ways and the **largest** reading wins, because the two
-   * failure directions are not equally bad. Reading high costs one person having
-   * to say the agent's name; reading low puts a silent agent back to answering
-   * every sentence in a room full of people, which is the bug this exists to
-   * prevent. Returns null only when nothing could be read at all — never a guess,
-   * since the caller must not eject the agent from a call that is still going.
+   * Read from the participants panel and nowhere else. Each row's `aria-label` *is* the
+   * person's name, so nothing has to be recovered from it — which the previous version did,
+   * because it read the video tiles. A tile renders its name twice with a control label glued
+   * on ("Mario SarcherMario Sarcherdevices"), and un-gluing that was guesswork that had
+   * already eaten a real name once, turning "Miska" into "M" and handing the transcriber a
+   * single letter to bias towards.
    *
-   * Checked against a live call rather than the docs: Meet renders **neither**
-   * `[data-participant-count]` nor a `button[aria-label*="People"]`, the two the
-   * first version relied on. They are kept as the first attempts anyway — they
-   * cost nothing in the same pass and other Meet surfaces may still carry them —
-   * but the readings that actually work are the People control's count badge and
-   * the participant ids on the tiles.
-   */
-  /**
-   * Who is in the room, as far as the DOM will say.
+   * Why names are worth reading at all is observed rather than theoretical: one call rendered
+   * "Miska" as "Mees", "Max" as "Mark", and a third participant's name in Japanese
+   * characters. Names are the words a meeting transcript is worst at and the ones this
+   * feature most depends on — the gate's clearest refusals are of the form "the speaker
+   * addresses Isaac", which only holds when Isaac survives transcription.
    *
-   * Fed to the transcriber as decoding hints. The problem it solves is observed, not
-   * theoretical: one call rendered "Miska" as "Mees", "Max" as "Mark", and a third
-   * participant's name in Japanese characters. Names are the words a meeting
-   * transcript is worst at and the ones this feature most depends on — the gate's
-   * clearest refusals are of the form "the speaker addresses Isaac", which only holds
-   * when Isaac survives transcription.
-   *
-   * Two readings, because they fail differently. The per-participant menu label is
-   * clean but English ("More options for Ada Lovelace"); tile text is
-   * language-independent but arrives doubled and with control labels glued on. Empty
-   * on any failure — a missing hint costs accuracy, and nothing else.
+   * Empty on any failure, including a panel that is not open. A missing hint costs accuracy
+   * and nothing else: the transcriber keeps the agent's own name, and the follow-up window's
+   * drift guard falls back to grammar alone.
    */
   async participantNames(page: Page): Promise<string[]> {
-    try {
-      const raw = await withTimeout(
-        page.evaluate(() => {
-          const doc = (globalThis as unknown as { document: CountDocument }).document;
-          const labels: string[] = [];
-          const tiles: string[] = [];
-
-          for (const el of Array.from(doc.querySelectorAll('[aria-label]'))) {
-            const label = el.getAttribute('aria-label');
-            if (label && /^more options for /i.test(label)) labels.push(label);
-          }
-          for (const el of Array.from(doc.querySelectorAll('[data-participant-id]'))) {
-            const text = el.textContent?.trim();
-            if (text) tiles.push(text.slice(0, 120));
-          }
-          return { labels, tiles };
-        }),
-        COUNT_READ_TIMEOUT_MS,
-      );
-
-      const names = [
-        ...raw.labels.map(nameFromOptionsLabel),
-        ...raw.tiles.map(unglueTileName),
-      ].filter((n): n is string => n !== null && plausibleName(n));
-
-      // Case-insensitively unique: the same person appears as a tile and as a menu
-      // label, and the two spellings need not match in case.
-      const seen = new Map<string, string>();
-      for (const name of names) if (!seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
-      return [...seen.values()];
-    } catch (err) {
-      logger.debug(`[Meeting] Could not read participant names: ${String(err)}`);
-      return [];
-    }
+    return namesFrom(await readRoom(page)).filter(plausibleName);
   }
 
+  async enableSpeakerAttribution(page: Page): Promise<void> {
+    await openParticipants(page);
+  }
+
+  async currentSpeaker(page: Page): Promise<SpeakerReading | null> {
+    const reading = await readRoom(page);
+    return reading === null ? null : judgeSpeaker(reading);
+  }
+
+  /**
+   * Read the participant count from the UI, the agent included.
+   *
+   * Two things ride on this: leaving once the room has emptied, and deciding whether the
+   * agent answers everything or waits to be addressed. It is therefore read three ways and
+   * the **largest** reading wins, because the two failure directions are not equally bad.
+   * Reading high costs one person having to say the agent's name; reading low puts a silent
+   * agent back to answering every sentence in a room full of people, which is the bug this
+   * exists to prevent. Returns null only when nothing could be read at all — never a guess,
+   * since the caller must not eject the agent from a call that is still going.
+   *
+   * All three readings are checked against a live call rather than taken from documentation.
+   * Two that the first version relied on, `[data-participant-count]` and a
+   * `button[aria-label*="People"]`, are gone: Meet renders neither, and a probe of every
+   * `aria-label` on a live page matched nothing /people/i except "Chat with everyone".
+   * What is left, in order of how much it can be trusted:
+   *
+   * 1. **Panel rows.** Exact and language-independent, but only while the panel is open.
+   * 2. **The People control's count badge.** Meet's own number, and readable with the panel
+   *    shut, which is what keeps the empty-room check working when the panel will not open.
+   *    English, and so the one reading a differently-localised profile loses.
+   * 3. **Distinct participant ids anywhere in the page.** Language-independent, and the last
+   *    thing standing if the panel is shut *and* the control is relabelled. It under-reports
+   *    when Meet virtualizes off-screen tiles, which is why the largest wins.
+   */
   async participantCount(page: Page): Promise<number | null> {
     let readings: number[];
     try {
-      // One `evaluate` rather than a locator per strategy: this runs on a timer
-      // for the whole call, and four locator round-trips each with their own
-      // timeout is a lot of work to repeat every ten seconds.
+      // One `evaluate` rather than a locator per strategy: this runs on a timer for the
+      // whole call, and three locator round-trips each with their own timeout is a lot of
+      // work to repeat every ten seconds.
       readings = await withTimeout(
         page.evaluate(() => {
-          // This body runs in the page, not in Node. The runtime's `lib` is
-          // deliberately Node-only — pulling in `dom` would put `document`,
-          // `fetch` and friends in scope for every server module — so the handful
-          // of DOM members used here are described structurally instead.
           const doc = (globalThis as unknown as { document: CountDocument }).document;
 
           const found: number[] = [];
@@ -1082,21 +1033,19 @@ export class GoogleMeetProvider implements MeetingProvider {
             if (Number.isFinite(value) && value > 0) found.push(value);
           };
 
-          const attr = doc
-            .querySelector('[data-participant-count]')
-            ?.getAttribute('data-participant-count');
-          if (attr) add(parseInt(attr, 10));
+          const panel = doc.querySelector('[role="list"][aria-label="Participants"]');
+          if (panel) {
+            add(
+              Array.from(panel.querySelectorAll('[role="listitem"][aria-label]')).filter((row) =>
+                row.getAttribute('data-participant-id'),
+              ).length,
+            );
+          }
 
-          const label = doc
-            .querySelector('button[aria-label*="People" i]')
-            ?.getAttribute('aria-label');
-          const labelled = label?.match(/(\d+)/);
-          if (labelled) add(parseInt(labelled[1], 10));
-
-          // The People control renders its label and a count badge as separate
-          // nodes, so the control's combined text reads "People2". Matched on the
-          // container's text rather than a class name, because every class on that
-          // subtree is a generated hash that changes without notice.
+          // The People control renders its label and a count badge as separate nodes, so
+          // the control's combined text reads "People2". Matched on that text rather than a
+          // class name, because every class on that subtree is a generated hash that
+          // changes without notice — and the control has no aria-label of its own.
           for (const el of Array.from(doc.querySelectorAll('div,span,button'))) {
             const text = el.textContent?.trim() ?? '';
             if (text.length > 24) continue;
@@ -1104,11 +1053,8 @@ export class GoogleMeetProvider implements MeetingProvider {
             if (badge) add(parseInt(badge[1], 10));
           }
 
-          // Language-independent, and the only reading that survives a relabelled
-          // People control. Distinct ids because the same participant appears both
-          // as a tile and as a row once the roster panel is open. It can *under*
-          // report if Meet stops rendering off-screen tiles in a large call, which
-          // is exactly why the largest reading wins below.
+          // Distinct ids, because the same participant appears both as a tile and as a
+          // panel row once the roster is open.
           const ids = new Set(
             Array.from(doc.querySelectorAll('[data-participant-id]')).map((el) =>
               el.getAttribute('data-participant-id'),

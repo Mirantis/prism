@@ -30,7 +30,7 @@ import { VoiceConversation, type VoiceConversationStats } from './voice-conversa
 import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet';
-import type { JoinStep, MeetingProvider } from './meeting-provider.interface';
+import type { JoinStep, MeetingProvider, SpeakerReading } from './meeting-provider.interface';
 import type { Page } from 'playwright-core';
 
 /**
@@ -43,6 +43,20 @@ import type { Page } from 'playwright-core';
  * poll wants to be quick relative to how long that stays tolerable.
  */
 const PARTICIPANT_POLL_MS = 10_000;
+
+/**
+ * How often to ask the platform who is speaking.
+ *
+ * Its own timer, an order of magnitude faster than the participant poll, because it is
+ * answering a different kind of question. Ten seconds is right for "has the room
+ * emptied"; for "who has the floor" it is useless — a caption label already lags speech
+ * by one to two seconds, and a whole exchange can start and finish inside one tick, so a
+ * slow poll would attribute most utterances to whoever spoke before them.
+ *
+ * The cost is one small `page.evaluate` per second for the length of the call, which is
+ * what a live call ran for hours while this was being developed.
+ */
+const SPEAKER_POLL_MS = 1_000;
 
 /**
  * Unreadable counts in a row before saying so.
@@ -112,6 +126,43 @@ export interface MeetingStatus {
   stats?: VoiceConversationStats;
 }
 
+/**
+ * What the runtime can tell the agent about who is in the room and who spoke.
+ *
+ * The audio a meeting bot receives is one mixed channel, so the model itself hears no
+ * speaker at all. This is the answer to the question it cannot answer for itself, and
+ * every field is allowed to be null: attribution is scraped from the platform's UI and
+ * saying "I cannot tell" is the whole point of having it, because a name spoken aloud to
+ * the wrong person is worse than an admission.
+ */
+export interface SpeakerReport {
+  inMeeting: boolean;
+  /** Who is making a sound right now, or null when nobody is or it cannot be told. */
+  speakingNow: SpeakerName | null;
+  /**
+   * Who said the utterance the agent is answering.
+   *
+   * The field worth having. It is pinned when the response is requested and held for the
+   * turn, so it still answers "who asked me this?" once the agent has been talking for
+   * ten seconds and the meters have long since gone still.
+   */
+  spokeToYou: SpeakerName | null;
+  /** Everyone the platform lists, the agent included. */
+  roster: string[];
+  /** Whether attribution is working at all on this call. */
+  attribution: 'available' | 'unavailable';
+  /** One line the agent can act on, since a bare null does not say why. */
+  note: string;
+}
+
+export interface SpeakerName {
+  name: string;
+  /** True when this names a group sharing one microphone rather than a person. */
+  isGroup: boolean;
+  /** Who shares that microphone, when `isGroup` and the platform could say. */
+  sharedBy?: string[];
+}
+
 export interface JoinMeetingInput {
   url: string;
   userId: string;
@@ -136,6 +187,18 @@ function localGateShare(stats: VoiceConversationStats | undefined): number {
   return Math.round(((stats?.gateLocalYes ?? 0) / total) * 100);
 }
 
+/**
+ * Share of finished utterances that came with a speaker label, as a whole percentage.
+ *
+ * Zero rather than absent when nothing was transcribed, for the reason `localGateShare`
+ * gives: a missing property cannot be told apart from a build that never emitted one.
+ */
+function attributionRate(stats: VoiceConversationStats | undefined): number {
+  const total = (stats?.attributedUtterances ?? 0) + (stats?.unattributedUtterances ?? 0);
+  if (total === 0) return 0;
+  return Math.round(((stats?.attributedUtterances ?? 0) / total) * 100);
+}
+
 export class MeetingBotService {
   private readonly providers: MeetingProvider[] = [googleMeetProvider];
 
@@ -146,6 +209,7 @@ export class MeetingBotService {
   private conversation: VoiceConversation | null = null;
   private page: Page | null = null;
   private pollTimer: NodeJS.Timeout | null = null;
+  private speakerTimer: NodeJS.Timeout | null = null;
   private maxDurationTimer: NodeJS.Timeout | null = null;
   private emptyReadings = 0;
   private joinedAt: number | null = null;
@@ -163,6 +227,17 @@ export class MeetingBotService {
   private micConfirmed = false;
   /** Whether a participant poll is still running; see `checkParticipants`. */
   private pollInFlight = false;
+  private speakerPollInFlight = false;
+  /**
+   * Whether any speaker has ever been read on this call.
+   *
+   * Drives the attribution retry the same way `micConfirmed` drives the unmute retry:
+   * until it is true, the participant poll keeps asking the provider to prepare itself. A
+   * quiet room reads no speaker either, so this can stay false for a while on a perfectly
+   * healthy call — which is harmless, because the retry tests for the state it wants
+   * before touching anything, and does nothing once the panel is open.
+   */
+  private speakerSeen = false;
   /** Step a failed join reached, carried to the `meeting ended` event. */
   private failStep: JoinStep | null = null;
   /**
@@ -216,6 +291,80 @@ export class MeetingBotService {
       joinedAt: this.joinedAt ? new Date(this.joinedAt).toISOString() : null,
       ...(this.conversation ? { stats: this.conversation.statistics } : {}),
     };
+  }
+
+  /**
+   * Who is speaking, and who the agent is answering.
+   *
+   * Reads state the polls have already gathered and touches the browser not at all. That
+   * is a requirement rather than an optimisation: the agent calls this mid-turn in a live
+   * room, and a fresh page read would put a CDP round trip between a question and its
+   * answer — silence the room hears.
+   */
+  speakerReport(): SpeakerReport {
+    const inMeeting = this.state !== 'idle';
+    const conversation = this.conversation;
+    if (!inMeeting || !conversation) {
+      return {
+        inMeeting,
+        speakingNow: null,
+        spokeToYou: null,
+        roster: [],
+        attribution: 'unavailable',
+        note:
+          this.state === 'idle'
+            ? 'You are not in a call.'
+            : `You are ${this.state === 'leaving' ? 'leaving' : 'still joining'} the call, so ` +
+              'there is nobody to attribute yet.',
+      };
+    }
+
+    const named = (reading: SpeakerReading | null): SpeakerName | null =>
+      reading === null
+        ? null
+        : {
+            name: reading.name,
+            isGroup: reading.isGroup,
+            ...(reading.isGroup && reading.members?.length
+              ? { sharedBy: [...reading.members] }
+              : {}),
+          };
+    const speakingNow = named(conversation.currentSpeaker);
+    const spokeToYou = named(conversation.answeringSpeaker);
+
+    return {
+      inMeeting,
+      speakingNow,
+      spokeToYou,
+      roster: [...conversation.roster],
+      attribution: this.speakerSeen ? 'available' : 'unavailable',
+      note: this.speakerNote(spokeToYou ?? speakingNow),
+    };
+  }
+
+  private speakerNote(who: SpeakerName | null): string {
+    if (!this.speakerSeen) {
+      return (
+        'I cannot tell who is speaking in this call — the platform is not showing it. ' +
+        'Do not guess at a name; ask if it matters.'
+      );
+    }
+    if (who === null) {
+      return (
+        'Nobody is identified right now. That usually means a pause, or two people ' +
+        'talking at once, which cannot be told apart on one mixed channel.'
+      );
+    }
+    if (who.isGroup) {
+      // Named where the platform could say who, because "one of Jari or Mario" is more use to
+      // the room than the label Meet gives its own group row.
+      const people = who.sharedBy?.length ? who.sharedBy.join(' or ') : 'more than one person';
+      return (
+        `That came from a microphone shared by ${people} in the same room, so I cannot tell ` +
+        'which of them spoke.'
+      );
+    }
+    return `That was ${who.name}.`;
   }
 
   /**
@@ -495,6 +644,24 @@ export class MeetingBotService {
 
       this.state = 'in_call';
       this.joinedAt = Date.now();
+
+      // Speaker attribution, before the agent has said a word. Owned here rather than inside
+      // the provider's join so there is one caller and the interface's contract is true for
+      // the next platform: a provider that only prepared itself in its own join flow would be
+      // relying on a promise the runtime never made.
+      //
+      // Ahead of the greeting, so the very first thing said in the call can already be
+      // attributed. Meet starts every call with its participants panel shut, and with it shut
+      // the roster is not in the page at all, so this is per join rather than per profile. It
+      // never throws — the participant poll keeps retrying while nothing has been attributed,
+      // so a control bar still painting costs a tick rather than the whole meeting.
+      if (this.page && provider.enableSpeakerAttribution) {
+        await provider.enableSpeakerAttribution(this.page).catch((err: unknown) => {
+          logger.debug(`[Meeting] Could not prepare speaker attribution: ${String(err)}`);
+        });
+        if (this.epoch !== epoch) return;
+      }
+
       trackEvent('meeting joined', input.userId, {
         provider: provider.name,
         response_mode: this.responseMode,
@@ -578,6 +745,9 @@ export class MeetingBotService {
   /** Poll for an empty room, and cap the total call duration. */
   private startWatchdogs(): void {
     this.pollTimer = setInterval(() => void this.checkParticipants(), PARTICIPANT_POLL_MS);
+    if (this.provider?.currentSpeaker) {
+      this.speakerTimer = setInterval(() => void this.checkSpeaker(), SPEAKER_POLL_MS);
+    }
     this.maxDurationTimer = setTimeout(
       () => {
         void this.finish('timeout', `I've left the call — it hit the ${config.meetingTimeoutMinutes}-minute limit.`);
@@ -696,6 +866,38 @@ export class MeetingBotService {
     this.greetTheRoom(provider.displayName);
   }
 
+  /**
+   * Read who has the floor and hand it to the conversation.
+   *
+   * Deliberately does nothing else. Nothing about the call depends on the answer yet;
+   * this records it and counts how often it was available, which is what says whether a
+   * scrape of somebody else's UI is still working. An overlap guard for the same reason
+   * the participant poll has one — the interval fires on a wall clock, so a slow read
+   * would otherwise stack ticks behind it — though here a skipped tick costs nothing,
+   * since the next one is a second away and asks a fresher question.
+   */
+  private async checkSpeaker(): Promise<void> {
+    if (this.state !== 'in_call' || !this.page || !this.provider?.currentSpeaker) return;
+    if (this.speakerPollInFlight) return;
+    // Captured and re-checked after the await, as `retryUnmute` does. The read is capped at
+    // a second and a half, so a cross-call leak is not reachable today — but the invariant
+    // then holds by timing rather than by the pattern, and it would quietly stop holding if
+    // anyone lengthened that cap.
+    const epoch = this.epoch;
+    this.speakerPollInFlight = true;
+    try {
+      const reading = await this.provider.currentSpeaker(this.page);
+      if (this.epoch !== epoch) return;
+      if (reading !== null) this.speakerSeen = true;
+      this.conversation?.setCurrentSpeaker(reading);
+    } catch {
+      // A hint, not a mechanism. `currentSpeaker` is documented to answer null rather
+      // than throw, so this is a page that closed under it mid-read.
+    } finally {
+      this.speakerPollInFlight = false;
+    }
+  }
+
   private async checkParticipants(): Promise<void> {
     if (this.state !== 'in_call' || !this.page || !this.provider) return;
 
@@ -723,6 +925,27 @@ export class MeetingBotService {
     // can hear is not really taking part.
     if (!this.micConfirmed) await this.retryUnmute(this.epoch);
     if (this.state !== 'in_call' || !this.page || !this.provider) return;
+
+    // Captions, if nothing has ever been attributed. Same shape as the unmute retry and
+    // for the same reason: one unlucky moment during admission — a dialog that outlived
+    // the sweep, a control bar still painting — would otherwise cost attribution for the
+    // whole meeting without saying so. Safe to repeat, because the provider tests for the
+    // state it wants before touching a control.
+    //
+    // Asked on *every* poll rather than only until something has been attributed once. The
+    // caption pane this replaced stayed on once on, so "have I ever read a speaker" was a
+    // fair proxy for "is it still working"; a panel is a piece of UI state that a re-render
+    // or a reconnect can take away, and with the old condition attribution would then be
+    // gone for the rest of the call with nothing left to notice. The cost of asking is one
+    // DOM query while the panel is up, and the provider bounds its own fruitless clicking.
+    if (this.provider.enableSpeakerAttribution) {
+      try {
+        await this.provider.enableSpeakerAttribution(this.page);
+      } catch {
+        // Documented not to throw; a closed page is the remaining way here.
+      }
+      if (this.state !== 'in_call' || !this.page || !this.provider) return;
+    }
 
     let count: number | null;
     try {
@@ -887,8 +1110,9 @@ export class MeetingBotService {
     this.epoch += 1;
 
     if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.speakerTimer) clearInterval(this.speakerTimer);
     if (this.maxDurationTimer) clearTimeout(this.maxDurationTimer);
-    this.pollTimer = this.maxDurationTimer = null;
+    this.pollTimer = this.speakerTimer = this.maxDurationTimer = null;
 
     if (this.page && this.provider) {
       try {
@@ -930,6 +1154,11 @@ export class MeetingBotService {
         gate_local_yes: String(stats?.gateLocalYes ?? 0),
         gate_model_calls: String(stats?.gateModelCalls ?? 0),
         gate_local_share: String(localGateShare(stats)),
+        // How often the platform told us who was speaking. Scraped from a UI nobody
+        // promised to keep stable, and it fails silently — the call carries on, just
+        // anonymously — so this rate falling between releases is the only signal that
+        // Google has moved something.
+        attribution_rate: String(attributionRate(stats)),
       });
     }
 
@@ -951,6 +1180,10 @@ export class MeetingBotService {
     // A poll still in flight belongs to the call being torn down; its own epoch check
     // stops it acting, but leaving this set would deadlock the next call's polling.
     this.pollInFlight = false;
+    this.speakerPollInFlight = false;
+    // Meet opens every call with its participants panel shut, so the next call starts out
+    // unattributed and has to open it again.
+    this.speakerSeen = false;
     this.failStep = null;
     // Free only when nothing is still being built. A startup abandoned mid-sign-in
     // still holds the shared browser profile, and the next `join()` would clear its

@@ -162,10 +162,10 @@ a meeting returns an error rather than dropping the first.
 
 ## In the call
 
-**It reads the room before it speaks.** The audio it hears is the whole room, and
-it has no way to tell who is talking to whom — it is one mixed channel with no
-speaker labels. So how much it speaks up depends on how many people are in the
-call:
+**It reads the room before it speaks.** The audio it hears is the whole room, and the
+words alone never say who they were aimed at — it is one mixed channel with no speaker
+labels. So how much it speaks up depends on how many people are in the call, which it
+reads off the meeting's own participants list:
 
 - **Just you and the agent.** It answers everything you say, as an assistant on a
   call with you would.
@@ -239,11 +239,26 @@ it "what did we decide in the meeting?" afterwards and it won't know. Its own lo
 no more than that by default — see [Settings](#settings) if you need to turn the words
 on to diagnose something.
 
-**It can't tell who is speaking.** The meeting audio arrives as one mixed channel
-with no speaker labels, so it won't attribute anything to a specific person — and
-it can't tell "ask the agent" from "ask the person next to you" except by what the
-words say, which is why the rules above are what they are. It may also mishear a
-name or a number, and is told to read important details back before acting on them.
+**It can't hear who is speaking, but it can look.** The meeting audio arrives as one
+mixed channel with no speaker labels, so nothing in what the agent hears says who said
+it — which is why it can't tell "ask the agent" from "ask the person next to you" except
+by the words, and why the rules above are what they are. It may also mishear a name or a
+number, and is told to read important details back before acting on them.
+
+**It opens the participants panel for itself.** That panel is a per-viewer thing, so this
+changes nothing about the audio and nothing about what anyone else in the call sees — but
+it lists everybody by name and shows a small voice meter beside each of them, and reading
+those meters is how a meeting bot can know who is talking at all. The agent can look up who
+it is answering and who last spoke, whenever a name would matter, so it can reply to you by
+name — and it costs it nothing to check.
+
+It says so plainly when it can't tell, and is told never to guess a name: during a pause,
+when two people talk over each other, or when several of you are in the same room sharing
+one microphone. In that last case Meet mixes you into a single stream, so the agent can
+tell that the group spoke but not which of you did — and it will say as much rather than
+pick one of your names.
+
+None of these names are written to the log.
 
 ## Tools, and what it won't do on a spoken request
 

@@ -26,6 +26,14 @@ vi.mock('../sign-in', () => ({
   signInToGoogle: vi.fn(async () => {}),
 }));
 
+// The provider delegates both caption calls to `captions.ts`, which is covered against
+// jsdom in its own suite. Mocked here only so the selector-shaped fake page below does not
+// have to grow an `evaluate` for a probe none of these cases are about.
+vi.mock('../captions', () => ({
+  enableCaptions: vi.fn(async () => {}),
+  readCurrentSpeaker: vi.fn(async () => null),
+}));
+
 interface FakePageOptions {
   /** Text the page reports, used for rejection detection. */
   bodyText?: string;
@@ -223,9 +231,11 @@ describe('join outcomes', () => {
   it('waits out the waiting room and reports admission when it arrives', async () => {
     const harness = fakePage({
       visibleButtons: ['Ask to join'],
-      // Admitted only on the third poll, as a real host would.
+      // Admitted only on the third poll, as a real host would. The marker is the Leave
+      // control: this used to add a People button, which a live probe of the page found Meet
+      // never renders — so the fake was proving admission by furniture that does not exist.
       onTick: (tick) => {
-        if (tick >= 3) harness.state.visibleSelectors.add('button[aria-label*="People" i]');
+        if (tick >= 3) harness.state.visibleSelectors.add('button[aria-label*="Leave call" i]');
       },
     });
 

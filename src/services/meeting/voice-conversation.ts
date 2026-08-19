@@ -30,6 +30,7 @@ import { RealtimeSession, type RealtimeSessionOptions } from './realtime-session
 import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { BargeInPolicy } from './barge-in';
 import { ResponsePolicy, type EffectiveMode, type ResponseMode } from './response-policy';
+import type { SpeakerReading } from './meeting-provider.interface';
 import { classifyAddressed, CLASSIFY_DEADLINE_MS } from './addressed-classifier';
 import { isVocativeAddress } from './vocative';
 import { formatKeywords, formatTranscript } from './transcript-log';
@@ -69,6 +70,19 @@ const MAX_EARLY_VERDICTS = 1;
 
 /** Utterances tracked for early judging. Insertion-ordered, oldest evicted. */
 const EARLY_JUDGED_LIMIT = 32;
+
+/**
+ * How long a speaker reading stays worth believing.
+ *
+ * The poll adds up to a second and a gate verdict about 1.3 more, so a reading is already
+ * a couple of seconds old when an utterance's words arrive — that part is expected and
+ * fine. What this bounds is the other end: the meters go still when nobody has spoken for
+ * a while, and a read then names nobody at all. Holding the last name indefinitely would
+ * keep naming somebody who stopped talking a minute ago.
+ *
+ * Six seconds is comfortably past the lag and well short of a conversational pause.
+ */
+const SPEAKER_FRESHNESS_MS = 6_000;
 
 /**
  * Most names handed to the transcriber at once.
@@ -124,6 +138,16 @@ export interface VoiceConversationStats {
    */
   gateLocalYes: number;
   gateModelCalls: number;
+  /**
+   * How many finished utterances had a speaker attached, and how many did not.
+   *
+   * The reason this is measured at all: attribution is scraped from Meet's participants
+   * panel, so it stops working when Google moves the UI, and it stops working *silently*
+   * — the call carries on, just anonymously. A rate that falls off a cliff between
+   * releases is the only signal that has happened.
+   */
+  attributedUtterances: number;
+  unattributedUtterances: number;
 }
 
 export class VoiceConversation {
@@ -138,6 +162,18 @@ export class VoiceConversation {
   private interruptions = 0;
   private gateLocalYes = 0;
   private gateModelCalls = 0;
+  private attributedUtterances = 0;
+  private unattributedUtterances = 0;
+  /**
+   * The last speaker Meet showed, and when it was read.
+   *
+   * Kept rather than replaced on a failed or empty read, and aged out by
+   * `SPEAKER_FRESHNESS_MS` instead — see `setCurrentSpeaker`.
+   */
+  private speaker: { reading: SpeakerReading; at: number } | null = null;
+  /** Who the answer being spoken is for — see `answeringSpeaker`. */
+  private answering: SpeakerReading | null = null;
+  private lastRoster: readonly string[] = [];
   private currentItemId: string | null = null;
   /**
    * Utterances already judged from a partial transcript, so it happens once.
@@ -346,6 +382,19 @@ export class VoiceConversation {
     this.session.on('transcript', (itemId, text) => {
       this.earlyJudged.delete(itemId);
       this.remember(this.finalizedItems, itemId);
+      // Counted on the finished transcript rather than at the turn boundary: this measures
+      // whether the scrape is working, and an utterance that produced no words says nothing
+      // either way about whether attribution works.
+      //
+      // Against `currentSpeaker`, so this asks the question that matters — could this
+      // utterance be tied to a person? An earlier version counted any reading at all,
+      // including the agent's own voice, on the reasoning that the scrape had plainly
+      // worked. That can read 100% while nothing is attributable to anybody in the room,
+      // which is the one failure this number exists to catch. A rate that sags while the
+      // agent is being talked over is the honest reading: in those moments attribution
+      // genuinely is not available.
+      if (this.currentSpeaker !== null) this.attributedUtterances += 1;
+      else this.unattributedUtterances += 1;
       // The finished transcript is proof the utterance is over, so an answer still
       // waiting on a boundary event has nothing left to wait for. `committed`
       // normally lands first and this never fires; it exists so a missed event
@@ -507,6 +556,10 @@ export class VoiceConversation {
         (waited === null ? '' : ` — room waited ${waited}ms since the speaker stopped`),
     );
     this.pendingAnswer = { at: Date.now(), via };
+    // Pinned for the turn before the request goes out. Asked later, the meters would answer
+    // about whoever is talking now — which during a long answer is nobody, and during an
+    // interruption is somebody else.
+    this.answering = this.currentSpeaker;
     this.session.requestResponse();
   }
 
@@ -555,6 +608,63 @@ export class VoiceConversation {
   }
 
   /**
+   * Report who the meeting platform last showed as speaking.
+   *
+   * `null` means "could not tell", which covers the panel not being open, nobody talking,
+   * two people talking at once, and the read having failed. All of them leave the last
+   * known speaker in place to age out rather than clearing it: a read that failed is not
+   * evidence that the person who was talking has stopped, and a moment of quiet is usually
+   * a pause.
+   */
+  setCurrentSpeaker(reading: SpeakerReading | null): void {
+    if (this.stopped || reading === null) return;
+    this.speaker = { reading, at: Date.now() };
+  }
+
+  /**
+   * The human who currently has the floor, or null.
+   *
+   * Null for all three of "nobody has been identified", "the reading is too old to
+   * believe" and "that was the agent's own voice". A caller wanting the agent's own turns
+   * wants `AudioPlayback`, which knows for certain rather than by scrape.
+   *
+   * The whole reading rather than the name, because a name cannot say whether it belongs
+   * to a person or to a room full of them sharing one microphone.
+   */
+  get currentSpeaker(): SpeakerReading | null {
+    if (!this.hasSpeakerReading) return null;
+    const reading = this.speaker?.reading ?? null;
+    return reading?.isSelf === true ? null : reading;
+  }
+
+  /**
+   * Who said the utterance the agent is answering, or null when it could not be told.
+   *
+   * Captured when the response is requested and held for the whole turn, which is what
+   * makes it the right answer to "who asked me this?" — the meters have moved on by the
+   * time the agent finishes speaking, and the model may ask at any point in between.
+   */
+  get answeringSpeaker(): SpeakerReading | null {
+    return this.answering;
+  }
+
+  /** The other people the platform last listed. Empty until the first read. */
+  get roster(): readonly string[] {
+    return this.lastRoster;
+  }
+
+  /**
+   * Whether the last reading is recent enough to act on, whoever it named.
+   *
+   * Separate from `currentSpeaker` because staleness and identity are different questions,
+   * and only this one is about the clock.
+   */
+  private get hasSpeakerReading(): boolean {
+    if (this.speaker === null) return false;
+    return Date.now() - this.speaker.at <= SPEAKER_FRESHNESS_MS;
+  }
+
+  /**
    * Report whether the room can hear the agent.
    *
    * Only the response policy cares: answering everything said in the room is a
@@ -582,6 +692,7 @@ export class VoiceConversation {
    */
   setParticipantNames(names: string[]): void {
     if (this.stopped) return;
+    this.lastRoster = names;
 
     // Sorted before anything else is derived from it. Meet reorders participant
     // tiles by who is speaking and virtualizes the grid, so the *same* people
@@ -615,17 +726,22 @@ export class VoiceConversation {
     this.session.setTranscriptionKeywords(keywords);
     logger.info(`[Meeting] Transcriber now expects ${keywords.length} name(s) in the room`);
 
-    // The model is told too, not just the transcriber. It has no other way to know
-    // who is present: the room arrives as one mixed audio channel with no speaker
-    // labels, and its own guidance tells it not to guess at names — so asked "who's
-    // in this call?" it could previously only say it didn't know. Sent as context
-    // rather than folded into the system prompt, because the prompt is fixed when
-    // the session is created and the roster is not.
+    // The model is told too, not just the transcriber. It has no other way to know who is
+    // present: the room arrives as one mixed audio channel with no speaker labels, so asked
+    // "who's in this call?" it could otherwise only say it didn't know. Sent as context
+    // rather than folded into the system prompt, because the prompt is fixed when the
+    // session is created and the roster is not.
+    //
+    // It no longer says the speaker is unknowable. That was true when the audio was the only
+    // signal; the runtime now reads the platform's participants panel, so the model can ask
+    // who it is answering with `meeting_speaker`. It is careful to promise only that: there
+    // is no per-response context carrying the name, so telling the model it has already been
+    // told would have it scan its context, find only this line, and pick a name off it.
     this.notify(
       `The people in the call with you are now: ${others.join(', ')}. ` +
-        `You still cannot tell which of them is speaking — the audio is one mixed ` +
-        `channel — so use these names only when someone identifies themselves or ` +
-        `is named by another speaker.`,
+        `The audio is still one mixed channel, so you cannot hear which of them is ` +
+        `speaking — call \`meeting_speaker\` when you need to know who you are answering ` +
+        `or who just spoke. Never guess at a name.`,
     );
   }
 
@@ -646,6 +762,8 @@ export class VoiceConversation {
       modeSwitches: policy.modeSwitches,
       gateLocalYes: this.gateLocalYes,
       gateModelCalls: this.gateModelCalls,
+      attributedUtterances: this.attributedUtterances,
+      unattributedUtterances: this.unattributedUtterances,
     };
   }
 

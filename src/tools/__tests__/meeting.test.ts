@@ -12,6 +12,7 @@ import { z } from 'zod';
 const mockJoin = vi.fn();
 const mockLeave = vi.fn();
 const mockStatus = vi.fn();
+const mockSpeakerReport = vi.fn();
 const mockFindProvider = vi.fn();
 
 vi.mock('../../services/meeting/meeting-bot.service', () => ({
@@ -19,6 +20,7 @@ vi.mock('../../services/meeting/meeting-bot.service', () => ({
     join: (...args: unknown[]) => mockJoin(...args),
     leave: () => mockLeave(),
     status: () => mockStatus(),
+    speakerReport: () => mockSpeakerReport(),
     findProvider: (url: string) => mockFindProvider(url),
   },
 }));
@@ -45,12 +47,13 @@ beforeEach(() => {
 const input = { userId: 'u1', agentId: 'a1', threadId: 't1' };
 
 describe('getMeetingTools', () => {
-  it('names all three generically, and says which platforms work in the description', () => {
+  it('names them all generically, and says which platforms work in the description', () => {
     // The platform comes from the URL, not the tool name — a per-platform *leave*
     // would mean two tools doing the identical thing to one single-call state.
     expect(Object.keys(getMeetingTools(input))).toEqual([
       'join_meeting',
       'leave_meeting',
+      'meeting_speaker',
       'meeting_status',
     ]);
     expect([...MEETING_TOOL_NAMES]).toEqual(Object.keys(getMeetingTools(input)));
@@ -144,6 +147,39 @@ describe('getMeetingTools', () => {
     });
   });
 
+  it('reports who spoke, and says so plainly when it cannot tell', async () => {
+    const tools = getMeetingTools(input);
+    const ctx = { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal };
+
+    mockSpeakerReport.mockReturnValue({
+      inMeeting: true,
+      speakingNow: null,
+      spokeToYou: { name: 'Mario Sarcher', isGroup: false },
+      roster: ['Iris', 'Mario Sarcher'],
+      attribution: 'available',
+      note: 'That was Mario Sarcher.',
+    });
+    expect(await tools.meeting_speaker.execute!({}, ctx)).toMatchObject({
+      success: true,
+      spokeToYou: { name: 'Mario Sarcher', isGroup: false },
+    });
+
+    // The honest answer matters more than the confident one: a name read out to the wrong
+    // person is worse than an admission, so `unavailable` has to survive to the model.
+    mockSpeakerReport.mockReturnValue({
+      inMeeting: true,
+      speakingNow: null,
+      spokeToYou: null,
+      roster: [],
+      attribution: 'unavailable',
+      note: 'I cannot tell who is speaking in this call.',
+    });
+    expect(await tools.meeting_speaker.execute!({}, ctx)).toMatchObject({
+      attribution: 'unavailable',
+      spokeToYou: null,
+    });
+  });
+
   it('reports not being in a meeting', async () => {
     mockStatus.mockReturnValue({
       state: 'idle',
@@ -192,7 +228,7 @@ describe('meeting tool mode', () => {
     'shell_exec', 'shell_write_file', 'claude_code', 'shell_spawn',
     'schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task',
     'create_goal', 'get_goal', 'share_file', 'skill',
-    'leave_meeting', 'join_meeting', 'meeting_status',
+    'leave_meeting', 'join_meeting', 'meeting_status', 'meeting_speaker',
     'rename_self', 'update_soul', 'update_memory', 'update_user_profile',
     'update_heartbeat_config', 'update_settings', 'update_vision', 'clear_bootstrap',
   ];

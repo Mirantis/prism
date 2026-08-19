@@ -27,10 +27,15 @@ import { logger } from '../logger';
  * Tool names, exported so every autonomous mode can drop them in one place.
  *
  * A live call keeps them: `join_meeting` inside a meeting harmlessly reports
- * that it is already in one, and `leave_meeting`/`meeting_status` are how the
- * agent ends and inspects the call it is in.
+ * that it is already in one, and the other three are how the agent ends the call it is
+ * in, inspects it, and finds out who it is talking to.
  */
-export const MEETING_TOOL_NAMES = ['join_meeting', 'leave_meeting', 'meeting_status'] as const;
+export const MEETING_TOOL_NAMES = [
+  'join_meeting',
+  'leave_meeting',
+  'meeting_speaker',
+  'meeting_status',
+] as const;
 
 export interface MeetingToolsInput {
   userId: string;
@@ -134,6 +139,18 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
         const { message } = await meetingBotService.leave();
         return { success: true, message };
       },
+    }),
+
+    meeting_speaker: tool({
+      description:
+        'Find out who is speaking in the call, and who said the thing you are answering. ' +
+        'The meeting audio reaches you as one mixed channel with no speaker labels, so this ' +
+        'is the only way you can know — but the runtime reads it off the platform, so it is ' +
+        'instant and costs nothing. Use it when a name matters: who asked you something, ' +
+        'who to answer, who is in the room. It tells you plainly when it cannot say, and ' +
+        'when the voice was a group of people sharing one microphone rather than one person.',
+      inputSchema: z.object({}),
+      execute: async () => ({ success: true, ...meetingBotService.speakerReport() }),
     }),
 
     meeting_status: tool({
