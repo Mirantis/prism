@@ -53,8 +53,12 @@ fi
 #
 # The bundle path is the one lens-sandbox-core hardcodes.
 CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-CA_COUNT=/etc/ssl/certs/ca-certificates.count
-if [ -n "${SSL_CERT_FILE:-}" ] && [ -r "$CA_BUNDLE" ] && [ -r "$CA_COUNT" ]; then
+CA_COUNT=/app/.ca-cert-count
+if [ -z "${SSL_CERT_FILE:-}" ]; then
+  echo 'chromium CA policy: not in a sandbox (SSL_CERT_FILE unset), nothing to trust'
+elif [ ! -r "$CA_BUNDLE" ] || [ ! -r "$CA_COUNT" ]; then
+  echo "chromium CA policy: skipped, need both $CA_BUNDLE and $CA_COUNT" >&2
+else
   sandbox_cas=$(awk -v skip="$(cat "$CA_COUNT")" '
     /BEGIN CERTIFICATE/ { in_cert = 1; b64 = ""; next }
     /END CERTIFICATE/   { in_cert = 0
@@ -63,13 +67,23 @@ if [ -n "${SSL_CERT_FILE:-}" ] && [ -r "$CA_BUNDLE" ] && [ -r "$CA_COUNT" ]; the
     in_cert             { b64 = b64 $0 }
   ' "$CA_BUNDLE" 2>/dev/null) || sandbox_cas=''
 
-  if [ -n "$sandbox_cas" ]; then
+  if [ -z "$sandbox_cas" ]; then
+    echo "chromium CA policy: skipped, no CAs appended past the $(cat "$CA_COUNT") the image ships" >&2
+  else
+    written=''
     for policy_dir in /etc/chromium/policies/managed /etc/opt/chrome/policies/managed; do
-      if [ -w "$policy_dir" ]; then
-        printf '{"CACertificates":[%s]}' "$sandbox_cas" > "$policy_dir/prism-ca.json" \
-          || echo "failed writing $policy_dir/prism-ca.json; continuing startup" >&2
+      if [ ! -w "$policy_dir" ]; then
+        echo "chromium CA policy: skipped $policy_dir, not writable" >&2
+      elif printf '{"CACertificates":[%s]}' "$sandbox_cas" > "$policy_dir/prism-ca.json"; then
+        written="$written $policy_dir/prism-ca.json"
+      else
+        echo "chromium CA policy: failed writing $policy_dir/prism-ca.json" >&2
       fi
     done
+    if [ -n "$written" ]; then
+      # base64 has no comma, so splitting on one counts the entries exactly.
+      echo "chromium CA policy: trusting $(printf '%s\n' "$sandbox_cas" | tr ',' '\n' | wc -l | tr -d ' ') sandbox CA(s) via$written"
+    fi
   fi
 fi
 

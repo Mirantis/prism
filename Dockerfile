@@ -116,9 +116,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # everything past this count is one of them. A count is all the comparison needs.
 #
 # Must stay in this layer: `ca-certificates` above is what creates the bundle,
-# and nothing later in the build touches it.
+# and nothing later in the build touches it. Kept under /app rather than beside
+# the bundle, which is update-ca-certificates' directory to manage.
 RUN grep -c 'BEGIN CERTIFICATE' /etc/ssl/certs/ca-certificates.crt \
-      > /etc/ssl/certs/ca-certificates.count
+      > /app/.ca-cert-count
 
 # Install only production dependencies. Scope to root + cli — the web
 # workspace's node_modules isn't needed at runtime (we only ship its
