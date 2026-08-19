@@ -146,8 +146,19 @@ const bedrockMantleBaseUrl =
 // Resolved once so the vendor-specific fields and the provider-neutral
 // `chatModelId`/`classificationModelId`/`embeddingModelId` share one source.
 const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-5';
+// The classification gate's model, and the reason it is not the same family as chat.
+//
+// A gate call returns one word from a short prompt, so its cost is almost all time to first
+// token. Measured over live meeting calls, Claude Haiku 4.5 took a median 1232ms and Nova 2 Lite
+// 748ms for the same work. On 220 sentences drawn from real meeting transcripts the two scored
+// the same accuracy: 69 of 70 addresses recognised, and Nova caught all 18 of the addresses that
+// were real speech with a name swapped in, where Haiku missed one.
+//
+// It also drives the heartbeat and scheduled-task DELIVER/SUPPRESS gates, which use their own
+// prompts and have not been measured on this model. They fail open, so a worse verdict there
+// delivers a message that could have been suppressed rather than losing one.
 const bedrockClassificationModelId =
-  process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+  process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.amazon.nova-2-lite-v1:0';
 const bedrockEmbeddingModelId = process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0';
 // Azure model IDs are deployment names. Chat/classification default to
 // Foundry's default Claude deployment names; embeddings default to an Azure

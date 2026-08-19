@@ -104,6 +104,23 @@ describe('config', () => {
       expect(cfg.llmProvider).toBe('bedrock');
     });
 
+    it('gates on a fast classification model, not the chat family', async () => {
+      process.env.LLM_PROVIDER = 'bedrock';
+      const cfg = await loadConfig();
+      // A gate call returns one word, so its cost is almost all time to first token. Measured
+      // over live meeting calls this model answered in a median 748ms against 1232ms for
+      // Claude Haiku 4.5, at the same accuracy on 220 sentences from real transcripts.
+      expect(cfg.chatModelId).toBe('us.anthropic.claude-opus-5');
+      expect(cfg.classificationModelId).toBe('us.amazon.nova-2-lite-v1:0');
+    });
+
+    it('lets the operator put the classification model back', async () => {
+      process.env.LLM_PROVIDER = 'bedrock';
+      process.env.BEDROCK_CLASSIFICATION_MODEL_ID = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+      const cfg = await loadConfig();
+      expect(cfg.classificationModelId).toBe('us.anthropic.claude-haiku-4-5-20251001-v1:0');
+    });
+
     it('selects azure and resolves the neutral model IDs to deployment names', async () => {
       process.env.LLM_PROVIDER = 'azure';
       const cfg = await loadConfig();
