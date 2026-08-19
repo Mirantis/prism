@@ -40,34 +40,18 @@ if [ -z "${OTEL_EXPORTER_OTLP_API_KEY+x}" ] && [ -s /app/.otel-api-key ]; then
   export OTEL_EXPORTER_OTLP_API_KEY
 fi
 
-# Teach Chromium to trust the sandbox's TLS-intercepting CAs.
+# Enable Chromium to trust the sandbox's TLS-intercepting CAs.
 #
-# Inside a Nexus sandbox every connection is terminated by a boundary proxy, and
-# the supervisor makes that trustworthy for normal tooling two ways: it appends
-# its CAs to the system bundle, and it points SSL_CERT_FILE / NODE_EXTRA_CA_CERTS
-# / CURL_CA_BUNDLE / REQUESTS_CA_BUNDLE / GIT_SSL_CAINFO at it. Chromium honours
-# none of that — it carries its own root store, on Linux never reads the system
-# bundle, and has no CA-path env var at all. Its only admin-facing hook is a
-# managed enterprise policy, so the meeting browser cannot reach a MITM'd origin
-# without one (`ERR_CERT_AUTHORITY_INVALID`).
+# A sandbox terminates TLS at its boundary proxy and appends its CAs to the
+# system bundle. Chromium ignores that bundle; its only admin-facing hook is a
+# managed enterprise policy, without which it rejects every proxied origin
+# (`ERR_CERT_AUTHORITY_INVALID`).
 #
-# Written at boot rather than baked into the image because one of these CAs is
-# generated inside the sandbox on every start and never leaves the supervisor's
-# memory. Everything past the cert count recorded at build time was appended by
-# the supervisor, which is exactly the set to hand over — and only that set:
-# certificates trusted this way are treated as locally-trusted anchors, which
-# turns off CT enforcement, Baseline-Requirements validity limits and key
-# pinning for anything chaining to them, so passing the whole bundle would
-# quietly weaken the public web rather than just add the proxy.
+# The base64 must be one unbroken line per certificate. A PEM body is already
+# base64 DER, so awk strips the armor and joins the wrapped lines.
+# CACertificates needs M132+; Debian's chromium is far past that.
 #
-# The base64 must be one unbroken line per certificate: Chromium decodes these
-# strictly and drops anything that fails, with no error on chrome://policy or
-# anywhere else. A PEM body is already base64 DER, so awk strips the armor and
-# joins the wrapped lines. CACertificates needs M132+; Debian's chromium is far
-# past that.
-#
-# SSL_CERT_FILE is set only by the supervisor, so this whole block no-ops on a
-# plain `docker run`. The bundle path is the one lens-sandbox-core hardcodes.
+# The bundle path is the one lens-sandbox-core hardcodes.
 CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 CA_COUNT=/etc/ssl/certs/ca-certificates.count
 if [ -n "${SSL_CERT_FILE:-}" ] && [ -r "$CA_BUNDLE" ] && [ -r "$CA_COUNT" ]; then

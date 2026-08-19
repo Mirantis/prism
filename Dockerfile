@@ -112,8 +112,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Count the CA certificates this image ships with, so start.sh can tell which
 # ones a sandbox supervisor appended at boot. The supervisor appends its
 # TLS-interception CAs to the bundle, so its certs are always the suffix and
-# everything past this count is one of them. A count rather than a copy of the
-# bundle because that is all the comparison needs.
+# everything past this count is one of them. A count is all the comparison needs.
 #
 # Must stay in this layer: `ca-certificates` above is what creates the bundle,
 # and nothing later in the build touches it.
@@ -305,7 +304,7 @@ ENV PRISM_DATA_DIR=/data
 # browser the image runs. It is node-owned because `start.sh` writes the CA policy
 # there on every boot (see the block in that file) — inside a sandbox the trust
 # anchors are only knowable at run time, since one of them is generated per
-# container start. Outside a sandbox nothing is written and it ships empty.
+# container start.
 #
 # /etc/opt/chrome too: resolveBrowser() prefers /usr/bin/google-chrome when a
 # derived image provides it, and Chrome reads its policies from there (see
