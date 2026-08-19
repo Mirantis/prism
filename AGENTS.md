@@ -117,6 +117,74 @@ when a change has nothing a user can observe.
   in commit messages and PR descriptions, where they stay linked to the
   change; a comment must explain the behavior on its own.
 
+## Writing style
+
+These rules cover every piece of prose an agent writes here: code comments,
+commit messages, PR descriptions, doc pages, and test names. They apply to new
+prose. Rewrite existing text only when you change it for another reason.
+
+**Plain word for the plain meaning.** Prefer the word a specification would
+use. If a shorter everyday word means the same thing, use the shorter one.
+These substitutions come from review comments on this repo:
+
+| Instead of | Write |
+|------------|-------|
+| reaches | requires, needs (or arrives at, runs) |
+| carries | has, includes, contains |
+| owns that position | appears there |
+| endemic | common |
+| load-bearing | important, relied on |
+| costs a model call | makes a model call |
+| answers the easy half | handles the simple cases |
+| out loud (of code, docs or data) | explicitly, or delete the phrase |
+
+`out loud` stays correct where the speech is literal, as in the voice-meeting
+code and docs (`src/prompts/meeting-prompt.ts`, `docs/voice-meetings.md`).
+
+- **No personification.** Code, files, tests, PRs and rooms do not prove,
+  know, learn, admit, want or decide. Attribute the action to a person or to a
+  measurement. Write "two calls in the same room measured it", not "a room
+  proved it". Write "`build-sea.mjs` sets it", not "the file says so".
+- **No rhetorical scaffolding.** Drop "Why bother.", "It's not X, it's Y",
+  "not just X but Y", rule-of-three flourishes, and the one-line paragraph for
+  drama. Use a comma or a full stop where an em-dash aside would work. Do not
+  use "honestly", "genuinely" or "precisely" as an intensifier. Keep
+  "deliberately" only for a real decision that a reader could mistake for an
+  accident.
+- **No self-congratulation, no narration of effort.** Do not call the work
+  comprehensive, robust, careful, thorough or battle-tested. Do not narrate the
+  process ("Let me...", "I'll now..."). Do not praise a finding. State what
+  changed and what it does.
+- **Simplified Technical English (STE), the parts to use.** The rules above
+  follow [ASD-STE100](https://www.asd-ste100.org/). Take these parts from it:
+  - One instruction or one idea per sentence.
+  - Keep sentences short. Aim for about 20 words of descriptive text, and one
+    step per sentence in a procedure. STE sets its own numeric maximums. Treat
+    the figure here as house guidance, not as a quote from the standard.
+  - Active voice, with the actor named.
+  - Present tense.
+  - One meaning per word, and one word per meaning. Repeat a term instead of
+    varying synonyms for elegance.
+  - No noun stack longer than three words.
+  - Spell out or define an abbreviation on first use.
+
+  This repo departs from STE in one way: there is no approved word list.
+  Domain terms and product names are fine (`sqlite-vec`, Bedrock, CDP).
+- **Self-check.** Read the sentence back and ask whether a terse senior
+  engineer writing a specification would use those words. If the sentence
+  reads as an attempt to sound impressive, rewrite it.
+
+A real example. "Before" is the `UNBUNDLABLE` comment in
+`scripts/build-sea.mjs` as it stands today. "After" is the rewrite these rules
+ask for:
+
+```text
+Before: `playwright-core` reaches esbuild as a prebuilt bundle ...
+        which a binary never reaches
+After:  esbuild receives `playwright-core` as a prebuilt bundle ...
+        which a binary never runs
+```
+
 ## Deployment shape
 
 One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
