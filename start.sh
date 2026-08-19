@@ -65,7 +65,7 @@ else
                           if (++seen > skip) printf "%s\"%s\"", (n++ ? "," : ""), b64
                           next }
     in_cert             { b64 = b64 $0 }
-  ' "$CA_BUNDLE" 2>/dev/null) || sandbox_cas=''
+  ' "$CA_BUNDLE") || sandbox_cas=''
 
   if [ -z "$sandbox_cas" ]; then
     echo "chromium CA policy: skipped, no CAs appended past the $(cat "$CA_COUNT") the image ships" >&2
