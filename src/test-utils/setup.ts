@@ -60,5 +60,13 @@ vi.mock('../config', () => ({
     // Read at log time rather than at startup, so leaving it out would silently take
     // whichever branch `undefined` happens to fall into.
     meetingTranscriptLogging: 'off',
+    // The follow-up window's real defaults, and they have to be here rather than left
+    // undefined. `tsconfig.json` excludes test files, so nothing typechecks a mock with a
+    // key missing — and the omission is not inert: `undefined <= 0` and `elapsed >
+    // undefined` are both false, so a window built from an unset value arms, accepts and
+    // never expires. Every test that thought it was exercising an eight-second window was
+    // exercising an infinite one.
+    meetingFollowUpWindowMs: 8_000,
+    meetingFollowUpShadowJudge: true,
   },
 }));

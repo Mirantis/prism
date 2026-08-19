@@ -6,11 +6,24 @@
  * to decline. So the tests that matter most are the ones asserting silence.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { ResponsePolicy } from '../response-policy';
+import { warmVocativeTagger } from '../vocative';
 
+/**
+ * A policy with the follow-up window **off** unless a test asks for it.
+ *
+ * Deliberate: every case below is about the two original reasons to answer, and a window
+ * left on would give some of them a third way to say yes. The window has its own block at
+ * the end of this file, and its own unit tests in `follow-up-window.test.ts`.
+ */
 const policy = (over: Partial<ConstructorParameters<typeof ResponsePolicy>[0]> = {}) =>
-  new ResponsePolicy({ mode: 'auto', ...over });
+  new ResponsePolicy({
+    mode: 'auto',
+    agentName: 'Prism',
+    followUpWindowMs: 0,
+    ...over,
+  });
 
 /**
  * One utterance through both paths.
@@ -24,6 +37,14 @@ const utterance = (p: ResponsePolicy, itemId: string): boolean | 'classify' => {
   const decision = p.onTranscript(itemId);
   return decision === 'classify' ? 'classify' : decision === 'respond';
 };
+
+beforeAll(async () => {
+  // The follow-up window's drift tests read POS tags synchronously, and until the tagger is
+  // loaded they have no verdict — so the window declines everything, which is the safe
+  // direction but not what the cases below are about. `VoiceConversation.start()` does this
+  // when a call opens. Warmed before `useFakeTimers`, since it is a module load.
+  await warmVocativeTagger();
+});
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -298,32 +319,119 @@ describe('not paying for a verdict that cannot matter', () => {
     // whatever the gate would say. Judging it anyway bought nothing and cost a
     // model call per sentence — on a live one-to-one call a verdict arrived 1.5s
     // after the agent had already begun answering that same utterance.
-    const policy = new ResponsePolicy({ mode: 'auto' });
-    policy.setParticipantCount(2);
+    const p = policy();
+    p.setParticipantCount(2);
 
-    expect(policy.onTranscript('item-1', 'partial')).toBe('ignore');
+    expect(p.onTranscript('item-1', 'partial')).toBe('ignore');
   });
 
   it('still judges the finished transcript in open mode', () => {
     // The mode can flip between an utterance closing and its words arriving, so
     // the authoritative pass is not skipped — only the speculative one.
-    const policy = new ResponsePolicy({ mode: 'auto' });
-    policy.setParticipantCount(2);
+    const p = policy();
+    p.setParticipantCount(2);
 
-    expect(policy.onTranscript('item-1', 'final')).toBe('classify');
+    expect(p.onTranscript('item-1', 'final')).toBe('classify');
   });
 
   it('keeps the early look when the agent must be named', () => {
-    const policy = new ResponsePolicy({ mode: 'addressed' });
+    const p = policy({ mode: 'addressed' });
 
-    expect(policy.onTranscript('item-1', 'partial')).toBe('classify');
+    expect(p.onTranscript('item-1', 'partial')).toBe('classify');
   });
 
   it('never re-judges an utterance already answered', () => {
-    const policy = new ResponsePolicy({ mode: 'auto' });
-    policy.setParticipantCount(2);
-    policy.onUtteranceCommitted('item-1');
+    const p = policy();
+    p.setParticipantCount(2);
+    p.onUtteranceCommitted('item-1');
 
-    expect(policy.onTranscript('item-1', 'final')).toBe('ignore');
+    expect(p.onTranscript('item-1', 'final')).toBe('ignore');
+  });
+});
+
+describe('staying in an exchange without being named again', () => {
+  /** A policy that has just answered Mario and finished speaking. */
+  const inExchange = () => {
+    const p = policy({ mode: 'addressed', followUpWindowMs: 8_000 });
+    p.setCurrentSpeaker('Mario');
+    expect(p.resolveClassification('i1', true)).toBe(true);
+    p.onAgentTurnEnded();
+    return p;
+  };
+
+  it('starts the clock at the partial, so a long question is not penalised for its length', () => {
+    // Half of the wiring: that the policy hands a partial's words to the window and that the
+    // clock then reads from them. The other half — that the *conversation* passes those words
+    // at all — cannot be seen from here, and that is exactly where two live failures came
+    // from. `voice-conversation.test.ts` covers it by driving the conversation instead.
+    const p = inExchange();
+
+    vi.advanceTimersByTime(2_000);
+    expect(p.onTranscript('i2', 'partial', 'so on that deploy, I was wondering whether')).toBe(
+      'classify',
+    );
+
+    // Nine more seconds of talking — past the window, if the clock were read at the end.
+    vi.advanceTimersByTime(9_000);
+    expect(p.onTranscript('i2', 'final', 'can you check whether staging picked it up?')).toBe(
+      'respond',
+    );
+  });
+
+  it('answers a follow-up carrying no name, without a model call', () => {
+    const p = inExchange();
+
+    // `respond` rather than `classify` is where the 0ms comes from: the gate is skipped
+    // outright rather than raced.
+    expect(p.onTranscript('i2', 'final', 'and can you check staging as well?')).toBe('respond');
+    expect(p.statistics.followUp.accepted).toBe(1);
+  });
+
+  it('marks the utterance answered so the other path cannot answer it twice', () => {
+    const p = inExchange();
+    p.onTranscript('i2', 'final', 'and can you check staging?');
+
+    // A second `response.create` is queued by the session rather than dropped, so the room
+    // would hear the same reply twice.
+    expect(p.resolveClassification('i2', true)).toBe(false);
+    expect(p.onTranscript('i2', 'final', 'and can you check staging?')).toBe('ignore');
+  });
+
+  it('still asks the model about anything the window declines', () => {
+    const p = inExchange();
+
+    // The window can only ever *add* an answer. Everything it turns down has to reach the
+    // gate, or the feature would be silencing utterances rather than speeding them up.
+    expect(p.onTranscript('i2', 'final', 'Tom, do you know the port?')).toBe('classify');
+  });
+
+  it('does nothing without a transcript to read', () => {
+    const p = inExchange();
+
+    // `open` mode answers at the turn boundary with no words at all, and a caller that has
+    // none cannot be offered a decision that depends on them.
+    expect(p.onTranscript('i2', 'final')).toBe('classify');
+  });
+
+  it('still opens when the platform could not say who spoke', () => {
+    const p = policy({ mode: 'addressed', followUpWindowMs: 8_000 });
+    p.setCurrentSpeaker(null);
+    p.resolveClassification('i1', true);
+    p.onAgentTurnEnded();
+
+    // This used to be inert without attribution, because a follow-up had to come from the same
+    // person and there was nobody to compare against. Eligibility is now about what was said,
+    // so a call whose participants panel cannot be read keeps the behaviour rather than
+    // silently losing it — and the drift guards are what keep that safe.
+    expect(p.onTranscript('i2', 'final', 'and can you check staging?')).toBe('respond');
+  });
+
+  it('is off entirely when the operator sets the window to zero', () => {
+    const p = policy({ mode: 'addressed', followUpWindowMs: 0 });
+    p.setCurrentSpeaker('Mario');
+    p.resolveClassification('i1', true);
+    p.onAgentTurnEnded();
+
+    expect(p.onTranscript('i2', 'final', 'and can you check staging?')).toBe('classify');
   });
 });

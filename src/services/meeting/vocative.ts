@@ -219,12 +219,40 @@ const isWord = (t: Token) => t.pos !== 'PUNCT' && t.pos !== 'SPACE';
  */
 let loading: Promise<Tokenizer | null> | undefined;
 
+/**
+ * The loaded tagger, once it exists.
+ *
+ * Held separately from the promise so there can be a *synchronous* reader. The load is
+ * async; tagging is not, and the follow-up window has to decide inside
+ * `ResponsePolicy.onTranscript`, which every caller relies on being synchronous — making
+ * it async would put an await between an utterance arriving and the per-item duplicate
+ * check that stops the room hearing the same reply twice.
+ *
+ * `undefined` means "not loaded yet", `null` means "tried and failed". A reader must not
+ * conflate either with "nothing found": see `ThirdPartyRead`.
+ */
+let tokenizer: Tokenizer | null | undefined;
+
+/**
+ * Load the tagger now.
+ *
+ * Called when a call starts, so the synchronous readers below can answer from the first
+ * utterance. Without it they would decline for the opening seconds of a call — safe, but
+ * exactly when the first exchange happens.
+ */
+export async function warmVocativeTagger(): Promise<void> {
+  await loadTokenizer();
+}
+
 function loadTokenizer(): Promise<Tokenizer | null> {
   // The *promise* is memoised, not its result. Two utterances are often judged within
   // milliseconds of each other at the start of a call — a partial transcript and its
   // finished form — and memoising the result let both get past the guard and build a
   // second 70MB tagger, or log the "once" warning twice on the failure path.
-  loading ??= buildTokenizer();
+  loading ??= buildTokenizer().then((built) => {
+    tokenizer = built;
+    return built;
+  });
   return loading;
 }
 
@@ -351,7 +379,7 @@ function decide(toks: Token[], name: string): VocativeVerdict {
   return sawName ? verdict : { addressed: false, why: 'no name' };
 }
 
-/** Break a token stream at sentence-final punctuation. */
+/** Break a token stream at sentence-final punctuation. Shared by both readers in this file. */
 function splitSentences(toks: Token[]): Token[][] {
   const sentences: Token[][] = [];
   let current: Token[] = [];
@@ -652,4 +680,298 @@ export async function isVocativeAddress(
     logger.debug(`[Meeting:Gate] Tagger failed, asking the model: ${String(error)}`);
     return { addressed: false, why: 'tagger failed' };
   }
+}
+
+/**
+ * Discourse markers this tagger reads as proper nouns.
+ *
+ * Deliberately tiny, and it is worth saying why it is allowed to exist at all when the
+ * refuted versions of this file died of hand-written word lists. The rule below asks the
+ * tagger "is this a name", and for 27 of the 33 words an earlier regex version had to
+ * enumerate — `no`, `yes`, `well`, `ok`, `sure`, `right`, `actually`, `anyway`, `now`,
+ * `then`, `also`, `but`, `and`, `so`, `hey`, `hi`, `hello`, `sorry`, `thanks`, `thank`,
+ * `uh`, `oh`, `look`, `listen`, `everyone`, `first` — the answer is already no, because
+ * they tag as determiners, interjections, adverbs, adjectives, conjunctions, verbs or
+ * pronouns. These are the residue: the tagger really does call them proper nouns, and
+ * "Um, could you..." is a follow-up rather than a question for somebody called Um.
+ *
+ * Group words like `guys` and `folks` are also tagged PROPN and are also not names, but
+ * they belong to the group-vocative test in `follow-up-window.ts` rather than here — a
+ * question thrown at the room is a different thing from one aimed at one person, and it
+ * is worth counting separately.
+ */
+const NOT_A_NAME = /^(um+|second)$/i;
+
+/**
+ * Edits tolerated between a spoken word and a name on the roster.
+ *
+ * Live transcription mangles names — "Jari" came back as "Yari" and "Miska" as "Mees" — so an
+ * exact roster match would miss the third party it is looking for. Scaled by length because one
+ * edit in four letters is a much looser claim than one in eight: too generous on short names and
+ * "Okay" starts matching a colleague called Omar.
+ */
+function nameEditBudget(length: number): number {
+  if (length < 4) return 0;
+  return length >= 6 ? 2 : 1;
+}
+
+/** Whether a word is a roster name, allowing for a mishearing. */
+function nearAKnownName(word: string, known: Set<string>): boolean {
+  const budget = nameEditBudget(word.length);
+  if (budget === 0) return false;
+  for (const name of known) {
+    if (Math.abs(name.length - word.length) > budget) continue;
+    if (withinEdits(word, name, budget)) return true;
+  }
+  return false;
+}
+
+/**
+ * Levenshtein distance, answered as "within `budget`?" and abandoned as soon as it cannot be.
+ *
+ * Hand-rolled rather than a dependency: it is a dozen lines, runs over a handful of roster
+ * names per sentence, and a phonetic algorithm would not help with the manglings that actually
+ * occur — Soundex and Metaphone both key on the first letter, so "Jari" and "Yari" differ under
+ * either.
+ */
+function withinEdits(a: string, b: string, budget: number): boolean {
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      row[j] = Math.min(row[j - 1] + 1, previous[j] + 1, previous[j - 1] + cost);
+      best = Math.min(best, row[j]);
+    }
+    if (best > budget) return false;
+    previous = row;
+  }
+  return previous[b.length] <= budget;
+}
+
+/** How far past a name a second-person pronoun still counts as being addressed to it. */
+const VOCATIVE_REACH_WORDS = 4;
+
+/**
+ * Tags with meaning, as opposed to the ones a sentence can open with harmlessly.
+ *
+ * Used to find the first *real* word of a sentence. Everything absent from this set —
+ * interjections, adverbs, conjunctions, particles, punctuation — is something people put
+ * in front of a vocative ("ok Emma,", "so Tom,", "and Emma,", "um, Yari,").
+ */
+const LEXICAL = new Set(['NOUN', 'PROPN', 'VERB', 'AUX', 'PRON', 'ADJ', 'NUM', 'DET', 'ADP']);
+
+/**
+ * Whether somebody else was named, when that can be read at all.
+ *
+ * Three-valued on purpose. "The tagger is not available" and "nobody else was named" must
+ * not collapse into one answer, because the caller uses this to decide whether it may
+ * skip a model call: reading the first as the second would let it answer an utterance it
+ * never actually examined.
+ */
+export type ThirdPartyRead =
+  /** Read successfully. `name` is who else was addressed, or null if nobody was. */
+  | { read: true; name: string | null }
+  /** No verdict — the tagger is not loaded, or this is not a script it reads. */
+  | { read: false };
+
+/**
+ * Was this said *to somebody other than the agent*?
+ *
+ * The question a follow-up window needs and the addressed gate does not. Being inside a
+ * window means the person who was talking to the agent is still talking — not that they
+ * are still talking *to the agent*. Live, the same speaker turned to a colleague inside
+ * the window ("Tom, do you know the default port for MySQL?") and the agent answered; the
+ * operator's words were "that question was for Pamela actually".
+ *
+ * Four positions a vocative is found in, each of which had to be added because a version
+ * without it answered somebody else's question:
+ *
+ *   1. **Opening a sentence, fenced by a comma** — "Tom, do you know…". Every sentence,
+ *      not just the first: "I gotcha, thank you. Um, Yari, do you have anything to add?"
+ *      was answered because the scan never reset at the full stop.
+ *   2. **Opening a sentence with no comma at all** — "Pamela can you get the numbers?".
+ *      People drop that comma constantly, and without this the whole utterance is
+ *      invisible to the guard.
+ *   3. **Closing a sentence, fenced by a comma** — "What do you think, Pamela?". The
+ *      earlier version only looked at tokens *followed* by a comma, so a trailing
+ *      vocative — the second most common form there is — was never seen.
+ *   4. **Fenced mid-sentence, with second person just behind it.** This catches a vocative
+ *      the position rules cannot see, because transcription turns a name into a phrase:
+ *      "Yari" came back as "The Ari, do you know more about that topic?", where the
+ *      sentence opens with a determiner.
+ *
+ * Positions 1 to 3 also require the sentence to be *addressed* — second person somewhere,
+ * or a question mark — so "Monday, we should ship" and "I'll do it on Tuesday, Wednesday"
+ * are not read as talking to somebody called Monday. Position 4 requires second person by
+ * construction. An enumeration is excluded outright: a coordinator arriving before any
+ * verb means the name is an item in a list, which is what "Kubernetes, Slack and Bedrock
+ * are all down, can you check?" is.
+ *
+ * **The roster is consulted, not just the tags.** A name the transcriber lower-cased tags
+ * as a common noun — "tom, do you know the port?" — and the yes-path in this file already
+ * tolerates that for the agent's own name, because there it is matched against a known
+ * string. Here the equivalent known strings are the people in the call, which the runtime
+ * scrapes anyway. Without a roster the guard falls back to the tag alone, so it is weaker
+ * early in a call than later.
+ *
+ * **A known limit.** The tagger calls a capitalised plural common noun a proper noun and
+ * leaves its lemma alone, so "Dogs, do you have any thoughts" — a mis-transcription —
+ * reads as a name here. Nothing local separates that from "Tom,", and it is the safe
+ * direction anyway: the caller's only response is to stop skipping the model call.
+ */
+export function addressedToSomeoneElse(
+  transcript: string,
+  agentName: string,
+  roster: readonly string[] = [],
+): ThirdPartyRead {
+  const text = transcript.trim();
+  const self = agentName.trim().toLowerCase();
+  if (text === '' || !readsScript(text)) return { read: false };
+  if (tokenizer === undefined || tokenizer === null) return { read: false };
+
+  let toks: Token[];
+  try {
+    toks = tokenizer(text);
+  } catch {
+    return { read: false };
+  }
+
+  const known = knownNames(roster, self);
+  for (const sentence of splitSentences(toks)) {
+    const name = vocativeIn(sentence, self, known);
+    if (name !== null) return { read: true, name };
+  }
+  return { read: true, name: null };
+}
+
+/**
+ * The room's names, lower-cased, with first names included and the agent removed.
+ *
+ * First names because that is what people say: the roster has "Mario Sarcher" and the
+ * room says "Mario". The agent is dropped so its own name can never be read as a third
+ * party, whichever spelling the roster holds it under.
+ */
+function knownNames(roster: readonly string[], self: string): Set<string> {
+  const names = new Set<string>();
+  for (const entry of roster) {
+    for (const part of [entry, entry.trim().split(/\s+/)[0] ?? '']) {
+      const name = part.trim().toLowerCase();
+      if (name.length >= 2 && name !== self) names.add(name);
+    }
+  }
+  return names;
+}
+
+/** Who this one sentence is addressed to, if it is addressed to somebody by name. */
+function vocativeIn(sentence: Token[], self: string, known: Set<string>): string | null {
+  const wordAt = sentence.map((t, i) => (isWord(t) ? i : -1)).filter((i) => i >= 0);
+  if (wordAt.length === 0) return null;
+
+  const nameLike = (i: number): boolean => {
+    const token = sentence[i];
+    const word = token.text.toLowerCase();
+    if (word === self || NOT_A_NAME.test(word)) return false;
+    // The roster outranks the tag: a lower-cased name tags as a common noun.
+    if (known.has(word)) return true;
+    if (nearAKnownName(word, known)) return true;
+    // And with a roster in hand it is also the limit: a proper noun matching nobody in the
+    // room is not somebody being spoken to.
+    //
+    // Two live calls, pulling opposite ways, are why it takes both halves. "Gotcha, thank you,
+    // and does it support any spending limits?" was declined as a question for somebody called
+    // Gotcha — the tagger calls it a proper noun and no grammatical test separates it from a
+    // name, so only the roster can. And "Yari, do you know anything about that?" was answered
+    // as a follow-up when it was plainly for Jari, whose name the transcriber had mangled — so
+    // the roster has to tolerate a mishearing, or it trades one failure for the other.
+    //
+    // Only sound because the roster is read off the participants panel, so it is complete while
+    // the panel is open. Two bounds worth stating: it is up to a poll interval stale, so a
+    // brand-new joiner named aloud is not on it yet; and a name mangled past `NAME_EDITS`
+    // ("Gary" for "Jari" is two edits at four letters) still misses. Both let the guard miss and
+    // the agent answer something meant for a colleague — weighed against a false close, which
+    // costs the person it *was* talking to their answer, and which is what live calls kept
+    // producing.
+    if (known.size > 0) return false;
+    return token.pos === 'PROPN';
+  };
+  const commaAfter = (i: number) => sentence[i + 1]?.text === ',';
+  const commaBefore = (i: number) => sentence[i - 1]?.text === ',';
+
+  // A question mark, and nothing weaker. Without one, a name beside a comma is as likely to be
+  // a date or a list item as somebody being spoken to — "Monday, we should ship" and "I'll do
+  // it on Tuesday, Wednesday" both have a proper noun in vocative position and neither is
+  // talking to anyone.
+  //
+  // It used to accept a second-person pronoun anywhere in the sentence, and that is what made
+  // "Gotcha, thank you." read as a question for somebody called Gotcha: the tagger calls
+  // `Gotcha` a proper noun, and `you` two words later was all the evidence the rule wanted. A
+  // live call lost a plain request to the agent that way.
+  //
+  // An order to a third party is deliberately *not* also accepted here. It was tried: the
+  // tagger reads "Jari, check the deploy." as `check/NOUN`, so there is no imperative to find,
+  // and a base-form-verb rule found nothing while adding a mechanism. It needs none — the
+  // follow-up window's own shape test closes on that sentence as a statement, which is the
+  // same outcome by a route that already exists.
+  const addressed = sentence.some((t) => t.text === '?');
+
+  // 1 & 2. The first content word of the sentence, markers skipped.
+  let head = 0;
+  while (head < wordAt.length && !isCandidatePosition(sentence[wordAt[head]])) head += 1;
+  if (head < wordAt.length) {
+    const i = wordAt[head];
+    if (nameLike(i) && !listedWith(sentence, wordAt, head)) {
+      if (addressed && commaAfter(i)) return sentence[i].text;
+      // No comma: "Pamela can you get the numbers?" — an inverted question whose subject
+      // is the listener, which is the one shape people reliably say without a pause.
+      const next = sentence[wordAt[head + 1] ?? -1];
+      const after = sentence[wordAt[head + 2] ?? -1];
+      if (
+        next?.pos === 'AUX' &&
+        after?.pos === 'PRON' &&
+        SECOND_PERSON.test(after.text)
+      ) {
+        return sentence[i].text;
+      }
+    }
+  }
+
+  // 3. The last content word, fenced by a comma: "What do you think, Pamela?"
+  const tail = wordAt[wordAt.length - 1];
+  if (addressed && nameLike(tail) && commaBefore(tail)) return sentence[tail].text;
+
+  // 4. Fenced anywhere, with second person close behind — and inside a question, like every
+  // other position here. Without that last requirement this is the branch "Gotcha, thank you."
+  // came through: a fenced proper noun with `you` behind it, and no question anywhere.
+  for (const i of wordAt) {
+    if (!addressed || !commaAfter(i) || !nameLike(i)) continue;
+    const following = wordAt.filter((j) => j > i).slice(0, VOCATIVE_REACH_WORDS);
+    if (following.some((j) => sentence[j].pos === 'PRON' && SECOND_PERSON.test(sentence[j].text))) {
+      return sentence[i].text;
+    }
+  }
+
+  return null;
+}
+
+/** A word that could be the head of a sentence rather than a marker in front of one. */
+function isCandidatePosition(token: Token): boolean {
+  return LEXICAL.has(token.pos) && !NOT_A_NAME.test(token.text);
+}
+
+/**
+ * Is the name at `head` an item in a list rather than somebody being called?
+ *
+ * A coordinator arriving before any verb means the sentence is still naming things:
+ * "Kubernetes, Slack and Bedrock are all down, can you check?" opens with a proper noun and
+ * a comma exactly the way a vocative does. The same rule guards the yes-path in this file.
+ */
+function listedWith(sentence: Token[], wordAt: number[], head: number): boolean {
+  for (const i of wordAt.slice(head + 1)) {
+    const pos = sentence[i].pos;
+    if (pos === 'VERB' || pos === 'AUX') return false;
+    if (pos === 'CCONJ') return true;
+  }
+  return false;
 }

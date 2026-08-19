@@ -180,11 +180,39 @@ have to ask for any of this, but you can override it per call:
 > Join `https://meet.google.com/abc-defg-hij` and only speak when someone says your
 > name
 
-**Say its name every time, including follow-ups.** There's no grace period. An
-earlier version stayed engaged for fifteen seconds after speaking, so a follow-up
-didn't need the name — but in a real room those fifteen seconds are mostly people
-starting to talk to *each other*, and it answered them. One rule that always holds
-turned out to be better than a shortcut that sometimes interrupts.
+**Once it's answered you, you can keep going without the name.** Ask it something, and if you
+start speaking again within about eight seconds of it finishing, your next question is treated
+as part of the same exchange — no name needed, and answered instantly. What counts is when you
+*start*, so a long question is not penalised for taking a while to ask. **Anybody in the call
+can pick the thread up**, not only the person it was answering — if a colleague follows up on
+what it just said, they don't have to say the name again either.
+
+Handing the floor back counts as a request, so if you cut it off and then say "sorry, go
+ahead", it carries on rather than waiting to be named again.
+
+The window shuts as soon as the conversation moves on, which in practice matters more than
+the eight seconds:
+
+- somebody says something substantial that isn't a question or a request — the exchange is
+  over. A short aside ("yeah", "go ahead") isn't enough to end it, but "right, let's move on"
+  is, however briefly it's put;
+- somebody turns to another person ("Tom, do you know the port?") — that question is theirs;
+- you ask the room rather than the agent ("any takes from the team?");
+- nothing follows up in time.
+
+Saying its name again re-opens it. And an interruption counts as it having spoken: cut it
+off mid-sentence and you're still in the exchange.
+
+This is narrower than it sounds, because the first version of it was not. An earlier build
+stayed engaged for fifteen seconds after speaking and treated *anything* said in that time as
+addressed to it — and in a real room those fifteen seconds are mostly people starting to talk
+to each other, so it answered them. What keeps this one in check is not who is talking but
+**what is said**: it has to be a question or a request, aimed at nobody else in particular,
+and the moment somebody's name comes up or the group moves along the exchange is over. A
+passing "yeah" or "go ahead" is neither answered nor treated as the end of anything.
+
+None of it can make the agent quieter: anything the window turns down is judged exactly as
+it is today. Set `MEETING_FOLLOW_UP_WINDOW_MS=0` to switch it off.
 
 **Its name is what gets its attention, but it isn't matched literally.** Live
 transcription mangles names — "Prism" has come back as "Pritham" — so a check
@@ -248,9 +276,10 @@ number, and is told to read important details back before acting on them.
 **It opens the participants panel for itself.** That panel is a per-viewer thing, so this
 changes nothing about the audio and nothing about what anyone else in the call sees — but
 it lists everybody by name and shows a small voice meter beside each of them, and reading
-those meters is how a meeting bot can know who is talking at all. The agent can look up who
-it is answering and who last spoke, whenever a name would matter, so it can reply to you by
-name — and it costs it nothing to check.
+those meters is how a meeting bot can know who is talking at all. Two things come out of it.
+The runtime knows who currently has the floor, which is what makes the follow-up window above
+safe to have. And the agent can look up who it is answering and who last spoke, whenever a
+name would matter, so it can reply to you by name — and it costs it nothing to check.
 
 It says so plainly when it can't tell, and is told never to guess a name: during a pause,
 when two people talk over each other, or when several of you are in the same room sharing

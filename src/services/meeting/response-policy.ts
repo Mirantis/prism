@@ -27,13 +27,19 @@
  * person in the next chair. Guessing there is how a meeting bot ends up in the
  * middle of other people's conversations.
  *
- * **No grace period after the agent speaks.** An earlier version kept a 15-second
- * window in which any utterance counted as addressed, so a follow-up needn't
- * repeat the name. Testing on real calls killed it: fifteen seconds after the
- * agent stops talking is mostly other people starting to talk to *each other*,
- * which is the exact failure this file exists to prevent. Being named every time
- * is slightly more effort to talk to and much harder to get wrong, and it leaves
- * one rule to explain instead of three interacting ones.
+ * **A follow-up window, but an attributed one.** An earlier version kept a
+ * 15-second grace period in which *any* utterance counted as addressed, and
+ * testing on real calls killed it: fifteen seconds after the agent stops talking
+ * is mostly other people starting to talk to *each other*, which is the exact
+ * failure this file exists to prevent.
+ *
+ * What brings it back is knowing who is speaking. `follow-up-window.ts` is about
+ * one person continuing one exchange rather than about a span of time in which
+ * anybody may say anything: same speaker, within the window of the agent's own
+ * turn ending, not addressed to somebody else, and shaped like a question or a
+ * request. It is a third reason to answer alongside the two above, and like them
+ * it can only ever *add* an answer — everything it declines goes to the model
+ * gate exactly as before.
  *
  * Every "yes" from this object *will* be spoken: unlike prompt-level gating there
  * is no path for the model to decline once `response.create` goes out. That makes
@@ -41,6 +47,7 @@
  */
 
 import { logger } from '../../logger';
+import { FollowUpWindow, type FollowUpWindowStats } from './follow-up-window';
 
 /** What the caller asked for. `auto` resolves from the participant count. */
 export type ResponseMode = 'auto' | 'open' | 'addressed';
@@ -70,6 +77,10 @@ const HANDLED_ITEM_LIMIT = 32;
 
 export interface ResponsePolicyOptions {
   mode: ResponseMode;
+  /** What the room calls the agent. Needed to tell its name from a third party's. */
+  agentName: string;
+  /** How long a follow-up may arrive after the agent's turn ends. `0` disables it. */
+  followUpWindowMs: number;
 }
 
 export interface ResponsePolicyStats {
@@ -90,6 +101,8 @@ export interface ResponsePolicyStats {
    * for a call that ended in the mode it started in.
    */
   modeSwitches: number;
+  /** How the follow-up window behaved — see `follow-up-window.ts`. */
+  followUp: FollowUpWindowStats;
 }
 
 export class ResponsePolicy {
@@ -116,16 +129,67 @@ export class ResponsePolicy {
   /** An id-less utterance was answered at the boundary; see `onTranscript`. */
   private answeredIdlessInOpenMode = false;
   private readonly handledItems: string[] = [];
+  /** The platform's identity for whoever last had the floor. Null when it could not be told. */
+  private speaker: string | null = null;
+  private readonly followUp: FollowUpWindow;
   private readonly stats: ResponsePolicyStats = {
     utterances: 0,
     answered: 0,
     suppressed: 0,
     addressedMatches: 0,
     modeSwitches: 0,
+    followUp: { accepted: 0, closedBy: { shape: 0, vocative: 0, group: 0, clock: 0 } },
   };
 
   constructor(private readonly options: ResponsePolicyOptions) {
     if (options.mode !== 'auto') this.mode = options.mode;
+    this.followUp = new FollowUpWindow({
+      windowMs: options.followUpWindowMs,
+      agentName: options.agentName,
+    });
+  }
+
+  /**
+   * Say who the platform last showed as speaking.
+   *
+   * The same injection shape as `setParticipantCount` and `setAudible`, and for the same
+   * reason: this class decides, and what it decides from arrives from outside. `null`
+   * means "could not tell", which leaves the follow-up window inert rather than guessing.
+   */
+  setCurrentSpeaker(speaker: string | null): void {
+    this.speaker = speaker;
+  }
+
+  /**
+   * The agent has stopped speaking — either it finished, or it was cut off.
+   *
+   * The follow-up window is measured from here rather than from the request that prompted
+   * the answer, because what a speaker follows up on is the answer. An interruption counts:
+   * somebody who cut the agent off is plainly still in the exchange.
+   */
+  onAgentTurnEnded(): void {
+    this.followUp.onAgentTurnEnded();
+  }
+
+  /**
+   * The agent has started a turn — nothing said over it is a follow-up to it.
+   *
+   * Without this the window keeps measuring against the *previous* turn's end while the
+   * agent is mid-answer, so a "yeah, got it" from the same person could close an exchange
+   * before the answer it was reacting to had finished.
+   */
+  onAgentTurnStarted(): void {
+    this.followUp.onAgentTurnStarted();
+  }
+
+  /** Tell the window who is in the call, so a lower-cased name is still recognised. */
+  setRoster(roster: readonly string[]): void {
+    this.followUp.setRoster(roster);
+  }
+
+  /** True while an unnamed follow-up would still be answered. */
+  get followUpOpen(): boolean {
+    return this.followUp.isOpen;
   }
 
   get effectiveMode(): EffectiveMode {
@@ -133,7 +197,7 @@ export class ResponsePolicy {
   }
 
   get statistics(): ResponsePolicyStats {
-    return { ...this.stats };
+    return { ...this.stats, followUp: this.followUp.statistics };
   }
 
   /**
@@ -230,7 +294,11 @@ export class ResponsePolicy {
    * `response.create` is *queued* by the session's pending-response deferral
    * rather than dropped, so the room would hear the same reply twice.
    */
-  onTranscript(itemId: string, stage: TranscriptStage = 'final'): TranscriptDecision {
+  onTranscript(
+    itemId: string,
+    stage: TranscriptStage = 'final',
+    transcript?: string,
+  ): TranscriptDecision {
     if (this.wasHandled(itemId)) return 'ignore';
 
     // In `open` mode an early look cannot change anything: the utterance will be
@@ -254,6 +322,19 @@ export class ResponsePolicy {
     if (itemId === '' && this.answeredIdlessInOpenMode) {
       this.answeredIdlessInOpenMode = false;
       return 'ignore';
+    }
+
+    // Already in an exchange with this person? Then the name need not be repeated. This
+    // is where the 0ms comes from on a follow-up: the model call is skipped outright
+    // rather than raced. Everything the window declines falls through to `classify`, so
+    // it can only ever add an answer.
+    //
+    // Marked answered here, like every other yes, so the other path cannot answer the
+    // same utterance a second time — the session queues a second `response.create`
+    // rather than dropping it, and the room would hear the reply twice.
+    if (transcript !== undefined && this.followUp.consider(transcript, stage, itemId)) {
+      this.answer(itemId);
+      return 'respond';
     }
 
     // Deliberately does not otherwise test the *current* mode. Someone leaving can
@@ -293,6 +374,10 @@ export class ResponsePolicy {
 
     this.stats.addressedMatches += 1;
     logger.info('[Meeting] Addressed by name — responding');
+    // Arm the follow-up window on *any* addressed verdict, whichever path produced it.
+    // See `FollowUpWindow.arm` for why it is not conditioned on the name appearing in
+    // the words.
+    this.followUp.arm(this.speaker);
     return this.answer(itemId);
   }
 

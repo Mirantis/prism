@@ -106,6 +106,10 @@ class FakeVoiceConversation {
       gateModelCalls: 1,
       attributedUtterances: 3,
       unattributedUtterances: 1,
+      followUpAccepted: 2,
+      followUpClosedBy: { shape: 1, vocative: 0, group: 0, clock: 3, turn: 0 },
+      followUpJudged: 2,
+      followUpDisagreements: 1,
     };
   }
 }
@@ -1274,6 +1278,24 @@ describe('telemetry', () => {
     expect(ended?.[2]).toMatchObject({ attribution_rate: '75' });
   });
 
+  it('reports what the follow-up window did', async () => {
+    await service.join(input);
+    await settle();
+    await service.leave();
+
+    // The closes matter as much as the accepts: they are the only way to tell "the window
+    // is too narrow" from "the drift guards are firing on things they shouldn't".
+    const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
+    expect(ended?.[2]).toMatchObject({
+      followup_accepted: '2',
+      followup_closed_shape: '1',
+      followup_closed_clock: '3',
+      followup_closed_vocative: '0',
+      followup_judged: '2',
+      followup_disagreements: '1',
+    });
+  });
+
   it('reports a zero share for a call nobody spoke to the agent in', async () => {
     // A common outcome. Absent properties would look the same as a build that never
     // emitted them.
@@ -1289,6 +1311,10 @@ describe('telemetry', () => {
       gateModelCalls: 0,
       attributedUtterances: 0,
       unattributedUtterances: 0,
+      followUpAccepted: 0,
+      followUpClosedBy: { shape: 0, vocative: 0, group: 0, clock: 0, turn: 0 },
+      followUpJudged: 0,
+      followUpDisagreements: 0,
     });
 
     await service.join(input);

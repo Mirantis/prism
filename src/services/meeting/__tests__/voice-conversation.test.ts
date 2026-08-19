@@ -584,8 +584,8 @@ describe('answering a spoken name without asking the model', () => {
 /**
  * A speaker reading as the participants panel produces one.
  *
- * The id is present on every one of them because it, not the display name, is what a
- * caller comparing two readings has to use — the name is only ever for people to read.
+ * The id is what the follow-up window compares, so it has to be present and stable
+ * across readings of the same person — the display name is only ever for people to read.
  */
 function reading(name: string, id = `spaces/x/devices/${name.length}`) {
   return { id, name, isSelf: false, isGroup: false };
@@ -679,5 +679,180 @@ describe('knowing who has the floor', () => {
       attributedUtterances: 0,
       unattributedUtterances: 1,
     });
+  });
+});
+
+describe('staying in an exchange after the agent has spoken', () => {
+  /** 24 kHz pcm16 silence, which is what the session hands to playback. */
+  const audioDelta = (ms: number) => ({
+    type: 'response.output_audio.delta',
+    item_id: 'a1',
+    delta: Buffer.alloc(Math.round(24_000 * 2 * (ms / 1000))).toString('base64'),
+  });
+
+  it('answers an unnamed follow-up without a gate call, once its own turn has ended', async () => {
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+    // Made to say no, so an answer can only have come from the window.
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
+
+    // Addressed by name, which arms the window.
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-50',
+      transcript: 'Emma, can you check the deploy?',
+    });
+    await settle();
+
+    // The agent speaks and runs out. The window is measured from here rather than from the
+    // question, because what somebody follows up on is the answer — so without this the
+    // follow-up below is declined.
+    // Past the playback pre-roll, so it actually starts, then long enough for the device to
+    // run dry — which is the moment the room stops hearing the agent.
+    send(audioDelta(120));
+    // The turn is over as far as the server is concerned. Without this the session holds
+    // the next `response.create` back — it defers while one is still open, so the room
+    // hears one reply rather than two spliced together.
+    send({ type: 'response.done', response: { id: 'r1', status: 'completed' } });
+    await new Promise((r) => setTimeout(r, 500));
+
+    const before = sent.filter((e) => e.type === 'response.create').length;
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-51',
+      transcript: 'and can you check staging as well?',
+    });
+    await settle();
+    await settle();
+
+    expect(sent.filter((e) => e.type === 'response.create').length).toBe(before + 1);
+    expect(h.conversation.statistics.followUpAccepted).toBe(1);
+  });
+
+  it('starts the follow-up clock when the speaker starts, not when they stop', async () => {
+    // The test at the seam, and the one that was missing. `follow-up-window.ts` had a unit test
+    // proving it stamps an utterance's start from a partial, and `response-policy.ts` had one
+    // proving the clock uses that stamp — but the conversation passed no words on a partial, so
+    // the window only ever saw finished sentences and the stamp was unreachable. Two live calls
+    // failed on exactly that while both unit tests stayed green. Only a test that drives the
+    // conversation can see it.
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-56',
+      transcript: 'Emma, can you check the deploy?',
+    });
+    await settle();
+    send(audioDelta(120));
+    send({ type: 'response.done', response: { id: 'r1', status: 'completed' } });
+    await new Promise((r) => setTimeout(r, 500));
+
+    const before = sent.filter((e) => e.type === 'response.create').length;
+
+    // The follow-up begins here, well inside the window.
+    send({
+      type: 'conversation.item.input_audio_transcription.delta',
+      item_id: 'item-57',
+      delta: 'so on that deploy, I was wondering whether',
+    });
+    await settle();
+    await settle();
+
+    // ...and takes another twelve seconds to say, which is what live speech is like. Only the
+    // clock is faked: the harness runs a real socket.
+    const later = Date.now() + 12_000;
+    vi.useFakeTimers({ toFake: ['Date'], now: later });
+    try {
+      send({
+        type: 'conversation.item.input_audio_transcription.completed',
+        item_id: 'item-57',
+        transcript: 'can you check whether staging picked it up?',
+      });
+      await settle();
+      await settle();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(sent.filter((e) => e.type === 'response.create').length).toBe(before + 1);
+    expect(h.conversation.statistics.followUpAccepted).toBe(1);
+  });
+
+  it('does not treat a question aimed at a colleague as a follow-up', async () => {
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-52',
+      transcript: 'Emma, can you check the deploy?',
+    });
+    await settle();
+    send(audioDelta(120));
+    send({ type: 'response.done', response: { id: 'r1', status: 'completed' } });
+    await new Promise((r) => setTimeout(r, 500));
+
+    const before = sent.filter((e) => e.type === 'response.create').length;
+    // Same speaker, inside the window, question-shaped — and not for the agent.
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-53',
+      transcript: 'Tom, do you know the default port for MySQL?',
+    });
+    await settle();
+    await settle();
+
+    expect(sent.filter((e) => e.type === 'response.create').length).toBe(before);
+    // Declined, not silenced: the model still got asked, and it is the one that said no.
+    expect(vi.mocked(classifyAddressed)).toHaveBeenCalledWith(
+      expect.objectContaining({ transcript: 'Tom, do you know the default port for MySQL?' }),
+    );
+  });
+});
+
+describe('the follow-up window while the agent is still being heard', () => {
+  const audioDelta = (ms: number) => ({
+    type: 'response.output_audio.delta',
+    item_id: 'a1',
+    delta: Buffer.alloc(Math.round(24_000 * 2 * (ms / 1000))).toString('base64'),
+  });
+
+  it('re-suspends the window when audio resumes after the turn looked finished', async () => {
+    // Measured live. `responseOpen` covers a gap inside one response, but the session fires a
+    // *deferred* response itself on `response.done` without going through `answer()` — so the
+    // clock started at the gap and kept running while she talked for another five seconds, and
+    // the window expired before she stopped. Any audio reaching the room has to suspend it,
+    // whichever path asked for the response.
+    const { h, send } = await speakingHarness();
+    active = h;
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-60',
+      transcript: 'Emma, can you explain that?',
+    });
+    await settle();
+
+    // She speaks, the server says the response is done, and playback drains — so the window
+    // opens.
+    send(audioDelta(120));
+    send({ type: 'response.done', response: { id: 'r1', status: 'completed' } });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(h.conversation.responsePolicy.followUpOpen).toBe(true);
+
+    // Then more audio arrives without a new request, exactly as a deferred response does.
+    send(audioDelta(120));
+    await settle();
+
+    expect(h.conversation.responsePolicy.followUpOpen).toBe(false);
   });
 });

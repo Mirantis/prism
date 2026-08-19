@@ -30,9 +30,11 @@ import { RealtimeSession, type RealtimeSessionOptions } from './realtime-session
 import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { BargeInPolicy } from './barge-in';
 import { ResponsePolicy, type EffectiveMode, type ResponseMode } from './response-policy';
+import type { FollowUpCloseReason } from './follow-up-window';
 import type { SpeakerReading } from './meeting-provider.interface';
 import { classifyAddressed, CLASSIFY_DEADLINE_MS } from './addressed-classifier';
-import { isVocativeAddress } from './vocative';
+import { isVocativeAddress, warmVocativeTagger } from './vocative';
+import { judgeFollowUp } from './follow-up-shadow';
 import { formatKeywords, formatTranscript } from './transcript-log';
 
 /**
@@ -148,6 +150,17 @@ export interface VoiceConversationStats {
    */
   attributedUtterances: number;
   unattributedUtterances: number;
+  /** Utterances answered as a continuation of an exchange, with no model call. */
+  followUpAccepted: number;
+  /** Why exchanges ended — see `follow-up-window.ts` for what each reason means. */
+  followUpClosedBy: Record<FollowUpCloseReason, number>;
+  /**
+   * Accepted follow-ups a model was able to judge afterwards, and how many it disagreed
+   * with. Their ratio is the window's false-positive rate — measured rather than assumed,
+   * and without the room ever waiting for it. See `follow-up-shadow.ts`.
+   */
+  followUpJudged: number;
+  followUpDisagreements: number;
 }
 
 export class VoiceConversation {
@@ -164,6 +177,17 @@ export class VoiceConversation {
   private gateModelCalls = 0;
   private attributedUtterances = 0;
   private unattributedUtterances = 0;
+  private followUpJudged = 0;
+  private followUpDisagreements = 0;
+  /**
+   * Whether the model is part-way through a turn.
+   *
+   * The playback queue empties during a turn as well as at the end of one — a response that
+   * speaks a preamble, calls a slow tool and then answers drains in the gap — so "the device
+   * ran dry" is not by itself "the agent has finished". Without this the follow-up window
+   * would open against the preamble and start its clock in the middle of an answer.
+   */
+  private responseOpen = false;
   /**
    * The last speaker Meet showed, and when it was read.
    *
@@ -255,9 +279,20 @@ export class VoiceConversation {
     // Mirrors what `RealtimeSession` seeds at connect time.
     this.keywords = [options.agentName];
 
-    this.responsePolicy = new ResponsePolicy({ mode: options.responseMode });
+    this.responsePolicy = new ResponsePolicy({
+      mode: options.responseMode,
+      agentName: options.agentName,
+      followUpWindowMs: config.meetingFollowUpWindowMs,
+    });
 
     this.playback = new AudioPlayback(options.sink);
+    // The room has stopped hearing the agent, which is when a follow-up window starts
+    // running. Measured from the answer rather than from the request, because what
+    // somebody follows up on is the answer.
+    this.playback.onDrained = () => {
+      if (this.responseOpen) return;
+      this.responsePolicy.onAgentTurnEnded();
+    };
 
     this.bargeIn = new BargeInPolicy({
       pausePlayback: () => this.playback.pause(),
@@ -271,6 +306,10 @@ export class VoiceConversation {
         const items = this.playback.flush();
         this.session.interrupt(items);
         this.interruptions += 1;
+        // Being cut off ends the turn too, and somebody who interrupts is plainly still in
+        // the exchange. Reported here rather than by the playback, because only this path
+        // knows a human took the floor instead of the speech running out.
+        this.responsePolicy.onAgentTurnEnded();
         const heard = items.reduce((n, i) => n + i.playedMs, 0);
         logger.info(
           `[Meeting] Yielded the floor after ${Math.round(heard)}ms of speech ` +
@@ -304,6 +343,15 @@ export class VoiceConversation {
         );
       }
 
+      // The room is hearing the agent, so no follow-up window may be running — whatever
+      // asked for this response. The `responseOpen` flag below covers a gap *within* one
+      // response, but the session fires a *deferred* response itself on `response.done`,
+      // without going through `answer()`: measured live, that let the clock start at the gap
+      // and keep running while she talked for another five seconds, so the window expired
+      // before she had finished speaking. Enforced here because this is the one place every
+      // path converges — audio reaching the room.
+      this.responsePolicy.onAgentTurnStarted();
+
       if (itemId && itemId !== this.currentItemId) {
         // A new utterance begins: settle any undecided pause first so stale
         // audio can't be spliced onto the front of the new one.
@@ -324,6 +372,11 @@ export class VoiceConversation {
 
     this.session.on('responseDone', () => {
       this.responses += 1;
+      // The model has finished generating. The room may still be hearing the tail of it, so
+      // the turn is over only once playback drains too — which is what `onDrained` reports,
+      // and why it checks this flag rather than assuming an empty queue means the end.
+      this.responseOpen = false;
+      if (!this.playback.isSpeaking) this.responsePolicy.onAgentTurnEnded();
       // The measurement belongs to one response. Left set, a response that ends
       // without ever producing audio — cancelled by a barge-in, killed by an API
       // error — would hand its marker to whatever spoke next, including the
@@ -371,7 +424,13 @@ export class VoiceConversation {
       if (seen && (seen.looks >= MAX_EARLY_VERDICTS || chars - seen.chars < EARLY_VERDICT_GROWTH_CHARS)) {
         return;
       }
-      if (this.responsePolicy.onTranscript(itemId, 'partial') !== 'classify') return;
+      // The words *are* passed on a partial, and only so the follow-up window can note when
+      // this person started talking. What it judges is unchanged — it accepts and drift-closes
+      // on finished sentences only, enforced inside `consider` — but its clock has to start
+      // when the speaking did. Withholding them here made that unreachable: the window saw
+      // nothing but finals, so a follow-up's clock began at the moment its last word landed,
+      // and a long question timed out on its own length. Two live calls, two failures.
+      if (this.responsePolicy.onTranscript(itemId, 'partial', textSoFar) !== 'classify') return;
       this.earlyJudged.set(itemId, { chars, looks: (seen?.looks ?? 0) + 1 });
       if (this.earlyJudged.size > EARLY_JUDGED_LIMIT) {
         this.earlyJudged.delete(this.earlyJudged.keys().next().value as string);
@@ -382,17 +441,17 @@ export class VoiceConversation {
     this.session.on('transcript', (itemId, text) => {
       this.earlyJudged.delete(itemId);
       this.remember(this.finalizedItems, itemId);
-      // Counted on the finished transcript rather than at the turn boundary: this measures
-      // whether the scrape is working, and an utterance that produced no words says nothing
-      // either way about whether attribution works.
+      // Counted on the finished transcript rather than at the turn boundary: an utterance
+      // that produced no words says nothing either way about whether attribution works.
       //
-      // Against `currentSpeaker`, so this asks the question that matters — could this
-      // utterance be tied to a person? An earlier version counted any reading at all,
-      // including the agent's own voice, on the reasoning that the scrape had plainly
-      // worked. That can read 100% while nothing is attributable to anybody in the room,
-      // which is the one failure this number exists to catch. A rate that sags while the
-      // agent is being talked over is the honest reading: in those moments attribution
-      // genuinely is not available.
+      // Against `currentSpeaker`, so this asks the question the follow-up window asks —
+      // could this utterance be tied to a person? An earlier version counted any reading at
+      // all, including the agent's own voice, on the reasoning that the scrape had plainly
+      // worked. It read 100% through a whole call in which no exchange could arm, because
+      // merged audio was naming a group that matched nobody: the one number watching this
+      // feature was blind to its only real failure. A rate that sags while the agent is
+      // being talked over is the correct reading — in those moments attribution
+      // is not available.
       if (this.currentSpeaker !== null) this.attributedUtterances += 1;
       else this.unattributedUtterances += 1;
       // The finished transcript is proof the utterance is over, so an answer still
@@ -404,9 +463,13 @@ export class VoiceConversation {
         this.answer('early-verdict-late-commit');
         return;
       }
-      const decision = this.responsePolicy.onTranscript(itemId);
+      const decision = this.responsePolicy.onTranscript(itemId, 'final', text);
       if (decision === 'respond') {
-        this.answer('transcript');
+        this.answer('follow-up');
+        // Answered already; this only measures whether answering was right. Deliberately not
+        // awaited — the room has its reply, and the window cannot supply ground truth about
+        // itself.
+        void this.judgeFollowUpAfterTheFact(text);
         return;
       }
       if (decision === 'classify') void this.classifyThenMaybeRespond(itemId, text, 'final');
@@ -520,6 +583,30 @@ export class VoiceConversation {
   }
 
   /**
+   * Check an answered follow-up against a model, after the fact.
+   *
+   * Every accepted follow-up reaches this, because the window only ever accepts a finished
+   * transcript — so the measurement covers the whole population rather than the safer half
+   * of it.
+   */
+  private async judgeFollowUpAfterTheFact(transcript: string): Promise<void> {
+    if (!config.meetingFollowUpShadowJudge) return;
+    const verdict = await judgeFollowUp({ transcript, agentName: this.options.agentName });
+    if (this.stopped || verdict === null) return;
+    this.followUpJudged += 1;
+    if (verdict === 'moved_on') {
+      this.followUpDisagreements += 1;
+      // Worth a line of its own: this is the agent having answered something it should have
+      // stayed out of, which is the failure the whole window is designed around. The
+      // sentence itself rides the transcript switch, as everywhere else.
+      logger.info(
+        `[Meeting:FollowUp] a model reading the same sentence afterwards says the speaker had ` +
+          `moved on ${formatTranscript(transcript)}`.trimEnd(),
+      );
+    }
+  }
+
+  /**
    * Add to a bounded set of item ids.
    *
    * Turns are short-lived and a call can run for an hour, so these sets are caches
@@ -556,9 +643,14 @@ export class VoiceConversation {
         (waited === null ? '' : ` — room waited ${waited}ms since the speaker stopped`),
     );
     this.pendingAnswer = { at: Date.now(), via };
-    // Pinned for the turn before the request goes out. Asked later, the meters would answer
-    // about whoever is talking now — which during a long answer is nobody, and during an
-    // interruption is somebody else.
+    // A turn is starting, so nothing said over it is a follow-up *to* it. Marked before the
+    // request goes out rather than when audio arrives: the model takes its own time to
+    // start, and the gap between asking and hearing is exactly when somebody says "yeah".
+    this.responseOpen = true;
+    this.responsePolicy.onAgentTurnStarted();
+    // Pinned for the turn before the request goes out. Asked later, the meters would
+    // answer about whoever is talking now — which during a long answer is nobody, and
+    // during an interruption is somebody else.
     this.answering = this.currentSpeaker;
     this.session.requestResponse();
   }
@@ -571,6 +663,10 @@ export class VoiceConversation {
 
   /** Open the Realtime session. Throws if the connection or auth fails. */
   async start(): Promise<void> {
+    // Loaded here rather than on first use so the follow-up window's drift tests, which
+    // have to answer synchronously, can answer from the first utterance of the call —
+    // which is exactly when the first exchange happens. ~58ms, once per process.
+    await warmVocativeTagger();
     await this.session.connect();
   }
 
@@ -613,12 +709,17 @@ export class VoiceConversation {
    * `null` means "could not tell", which covers the panel not being open, nobody talking,
    * two people talking at once, and the read having failed. All of them leave the last
    * known speaker in place to age out rather than clearing it: a read that failed is not
-   * evidence that the person who was talking has stopped, and a moment of quiet is usually
-   * a pause.
+   * evidence that the person who was talking has stopped, and a moment of quiet is
+   * usually a pause. Nothing here changes how the agent behaves — the reading is
+   * recorded, and what reads it decides what it is worth.
    */
   setCurrentSpeaker(reading: SpeakerReading | null): void {
-    if (this.stopped || reading === null) return;
-    this.speaker = { reading, at: Date.now() };
+    if (this.stopped) return;
+    if (reading !== null) this.speaker = { reading, at: Date.now() };
+    // The policy is given the platform's *identity* rather than the display name, because
+    // the only question it asks of it is "the same person as before?" — and two people can
+    // share a name, while a name can change mid-call.
+    this.responsePolicy.setCurrentSpeaker(this.currentSpeaker?.id ?? null);
   }
 
   /**
@@ -627,14 +728,22 @@ export class VoiceConversation {
    * Null for all three of "nobody has been identified", "the reading is too old to
    * believe" and "that was the agent's own voice". A caller wanting the agent's own turns
    * wants `AudioPlayback`, which knows for certain rather than by scrape.
-   *
-   * The whole reading rather than the name, because a name cannot say whether it belongs
-   * to a person or to a room full of them sharing one microphone.
    */
   get currentSpeaker(): SpeakerReading | null {
     if (!this.hasSpeakerReading) return null;
     const reading = this.speaker?.reading ?? null;
     return reading?.isSelf === true ? null : reading;
+  }
+
+  /**
+   * Whether the last reading is recent enough to act on, whoever it named.
+   *
+   * Separate from `currentSpeaker` because staleness and identity are different
+   * questions, and only this one is about the clock.
+   */
+  private get hasSpeakerReading(): boolean {
+    if (this.speaker === null) return false;
+    return Date.now() - this.speaker.at <= SPEAKER_FRESHNESS_MS;
   }
 
   /**
@@ -651,17 +760,6 @@ export class VoiceConversation {
   /** The other people the platform last listed. Empty until the first read. */
   get roster(): readonly string[] {
     return this.lastRoster;
-  }
-
-  /**
-   * Whether the last reading is recent enough to act on, whoever it named.
-   *
-   * Separate from `currentSpeaker` because staleness and identity are different questions,
-   * and only this one is about the clock.
-   */
-  private get hasSpeakerReading(): boolean {
-    if (this.speaker === null) return false;
-    return Date.now() - this.speaker.at <= SPEAKER_FRESHNESS_MS;
   }
 
   /**
@@ -692,6 +790,11 @@ export class VoiceConversation {
    */
   setParticipantNames(names: string[]): void {
     if (this.stopped) return;
+
+    // Also the set of names a vocative could be aimed at. Fed to the policy rather than read
+    // from it, so the follow-up window's drift guard can recognise a name the transcriber
+    // lower-cased — which the tagger reads as a common noun, and so cannot see on its own.
+    this.responsePolicy.setRoster(names);
     this.lastRoster = names;
 
     // Sorted before anything else is derived from it. Meet reorders participant
@@ -764,6 +867,10 @@ export class VoiceConversation {
       gateModelCalls: this.gateModelCalls,
       attributedUtterances: this.attributedUtterances,
       unattributedUtterances: this.unattributedUtterances,
+      followUpAccepted: policy.followUp.accepted,
+      followUpClosedBy: policy.followUp.closedBy,
+      followUpJudged: this.followUpJudged,
+      followUpDisagreements: this.followUpDisagreements,
     };
   }
 

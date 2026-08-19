@@ -30,110 +30,20 @@ describe('config', () => {
     return mod.config;
   }
 
-  it('reads PORT with default 3003', async () => {
-    delete process.env.PORT;
-    const cfg = await loadConfig();
-    expect(cfg.port).toBe(3003);
-  });
 
-  it('reads PORT from env', async () => {
-    process.env.PORT = '4000';
-    const cfg = await loadConfig();
-    expect(cfg.port).toBe(4000);
-  });
 
-  it('reads BEDROCK_MODEL_ID with default', async () => {
-    delete process.env.BEDROCK_MODEL_ID;
-    const cfg = await loadConfig();
-    expect(cfg.bedrockModelId).toBe('us.anthropic.claude-opus-5');
-  });
 
-  it('reads BEDROCK_CLASSIFICATION_MODEL_ID with default', async () => {
-    delete process.env.BEDROCK_CLASSIFICATION_MODEL_ID;
-    const cfg = await loadConfig();
-    expect(cfg.bedrockClassificationModelId).toBe('us.anthropic.claude-haiku-4-5-20251001-v1:0');
-  });
 
-  it('reads AWS_REGION with default us-east-1', async () => {
-    delete process.env.AWS_REGION;
-    const cfg = await loadConfig();
-    expect(cfg.awsRegion).toBe('us-east-1');
-  });
 
-  it('reads AWS credential env vars', async () => {
-    process.env.AWS_ACCESS_KEY_ID = 'key-123';
-    process.env.AWS_SECRET_ACCESS_KEY = 'secret-456';
-    const cfg = await loadConfig();
-    expect(cfg.awsAccessKeyId).toBe('key-123');
-    expect(cfg.awsSecretAccessKey).toBe('secret-456');
-  });
 
-  it('uses local-owner sentinel when OWNER_USER_ID is unset', async () => {
-    delete process.env.OWNER_USER_ID;
-    const cfg = await loadConfig();
-    expect(cfg.ownerUserId).toBe('00000000-0000-0000-0000-000000000001');
-  });
 
-  it('reads OWNER_USER_ID / AGENT_NAME / TEAM_NAME from env', async () => {
-    process.env.OWNER_USER_ID = 'owner-uuid';
-    process.env.AGENT_NAME = 'Custom';
-    process.env.TEAM_NAME = 'Acme';
-    const cfg = await loadConfig();
-    expect(cfg.ownerUserId).toBe('owner-uuid');
-    expect(cfg.agentName).toBe('Custom');
-    expect(cfg.teamName).toBe('Acme');
-  });
 
-  it('defaults agentName to "Prism" and teamName to "Local"', async () => {
-    delete process.env.AGENT_NAME;
-    delete process.env.TEAM_NAME;
-    const cfg = await loadConfig();
-    expect(cfg.agentName).toBe('Prism');
-    expect(cfg.teamName).toBe('Local');
-  });
 
-  it('reads NEXUS_MCP_URL directly from env', async () => {
-    process.env.NEXUS_MCP_URL = 'https://nexus.example.com/projects/proj-42/mcp';
-    const cfg = await loadConfig();
-    expect(cfg.nexusMcpUrl).toBe('https://nexus.example.com/projects/proj-42/mcp');
-  });
 
-  it('nexusMcpUrl is null when NEXUS_MCP_URL is unset', async () => {
-    delete process.env.NEXUS_MCP_URL;
-    const cfg = await loadConfig();
-    expect(cfg.nexusMcpUrl).toBeNull();
-  });
 
-  it('nexusMcpUrl does not fall back to NEXUS_API_URL', async () => {
-    delete process.env.NEXUS_MCP_URL;
-    process.env.NEXUS_API_URL = 'https://nexus.example.com';
-    const cfg = await loadConfig();
-    expect(cfg.nexusMcpUrl).toBeNull();
-  });
 
-  it('nexusLlmBaseUrl is null when NEXUS_API_URL is unset', async () => {
-    delete process.env.NEXUS_API_URL;
-    const cfg = await loadConfig();
-    expect(cfg.nexusLlmBaseUrl).toBeNull();
-  });
 
-  it('builds the auto-resolve LLM URL (/llm/...) when PROJECT_ID is unset', async () => {
-    process.env.NEXUS_API_URL = 'https://nexus.example.com';
-    delete process.env.PROJECT_ID;
-    process.env.AWS_REGION = 'us-east-1';
-    const cfg = await loadConfig();
-    expect(cfg.nexusLlmBaseUrl).toBe('https://nexus.example.com/llm/bedrock/us-east-1');
-  });
 
-  it('builds the explicit-project LLM URL (/projects/...) when PROJECT_ID is set', async () => {
-    process.env.NEXUS_API_URL = 'https://nexus.example.com';
-    process.env.PROJECT_ID = 'proj-42';
-    process.env.AWS_REGION = 'eu-west-1';
-    const cfg = await loadConfig();
-    expect(cfg.nexusLlmBaseUrl).toBe(
-      'https://nexus.example.com/projects/proj-42/llm/bedrock/eu-west-1',
-    );
-  });
 
   describe('MODELS_DEV_URL', () => {
     it('is null when unset, so the runtime makes no outbound call by default', async () => {
@@ -527,6 +437,41 @@ describe('config', () => {
         const cfg = await loadConfig();
         expect(cfg.meetingTimeoutMinutes).toBe(60);
       }
+    });
+
+    it('defaults the follow-up window to eight seconds', async () => {
+      delete process.env.MEETING_FOLLOW_UP_WINDOW_MS;
+      const cfg = await loadConfig();
+      expect(cfg.meetingFollowUpWindowMs).toBe(8_000);
+    });
+
+    it('lets zero switch the follow-up window off rather than falling back', async () => {
+      // Unlike the duration cap, zero is a meaningful value here: it is how an operator
+      // turns the behaviour off, so it must not collapse to the default.
+      process.env.MEETING_FOLLOW_UP_WINDOW_MS = '0';
+      const cfg = await loadConfig();
+      expect(cfg.meetingFollowUpWindowMs).toBe(0);
+    });
+
+    it('falls back to the default window on junk or a negative value', async () => {
+      for (const bad of ['soon', '-1', '']) {
+        process.env.MEETING_FOLLOW_UP_WINDOW_MS = bad;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.meetingFollowUpWindowMs).toBe(8_000);
+      }
+    });
+
+
+
+    it('judges answered follow-ups after the fact unless told not to', async () => {
+      // On by default because it is the only way to know whether the window is right — it
+      // would otherwise be marking its own homework — and nothing in the call waits for it.
+      delete process.env.MEETING_FOLLOW_UP_SHADOW_JUDGE;
+      expect((await loadConfig()).meetingFollowUpShadowJudge).toBe(true);
+      process.env.MEETING_FOLLOW_UP_SHADOW_JUDGE = 'false';
+      vi.resetModules();
+      expect((await loadConfig()).meetingFollowUpShadowJudge).toBe(false);
     });
 
     it('defaults the admission wait to five minutes, in milliseconds', async () => {

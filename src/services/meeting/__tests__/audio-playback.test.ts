@@ -235,3 +235,67 @@ describe('AudioPlayback', () => {
     expect(s.totalMs()).toBe(0);
   });
 });
+
+describe('reporting when the room has stopped hearing the agent', () => {
+  /** 48 kHz pcm16 silence — what the conversation hands over after upsampling. */
+  const pcm = (ms: number) => Buffer.alloc(Math.round(48_000 * 2 * (ms / 1000)));
+
+  it('fires once the device has actually run dry, not when the queue empties', async () => {
+    // There is no event for this. `isSpeaking` is a getter over a queue and a clock, and the
+    // tick stops the moment the queue is empty — so the instant the room stops hearing the
+    // agent was previously knowable only by polling for it all call.
+    const sink = { write: () => true };
+    const playback = new AudioPlayback(sink);
+    const drained: number[] = [];
+    playback.onDrained = () => drained.push(Date.now());
+
+    playback.enqueue(pcm(120), 'a1');
+    expect(drained).toHaveLength(0);
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(drained).toHaveLength(1);
+    expect(playback.isSpeaking).toBe(false);
+    playback.dispose();
+  });
+
+  it('does not fire in the gap between two fragments of one response', async () => {
+    // A response arrives as many fragments, and each gap empties the queue. Reporting the
+    // turn as over there would open a follow-up window in the middle of an answer.
+    const playback = new AudioPlayback({ write: () => true });
+    let drains = 0;
+    playback.onDrained = () => {
+      drains += 1;
+    };
+
+    playback.enqueue(pcm(120), 'a1');
+    await new Promise((r) => setTimeout(r, 60));
+    playback.enqueue(pcm(120), 'a1');
+    await new Promise((r) => setTimeout(r, 60));
+
+    expect(drains).toBe(0);
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(drains).toBe(1);
+    playback.dispose();
+  });
+
+  it('says nothing more after an interruption or a teardown', async () => {
+    // The barge-in path reports the turn as over itself, because it knows the part this
+    // object cannot: that a human took the floor rather than the speech running out.
+    const playback = new AudioPlayback({ write: () => true });
+    let drains = 0;
+    playback.onDrained = () => {
+      drains += 1;
+    };
+
+    playback.enqueue(pcm(120), 'a1');
+    await new Promise((r) => setTimeout(r, 60));
+    playback.flush();
+    await new Promise((r) => setTimeout(r, 400));
+
+    expect(drains).toBe(0);
+    playback.dispose();
+  });
+});

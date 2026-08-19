@@ -142,7 +142,7 @@ export interface SpeakerReport {
   /**
    * Who said the utterance the agent is answering.
    *
-   * The field worth having. It is pinned when the response is requested and held for the
+   * This is the field that answers "who asked me this?". It is pinned when the response is requested and held for the
    * turn, so it still answers "who asked me this?" once the agent has been talking for
    * ten seconds and the meters have long since gone still.
    */
@@ -807,7 +807,7 @@ export class MeetingBotService {
    * Held in one place because it happens at either of two moments: on admission when
    * the microphone came up with the call, or later, the first time a mid-call retry
    * gets it live. A room that could not hear the greeting was never greeted, so
-   * deferring it to the moment somebody can hear it is the honest reading of "so the
+   * deferring it to the moment somebody can hear it is the correct reading of "so the
    * room isn't joined by a silent participant".
    */
   private greetTheRoom(displayName: string): void {
@@ -1159,6 +1159,21 @@ export class MeetingBotService {
         // anonymously — so this rate falling between releases is the only signal that
         // Google has moved something.
         attribution_rate: String(attributionRate(stats)),
+        // What the follow-up window did. `followup_accepted` is answers given without a
+        // model call because the exchange was still running; the closes say why exchanges
+        // ended, which is the only way to tell "the window is too narrow" from "the drift
+        // guards are firing on things they shouldn't".
+        followup_accepted: String(stats?.followUpAccepted ?? 0),
+        followup_closed_shape: String(stats?.followUpClosedBy?.shape ?? 0),
+        followup_closed_vocative: String(stats?.followUpClosedBy?.vocative ?? 0),
+        followup_closed_group: String(stats?.followUpClosedBy?.group ?? 0),
+        followup_closed_clock: String(stats?.followUpClosedBy?.clock ?? 0),
+        // The window's false-positive rate, which the ticket asks for and the window
+        // cannot supply about itself. `judged` is the denominator rather than
+        // `followup_accepted`, so a run of failed judge calls reads as a smaller sample
+        // instead of as a better rate.
+        followup_judged: String(stats?.followUpJudged ?? 0),
+        followup_disagreements: String(stats?.followUpDisagreements ?? 0),
       });
     }
 

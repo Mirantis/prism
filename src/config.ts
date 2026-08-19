@@ -360,6 +360,24 @@ const rawAdmissionTimeout = parseInt(process.env.MEETING_ADMISSION_TIMEOUT_SECON
 const meetingAdmissionTimeoutMs =
   (Number.isFinite(rawAdmissionTimeout) && rawAdmissionTimeout > 0 ? rawAdmissionTimeout : 300) * 1000;
 
+// How long after the agent's own turn ends a follow-up still counts as part of the
+// same exchange, so the speaker need not say the name again. Zero switches the
+// whole behaviour off; junk falls back to the default.
+//
+// Eight seconds rather than the twelve a first reading suggested. Those readings
+// came from a version of the window with no drift guards at all, which answered
+// three of five utterances aimed at other people — so the late candidates that
+// argued for a wider window were probably the false accepts themselves. The
+// accepted-follow-up distribution is also censored at the window by construction,
+// so it cannot be used to justify its own width. Half the genuine follow-ups
+// observed arrived inside 6.2s, and the width matters much less now that the
+// window closes on the conversation moving on rather than only on the clock.
+const rawFollowUpWindow = parseInt(process.env.MEETING_FOLLOW_UP_WINDOW_MS ?? '', 10);
+const meetingFollowUpWindowMs =
+  Number.isFinite(rawFollowUpWindow) && rawFollowUpWindow >= 0 ? rawFollowUpWindow : 8_000;
+
+const meetingFollowUpShadowJudge = process.env.MEETING_FOLLOW_UP_SHADOW_JUDGE !== 'false';
+
 // Parsed defensively: `parseInt` yields NaN for junk, and a zero/negative window
 // would make the context indicator divide by nothing, so both collapse to null
 // (= fall through to the bundled snapshot).
@@ -591,4 +609,6 @@ export const config = {
   googleBotPassword,
   meetingTimeoutMinutes,
   meetingAdmissionTimeoutMs,
+  meetingFollowUpWindowMs,
+  meetingFollowUpShadowJudge,
 };

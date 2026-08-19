@@ -108,6 +108,22 @@ export class AudioPlayback {
   /** Item of the most recently written chunk — the one currently audible. */
   private writingItem: string | null = null;
 
+  /**
+   * Called when the room has stopped hearing the agent.
+   *
+   * A callback rather than a poll because there is nothing to poll: `isSpeaking` is a
+   * getter over a queue and a clock, and `tick()` stops the timer the moment the queue
+   * empties — so the instant the *device* finishes draining has no event of its own.
+   * Whoever wants to know when the agent's turn ended would otherwise have to run a timer
+   * of their own for the whole call to catch a moment this object already knows about.
+   *
+   * Fires only for speech that ran out on its own. An interruption is reported by whoever
+   * commits it, which knows something this object does not: that a human took the floor.
+   */
+  onDrained: (() => void) | null = null;
+  /** Fires `onDrained` once the audio already handed to the device has been heard. */
+  private drainTimer: NodeJS.Timeout | null = null;
+
   constructor(private readonly sink: PlaybackSink) {}
 
   /**
@@ -123,6 +139,9 @@ export class AudioPlayback {
    * item.
    */
   enqueue(pcm48k: Buffer, itemId: string): void {
+    // More speech on the way, so the turn has not ended after all. A response arrives as
+    // many fragments with gaps between them, and each gap empties the queue.
+    this.cancelDrainWatch();
     if (this.disposed || pcm48k.length === 0) return;
     this.queue.push({ itemId, chunk: pcm48k });
     this.queuedBytes += pcm48k.length;
@@ -179,6 +198,9 @@ export class AudioPlayback {
     this.writtenMsByItem.clear();
     this.writingItem = null;
     this.stopTimer();
+    // Whoever commits the interrupt reports the turn as over, and it knows the part this
+    // object cannot: that a human took the floor rather than the speech running out.
+    this.cancelDrainWatch();
     return items;
   }
 
@@ -217,6 +239,33 @@ export class AudioPlayback {
     this.tick();
   }
 
+  /**
+   * Wait out what the device has left, then report the turn as over.
+   *
+   * A one-shot timer rather than keeping the tick running: the queue is empty, so there is
+   * nothing to do until the audio already written has been heard, and that moment is
+   * arithmetic rather than something to watch for. Re-checks `isSpeaking` on the way out
+   * because more speech may have arrived in the meantime — `enqueue` cancels this, but the
+   * check costs nothing and makes the ordering irrelevant.
+   */
+  private watchForDrain(): void {
+    if (this.disposed || this.onDrained === null) return;
+    this.cancelDrainWatch();
+    this.drainTimer = setTimeout(() => {
+      this.drainTimer = null;
+      if (this.disposed || this.isSpeaking) return;
+      this.onDrained?.();
+    }, this.outstandingMs + TICK_MS);
+    this.drainTimer.unref?.();
+  }
+
+  private cancelDrainWatch(): void {
+    if (this.drainTimer) {
+      clearTimeout(this.drainTimer);
+      this.drainTimer = null;
+    }
+  }
+
   private stopTimer(): void {
     if (this.timer) {
       clearInterval(this.timer);
@@ -230,6 +279,7 @@ export class AudioPlayback {
       // Nothing left to hand over. Keep the clock so `outstandingMs` stays honest
       // while the device drains, but stop spinning the timer.
       this.stopTimer();
+      this.watchForDrain();
       return;
     }
 
@@ -302,5 +352,6 @@ export class AudioPlayback {
     this.queue = [];
     this.queuedBytes = 0;
     this.stopTimer();
+    this.cancelDrainWatch();
   }
 }
