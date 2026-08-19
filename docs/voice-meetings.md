@@ -106,6 +106,20 @@ browser rather than the proxy. The runtime adds `127.0.0.1`, `localhost` and `::
 deployment, include the literal `127.0.0.1` rather than only `localhost`, since the
 match is on the URL host and no name resolution happens.
 
+**If the proxy intercepts TLS, the container hands Chromium the CA itself.** A Lens
+sandbox terminates TLS at its boundary proxy and makes that trustworthy by appending
+its CAs to the system bundle and pointing `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` and
+friends at it. Chromium honours none of that — it carries its own root store, never
+reads the system bundle on Linux, and has no CA-path environment variable, so left
+alone every join dies on `ERR_CERT_AUTHORITY_INVALID`. This used to be a manual
+drop-in; `start.sh` now writes the sandbox's CAs to
+`/etc/chromium/policies/managed/lens-ca.json` (and the `/etc/opt/chrome` equivalent)
+as a `CACertificates` policy on every start, because one of those CAs is generated
+fresh inside the sandbox each time. Outside a sandbox nothing is written and nothing
+changes. To confirm it took effect, look under **Local certificates** in
+`chrome://certificate-manager` rather than `chrome://policy` — a malformed entry in
+this policy is dropped silently and the policy page still reports it as set.
+
 ### Why the agent needs its own Google account
 
 **Google auto-denies automated anonymous guests.** Asking to join without signing in
