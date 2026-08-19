@@ -110,7 +110,7 @@ match is on the URL host and no name resolution happens.
 sandbox terminates TLS at its boundary proxy and makes that trustworthy by appending
 its CAs to the system bundle and pointing `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` and
 friends at it. Chromium ignores all of that, so `start.sh` writes the sandbox's CAs to
-`/etc/chromium/policies/managed/lens-ca.json` (and the `/etc/opt/chrome` equivalent)
+`/etc/chromium/policies/managed/prism-ca.json` (and the `/etc/opt/chrome` equivalent)
 as a `CACertificates` policy on every start, because one of those CAs is generated
 fresh inside the sandbox each time. Outside a sandbox nothing is written and nothing
 changes.
