@@ -2,7 +2,7 @@
  * OpenAI Provider Tests — the official OpenAI API
  *
  * One surface: chat, classification and embeddings all dispatch through the
- * same @ai-sdk/openai client, direct or through the Nexus openai mount.
+ * same @ai-sdk/openai client, direct or through the Lens Agents openai mount.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -47,17 +47,17 @@ describe('createOpenAiProvider', () => {
     );
   });
 
-  it('Nexus routing: the mount wins over OPENAI_BASE_URL', () => {
+  it('Gateway routing: the mount wins over OPENAI_BASE_URL', () => {
     config.openaiBaseUrl = 'https://gw.example/openai/v1';
-    createOpenAiProvider('https://nexus.example/llm/openai/v1');
+    createOpenAiProvider('https://gateway.example/llm/openai/v1');
     expect(mockCreateOpenAI).toHaveBeenCalledWith(
-      expect.objectContaining({ baseURL: 'https://nexus.example/llm/openai/v1' }),
+      expect.objectContaining({ baseURL: 'https://gateway.example/llm/openai/v1' }),
     );
   });
 
-  it('Nexus routing without a local key: falls back to a decoy apiKey (gateway injects the real one)', () => {
+  it('Gateway routing without a local key: falls back to a decoy apiKey (gateway injects the real one)', () => {
     config.openaiApiKey = undefined;
-    createOpenAiProvider('https://nexus.example/llm/openai/v1');
+    createOpenAiProvider('https://gateway.example/llm/openai/v1');
     expect(mockCreateOpenAI).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: 'nexus-managed' }),
     );
@@ -125,9 +125,9 @@ describe('isOpenAiConfigured', () => {
     expect(isOpenAiConfigured()).toBe(true);
   });
 
-  it('true with model + nexus mount and NO key (gateway holds the key)', () => {
+  it('true with model + gateway mount and NO key (gateway holds the key)', () => {
     config.openaiApiKey = undefined;
-    config.nexusOpenAiBaseUrl = 'https://nexus.example/llm/openai/v1';
+    config.nexusOpenAiBaseUrl = 'https://gateway.example/llm/openai/v1';
     expect(isOpenAiConfigured()).toBe(true);
   });
 
@@ -136,7 +136,7 @@ describe('isOpenAiConfigured', () => {
     expect(isOpenAiConfigured()).toBe(true);
   });
 
-  it('false without a key when there is no nexus mount', () => {
+  it('false without a key when there is no gateway mount', () => {
     config.openaiApiKey = undefined;
     expect(isOpenAiConfigured()).toBe(false);
   });

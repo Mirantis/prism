@@ -1,6 +1,6 @@
 /**
- * Workspace path helpers, ported from
- * `nexus-monorepo/crates/nexus-shell-sandbox/src/workspace.rs`.
+ * Workspace path helpers, ported from the upstream Lens Agents shell
+ * sandbox.
  *
  * - `resolvePath` turns a tool-supplied path into an absolute path.
  *   Relative paths are resolved from the workspace root; absolute

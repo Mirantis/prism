@@ -178,9 +178,10 @@ share it accordingly.
 
 The meeting tools themselves only exist when the runtime can actually host a call: the
 container image's browser/audio toolchain plus `OPENAI_API_KEY` (which a
-direct-mode `LLM_PROVIDER=openai` deployment already carries — a Nexus-routed
-one can run keyless, and then has no meeting tools). They're also
-chat-only — a heartbeat or scheduled run can't dial into a meeting on its own.
+direct-mode `LLM_PROVIDER=openai` deployment already carries — one routed
+through the Lens Agents gateway can run keyless, and then has no meeting tools).
+They're also chat-only — a heartbeat or scheduled run can't dial into a meeting
+on its own.
 
 ## External tools (MCP)
 

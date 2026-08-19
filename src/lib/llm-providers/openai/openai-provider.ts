@@ -8,18 +8,18 @@
  * override or gateway — must serve `/responses`, not just
  * `/chat/completions`.
  *
- * Routing: a `baseURL` argument (the Nexus OpenAI mount, computed from
- * `NEXUS_API_URL` as `…/llm/openai/v1`; nexus-monorepo#483) routes everything
+ * Routing: a `baseURL` argument (the Lens Agents OpenAI mount, computed from
+ * `NEXUS_API_URL` as `…/llm/openai/v1`) routes everything
  * through the gateway, which appends the client path to its configured OpenAI
  * root and injects the API key on the outbound leg; unset → direct to
  * api.openai.com (or `OPENAI_BASE_URL`). The one OpenAI call that never rides
- * Nexus is the voice-meeting Realtime WebSocket — the mount routes POST only —
- * which stays pinned in `services/meeting/openai-endpoint.ts`.
+ * the gateway is the voice-meeting Realtime WebSocket — the mount routes POST
+ * only — which stays pinned in `services/meeting/openai-endpoint.ts`.
  *
  * Auth: the same `OPENAI_API_KEY` the voice-meeting stack uses, sent as a
  * bearer header. It may be a `__nexus_cred:<uuid>__` sentinel the MITM proxy
  * rewrites on the wire — read verbatim, never trimmed or validated. Through
- * Nexus no local key is needed (the gateway holds its own), but the SDK
+ * the gateway no local key is needed (it holds its own), but the SDK
  * insists on one, so fall back to a decoy like the Azure/mantle factories do.
  *
  * Prompt caching is automatic on OpenAI — no breakpoint concept — so this
@@ -49,7 +49,7 @@ import { NO_CACHE_POINT, type LlmProvider } from '../llm-provider';
 export function createOpenAiProvider(baseURL?: string): LlmProvider {
   logger.info({ routing: baseURL ? 'nexus' : 'direct' }, 'Creating OpenAI provider');
 
-  // Through Nexus the gateway injects the real key on the outbound leg, so no
+  // Through the gateway the real key is injected on the outbound leg, so no
   // local key is needed — but the SDK insists on one, so fall back to a decoy
   // (the same pattern as the Azure and mantle factories).
   const decoyableKey = config.openaiApiKey || (baseURL ? 'nexus-managed' : undefined);
@@ -76,7 +76,7 @@ export function createOpenAiProvider(baseURL?: string): LlmProvider {
 }
 
 /**
- * Check if OpenAI is configured. Through Nexus only the model id is needed —
+ * Check if OpenAI is configured. Through the gateway only the model id is needed —
  * the gateway holds the key (Azure/mantle parity). Direct mode needs the key
  * too. Embedding config is deliberately NOT required — memory embeddings
  * fail-open without it.

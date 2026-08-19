@@ -5,10 +5,9 @@
  * this to start long-running tasks (e.g. `npm run test`), feed
  * them stdin, drain their stdout/stderr, and kill them.
  *
- * Port of the relevant bits of
- * `nexus-monorepo/crates/nexus-shell-sandbox/src/handlers/process_handlers.rs`,
- * minus the cross-process MCP plumbing — agent-runtime calls these
- * directly via AI SDK tools.
+ * Port of the relevant bits of the upstream Lens Agents shell sandbox's
+ * process handlers, minus the cross-process MCP plumbing — agent-runtime
+ * calls these directly via AI SDK tools.
  *
  * Concurrency cap is intentionally generous (10) because these are
  * agent-driven background tasks; the cap exists to prevent runaway

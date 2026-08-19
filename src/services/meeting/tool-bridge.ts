@@ -3,7 +3,7 @@
  *
  * This is what makes the voice in the meeting the agent rather than a narrator:
  * the tools an ordinary chat turn gets — memory, cron, goals, shell, skills, plus
- * everything the Nexus MCP endpoint serves — are offered to the Realtime session as
+ * everything the Lens Agents MCP endpoint serves — are offered to the Realtime session as
  * function tools and executed in this process when called. `share_file` is the one
  * exception, dropped by `filterToolsByMode` because a meeting runs neither the
  * invoke loop nor the conversation engine that deliver what it stores.

@@ -140,7 +140,7 @@ class WebSocketGatewayService {
     ws.isAlive = true;
 
     // The runtime is scoped to one agent and trusts the inbound network
-    // (Nexus routing terminates auth in front of the container). Pin the
+    // (Lens Agents routing terminates auth in front of the container). Pin the
     // connection to the configured owner without inspecting a token.
     const userId: string = config.ownerUserId;
     ws.userId = userId;
@@ -383,7 +383,7 @@ class WebSocketGatewayService {
       return;
     }
 
-    // Authorization: Nexus inbound routing terminates auth in front of the
+    // Authorization: Lens Agents inbound routing terminates auth in front of the
     // runtime. Once a request reaches the container we trust the connection.
     // Still pin to *this* container's agent so a stray client can't address
     // another runtime.
@@ -507,7 +507,7 @@ class WebSocketGatewayService {
       }
     }
 
-    // Nexus inbound routing terminates auth in front of the runtime, so we
+    // Lens Agents inbound routing terminates auth in front of the runtime, so we
     // trust the connection here. The Web UI talks straight to the runtime
     // over WS without a JWT — fall back to the bootstrap-default owner user
     // (matches the agent's `userId`).

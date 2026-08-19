@@ -93,9 +93,9 @@ describe('config', () => {
   });
 
   it('reads NEXUS_MCP_URL directly from env', async () => {
-    process.env.NEXUS_MCP_URL = 'https://nexus.example.com/projects/proj-42/mcp';
+    process.env.NEXUS_MCP_URL = 'https://gateway.example.com/projects/proj-42/mcp';
     const cfg = await loadConfig();
-    expect(cfg.nexusMcpUrl).toBe('https://nexus.example.com/projects/proj-42/mcp');
+    expect(cfg.nexusMcpUrl).toBe('https://gateway.example.com/projects/proj-42/mcp');
   });
 
   it('nexusMcpUrl is null when NEXUS_MCP_URL is unset', async () => {
@@ -106,7 +106,7 @@ describe('config', () => {
 
   it('nexusMcpUrl does not fall back to NEXUS_API_URL', async () => {
     delete process.env.NEXUS_MCP_URL;
-    process.env.NEXUS_API_URL = 'https://nexus.example.com';
+    process.env.NEXUS_API_URL = 'https://gateway.example.com';
     const cfg = await loadConfig();
     expect(cfg.nexusMcpUrl).toBeNull();
   });
@@ -118,20 +118,20 @@ describe('config', () => {
   });
 
   it('builds the auto-resolve LLM URL (/llm/...) when PROJECT_ID is unset', async () => {
-    process.env.NEXUS_API_URL = 'https://nexus.example.com';
+    process.env.NEXUS_API_URL = 'https://gateway.example.com';
     delete process.env.PROJECT_ID;
     process.env.AWS_REGION = 'us-east-1';
     const cfg = await loadConfig();
-    expect(cfg.nexusLlmBaseUrl).toBe('https://nexus.example.com/llm/bedrock/us-east-1');
+    expect(cfg.nexusLlmBaseUrl).toBe('https://gateway.example.com/llm/bedrock/us-east-1');
   });
 
   it('builds the explicit-project LLM URL (/projects/...) when PROJECT_ID is set', async () => {
-    process.env.NEXUS_API_URL = 'https://nexus.example.com';
+    process.env.NEXUS_API_URL = 'https://gateway.example.com';
     process.env.PROJECT_ID = 'proj-42';
     process.env.AWS_REGION = 'eu-west-1';
     const cfg = await loadConfig();
     expect(cfg.nexusLlmBaseUrl).toBe(
-      'https://nexus.example.com/projects/proj-42/llm/bedrock/eu-west-1',
+      'https://gateway.example.com/projects/proj-42/llm/bedrock/eu-west-1',
     );
   });
 
@@ -291,29 +291,29 @@ describe('config', () => {
     });
 
     it('builds the auto-resolve mantle mount when PROJECT_ID is unset', async () => {
-      process.env.NEXUS_API_URL = 'https://nexus.example.com';
+      process.env.NEXUS_API_URL = 'https://gateway.example.com';
       delete process.env.PROJECT_ID;
       process.env.AWS_REGION = 'us-east-1';
       const cfg = await loadConfig();
       expect(cfg.nexusBedrockMantleBaseUrl).toBe(
-        'https://nexus.example.com/llm/bedrock-mantle/anthropic/us-east-1/v1',
+        'https://gateway.example.com/llm/bedrock-mantle/anthropic/us-east-1/v1',
       );
     });
 
     it('builds the explicit-project mantle mount when PROJECT_ID is set', async () => {
-      process.env.NEXUS_API_URL = 'https://nexus.example.com';
+      process.env.NEXUS_API_URL = 'https://gateway.example.com';
       process.env.PROJECT_ID = 'proj-42';
       process.env.AWS_REGION = 'eu-west-1';
       const cfg = await loadConfig();
       expect(cfg.nexusBedrockMantleBaseUrl).toBe(
-        'https://nexus.example.com/projects/proj-42/llm/bedrock-mantle/anthropic/eu-west-1/v1',
+        'https://gateway.example.com/projects/proj-42/llm/bedrock-mantle/anthropic/eu-west-1/v1',
       );
     });
   });
 
   describe('nexusChatBaseUrl', () => {
     beforeEach(() => {
-      process.env.NEXUS_API_URL = 'https://nexus.example.com';
+      process.env.NEXUS_API_URL = 'https://gateway.example.com';
       delete process.env.PROJECT_ID;
       process.env.AWS_REGION = 'us-east-1';
     });
@@ -321,30 +321,30 @@ describe('config', () => {
     it('is the bedrock-runtime mount on bedrock', async () => {
       process.env.LLM_PROVIDER = 'bedrock';
       const cfg = await loadConfig();
-      expect(cfg.nexusChatBaseUrl).toBe('https://nexus.example.com/llm/bedrock/us-east-1');
+      expect(cfg.nexusChatBaseUrl).toBe('https://gateway.example.com/llm/bedrock/us-east-1');
     });
 
     it('is the azure anthropic mount on azure', async () => {
       process.env.LLM_PROVIDER = 'azure';
       const cfg = await loadConfig();
-      expect(cfg.nexusChatBaseUrl).toBe('https://nexus.example.com/llm/azure/anthropic/v1');
+      expect(cfg.nexusChatBaseUrl).toBe('https://gateway.example.com/llm/azure/anthropic/v1');
     });
 
     it('is the mantle mount on bedrock-mantle, not the bedrock-runtime one', async () => {
       process.env.LLM_PROVIDER = 'bedrock-mantle';
       const cfg = await loadConfig();
       expect(cfg.nexusChatBaseUrl).toBe(
-        'https://nexus.example.com/llm/bedrock-mantle/anthropic/us-east-1/v1',
+        'https://gateway.example.com/llm/bedrock-mantle/anthropic/us-east-1/v1',
       );
       // The bedrock-runtime mount stays available — it carries the Titan leg.
-      expect(cfg.nexusLlmBaseUrl).toBe('https://nexus.example.com/llm/bedrock/us-east-1');
+      expect(cfg.nexusLlmBaseUrl).toBe('https://gateway.example.com/llm/bedrock/us-east-1');
     });
 
     it('is the openai mount on openai', async () => {
       process.env.LLM_PROVIDER = 'openai';
       const cfg = await loadConfig();
-      expect(cfg.nexusChatBaseUrl).toBe('https://nexus.example.com/llm/openai/v1');
-      expect(cfg.nexusOpenAiBaseUrl).toBe('https://nexus.example.com/llm/openai/v1');
+      expect(cfg.nexusChatBaseUrl).toBe('https://gateway.example.com/llm/openai/v1');
+      expect(cfg.nexusOpenAiBaseUrl).toBe('https://gateway.example.com/llm/openai/v1');
     });
 
     it('builds the explicit-project openai mount when PROJECT_ID is set', async () => {
@@ -352,7 +352,7 @@ describe('config', () => {
       process.env.PROJECT_ID = 'proj-42';
       const cfg = await loadConfig();
       expect(cfg.nexusOpenAiBaseUrl).toBe(
-        'https://nexus.example.com/projects/proj-42/llm/openai/v1',
+        'https://gateway.example.com/projects/proj-42/llm/openai/v1',
       );
     });
 

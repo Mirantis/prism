@@ -91,7 +91,7 @@ export interface CollectedTools {
 
 /**
  * Collect the tools an invocation of `mode` sends: built-ins (direct AI SDK
- * tools, no MCP round trip) filtered by mode, every tool the Nexus MCP
+ * tools, no MCP round trip) filtered by mode, every tool the Lens Agents MCP
  * endpoint exposes, and the Task tool when subagents are configured.
  */
 export async function collectTools(input: CollectToolsInput): Promise<CollectedTools> {
@@ -121,7 +121,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
       : {}),
   };
 
-  // Register every tool the Nexus MCP endpoint exposes. In the sandbox this
+  // Register every tool the Lens Agents MCP endpoint exposes. In the sandbox this
   // is the project-scoped endpoint, which already excludes first-party shell
   // tools by design (those are local built-ins above), so no tool allowlist
   // is sent — we want the full surface it serves.
@@ -139,7 +139,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   // convention that a future rename could quietly invalidate.
   for (const [name, tool] of Object.entries(pluginTools)) {
     if (name in merged) {
-      logger.warn(`[Plugins] dropping tool "${name}" — a built-in or Nexus tool already owns it`);
+      logger.warn(`[Plugins] dropping tool "${name}" — a built-in or platform tool already owns it`);
       continue;
     }
     merged[name] = tool;
@@ -150,10 +150,11 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   const modeFilteredTools = filterToolsByMode(merged, input.mode);
 
   // Locked-in mode: withhold the workspace-markdown writers. Applied after the
-  // mode filter so it holds for every mode, and over the merged map so a Nexus
-  // MCP tool cannot answer to a withheld name — those names are un-namespaced.
-  // A plugin tool is namespaced by plugin and server, so it never collides
-  // either way. The refusal in agent-config.ts is what enforces the lock.
+  // mode filter so it holds for every mode, and over the merged map so a
+  // platform MCP tool cannot answer to a withheld name — those names are
+  // un-namespaced. A plugin tool is namespaced by plugin and server, so it
+  // never collides either way. The refusal in agent-config.ts is what enforces
+  // the lock.
   const filteredTools = input.lockedIn
     ? omitLockedWorkspaceTools(modeFilteredTools)
     : modeFilteredTools;
@@ -182,7 +183,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   const tools = capToolNames(filteredTools, 'collect', reservedNames);
 
   logger.info(
-    `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} Nexus MCP + ${Object.keys(pluginTools).length} plugin MCP tool(s); ${subagents.length} subagent(s)`,
+    `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} platform MCP + ${Object.keys(pluginTools).length} plugin MCP tool(s); ${subagents.length} subagent(s)`,
   );
 
   return { tools, subagents };

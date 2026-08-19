@@ -4,7 +4,7 @@
  * Express router exposing the runtime's REST surface — the agent-runtime
  * owns its own data, so these routes are the canonical CRUD layer for
  * heartbeat, cron, Slack mappings, threads, agent identity, and
- * subagent wiring. Called by the bundled Web UI. Nexus inbound routing
+ * subagent wiring. Called by the bundled Web UI. Lens Agents inbound routing
  * terminates auth in front of the container; routes are not protected
  * by an internal secret.
  *

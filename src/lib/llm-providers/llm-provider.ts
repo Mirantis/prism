@@ -4,7 +4,7 @@
  * A provider is a callable chat dispatcher — `(modelId) => LanguageModel` —
  * with an `.embedding(modelId)` method attached, so callers of
  * `createProvider()` never have to know which vendor (Bedrock, Azure,
- * bedrock-mantle or OpenAI) or route (direct or Nexus) is in use.
+ * bedrock-mantle or OpenAI) or route (direct or gateway) is in use.
  *
  * Why an explicit named type rather than inference: the vendor SDKs re-export
  * their own nested `@ai-sdk/provider` copies, so an inferred return type can't

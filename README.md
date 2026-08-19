@@ -342,7 +342,7 @@ restarts.
 | `LLM_PROVIDER` | LLM platform: `bedrock`, `azure`, `bedrock-mantle`, or `openai` — see [Configuration](docs/configuration.md#provider-selection) for the non-default platforms' credentials and model IDs | `bedrock` |
 | `DATABASE_URL` | SQLite URL. The local default resolves to `prisma/sqlite/agent.db` (Prisma's schema-relative rule); the Docker image's `start.sh` overrides to `file:/data/agent.db` so the mounted `/data` volume is used | `file:./agent.db` (Docker: `file:/data/agent.db`) |
 | `AGENT_ID` | Pin the agent's UUID. When unset, a fresh UUID is generated on first boot and reused on subsequent boots via the workspace row in the DB | generated |
-| `NEXUS_API_URL` | Base URL of the Nexus instance used for WebSocket authorization and the MCP/LLM proxy | `http://localhost:3002` |
+| `NEXUS_API_URL` | Base URL of the Lens Agents instance used for WebSocket authorization and the MCP/LLM proxy | `http://localhost:3002` |
 | `AGENT_NAME` | Display name on first boot | `Prism` |
 | `TEAM_NAME` | Team name on first boot | `Local` |
 | `OWNER_USER_ID` | Owner user ID on first boot. The default is a local sentinel — Slack identity linking later overlays the real `lensUserId` per-message | `00000000-0000-0000-0000-000000000001` |
@@ -353,7 +353,7 @@ restarts.
 | `CONTEXT_WINDOW_TOKENS` | Context window to assume for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry at startup (e.g. `https://models.dev/api.json`); unset means no outbound call, bundled catalog only | — (disabled) |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check on the Slack app identity | — |
-| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) (OpenAI Realtime API, connected directly — not via Nexus); also the chat credential when `LLM_PROVIDER=openai` | — (disabled) |
+| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) (OpenAI Realtime API, connected directly — not via the Lens Agents gateway); also the chat credential when `LLM_PROVIDER=openai` | — (disabled) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice (pinned snapshot) | `gpt-realtime-2.1` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one meeting call | `60` |
 | `LANGFUSE_SECRET_KEY` | Enables Langfuse tracing when set | — |

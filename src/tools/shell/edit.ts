@@ -1,6 +1,6 @@
 /**
- * `apply_edit` ported from
- * `nexus-monorepo/crates/nexus-shell-sandbox/src/handlers/file_handlers.rs`.
+ * `apply_edit` ported from the upstream Lens Agents shell sandbox's file
+ * handlers.
  *
  * Exact-match replacement with a whitespace-tolerant line-trimmed
  * fallback. Behavior mirrors upstream verbatim.

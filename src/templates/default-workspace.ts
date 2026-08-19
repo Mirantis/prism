@@ -95,7 +95,7 @@ export const DEFAULT_HEARTBEAT_MD = `# Heartbeat Instructions
 /**
  * Default Bootstrap - First-run onboarding conversation.
  * Uses {{agentName}} and {{teamName}} placeholders, replaced at agent creation time.
- * Nexus token is auto-created server-side — no MCP tool calls needed during bootstrap.
+ * The platform token is auto-created server-side — no MCP tool calls needed during bootstrap.
  */
 export const DEFAULT_BOOTSTRAP_MD = `# Welcome
 

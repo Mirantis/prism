@@ -28,8 +28,8 @@ appears when the first two are present:
    Xvfb, PulseAudio). A native install via the `prism` binary has no browser to
    drive, so the feature is container-only.
 2. **`OPENAI_API_KEY`.** The voice model is OpenAI's Realtime API, connected
-   directly to `api.openai.com` — it never rides the Nexus gateway, whose openai
-   mount routes POST only. Your chat model is unaffected: on the Claude platforms
+   directly to `api.openai.com` — it never rides the Lens Agents gateway, whose
+   openai mount routes POST only. Your chat model is unaffected: on the Claude platforms
    only the in-meeting voice uses OpenAI, and with `LLM_PROVIDER=openai` chat
    shares this same key (see [Configuration](configuration.md#provider-selection)).
 3. **A Google account for the agent** (`GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD`).

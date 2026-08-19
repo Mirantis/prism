@@ -37,14 +37,14 @@ const BEDROCK_CONFIG = {
   classificationModelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
   embeddingModelId: 'amazon.titan-embed-text-v2:0',
   awsRegion: 'us-east-1',
-  nexusLlmBaseUrl: 'https://nexus.test/llm/bedrock/us-east-1',
+  nexusLlmBaseUrl: 'https://gateway.test/llm/bedrock/us-east-1',
   nexusAzureBaseUrl: null,
   nexusBedrockMantleBaseUrl: null,
   // config resolves this to the selected vendor's chat mount; telemetry only
   // reads this one field.
-  nexusChatBaseUrl: 'https://nexus.test/llm/bedrock/us-east-1',
-  nexusApiUrl: 'https://nexus.test',
-  nexusMcpUrl: 'https://nexus.test/projects/p1/mcp',
+  nexusChatBaseUrl: 'https://gateway.test/llm/bedrock/us-east-1',
+  nexusApiUrl: 'https://gateway.test',
+  nexusMcpUrl: 'https://gateway.test/projects/p1/mcp',
   slackBotToken: 'xoxb-test',
   langfuseSecretKey: undefined,
   langfusePublicKey: undefined,
@@ -72,7 +72,7 @@ describe('trackAgentStarted', () => {
     mockGetSubagents.mockResolvedValue([{ id: 'sub-1' }]);
   });
 
-  it('emits one `agent started` census for a Bedrock + Nexus deployment', async () => {
+  it('emits one `agent started` census for a Bedrock + gateway deployment', async () => {
     await trackAgentStarted({ ...AGENT, webhooksEnabled: true }, { cronTasks: 3 });
 
     expect(mockTrackEvent).toHaveBeenCalledTimes(1);
@@ -136,12 +136,12 @@ describe('trackAgentStarted', () => {
     expect(props).not.toHaveProperty('llm.region');
   });
 
-  it('routes through Nexus on Azure when the Azure Nexus base URL is set', async () => {
+  it('routes through the gateway on Azure when the Azure gateway base URL is set', async () => {
     setConfig({
       llmProvider: 'azure',
       nexusLlmBaseUrl: null,
-      nexusAzureBaseUrl: 'https://nexus.test/llm/azure/anthropic/v1',
-      nexusChatBaseUrl: 'https://nexus.test/llm/azure/anthropic/v1',
+      nexusAzureBaseUrl: 'https://gateway.test/llm/azure/anthropic/v1',
+      nexusChatBaseUrl: 'https://gateway.test/llm/azure/anthropic/v1',
     });
 
     await trackAgentStarted(AGENT, { cronTasks: 0 });
@@ -171,12 +171,12 @@ describe('trackAgentStarted', () => {
     });
   });
 
-  it('routes through Nexus on bedrock-mantle when the mantle mount is set', async () => {
+  it('routes through the gateway on bedrock-mantle when the mantle mount is set', async () => {
     setConfig({
       llmProvider: 'bedrock-mantle',
       nexusLlmBaseUrl: null,
-      nexusBedrockMantleBaseUrl: 'https://nexus.test/llm/bedrock-mantle/anthropic/us-east-1/v1',
-      nexusChatBaseUrl: 'https://nexus.test/llm/bedrock-mantle/anthropic/us-east-1/v1',
+      nexusBedrockMantleBaseUrl: 'https://gateway.test/llm/bedrock-mantle/anthropic/us-east-1/v1',
+      nexusChatBaseUrl: 'https://gateway.test/llm/bedrock-mantle/anthropic/us-east-1/v1',
     });
 
     await trackAgentStarted(AGENT, { cronTasks: 0 });
@@ -208,11 +208,11 @@ describe('trackAgentStarted', () => {
     expect(props).not.toHaveProperty('llm.region');
   });
 
-  it('routes through Nexus on OpenAI when the openai mount is set', async () => {
+  it('routes through the gateway on OpenAI when the openai mount is set', async () => {
     setConfig({
       llmProvider: 'openai',
       nexusLlmBaseUrl: null,
-      nexusChatBaseUrl: 'https://nexus.test/llm/openai/v1',
+      nexusChatBaseUrl: 'https://gateway.test/llm/openai/v1',
     });
 
     await trackAgentStarted(AGENT, { cronTasks: 0 });

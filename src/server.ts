@@ -8,7 +8,7 @@
  *      /messages       — thread history replay
  *      /               — Prism Web UI (static SPA bundle from web/dist)
  *
- * Auth is handled by Nexus inbound routing in front of the runtime;
+ * Auth is handled by Lens Agents inbound routing in front of the runtime;
  * the container itself trusts every incoming connection.
  */
 

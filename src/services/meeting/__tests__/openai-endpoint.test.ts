@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 describe('resolveRealtimeEndpoint', () => {
-  it('always connects directly to OpenAI — there is no Nexus mount for Realtime', () => {
+  it('always connects directly to OpenAI — there is no gateway mount for Realtime', () => {
     const endpoint = resolveRealtimeEndpoint();
     expect(endpoint.url).toBe('wss://api.openai.com/v1/realtime?model=gpt-realtime');
   });

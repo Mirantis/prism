@@ -35,7 +35,7 @@ async function loadFromEnv(): Promise<SlackConnectionRecord | null> {
     return null;
   }
 
-  // No local shape check: Nexus-injected credentials arrive as
+  // No local shape check: platform-injected credentials arrive as
   // `__nexus_cred:<uuid>__` sentinels that get rewritten to real tokens at
   // the MITM proxy on outbound Slack calls. auth.test() below is the real
   // validation — it goes through the proxy and sees the swapped-in token.

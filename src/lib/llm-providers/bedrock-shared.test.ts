@@ -94,12 +94,12 @@ describe('createBedrockEmbeddingProvider', () => {
     );
   });
 
-  it('attaches no credentials when routed through Nexus (the gateway signs)', () => {
-    createBedrockEmbeddingProvider('https://nexus.example/llm/bedrock/us-east-1');
+  it('attaches no credentials when routed through the gateway (the gateway signs)', () => {
+    createBedrockEmbeddingProvider('https://gateway.example/llm/bedrock/us-east-1');
 
     expect(mockCreateAmazonBedrock).toHaveBeenCalledWith({
       region: 'us-west-2',
-      baseURL: 'https://nexus.example/llm/bedrock/us-east-1',
+      baseURL: 'https://gateway.example/llm/bedrock/us-east-1',
     });
   });
 

@@ -46,7 +46,7 @@ describe('slack-config', () => {
     expect(mockAuthTest).not.toHaveBeenCalled();
   });
 
-  it('passes through a Nexus credential sentinel unchanged (MITM swaps on wire)', async () => {
+  it('passes through a platform credential sentinel unchanged (MITM swaps on wire)', async () => {
     (config as { slackBotToken?: string }).slackBotToken = '__nexus_cred:abc-123__';
     mockAuthTest.mockResolvedValue({
       team_id: 'T999',

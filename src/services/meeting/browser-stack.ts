@@ -118,7 +118,7 @@ export function buildBrowserArgs(port: number, userDataDir: string): string[] {
     // seccomp profile with no `SYS_ADMIN`, so the zygote fails to fork and the
     // browser dies at launch. Disabled deliberately rather than discovered in
     // production. The isolation that matters is the outer one — this whole
-    // runtime already runs inside the Nexus sandbox with filtered egress, and
+    // runtime already runs inside the Lens Agents sandbox with filtered egress, and
     // the browser visits exactly one origin we chose.
     '--no-sandbox',
     '--disable-setuid-sandbox',

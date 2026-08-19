@@ -20,7 +20,7 @@
  * `{res}.openai.azure.com` (OpenAI) hosts with resource-level keys.
  * `AZURE_FOUNDRY_BASE_URL` is the escape hatch when an operator splits them.
  *
- * Routing: a `baseURL` argument (the Nexus Azure gateway chat route, computed
+ * Routing: a `baseURL` argument (the Lens Agents Azure gateway chat route, computed
  * from `NEXUS_API_URL` as `…/llm/azure/anthropic/v1`, mirroring Bedrock's
  * `…/llm/bedrock/{region}`) overrides the Foundry chat endpoint, and
  * embeddings then ride the gateway's `…/llm/azure/openai/v1` mount; unset →
@@ -50,19 +50,20 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
 
   // Chat/classification — Anthropic Messages API. The SDK builds
   // `${baseURL}/messages`, so the base must end at `…/anthropic/v1` (direct)
-  // or `…/llm/azure/anthropic/v1` (Nexus).
+  // or `…/llm/azure/anthropic/v1` (gateway).
   //
-  // Through Nexus the gateway injects the real Foundry key (`api-key` from
-  // its NEXUS_AZURE_TOKEN) on the outbound leg, so no local key is needed —
-  // but the SDKs insist on one, so fall back to a decoy (the same pattern the
-  // Nexus sandbox uses for its provisioned ANTHROPIC_API_KEY).
+  // Through the gateway the real Foundry key (`api-key` from its
+  // NEXUS_AZURE_TOKEN) is injected on the outbound leg, so no local key is
+  // needed — but the SDKs insist on one, so fall back to a decoy (the same
+  // pattern the Lens Agents sandbox uses for its provisioned
+  // ANTHROPIC_API_KEY).
   const decoyableKey = config.azureApiKey || (baseURL ? 'nexus-managed' : undefined);
   const anthropic = createAnthropic({
     apiKey: decoyableKey,
     baseURL: baseURL ?? config.azureFoundryBaseUrl,
   });
 
-  // Embeddings — Azure OpenAI (text-embedding-3 deployment). In Nexus mode
+  // Embeddings — Azure OpenAI (text-embedding-3 deployment). In gateway mode
   // they route through the gateway's `…/llm/azure/openai/v1` mount (the SDK
   // treats a non-*.openai.azure.com base as a custom gateway and appends
   // `/embeddings` bare, landing on the resource's `/openai/v1/embeddings`);
@@ -91,9 +92,9 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
 }
 
 /**
- * Check if Azure is configured. Through Nexus only a chat deployment is
- * needed — the gateway holds the Foundry key (Bedrock parity: no local
- * credentials when routed via Nexus). Direct mode needs the deployment, an
+ * Check if Azure is configured. Through the Lens Agents gateway only a chat
+ * deployment is needed — the gateway holds the Foundry key (Bedrock parity: no
+ * local credentials when routed that way). Direct mode needs the deployment, an
  * api-key, and a Foundry endpoint (resource name or explicit base URL).
  * Embedding config is deliberately NOT required — memory embeddings
  * fail-open without it.

@@ -11,7 +11,7 @@
  * Two callers, and they must agree byte for byte:
  *
  * - `lib/tool-collection.ts` caps the assembled tool set — the last point
- *   before a request, so it covers built-ins, Nexus MCP, plugin MCP, the Task
+ *   before a request, so it covers built-ins, platform MCP, plugin MCP, the Task
  *   tool, and the voice-meeting bridge that re-declares the same keys;
  * - `prompts/context-builder.ts` runs stored names from history through the
  *   same function, so history matches the tools block on replay.

@@ -2,7 +2,7 @@
  * Agent CRUD Service
  *
  * Manages agent lifecycle: creation, deletion, lookups, ownership validation,
- * Nexus token management, and subagent relationships.
+ * platform token management, and subagent relationships.
  *
  * This is the authoritative service for agent data — the backend delegates
  * all agent operations here via the management API.

@@ -29,7 +29,7 @@
  * is the one chokepoint every override flows through, and it keeps the stored
  * value portable if the operator switches back to `LLM_PROVIDER=bedrock`.
  *
- * Routing: a `baseURL` argument (the Nexus mantle mount, computed from
+ * Routing: a `baseURL` argument (the Lens Agents mantle mount, computed from
  * `NEXUS_API_URL` as `…/llm/bedrock-mantle/anthropic/{region}/v1`) overrides
  * the direct endpoint; unset → straight to the AWS endpoint.
  *
@@ -94,8 +94,8 @@ export function toBareBedrockModelId(modelId: string): string {
  * `.embedding(modelId)` method that reaches Titan on bedrock-runtime.
  *
  * `baseURL` selects chat routing: unset → direct to the AWS mantle endpoint
- * (requires the Bedrock API key); set → the Nexus gateway, which holds the
- * credential itself.
+ * (requires the Bedrock API key); set → the Lens Agents gateway, which holds
+ * the credential itself.
  */
 export function createBedrockMantleProvider(baseURL?: string): LlmProvider {
   logger.info(
@@ -105,9 +105,9 @@ export function createBedrockMantleProvider(baseURL?: string): LlmProvider {
 
   // Chat/classification — the SDK builds `${baseURL}/messages`, so the base
   // must end at `…/anthropic/v1` (direct) or
-  // `…/llm/bedrock-mantle/anthropic/{region}/v1` (Nexus).
+  // `…/llm/bedrock-mantle/anthropic/{region}/v1` (gateway).
   //
-  // Through Nexus the gateway injects the real Bedrock credential on the
+  // Through the gateway the real Bedrock credential is injected on the
   // outbound leg, so no local key is needed — but the SDK insists on one, so
   // fall back to a decoy (same pattern as the Azure provider).
   const decoyableKey = config.bedrockApiKey || (baseURL ? 'nexus-managed' : undefined);
@@ -152,7 +152,7 @@ export function createBedrockMantleProvider(baseURL?: string): LlmProvider {
 }
 
 /**
- * Check if Bedrock Mantle is configured. Through Nexus only a chat model is
+ * Check if Bedrock Mantle is configured. Through the gateway only a chat model is
  * needed — the gateway holds the Bedrock credential. Direct mode also needs
  * the API key and an endpoint: unlike the native Bedrock provider there is no
  * SigV4 fallback, and without an explicit key `createAnthropic` would silently

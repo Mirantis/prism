@@ -119,7 +119,7 @@ export async function buildSystemPromptParts(
       `**Your Mission**: Proactively advance this vision. During heartbeats, evaluate progress and identify opportunities.`);
   }
 
-  // Containers run inside a Nexus sandbox where credentials + configs flow
+  // Containers run inside a Lens Agents sandbox where credentials + configs flow
   // into the local shell; the agent invokes CLIs via `shell_exec`.
   stableSections.push(
     `# Connected Infrastructure\n\n` +

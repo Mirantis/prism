@@ -13,7 +13,7 @@ import { capToolNames, sanitizeToolNameSegment, toModelToolName, MAX_TOOL_NAME }
 /** The shape a provider will accept: this charset, within this length. */
 const ACCEPTED = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** A Nexus MCP name from the failure this rule exists for (70 characters). */
+/** A platform MCP name from the failure this rule exists for (70 characters). */
 const NEXUS_ATLASSIAN = '75166a14-fd0b-4bbb-b6d6-ddbd008bb95b__atlassian__addCommentToJiraIssue';
 
 function makeTool(name: string): Tool {
@@ -54,7 +54,7 @@ describe('toModelToolName', () => {
     expect(toModelToolName('12306__srv__search')).toBe('t_12306__srv__search');
   });
 
-  it('shortens the over-long Nexus name that a provider rejects', () => {
+  it('shortens the over-long platform name that a provider rejects', () => {
     const capped = toModelToolName(NEXUS_ATLASSIAN);
 
     expect(NEXUS_ATLASSIAN.length).toBe(70);
