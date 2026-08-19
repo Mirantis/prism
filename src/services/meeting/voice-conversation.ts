@@ -118,10 +118,9 @@ export interface VoiceConversationStats {
    * How the "was I addressed" question got answered.
    *
    * `gateLocalYes` is the number of times the local tagger recognised a vocative and
-   * no model call was made; `gateModelCalls` the number of times one was. Their
-   * ratio is the point: it says how much of the gate's per-utterance latency the
-   * fast path is actually taking off the room, on real speech rather than on a
-   * corpus.
+   * no model call was made; `gateModelCalls` the number of times one was. Their ratio
+   * shows how often the fast path removes the gate's per-utterance latency, measured
+   * on real speech rather than on a corpus.
    */
   gateLocalYes: number;
   gateModelCalls: number;
@@ -399,9 +398,9 @@ export class VoiceConversation {
 
     // The local read first. It can only ever say *yes* — see `vocative.ts` — so a
     // sentence it recognises as a vocative skips the model entirely and the room
-    // waits 0ms instead of the gate's measured 0.9–1.5s, while everything else
-    // reaches the model exactly as it did before. That asymmetry is the whole design:
-    // a bug here costs latency, never a wrong answer.
+    // waits 0ms instead of the gate's measured 0.9–1.5s, while everything else goes
+    // to the model exactly as before. The asymmetry is deliberate: a bug here adds
+    // latency; it does not produce a wrong answer.
     const local = await isVocativeAddress(transcript, this.options.agentName);
     if (local.addressed) this.gateLocalYes += 1;
     else this.gateModelCalls += 1;
@@ -435,8 +434,8 @@ export class VoiceConversation {
         `item=${itemId || 'none'}`,
         `mode=${this.responsePolicy.effectiveMode}`,
         // Which path decided, and — when it was the model — what the local read made
-        // of the sentence. `VocativeReason` is a bounded enum precisely so this token
-        // is safe to write with the transcript switched off.
+        // of the sentence. `VocativeReason` is a bounded enum, so this token is safe
+        // to write with the transcript switched off.
         local.addressed ? 'path=local' : `path=model local="${local.why}"`,
         formatKeywords(keywords),
         formatTranscript(transcript),

@@ -4,16 +4,16 @@
  * Every case below came out of a real call — either said into a live Google Meet, or
  * spoken through a text-to-speech voice and run through the same transcriber the
  * runtime uses, so the text is what the agent would actually have seen rather than
- * what a keyboard would produce. That provenance is the point of this file: five
+ * what a keyboard would produce. That is why this file is built from real calls: five
  * defects in this rule were found by phrasings nobody thought to invent, and the two
- * earlier versions of the rule that leaked passed every case their author made up.
+ * earlier versions of the rule that leaked passed every invented case.
  *
  * The two numbers trade against each other, and they are not equally important:
  *
- * - **A leak** is a mention answered locally — the agent butting into a sentence
+ * - **A leak** is a mention answered locally — the agent interrupting a sentence
  *   about it. There is no recovery from that in a room, so leaks must be zero.
- * - **A miss** is an address the model has to judge instead. It costs the room the
- *   gate's ~1.3s and nothing else, because this path can only ever say yes.
+ * - **A miss** is an address the model has to judge instead. It adds the gate's
+ *   ~1.3s and nothing else, because this path can only ever say yes.
  *
  * So the mention lists are assertions and the address lists are a budget. The
  * punctuation-stripped runs exist because the transcriber is unreliable about
@@ -29,7 +29,7 @@ vi.mock('../../../logger', () => ({
 
 const NAME = 'Iris';
 
-/** Said to the agent. Answering these locally is the whole point. */
+/** Said to the agent. Answering these locally is what this path is for. */
 const ADDRESSES = [
   'Iris, what time is it?',
   'what day of the week is it today, Iris?',
@@ -134,11 +134,11 @@ const SOMEONE_ELSE = [
 /**
  * Sentences a code review confirmed the first version of this answered.
  *
- * Kept apart from the corpora above because the provenance is different and weaker:
- * nobody said these in a room. They were constructed by reading the rules and hunting
- * for shapes that satisfy them by accident, which makes them poor evidence about what a
- * meeting sounds like and very good evidence about where the rules were loose. Three
- * families, each of which needed its own narrowing:
+ * Kept apart from the corpora above because the source is different and weaker: nobody
+ * said these in a room. They were written by reading the rules and looking for shapes
+ * that satisfy them by accident, which makes them poor evidence about what a meeting
+ * sounds like and good evidence about where the rules were loose. Three families, each
+ * of which needed its own narrowing:
  *
  *   * reported speech — one human relaying the agent's output to another, which the old
  *     "any second-person pronoun anywhere" exemption read as a direct address;
@@ -172,9 +172,9 @@ const CONSTRUCTED_MENTIONS: [string, string][] = [
 /**
  * Addresses that must survive every narrowing the review prompted.
  *
- * Each is the shape a fix could plausibly have broken, so they are asserted next to the
- * leaks rather than only inside the big corpus: dropping the comma from an inverted
- * question is something people do constantly, and an aside mid-request is normal speech.
+ * Each is a shape a fix could plausibly have broken, so they are asserted next to the
+ * leaks rather than only inside the big corpus: people drop the comma from an inverted
+ * question all the time, and an aside mid-request is normal speech.
  */
 const NARROWING_MUST_KEEP: [string, string][] = [
   ['Iris are you still there', 'Iris'],
@@ -190,15 +190,15 @@ const NARROWING_MUST_KEEP: [string, string][] = [
  * calls, transcribed by the model this runtime uses.
  *
  * The strongest corpus in this file, and the one that matters most, because it is the only
- * one nobody composed. Every entry below was said out loud by somebody who was not thinking
- * about the parser — and five of them failed. The rules had been written and measured
- * against single, tidy, well-punctuated sentences; real speech is multi-sentence,
- * disfluent, and puts the name wherever the thought ends. On the first of those two calls
- * the local read fired **only** on a bare "Iris." or a leading vocative, and every
- * naturally-phrased address went to the model, at a cost of 1.3–2.1 seconds each.
+ * one nobody composed. Every entry below was said by somebody who was not thinking about
+ * the parser — and five of them failed. The rules had been written and measured against
+ * single, tidy, well-punctuated sentences; real speech is multi-sentence, disfluent, and
+ * puts the name wherever the thought ends. On the first of those two calls the local read
+ * fired **only** on a bare "Iris." or a leading vocative, and every naturally-phrased
+ * address went to the model, at a cost of 1.3–2.1 seconds each.
  *
  * **Eight** of these failed before the rules were widened, and each is marked with the rule
- * that now carries it. Keep them: every one of those rules looks arbitrary without the
+ * that now covers it. Keep them: every one of those rules looks arbitrary without the
  * sentence that forced it.
  */
 const LIVE_ADDRESSES = [
@@ -208,7 +208,7 @@ const LIVE_ADDRESSES = [
   // on an adjective.
   'That sounds pretty good, Iris. Thank you for the great summary.',
   // FAILED (segmentation): same cause, and the name ends a *question* here, so segmentation
-  // alone carries it.
+  // alone is enough to fix it.
   'All right, so now I am thinking a bit about, you know, how could this be deployed to our own infrastructure, Iris? Are there any, so prerequisites or, you know, anything that we have to build up before we can use this, you know?',
   // FAILED (courtesy opening a clause): a courtesy immediately before the name, with a
   // sentence in front of it. The greeting exemption asked whether *every* preceding word was
@@ -231,7 +231,7 @@ const LIVE_ADDRESSES = [
   // Passed from the start, via the greeting that opens it rather than via the tail rule.
   'Okay, well, hey, go ahead, Iris.',
   // These worked from the start, and are here so a future narrowing cannot quietly break
-  // the shapes that carried the feature on day one.
+  // the shapes the feature shipped with.
   'So, Iris, please check',
   'All right, Iris, what capability',
   'Iris, you have to explain',
@@ -252,12 +252,12 @@ const LIVE_ADDRESSES = [
 /**
  * Said in the same two calls, and none of it aimed at the agent.
  *
- * Half of these are the deliberate probes — a mention, reported speech, an appositive, a
- * list ending in her name — and half are simply what two people say to each other in a
- * meeting. The local read declined every one.
+ * Half of these are probes — a mention, reported speech, an appositive, a list ending in
+ * her name — and half are simply what two people say to each other in a meeting. The
+ * local read declined every one.
  */
 const LIVE_NOT_ADDRESSES = [
-  // Deliberate probes, said out loud to test the loosened rules.
+  // Probes, spoken in the call to test the loosened rules.
   'I asked Iris about that yesterday, but I do not know what she said',
   'Iris said the cluster was fine and, you know, we moved on',
   'I think there is no Iris in this project.',
@@ -318,8 +318,8 @@ describe('isVocativeAddress', () => {
   it('does not read an enumeration ending in the name as an address', async () => {
     // The loosest rule here accepts a comma-fenced name closing a clause, and a list's last
     // item sits in exactly that position. What separates them is that a list's previous item
-    // is itself a name or a number. Both forms tested, because the one said out loud used
-    // "and" and so never exercised the guard.
+    // is itself a name or a number. Both forms tested, because the spoken one used "and"
+    // and so never exercised the guard.
     for (const text of [
       'the attendees were Tom, Iris',
       'the attendees were Tom, Yari, Iris',
@@ -335,8 +335,8 @@ describe('isVocativeAddress', () => {
     // the guard that closes each one is otherwise unmotivated.
     const leaks = [
       // The inverted-question override. "you know" as a filler is byte-identical to an
-      // inverted question up to the point the rule stops reading, and it is endemic — the
-      // address corpus above contains it three times in one utterance. These are people
+      // inverted question up to the point the rule stops reading, and it is very common —
+      // the address corpus above contains it three times in one utterance. These are people
       // discussing the agent's performance.
       'honestly Iris was you know a bit slow today',
       'honestly Iris was, you know, a bit slow today',
@@ -349,9 +349,9 @@ describe('isVocativeAddress', () => {
       'what Iris did you can read in the postmortem',
       'the demo Iris did you all saw last week',
       'the stuff Iris does you all know already',
-      // The comma-fenced tail. Appositives and list tails own that position and usually end
-      // on a common noun or a pronoun, which excluding proper nouns and numbers did not
-      // catch. "our agent, Iris" is the most natural way to refer to this bot in the
+      // The comma-fenced tail. Appositives and list tails sit in that position too, and
+      // usually end on a common noun or a pronoun, which excluding proper nouns and numbers
+      // did not catch. "our agent, Iris" is the most natural way to refer to this bot in the
       // meetings it attends.
       'the outage was caused by our agent, Iris.',
       'it was flagged first by our agent, Iris.',
@@ -384,7 +384,7 @@ describe('isVocativeAddress', () => {
   it('still answers the addresses those guards could have broken', async () => {
     // A vocative can follow a verb ("Thanks for coming, Iris"), which is why verbs are absent
     // from the predicate-tail allowlist rather than the guard being loosened: that sentence
-    // reaches a yes through the greeting that opens it.
+    // passes through the greeting that opens it.
     const keep = ['Thanks for coming, Iris', 'thanks Iris', 'Iris do you know the answer'];
     const lost: string[] = [];
     for (const text of keep) {
@@ -433,8 +433,8 @@ describe('isVocativeAddress', () => {
     }
     // A budget, not an assertion of the exact number: the ones it loses are forms
     // where the comma was the only thing marking the vocative ("Iris, thanks for
-    // that" → "Iris thanks for that", which is a sentence about thanking Iris). They
-    // cost a model call, which is what happens today for every utterance.
+    // that" → "Iris thanks for that", which is a sentence about thanking Iris).
+    // Those go to the model, which is what happens today for every utterance.
     expect(answered).toBeGreaterThanOrEqual(16);
   });
 
@@ -448,9 +448,9 @@ describe('isVocativeAddress', () => {
 
   it('hands a mangled name to the model instead of guessing at it', async () => {
     // A live call rendered "Prism" as "Pritham". Reading through a mishearing is the
-    // model gate's job, and the local read deliberately does not try: an agent's name
-    // is arbitrary user-set text, so any tolerance would have to be right for every
-    // name anyone might pick. This costs the room the gate's ~1.3s and nothing else.
+    // model gate's job, and the local read does not try: an agent's name is arbitrary
+    // user-set text, so any tolerance would have to be right for every name anyone
+    // might pick. This adds the gate's ~1.3s and nothing else.
     expect(await isVocativeAddress('Irish, can you check the deploy?', NAME)).toMatchObject({
       addressed: false,
       why: 'no name',

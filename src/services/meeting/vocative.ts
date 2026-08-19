@@ -1,24 +1,24 @@
 /**
- * Was the agent's name spoken *to* it — decided locally, in no measurable time.
+ * Was the agent's name spoken *to* it — decided locally, with no model call.
  *
  * `addressed-classifier.ts` explains why being named is judged by a model rather
- * than a string match, and every word of that still holds. This is not a
- * replacement for it. It is a shortcut in front of it, and the contract is narrow
- * enough to be worth stating twice:
+ * than a string match, and all of that still holds. This is not a replacement for
+ * it. It is a shortcut in front of it, and the contract is narrow enough to state
+ * here too:
  *
  * **It can only ever say yes.** Anything it does not recognise as a vocative — a
- * mention, a mangled name, a language it cannot read, a tagger that threw — is
- * handed to the model exactly as before. So the worst thing a bug in here can do
- * is cost the room the gate's ~1.3s, which is what happens today anyway. It cannot
- * make the agent quieter, and it cannot make it answer something the model would
- * have refused, unless it says yes wrongly. That is the one failure to design
- * against, and it is why the rules below are stricter than "the name is in there".
+ * mention, a mangled name, a language it cannot read, a tagger that threw — goes to
+ * the model exactly as before. So the worst a bug in here can do is add the gate's
+ * ~1.3s, which is what every gated utterance pays today. It cannot make the agent
+ * quieter, and it cannot make it answer something the model would have refused,
+ * unless it says yes wrongly. That is the one failure to design against, and it is
+ * why the rules below are stricter than "the name is in there".
  *
- * **Why bother.** The gate is a transatlantic round trip. Measured on live calls it
- * runs 0.9–1.5s with a tail past 2.5s, and it is paid on every utterance in a
- * crowded room — including the ones where someone plainly began the sentence with
- * the agent's name. On those, this answers in 0ms; best observed end to end was
- * 780ms from the speaker stopping to the first audio out.
+ * **Why.** The gate is a network round trip. Measured on live calls it runs
+ * 0.9–1.5s with a tail past 2.5s, on every utterance in a crowded room — including
+ * the ones where someone plainly began the sentence with the agent's name. On
+ * those, this answers in 0ms; the best end-to-end measurement was 780ms from the
+ * speaker stopping to the first audio out.
  *
  * **Name presence is not the test.** Two earlier versions of this keyed on the name
  * appearing and leaked 11 of 12 and 6 of 6 third-person mentions respectively.
@@ -28,7 +28,7 @@
  *
  *   1. **Edge position.** A vocative sits at the start or the end of what is being
  *      said, or is fenced off by a comma, or follows nothing but a greeting. This
- *      is what kills "ask Iris later" and "we can get Iris to do it".
+ *      rule rejects "ask Iris later" and "we can get Iris to do it".
  *   2. **No grammatical role.** A finite verb after the name makes the name its
  *      subject ("Iris said the cluster was fine"); a preposition or a verb before
  *      it makes it an object ("I talked to Iris", "let Iris handle it"). Either way
@@ -43,15 +43,14 @@
  * express it — the difference is *inflection*. `said` has the lemma `say`, so it is
  * a finite verb and the name in front of it is its subject. `go` has the lemma `go`,
  * so it is a base form, so the sentence is an imperative aimed at whoever was just
- * named. One principle instead of two enumerations of English morphology that I
- * would be guessing at — and hand-written lists are precisely the artifact that
- * leaked in both refuted versions.
+ * named. One rule instead of two hand-written lists of English morphology — and
+ * hand-written lists are what leaked in both earlier versions.
  *
- * **The tagger is English-only, and this file says so out loud.** wink's
+ * **The tagger is English-only, and this file states it.** wink's
  * `wink-eng-lite-web-model` is the only model that exists, so `readsScript()`
  * declares what this path can read and everything else defers. That does *not* make
  * the agent English-only: the model gate behind this is language-agnostic, and a
- * deferral reaches it unchanged. The seam is not hypothetical — unseeded
+ * deferral goes to it unchanged. This is not hypothetical — unseeded
  * transcription rendered "hey Iris" as the Greek "Καίρις" twice on one call, and
  * both took the deferral rather than being mis-parsed as English. Supporting a
  * second language means adding a reader here and touching nothing else.
@@ -63,7 +62,7 @@ import { logger } from '../../logger';
 /**
  * Why this path decided what it did.
  *
- * A bounded enum rather than a sentence, and deliberately so: this is written to the
+ * A bounded enum rather than a sentence, on purpose: this is written to the
  * log on every utterance, and a reason built by quoting the sentence ("name is the
  * subject of *said*") would put a word of the room's speech in the log under
  * `MEETING_TRANSCRIPT_LOGGING=off` — the one thing `transcript-log.ts` exists to
@@ -72,7 +71,7 @@ import { logger } from '../../logger';
 export type VocativeReason =
   /** All three rules held: someone said the name *to* the agent. */
   | 'vocative'
-  /** No word in the text resembles the name. The overwhelmingly common case. */
+  /** No word in the text resembles the name. By far the most common case. */
   | 'no name'
   /** A word matched the letters but is doing a function word's job here. */
   | 'not a name here'
@@ -105,17 +104,17 @@ export interface VocativeVerdict {
 /**
  * Words that may sit in front of a vocative without giving the name a role.
  *
- * Not a general-purpose list, and not load-bearing the way the refuted verb lists
- * were: everything here is something people say *before* addressing someone ("hey
- * Iris", "sorry Iris, could you repeat that", "ok Iris, your turn"). Getting an
- * entry wrong costs a deferral, not a wrong answer.
+ * Not a general-purpose list, and it does not decide the verdict the way the earlier
+ * verb lists did: everything here is something people say *before* addressing someone
+ * ("hey Iris", "sorry Iris, could you repeat that", "ok Iris, your turn"). A wrong
+ * entry costs a deferral, not a wrong answer.
  */
 const GREETING = /^(ok|okay|oh|sorry|hey|hi|hello|thanks|thank|morning|afternoon|yes|no|yeah)$/i;
 
 /**
  * Courtesies that come immediately before a name at the end of a sentence.
  *
- * Overlaps `GREETING` but is deliberately not the same list. The trailing-name rule has to
+ * Overlaps `GREETING` but is not the same list. The trailing-name rule has to
  * let through "Makes sense, thanks Iris" and "Oh, go ahead, sorry, Iris" — both live
  * utterances — while `GREETING` in that position would also admit "there is no Iris", where
  * `no` is a determiner rather than an acknowledgement. These are the words people actually
@@ -133,7 +132,7 @@ const SECOND_PERSON = /^(you|your|yours|yourself)$/i;
  * First-person plural, as a subject or an object. "Iris, we need the node count" and
  * "Iris, give us a minute" are both addressed rather than narrated.
  *
- * `our` is deliberately absent. It is a possessive determiner, so it modifies whatever
+ * `our` is absent on purpose. It is a possessive determiner, so it modifies whatever
  * noun follows it rather than standing in for anybody being spoken to — which is exactly
  * the shape of an appositive about the agent. With `our` in this list, the
  * comma-stripped "Iris our agent flagged it first" read as an address.
@@ -144,7 +143,7 @@ const INCLUSIVE = /^(we|us)$/i;
 const REQUEST = /^(please|pls)$/i;
 
 /**
- * Tags a name cannot possibly carry.
+ * Tags a name cannot have.
  *
  * An agent's name is user-set text, so it is often also an ordinary English word —
  * Max, Will, May, Mark, Grace, Sage, Echo. When such a word is doing a function
@@ -152,9 +151,9 @@ const REQUEST = /^(please|pls)$/i;
  * an auxiliary, not with an address to an agent called Will. Reading the tag is the
  * only way to tell those apart, since the letters are identical.
  *
- * Nominal tags are deliberately all allowed, PROPN and NOUN alike: transcription
- * lower-cases a name often enough that requiring PROPN would throw away real
- * addresses — a live call rendered "Actually, prism, can you help with that?" with
+ * Nominal tags are all allowed, PROPN and NOUN alike: transcription lower-cases a
+ * name often enough that requiring PROPN would throw away real addresses — a live
+ * call rendered "Actually, prism, can you help with that?" with
  * `prism` tagged NOUN, and that is exactly the utterance this path exists to answer
  * without a model call.
  */
@@ -257,11 +256,11 @@ async function buildTokenizer(): Promise<Tokenizer | null> {
 /**
  * Is this text in a script the tagger can read?
  *
- * Latin-script share is a cheap and honest proxy. It is not a language detector and
- * does not pretend to be one — it answers "was this written in the alphabet the
- * English model was trained on", which is the question that decides whether tagging
- * it means anything. Text with no letters at all (a number, a stray "?") reads as
- * fine, because there is nothing in it to mis-parse.
+ * Latin-script share is a cheap proxy. It is not a language detector — it answers
+ * "was this written in the alphabet the English model was trained on", which is the
+ * question that decides whether tagging it means anything. Text with no letters at
+ * all (a number, a stray "?") reads as fine, because there is nothing in it to
+ * mis-parse.
  */
 function readsScript(text: string): boolean {
   const letters = text.replace(/[^\p{L}]/gu, '');
@@ -273,30 +272,30 @@ function readsScript(text: string): boolean {
 /**
  * Is this heard word the agent's name? Exact, ignoring case. Lowercase `name` expected.
  *
- * **Deliberately not fuzzy**, and this is the one decision here worth arguing about.
- * Transcription does mangle names — a live call rendered "Prism" as "Pritham" — but
- * reading through a mishearing is precisely what the model gate behind this exists to
- * do, and duplicating its hardest job in a local heuristic is where a local heuristic
- * leaks. An agent's name is arbitrary user-set text, so any tolerance has to hold for
- * *every* name somebody might choose, not for the one in front of us.
+ * **Not fuzzy**, on purpose, and this is the decision here that needs the most
+ * explanation. Transcription does mangle names — a live call rendered "Prism" as
+ * "Pritham" — but reading through a mishearing is what the model gate exists to do, and
+ * repeating its hardest job in a local heuristic is where a local heuristic leaks. An
+ * agent's name is arbitrary user-set text, so any tolerance has to hold for *every*
+ * name somebody might choose, not for the one in front of us.
  *
  * An earlier version accepted a shared four-character prefix. Against seventeen
  * heard-word/agent-name pairs it was wrong nine times, and not marginally: a colleague
- * called **Mario** reached an agent called **Marina**, `sandbox` reached Sandra,
- * `concern` and `concept` both reached Concord. Answering a question somebody asked
- * Mario is the exact failure this whole path is built to avoid. A one-edit-distance
+ * called **Mario** matched an agent called **Marina**, `sandbox` matched Sandra,
+ * `concern` and `concept` both matched Concord. Answering a question somebody asked
+ * Mario is exactly the failure this path is built to avoid. A one-edit-distance
  * rule got that down to two, both genuinely ambiguous (`marine`/Marina,
  * `prisma`/Prism).
  *
- * Phonetic matching was measured too, since it is the obvious thing to reach for —
+ * Phonetic matching was measured too, since it is the obvious alternative —
  * `soundex-code`, `metaphone`, `double-metaphone` and Jaro-Winkler, on the same pairs.
  * Double-metaphone was the best of them and the only rule that recovered a mangling
  * that really happened, collapsing both "ares" and "aras" onto the agent's own code.
  * It also leaked three, including `all` onto an agent called Al: collapsing vowels is
- * the same property that makes it recover a mishearing. None of the four recovered
- * "Pritham" for "Prism", the mangling this feature is best known for.
+ * the same property that recovers a mishearing. None of the four recovered "Pritham"
+ * for "Prism", the mangling this feature is best known for.
  *
- * And none of it bought anything where it counts. On real transcriber output — 64
+ * None of it helped where it counts. On real transcriber output — 64
  * utterances, three voices, through the model this runtime uses — exact matching and
  * double-metaphone find the name in **the same 23 of 23 addresses** once the name is
  * seeded to the transcriber as a keyword, which is what production does on every call.
@@ -304,8 +303,8 @@ function readsScript(text: string): boolean {
  * has not shipped since keyword seeding did. Across every corpus the only case
  * separating exact from one-edit is a written "Irish" for "Iris".
  *
- * So the division of labour is the sharp one: this path takes the easy case in 0ms, and
- * the hard case goes where the hard case belongs.
+ * So the split is clear: this path takes the easy case in 0ms, and the hard case goes
+ * to the model.
  *
  * The consequence to know: an agent whose name is two words, or written in a script
  * the tagger cannot read, never matches here at all. Every one of its utterances goes
@@ -316,21 +315,21 @@ function looksLikeName(word: string, name: string): boolean {
 }
 
 /**
- * The three rules, over tagged tokens. Pure, and the whole decision.
+ * The three rules, over tagged tokens. Pure, and the whole of the decision.
  *
  * One sentence at a time — see the comment inside for the two live utterances that made
  * that necessary.
  */
 function decide(toks: Token[], name: string): VocativeVerdict {
-  // One sentence at a time. Working on the whole utterance was a deliberate choice once,
-  // justified on the grounds that the comma test already rescues a vocative with a clause
-  // *before* it — which said nothing about one with a whole sentence *after* it, and that
-  // is what ordinary speech produces. Two live examples, minutes apart:
+  // One sentence at a time. An earlier version read the whole utterance, on the grounds
+  // that the comma test already rescues a vocative with a clause *before* it — which said
+  // nothing about one with a whole sentence *after* it, and that is what ordinary speech
+  // produces. Two live examples, minutes apart:
   //
   //   "…how could this be deployed to our own infrastructure, Iris? Are there any…"
   //   "That sounds pretty good, Iris. Thank you for the great summary."
   //
-  // In both, the name ends the first sentence and the speaker carries on, so `atEnd` was
+  // In both, the name ends the first sentence and the speaker continues, so `atEnd` was
   // false and a plain trailing vocative read as mid-clause. Both went to the model, which
   // answered them correctly a second and a half later.
   const sentences = splitSentences(toks);
@@ -446,10 +445,10 @@ function judgeOccurrence(toks: Token[], nameAt: number, isLastSentence: boolean)
   // An auxiliary and the listener, right behind the name: "Iris can you hear me". The
   // inverted-question form, which happens when the name is being spoken to.
   //
-  // Except for one bigram that is byte-identical up to this point and endemic in speech:
+  // Except for one bigram that is identical up to this point and very common in speech:
   // "you know" as a filler. `Iris was you know a bit slow today` has AUX + second-person
   // exactly like an inverted question, and it is somebody discussing the agent's performance
-  // — precisely the sentence it must not interrupt. The commas do not distinguish them
+  // — exactly the sentence it must not interrupt. The commas do not distinguish them
   // either, since punctuation is filtered out of `words`. So the filler is excluded by the
   // lemma of what follows the pronoun, which also closes the same hole in the rule-2
   // exemption below, where it predates these changes.
@@ -595,18 +594,18 @@ function judgeOccurrence(toks: Token[], nameAt: number, isLastSentence: boolean)
   // "That sounds pretty good, Iris." Nothing else in that sentence marks it as directed — no
   // question, no second person, no courtesy — and it is still plainly a vocative.
   //
-  // An allowlist rather than a blocklist, and that distinction is load-bearing. Excluding
-  // proper nouns and numbers was not nearly enough, because the two shapes that own this
-  // position are an appositive and a list, and both usually end on a common noun or a
+  // An allowlist rather than a blocklist, and the difference matters. Excluding proper
+  // nouns and numbers was not nearly enough, because the two shapes that usually occupy
+  // this position are an appositive and a list, and both often end on a common noun or a
   // pronoun: "the outage was caused by our agent, Iris", "they rely on Slack, the
   // dashboards, Iris", "they blamed it on her, Iris". Naming what a vocative *does* follow —
   // an adjective, an adverb, an interjection — admits the live cases ("pretty good, Iris",
   // "go ahead, Iris") and none of those.
   //
-  // Verbs are deliberately absent even though a vocative can follow one, because the tagger
-  // reads a noun-phrase head as a verb often enough to matter: "the team lead, Iris" tags
-  // `lead` as VERB. The genuine cases reach a yes another way — "Thanks for coming, Iris"
-  // through the greeting that opens it.
+  // Verbs are absent even though a vocative can follow one, because the tagger reads a
+  // noun-phrase head as a verb often enough to matter: "the team lead, Iris" tags `lead`
+  // as VERB. The genuine cases pass another way — "Thanks for coming, Iris" through the
+  // greeting that opens it.
   const PREDICATE_TAIL = new Set(['ADJ', 'ADV', 'INTJ']);
   const fencedTail = atEnd && commaBefore && prev !== undefined && PREDICATE_TAIL.has(prev.pos);
 

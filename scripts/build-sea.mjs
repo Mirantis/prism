@@ -54,16 +54,17 @@ const version = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')
 const UNBUNDLABLE = ['playwright-core', 'fsevents'];
 
 /**
- * Deps only a voice meeting reaches, kept out for size rather than because they break.
+ * Deps that only a voice meeting needs, kept out for size rather than because they
+ * break.
  *
- * The English POS tagger and its model bundle perfectly well and cost **3.8MB** of
+ * The English POS tagger and its model bundle correctly, but they add **3.8MB** to the
  * binary (15.58MB against 11.77MB, measured) for code a SEA cannot run: the meeting
  * path needs Chromium, Xvfb and PulseAudio, none of which a binary ships, and
- * `playwright-core` above is already external for the same reason — so anything that
- * could reach the tagger has failed to open a browser long before. Left in, every
- * `prism` download pays for a tagger it will never load.
+ * `playwright-core` above is already external for the same reason — so the code that
+ * loads the tagger has already failed to open a browser. If they stay in, every
+ * `prism` download includes a tagger it never loads.
  *
- * Safe by the same argument as `UNBUNDLABLE`, and one step safer: an unresolvable
+ * Safe for the same reason as `UNBUNDLABLE`, and one step safer: an unresolvable
  * `import()` here is caught in `services/meeting/vocative.ts`, which logs once and
  * sends every utterance to the classification model instead — the behaviour before
  * the tagger existed.

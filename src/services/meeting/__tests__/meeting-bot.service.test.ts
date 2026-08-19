@@ -1117,8 +1117,8 @@ describe('telemetry', () => {
     await settle();
     await service.leave();
 
-    // The share is emitted rather than derived, so the one number this feature is
-    // judged on needs no arithmetic in a dashboard. Three of four here.
+    // The share is emitted rather than derived, so a dashboard needs no arithmetic to
+    // show it. Three of four here.
     const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
     expect(ended?.[2]).toMatchObject({
       gate_local_yes: '3',
@@ -1128,8 +1128,8 @@ describe('telemetry', () => {
   });
 
   it('reports a zero share for a call nobody spoke to the agent in', async () => {
-    // A real and common outcome. Absent properties would be indistinguishable from a
-    // build that never emitted them.
+    // A common outcome. Absent properties would look the same as a build that never
+    // emitted them.
     vi.spyOn(FakeVoiceConversation.prototype, 'statistics', 'get').mockReturnValue({
       responses: 0,
       toolCalls: 0,
