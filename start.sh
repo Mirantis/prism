@@ -52,10 +52,8 @@ fi
 # CACertificates needs M132+; Debian's chromium is far past that.
 #
 # A suffix on the bundle is the only condition that matters, so it is also the only
-# thing tested: no sandbox means nothing appended means nothing to do. Deliberately
-# not gated on SSL_CERT_FILE — that would test one file and read another, and would
-# tie this to which variables a supervisor happens to export. The path is the one
-# lens-sandbox-core hardcodes as CA_BUNDLE_PATH in src/ca.rs, where it appends.
+# thing tested: no sandbox means nothing appended means nothing to do. The path is the
+# one lens-sandbox-core hardcodes as CA_BUNDLE_PATH in src/ca.rs, where it appends.
 CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 CA_COUNT=/app/.ca-cert-count
 if [ ! -r "$CA_BUNDLE" ] || [ ! -r "$CA_COUNT" ]; then
