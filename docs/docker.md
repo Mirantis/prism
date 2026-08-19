@@ -118,13 +118,16 @@ runtime exchanges audio through. They add roughly 400 MB, and unlike LibreOffice
 above there is no way to join a meeting without a browser and an audio server, so
 they are bundled rather than left out. It's Debian's `chromium`
 rather than Google Chrome because only the former is packaged for arm64, and the
-image is multi-arch. `/etc/chromium/policies/managed` — where Chromium reads
-managed policies — is pre-created and owned by the runtime user, because
-`/etc/chromium` is root-owned and the container has no `sudo`. Behind a
-TLS-intercepting proxy, that is where a certificate policy makes the browser trust
-the proxy's certificate authority instead of rejecting every proxied page. In a Lens
-sandbox `start.sh` writes that policy itself on every start, since the sandbox's CAs
-are only knowable at run time (see [voice meetings](voice-meetings.md#egress)).
+image is multi-arch. `/etc/chromium/policies/managed` and
+`/etc/opt/chrome/policies/managed` — where Chromium and Chrome read managed
+policies — are both pre-created and owned by the runtime user, because those `/etc`
+trees are root-owned and the container has no `sudo`. Chrome's is there for a
+derived image that adds it, since the runtime prefers `google-chrome` when one is
+present. Behind a TLS-intercepting proxy, that is where a certificate policy makes
+the browser trust the proxy's certificate authority instead of rejecting every
+proxied page. In a Lens sandbox `start.sh` writes `prism-ca.json` into both on every
+start, since the sandbox's CAs are only knowable at run time (see
+[voice meetings](voice-meetings.md#egress)).
 Voice meetings additionally need `OPENAI_API_KEY` (already present when the
 container runs `LLM_PROVIDER=openai` chat direct — through the Lens Agents
 gateway that provider needs no local key, and the meeting tools then stay off
