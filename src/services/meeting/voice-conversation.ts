@@ -508,12 +508,21 @@ export class VoiceConversation {
     // list that replaced the one the utterance was actually transcribed under.
     const keywords = this.keywords;
 
-    // The local read first. It can only ever say *yes* — see `vocative.ts` — so a
-    // sentence it recognises as a vocative skips the model entirely and the room
-    // waits 0ms instead of the gate's measured 0.9–1.5s, while everything else goes
-    // to the model exactly as before. The asymmetry is deliberate: a bug here adds
-    // latency; it does not produce a wrong answer.
-    const local = await isVocativeAddress(transcript, this.options.agentName);
+    // The local read first, when the operator has asked for it. It can only ever say *yes*
+    // — see `vocative.ts` — so a sentence it recognises as a vocative skips the model
+    // entirely and the room waits 0ms instead of the gate's latency, while everything else
+    // goes to the model.
+    //
+    // Off by default, which is a change. The asymmetry that made it safe cuts the other way
+    // once the gate is quick: its only failure is saying yes to a sentence nobody addressed
+    // to the agent, and the agent then answers a room that asked it nothing. That was worth
+    // 0.9-1.5s of saving and is not worth about 750ms, which is what a fast classification
+    // model measured over live calls. `MEETING_LOCAL_ADDRESSED_READ=true` puts it back for a
+    // deployment whose gate is slow enough to want it — the saving scales with that latency,
+    // and so does the case for taking the risk.
+    const local = config.meetingLocalAddressedRead
+      ? await isVocativeAddress(transcript, this.options.agentName)
+      : { addressed: false as const, why: 'local read off' as const };
     if (local.addressed) this.gateLocalYes += 1;
     else this.gateModelCalls += 1;
     const addressed =

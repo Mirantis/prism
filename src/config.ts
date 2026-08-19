@@ -376,6 +376,19 @@ const rawFollowUpWindow = parseInt(process.env.MEETING_FOLLOW_UP_WINDOW_MS ?? ''
 const meetingFollowUpWindowMs =
   Number.isFinite(rawFollowUpWindow) && rawFollowUpWindow >= 0 ? rawFollowUpWindow : 8_000;
 
+// Whether the local grammar read runs in front of the addressed gate.
+//
+// Off, which is a change: it used to be the only behaviour. It answers *yes* on its own for a
+// plainly named address and skips the model call, which was worth having when the gate cost
+// 0.9-1.5s. Measured over live calls on a fast classification model the gate now answers in
+// about 750ms, and the read can only fail in one direction — it says yes to a sentence nobody
+// addressed to the agent, and the agent answers a room that asked it nothing. An agent that
+// interrupts is harder to trust than a slow one, so the default trades the saving away.
+//
+// Set it to `true` on a deployment whose classification model is slow. The saving scales with
+// that latency, and so does the case for accepting the risk.
+const meetingLocalAddressedRead = process.env.MEETING_LOCAL_ADDRESSED_READ === 'true';
+
 const meetingFollowUpShadowJudge = process.env.MEETING_FOLLOW_UP_SHADOW_JUDGE !== 'false';
 
 // Parsed defensively: `parseInt` yields NaN for junk, and a zero/negative window
@@ -610,5 +623,6 @@ export const config = {
   meetingTimeoutMinutes,
   meetingAdmissionTimeoutMs,
   meetingFollowUpWindowMs,
+  meetingLocalAddressedRead,
   meetingFollowUpShadowJudge,
 };

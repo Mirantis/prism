@@ -67,6 +67,7 @@ vi.mock('../config', () => ({
     // never expires. Every test that thought it was exercising an eight-second window was
     // exercising an infinite one.
     meetingFollowUpWindowMs: 8_000,
+    meetingLocalAddressedRead: false,
     meetingFollowUpShadowJudge: true,
   },
 }));

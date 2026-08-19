@@ -156,7 +156,15 @@ let active: Harness | null = null;
 afterEach(async () => {
   await active?.dispose();
   active = null;
+  // The local read is off by default in production, so it is off by default here. A test
+  // that wants it turns it on and this puts it back.
+  (config as { meetingLocalAddressedRead: boolean }).meetingLocalAddressedRead = false;
 });
+
+/** Turn the local grammar read on for one test, as `MEETING_LOCAL_ADDRESSED_READ=true` does. */
+function withLocalRead(): void {
+  (config as { meetingLocalAddressedRead: boolean }).meetingLocalAddressedRead = true;
+}
 
 describe('losing the Realtime session', () => {
   it('reports a close the server initiated', async () => {
@@ -521,6 +529,7 @@ describe('answering a spoken name without asking the model', () => {
     active = h;
     // Made to say no, so a response can only come from the local read. If the gate
     // were still consulted the agent would stay silent here.
+    withLocalRead();
     vi.mocked(classifyAddressed).mockResolvedValue(false);
 
     send({
@@ -534,6 +543,26 @@ describe('answering a spoken name without asking the model', () => {
     expect(vi.mocked(classifyAddressed)).not.toHaveBeenCalled();
     expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(1);
     expect(infoLines()).toContain('path=local');
+  });
+
+  it('asks the model about a plainly named address, with the local read off', async () => {
+    // The shipped default. A local grammar read used to answer this one for free; it is now
+    // opt-in, because its only way to fail is answering a room that addressed nobody.
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+    vi.mocked(classifyAddressed).mockResolvedValue(true);
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-34',
+      transcript: 'Emma, can you take a look?',
+    });
+    await settle();
+    await settle();
+
+    expect(vi.mocked(classifyAddressed)).toHaveBeenCalledTimes(1);
+    expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(1);
+    expect(infoLines()).toContain('local read off');
   });
 
   it('still asks the model about a sentence that only mentions the agent', async () => {
@@ -560,6 +589,7 @@ describe('answering a spoken name without asking the model', () => {
   it('counts which path decided, so the saving is measurable on a real call', async () => {
     const { h, send } = await speakingHarness();
     active = h;
+    withLocalRead();
     vi.mocked(classifyAddressed).mockResolvedValue(false);
 
     send({
@@ -693,8 +723,11 @@ describe('staying in an exchange after the agent has spoken', () => {
   it('answers an unnamed follow-up without a gate call, once its own turn has ended', async () => {
     const { h, send, sent } = await speakingHarness();
     active = h;
-    // Made to say no, so an answer can only have come from the window.
-    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    // The gate answers yes only for the sentence that names the agent, so an answer to
+    // anything else can only have come from the window.
+    vi.mocked(classifyAddressed).mockImplementation(async ({ transcript }) =>
+      /emma/i.test(transcript),
+    );
     h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
 
     // Addressed by name, which arms the window.
@@ -739,7 +772,9 @@ describe('staying in an exchange after the agent has spoken', () => {
     // conversation can see it.
     const { h, send, sent } = await speakingHarness();
     active = h;
-    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    vi.mocked(classifyAddressed).mockImplementation(async ({ transcript }) =>
+      /emma/i.test(transcript),
+    );
     h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
 
     send({
@@ -786,7 +821,9 @@ describe('staying in an exchange after the agent has spoken', () => {
   it('does not treat a question aimed at a colleague as a follow-up', async () => {
     const { h, send, sent } = await speakingHarness();
     active = h;
-    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    vi.mocked(classifyAddressed).mockImplementation(async ({ transcript }) =>
+      /emma/i.test(transcript),
+    );
     h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
 
     send({
@@ -832,7 +869,9 @@ describe('the follow-up window while the agent is still being heard', () => {
     // whichever path asked for the response.
     const { h, send } = await speakingHarness();
     active = h;
-    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    vi.mocked(classifyAddressed).mockImplementation(async ({ transcript }) =>
+      /emma/i.test(transcript),
+    );
     h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
 
     send({
