@@ -120,8 +120,11 @@ they are bundled rather than left out. It's Debian's `chromium`
 rather than Google Chrome because only the former is packaged for arm64, and the
 image is multi-arch. `/etc/chromium/policies/managed` — where Chromium reads
 managed policies — is pre-created and owned by the runtime user, because
-`/etc/chromium` is root-owned and the container has no `sudo`. The image puts no
-policy in it, so it stays an empty drop-in point.
+`/etc/chromium` is root-owned and the container has no `sudo`. Behind a
+TLS-intercepting proxy, that is where the agent can drop a certificate policy so
+the browser trusts the proxy's certificate authority instead of rejecting every
+proxied page. The image puts no policy in it, so it ships as an empty drop-in
+point.
 Voice meetings additionally need `OPENAI_API_KEY` (already present when the
 container runs `LLM_PROVIDER=openai` chat direct — through
 Nexus that provider needs no local key, and the meeting tools then stay off

@@ -282,11 +282,18 @@ VOLUME ["/data"]
 ENV PRISM_DATA_DIR=/data
 
 # Where Chromium reads managed policies. Debian's chromium package ships
-# /etc/chromium root-owned, and the runtime user has no sudo, so the directory is
-# pre-created node-owned on purpose: the runtime writes its own policy files here
-# at run time, such as the CA-trust drop-in a proxied host needs. Keep it
-# node-owned — root ownership makes that write fail. The image itself bakes in no
-# policy.
+# /etc/chromium root-owned and the runtime user has no sudo, so only the build can
+# create this directory, and it must be node-owned or the policy file cannot be
+# written at run time. The need is certificate trust: behind a TLS-intercepting
+# proxy Chromium rejects a proxied host with ERR_CERT_AUTHORITY_INVALID until a
+# CACertificates policy names the proxy's CA — with that drop-in the same host
+# answered HTTP 200. Chromium reads managed policy at process start, so the file
+# must exist before the browser launches.
+#
+# A runtime-writable policy directory widens the image's trust surface on purpose:
+# a file here can install a trusted CA, force extensions or set a proxy for every
+# browser the image runs. Nothing in the image writes it — the agent does, through
+# its own shell, when asked to trust a proxy's CA. The directory ships empty.
 RUN mkdir -p /etc/chromium/policies/managed && chown node:node /etc/chromium/policies/managed
 
 # Health check
