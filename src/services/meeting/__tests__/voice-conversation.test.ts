@@ -35,11 +35,10 @@ vi.mock('../addressed-classifier', async (importOriginal) => ({
 }));
 
 beforeAll(async () => {
-  // These tests run the *real* vocative read — the point of several of them is which
-  // path decides — and its POS tagger is imported lazily, measured at ~59ms. Paid inside
-  // a test, that import lands in the same few milliseconds as the assertion window built
-  // out of two 20ms settles, so a slow runner would see no response at all. Warmed once
-  // here so no test is racing a module load.
+  // These tests run the *real* vocative read — several of them check which path decides
+  // — and its POS tagger is imported lazily, measured at ~59ms. Inside a test, that
+  // import competes with an assertion window built from two 20ms settles, so a slow
+  // runner would see no response at all. Warmed once here so no test races a module load.
   const { isVocativeAddress } = await import('../vocative');
   await isVocativeAddress('warm the tagger', 'nobody');
 });
@@ -293,7 +292,7 @@ describe('recording what each verdict was reached on', () => {
   // tests keep exercising the model path they are about. A vocative ("Emma, can you take
   // a look?") is decided locally, which makes the mocked gate irrelevant and every
   // `addressed=false` assertion below unreachable. The verdict line itself is still
-  // written either way — it carries `path=local` — so what changes is the verdict, not
+  // written either way — it says `path=local` — so what changes is the verdict, not
   // whether there is a line to redact.
   const UTTERANCE = 'I asked Emma about that yesterday';
 
@@ -550,9 +549,9 @@ describe('answering a spoken name without asking the model', () => {
     await settle();
     await settle();
 
-    // The local read only ever says yes, so everything it declines has to reach the
-    // model — otherwise the fast path would be silencing utterances, which is the one
-    // thing its YES-only contract promises it cannot do.
+    // The local read only ever says yes, so everything it declines must go to the
+    // model — otherwise the fast path would be silencing utterances, which its
+    // YES-only contract forbids.
     expect(vi.mocked(classifyAddressed)).toHaveBeenCalledTimes(1);
     expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(0);
     expect(infoLines()).toContain('path=model');
