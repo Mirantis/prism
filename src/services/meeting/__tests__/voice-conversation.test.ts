@@ -472,3 +472,103 @@ describe('what a call leaves in the log', () => {
     expect(infoLines()).toMatch(/\[Meeting:Heard\] item=item-8 transcript=".*staging cluster/);
   });
 });
+
+/**
+ * A speaker reading as the participants panel produces one.
+ *
+ * The id is present on every one of them because it, not the display name, is what a
+ * caller comparing two readings has to use — the name is only ever for people to read.
+ */
+function reading(name: string, id = `spaces/x/devices/${name.length}`) {
+  return { id, isSelf: false, who: { kind: 'person' as const, name } };
+}
+
+describe('knowing who has the floor', () => {
+  it('reports the human the platform named', async () => {
+    const { h } = await speakingHarness();
+    active = h;
+
+    h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
+
+    expect(h.conversation.currentSpeaker?.who).toEqual({ kind: 'person', name: 'Mario Sarcher' });
+  });
+
+  it('reports nobody while the agent itself is the one being captioned', async () => {
+    const { h } = await speakingHarness();
+    active = h;
+
+    h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
+    h.conversation.setCurrentSpeaker({
+      id: 'devices/9',
+      isSelf: true,
+      who: { kind: 'person', name: 'Iris' },
+    });
+
+    // Not the stale human. Whoever reads this wants "which human has the floor", and
+    // answering with the last person who spoke before the agent started talking is how a
+    // follow-up gets attributed to the wrong speaker.
+    expect(h.conversation.currentSpeaker).toBeNull();
+  });
+
+  it('keeps the last speaker when a read comes back empty', async () => {
+    const { h } = await speakingHarness();
+    active = h;
+
+    h.conversation.setCurrentSpeaker(reading('Emma Lee'));
+    // Captions off, pane cleared, or the read failed — all arrive as null, and none of
+    // them is evidence that the person who was talking has stopped.
+    h.conversation.setCurrentSpeaker(null);
+
+    expect(h.conversation.currentSpeaker?.who).toEqual({ kind: 'person', name: 'Emma Lee' });
+  });
+
+  it('forgets a speaker that has gone stale', async () => {
+    const { h } = await speakingHarness();
+    active = h;
+    h.conversation.setCurrentSpeaker(reading('Emma Lee'));
+
+    // Only the clock is faked: the harness runs a real socket, and faking timers would
+    // stall it. Past the freshness bound the pane has plainly cleared, and holding the
+    // name would keep naming somebody who stopped talking a minute ago.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 6_001 });
+    try {
+      expect(h.conversation.currentSpeaker).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('counts how often a closed utterance had a speaker attached', async () => {
+    const { h, send } = await speakingHarness();
+    active = h;
+
+    h.conversation.setCurrentSpeaker(reading('Emma Lee'));
+    // Counted when the turn detector closes an utterance, not when a transcript arrives:
+    // transcription is only requested when the log is going to carry the words, so a
+    // counter on the transcript would read zero on every default-configured call.
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-40' });
+    await settle();
+    await settle();
+
+    // The rate this feeds is the only signal that a scrape of somebody else's UI has
+    // stopped working: the call carries on either way, just anonymously.
+    expect(h.conversation.statistics).toMatchObject({
+      attributedUtterances: 1,
+      unattributedUtterances: 0,
+    });
+  });
+
+  it('counts an unattributed utterance when the platform said nothing', async () => {
+    const { h, send } = await speakingHarness();
+    active = h;
+
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-41' });
+    await settle();
+    await settle();
+
+    expect(h.conversation.statistics).toMatchObject({
+      attributedUtterances: 0,
+      unattributedUtterances: 1,
+    });
+  });
+});
