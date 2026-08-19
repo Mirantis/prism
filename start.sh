@@ -51,12 +51,14 @@ fi
 # base64 DER, so awk strips the armor and joins the wrapped lines.
 # CACertificates needs M132+; Debian's chromium is far past that.
 #
-# The bundle path is the one lens-sandbox-core hardcodes.
+# A suffix on the bundle is the only condition that matters, so it is also the only
+# thing tested: no sandbox means nothing appended means nothing to do. Deliberately
+# not gated on SSL_CERT_FILE — that would test one file and read another, and would
+# tie this to which variables a supervisor happens to export. The path is the one
+# lens-sandbox-core hardcodes as CA_BUNDLE_PATH in src/ca.rs, where it appends.
 CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 CA_COUNT=/app/.ca-cert-count
-if [ -z "${SSL_CERT_FILE:-}" ]; then
-  echo 'chromium CA policy: not in a sandbox (SSL_CERT_FILE unset), nothing to trust'
-elif [ ! -r "$CA_BUNDLE" ] || [ ! -r "$CA_COUNT" ]; then
+if [ ! -r "$CA_BUNDLE" ] || [ ! -r "$CA_COUNT" ]; then
   echo "chromium CA policy: skipped, need both $CA_BUNDLE and $CA_COUNT" >&2
 else
   sandbox_cas=$(awk -v skip="$(cat "$CA_COUNT")" '
@@ -68,7 +70,7 @@ else
   ' "$CA_BUNDLE") || sandbox_cas=''
 
   if [ -z "$sandbox_cas" ]; then
-    echo "chromium CA policy: skipped, no CAs appended past the $(cat "$CA_COUNT") the image ships" >&2
+    echo "chromium CA policy: nothing appended past the $(cat "$CA_COUNT") certificates the image ships, nothing to trust"
   else
     written=''
     for policy_dir in /etc/chromium/policies/managed /etc/opt/chrome/policies/managed; do
