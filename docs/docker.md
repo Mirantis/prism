@@ -124,9 +124,7 @@ managed policies — is pre-created and owned by the runtime user, because
 TLS-intercepting proxy, that is where a certificate policy makes the browser trust
 the proxy's certificate authority instead of rejecting every proxied page. In a Lens
 sandbox `start.sh` writes that policy itself on every start, since the sandbox's CAs
-are only knowable at run time (see
-[voice meetings](voice-meetings.md#egress)); otherwise the directory ships empty and
-stays a drop-in point.
+are only knowable at run time (see [voice meetings](voice-meetings.md#egress)).
 Voice meetings additionally need `OPENAI_API_KEY` (already present when the
 container runs `LLM_PROVIDER=openai` chat direct — through
 Nexus that provider needs no local key, and the meeting tools then stay off
