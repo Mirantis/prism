@@ -8,17 +8,20 @@
 #      `Environment variable not found: DATABASE_URL` from prisma if
 #      the operator doesn't pre-set it. Mirrors the runtime default so
 #      an unconfigured `docker run` still works.
-#   2. Apply Prisma migrations.
-#   3. Apply any pending `.prism` import via
+#   2. Hand the sandbox's TLS-interception CAs to Chromium as managed
+#      enterprise policy — the browser cannot see them any other way.
+#      No-op outside a sandbox.
+#   3. Apply Prisma migrations.
+#   4. Apply any pending `.prism` import via
 #      `dist/scripts/apply-pending-import.js` BEFORE prisma migrate
 #      deploy / backfill / server open the SQLite file. Shared with the
 #      `dev:single` npm script (which runs the same code via tsx) —
 #      single source of truth for the swap, no race with the backfill
-#      subprocess step 4 forks, no race with `prisma migrate deploy`
+#      subprocess step 5 forks, no race with `prisma migrate deploy`
 #      opening the stale DB.
-#   4. Kick off the embedding backfill in the background — best-effort,
+#   5. Kick off the embedding backfill in the background — best-effort,
 #      never blocks startup.
-#   5. Exec the Node server as PID 1 (after the migrate step so signal
+#   6. Exec the Node server as PID 1 (after the migrate step so signal
 #      handling + crash semantics match a clean process tree).
 #
 # Direct path to the workspace-hoisted prisma binary — avoids `npx`'s
@@ -36,6 +39,56 @@ if [ -z "${OTEL_EXPORTER_OTLP_API_KEY+x}" ] && [ -s /app/.otel-api-key ]; then
   OTEL_EXPORTER_OTLP_API_KEY=$(cat /app/.otel-api-key)
   export OTEL_EXPORTER_OTLP_API_KEY
 fi
+
+# Teach Chromium to trust the sandbox's TLS-intercepting CAs.
+#
+# Inside a Nexus sandbox every connection is terminated by a boundary proxy, and
+# the supervisor makes that trustworthy for normal tooling two ways: it appends
+# its CAs to the system bundle, and it points SSL_CERT_FILE / NODE_EXTRA_CA_CERTS
+# / CURL_CA_BUNDLE / REQUESTS_CA_BUNDLE / GIT_SSL_CAINFO at it. Chromium honours
+# none of that — it carries its own root store, on Linux never reads the system
+# bundle, and has no CA-path env var at all. Its only admin-facing hook is a
+# managed enterprise policy, so the meeting browser cannot reach a MITM'd origin
+# without one (`ERR_CERT_AUTHORITY_INVALID`).
+#
+# Written at boot rather than baked into the image because one of these CAs is
+# generated inside the sandbox on every start and never leaves the supervisor's
+# memory. Everything past the cert count recorded at build time was appended by
+# the supervisor, which is exactly the set to hand over — and only that set:
+# certificates trusted this way are treated as locally-trusted anchors, which
+# turns off CT enforcement, Baseline-Requirements validity limits and key
+# pinning for anything chaining to them, so passing the whole bundle would
+# quietly weaken the public web rather than just add the proxy.
+#
+# The base64 must be one unbroken line per certificate: Chromium decodes these
+# strictly and drops anything that fails, with no error on chrome://policy or
+# anywhere else. A PEM body is already base64 DER, so awk strips the armor and
+# joins the wrapped lines. CACertificates needs M132+; Debian's chromium is far
+# past that.
+#
+# SSL_CERT_FILE is set only by the supervisor, so this whole block no-ops on a
+# plain `docker run`. The bundle path is the one lens-sandbox-core hardcodes.
+CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+CA_COUNT=/etc/ssl/certs/ca-certificates.count
+if [ -n "${SSL_CERT_FILE:-}" ] && [ -r "$CA_BUNDLE" ] && [ -r "$CA_COUNT" ]; then
+  sandbox_cas=$(awk -v skip="$(cat "$CA_COUNT")" '
+    /BEGIN CERTIFICATE/ { in_cert = 1; b64 = ""; next }
+    /END CERTIFICATE/   { in_cert = 0
+                          if (++seen > skip) printf "%s\"%s\"", (n++ ? "," : ""), b64
+                          next }
+    in_cert             { b64 = b64 $0 }
+  ' "$CA_BUNDLE" 2>/dev/null) || sandbox_cas=''
+
+  if [ -n "$sandbox_cas" ]; then
+    for policy_dir in /etc/chromium/policies/managed /etc/opt/chrome/policies/managed; do
+      if [ -w "$policy_dir" ]; then
+        printf '{"CACertificates":[%s]}' "$sandbox_cas" > "$policy_dir/lens-ca.json" \
+          || echo "failed writing $policy_dir/lens-ca.json; continuing startup" >&2
+      fi
+    done
+  fi
+fi
+
 node dist/scripts/apply-pending-import.js
 "$PRISMA" migrate deploy --schema=prisma/sqlite/schema.prisma
 

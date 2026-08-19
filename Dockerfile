@@ -109,6 +109,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unzip \
     && rm -rf /var/lib/apt/lists/*
 
+# Count the CA certificates this image ships with, so start.sh can tell which
+# ones a sandbox supervisor appended at boot. The supervisor appends its
+# TLS-interception CAs to the bundle, so its certs are always the suffix and
+# everything past this count is one of them. A count rather than a copy of the
+# bundle because that is all the comparison needs.
+#
+# Must stay in this layer: `ca-certificates` above is what creates the bundle,
+# and nothing later in the build touches it.
+RUN grep -c 'BEGIN CERTIFICATE' /etc/ssl/certs/ca-certificates.crt \
+      > /etc/ssl/certs/ca-certificates.count
+
 # Install only production dependencies. Scope to root + cli — the web
 # workspace's node_modules isn't needed at runtime (we only ship its
 # built dist/), so skip it to keep the image smaller.
@@ -291,9 +302,16 @@ ENV PRISM_DATA_DIR=/data
 #
 # A runtime-writable policy directory widens the image's trust surface on purpose:
 # a file here can install a trusted CA, force extensions or set a proxy for every
-# browser the image runs. Nothing in the image writes it — the agent does, through
-# its own shell, when asked to trust a proxy's CA. The directory ships empty.
-RUN mkdir -p /etc/chromium/policies/managed && chown node:node /etc/chromium/policies/managed
+# browser the image runs. It is node-owned because `start.sh` writes the CA policy
+# there on every boot (see the block in that file) — inside a sandbox the trust
+# anchors are only knowable at run time, since one of them is generated per
+# container start. Outside a sandbox nothing is written and it ships empty.
+#
+# /etc/opt/chrome too: resolveBrowser() prefers /usr/bin/google-chrome when a
+# derived image provides it, and Chrome reads its policies from there (see
+# BROWSER_CANDIDATES in services/meeting/browser-stack.ts).
+RUN mkdir -p /etc/chromium/policies/managed /etc/opt/chrome/policies/managed \
+ && chown node:node /etc/chromium/policies/managed /etc/opt/chrome/policies/managed
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
