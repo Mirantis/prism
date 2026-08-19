@@ -223,9 +223,11 @@ describe('join outcomes', () => {
   it('waits out the waiting room and reports admission when it arrives', async () => {
     const harness = fakePage({
       visibleButtons: ['Ask to join'],
-      // Admitted only on the third poll, as a real host would.
+      // Admitted only on the third poll, as a real host would. The marker is the Leave
+      // control: this used to add a People button, which a live probe of the page found Meet
+      // never renders — so the fake was proving admission by furniture that does not exist.
       onTick: (tick) => {
-        if (tick >= 3) harness.state.visibleSelectors.add('button[aria-label*="People" i]');
+        if (tick >= 3) harness.state.visibleSelectors.add('button[aria-label*="Leave call" i]');
       },
     });
 

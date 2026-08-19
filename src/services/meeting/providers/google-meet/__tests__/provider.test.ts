@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  GoogleMeetProvider,
-  nameFromOptionsLabel,
-  unglueTileName,
-} from '../index';
+import { GoogleMeetProvider } from '../index';
 
 const provider = new GoogleMeetProvider();
 
@@ -98,18 +94,24 @@ describe('GoogleMeetProvider.participantCount', () => {
     expect(await provider.participantCount(pageWith(html))).toBe(9);
   });
 
-  it('still reads the two legacy attributes', async () => {
-    expect(await provider.participantCount(pageWith('<div data-participant-count="5"></div>'))).toBe(5);
-    expect(
-      await provider.participantCount(pageWith('<button aria-label="People (4)"></button>')),
-    ).toBe(4);
+  it('counts the panel rows that name a participant', async () => {
+    // The authoritative reading, and the only one that is both exact and
+    // language-independent — but it needs the panel open, which is why it is not alone.
+    const html = `<div role="list" aria-label="Participants">
+      <div role="listitem" aria-label="Iris" data-participant-id="spaces/x/devices/1"></div>
+      <div role="listitem" aria-label="Mario Sarcher" data-participant-id="spaces/x/devices/2"></div>
+      <div role="listitem" aria-label="Merged audio"></div>
+    </div>`;
+    // Three rows, two of them people: a cohort row has no participant id, and
+    // counting it would have the agent believe there is one more person in the room.
+    expect(await provider.participantCount(pageWith(html))).toBe(2);
   });
 
   it('discards a reading that is not a number', async () => {
     // `parseInt('lots')` is NaN, and NaN reaching the caller would compare false
     // against every threshold — neither "leave" nor "stay", just quietly wrong.
     expect(
-      await provider.participantCount(pageWith('<div data-participant-count="lots"></div>')),
+      await provider.participantCount(pageWith('<div><span>People</span><div>lots</div></div>')),
     ).toBeNull();
   });
 
@@ -128,38 +130,4 @@ describe('GoogleMeetProvider.participantCount', () => {
     // whole call: one read that never settles would stall every later poll.
     await expect(provider.participantCount(wedged)).resolves.toBeNull();
   }, 10_000);
-});
-
-/**
- * Name extraction, against the exact strings a live Meet call produced.
- *
- * Written this way on purpose: the participant *count* selectors were invented from
- * first principles, passed every test, and matched nothing Meet actually serves —
- * the count read `null` for entire meetings while the suite stayed green. These
- * inputs were copied out of a running call over CDP.
- */
-describe('reading participant names', () => {
-  it('undoubles the name in a tile', () => {
-    // Meet renders the name twice and glues a control label on the end.
-    expect(unglueTileName('Mario SarcherMario Sarcherdevices')).toBe('Mario Sarcher');
-  });
-
-  it('rejects a tile that is only controls', () => {
-    expect(
-      unglueTileName('visual_effectsBackgrounds and effectsShow in a tilemore_vert'),
-    ).toBeNull();
-  });
-
-  it('takes the name out of the per-participant menu label', () => {
-    expect(nameFromOptionsLabel('More options for Emma Sky')).toBe('Emma Sky');
-    expect(nameFromOptionsLabel('Pin Emma Sky to the screen')).toBeNull();
-  });
-
-  it('declines a tile it cannot read as doubled', () => {
-    // The first version stripped trailing lowercase as "control labels" and turned
-    // "Miska" into "M" — a single letter handed to the transcriber as a hint to bias
-    // towards. Undoubled tiles are left to the menu-label reading instead.
-    expect(unglueTileName('Miska')).toBeNull();
-    expect(unglueTileName('Lee')).toBeNull();
-  });
 });

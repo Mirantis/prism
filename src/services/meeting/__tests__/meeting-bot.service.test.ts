@@ -63,6 +63,7 @@ const conversationStart = vi.fn();
 const conversationNotify = vi.fn();
 const conversationSpeak = vi.fn();
 const conversationSetParticipantCount = vi.fn();
+const conversationSetCurrentSpeaker = vi.fn();
 /**
  * Told whether the room can hear the agent.
  *
@@ -91,6 +92,7 @@ class FakeVoiceConversation {
   notify = conversationNotify;
   speakNow = conversationSpeak;
   setParticipantCount = conversationSetParticipantCount;
+  setCurrentSpeaker = conversationSetCurrentSpeaker;
   setAudible = conversationSetAudible;
   pushMeetingAudio = vi.fn();
   get responseMode() {
@@ -110,6 +112,8 @@ class FakeVoiceConversation {
       gateLatencyMs: 3200,
       gateSuperseded: 1,
       responsesFailed: 2,
+      attributedUtterances: 3,
+      unattributedUtterances: 1,
     };
   }
 }
@@ -150,6 +154,9 @@ const providerSignIn = vi.fn(async () => {});
 const providerLeave = vi.fn();
 const providerParticipantCount = vi.fn();
 const providerEnsureUnmuted = vi.fn();
+const providerEnableAttribution = vi.fn();
+const providerParticipantNames = vi.fn();
+const providerCurrentSpeaker = vi.fn();
 vi.mock('../providers/google-meet', () => ({
   googleMeetProvider: {
     name: 'google-meet',
@@ -161,6 +168,9 @@ vi.mock('../providers/google-meet', () => ({
     leave: (...a: unknown[]) => providerLeave(...a),
     participantCount: (...a: unknown[]) => providerParticipantCount(...a),
     ensureUnmuted: (...a: unknown[]) => providerEnsureUnmuted(...a),
+    participantNames: (...a: unknown[]) => providerParticipantNames(...a),
+    enableSpeakerAttribution: (...a: unknown[]) => providerEnableAttribution(...a),
+    currentSpeaker: (...a: unknown[]) => providerCurrentSpeaker(...a),
   },
 }));
 
@@ -206,6 +216,9 @@ beforeEach(() => {
   publishToLatestThread.mockResolvedValue(undefined);
   providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   providerLeave.mockResolvedValue(undefined);
+  providerEnableAttribution.mockResolvedValue(undefined);
+  providerParticipantNames.mockResolvedValue([]);
+  providerCurrentSpeaker.mockResolvedValue(null);
   providerParticipantCount.mockResolvedValue(3);
   providerEnsureUnmuted.mockResolvedValue(false);
   conversationOptions = {};
@@ -962,6 +975,129 @@ describe('a late admission cannot resurrect a torn-down call', () => {
   });
 });
 
+describe('reading who has the floor', () => {
+  it('prepares attribution as soon as the join lands, before the greeting', async () => {
+    await service.join(input);
+    await settle();
+
+    // Meet opens every call with its participants panel shut, and preparing after the join
+    // was reported meant the first named address arrived with no speaker attached —
+    // observed twice, back when this read captions. Asserted as an ordering, because "it
+    // was called at some point" would have passed then too. Owned here rather than inside
+    // the provider's join so the interface's contract is true for the next platform.
+    expect(providerEnableAttribution).toHaveBeenCalledWith({ mockPage: true });
+    expect(providerEnableAttribution.mock.invocationCallOrder[0]).toBeLessThan(
+      conversationSpeak.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('keeps the call when attribution cannot be prepared at all', async () => {
+    // Attribution is a hint. A provider that throws here must not cost the meeting.
+    providerEnableAttribution.mockRejectedValue(new Error('Target closed'));
+
+    await service.join(input);
+    await settle();
+
+    expect(service.status().state).toBe('in_call');
+  });
+
+  it('asks for the speaker with nothing but the page', async () => {
+    // It used to be handed the roster, so a scraped caption label could be checked against
+    // who was in the call. Reading the panel removes that ambiguity rather than
+    // compensating for it, so passing the roster would be passing something unused — and an
+    // unused parameter is a claim about how the read works that is no longer true.
+    providerParticipantNames.mockResolvedValue(['Prism', 'Emma Lee']);
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(providerCurrentSpeaker).toHaveBeenCalledWith({ mockPage: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('hands each reading to the conversation, on its own faster timer', async () => {
+    // A second, not the participant poll's ten: a speaker reading already lags speech by
+    // one to two seconds, and a whole exchange can start and finish inside one slow tick.
+    providerCurrentSpeaker.mockResolvedValue({ name: 'Emma Lee', isSelf: false });
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      conversationSetCurrentSpeaker.mockClear();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(conversationSetCurrentSpeaker).toHaveBeenCalledWith({ name: 'Emma Lee', isSelf: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps asking the provider to prepare attribution until something is attributed', async () => {
+    // Same shape as the unmute retry, and for the same reason: one unlucky moment during
+    // admission would otherwise cost attribution for the whole meeting, silently. Safe to
+    // repeat because the provider tests for the state it wants before touching a control,
+    // off.
+    providerCurrentSpeaker.mockResolvedValue(null);
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      providerEnableAttribution.mockClear();
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(providerEnableAttribution).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps asking even after a speaker has been read, because the state can be lost', async () => {
+    // This used to stop once anything had been attributed, which was fair when attribution
+    // came from a caption pane: captions stay on once they are on, so "have I ever read a
+    // speaker" stood in for "is it still working". A participants panel is UI state that a
+    // re-render or a reconnect can take away, and under the old condition attribution would
+    // then be gone for the rest of the call with nothing left to notice.
+    providerCurrentSpeaker.mockResolvedValue({
+      id: 'spaces/x/devices/1',
+      name: 'Emma Lee',
+      isSelf: false,
+      isGroup: false,
+    });
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(2_000);
+      providerEnableAttribution.mockClear();
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(providerEnableAttribution).toHaveBeenCalledWith({ mockPage: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('carries on when the platform cannot be read', async () => {
+    // Attribution is a hint. A provider that throws must not stop the poll that also
+    // decides whether the room has emptied.
+    providerCurrentSpeaker.mockRejectedValue(new Error('Target closed'));
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(service.status().state).toBe('in_call');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('auto-leaving an empty meeting', () => {
   it('leaves once the bot is demonstrably the only one left', async () => {
     vi.useFakeTimers();
@@ -1141,7 +1277,18 @@ describe('telemetry', () => {
     });
   });
 
-  it('reports zeroes for a call nobody spoke to the agent in', async () => {
+  it('reports how often the platform said who was speaking', async () => {
+    await service.join(input);
+    await settle();
+    await service.leave();
+
+    // Scraped from a UI nobody promised to keep stable, and it fails silently — the call
+    // carries on, just anonymously. This rate dropping between releases is the signal.
+    const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
+    expect(ended?.[2]).toMatchObject({ attribution_rate: '75' });
+  });
+
+  it('reports a zero share for a call nobody spoke to the agent in', async () => {
     // A common outcome. Absent properties would look the same as a build that never
     // emitted them, and a mean over no calls must not be NaN.
     vi.spyOn(FakeVoiceConversation.prototype, 'statistics', 'get').mockReturnValue({
@@ -1157,6 +1304,8 @@ describe('telemetry', () => {
       gateLatencyMs: 0,
       gateSuperseded: 0,
       responsesFailed: 0,
+      attributedUtterances: 0,
+      unattributedUtterances: 0,
     });
 
     await service.join(input);
@@ -1170,6 +1319,7 @@ describe('telemetry', () => {
       gate_latency_ms: '0',
       gate_superseded: '0',
       responses_failed: '0',
+      attribution_rate: '0',
     });
   });
 });

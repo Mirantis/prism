@@ -71,6 +71,41 @@ export type JoinOutcome =
    */
   | { status: 'reauth_required' };
 
+/**
+ * Who a voice belongs to, as far as the platform can say.
+ *
+ * Two cases rather than one shape with optional fields, because they are answered
+ * differently and a caller has to handle both. `person` is somebody who can be named and
+ * addressed. `group` is one microphone several people share — any room system mixes the
+ * people in front of it, and the platform can then only say that the group made a sound.
+ *
+ * A group carries no name on purpose. The platform's label for it ("Merged audio" on
+ * Meet) is a piece of its own UI and not somebody who can be spoken to, so an agent that
+ * reads it out is talking to a person who does not exist. `members` is the useful answer
+ * instead — best effort, and empty when the platform mixes people without saying which.
+ */
+export type SpeakerDetails =
+  | { kind: 'person'; name: string }
+  | { kind: 'group'; members: readonly string[] };
+
+/**
+ * Who the platform last showed as speaking.
+ *
+ * `id` is what callers compare, and never a name: two participants can share a display
+ * name, a display name can change mid-call, and "was that the same person as before?" has
+ * to be exact. On Meet it is the per-device path off the participants panel, and a merged
+ * group's own identity is as sound as an individual's.
+ *
+ * `isSelf` is separate because "that was the agent" and "nobody can be identified" are
+ * different answers, and a caller that folds them together keeps reporting a stale human
+ * as the floor holder for the whole time the agent is talking.
+ */
+export interface SpeakerReading {
+  id: string;
+  isSelf: boolean;
+  who: SpeakerDetails;
+}
+
 export interface JoinOptions {
   url: string;
   /**
@@ -169,6 +204,40 @@ export interface MeetingProvider {
    * room's names are spelled.
    */
   participantNames?(page: Page): Promise<string[]>;
+
+  /**
+   * Put the platform's UI into whatever state lets speech be attributed to a speaker.
+   *
+   * **Must not reject**, and must be safe to call repeatedly. The runtime calls it once
+   * immediately after a successful join — before the agent has a voice, so before anything
+   * could be attributed — and then keeps calling it on the participant poll for as long as
+   * no speaker has ever been read. That is the same shape as `ensureUnmuted`, and for the
+   * same reason: one unlucky moment while the control bar is still painting would otherwise
+   * cost attribution for the whole meeting, silently.
+   *
+   * Whether such state survives between calls is the platform's business, and Meet's does
+   * not — its participants panel starts shut, and with it shut the roster is not in the
+   * page at all — so the runtime asks on every join rather than once per profile. A
+   * provider that needs no such preparation may simply not implement this.
+   */
+  enableSpeakerAttribution?(page: Page): Promise<void>;
+
+  /**
+   * Who the platform last showed as speaking, or null when it cannot be told.
+   *
+   * The audio a meeting bot receives is one mixed channel, so this is the only route to
+   * attribution — and it is a *hint*: it lags real speech, it stops working if the UI
+   * moves, and a platform need not offer it at all. Nothing may become unsafe when it
+   * returns null; a caller that cannot work without a speaker has to fall back to
+   * behaving as though the room were anonymous, which is what it did before.
+   *
+   * It is not handed the roster to check a name against. A caption scrape needed that,
+   * because a caption line and a fragment of a sentence are indistinguishable by shape.
+   * Reading the participant list directly removes the ambiguity rather than compensating
+   * for it: a row's own label cannot be a sentence fragment, and the identity attribute
+   * beside it is a second structural check.
+   */
+  currentSpeaker?(page: Page): Promise<SpeakerReading | null>;
 
   /**
    * How many people are in the call, or null when it can't be determined.
