@@ -4,16 +4,16 @@
  * Two orthogonal choices:
  *  - Vendor: `config.llmProvider` (`bedrock` default, `azure`,
  *    `bedrock-mantle`, or `openai`).
- *  - Routing: each vendor's factory takes an optional Nexus base URL — set →
- *    route through the Nexus gateway, unset → direct to the vendor.
+ *  - Routing: each vendor's factory takes an optional gateway base URL — set →
+ *    route through the Lens Agents gateway, unset → direct to the vendor.
  *
  * Every underlying factory returns the same call shape — `LlmProvider`, a
  * callable `(modelId) => LanguageModel` with `.embedding(modelId)` attached —
  * so callers don't have to care which vendor or route is in use.
  *
  * **bedrock-mantle** is AWS's second Bedrock inference endpoint
- * (`bedrock-mantle.{region}.api.aws`; a Nexus managed-inference backend since
- * nexus-monorepo#414), not a variant of the `bedrock` branch: it serves
+ * (`bedrock-mantle.{region}.api.aws`; a Lens Agents managed-inference
+ * backend), not a variant of the `bedrock` branch: it serves
  * neither InvokeModel nor Converse, so it needs its own factory. Of its three
  * surfaces — OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages
  * — only `/anthropic/v1` is implemented, which makes the provider a structural
@@ -29,9 +29,9 @@
  *
  * **openai** is the one vendor serving OpenAI models rather than Claude, on a
  * single surface: chat, classification and embeddings all ride one base URL —
- * the Nexus `…/llm/openai/v1` mount (nexus-monorepo#483) or api.openai.com
- * direct. Only the voice-meeting Realtime WebSocket stays off Nexus (the
- * mount routes POST only); see `openai/openai-provider.ts`.
+ * the Lens Agents `…/llm/openai/v1` mount or api.openai.com direct. Only the
+ * voice-meeting Realtime WebSocket stays off the gateway (the mount routes
+ * POST only); see `openai/openai-provider.ts`.
  */
 
 import { config } from '../../config';

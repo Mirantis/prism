@@ -52,32 +52,32 @@ describe('createAzureProvider', () => {
     });
   });
 
-  it('Nexus routing: an explicit baseURL overrides the Foundry endpoint', () => {
-    createAzureProvider('https://nexus.example/llm/azure/anthropic/v1');
+  it('Gateway routing: an explicit baseURL overrides the Foundry endpoint', () => {
+    createAzureProvider('https://gateway.example/llm/azure/anthropic/v1');
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith(
-      expect.objectContaining({ baseURL: 'https://nexus.example/llm/azure/anthropic/v1' }),
+      expect.objectContaining({ baseURL: 'https://gateway.example/llm/azure/anthropic/v1' }),
     );
   });
 
-  it('Nexus routing without a local key: falls back to a decoy apiKey (gateway injects the real one)', () => {
+  it('Gateway routing without a local key: falls back to a decoy apiKey (gateway injects the real one)', () => {
     config.azureApiKey = undefined;
-    createAzureProvider('https://nexus.example/llm/azure/anthropic/v1');
+    createAzureProvider('https://gateway.example/llm/azure/anthropic/v1');
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: 'nexus-managed' }),
     );
   });
 
-  it('Nexus routing: embeddings ride the gateway openai mount (no resourceName)', () => {
+  it('Gateway routing: embeddings ride the gateway openai mount (no resourceName)', () => {
     config.azureApiKey = undefined;
-    config.nexusAzureOpenAiBaseUrl = 'https://nexus.example/llm/azure/openai/v1';
-    createAzureProvider('https://nexus.example/llm/azure/anthropic/v1');
+    config.nexusAzureOpenAiBaseUrl = 'https://gateway.example/llm/azure/openai/v1';
+    createAzureProvider('https://gateway.example/llm/azure/anthropic/v1');
 
     const opts = mockCreateAzure.mock.calls[0][0];
     expect(opts).toMatchObject({
       apiKey: 'nexus-managed',
-      baseURL: 'https://nexus.example/llm/azure/openai/v1',
+      baseURL: 'https://gateway.example/llm/azure/openai/v1',
     });
     expect(opts).not.toHaveProperty('resourceName');
   });
@@ -136,10 +136,10 @@ describe('isAzureConfigured', () => {
     expect(isAzureConfigured()).toBe(true);
   });
 
-  it('true with deployment + nexus base URL and NO key/resource (gateway holds the key)', () => {
+  it('true with deployment + gateway base URL and NO key/resource (gateway holds the key)', () => {
     config.azureFoundryBaseUrl = undefined;
     config.azureApiKey = undefined;
-    config.nexusAzureBaseUrl = 'https://nexus.example/llm/azure/anthropic/v1';
+    config.nexusAzureBaseUrl = 'https://gateway.example/llm/azure/anthropic/v1';
     expect(isAzureConfigured()).toBe(true);
   });
 
@@ -148,7 +148,7 @@ describe('isAzureConfigured', () => {
     expect(isAzureConfigured()).toBe(true);
   });
 
-  it('false without a chat endpoint (neither Foundry URL nor nexus URL)', () => {
+  it('false without a chat endpoint (neither Foundry URL nor gateway URL)', () => {
     config.azureFoundryBaseUrl = undefined;
     config.nexusAzureBaseUrl = null;
     expect(isAzureConfigured()).toBe(false);

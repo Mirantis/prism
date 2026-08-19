@@ -13,9 +13,9 @@
  * field type") because Kimi expects OpenAI-shaped tool definitions.
  *
  * Routing: `createBedrockProvider(baseURL?)` runs direct to AWS (unset) or
- * through the Nexus LLM gateway (a `baseURL` — Nexus re-signs, tracks usage,
- * and audits, so no local credentials are used). Direct mode has two auth
- * paths, picked automatically by the SDK from the environment:
+ * through the Lens Agents LLM gateway (a `baseURL` — the gateway re-signs,
+ * tracks usage, and audits, so no local credentials are used). Direct mode has
+ * two auth paths, picked automatically by the SDK from the environment:
  *
  * 1. Bearer token: when `AWS_BEARER_TOKEN_BEDROCK` is set,
  *    `@ai-sdk/amazon-bedrock` short-circuits SigV4 and sends
@@ -46,8 +46,8 @@ import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
  *    provider doesn't expose embedding models).
  *
  * `baseURL` selects routing: unset → direct AWS (credentials via explicit keys
- * or the default credential chain); set → the Nexus gateway, which does its own
- * signing (so no local credentials are attached).
+ * or the default credential chain); set → the Lens Agents gateway, which does
+ * its own signing (so no local credentials are attached).
  */
 export function createBedrockProvider(baseURL?: string): LlmProvider {
   logger.info({ routing: baseURL ? 'nexus' : 'direct' }, 'Creating Bedrock provider');

@@ -4,17 +4,16 @@
  *   - shell_write_file
  *   - shell_edit_file
  *
- * Mirror the upstream input schemas + behavior from
- * `nexus-monorepo/packages/nexus/src/mcp/handlers/shell.schemas.ts` and
- * `crates/nexus-shell-sandbox/src/handlers/file_handlers.rs`.
+ * Mirror the upstream input schemas + behavior from the Lens Agents shell
+ * sandbox's shell schemas and file handlers.
  *
  * Security model (inherited from upstream): `resolvePath` resolves
  * relative paths against the workspace root and normalizes absolute
  * paths as-is; `isInsideWorkspace` then rejects anything not contained
  * in the workspace. Net effect: relative `..` traversal AND absolute
  * paths outside the workspace are both rejected. Real boundary is
- * still filesystem permissions; this layer matches the upstream
- * `crates/nexus-shell-sandbox/src/workspace.rs` semantics.
+ * still filesystem permissions; this layer matches the upstream shell
+ * sandbox's workspace semantics.
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';

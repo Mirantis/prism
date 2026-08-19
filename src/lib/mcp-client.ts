@@ -4,7 +4,7 @@
  * Uses Vercel AI SDK's MCP support to connect to MCP servers and get tools.
  * Used by the agent runtime to connect to:
  * 1. Backend MCP server (built-in tools: memory, config, cron)
- * 2. Nexus MCP server (kubectl, GitHub, AWS tools)
+ * 2. Lens Agents MCP server (kubectl, GitHub, AWS tools)
  */
 
 import { experimental_createMCPClient as createVercelMCPClient } from '@ai-sdk/mcp';

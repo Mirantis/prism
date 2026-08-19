@@ -5,8 +5,8 @@
 @custom-variant dark (&:is(.dark *));
 
 /* LDS token bridge — shadcn reads these, LDS provides the values.
- * Mirrors `nexus-ui`'s globals.css so primitives look identical across the
- * platform UI and the per-agent Prism Web UI. */
+ * Mirrors the Lens Agents platform UI's globals.css so primitives look
+ * identical across it and the per-agent Prism Web UI. */
 :root {
   --background: #1b1a1c;
   --foreground: var(--lds-color-text-primary);
@@ -101,8 +101,8 @@
   }
 }
 
-/* Custom scrollbars (Webkit) — quality-of-life polish; `nexus-ui` doesn't
- * ship one yet, but it's harmless and we already wrote it. */
+/* Custom scrollbars (Webkit) — quality-of-life polish; the platform UI
+ * doesn't ship one yet, but it's harmless and we already wrote it. */
 ::-webkit-scrollbar {
   width: 12px;
   height: 12px;

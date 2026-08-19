@@ -1,6 +1,6 @@
 /**
  * `claude_code` + `claude_code_status` + `claude_code_stop` tools —
- * in-process port of the upstream Nexus handlers.
+ * in-process port of the upstream Lens Agents handlers.
  *
  * The agent dispatches a task with `claude_code({ prompt, ... })`,
  * gets back a `taskId`, then polls `claude_code_status({ taskId })`
@@ -9,7 +9,7 @@
  *
  * Auth inherits from the agent-runtime's env: the spawned `claude`
  * CLI picks up `AWS_BEARER_TOKEN_BEDROCK` / `CLAUDE_CODE_USE_BEDROCK=1`
- * (injected by the Nexus policy) and authenticates through the same
+ * (injected by the Lens Agents policy) and authenticates through the same
  * Bearer-Bedrock path the agent itself uses.
  */
 import { z } from 'zod';

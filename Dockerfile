@@ -61,14 +61,13 @@ ENV CHECKPOINT_DISABLE=1
 
 # openssl for Prisma; wget for the healthcheck probe.
 # git/ca-certificates/curl/libatomic1/gcc/libc-dev/make/zstd are baked
-# into nexus-shell-sandbox (see nexus-monorepo
-# crates/nexus-shell-sandbox/Dockerfile:20-22) — needed by `gh`'s git
+# into the upstream Lens Agents shell sandbox image — needed by `gh`'s git
 # interop, by mise's install + plugin compile path, and by tools that
 # pull zstd-compressed archives. ripgrep is also installed via apt
 # instead of via mise because mise's aqua backend lacks a linux/arm64
 # build for it; Debian's package is single-binary and works everywhere.
 # Ships so `shell_exec` from agents has the same toolchain surface as
-# the upstream Nexus-hosted shell sandbox.
+# the upstream Lens Agents shell sandbox.
 #
 # poppler-utils (pdftoppm/pdftotext/pdfimages), tesseract-ocr, and the
 # fonts stack are the document-skills toolchain — the Anthropic pdf/docx/
@@ -76,7 +75,7 @@ ENV CHECKPOINT_DISABLE=1
 # stay on apt (not mise): they're multi-file C/C++ packages with data files
 # and font integration, not the single GitHub-release binaries mise's aqua
 # backend handles (same reason ripgrep is apt). This intentionally diverges
-# from the nexus-shell-sandbox parity set. Python + pandoc, which mise CAN
+# from the shell-sandbox parity set. Python + pandoc, which mise CAN
 # provide, are added to the `mise use -g` line below instead.
 #
 # xvfb + pulseaudio are the voice-meeting toolchain (see src/services/meeting/):
@@ -132,13 +131,13 @@ RUN npm rebuild better-sqlite3
 # inherited env (AWS_BEARER_TOKEN_BEDROCK, CLAUDE_CODE_USE_BEDROCK).
 RUN npm install -g @anthropic-ai/claude-code
 
-# Operator CLIs via mise — parity with the upstream Nexus-hosted
-# shell sandbox (`nexus-monorepo/crates/nexus-shell-sandbox/Dockerfile:24-30`).
+# Operator CLIs via mise — parity with the upstream Lens Agents shell
+# sandbox image.
 # Without these, FU-5's `shell_exec` is mostly useless beyond `ls /data`:
 # agents asking the obvious "list pods in cluster X" / "open a PR" /
 # "list S3 buckets" hit `command not found`. Installed under the `node`
 # user so the shims live in /home/node and stay accessible at runtime
-# (the outer Nexus sandbox drops privileges to `node`).
+# (the outer Lens Agents sandbox drops privileges to `node`).
 #
 # Same tool set as upstream, plus the document-skills interpreter, split
 # between mise and apt:

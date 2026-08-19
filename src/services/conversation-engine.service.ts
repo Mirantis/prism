@@ -157,9 +157,9 @@ class ConversationEngineService {
 
   /**
    * Binary classifier: is `agentResponse` a substantive reply where a user
-   * thumbs-up/down carries useful signal? Routes through Nexus (same as the
-   * main `invoke()` path) using the agent's Nexus token. Returns `false`
-   * (fail-closed) on any classifier error or when no Nexus token is available
+   * thumbs-up/down carries useful signal? Routes through the gateway (same as
+   * the main `invoke()` path) using the agent's platform token. Returns `false`
+   * (fail-closed) on any classifier error or when no platform token is available
    * — a broken/unroutable classifier should not cause us to show feedback on
    * every reply.
    */

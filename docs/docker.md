@@ -126,7 +126,7 @@ the browser trusts the proxy's certificate authority instead of rejecting every
 proxied page. The image puts no policy in it, so it ships as an empty drop-in
 point.
 Voice meetings additionally need `OPENAI_API_KEY` (already present when the
-container runs `LLM_PROVIDER=openai` chat direct — through
-Nexus that provider needs no local key, and the meeting tools then stay off
+container runs `LLM_PROVIDER=openai` chat direct — through the Lens Agents
+gateway that provider needs no local key, and the meeting tools then stay off
 without one); without it
 the toolchain sits idle and the meeting tools aren't offered.

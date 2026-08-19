@@ -609,7 +609,7 @@ describe('Requirement: WebSocket Gateway', () => {
       mockConfig.agentId = 'agent-bobby';
     });
 
-    it('accepts a message when agentId matches (auth is handled by Nexus inbound routing)', async () => {
+    it('accepts a message when agentId matches (auth is handled by Lens Agents inbound routing)', async () => {
       const userId = 'user-123';
       const ws = createMockWebSocket();
       ws.userId = userId;

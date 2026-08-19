@@ -1,7 +1,7 @@
 /**
  * `WebClient` subclass that strips the `token` field from every outbound
  * request body, so bot-token auth flows **only** via the `Authorization`
- * header. This lets the Nexus sandbox MITM proxy inject the real token
+ * header. This lets the Lens Agents sandbox MITM proxy inject the real token
  * via its header-rewriting credential injection (`__nexus_cred:<uuid>__`
  * sentinel in env → real `xoxb-…` at the proxy); the body no longer
  * carries the sentinel, so Slack never sees the placeholder.

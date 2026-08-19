@@ -129,7 +129,7 @@ That tag moves with each such push and `pr-image-cleanup.yml` deletes every
 `pr-<n>`-prefixed tag when the PR closes. A fork's PR builds the image and
 pushes nothing — its token is read-only. Slack creds come from env
 (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`), validated via `auth.test` on boot; may
-be Nexus credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
+be platform credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy.
 
 One LLM provider per container, selected by `LLM_PROVIDER` (`bedrock`
@@ -167,16 +167,16 @@ provider declares `classificationProviderOptions: { openai: { reasoningEffort:
 OpenAI rather than track which model/SDK combination accepts it — so their
 tiny token budgets stay valid on a GPT-5.x classification model, and the empty
 cache-point fragment (OpenAI prompt caching is automatic — no breakpoints). Any provider
-can run direct or through the Nexus LLM gateway — routing is automatic when
+can run direct or through the Lens Agents LLM gateway — routing is automatic when
 `NEXUS_API_URL` is set (`…/llm/bedrock/{region}` for Bedrock; Azure chat
 rides `…/llm/azure/anthropic/v1` and Azure embeddings
 `…/llm/azure/openai/v1`; mantle chat rides
 `…/llm/bedrock-mantle/anthropic/{region}/v1` while its embeddings stay on the
 bedrock mount; openai chat, classification and embeddings all ride
-`…/llm/openai/v1`, a Nexus backend since nexus-monorepo#483; Nexus holds the
+`…/llm/openai/v1`, a gateway backend; the gateway holds the
 platform credentials, so no local LLM key is needed on that path). The one
-OpenAI call that never rides Nexus is the voice-meeting Realtime WebSocket —
-the openai mount routes POST only.
+OpenAI call that never rides the gateway is the voice-meeting Realtime
+WebSocket — the openai mount routes POST only.
 
 ## SEA binaries — Node 22 pin
 
@@ -293,8 +293,8 @@ Vite-proxy-shaped that would mask a real bug.
 - **Owns message delivery** - Runs `MessageDeliveryService` locally: stores messages via `conversationService` and delivers via local adapters. User-initiated messages deliver only to the originating channel; autonomous messages (heartbeat/cron) broadcast to all connected channels.
 - **Owns channel adapters** - WebSocket and Slack adapters run locally, registered with `messageDeliveryService` in `index.ts`.
 - **Owns scheduling** - Heartbeat timers and cron jobs run in-process (not in the backend).
-- **Owns Slack connections** - Runs Bolt apps with Socket Mode, receives and routes messages, handles verification codes, calls Slack APIs directly. The one connection is synthesized from `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars (validated via `auth.test` on boot; see `lib/slack-config.ts`). Bot token in env may be a Nexus credential sentinel that the MITM proxy rewrites on the wire; a `SlackWebClient` subclass (`lib/slack-web-client.ts`) strips the body `token` field so auth flows only via the `Authorization` header.
-- **Owns agent data** - Agent CRUD, ownership validation, nexus token management, and subagent relationships via `agentWorkspaceService` (direct Prisma access). `CreateAgentInput` requires a pre-generated `id` field -- the backend generates the UUID and passes it when creating the `AgentWorkspace`. Note: `orgId` and `teamId` are NOT in `AgentWorkspace` -- they live exclusively in the backend-only `Agent` table.
+- **Owns Slack connections** - Runs Bolt apps with Socket Mode, receives and routes messages, handles verification codes, calls Slack APIs directly. The one connection is synthesized from `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars (validated via `auth.test` on boot; see `lib/slack-config.ts`). Bot token in env may be a platform credential sentinel that the MITM proxy rewrites on the wire; a `SlackWebClient` subclass (`lib/slack-web-client.ts`) strips the body `token` field so auth flows only via the `Authorization` header.
+- **Owns agent data** - Agent CRUD, ownership validation, platform token management, and subagent relationships via `agentWorkspaceService` (direct Prisma access). `CreateAgentInput` requires a pre-generated `id` field -- the backend generates the UUID and passes it when creating the `AgentWorkspace`. Note: `orgId` and `teamId` are NOT in `AgentWorkspace` -- they live exclusively in the backend-only `Agent` table.
 - **Direct database access** - Has its own Prisma client (SQLite) for agent data (CRUD, ownership, subagents), conversation data (threads, messages, active thread resolution), agent field updates (heartbeat timestamp, heartbeat status), cron task state (list, update run timestamps, delete one-shot tasks), Slack message queue drain (pending heartbeat trigger messages), and Slack mapping CRUD. Vector search over `memory_entries.embedding` goes through a sibling `better-sqlite3` handle that loads the `sqlite-vec` extension (see `lib/sqlite-bootstrap.ts`).
 - **No direct imports from backend** - Communicates via HTTP and MCP only.
 - **SOLID** - Each service (heartbeat, cron, invoke, conversation engine, message delivery) has a single responsibility.
@@ -330,7 +330,7 @@ locally.
    goals, shell/Claude Code, share-file, skills, meetings), assembled by
    `lib/tool-collection.ts#collectTools` and filtered per invocation mode. There is
    **no internal MCP server** — these are in-process closures, not an HTTP surface.
-2. **Nexus MCP** — kubectl, GitHub, AWS tools (external, via `NEXUS_MCP_URL`).
+2. **Lens Agents MCP** — kubectl, GitHub, AWS tools (external, via `NEXUS_MCP_URL`).
 3. **Plugin MCP** — whatever an installed Agent Plugin declares in its `mcp.json`;
    stdio, Streamable HTTP or legacy SSE (`services/plugin-mcp.service.ts`).
 
@@ -347,7 +347,7 @@ It runs as the **last** step of `collectTools()`, the only assembly point every
 request goes through — chat, compaction, and the voice-meeting bridge, which
 re-declares the same keys to the Realtime API under the same limit — because a
 name an MCP server advertises is not ours to choose and one a provider rejects
-fails the *whole* request (Nexus pre-namespaces a proxied connector as
+fails the *whole* request (Lens Agents pre-namespaces a proxied connector as
 `<uuid>__<connector>__<tool>`, and a 36-char UUID blows the budget on its own).
 Renaming the map key is the whole fix, since an MCP tool's `execute` closes over
 the name the *server* gave it and the call still goes out under that name.
@@ -366,7 +366,7 @@ tools block.
 | **ThreadTurnService** | `services/thread-turn.service.ts` | The one per-thread primitive: every model invocation on a thread serializes on its mutex (FIFO — chat turns and goal turns alike), and a chat turn *claims* the thread, so a message arriving from the claim until the exchange ends is handed to that turn instead of starting a second one. Channel-agnostic — transports go through the engine, never here directly |
 | **ContextService** | `services/context.service.ts` | Builds agent context from local database: agent data via `agentWorkspaceService.getAgentById()` and conversation history via Prisma |
 | **ConversationService** | `services/conversation.service.ts` | Thread and message CRUD via Prisma, pluggable thread providers (database + Slack) |
-| **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, nexus token management, subagent relationships |
+| **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, platform token management, subagent relationships |
 | **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat timestamp, heartbeat status) |
 | **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats |
 | **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; manages cron task state directly via Prisma (list, update run timestamps, delete); skips a tick that would overlap a still-running execution of the same task; runs each result through the instruction-aware DELIVER/SUPPRESS gate before delivering (empty results suppressed, error results bypass the gate and always deliver, in-memory per-task last-delivered baseline fed to the gate as context — cleared when a suppressed run observes a different situation so a recurrence re-alerts — fail-open) |
@@ -397,7 +397,7 @@ src/
 │   ├── conversation-engine.service.ts # Chat flow orchestration: thread mgmt, iterates invokeStream() with per-step publish, local message delivery
 │   ├── message-delivery.service.ts # Unified message publish: store + channel-scoped or broadcast delivery
 │   ├── thread-turn.service.ts  # Per-thread mutex + mid-turn inbox (turn steering, coalesced follow-ups)
-│   ├── agent-workspace.service.ts # Agent CRUD, ownership validation, nexus tokens, subagents
+│   ├── agent-workspace.service.ts # Agent CRUD, ownership validation, platform tokens, subagents
 │   ├── agent-status.service.ts  # Direct Prisma writes for agent fields (heartbeat timestamp/status)
 │   ├── websocket-gateway.service.ts # WebSocket server: JWT decode (backend verifies), connection mgmt, message queuing
 │   ├── websocket-adapter.service.ts # ChannelAdapter for WebSocket, calls local gateway
@@ -431,7 +431,7 @@ src/
 │   │   ├── addressed-classifier.ts # The same question, asked of Haiku. Fails closed
 │   │   ├── transcript-log.ts   # Whether a log line may carry an utterance at all (`MEETING_TRANSCRIPT_LOGGING`)
 │   │   ├── resampler.ts        # 48k⇄24k pcm16 with anti-alias FIR
-│   │   └── openai-endpoint.ts  # Direct wss://api.openai.com — no Nexus mount exists
+│   │   └── openai-endpoint.ts  # Direct wss://api.openai.com — no gateway mount exists
 │   ├── skill-catalog.service.ts   # Agent Skills discovery (workspace, global, plugin roots)
 │   ├── plugin-catalog.service.ts  # Agent Plugins discovery + plugin.json validation
 │   ├── plugin-mcp-config.ts       # mcp.json parsing/validation (pure; no SDK, no I/O)
@@ -461,10 +461,10 @@ src/
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
 │   ├── llm-providers/          # One folder per LLM vendor, plus the shared contract and the selector
 │   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` + `.embedding(modelId)` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (Anthropic breakpoint or the empty `NO_CACHE_POINT`) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares
-│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai), passes each its optional Nexus baseURL; `isProviderConfigured()`
+│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai), passes each its optional gateway baseURL; `isProviderConfigured()`
 │   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors need: AWS credential resolution, the generic Converse/embeddings provider (mantle's Titan leg), `isAnthropicModelId()`
 │   │   ├── bedrock/
-│   │   │   └── bedrock-provider.ts # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or Nexus when baseURL set)
+│   │   │   └── bedrock-provider.ts # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or gateway-routed when baseURL set)
 │   │   ├── azure/
 │   │   │   └── azure-provider.ts   # Azure provider factory (Claude via MS Foundry, Anthropic Messages API; embeddings via Azure OpenAI): `createAzureProvider(baseURL?)`
 │   │   ├── bedrock-mantle/
@@ -511,7 +511,7 @@ What the operator sets on `docker run`:
 | `PORT` | Agent runtime server port | `3003` |
 | `AGENT_ID` | UUID of the one `AgentWorkspace` this container owns | bootstrapped on first boot |
 | `DATABASE_URL` | SQLite URL for the runtime DB | `file:/data/agent.db` |
-| `NEXUS_API_URL` | Nexus server URL (LLM proxy + MCP tools) | — |
+| `NEXUS_API_URL` | Lens Agents server URL (LLM proxy + MCP tools) | — |
 | `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
 | `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
 | `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, or `openai` (one per container) | `bedrock` |
@@ -537,7 +537,7 @@ What the operator sets on `docker run`:
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
 | `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction (sent verbatim) | `6` |
 | `ATTACHMENT_TTL_HOURS` | How long attachment content (the media file under `<data dir>/media`) is kept before the hourly sweep deletes it; the metadata stub survives, so history keeps showing the file as *content expired*. A non-positive or unparseable value falls back to the default | `168` (7 days) |
-| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md), and drives chat when `LLM_PROVIDER=openai` (required direct; not needed through Nexus). The Realtime WebSocket is **never routed through Nexus** — the openai mount routes POST only, so the socket goes direct to `api.openai.com`; may be a `__nexus_cred:…__` sentinel since it only ever rides a header | — (meeting tools unregistered) |
+| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md), and drives chat when `LLM_PROVIDER=openai` (required direct; not needed through the gateway). The Realtime WebSocket is **never routed through the gateway** — the openai mount routes POST only, so the socket goes direct to `api.openai.com`; may be a `__nexus_cred:…__` sentinel since it only ever rides a header | — (meeting tools unregistered) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot rather than the moving `gpt-realtime` alias, so a new snapshot cannot change turn-taking under a live deployment | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the in-meeting model thinks before answering or picking a tool (`minimal`…`xhigh`). The Realtime API's own default is `low` — right for a voice agent that reads out an order status, wrong for one holding shell, kubectl and its own configuration, so this defaults to `high`. Paid for in latency, which in a call is silence in a room: `[Meeting:Latency]` logs the level in force beside the figure so levels can be compared. `''` sends no setting and takes the API default | `high` |
@@ -695,7 +695,7 @@ The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature
 
 ## LLM Error Handling
 
-`lib/llm-errors.ts#buildErrorStep(error)` is the **single owner** of LLM/runtime error → user-facing text. It distinguishes Nexus RFC 7807 `budget-exceeded` 429s (returns a friendly "spending limit reached" message and tags the step with `error: { type: 'budget_exceeded', detail }`) from generic errors (returns a "I encountered an error…" step tagged `error: { type: 'generic', detail }`, with the response body's `detail` field when present). The SDK wraps retried failures with a `lastError` field — `buildErrorStep` unwraps it before classifying. The cron scheduler uses the tag to route error results **around** the DELIVER/SUPPRESS gate: an error message is never "nothing to report", so it always delivers.
+`lib/llm-errors.ts#buildErrorStep(error)` is the **single owner** of LLM/runtime error → user-facing text. It distinguishes gateway RFC 7807 `budget-exceeded` 429s (returns a friendly "spending limit reached" message and tags the step with `error: { type: 'budget_exceeded', detail }`) from generic errors (returns a "I encountered an error…" step tagged `error: { type: 'generic', detail }`, with the response body's `detail` field when present). The SDK wraps retried failures with a `lastError` field — `buildErrorStep` unwraps it before classifying. The cron scheduler uses the tag to route error results **around** the DELIVER/SUPPRESS gate: an error message is never "nothing to report", so it always delivers.
 
 It's used only inside `invokeStream()`'s catch paths (context-fetch failure, `generateText` rejection). Errors are pushed onto the step channel rather than thrown, so consumers don't need a separate error-handling path: chat just sees a final friendly step and delivers it; `invoke()` aggregates the text and surfaces the structured `error` field on `InvokeResponse` so heartbeat/cron can detect budget exhaustion programmatically.
 
@@ -793,7 +793,7 @@ The agent-runtime owns the full Slack adapter implementation. It manages Bolt ap
 
 ### Slack Architecture
 
-- **Bolt apps**: One `App` instance per Slack workspace connection, using Socket Mode for real-time events. `clientOptions` on the `App` constructor passes a `requestInterceptor` to the underlying WebClient that strips the body `token` field so auth flows only via the `Authorization` header — necessary when the bot token is a Nexus credential sentinel that only the MITM proxy can rewrite.
+- **Bolt apps**: One `App` instance per Slack workspace connection, using Socket Mode for real-time events. `clientOptions` on the `App` constructor passes a `requestInterceptor` to the underlying WebClient that strips the body `token` field so auth flows only via the `Authorization` header — necessary when the bot token is a platform credential sentinel that only the MITM proxy can rewrite.
 - **Connection data**: source depends on mode.
   - **Multi-tenant**: SlackConnection records (tokens, workspace info) are fetched from the backend via `backendClient.getActiveSlackConnections()` at startup and `backendClient.getSlackConnection()` at runtime. Agent-runtime does NOT directly access the backend's `SlackConnection` table; the backend exclusively owns it. Connection CRUD (create, update, deactivate) is handled by the backend's org-scoped endpoints.
   - **Single-agent**: one synthetic connection is built by `lib/slack-config.ts` from the `SLACK_BOT_TOKEN` env var (validated via `auth.test` on boot). No backend, no decrypt, no encryption key. `SlackWebClient` (in `lib/slack-web-client.ts`) is the subclass that strips the body `token`.

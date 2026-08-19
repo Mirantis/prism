@@ -45,7 +45,7 @@ jobs:
 
   # Build per-platform images on native runners (no QEMU emulation) and
   # push each by digest; the merge job below stitches them into one
-  # multi-arch manifest. Pattern mirrors nexus-monorepo's deploy.yml.
+  # multi-arch manifest. Pattern mirrors the upstream Lens Agents deploy.yml.
   build:
     needs: [prepare, approve]
     strategy:

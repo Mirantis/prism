@@ -48,12 +48,12 @@ const llmProvider: 'bedrock' | 'azure' | 'bedrock-mantle' | 'openai' =
         ? 'openai'
         : 'bedrock';
 
-// Nexus LLM proxy base URL for native Bedrock (bedrock-runtime). Mirrors the
-// Nexus route mounts:
+// Lens Agents LLM proxy base URL for native Bedrock (bedrock-runtime). Mirrors
+// the gateway's route mounts:
 //   /projects/{projectId}/llm/bedrock/{region}  (explicit project — PROJECT_ID set)
 //   /llm/bedrock/{region}                        (auto-resolve project — PROJECT_ID unset)
 // null when NEXUS_API_URL itself is unset (callers route direct to Bedrock
-// instead of going through Nexus). On `bedrock-mantle` this still carries the
+// instead of going through the gateway). On `bedrock-mantle` this still carries the
 // *embedding* leg (Titan lives on bedrock-runtime, not on mantle) even though
 // chat rides `nexusBedrockMantleBaseUrl`.
 const nexusLlmBaseUrl = nexusApiUrl
@@ -62,9 +62,9 @@ const nexusLlmBaseUrl = nexusApiUrl
       : `${nexusApiUrl}/llm/bedrock/${awsRegion}`)
   : null;
 
-// Nexus LLM proxy base URLs for Azure. Mirrors the Bedrock route mount above
-// (`nexusLlmBaseUrl`), swapping the vendor segment. Nexus exposes the two
-// Foundry surfaces separately (`…/llm/azure/anthropic/{path}` → the resource's
+// Lens Agents LLM proxy base URLs for Azure. Mirrors the Bedrock route mount
+// above (`nexusLlmBaseUrl`), swapping the vendor segment. The gateway exposes
+// the two Foundry surfaces separately (`…/llm/azure/anthropic/{path}` → the resource's
 // `/anthropic` surface; `…/llm/azure/openai/{path}` → its `/openai` surface):
 //   /projects/{projectId}/llm/azure/…  (explicit project — PROJECT_ID set)
 //   /llm/azure/…                        (auto-resolve project — PROJECT_ID unset)
@@ -80,8 +80,8 @@ const nexusAzureRoot = nexusApiUrl
 const nexusAzureBaseUrl = nexusAzureRoot ? `${nexusAzureRoot}/anthropic/v1` : null;
 const nexusAzureOpenAiBaseUrl = nexusAzureRoot ? `${nexusAzureRoot}/openai/v1` : null;
 
-// Nexus LLM proxy base URL for bedrock-mantle's Anthropic surface, mounted as
-// `…/llm/bedrock-mantle/anthropic/{region}/{path}` (nexus-monorepo#414) and
+// Lens Agents LLM proxy base URL for bedrock-mantle's Anthropic surface,
+// mounted as `…/llm/bedrock-mantle/anthropic/{region}/{path}` and
 // forwarded verbatim to `https://bedrock-mantle.{region}.api.aws/anthropic/{path}`.
 // Ends at `/v1` because the anthropic SDK appends `/messages`, so the proxied
 // URL lands on `…/anthropic/v1/messages`. Keyless — the gateway holds the
@@ -94,8 +94,8 @@ const nexusBedrockMantleBaseUrl = nexusApiUrl
       : `${nexusApiUrl}/llm/bedrock-mantle/anthropic/${awsRegion}/v1`)
   : null;
 
-// Nexus LLM proxy base URL for OpenAI, mounted as `…/llm/openai/{path}`
-// (nexus-monorepo#483) and forwarded verbatim to the gateway's configured
+// Lens Agents LLM proxy base URL for OpenAI, mounted as `…/llm/openai/{path}`
+// and forwarded verbatim to the gateway's configured
 // OpenAI root (`https://api.openai.com` unless the operator points it at an
 // OpenAI-compatible endpoint). Ends at `/v1` because the openai SDK appends
 // `/responses`, `/chat/completions` or `/embeddings` to its base, so the
@@ -111,9 +111,9 @@ const nexusOpenAiBaseUrl = nexusApiUrl
       : `${nexusApiUrl}/llm/openai/v1`)
   : null;
 
-// The selected vendor's Nexus *chat* mount, resolved once so callers that only
-// need "is chat routed through Nexus?" (the startup log, startup telemetry)
-// don't each re-derive the per-vendor branch. null → chat goes direct.
+// The selected vendor's gateway *chat* mount, resolved once so callers that
+// only need "is chat routed through the gateway?" (the startup log, startup
+// telemetry) don't each re-derive the per-vendor branch. null → chat goes direct.
 const nexusChatBaseUrl =
   llmProvider === 'azure'
     ? nexusAzureBaseUrl
@@ -139,7 +139,7 @@ const bedrockApiKey = process.env.AWS_BEARER_TOKEN_BEDROCK;
 
 // Direct bedrock-mantle chat endpoint. Must end at `/anthropic/v1` — the
 // anthropic SDK appends `/messages`. The override mirrors AZURE_FOUNDRY_BASE_URL
-// and, like it, applies to direct mode only (Nexus routing has its own mount).
+// and, like it, applies to direct mode only (gateway routing has its own mount).
 const bedrockMantleBaseUrl =
   process.env.BEDROCK_MANTLE_BASE_URL || `https://bedrock-mantle.${awsRegion}.api.aws/anthropic/v1`;
 
@@ -187,7 +187,7 @@ const openaiModelId = process.env.OPENAI_MODEL_ID || 'gpt-5.6-sol';
 const openaiClassificationModelId = process.env.OPENAI_CLASSIFICATION_MODEL_ID || 'gpt-5.6-luna';
 const openaiEmbeddingModelId = process.env.OPENAI_EMBEDDING_MODEL_ID ?? 'text-embedding-3-small';
 // Direct OpenAI endpoint override, mirroring AZURE_FOUNDRY_BASE_URL /
-// BEDROCK_MANTLE_BASE_URL: applies to direct mode only (Nexus routing has its
+// BEDROCK_MANTLE_BASE_URL: applies to direct mode only (gateway routing has its
 // own mount), and must serve the Responses API — the SDK appends `/responses`,
 // not just `/chat/completions`. Does NOT move the Realtime WebSocket.
 // undefined → the SDK's own default, https://api.openai.com/v1.
@@ -221,9 +221,9 @@ const modelIds = {
 
 // The OpenAI API key, serving double duty: live voice meetings (OpenAI
 // Realtime API) and, when LLM_PROVIDER=openai, the chat provider. The
-// *Realtime WebSocket* is the one model call that never rides the Nexus LLM
-// gateway — the `…/llm/openai` mount (nexus-monorepo#483) routes POST only,
-// so the socket goes straight to api.openai.com. Chat/classification/
+// *Realtime WebSocket* is the one model call that never rides the Lens Agents
+// LLM gateway — the `…/llm/openai` mount routes POST only, so the socket goes
+// straight to api.openai.com. Chat/classification/
 // embeddings do ride that mount when NEXUS_API_URL is set, and then need no
 // local key at all (the gateway injects its own). Still credential-safe in a
 // sandbox: the key may be a `__nexus_cred:<uuid>__` sentinel that the egress
@@ -451,9 +451,9 @@ export const config = {
 
   // OpenAI (used when LLM_PROVIDER=openai). Chat/classification/embeddings all
   // speak the OpenAI API on one surface — direct to api.openai.com (or
-  // `openaiBaseUrl`), or through the Nexus `…/llm/openai/v1` mount when
+  // `openaiBaseUrl`), or through the Lens Agents `…/llm/openai/v1` mount when
   // NEXUS_API_URL is set. The key is `openaiApiKey` below (shared with voice
-  // meetings); through Nexus no local key is needed.
+  // meetings); through the gateway no local key is needed.
   openaiModelId,
   openaiClassificationModelId,
   openaiEmbeddingModelId,
@@ -488,10 +488,10 @@ export const config = {
   slackBotToken: process.env.SLACK_BOT_TOKEN,
   slackExpectedAppId: process.env.SLACK_EXPECTED_APP_ID,
 
-  // External MCP server URL — injected directly as NEXUS_MCP_URL by the Nexus
-  // sandbox (project-scoped /projects/:id/mcp; the MITM proxy injects the
+  // External MCP server URL — injected directly as NEXUS_MCP_URL by the Lens
+  // Agents sandbox (project-scoped /projects/:id/mcp; the MITM proxy injects the
   // Authorization header for that path). Already a complete URL — do NOT append
-  // /mcp. null when unset so call sites can skip Nexus entirely.
+  // /mcp. null when unset so call sites can skip the external server entirely.
   nexusMcpUrl: process.env.NEXUS_MCP_URL ?? null,
 
   // Langfuse observability (optional — disabled when keys not set)
@@ -499,11 +499,12 @@ export const config = {
   langfusePublicKey: process.env.LANGFUSE_PUBLIC_KEY,
   langfuseBaseUrl: process.env.LANGFUSE_BASE_URL || 'http://localhost:3100',
 
-  // Nexus LLM proxy base URL for native Bedrock (see the derivation above).
-  // Also carries mantle's embedding leg, since Titan is bedrock-runtime-only.
+  // Lens Agents LLM proxy base URL for native Bedrock (see the derivation
+  // above). Also carries mantle's embedding leg, since Titan is
+  // bedrock-runtime-only.
   nexusLlmBaseUrl,
-  // The selected vendor's Nexus chat mount — 'routed through Nexus?' in one
-  // field, so callers don't re-derive the per-vendor branch.
+  // The selected vendor's gateway chat mount — 'routed through the gateway?'
+  // in one field, so callers don't re-derive the per-vendor branch.
   nexusChatBaseUrl,
 
   // OpenTelemetry (optional — disabled when not set)

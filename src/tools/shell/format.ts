@@ -1,6 +1,6 @@
 /**
- * `format_file_content` ported from
- * `nexus-monorepo/crates/nexus-shell-sandbox/src/handlers/file_handlers.rs`.
+ * `format_file_content` ported from the upstream Lens Agents shell sandbox's
+ * file handlers.
  *
  * Returns the file with each line prefixed by its 1-indexed line
  * number, optionally sliced via offset/limit. Lines longer than

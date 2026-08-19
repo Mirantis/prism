@@ -47,7 +47,7 @@ import { AsyncChannel } from './utils/async-channel';
  *
  * 1. Preflight: short-circuit with a placeholder step if misconfigured
  * 2. Fetch agent context from the local database
- * 3. Fetch Nexus MCP token and connect to MCP servers for tools
+ * 3. Fetch the external MCP token and connect to MCP servers for tools
  * 4. Build the system prompt + message history
  * 5. Call generateText() and yield each step as onStepFinish fires
  * 6. On step-limit, make a follow-up summary call and yield its result
@@ -118,7 +118,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     logger.info(`Invoking in ${request.mode} mode with model ${modelId} for agent ${context.agentName}`);
 
     // 3. Create provider and model — createProvider picks the configured
-    // vendor (Bedrock/Azure) and routing (direct vs Nexus).
+    // vendor (Bedrock/Azure) and routing (direct vs the Lens Agents gateway).
     const provider = createProvider();
     const model = provider(modelId);
     const cachePoint = provider.cachePoint;

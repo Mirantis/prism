@@ -58,19 +58,19 @@ describe('createBedrockMantleProvider', () => {
     });
   });
 
-  it('Nexus routing: an explicit baseURL overrides the direct endpoint', () => {
-    createBedrockMantleProvider('https://nexus.example/llm/bedrock-mantle/anthropic/us-east-1/v1');
+  it('Gateway routing: an explicit baseURL overrides the direct endpoint', () => {
+    createBedrockMantleProvider('https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1');
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith(
       expect.objectContaining({
-        baseURL: 'https://nexus.example/llm/bedrock-mantle/anthropic/us-east-1/v1',
+        baseURL: 'https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1',
       }),
     );
   });
 
-  it('Nexus routing without a local key: falls back to a decoy apiKey (gateway injects the real one)', () => {
+  it('Gateway routing without a local key: falls back to a decoy apiKey (gateway injects the real one)', () => {
     config.bedrockApiKey = undefined;
-    createBedrockMantleProvider('https://nexus.example/llm/bedrock-mantle/anthropic/us-east-1/v1');
+    createBedrockMantleProvider('https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1');
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: 'nexus-managed' }),
@@ -124,15 +124,15 @@ describe('createBedrockMantleProvider', () => {
     expect(mockAnthropicModel).not.toHaveBeenCalled();
   });
 
-  it('embeddings ride the bedrock-runtime Nexus mount, not the mantle one', () => {
-    config.nexusLlmBaseUrl = 'https://nexus.example/llm/bedrock/us-east-1';
+  it('embeddings ride the bedrock-runtime gateway mount, not the mantle one', () => {
+    config.nexusLlmBaseUrl = 'https://gateway.example/llm/bedrock/us-east-1';
     const provider = createBedrockMantleProvider(
-      'https://nexus.example/llm/bedrock-mantle/anthropic/us-east-1/v1',
+      'https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1',
     );
     provider.embedding('amazon.titan-embed-text-v2:0');
 
     expect(mockCreateBedrockEmbeddingProvider).toHaveBeenCalledWith(
-      'https://nexus.example/llm/bedrock/us-east-1',
+      'https://gateway.example/llm/bedrock/us-east-1',
     );
   });
 
@@ -184,10 +184,10 @@ describe('isBedrockMantleConfigured', () => {
     expect(isBedrockMantleConfigured()).toBe(true);
   });
 
-  it('true with model + nexus base URL and NO key (gateway holds the credential)', () => {
+  it('true with model + gateway base URL and NO key (gateway holds the credential)', () => {
     config.bedrockApiKey = undefined;
     config.nexusBedrockMantleBaseUrl =
-      'https://nexus.example/llm/bedrock-mantle/anthropic/us-east-1/v1';
+      'https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1';
     expect(isBedrockMantleConfigured()).toBe(true);
   });
 

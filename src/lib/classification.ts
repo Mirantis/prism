@@ -2,7 +2,7 @@
  * Classification-gate model factory.
  *
  * Goes through the unified `createProvider()`, so it inherits whatever vendor
- * and routing (direct or Nexus) the runtime is configured for. The classifier
+ * and routing (direct or gateway) the runtime is configured for. The classifier
  * uses a fast model (`classificationModelId`) supported on either provider.
  *
  * Kept in its own module (rather than in `create-provider.ts`) so the provider

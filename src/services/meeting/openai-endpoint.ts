@@ -1,11 +1,12 @@
 /**
  * Where the meeting bot's Realtime WebSocket goes, and how it authenticates.
  *
- * Unlike every other model call in the runtime, this one never rides the Nexus
- * LLM gateway. Nexus managed inference serves Bedrock, Azure (Claude on Microsoft
- * Foundry) and Bedrock Mantle — the Anthropic Messages and OpenAI Chat Completions
- * surfaces. None of them serves OpenAI's Realtime WebSocket, so there is no
- * `/llm/{vendor}` mount to route through and the connection goes straight to
+ * Unlike every other model call in the runtime, this one never rides the Lens
+ * Agents LLM gateway. Every vendor that gateway fronts — Bedrock, Azure (Claude
+ * on Microsoft Foundry), Bedrock Mantle and OpenAI — is reached over a
+ * request/response HTTP mount, and none of those carries a realtime voice
+ * surface: the `…/llm/openai` mount routes POST only. So there is no
+ * `/llm/{vendor}` route to go through and the connection goes straight to
  * `api.openai.com`.
  *
  * That is still credential-safe in a sandbox: `OPENAI_API_KEY` may be a

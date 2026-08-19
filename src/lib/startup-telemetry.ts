@@ -5,7 +5,7 @@
  * emitted from `index.ts` once the agent row is resolved and cron tasks are
  * registered. It answers fleet-level product questions the Pino startup logs
  * can't: which LLM vendor/models deployments actually run, whether they route
- * through Nexus, which integrations are wired up, what host Prism runs on, and
+ * through the gateway, which integrations are wired up, what host Prism runs on, and
  * how much of the feature surface is configured.
  *
  * Only ids, flags, counts and model identifiers — never tokens, URLs, paths or
@@ -44,7 +44,7 @@ export async function trackAgentStarted(
       'agent.id': agent.id,
       'llm.provider': config.llmProvider,
       // Same routing expression as the `[Startup] LLM provider` log: 'nexus'
-      // when the selected vendor's Nexus chat mount is set, else 'direct'.
+      // when the selected vendor's gateway chat mount is set, else 'direct'.
       'llm.routing': config.nexusChatBaseUrl ? 'nexus' : 'direct',
       'llm.chat_model': config.chatModelId,
       'llm.classification_model': config.classificationModelId,

@@ -1,6 +1,6 @@
 /**
- * Port of the Rust unit tests from
- * `nexus-monorepo/crates/nexus-shell-sandbox/src/{workspace,handlers/file_handlers}.rs`.
+ * Port of the Rust unit tests from the upstream Lens Agents shell sandbox's
+ * workspace and file handlers.
  * Kept deliberately close in structure to the upstream tests so
  * regressions can be diffed across languages.
  */

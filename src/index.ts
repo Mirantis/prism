@@ -120,8 +120,8 @@ const initialize = async () => {
     await reconcileAttachmentStorage(dirs.mediaDir);
 
     // Active LLM provider + routing, so the deployed vendor is observable in
-    // logs. `routing` is 'nexus' when the selected vendor's Nexus chat mount is
-    // set, else 'direct'.
+    // logs. `routing` is 'nexus' when the selected vendor's gateway chat mount
+    // is set, else 'direct'.
     logger.info(
       {
         provider: config.llmProvider,
@@ -133,7 +133,7 @@ const initialize = async () => {
 
     // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
     // either picks up the existing row via findFirst() or creates a
-    // fresh one with a generated UUID. Auth is handled by Nexus inbound
+    // fresh one with a generated UUID. Auth is handled by Lens Agents inbound
     // routing in front of the runtime; the container itself trusts
     // every incoming connection.
     logger.info(

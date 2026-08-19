@@ -1,6 +1,6 @@
 /**
- * `shell_exec` tool — in-process port of
- * `nexus-monorepo/packages/nexus/src/mcp/handlers/shell.handlers.ts :: shell_exec`.
+ * `shell_exec` tool — in-process port of the upstream Lens Agents shell
+ * sandbox's `shell_exec` handler.
  *
  * Runs a single shell command in a bash subprocess with a timeout.
  * Captures stdout + stderr (up to MAX_EXEC_OUTPUT_BYTES each) and

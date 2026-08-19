@@ -1,7 +1,7 @@
 /**
  * Targeted find-and-replace editing utility.
  *
- * Ported from nexus-shell-sandbox's sandbox-client.ts with simplification:
+ * Ported from the upstream Lens Agents shell sandbox client with simplification:
  * no `replaceAll` parameter — ambiguous matches always error.
  */
 

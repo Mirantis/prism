@@ -95,7 +95,7 @@ gating workflow as "green" — it's already a required check on the PR page.
 
 ## Security-Sensitive Changes
 
-Changes touching credential handling (Slack tokens and Nexus credential
+Changes touching credential handling (Slack tokens and Lens Agents credential
 sentinels, the Bedrock API key), the MCP tool surface (kubectl, GitHub, AWS),
 agent access control, the WebSocket JWT path, or the agent's own SQLite data
 should include a short note on the security impact in the pull request

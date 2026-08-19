@@ -75,8 +75,8 @@ export function isAnthropicModelId(modelId: string): boolean {
  * The generic (Converse + embeddings) bedrock-runtime provider on its own.
  *
  * `baseURL` selects routing exactly as in `createBedrockProvider`: unset →
- * direct to AWS with resolved credentials; set → the Nexus gateway, which does
- * its own signing.
+ * direct to AWS with resolved credentials; set → the Lens Agents gateway,
+ * which does its own signing.
  */
 export function createBedrockEmbeddingProvider(baseURL?: string) {
   return createAmazonBedrock(

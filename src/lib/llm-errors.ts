@@ -1,7 +1,7 @@
 /**
  * LLM Error Classification
  *
- * Detects Nexus budget-exceeded errors (RFC 7807) from LLM call failures.
+ * Detects gateway budget-exceeded errors (RFC 7807) from LLM call failures.
  * The AI SDK retries transient 429s internally — this module identifies
  * permanent budget errors that should not be retried.
  */
@@ -10,9 +10,10 @@ import { logger } from '../logger';
 import type { InvokeStep } from '../types';
 
 /**
- * Check if an error is a Nexus budget-exceeded 429.
+ * Check if an error is a gateway budget-exceeded 429.
  *
- * Nexus returns RFC 7807 problem details with `type: "budget-exceeded"`.
+ * The Lens Agents gateway returns RFC 7807 problem details with
+ * `type: "budget-exceeded"`.
  * Unlike throttling 429s, these won't resolve by waiting.
  */
 export function isSpendingLimitError(error: unknown): boolean {

@@ -604,7 +604,7 @@ class SlackAdapterService implements ChannelAdapter {
     //   - `requestInterceptor: stripBodyToken`: drops the `token` field
     //     from outbound bodies so bot-token auth flows only via
     //     `Authorization` header — required when the bot token is a
-    //     Nexus `__nexus_cred:<uuid>__` sentinel (header-only rewrite).
+    //     platform `__nexus_cred:<uuid>__` sentinel (header-only rewrite).
     //   - `BOUNDED_SLACK_CLIENT_OPTIONS`: a request deadline and a few
     //     seconds-scale retries instead of the SDK's `timeout: 0` +
     //     ~30 minutes of them. This client is not only used for posting:

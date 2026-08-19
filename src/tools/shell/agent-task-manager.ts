@@ -1,8 +1,8 @@
 /**
  * Agent task manager for `claude_code` / `claude_code_status`.
  *
- * TypeScript port of
- * `nexus-monorepo/crates/nexus-shell-sandbox/src/agent_task_manager.rs`.
+ * TypeScript port of the upstream Lens Agents shell sandbox's agent task
+ * manager.
  * Spawns the Claude Code CLI with `--output-format stream-json`,
  * parses the NDJSON stream, buffers assistant text for drain-on-read
  * polling, and tracks completion state.

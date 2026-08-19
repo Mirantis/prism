@@ -33,9 +33,9 @@ differences from `bedrock` matter in practice:
   use `anthropic.claude-haiku-4-5`, not
   `anthropic.claude-haiku-4-5-20251001-v1:0`.
 - **Mantle serves no embedding models.** Memory embeddings stay on Titan over
-  `bedrock-runtime`, which means AWS credentials (or Nexus) still have to reach
-  regular Bedrock for that leg; set `BEDROCK_MANTLE_EMBEDDING_MODEL_ID=''` to
-  skip embeddings instead.
+  `bedrock-runtime`, which means AWS credentials (or the Lens Agents gateway)
+  still have to reach regular Bedrock for that leg; set
+  `BEDROCK_MANTLE_EMBEDDING_MODEL_ID=''` to skip embeddings instead.
 
 Mantle also rejects structured outputs, Guardrails, and prompt routing, and it
 draws on a separate quota pool at the same per-token price.
@@ -50,16 +50,16 @@ authenticated with the same `OPENAI_API_KEY` that enables
 [voice meetings](voice-meetings.md) — setting it for chat also switches the
 meeting tools on where the browser/audio toolchain is present.
 
-Each platform can run **direct** or **through Nexus** (the LLM gateway).
+Each platform can run **direct** or **through the Lens Agents LLM gateway**.
 Routing is automatic for all four: set `NEXUS_API_URL` and the runtime routes
-through Nexus (`…/llm/bedrock/{region}` for Bedrock; for Azure, chat rides
+through the gateway (`…/llm/bedrock/{region}` for Bedrock; for Azure, chat rides
 `…/llm/azure/anthropic/v1` and embeddings `…/llm/azure/openai/v1`; for mantle,
 chat rides `…/llm/bedrock-mantle/anthropic/{region}/v1` while embeddings stay
 on the `…/llm/bedrock/{region}` mount; for OpenAI, chat, classification and
 embeddings all ride `…/llm/openai/v1`), otherwise it talks to the platform
-directly. Through Nexus the gateway holds the platform credentials, so no local
-LLM credential is needed. The one exception is the voice-meeting Realtime
-WebSocket, which always goes direct to `api.openai.com` — the Nexus openai
+directly. Through the gateway the platform credentials are held for you, so no
+local LLM credential is needed. The one exception is the voice-meeting Realtime
+WebSocket, which always goes direct to `api.openai.com` — the gateway's openai
 mount routes POST only. The credentials and model IDs below are grouped per
 platform.
 
@@ -67,13 +67,13 @@ platform.
 
 | Variable | Purpose |
 |----------|---------|
-| `AWS_BEARER_TOKEN_BEDROCK` | **(Bedrock, Mantle)** Bedrock API key — one credential for both AWS endpoints. On Bedrock the AI SDK auto-selects bearer auth when this is set; on mantle it is sent as the `x-api-key` header and is **required** for direct mode, which has no SigV4 path. Not needed when routing through Nexus. |
+| `AWS_BEARER_TOKEN_BEDROCK` | **(Bedrock, Mantle)** Bedrock API key — one credential for both AWS endpoints. On Bedrock the AI SDK auto-selects bearer auth when this is set; on mantle it is sent as the `x-api-key` header and is **required** for direct mode, which has no SigV4 path. Not needed when routing through the Lens Agents gateway. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | **(Bedrock)** AWS SigV4 credentials, as an alternative to the bearer token. Mantle chat cannot use these, but they still serve the Titan embedding leg under `bedrock-mantle`. |
 | `BEDROCK_MANTLE_BASE_URL` | **(Mantle)** Override the derived mantle chat endpoint (must end at `/anthropic/v1`). Applies to direct mode only. |
-| `AZURE_API_KEY` | **(Azure)** Foundry resource key, sent as the `x-api-key` header. Required for direct mode only — when routing through Nexus the gateway holds the key for both chat and embeddings. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `AZURE_API_KEY` | **(Azure)** Foundry resource key, sent as the `x-api-key` header. Required for direct mode only — when routing through the Lens Agents gateway it holds the key for both chat and embeddings. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `AZURE_RESOURCE_NAME` | **(Azure, direct)** Foundry resource name — derives the chat endpoint `https://{resource}.services.ai.azure.com/anthropic/v1` and the embeddings endpoint `https://{resource}.openai.azure.com`. |
 | `AZURE_FOUNDRY_BASE_URL` | **(Azure)** Override the derived Foundry Anthropic chat endpoint (must end at `/anthropic/v1`). |
-| `OPENAI_API_KEY` | **(OpenAI)** API key, sent as a bearer header. Required for direct mode only — through Nexus the gateway holds the key. Shared with [voice meetings](voice-meetings.md): setting it also enables the meeting tools when the browser/audio toolchain is present. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `OPENAI_API_KEY` | **(OpenAI)** API key, sent as a bearer header. Required for direct mode only — through the Lens Agents gateway it holds the key. Shared with [voice meetings](voice-meetings.md): setting it also enables the meeting tools when the browser/audio toolchain is present. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `OPENAI_BASE_URL` | **(OpenAI, direct)** Override the chat/embeddings endpoint (must serve the Responses API). Does not move the voice-meeting Realtime WebSocket. |
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). Enables the Slack adapter; validated via `auth.test` on boot. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-…`) for Socket Mode. |
@@ -290,7 +290,7 @@ for that.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `NEXUS_MCP_URL` | Endpoint of an external [MCP server](tools.md#external-tools-mcp). When set, its tools are exposed to the agent. | — (no external tools) |
-| `NEXUS_API_URL` | Base URL of a Nexus instance, used for the LLM proxy and WebSocket authorization. When set, LLM calls route through Nexus (for any platform). It is **not** a fallback for `NEXUS_MCP_URL`. | — |
+| `NEXUS_API_URL` | Base URL of a Lens Agents instance, used for the LLM proxy and WebSocket authorization. When set, LLM calls route through that gateway (for any platform). It is **not** a fallback for `NEXUS_MCP_URL`. | — |
 
 ## Voice meetings
 
@@ -299,7 +299,7 @@ part by voice. The tools appear only when `OPENAI_API_KEY` is set **and** the ho
 has the browser/audio toolchain, which ships in the container image.
 
 The voice model is OpenAI's Realtime API. It is the one model call that never
-routes through the Nexus LLM gateway: the Nexus openai mount serves POST
+routes through the Lens Agents LLM gateway: its openai mount serves POST
 endpoints only, and no managed-inference backend exposes a realtime voice
 surface. The socket goes straight to `api.openai.com`, so an egress-filtered
 deployment must allow that host (plus Google's meeting and accounts hosts, including
@@ -344,11 +344,10 @@ them carries a request or response body.
 
 With OpenTelemetry enabled, the runtime emits an `agent started` event once per
 boot describing the deployment: the LLM provider, whether calls route through
-Nexus, the model identifiers, on/off flags for Slack, Nexus, the external MCP
-server and Langfuse, the host shape (packaged binary or not, Node version,
-platform, architecture), and counts of cron tasks, installed skills, installed
-plugins and
-subagents. Like
+the Lens Agents gateway, the model identifiers, on/off flags for Slack, that
+gateway, the external MCP server and Langfuse, the host shape (packaged binary
+or not, Node version, platform, architecture), and counts of cron tasks,
+installed skills, installed plugins and subagents. Like
 every other product event, it carries only identifiers, flags and counts — never
 credentials, URLs, file paths, or message content.
 

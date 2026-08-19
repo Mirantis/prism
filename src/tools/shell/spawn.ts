@@ -6,8 +6,7 @@
  * drain accumulated stdout/stderr, and kill them — all without
  * blocking other tool calls.
  *
- * Port of
- * `nexus-monorepo/crates/nexus-shell-sandbox/src/handlers/process_handlers.rs`,
+ * Port of the upstream Lens Agents shell sandbox's process handlers,
  * with the per-process state map living in `process-manager.ts`.
  */
 import { z } from 'zod';
