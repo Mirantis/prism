@@ -30,12 +30,19 @@ import { RealtimeSession, type RealtimeSessionOptions } from './realtime-session
 import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { BargeInPolicy } from './barge-in';
 import { ResponsePolicy, type EffectiveMode, type ResponseMode } from './response-policy';
-import type { FollowUpCloseReason } from './follow-up-window';
 import type { SpeakerReading } from './meeting-provider.interface';
 import { classifyAddressed, CLASSIFY_DEADLINE_MS } from './addressed-classifier';
 import { isVocativeAddress, warmVocativeTagger } from './vocative';
-import { judgeFollowUp } from './follow-up-shadow';
+import { judgeFollowUp, CONTEXT_LINES, type JudgeLine } from './follow-up-judge';
 import { formatKeywords, formatTranscript } from './transcript-log';
+
+/**
+ * Lines of the meeting held for the follow-up judge.
+ *
+ * Its context, plus the agent's own marker for the turn being followed up on, plus the
+ * utterance under judgement. The shape the judge was measured with — see `CONTEXT_LINES`.
+ */
+const TRANSCRIPT_LINES_KEPT = CONTEXT_LINES + 2;
 
 /**
  * How much of a partial transcript is worth judging.
@@ -150,17 +157,18 @@ export interface VoiceConversationStats {
    */
   attributedUtterances: number;
   unattributedUtterances: number;
-  /** Utterances answered as a continuation of an exchange, with no model call. */
-  followUpAccepted: number;
-  /** Why exchanges ended — see `follow-up-window.ts` for what each reason means. */
-  followUpClosedBy: Record<FollowUpCloseReason, number>;
   /**
-   * Accepted follow-ups a model was able to judge afterwards, and how many it disagreed
-   * with. Their ratio is the window's false-positive rate — measured rather than assumed,
-   * and without the room ever waiting for it. See `follow-up-shadow.ts`.
+   * Utterances answered as a continuation of an exchange, without the name being said again,
+   * and utterances the exchange's clock allowed but the judge turned down.
+   *
+   * The two together say whether judging an exchange earns its keep: every decline is a
+   * model call the room paid nothing for out loud, and every accept is an answer that no
+   * addressed gate would have given. See `follow-up-judge.ts`.
    */
-  followUpJudged: number;
-  followUpDisagreements: number;
+  followUpAccepted: number;
+  followUpDeclined: number;
+  /** Exchanges that ended because nothing followed up in time. */
+  followUpLapsed: number;
 }
 
 export class VoiceConversation {
@@ -177,8 +185,6 @@ export class VoiceConversation {
   private gateModelCalls = 0;
   private attributedUtterances = 0;
   private unattributedUtterances = 0;
-  private followUpJudged = 0;
-  private followUpDisagreements = 0;
   /**
    * Whether the model is part-way through a turn.
    *
@@ -198,6 +204,28 @@ export class VoiceConversation {
   /** Who the answer being spoken is for — see `answeringSpeaker`. */
   private answering: SpeakerReading | null = null;
   private lastRoster: readonly string[] = [];
+  /**
+   * The tail of the meeting, as the follow-up judge reads it.
+   *
+   * Held because the sentence alone does not say who it was said to: "so what happens at 14
+   * days?" is a follow-up when it lands on the agent's answer and an aside between two
+   * colleagues otherwise, and the words are identical. Speaker labels are what carry that,
+   * which is also why the ring is worth so little when attribution is unavailable — every
+   * human line reads `Someone`, honestly, and the judge is left with the words.
+   *
+   * Bounded at what the judge is given, so nothing accumulates across an hour-long call.
+   */
+  private readonly transcriptLines: JudgeLine[] = [];
+  /**
+   * Whether this turn has put its marker in that ring yet.
+   *
+   * Two of the three paths that end a turn can fire for the same turn (generation finishing
+   * and playback draining), and a doubled marker would spend a line of context saying the
+   * same thing twice.
+   *
+   * Starts true so the greeting — a turn nobody asked for — adds nothing.
+   */
+  private agentLineRecorded = true;
   private currentItemId: string | null = null;
   /**
    * Utterances already judged from a partial transcript, so it happens once.
@@ -281,7 +309,6 @@ export class VoiceConversation {
 
     this.responsePolicy = new ResponsePolicy({
       mode: options.responseMode,
-      agentName: options.agentName,
       followUpWindowMs: config.meetingFollowUpWindowMs,
     });
 
@@ -291,7 +318,7 @@ export class VoiceConversation {
     // somebody follows up on is the answer.
     this.playback.onDrained = () => {
       if (this.responseOpen) return;
-      this.responsePolicy.onAgentTurnEnded();
+      this.endAgentTurn();
     };
 
     this.bargeIn = new BargeInPolicy({
@@ -309,7 +336,7 @@ export class VoiceConversation {
         // Being cut off ends the turn too, and somebody who interrupts is plainly still in
         // the exchange. Reported here rather than by the playback, because only this path
         // knows a human took the floor instead of the speech running out.
-        this.responsePolicy.onAgentTurnEnded();
+        this.endAgentTurn();
         const heard = items.reduce((n, i) => n + i.playedMs, 0);
         logger.info(
           `[Meeting] Yielded the floor after ${Math.round(heard)}ms of speech ` +
@@ -376,7 +403,7 @@ export class VoiceConversation {
       // the turn is over only once playback drains too — which is what `onDrained` reports,
       // and why it checks this flag rather than assuming an empty queue means the end.
       this.responseOpen = false;
-      if (!this.playback.isSpeaking) this.responsePolicy.onAgentTurnEnded();
+      if (!this.playback.isSpeaking) this.endAgentTurn();
       // The measurement belongs to one response. Left set, a response that ends
       // without ever producing audio — cancelled by a barge-in, killed by an API
       // error — would hand its marker to whatever spoke next, including the
@@ -424,13 +451,11 @@ export class VoiceConversation {
       if (seen && (seen.looks >= MAX_EARLY_VERDICTS || chars - seen.chars < EARLY_VERDICT_GROWTH_CHARS)) {
         return;
       }
-      // The words *are* passed on a partial, and only so the follow-up window can note when
-      // this person started talking. What it judges is unchanged — it accepts and drift-closes
-      // on finished sentences only, enforced inside `consider` — but its clock has to start
-      // when the speaking did. Withholding them here made that unreachable: the window saw
-      // nothing but finals, so a follow-up's clock began at the moment its last word landed,
-      // and a long question timed out on its own length. Two live calls, two failures.
-      if (this.responsePolicy.onTranscript(itemId, 'partial', textSoFar) !== 'classify') return;
+      // Asked on a partial as well as on the finished sentence, and not only for the early
+      // verdict: this is where the follow-up window learns when the speaker *started*.
+      // Reached only from a final, a follow-up's clock began at the moment its last word
+      // landed, so a long question timed out on its own length. Two live calls, two failures.
+      if (this.responsePolicy.onTranscript(itemId, 'partial') !== 'classify') return;
       this.earlyJudged.set(itemId, { chars, looks: (seen?.looks ?? 0) + 1 });
       if (this.earlyJudged.size > EARLY_JUDGED_LIMIT) {
         this.earlyJudged.delete(this.earlyJudged.keys().next().value as string);
@@ -454,6 +479,10 @@ export class VoiceConversation {
       // is not available.
       if (this.currentSpeaker !== null) this.attributedUtterances += 1;
       else this.unattributedUtterances += 1;
+      // Kept whatever is decided below, including `ignore`: the value of the ring is that it
+      // shows who has been talking to whom, and an utterance the agent stayed out of is as
+      // much a part of that as one it answered.
+      this.recordLine(this.currentSpeaker?.name ?? 'Someone', text);
       // The finished transcript is proof the utterance is over, so an answer still
       // waiting on a boundary event has nothing left to wait for. `committed`
       // normally lands first and this never fires; it exists so a missed event
@@ -463,13 +492,9 @@ export class VoiceConversation {
         this.answer('early-verdict-late-commit');
         return;
       }
-      const decision = this.responsePolicy.onTranscript(itemId, 'final', text);
-      if (decision === 'respond') {
-        this.answer('follow-up');
-        // Answered already; this only measures whether answering was right. Deliberately not
-        // awaited — the room has its reply, and the window cannot supply ground truth about
-        // itself.
-        void this.judgeFollowUpAfterTheFact(text);
+      const decision = this.responsePolicy.onTranscript(itemId, 'final');
+      if (decision === 'follow-up') {
+        void this.answerIfFollowingUp(itemId, text);
         return;
       }
       if (decision === 'classify') void this.classifyThenMaybeRespond(itemId, text, 'final');
@@ -592,27 +617,75 @@ export class VoiceConversation {
   }
 
   /**
-   * Check an answered follow-up against a model, after the fact.
+   * Ask whether an utterance inside an open exchange is aimed at the agent, and answer it.
    *
-   * Every accepted follow-up reaches this, because the window only ever accepts a finished
-   * transcript — so the measurement covers the whole population rather than the safer half
-   * of it.
+   * Reached only when the exchange's clock allows it, which is the cheap half of the
+   * question — see `follow-up-window.ts`. This is the other half, and it costs a model call
+   * of about 600ms.
+   *
+   * A decline is not silence. The utterance goes straight on to the addressed gate, so the
+   * worst this path can do is spend two model calls on one sentence — and a sentence that
+   * ends up answered by neither produced no speech, which makes both of them inaudible. That
+   * is why the judge keeps the question it was measured on rather than being folded into the
+   * addressed gate to save a round trip.
    */
-  private async judgeFollowUpAfterTheFact(transcript: string): Promise<void> {
-    if (!config.meetingFollowUpShadowJudge) return;
-    const verdict = await judgeFollowUp({ transcript, agentName: this.options.agentName });
-    if (this.stopped || verdict === null) return;
-    this.followUpJudged += 1;
-    if (verdict === 'moved_on') {
-      this.followUpDisagreements += 1;
-      // Worth a line of its own: this is the agent having answered something it should have
-      // stayed out of, which is the failure the whole window is designed around. The
-      // sentence itself rides the transcript switch, as everywhere else.
-      logger.info(
-        `[Meeting:FollowUp] a model reading the same sentence afterwards says the speaker had ` +
-          `moved on ${formatTranscript(transcript)}`.trimEnd(),
-      );
+  private async answerIfFollowingUp(itemId: string, transcript: string): Promise<void> {
+    const asked = Date.now();
+    const followsUp = await judgeFollowUp({
+      agentName: this.options.agentName,
+      lines: this.transcriptLines.slice(-TRANSCRIPT_LINES_KEPT),
+      itemId,
+    });
+    if (this.stopped) return;
+
+    // Somebody answered it while the judge was thinking — a verdict on the same utterance
+    // from a partial transcript takes the same road and can land inside those 600ms. There
+    // is no decline to count and no gate call to make: the room already has its reply.
+    if (this.responsePolicy.wasAnswered(itemId)) return;
+
+    // A verdict too old to act on counts as a decline rather than as a drop. Dropping it was
+    // the one path on which this whole feature could make the agent *quieter* than switching
+    // it off: an utterance routed here is not asked about the name first, so "Iris, and
+    // staging?" inside an open exchange would have gone unanswered on a slow judge call —
+    // retried twice by the SDK, and past the deadline. Falling through instead means the
+    // sentence is judged on the name too, and that gate applies its own freshness rule.
+    const late = Date.now() - asked > CLASSIFY_DEADLINE_MS;
+    if (late) logger.info('[Meeting:FollowUp] verdict came too late to answer as a follow-up');
+
+    if (!followsUp || late) {
+      this.responsePolicy.declineFollowUp();
+      // Judged again, by a different question: this one asked whether the words continue an
+      // exchange, and the gate asks whether they name the agent. A sentence can fail the
+      // first and pass the second.
+      void this.classifyThenMaybeRespond(itemId, transcript, 'final');
+      return;
     }
+
+    if (!this.responsePolicy.acceptFollowUp(itemId)) return;
+    this.answer('follow-up');
+  }
+
+  /**
+   * The agent's turn is over — the room heard all of it, or somebody cut it off.
+   *
+   * Also where the agent's own line enters the transcript ring, because that is when it is
+   * chronologically true. Written at the *start* of a turn the marker landed before the
+   * question that prompted it: an answer decided from a partial transcript is spoken at the
+   * turn boundary, and the finished transcript of that question arrives afterwards.
+   */
+  private endAgentTurn(): void {
+    this.responsePolicy.onAgentTurnEnded();
+    if (this.agentLineRecorded) return;
+    this.agentLineRecorded = true;
+    this.recordLine(this.options.agentName, '(answered)');
+  }
+
+  /** Append to the transcript ring, dropping the oldest line once it is full. */
+  private recordLine(speaker: string, text: string): void {
+    const said = text.trim();
+    if (said === '') return;
+    this.transcriptLines.push({ speaker, text: said });
+    if (this.transcriptLines.length > TRANSCRIPT_LINES_KEPT) this.transcriptLines.shift();
   }
 
   /**
@@ -652,6 +725,9 @@ export class VoiceConversation {
         (waited === null ? '' : ` — room waited ${waited}ms since the speaker stopped`),
     );
     this.pendingAnswer = { at: Date.now(), via };
+    // This turn owes the transcript ring a line, which `endAgentTurn` writes once the room
+    // has actually heard it.
+    this.agentLineRecorded = false;
     // A turn is starting, so nothing said over it is a follow-up *to* it. Marked before the
     // request goes out rather than when audio arrives: the model takes its own time to
     // start, and the gap between asking and hearing is exactly when somebody says "yeah".
@@ -672,10 +748,10 @@ export class VoiceConversation {
 
   /** Open the Realtime session. Throws if the connection or auth fails. */
   async start(): Promise<void> {
-    // Loaded here rather than on first use so the follow-up window's drift tests, which
-    // have to answer synchronously, can answer from the first utterance of the call —
-    // which is exactly when the first exchange happens. ~58ms, once per process.
-    await warmVocativeTagger();
+    // Loaded here rather than on first use so the local read can take the shortcut on the
+    // first utterance of a call, and only when there is a local read to take it: the tagger
+    // is 70MB resident, and it is off by default. ~58ms, once per process.
+    if (config.meetingLocalAddressedRead) await warmVocativeTagger();
     await this.session.connect();
   }
 
@@ -800,10 +876,6 @@ export class VoiceConversation {
   setParticipantNames(names: string[]): void {
     if (this.stopped) return;
 
-    // Also the set of names a vocative could be aimed at. Fed to the policy rather than read
-    // from it, so the follow-up window's drift guard can recognise a name the transcriber
-    // lower-cased — which the tagger reads as a common noun, and so cannot see on its own.
-    this.responsePolicy.setRoster(names);
     this.lastRoster = names;
 
     // Sorted before anything else is derived from it. Meet reorders participant
@@ -877,9 +949,8 @@ export class VoiceConversation {
       attributedUtterances: this.attributedUtterances,
       unattributedUtterances: this.unattributedUtterances,
       followUpAccepted: policy.followUp.accepted,
-      followUpClosedBy: policy.followUp.closedBy,
-      followUpJudged: this.followUpJudged,
-      followUpDisagreements: this.followUpDisagreements,
+      followUpDeclined: policy.followUp.declined,
+      followUpLapsed: policy.followUp.lapsed,
     };
   }
 

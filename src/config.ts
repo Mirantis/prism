@@ -400,8 +400,6 @@ const meetingFollowUpWindowMs =
 // that latency, and so does the case for accepting the risk.
 const meetingLocalAddressedRead = process.env.MEETING_LOCAL_ADDRESSED_READ === 'true';
 
-const meetingFollowUpShadowJudge = process.env.MEETING_FOLLOW_UP_SHADOW_JUDGE !== 'false';
-
 // Parsed defensively: `parseInt` yields NaN for junk, and a zero/negative window
 // would make the context indicator divide by nothing, so both collapse to null
 // (= fall through to the bundled snapshot).
@@ -635,5 +633,4 @@ export const config = {
   meetingAdmissionTimeoutMs,
   meetingFollowUpWindowMs,
   meetingLocalAddressedRead,
-  meetingFollowUpShadowJudge,
 };

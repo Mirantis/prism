@@ -11,7 +11,8 @@ import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { VoiceConversation } from '../voice-conversation';
-import { classifyAddressed } from '../addressed-classifier';
+import { classifyAddressed, CLASSIFY_DEADLINE_MS } from '../addressed-classifier';
+import { judgeFollowUp } from '../follow-up-judge';
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -34,6 +35,16 @@ vi.mock('../addressed-classifier', async (importOriginal) => ({
   classifyAddressed: vi.fn(),
 }));
 
+// The follow-up judge is a second network call, and these tests are about what the
+// conversation does with its answer — and about what it shows it, which no unit test of the
+// judge can see. `CONTEXT_LINES` stays real: the conversation sizes its transcript ring from
+// it, and a mocked-away constant would make the ring the wrong length in the one test that
+// checks what the judge is given.
+vi.mock('../follow-up-judge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../follow-up-judge')>()),
+  judgeFollowUp: vi.fn(),
+}));
+
 beforeAll(async () => {
   // These tests run the *real* vocative read — several of them check which path decides
   // — and its POS tagger is imported lazily, measured at ~59ms. Inside a test, that
@@ -45,6 +56,9 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.mocked(classifyAddressed).mockResolvedValue(true);
+  // Declining by default, so an exchange left open by one test cannot answer another test's
+  // utterance behind its back. The cases about following up set it themselves.
+  vi.mocked(judgeFollowUp).mockResolvedValue(false);
   vi.mocked(logger.info).mockClear();
 });
 
@@ -720,14 +734,15 @@ describe('staying in an exchange after the agent has spoken', () => {
     delta: Buffer.alloc(Math.round(24_000 * 2 * (ms / 1000))).toString('base64'),
   });
 
-  it('answers an unnamed follow-up without a gate call, once its own turn has ended', async () => {
+  it('answers an unnamed follow-up once its own turn has ended', async () => {
     const { h, send, sent } = await speakingHarness();
     active = h;
     // The gate answers yes only for the sentence that names the agent, so an answer to
-    // anything else can only have come from the window.
+    // anything else can only have come from the exchange.
     vi.mocked(classifyAddressed).mockImplementation(async ({ transcript }) =>
       /emma/i.test(transcript),
     );
+    vi.mocked(judgeFollowUp).mockResolvedValue(true);
     h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
 
     // Addressed by name, which arms the window.
@@ -761,6 +776,22 @@ describe('staying in an exchange after the agent has spoken', () => {
 
     expect(sent.filter((e) => e.type === 'response.create').length).toBe(before + 1);
     expect(h.conversation.statistics.followUpAccepted).toBe(1);
+
+    // What the judge was shown, which is the only thing that lets it tell a follow-up from an
+    // aside: who said each line, and that the agent answered in between. The labels come from
+    // the participants panel, and the agent's own marker is written when the room has actually
+    // heard the turn — written when the turn *starts*, it landed before the question that
+    // prompted it, because an answer decided from a partial transcript is spoken at the turn
+    // boundary and the finished transcript arrives afterwards.
+    expect(vi.mocked(judgeFollowUp).mock.calls[0][0]).toEqual({
+      agentName: 'Emma',
+      itemId: 'item-51',
+      lines: [
+        { speaker: 'Mario Sarcher', text: 'Emma, can you check the deploy?' },
+        { speaker: 'Emma', text: '(answered)' },
+        { speaker: 'Mario Sarcher', text: 'and can you check staging as well?' },
+      ],
+    });
   });
 
   it('starts the follow-up clock when the speaker starts, not when they stop', async () => {
@@ -775,6 +806,7 @@ describe('staying in an exchange after the agent has spoken', () => {
     vi.mocked(classifyAddressed).mockImplementation(async ({ transcript }) =>
       /emma/i.test(transcript),
     );
+    vi.mocked(judgeFollowUp).mockResolvedValue(true);
     h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
 
     send({
@@ -818,7 +850,59 @@ describe('staying in an exchange after the agent has spoken', () => {
     expect(h.conversation.statistics.followUpAccepted).toBe(1);
   });
 
-  it('does not treat a question aimed at a colleague as a follow-up', async () => {
+  it('asks the gate about a verdict that arrived too late to use', async () => {
+    // The one path on which this feature could make the agent *quieter* than switching it
+    // off. An utterance inside an open exchange is not asked about the name first, so a slow
+    // judge call — the SDK retries twice under throttling — used to drop the verdict and
+    // with it a sentence that may well have named the agent.
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+    vi.mocked(classifyAddressed).mockImplementation(async ({ transcript }) =>
+      /emma/i.test(transcript),
+    );
+    vi.mocked(judgeFollowUp).mockResolvedValue(true);
+    h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-70',
+      transcript: 'Emma, can you check the deploy?',
+    });
+    await settle();
+    send(audioDelta(120));
+    send({ type: 'response.done', response: { id: 'r1', status: 'completed' } });
+    await new Promise((r) => setTimeout(r, 500));
+
+    const before = sent.filter((e) => e.type === 'response.create').length;
+    // Only the clock is faked; the harness runs a real socket. The judge takes longer than
+    // the deadline, and says yes.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.mocked(judgeFollowUp).mockImplementation(async () => {
+      vi.setSystemTime(Date.now() + CLASSIFY_DEADLINE_MS + 1_000);
+      return true;
+    });
+    try {
+      send({
+        type: 'conversation.item.input_audio_transcription.completed',
+        item_id: 'item-71',
+        transcript: 'and can you check staging as well?',
+      });
+      await settle();
+      await settle();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // Not answered as a follow-up — the room has moved on by six seconds — but the sentence
+    // still reached the gate, so nothing was silenced by the judge being slow.
+    expect(sent.filter((e) => e.type === 'response.create').length).toBe(before);
+    expect(vi.mocked(classifyAddressed)).toHaveBeenCalledWith(
+      expect.objectContaining({ transcript: 'and can you check staging as well?' }),
+    );
+    expect(h.conversation.statistics.followUpDeclined).toBe(1);
+  });
+
+  it('still asks the gate about an utterance the judge turns down', async () => {
     const { h, send, sent } = await speakingHarness();
     active = h;
     vi.mocked(classifyAddressed).mockImplementation(async ({ transcript }) =>
@@ -837,7 +921,7 @@ describe('staying in an exchange after the agent has spoken', () => {
     await new Promise((r) => setTimeout(r, 500));
 
     const before = sent.filter((e) => e.type === 'response.create').length;
-    // Same speaker, inside the window, question-shaped — and not for the agent.
+    // Inside the window and question-shaped, and the judge reads it as being for a colleague.
     send({
       type: 'conversation.item.input_audio_transcription.completed',
       item_id: 'item-53',
@@ -847,10 +931,13 @@ describe('staying in an exchange after the agent has spoken', () => {
     await settle();
 
     expect(sent.filter((e) => e.type === 'response.create').length).toBe(before);
-    // Declined, not silenced: the model still got asked, and it is the one that said no.
+    // Declined, not silenced. The exchange can only ever *add* an answer, so a sentence it
+    // turns down has to reach the gate — which is where a name the judge read as a colleague's
+    // but is really the agent's gets a second look.
     expect(vi.mocked(classifyAddressed)).toHaveBeenCalledWith(
       expect.objectContaining({ transcript: 'Tom, do you know the default port for MySQL?' }),
     );
+    expect(h.conversation.statistics.followUpDeclined).toBe(1);
   });
 });
 

@@ -107,9 +107,8 @@ class FakeVoiceConversation {
       attributedUtterances: 3,
       unattributedUtterances: 1,
       followUpAccepted: 2,
-      followUpClosedBy: { shape: 1, vocative: 0, group: 0, clock: 3, turn: 0 },
-      followUpJudged: 2,
-      followUpDisagreements: 1,
+      followUpDeclined: 4,
+      followUpLapsed: 3,
     };
   }
 }
@@ -1278,21 +1277,18 @@ describe('telemetry', () => {
     expect(ended?.[2]).toMatchObject({ attribution_rate: '75' });
   });
 
-  it('reports what the follow-up window did', async () => {
+  it('reports what staying in an exchange bought', async () => {
     await service.join(input);
     await settle();
     await service.leave();
 
-    // The closes matter as much as the accepts: they are the only way to tell "the window
-    // is too narrow" from "the drift guards are firing on things they shouldn't".
+    // All three matter. Accepted against declined says whether judging an exchange earns the
+    // model calls it costs, and lapsed against both says whether the window is too narrow.
     const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
     expect(ended?.[2]).toMatchObject({
       followup_accepted: '2',
-      followup_closed_shape: '1',
-      followup_closed_clock: '3',
-      followup_closed_vocative: '0',
-      followup_judged: '2',
-      followup_disagreements: '1',
+      followup_declined: '4',
+      followup_lapsed: '3',
     });
   });
 
@@ -1312,9 +1308,8 @@ describe('telemetry', () => {
       attributedUtterances: 0,
       unattributedUtterances: 0,
       followUpAccepted: 0,
-      followUpClosedBy: { shape: 0, vocative: 0, group: 0, clock: 0, turn: 0 },
-      followUpJudged: 0,
-      followUpDisagreements: 0,
+      followUpDeclined: 0,
+      followUpLapsed: 0,
     });
 
     await service.join(input);

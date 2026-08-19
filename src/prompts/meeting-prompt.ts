@@ -56,8 +56,8 @@ export interface MeetingInstructionsInput {
  */
 function listeningNote(mode: MeetingInstructionsInput['responseMode']): string {
   const gated = `You are not prompted to speak for every utterance in this call — someone has to
-   call you by name first, every time, including for follow-ups. So when you are
-   prompted, answer the thing that was said: don't re-introduce yourself, don't ask
+   call you by name first, except in the seconds right after you have answered, when
+   they can carry on without it. So when you are prompted, answer the thing that was said: don't re-introduce yourself, don't ask
    whether they were talking to you, and don't apologise for the gaps in between. If a
    question seems to be missing the context of what you said a moment ago, that is
    because you did not hear the turns in between, not because the speaker changed the

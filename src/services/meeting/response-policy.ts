@@ -33,13 +33,13 @@
  * is mostly other people starting to talk to *each other*, which is the exact
  * failure this file exists to prevent.
  *
- * What brings it back is knowing who is speaking. `follow-up-window.ts` is about
- * one person continuing one exchange rather than about a span of time in which
- * anybody may say anything: same speaker, within the window of the agent's own
- * turn ending, not addressed to somebody else, and shaped like a question or a
- * request. It is a third reason to answer alongside the two above, and like them
- * it can only ever *add* an answer — everything it declines goes to the model
- * gate exactly as before.
+ * What brings it back is reading the utterance against the conversation around it.
+ * `follow-up-window.ts` holds the clock — an exchange is open, and this utterance
+ * began inside the window of the agent's own turn ending — and
+ * `follow-up-judge.ts` answers the other half, whether the words are aimed at the
+ * agent at all. It is a third reason to answer alongside the two above, and like
+ * them it can only ever *add* an answer: everything either half declines goes to
+ * the model gate exactly as before.
  *
  * Every "yes" from this object *will* be spoken: unlike prompt-level gating there
  * is no path for the model to decline once `response.create` goes out. That makes
@@ -58,11 +58,17 @@ export type EffectiveMode = 'open' | 'addressed';
 /**
  * What to do with an utterance once its words are known.
  *
- * `classify` means this object declines to decide: whether the agent was named is
- * a judgement, and judgements live outside a class the rest of the code calls
+ * Two of the three hand the decision back out. `classify` means this object declines to
+ * decide whether the agent was named, and `follow-up` that the clock allows this utterance
+ * to continue an exchange but not whether the words are for the agent. Both are judgements
+ * made by a model, and judgements live outside a class the rest of the code calls
  * synchronously.
+ *
+ * A declined `follow-up` becomes a `classify`: the caller asks the addressed gate next, so
+ * the window can only ever add an answer. Nothing here says "speak now" — this object never
+ * decides that on its own any more.
  */
-export type TranscriptDecision = 'respond' | 'ignore' | 'classify';
+export type TranscriptDecision = 'ignore' | 'classify' | 'follow-up';
 
 /**
  * Which transcript a verdict was judged from.
@@ -77,8 +83,6 @@ const HANDLED_ITEM_LIMIT = 32;
 
 export interface ResponsePolicyOptions {
   mode: ResponseMode;
-  /** What the room calls the agent. Needed to tell its name from a third party's. */
-  agentName: string;
   /** How long a follow-up may arrive after the agent's turn ends. `0` disables it. */
   followUpWindowMs: number;
 }
@@ -138,15 +142,12 @@ export class ResponsePolicy {
     suppressed: 0,
     addressedMatches: 0,
     modeSwitches: 0,
-    followUp: { accepted: 0, closedBy: { shape: 0, vocative: 0, group: 0, clock: 0 } },
+    followUp: { accepted: 0, declined: 0, lapsed: 0 },
   };
 
   constructor(private readonly options: ResponsePolicyOptions) {
     if (options.mode !== 'auto') this.mode = options.mode;
-    this.followUp = new FollowUpWindow({
-      windowMs: options.followUpWindowMs,
-      agentName: options.agentName,
-    });
+    this.followUp = new FollowUpWindow({ windowMs: options.followUpWindowMs });
   }
 
   /**
@@ -180,11 +181,6 @@ export class ResponsePolicy {
    */
   onAgentTurnStarted(): void {
     this.followUp.onAgentTurnStarted();
-  }
-
-  /** Tell the window who is in the call, so a lower-cased name is still recognised. */
-  setRoster(roster: readonly string[]): void {
-    this.followUp.setRoster(roster);
   }
 
   /** True while an unnamed follow-up would still be answered. */
@@ -294,11 +290,7 @@ export class ResponsePolicy {
    * `response.create` is *queued* by the session's pending-response deferral
    * rather than dropped, so the room would hear the same reply twice.
    */
-  onTranscript(
-    itemId: string,
-    stage: TranscriptStage = 'final',
-    transcript?: string,
-  ): TranscriptDecision {
+  onTranscript(itemId: string, stage: TranscriptStage = 'final'): TranscriptDecision {
     if (this.wasHandled(itemId)) return 'ignore';
 
     // In `open` mode an early look cannot change anything: the utterance will be
@@ -324,18 +316,14 @@ export class ResponsePolicy {
       return 'ignore';
     }
 
-    // Already in an exchange with this person? Then the name need not be repeated. This
-    // is where the 0ms comes from on a follow-up: the model call is skipped outright
-    // rather than raced. Everything the window declines falls through to `classify`, so
-    // it can only ever add an answer.
+    // Already in an exchange? Then the name need not be repeated — but whether these
+    // particular words are for the agent is a question for the judge, and the caller asks
+    // it. The window answers the part it can answer synchronously: the clock.
     //
-    // Marked answered here, like every other yes, so the other path cannot answer the
-    // same utterance a second time — the session queues a second `response.create`
-    // rather than dropping it, and the room would hear the reply twice.
-    if (transcript !== undefined && this.followUp.consider(transcript, stage, itemId)) {
-      this.answer(itemId);
-      return 'respond';
-    }
+    // Nothing is marked answered here, unlike every other yes on this path. The judge takes
+    // about 600ms and a partial verdict for the same item can land inside that, so the item
+    // is marked when the answer is actually decided — see `acceptFollowUp`.
+    if (this.followUp.eligible(stage, itemId)) return 'follow-up';
 
     // Deliberately does not otherwise test the *current* mode. Someone leaving can
     // flip `addressed` → `open` in the second between an utterance closing and its
@@ -379,6 +367,40 @@ export class ResponsePolicy {
     // the words.
     this.followUp.arm(this.speaker);
     return this.answer(itemId);
+  }
+
+  /**
+   * The judge says this utterance continues the exchange.
+   *
+   * Re-checks the item rather than trusting the caller, for the same reason
+   * `resolveClassification` does: the judgement takes a few hundred milliseconds, and a
+   * verdict on the same item from a partial transcript can be answered inside that. False
+   * means somebody already spoke for it.
+   */
+  acceptFollowUp(itemId: string): boolean {
+    if (this.wasHandled(itemId)) return false;
+    this.followUp.accept();
+    return this.answer(itemId);
+  }
+
+  /**
+   * The judge says it does not. Counted, and the exchange stays open.
+   *
+   * The utterance goes on to the addressed gate, so nothing is marked handled here either.
+   */
+  declineFollowUp(): void {
+    this.followUp.decline();
+  }
+
+  /**
+   * Has this utterance already been spoken for?
+   *
+   * Read by the follow-up path, which spends a model call before it can act: a partial
+   * verdict on the same utterance can be answered inside that, and the work left to do then
+   * is none — neither a decline to count nor a gate call to make.
+   */
+  wasAnswered(itemId: string): boolean {
+    return this.wasHandled(itemId);
   }
 
   /** Record a yes: remember the item so the other path can't answer it twice. */

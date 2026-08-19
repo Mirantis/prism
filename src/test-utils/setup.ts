@@ -68,6 +68,5 @@ vi.mock('../config', () => ({
     // exercising an infinite one.
     meetingFollowUpWindowMs: 8_000,
     meetingLocalAddressedRead: false,
-    meetingFollowUpShadowJudge: true,
   },
 }));

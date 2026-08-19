@@ -1159,21 +1159,14 @@ export class MeetingBotService {
         // anonymously — so this rate falling between releases is the only signal that
         // Google has moved something.
         attribution_rate: String(attributionRate(stats)),
-        // What the follow-up window did. `followup_accepted` is answers given without a
-        // model call because the exchange was still running; the closes say why exchanges
-        // ended, which is the only way to tell "the window is too narrow" from "the drift
-        // guards are firing on things they shouldn't".
+        // What staying in an exchange bought. `accepted` is questions answered with nobody
+        // saying the agent's name; `declined` is the judge turning one down, which costs the
+        // room nothing out loud; `lapsed` is exchanges that simply ran out of time. Accepted
+        // against declined says whether judging an exchange earns its keep, and `lapsed`
+        // against both says whether the window is too narrow.
         followup_accepted: String(stats?.followUpAccepted ?? 0),
-        followup_closed_shape: String(stats?.followUpClosedBy?.shape ?? 0),
-        followup_closed_vocative: String(stats?.followUpClosedBy?.vocative ?? 0),
-        followup_closed_group: String(stats?.followUpClosedBy?.group ?? 0),
-        followup_closed_clock: String(stats?.followUpClosedBy?.clock ?? 0),
-        // The window's false-positive rate, which the ticket asks for and the window
-        // cannot supply about itself. `judged` is the denominator rather than
-        // `followup_accepted`, so a run of failed judge calls reads as a smaller sample
-        // instead of as a better rate.
-        followup_judged: String(stats?.followUpJudged ?? 0),
-        followup_disagreements: String(stats?.followUpDisagreements ?? 0),
+        followup_declined: String(stats?.followUpDeclined ?? 0),
+        followup_lapsed: String(stats?.followUpLapsed ?? 0),
       });
     }
 

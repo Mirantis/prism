@@ -170,9 +170,10 @@ reads off the meeting's own participants list:
 - **Just you and the agent.** It answers everything you say, as an assistant on a
   call with you would.
 - **Anyone else in the call.** It stays quiet unless you call it by name ("Prism,
-  can you check the cluster?") — every time, including follow-ups. Everything else —
-  two people working through a problem with each other — it sits through in silence,
-  however much a sentence might have sounded like a request.
+  can you check the cluster?") — every time, except for the few seconds after it has
+  answered you, which the next section covers. Everything else — two people working
+  through a problem with each other — it sits through in silence, however much a
+  sentence might have sounded like a request.
 
 It switches over as people join and leave, within about ten seconds. You don't
 have to ask for any of this, but you can override it per call:
@@ -182,37 +183,36 @@ have to ask for any of this, but you can override it per call:
 
 **Once it's answered you, you can keep going without the name.** Ask it something, and if you
 start speaking again within about eight seconds of it finishing, your next question is treated
-as part of the same exchange — no name needed, and answered instantly. What counts is when you
-*start*, so a long question is not penalised for taking a while to ask. **Anybody in the call
-can pick the thread up**, not only the person it was answering — if a colleague follows up on
-what it just said, they don't have to say the name again either.
+as part of the same exchange — no name needed. What counts is when you *start*, so a long
+question is not penalised for taking a while to ask. **Anybody in the call can pick the thread
+up**, not only the person it was answering — if a colleague follows up on what it just said,
+they don't have to say the name again either.
 
-Handing the floor back counts as a request, so if you cut it off and then say "sorry, go
-ahead", it carries on rather than waiting to be named again.
+Inside those eight seconds each sentence is read against the last few lines of the
+conversation, and the agent answers the ones aimed at it. That is what keeps it out of the
+exchanges going on around it: "so what happens at 14 days?" needs an answer when it lands on
+something the agent just said, and needs silence when two colleagues are working it out
+between themselves — and the words are identical either way, so only the conversation around
+them separates the two. Handing the floor back counts too, so if you cut it off and then say
+"sorry, go ahead", it carries on.
 
-The window shuts as soon as the conversation moves on, which in practice matters more than
-the eight seconds:
-
-- somebody says something substantial that isn't a question or a request — the exchange is
-  over. A short aside ("yeah", "go ahead") isn't enough to end it, but "right, let's move on"
-  is, however briefly it's put;
-- somebody turns to another person ("Tom, do you know the port?") — that question is theirs;
-- you ask the room rather than the agent ("any takes from the team?");
-- nothing follows up in time.
-
-Saying its name again re-opens it. And an interruption counts as it having spoken: cut it
-off mid-sentence and you're still in the exchange.
+A sentence it stays out of does not end the exchange. It simply says nothing and reads the
+next one, so an aside, a "yeah", or somebody answering a question of their own no longer costs
+you the rest of your exchange. What ends it is time: eight seconds in which nobody follows up,
+and the agent waits to be named again.
 
 This is narrower than it sounds, because the first version of it was not. An earlier build
 stayed engaged for fifteen seconds after speaking and treated *anything* said in that time as
 addressed to it — and in a real room those fifteen seconds are mostly people starting to talk
-to each other, so it answered them. What keeps this one in check is not who is talking but
-**what is said**: it has to be a question or a request, aimed at nobody else in particular,
-and the moment somebody's name comes up or the group moves along the exchange is over. A
-passing "yeah" or "go ahead" is neither answered nor treated as the end of anything.
+to each other, so it answered them. Reading each sentence in context instead was measured
+against three real meeting transcripts, 1389 utterances from meetings no agent attended: it
+would have spoken in 6.7% of them, against 10.9% for the rules it replaced.
 
-None of it can make the agent quieter: anything the window turns down is judged exactly as
-it is today. Set `MEETING_FOLLOW_UP_WINDOW_MS=0` to switch it off.
+Saying its name re-opens the window, and an interruption counts as the agent having spoken —
+cut it off mid-sentence and you are still in the exchange.
+
+None of it can make the agent quieter: anything the exchange turns down is judged exactly as
+it would be otherwise. Set `MEETING_FOLLOW_UP_WINDOW_MS=0` to switch it off.
 
 **Its name is what gets its attention, but it isn't matched literally.** Live
 transcription mangles names — "Prism" has come back as "Pritham" — so a check
@@ -370,7 +370,9 @@ call. It bills per audio minute at a small fraction of the Realtime audio rate f
 the same minute, and it never feeds the model — the conversation itself stays pure
 audio. Working out whether you called the agent by name is one short call to the
 small classification model — a few tokens per sentence, and none at all in a
-one-to-one call, where nothing needs deciding.
+one-to-one call, where nothing needs deciding. A sentence said inside an open
+exchange costs a second call of the same size, which reads it against the last few
+lines of the conversation.
 
 **A call cannot run past an hour.** OpenAI's Realtime sessions end at 60 minutes,
 which is not configurable and applies regardless of `MEETING_TIMEOUT_MINUTES`. When

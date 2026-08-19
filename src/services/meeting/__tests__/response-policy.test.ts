@@ -6,9 +6,8 @@
  * to decline. So the tests that matter most are the ones asserting silence.
  */
 
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ResponsePolicy } from '../response-policy';
-import { warmVocativeTagger } from '../vocative';
 
 /**
  * A policy with the follow-up window **off** unless a test asks for it.
@@ -18,33 +17,19 @@ import { warmVocativeTagger } from '../vocative';
  * the end of this file, and its own unit tests in `follow-up-window.test.ts`.
  */
 const policy = (over: Partial<ConstructorParameters<typeof ResponsePolicy>[0]> = {}) =>
-  new ResponsePolicy({
-    mode: 'auto',
-    agentName: 'Prism',
-    followUpWindowMs: 0,
-    ...over,
-  });
+  new ResponsePolicy({ mode: 'auto', followUpWindowMs: 0, ...over });
 
 /**
  * One utterance through both paths.
  *
- * `'classify'` means this object declined to decide — the window did not cover it,
- * so whether the agent was named is a question for the model. The decision then
- * continues in `resolveClassification`.
+ * `'classify'` means this object declined to decide — no exchange covered the utterance,
+ * so whether the agent was named is a question for the model. The decision then continues
+ * in `resolveClassification`.
  */
 const utterance = (p: ResponsePolicy, itemId: string): boolean | 'classify' => {
   if (p.onUtteranceCommitted(itemId)) return true;
-  const decision = p.onTranscript(itemId);
-  return decision === 'classify' ? 'classify' : decision === 'respond';
+  return p.onTranscript(itemId) === 'classify' ? 'classify' : false;
 };
-
-beforeAll(async () => {
-  // The follow-up window's drift tests read POS tags synchronously, and until the tagger is
-  // loaded they have no verdict — so the window declines everything, which is the safe
-  // direction but not what the cases below are about. `VoiceConversation.start()` does this
-  // when a call opens. Warmed before `useFakeTimers`, since it is a module load.
-  await warmVocativeTagger();
-});
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -359,58 +344,69 @@ describe('staying in an exchange without being named again', () => {
     return p;
   };
 
+  it('offers an utterance inside the exchange to the judge instead of the gate', () => {
+    const p = inExchange();
+
+    // `follow-up` rather than `classify` is the whole feature: the utterance is judged on
+    // whether it continues the exchange, which no name in it can answer.
+    expect(p.onTranscript('i2', 'final')).toBe('follow-up');
+  });
+
   it('starts the clock at the partial, so a long question is not penalised for its length', () => {
-    // Half of the wiring: that the policy hands a partial's words to the window and that the
-    // clock then reads from them. The other half — that the *conversation* passes those words
-    // at all — cannot be seen from here, and that is exactly where two live failures came
-    // from. `voice-conversation.test.ts` covers it by driving the conversation instead.
+    // Half of the wiring: that the policy shows the window the partial and that the clock then
+    // reads from it. The other half — that the *conversation* reports partials at all — cannot
+    // be seen from here, and that is exactly where two live failures came from.
+    // `voice-conversation.test.ts` covers it by driving the conversation instead.
     const p = inExchange();
 
     vi.advanceTimersByTime(2_000);
-    expect(p.onTranscript('i2', 'partial', 'so on that deploy, I was wondering whether')).toBe(
-      'classify',
-    );
+    expect(p.onTranscript('i2', 'partial')).toBe('classify');
 
     // Nine more seconds of talking — past the window, if the clock were read at the end.
     vi.advanceTimersByTime(9_000);
-    expect(p.onTranscript('i2', 'final', 'can you check whether staging picked it up?')).toBe(
-      'respond',
-    );
+    expect(p.onTranscript('i2', 'final')).toBe('follow-up');
   });
 
-  it('answers a follow-up carrying no name, without a model call', () => {
+  it('marks nothing answered until the judge has answered', () => {
     const p = inExchange();
+    expect(p.onTranscript('i2', 'final')).toBe('follow-up');
 
-    // `respond` rather than `classify` is where the 0ms comes from: the gate is skipped
-    // outright rather than raced.
-    expect(p.onTranscript('i2', 'final', 'and can you check staging as well?')).toBe('respond');
+    // The judge takes about 600ms, and a verdict on the same utterance from a partial
+    // transcript can land inside that. Latching the item when the clock allowed it would
+    // have silenced whichever path lost the race.
+    expect(p.resolveClassification('i2', true)).toBe(true);
+  });
+
+  it('marks the utterance answered once the judge says it continues the exchange', () => {
+    const p = inExchange();
+    p.onTranscript('i2', 'final');
+
+    expect(p.acceptFollowUp('i2')).toBe(true);
     expect(p.statistics.followUp.accepted).toBe(1);
-  });
-
-  it('marks the utterance answered so the other path cannot answer it twice', () => {
-    const p = inExchange();
-    p.onTranscript('i2', 'final', 'and can you check staging?');
 
     // A second `response.create` is queued by the session rather than dropped, so the room
     // would hear the same reply twice.
     expect(p.resolveClassification('i2', true)).toBe(false);
-    expect(p.onTranscript('i2', 'final', 'and can you check staging?')).toBe('ignore');
+    expect(p.onTranscript('i2', 'final')).toBe('ignore');
   });
 
-  it('still asks the model about anything the window declines', () => {
+  it('does not answer twice when a verdict beat the judge to it', () => {
     const p = inExchange();
+    p.onTranscript('i2', 'final');
+    expect(p.resolveClassification('i2', true)).toBe(true);
 
-    // The window can only ever *add* an answer. Everything it turns down has to reach the
-    // gate, or the feature would be silencing utterances rather than speeding them up.
-    expect(p.onTranscript('i2', 'final', 'Tom, do you know the port?')).toBe('classify');
+    expect(p.acceptFollowUp('i2')).toBe(false);
   });
 
-  it('does nothing without a transcript to read', () => {
+  it('counts a decline and leaves the exchange open', () => {
     const p = inExchange();
+    p.onTranscript('i2', 'final');
 
-    // `open` mode answers at the turn boundary with no words at all, and a caller that has
-    // none cannot be offered a decision that depends on them.
-    expect(p.onTranscript('i2', 'final')).toBe('classify');
+    p.declineFollowUp();
+
+    expect(p.statistics.followUp.declined).toBe(1);
+    expect(p.followUpOpen).toBe(true);
+    expect(p.onTranscript('i3', 'final')).toBe('follow-up');
   });
 
   it('still opens when the platform could not say who spoke', () => {
@@ -419,11 +415,12 @@ describe('staying in an exchange without being named again', () => {
     p.resolveClassification('i1', true);
     p.onAgentTurnEnded();
 
-    // This used to be inert without attribution, because a follow-up had to come from the same
-    // person and there was nobody to compare against. Eligibility is now about what was said,
-    // so a call whose participants panel cannot be read keeps the behaviour rather than
-    // silently losing it — and the drift guards are what keep that safe.
-    expect(p.onTranscript('i2', 'final', 'and can you check staging?')).toBe('respond');
+    // This used to be inert without attribution, because a follow-up had to come from the
+    // same person and there was nobody to compare against. Anybody may continue an exchange
+    // now, so a call whose participants panel cannot be read keeps the behaviour rather than
+    // silently losing it — the judge reads speaker labels where there are any and the words
+    // alone where there are not.
+    expect(p.onTranscript('i2', 'final')).toBe('follow-up');
   });
 
   it('is off entirely when the operator sets the window to zero', () => {
@@ -432,6 +429,6 @@ describe('staying in an exchange without being named again', () => {
     p.resolveClassification('i1', true);
     p.onAgentTurnEnded();
 
-    expect(p.onTranscript('i2', 'final', 'and can you check staging?')).toBe('classify');
+    expect(p.onTranscript('i2', 'final')).toBe('classify');
   });
 });

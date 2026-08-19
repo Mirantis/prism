@@ -479,18 +479,6 @@ describe('config', () => {
       }
     });
 
-
-
-    it('judges answered follow-ups after the fact unless told not to', async () => {
-      // On by default because it is the only way to know whether the window is right — it
-      // would otherwise be marking its own homework — and nothing in the call waits for it.
-      delete process.env.MEETING_FOLLOW_UP_SHADOW_JUDGE;
-      expect((await loadConfig()).meetingFollowUpShadowJudge).toBe(true);
-      process.env.MEETING_FOLLOW_UP_SHADOW_JUDGE = 'false';
-      vi.resetModules();
-      expect((await loadConfig()).meetingFollowUpShadowJudge).toBe(false);
-    });
-
     it('defaults the admission wait to five minutes, in milliseconds', async () => {
       delete process.env.MEETING_ADMISSION_TIMEOUT_SECONDS;
       const cfg = await loadConfig();
