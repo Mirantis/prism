@@ -51,38 +51,48 @@ fi
 # base64 DER, so awk strips the armor and joins the wrapped lines.
 # CACertificates needs M132+; Debian's chromium is far past that.
 #
-# A suffix on the bundle is the only condition that matters, so it is also the only
-# thing tested: no sandbox means nothing appended means nothing to do. The path is the
-# one lens-sandbox-core hardcodes as CA_BUNDLE_PATH in src/ca.rs, where it appends.
+# What to hand over is whatever the live bundle holds that the image did not ship,
+# compared by content against the record the build left in $CA_BASE. Identity rather
+# than position, so a bundle that gets reordered or regenerated cannot make public
+# roots look like the difference. The bundle path is the one lens-sandbox-core
+# hardcodes as CA_BUNDLE_PATH in src/ca.rs, where it appends.
 CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-CA_COUNT=/app/.ca-cert-count
-if [ ! -r "$CA_BUNDLE" ] || [ ! -r "$CA_COUNT" ]; then
-  echo "chromium CA policy: skipped, need both $CA_BUNDLE and $CA_COUNT" >&2
+CA_BASE=/app/.ca-certificates.base
+# An empty $CA_BASE would make every certificate in the bundle look added, so it is
+# tested for content and not merely for existence.
+if [ ! -r "$CA_BUNDLE" ] || [ ! -s "$CA_BASE" ]; then
+  echo "chromium CA policy: skipped, need $CA_BUNDLE and a non-empty $CA_BASE" >&2
 else
-  sandbox_cas=$(awk -v skip="$(cat "$CA_COUNT")" '
+  added=$(awk '
     /BEGIN CERTIFICATE/ { in_cert = 1; b64 = ""; next }
-    /END CERTIFICATE/   { in_cert = 0
-                          if (++seen > skip) printf "%s\"%s\"", (n++ ? "," : ""), b64
-                          next }
+    /END CERTIFICATE/   { in_cert = 0; print b64; next }
     in_cert             { b64 = b64 $0 }
-  ' "$CA_BUNDLE") || sandbox_cas=''
+  ' "$CA_BUNDLE" | grep -Fxv -f "$CA_BASE") || added=''
 
-  if [ -z "$sandbox_cas" ]; then
-    echo "chromium CA policy: nothing appended past the $(cat "$CA_COUNT") certificates the image ships, nothing to trust"
+  count=0
+  [ -z "$added" ] || count=$(printf '%s\n' "$added" | wc -l | tr -d ' ')
+
+  if [ "$count" -eq 0 ]; then
+    echo 'chromium CA policy: bundle holds only what the image shipped, nothing to trust'
+  elif [ "$count" -gt 10 ]; then
+    # A sandbox appends about three. Double digits means the comparison is not
+    # measuring what it is meant to, and trusting the result would be the wrong
+    # way to fail: these would be public roots, installed as local anchors.
+    echo "chromium CA policy: refusing $count added certificates, expected a handful" >&2
   else
+    entries=$(printf '%s\n' "$added" | awk '{ printf "%s\"%s\"", (NR > 1 ? "," : ""), $0 }')
     written=''
     for policy_dir in /etc/chromium/policies/managed /etc/opt/chrome/policies/managed; do
       if [ ! -w "$policy_dir" ]; then
         echo "chromium CA policy: skipped $policy_dir, not writable" >&2
-      elif printf '{"CACertificates":[%s]}' "$sandbox_cas" > "$policy_dir/prism-ca.json"; then
+      elif printf '{"CACertificates":[%s]}' "$entries" > "$policy_dir/prism-ca.json"; then
         written="$written $policy_dir/prism-ca.json"
       else
         echo "chromium CA policy: failed writing $policy_dir/prism-ca.json" >&2
       fi
     done
     if [ -n "$written" ]; then
-      # base64 has no comma, so splitting on one counts the entries exactly.
-      echo "chromium CA policy: trusting $(printf '%s\n' "$sandbox_cas" | tr ',' '\n' | wc -l | tr -d ' ') sandbox CA(s) via$written"
+      echo "chromium CA policy: trusting $count added CA(s) via$written"
     fi
   fi
 fi

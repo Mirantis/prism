@@ -110,16 +110,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Count the CA certificates this image ships with, so start.sh can tell which
-# ones a sandbox supervisor appended at boot. The supervisor appends its
-# TLS-interception CAs to the bundle, so its certs are always the suffix and
-# everything past this count is one of them. A count is all the comparison needs.
+# Record the CA certificates this image ships, one base64 body per line, so start.sh
+# can hand Chromium whatever a sandbox supervisor added to the bundle at boot and
+# nothing else. Stored in comparison form rather than as a copy of the bundle so the
+# boot path is a single pass and needs no temporary file.
 #
-# Must stay in this layer: `ca-certificates` above is what creates the bundle,
-# and nothing later in the build touches it. Kept under /app rather than beside
-# the bundle, which is update-ca-certificates' directory to manage.
-RUN grep -c 'BEGIN CERTIFICATE' /etc/ssl/certs/ca-certificates.crt \
-      > /app/.ca-cert-count
+# By content, not by position: a bundle that update-ca-certificates regenerates is
+# reordered and may be larger, and a positional rule would then offer public roots
+# as the difference. Those are certificates Chromium already trusts through its own
+# root store, and installing them as policy anchors would exempt them from the
+# Certificate Transparency, pinning and validity checks it applies there.
+#
+# Must stay in this layer: `ca-certificates` above is what creates the bundle. Kept
+# under /app rather than beside it, which is update-ca-certificates' own directory.
+RUN awk '/BEGIN CERTIFICATE/{c=1;b="";next} /END CERTIFICATE/{c=0;print b;next} c{b=b $0}' \
+      /etc/ssl/certs/ca-certificates.crt > /app/.ca-certificates.base
 
 # Install only production dependencies. Scope to root + cli — the web
 # workspace's node_modules isn't needed at runtime (we only ship its
