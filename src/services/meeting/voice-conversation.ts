@@ -878,8 +878,6 @@ export class VoiceConversation {
   setParticipantNames(names: string[]): void {
     if (this.stopped) return;
 
-    this.lastRoster = names;
-
     // Sorted before anything else is derived from it. Meet reorders participant
     // tiles by who is speaking and virtualizes the grid, so the *same* people
     // arrive from the scrape in a different order poll after poll. Keyed on
@@ -899,6 +897,14 @@ export class VoiceConversation {
       logger.debug('[Meeting] Participant names came back empty — leaving the roster as it was');
       return;
     }
+
+    // The *filtered* list, which matters more than it looks. Both gates are told to answer
+    // for nobody but themselves, so the agent's own name reaching them as somebody else's
+    // mutes it for the whole call — the worst failure either gate has. `namesFrom()` already
+    // drops the agent's row, but it recognises it by the English `(You)` marker, so a bot
+    // account on a non-English profile arrives here with the agent still in the list. The
+    // filter above is the second line of defence and this is where it has to land.
+    this.lastRoster = others;
 
     const keywords = [this.options.agentName, ...others].slice(0, KEYWORD_LIMIT);
 

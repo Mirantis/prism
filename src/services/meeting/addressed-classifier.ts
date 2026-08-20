@@ -126,7 +126,12 @@ export interface ClassifyAddressedInput {
    * Measured on 150 constructed negatives: false accepts fell from 32 to 3 with the names
    * in hand, and recall on 70 addresses stayed at 70.
    *
-   * Empty until the first roster read, which is safe — that is what the gate had before.
+   * Empty until the first roster read, and on a platform whose roster cannot be read at all.
+   * That is not the same prompt the gate ran before — the addressee paragraph is there either
+   * way — so it was measured too: with no names, 70/70 recall and 13/150 false accepts against
+   * the old prompt's 32/150, and 17/18 against 18/18 on the real addresses. Better on the
+   * false side, one case worse on recall, so the paragraph is worth having even with nobody to
+   * name.
    */
   roster?: readonly string[];
   /**

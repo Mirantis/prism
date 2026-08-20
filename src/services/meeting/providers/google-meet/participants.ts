@@ -196,12 +196,19 @@ export async function openParticipants(page: Page): Promise<void> {
         async ({ list, settleMs, giveUpAfter }) => {
           const w = globalThis as unknown as {
             document: RoomDocument;
-            __prismPanel?: { fruitless: number };
+            __prismPanel?: { fruitless: number; announced?: boolean };
           };
           const doc = w.document;
-          if (doc.querySelector(list)) return 'open';
-
           const tries = (w.__prismPanel ??= { fruitless: 0 });
+          if (doc.querySelector(list)) {
+            // Said once per page, not once per poll. This function runs on the 10s
+            // participant poll for the life of the call, so an unconditional line here is
+            // ~360 identical lines an hour at `info`.
+            if (tries.announced === true) return 'already-open';
+            tries.announced = true;
+            return 'open';
+          }
+
           if (tries.fruitless >= giveUpAfter) return 'gave-up';
 
           // The control has its name as *text* — "People" plus a count badge, so
@@ -221,6 +228,7 @@ export async function openParticipants(page: Page): Promise<void> {
           // true afterwards is that the list is *there*.
           if (doc.querySelector(list)) {
             tries.fruitless = 0;
+            tries.announced = true;
             return 'opened';
           }
           tries.fruitless += 1;

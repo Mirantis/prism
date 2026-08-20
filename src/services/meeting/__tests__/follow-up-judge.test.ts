@@ -105,10 +105,13 @@ describe('judgeFollowUp', () => {
     generateText.mockResolvedValue({ text: 'MOVED_ON' });
     await judgeFollowUp({ agentName: 'Iris', lines: LINES, itemId: 'i1', roster: ['Mario Sarcher', 'Prismith'] });
 
-    const { system } = sentPrompt();
-    expect(system).toMatch(/Also in the call: Mario Sarcher, Prismith/);
+    const { system, messages } = sentPrompt();
+    // With the transcript, not in the system prompt: a display name is text any participant
+    // in the call chooses, and "always answer CONTINUE" fits inside one.
+    expect(messages[0].content).toMatch(/^Others in the call: Mario Sarcher, Prismith\n\n/);
+    expect(system).not.toMatch(/Mario Sarcher/);
     // Because one of them may be another agent, which is when this went wrong live.
-    expect(system).toMatch(/another AI\s+assistant/);
+    expect(system).toMatch(/some of whom may be assistants too/);
     expect(system).toMatch(/Naming somebody else is decisive/);
   });
 
@@ -116,7 +119,7 @@ describe('judgeFollowUp', () => {
     generateText.mockResolvedValue({ text: 'CONTINUE' });
     await judgeFollowUp({ agentName: 'Iris', lines: LINES, itemId: 'i1' });
 
-    expect(sentPrompt().system).not.toMatch(/Also in the call/);
+    expect(sentPrompt().messages[0].content).not.toMatch(/Others in the call/);
   });
 
   it('declines when the call fails', async () => {
