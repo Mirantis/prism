@@ -523,7 +523,7 @@ function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
         ? 'use view_attachment to look at it.'
         : att.category === 'pdf'
           ? 'use view_attachment to read it, or hydrate_attachment + pdftotext for shell inspection.'
-          : 'use hydrate_attachment to extract it to disk and inspect it with shell tools.';
+          : 'not on disk yet. Call hydrate_attachment to write it to the filesystem, then inspect it with shell tools.';
     parts.push({
       type: 'text',
       // No tool hint on an expired stub — the content is gone, so the model
@@ -585,7 +585,7 @@ function getAttachmentsInstructions(): string {
 Each file shared in the conversation appears as a metadata stub showing filename, type, size, and id. To access the content:
 
 - **view_attachment(attachmentId)** — look at an image (png/jpeg/gif/webp) or read a PDF; the content is attached to the conversation for you to analyze directly.
-- **hydrate_attachment(attachmentId)** — extracts the file to disk. Then inspect with shell tools: \`cat\`, \`head\`, \`jq\`, \`unzip\`, \`pdftotext\`, \`sqlite3\`, \`strings\`, etc. Prefer this for text, code, archives, data files, and anything view_attachment can't show.
+- **hydrate_attachment(attachmentId)** — the only way to put the file on the workspace filesystem. Nothing is on disk until you call it, and the filename in the stub is not a path. It returns the absolute path to use with shell tools: \`cat\`, \`head\`, \`jq\`, \`unzip\`, \`pdftotext\`, \`sqlite3\`, \`strings\`, etc. Prefer this for text, code, archives, data files, and anything view_attachment can't show.
 
 A stub marked "content expired" means the file is past the 7-day retention window — its bytes are gone; ask the user to share it again if you need it.
 
