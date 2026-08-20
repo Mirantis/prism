@@ -123,8 +123,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #
 # Must stay in this layer: `ca-certificates` above is what creates the bundle. Kept
 # under /app rather than beside it, which is update-ca-certificates' own directory.
+#
+# awk reports nothing wrong about an empty bundle, so the record is checked for
+# content here: a base image without certificates fails the build rather than
+# shipping a record that only makes itself known as a skipped line at boot.
 RUN awk '/BEGIN CERTIFICATE/{c=1;b="";next} /END CERTIFICATE/{c=0;print b;next} c{sub(/\r$/,"");b=b $0}' \
-      /etc/ssl/certs/ca-certificates.crt > /app/.ca-certificates.base
+      /etc/ssl/certs/ca-certificates.crt > /app/.ca-certificates.base \
+ && [ -s /app/.ca-certificates.base ]
 
 # Install only production dependencies. Scope to root + cli — the web
 # workspace's node_modules isn't needed at runtime (we only ship its
