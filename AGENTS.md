@@ -75,6 +75,20 @@ the feature is observable in production. Rules:
   `goal started` (creation) and `goal finished` (with `status`, `turns`,
   `elapsed_ms`); cron emits `cron task scheduled` / `cron task executed`.
 
+### LLM tracing (Langfuse)
+
+The AI SDK writes no spans itself — it calls whatever telemetry integration is
+registered, so `initLangfuse()` registers one (`@ai-sdk/otel`'s
+`LegacyOpenTelemetry`, whose span shape `LangfuseSpanProcessor` reads). With an
+integration registered a call is traced **with its prompt recorded unless it
+says otherwise**, so a *gate* whose whole prompt is somebody else's words opts
+out in writing: `isEnabled: false` for the Slack thread classifier,
+`langfuseTelemetry(…, { recordContent: false })` for the meeting gate. The chat
+path traces its content deliberately and is not covered by that. Per-call
+identifiers ride `runtimeContext` plus `includeRuntimeContext`, never a
+telemetry field. `lib/langfuse-tracing.test.ts` pins each case against the real
+SDK.
+
 ## Documentation
 
 Any **user-facing change must update the docs** in the same PR. The user docs

@@ -324,12 +324,14 @@ under the data dir, so sign-in happens once rather than per meeting.
 
 All optional; each is off until its variable is set. Langfuse traces every LLM
 call (model, tokens, tool calls, latency), with prompts and completions included
-— the one exception is the in-meeting call that decides whether the agent was
-named, whose content follows
-[`MEETING_TRANSCRIPT_LOGGING`](voice-meetings.md#what-ends-up-in-the-log) because
-it is a sentence somebody said out loud. OpenTelemetry exports product telemetry
-to a collector; that surface carries no prompts at all. Structured logs (Pino)
-are always on, and no error written to them carries a request or response body.
+— except the two that read words somebody else wrote or said. The in-meeting
+call that decides whether the agent was named follows
+[`MEETING_TRANSCRIPT_LOGGING`](voice-meetings.md#what-ends-up-in-the-log) for its
+content, and the call that decides what to do with a threaded Slack message is
+not traced at all, since its prompt is the channel's recent messages.
+OpenTelemetry exports product telemetry to a collector; that surface carries no
+prompts at all. Structured logs (Pino) are always on, and no error written to
+them carries a request or response body.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|

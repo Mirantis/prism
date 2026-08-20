@@ -197,6 +197,43 @@ import { withToolsCacheControl } from './lib/tool-collection';
 import { config } from './config';
 import { Tool } from 'ai';
 
+type StepMessage = { role: string; content?: unknown; providerOptions?: unknown };
+type PrepareStep = (options: {
+  messages: StepMessage[];
+  initialMessages: StepMessage[];
+  responseMessages: StepMessage[];
+}) => Promise<{ messages: StepMessage[] }>;
+
+/** What the SDK hands `prepareStep` for the first step of a turn. */
+function firstStep(initialMessages: StepMessage[]) {
+  return { messages: initialMessages, initialMessages, responseMessages: [] };
+}
+
+/**
+ * Drive `prepareStep` the way the SDK's step loop does.
+ *
+ * A returned `messages` override becomes the base for the next step, so the
+ * `messages` argument carries that override plus the response messages the step
+ * produced, while `initialMessages` and `responseMessages` stay the discrete
+ * pieces. Each call prepares one step and takes what that step then produces.
+ * A hook that splices onto `messages` rather than rebuilding from the pieces
+ * duplicates its injections and its cache breakpoint once per remaining step.
+ */
+function stepDriver(prepareStep: PrepareStep, initialMessages: StepMessage[]) {
+  let carried = initialMessages;
+  const responseMessages: StepMessage[] = [];
+  return async (produced: StepMessage[] = []) => {
+    const result = await prepareStep({
+      messages: carried,
+      initialMessages,
+      responseMessages: [...responseMessages],
+    });
+    responseMessages.push(...produced);
+    carried = [...result.messages, ...produced];
+    return result;
+  };
+}
+
 describe('invoke', () => {
   beforeEach(() => {
     // Built-in tools are direct AI SDK now; only the Nexus MCP url
@@ -1398,12 +1435,36 @@ describe('invoke', () => {
         { role: 'user', content: 'msg1' },
         { role: 'assistant', content: 'msg2' },
       ];
-      const result = await callArgs.prepareStep({ messages: testMessages });
+      const result = await callArgs.prepareStep(firstStep(testMessages));
       expect(result.messages[1].providerOptions).toEqual({
         anthropic: { cacheControl: { type: 'ephemeral' } },
       });
       // Earlier messages should be untouched
       expect(result.messages[0].providerOptions).toBeUndefined();
+    });
+
+    it('leaves exactly one message-level breakpoint after several steps', async () => {
+      // Bedrock accepts four cache blocks per request, and the system prompt
+      // already spends two with the tool list on a third. A breakpoint that
+      // survives into the next step's message list therefore does not just
+      // waste a slot, it gets the turn rejected a few steps in.
+      await invoke(createTestInvokeRequest({ prompt: 'go' }));
+      const { prepareStep } = mockGenerateText.mock.calls[0][0];
+
+      const toolRound = [
+        { role: 'assistant', content: [{ type: 'tool-call' }] },
+        { role: 'tool', content: [{ type: 'tool-result' }] },
+      ];
+      const step = stepDriver(prepareStep, [{ role: 'user', content: 'go' }]);
+      await step(toolRound);
+      await step(toolRound);
+      const third = await step();
+
+      const marked = third.messages.filter((m) => m.providerOptions !== undefined);
+      expect(marked).toHaveLength(1);
+      expect(third.messages.at(-1)?.providerOptions).toEqual({
+        anthropic: { cacheControl: { type: 'ephemeral' } },
+      });
     });
   });
 
@@ -1562,13 +1623,13 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ prompt: 'review the PR', steering }));
 
       const { prepareStep } = mockGenerateText.mock.calls[0][0];
-      const result = await prepareStep({
-        messages: [
+      const result = await prepareStep(
+        firstStep([
           { role: 'user', content: 'review the PR' },
           { role: 'assistant', content: [{ type: 'tool-call' }] },
           { role: 'tool', content: [{ type: 'tool-result' }] },
-        ],
-      });
+        ]),
+      );
 
       expect(result.messages).toHaveLength(4);
       expect(result.messages[3]).toMatchObject({
@@ -1582,9 +1643,10 @@ describe('invoke', () => {
     });
 
     it('keeps an injected message in place on later steps', async () => {
-      // prepareStep is handed a freshly built [...history, ...responseMessages]
-      // every step; injections are not part of the SDK's own list, so they have
-      // to be re-spliced at the position they were inserted at.
+      // Injections are not part of the SDK's own message list, so they have to
+      // be re-spliced at the position they were inserted at. The driver
+      // reproduces the SDK's carry-forward, so a hook that re-splices onto the
+      // `messages` argument lands a second copy here.
       const steering = vi
         .fn()
         .mockResolvedValueOnce([{ text: 'skip the tests' }])
@@ -1593,14 +1655,12 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ steering }));
       const { prepareStep } = mockGenerateText.mock.calls[0][0];
 
-      await prepareStep({ messages: [{ role: 'user', content: 'go' }] });
-      const later = await prepareStep({
-        messages: [
-          { role: 'user', content: 'go' },
-          { role: 'assistant', content: 'on it' },
-          { role: 'tool', content: [{ type: 'tool-result' }] },
-        ],
-      });
+      const step = stepDriver(prepareStep, [{ role: 'user', content: 'go' }]);
+      await step([
+        { role: 'assistant', content: 'on it' },
+        { role: 'tool', content: [{ type: 'tool-result' }] },
+      ]);
+      const later = await step();
 
       expect(later.messages.map((m: { role: string }) => m.role)).toEqual([
         'user', // original prompt
@@ -1624,7 +1684,7 @@ describe('invoke', () => {
           return { text: 'summary', steps: [{ text: 'summary', toolCalls: [], toolResults: [] }] };
         }
         // Stand in for the SDK's per-step prepareStep call.
-        await args.prepareStep?.({ messages: [{ role: 'user', content: 'go' }] });
+        await args.prepareStep?.(firstStep([{ role: 'user', content: 'go' }]));
         return {
           text: '',
           steps: Array.from({ length: 100 }, () => ({ text: '', toolCalls: [], toolResults: [] })),
@@ -1671,12 +1731,13 @@ describe('invoke', () => {
         );
         expect(viewResult).toMatchObject({ success: true, category: 'pdf' });
 
-        const step = [
+        const history = [
           { role: 'user', content: 'read the doc' },
           { role: 'assistant', content: [{ type: 'tool-call' }] },
           { role: 'tool', content: [{ type: 'tool-result' }] },
         ];
-        const result = await callArgs.prepareStep({ messages: step });
+        const step = stepDriver(callArgs.prepareStep, history);
+        const result = await step([{ role: 'assistant', content: 'reading' }]);
 
         // The document rides a user message right after the tool result that
         // requested it — Bedrock's Converse converter rejects file content
@@ -1690,9 +1751,8 @@ describe('invoke', () => {
         });
 
         // Re-spliced at the same position on later steps, like steering.
-        const later = await callArgs.prepareStep({
-          messages: [...step, { role: 'assistant', content: 'reading' }],
-        });
+        const later = await step();
+        expect(later.messages).toHaveLength(5);
         expect(later.messages[3].content[0]).toMatchObject({ type: 'file' });
         expect(later.messages[4]).toMatchObject({ role: 'assistant' });
       } finally {
@@ -1784,13 +1844,13 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest());
       const { prepareStep } = mockGenerateText.mock.calls[0][0];
 
-      await prepareStep({
-        messages: [
+      await prepareStep(
+        firstStep([
           { role: 'user', content: 'go' },
           { role: 'assistant', content: [{ type: 'tool-call' }] },
           { role: 'tool', content: [{ type: 'tool-result' }] },
-        ],
-      });
+        ]),
+      );
 
       expect(mockTrackEvent).not.toHaveBeenCalledWith(
         'invocation trailing assistant',
@@ -1807,8 +1867,8 @@ describe('invoke', () => {
 
       await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'go' }));
       const { prepareStep } = mockGenerateText.mock.calls[0][0];
-      await prepareStep({ messages: [{ role: 'assistant', content: 'still working' }] });
-      await prepareStep({ messages: [{ role: 'assistant', content: 'still working' }] });
+      await prepareStep(firstStep([{ role: 'assistant', content: 'still working' }]));
+      await prepareStep(firstStep([{ role: 'assistant', content: 'still working' }]));
 
       const reports = mockTrackEvent.mock.calls.filter(
         (call) => call[0] === 'invocation trailing assistant',

@@ -16,7 +16,7 @@ import { embed, embedMany, type EmbeddingModel } from 'ai';
 import { createProvider } from '../lib/llm-providers/create-provider';
 import { config } from '../config';
 import { logger } from '../logger';
-import { langfuseTelemetry } from '../lib/telemetry';
+import { langfuseEmbedTelemetry } from '../lib/telemetry';
 import { memoryEmbeddingStore, type SearchOptions } from './memory-store';
 import type { MemorySearchResult } from './memory-manager.service';
 
@@ -52,7 +52,7 @@ class EmbeddingService {
         model: this.getEmbeddingModel(),
         value: text,
         providerOptions: EMBEDDING_PROVIDER_OPTIONS,
-        ...langfuseTelemetry('memory-embedding'),
+        ...langfuseEmbedTelemetry('memory-embedding'),
       });
 
       return embedding;
@@ -84,7 +84,7 @@ class EmbeddingService {
         // still parallelizes.
         maxParallelCalls: 1,
         providerOptions: EMBEDDING_PROVIDER_OPTIONS,
-        ...langfuseTelemetry('memory-embedding-backfill'),
+        ...langfuseEmbedTelemetry('memory-embedding-backfill'),
       });
 
       return embeddings;

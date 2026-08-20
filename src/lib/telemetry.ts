@@ -112,9 +112,9 @@ export async function shutdownTelemetry(): Promise<void> {
 }
 
 /**
- * Tracing options for an LLM call (`generateText`, `generateObject`, `embed`),
- * routed to Langfuse. Returns an empty object when Langfuse isn't configured,
- * so call sites can spread it unconditionally:
+ * Tracing options for a `generateText` or `generateObject` call, routed to
+ * Langfuse. Returns an empty object when Langfuse isn't configured, so call
+ * sites can spread it unconditionally:
  *
  *   generateText({ ..., ...langfuseTelemetry('thread-title') })
  *
@@ -125,27 +125,63 @@ export async function shutdownTelemetry(): Promise<void> {
  * disclosure than a log line, not a weaker one: it is a durable store on another
  * host, so a call the log deliberately does not record must not arrive there
  * either.
+ *
+ * `identifiers` ride the SDK's runtime context, not a telemetry field: the
+ * `metadata` option this used to pass no longer exists, and since it was spread
+ * out of a declared return type rather than written as a literal, nothing
+ * rejected it — the values were simply dropped before reaching a span. Each key
+ * has to be opted in by name, and arrives as `ai.settings.context.<key>`.
+ *
+ * An embedding call takes telemetry but no runtime context, so it has its own
+ * `langfuseEmbedTelemetry()` rather than this one — see there.
  */
 export function langfuseTelemetry(
   functionId: string,
-  metadata?: Record<string, string>,
+  identifiers?: Record<string, string>,
   options?: { recordContent?: boolean },
 ): {
+  runtimeContext?: Record<string, string>;
   experimental_telemetry?: {
     isEnabled: true;
     functionId: string;
-    metadata?: Record<string, string>;
+    includeRuntimeContext?: Record<string, boolean>;
     recordInputs?: boolean;
     recordOutputs?: boolean;
   };
 } {
   if (!isLangfuseEnabled()) return {};
   return {
+    ...(identifiers ? { runtimeContext: identifiers } : {}),
     experimental_telemetry: {
       isEnabled: true,
       functionId,
-      ...(metadata ? { metadata } : {}),
+      ...(identifiers
+        ? {
+            includeRuntimeContext: Object.fromEntries(
+              Object.keys(identifiers).map((key) => [key, true]),
+            ),
+          }
+        : {}),
       ...(options?.recordContent === false ? { recordInputs: false, recordOutputs: false } : {}),
     },
   };
+}
+
+/**
+ * Tracing options for an embedding call (`embed`, `embedMany`), routed to
+ * Langfuse. Same contract as `langfuseTelemetry()` minus the identifiers.
+ *
+ * Separate rather than a flag, because those two take telemetry but no runtime
+ * context — and a spread property the callee does not declare is dropped
+ * without complaint, since TypeScript checks excess properties only on an
+ * object literal, never on what a spread brings in. Attaching identifiers to an
+ * embedding call therefore cannot be made a compile error; taking the parameter
+ * away is the next best thing, so reaching for one here means switching helpers
+ * rather than adding an argument.
+ */
+export function langfuseEmbedTelemetry(functionId: string): {
+  experimental_telemetry?: { isEnabled: true; functionId: string };
+} {
+  if (!isLangfuseEnabled()) return {};
+  return { experimental_telemetry: { isEnabled: true, functionId } };
 }

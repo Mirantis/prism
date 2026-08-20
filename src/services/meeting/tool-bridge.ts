@@ -120,7 +120,7 @@ export async function prepareMeetingTools(
 
   const declarations: RealtimeFunctionTool[] = Object.entries(usable).map(([name, tool]) => ({
     name,
-    description: tool.description ?? name,
+    description: describeTool(tool) ?? name,
     // asSchema normalizes both shapes the codebase produces: zod schemas from the
     // built-in tools and pre-wrapped JSON Schema from MCP and the task tool.
     parameters: asSchema(tool.inputSchema).jsonSchema as Record<string, unknown>,
@@ -133,6 +133,20 @@ export async function prepareMeetingTools(
     count: declarations.length,
     execute: (name, argumentsJson) => executeTool(usable, name, argumentsJson),
   };
+}
+
+/**
+ * A tool's description as plain text, or undefined when it declares none.
+ *
+ * The SDK allows a description to be a function of the tool's execution
+ * context, so a declaration has to resolve it rather than read it. The bridge
+ * gives no tool a context (see `executeTool`), so it resolves with none — the
+ * same value the SDK passes for a tool the caller supplied no context for.
+ */
+function describeTool(tool: Tool): string | undefined {
+  return typeof tool.description === 'function'
+    ? tool.description({ context: undefined })
+    : tool.description;
 }
 
 /**
@@ -164,10 +178,13 @@ async function executeTool(
     // The AI SDK passes a call context (toolCallId, messages) that built-in tools
     // ignore; MCP tools only read `abortSignal`. A fresh signal keeps the shape
     // valid without giving the bridge a cancellation story it doesn't have yet.
+    // `context` carries per-tool state a caller can pass through `generateText`;
+    // no tool here declares one, so it stays undefined.
     const result = await tool.execute(args, {
       toolCallId: `meeting-${Date.now()}`,
       messages: [],
       abortSignal: new AbortController().signal,
+      context: undefined,
     });
     return renderToolResult(result, {
       maxChars: MEETING_MAX_RESULT_CHARS,
