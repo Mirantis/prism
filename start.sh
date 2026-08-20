@@ -58,10 +58,22 @@ fi
 # hardcodes as CA_BUNDLE_PATH in src/ca.rs, where it appends.
 CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 CA_BASE=/app/.ca-certificates.base
+POLICY_DIRS='/etc/chromium/policies/managed /etc/opt/chrome/policies/managed'
+
+# This boot either writes a policy or leaves none behind. The sandbox mints one of
+# these CAs per container start, so a file from an earlier boot names an anchor whose
+# key is gone, and the policy directories survive a restart in the writable layer.
+drop_policy() {
+  for policy_dir in $POLICY_DIRS; do
+    rm -f "$policy_dir/prism-ca.json" 2>/dev/null || true
+  done
+}
+
 # An empty $CA_BASE would make every certificate in the bundle look added, so it is
 # tested for content and not merely for existence.
 if [ ! -r "$CA_BUNDLE" ] || [ ! -s "$CA_BASE" ]; then
-  echo "chromium CA policy: skipped, need $CA_BUNDLE and a non-empty $CA_BASE" >&2
+  drop_policy
+  echo "chromium CA policy: skipped, need $CA_BUNDLE and a non-empty $CA_BASE; left no policy" >&2
 else
   added=$(awk '
     /BEGIN CERTIFICATE/ { in_cert = 1; b64 = ""; next }
@@ -73,16 +85,18 @@ else
   [ -z "$added" ] || count=$(printf '%s\n' "$added" | wc -l | tr -d ' ')
 
   if [ "$count" -eq 0 ]; then
-    echo 'chromium CA policy: bundle holds only what the image shipped, nothing to trust'
+    drop_policy
+    echo 'chromium CA policy: bundle holds only what the image shipped, left no policy'
   elif [ "$count" -gt 10 ]; then
     # A sandbox appends about three. Double digits means the comparison is not
     # measuring what it is meant to, and trusting the result would be the wrong
     # way to fail: these would be public roots, installed as local anchors.
-    echo "chromium CA policy: refusing $count added certificates, expected a handful" >&2
+    drop_policy
+    echo "chromium CA policy: refusing $count added certificates, expected a handful; left no policy" >&2
   else
     entries=$(printf '%s\n' "$added" | awk '{ printf "%s\"%s\"", (NR > 1 ? "," : ""), $0 }')
     written=''
-    for policy_dir in /etc/chromium/policies/managed /etc/opt/chrome/policies/managed; do
+    for policy_dir in $POLICY_DIRS; do
       if [ ! -w "$policy_dir" ]; then
         echo "chromium CA policy: skipped $policy_dir, not writable" >&2
       elif printf '{"CACertificates":[%s]}' "$entries" > "$policy_dir/prism-ca.json"; then
