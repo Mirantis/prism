@@ -25,12 +25,12 @@
  */
 
 import fs from 'fs';
-import { createHash } from 'crypto';
 import type { Tool } from 'ai';
 import { experimental_createMCPClient } from '@ai-sdk/mcp';
 import { Experimental_StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
 import { logger } from '../logger';
 import { resolvePluginDataDir } from '../lib/data-dir';
+import { sanitizeToolNameSegment, toModelToolName } from '../lib/tool-names';
 import { pluginCatalogService } from './plugin-catalog.service';
 import { parseMcpJson, type ResolvedServer } from './plugin-mcp-config';
 
@@ -62,13 +62,6 @@ const RETRY_MAX_MS = 15 * 60_000;
 function retryDelayMs(attempts: number): number {
   return Math.min(RETRY_BASE_MS * 2 ** (attempts - 1), RETRY_MAX_MS);
 }
-
-/**
- * Bedrock Converse caps `toolSpec.name` at 64 characters. Anthropic's Messages
- * API allows 128, but Bedrock is this runtime's default provider, so 64 is the
- * binding constraint — exceed it and the whole request is rejected.
- */
-const MAX_TOOL_NAME = 64;
 
 interface DesiredServer {
   pluginId: string;
@@ -423,41 +416,19 @@ function splitKey(key: string): [string, string] {
   return [key.slice(0, at), key.slice(at + 1)];
 }
 
-function sanitizeSegment(segment: string): string {
-  const cleaned = segment
-    .replace(/[^A-Za-z0-9_-]+/g, '_')
-    // Collapse runs so `__` stays unambiguous as the joiner.
-    .replace(/_{2,}/g, '_')
-    .replace(/^_+|_+$/g, '');
-  // A segment of pure punctuation cleans down to nothing — a plugin directory
-  // literally named "___" or "...", say, since directory names are not held to
-  // the spec's manifest-name pattern. Dropping it would take the whole
-  // namespace with it, so two such plugins would collide on one tool name and
-  // one would be silently discarded. A digest keeps every segment contributing
-  // exactly one stable token.
-  return cleaned || `x${createHash('sha256').update(segment).digest('hex').slice(0, 6)}`;
-}
-
 /**
  * `<pluginId>__<serverName>__<toolName>`, in the character set every provider
- * accepts and within the 64-character cap.
+ * accepts and within the length cap.
  *
- * An over-long name is truncated and suffixed with a digest of the full name, so
- * two long names that share a prefix stay distinct and each one is stable across
- * restarts — the tools block must not change shape between processes or the
- * prompt cache misses on every boot.
+ * The three-part shape — and with it the per-plugin namespace — is guaranteed:
+ * `sanitizeToolNameSegment` always yields a token, so no segment can vanish and
+ * take its namespace with it. Shortening an over-long name is
+ * `lib/tool-names.ts`'s job, shared with every other tool source.
  */
 export function qualifyToolName(pluginId: string, serverName: string, toolName: string): string {
-  // No filtering: sanitizeSegment always yields a token, so the three-part
-  // shape — and with it the per-plugin namespace — is guaranteed.
-  const base = [pluginId, serverName, toolName].map(sanitizeSegment).join('__');
-  // A name starting with a digit reads as an array index, and JavaScript
-  // enumerates integer-like keys first regardless of insertion order — which
-  // would silently break the ordering the cache depends on.
-  const safe = /^[A-Za-z_]/.test(base) ? base : `t_${base}`;
-  if (safe.length <= MAX_TOOL_NAME) return safe;
-  const digest = createHash('sha256').update(safe).digest('hex').slice(0, 7);
-  return `${safe.slice(0, MAX_TOOL_NAME - 8).replace(/_+$/, '')}_${digest}`;
+  return toModelToolName(
+    [pluginId, serverName, toolName].map(sanitizeToolNameSegment).join('__'),
+  );
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -472,4 +443,4 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 export const pluginMcpService = new PluginMcpService();
 
 // Exported for unit tests.
-export const __test = { qualifyToolName, sanitizeSegment };
+export const __test = { qualifyToolName, sanitizeSegment: sanitizeToolNameSegment };

@@ -13,6 +13,7 @@ import type { CachePointFragment } from './llm-providers/llm-provider';
 import { config } from '../config';
 import { logger } from '../logger';
 import { getMCPTools } from './mcp-client';
+import { capToolNames } from './tool-names';
 import { createTaskTool, type Invoker } from './task-tool';
 import { getMemoryTools } from '../tools/memory';
 import { getCronTools } from '../tools/cron';
@@ -151,9 +152,9 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   // Locked-in mode: withhold the workspace-markdown writers. Applied after the
   // mode filter so it holds for every mode, and over the merged map so a Nexus
   // MCP tool cannot answer to a withheld name — those names are un-namespaced.
-  // A plugin tool is `<plugin>__<server>__<tool>`, so it never collides either
-  // way. The refusal in agent-config.ts is what enforces the lock.
-  const tools = input.lockedIn
+  // A plugin tool is namespaced by plugin and server, so it never collides
+  // either way. The refusal in agent-config.ts is what enforces the lock.
+  const filteredTools = input.lockedIn
     ? omitLockedWorkspaceTools(modeFilteredTools)
     : modeFilteredTools;
 
@@ -162,15 +163,27 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     ? []
     : await agentWorkspaceService.getSubagents(input.agentId);
 
-  logger.info(
-    `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} Nexus MCP + ${Object.keys(pluginTools).length} plugin MCP tool(s); ${subagents.length} subagent(s)`,
-  );
-
   // Add task tool if subagents are configured
   if (subagents.length > 0 && input.mode !== 'subagent') {
     logger.info(`Adding Task tool for ${subagents.length} subagent(s)`);
-    tools['Task'] = createTaskTool(subagents, input.userId, input.taskInvoker);
+    filteredTools['Task'] = createTaskTool(subagents, input.userId, input.taskInvoker);
   }
+
+  // Last word on what a tool may be called, and deliberately the last step
+  // here: this is the only assembly point every request goes through — chat,
+  // compaction, and the voice-meeting bridge, which re-declares these same keys
+  // to the Realtime API under the same limit.
+  //
+  // Every built-in name is reserved, `Task` included, and the set is taken
+  // before the filters rather than after: a mode that withheld `share_file`
+  // leaves its name unclaimed, and a remote `share.file` sanitizing into that
+  // slot would hand the model a tool the mode had just taken away.
+  const reservedNames = new Set([...Object.keys(builtInTools), 'Task']);
+  const tools = capToolNames(filteredTools, 'collect', reservedNames);
+
+  logger.info(
+    `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} Nexus MCP + ${Object.keys(pluginTools).length} plugin MCP tool(s); ${subagents.length} subagent(s)`,
+  );
 
   return { tools, subagents };
 }
