@@ -523,6 +523,35 @@ describe('buildConversationMessages', () => {
     });
   });
 
+  it('replays a stored over-long tool name under the name the tools block carries', () => {
+    // A name a 128-character provider (Azure, bedrock-mantle) accepted and
+    // stored is replayed on every later turn — including on Bedrock, whose cap
+    // is 64. The same rule that names the tools block runs here, so history and
+    // tool set agree without an alias table.
+    const stored = '75166a14-fd0b-4bbb-b6d6-ddbd008bb95b__atlassian__addCommentToJiraIssue';
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-abc',
+          role: 'AGENT',
+          content: '',
+          toolCalls: [
+            { tool: stored, input: '{}', output: 'ok', success: true, timestamp: '2026-01-01T00:00:00Z' },
+          ],
+        },
+      ],
+    });
+    const messages = buildConversationMessages(context);
+
+    const shortened = 't_75166a14-fd0b-4bbb-b6d6-ddbd008bb95b__atlassian__addCo_b897e9d';
+    const assistantContent = messages[0].content as Array<{ toolName: string }>;
+    const toolContent = messages[1].content as Array<{ toolName: string }>;
+    // Both parts, or the pair no longer matches.
+    expect(assistantContent[0].toolName).toBe(shortened);
+    expect(toolContent[0].toolName).toBe(shortened);
+    expect(shortened.length).toBe(64);
+  });
+
   it('emits tool-call without text when AGENT content is empty', () => {
     const context = createTestAgentContext({
       recentMessages: [

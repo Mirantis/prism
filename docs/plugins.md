@@ -147,7 +147,9 @@ Both are also set in the server's environment. The rules worth knowing:
 
 A plugin's tools are named `<plugin id>__<server name>__<tool name>`, so two
 plugins can expose a tool of the same name without clashing, and a plugin can
-never take over a built-in tool's name.
+never take over a built-in tool's name. A name that comes out longer than the
+model's 64-character limit is shortened to fit, so keeping the plugin's folder
+name short keeps its tools' names readable.
 
 ## What the agent knows about plugins
 

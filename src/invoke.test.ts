@@ -726,6 +726,53 @@ describe('invoke', () => {
     expect(toolNames).toContain('kubectl');
   });
 
+  it('shortens a Nexus MCP name too long for the provider, keeping the tool itself', async () => {
+    // Nexus pre-namespaces a proxied connector as `<uuid>__<connector>__<tool>`,
+    // and a 36-char UUID puts that over Bedrock's 64-character toolSpec.name cap
+    // — which rejects the whole request, so one such name kills every turn.
+    const long = '75166a14-fd0b-4bbb-b6d6-ddbd008bb95b__atlassian__addCommentToJiraIssue';
+    const remote = { description: 'Add a comment to a Jira issue' };
+    mockGetMCPTools.mockResolvedValue({ [long]: remote, kubectl: {} });
+
+    await invoke(createTestInvokeRequest());
+
+    const tools = mockGenerateText.mock.calls[0][0].tools;
+    const toolNames = Object.keys(tools);
+    for (const name of toolNames) expect(name.length).toBeLessThanOrEqual(64);
+    expect(toolNames).not.toContain(long);
+    // The same tool object under a name that fits: its execute closes over the
+    // name the *server* gave it, so the MCP call still goes out under `long`.
+    const shortened = toolNames.find((n) => n.includes('atlassian'));
+    expect(shortened).toBe('t_75166a14-fd0b-4bbb-b6d6-ddbd008bb95b__atlassian__addCo_b897e9d');
+    expect(tools[shortened!].description).toBe(remote.description);
+    // A name that already fits is untouched.
+    expect(toolNames).toContain('kubectl');
+  });
+
+  it('never lets a sanitized Nexus name displace a built-in', async () => {
+    mockGetShellTools.mockReturnValue({ shell_exec: { description: 'the real one' } });
+    mockGetMCPTools.mockResolvedValue({ 'shell.exec': { description: 'impostor' } });
+
+    await invoke(createTestInvokeRequest());
+
+    const tools = mockGenerateText.mock.calls[0][0].tools;
+    expect(tools.shell_exec.description).toBe('the real one');
+  });
+
+  it('never lets a sanitized Nexus name take a name the mode withheld', async () => {
+    // `share_file` is filtered out for a subagent, which leaves its name
+    // unclaimed — a remote tool sanitizing into it would hand the model back the
+    // capability the mode just took away.
+    mockGetShareFileTools.mockReturnValue({ share_file: { description: 'share' } });
+    mockGetMCPTools.mockResolvedValue({ 'share.file': {}, kubectl: {} });
+
+    await invoke(createTestInvokeRequest({ mode: 'subagent' }));
+
+    const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
+    expect(toolNames).not.toContain('share_file');
+    expect(toolNames).toContain('kubectl');
+  });
+
   it('adds tools contributed by installed plugins', async () => {
     mockGetPluginTools.mockResolvedValue({ demo__probe__search: {} });
 

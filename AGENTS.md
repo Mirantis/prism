@@ -319,6 +319,27 @@ locally.
 3. **Plugin MCP** — whatever an installed Agent Plugin declares in its `mcp.json`;
    stdio, Streamable HTTP or legacy SSE (`services/plugin-mcp.service.ts`).
 
+#### Tool naming
+
+`lib/tool-names.ts` is the single owner of what a tool may be *called* when it
+reaches a model: the charset `[A-Za-z0-9_-]` sanitized per `__` segment, no
+leading digit (JS enumerates integer-like keys first, reordering the tools block
+behind the prompt cache's back), and **64** characters — Bedrock Converse's
+`toolSpec.name` limit binds tighter than Anthropic's 128, and this runtime
+defaults to Bedrock. An over-long name is truncated and given a digest suffix,
+keeping names that share a prefix distinct and each one stable across restarts.
+It runs as the **last** step of `collectTools()`, the only assembly point every
+request goes through — chat, compaction, and the voice-meeting bridge, which
+re-declares the same keys to the Realtime API under the same limit — because a
+name an MCP server advertises is not ours to choose and one a provider rejects
+fails the *whole* request (Nexus pre-namespaces a proxied connector as
+`<uuid>__<connector>__<tool>`, and a 36-char UUID blows the budget on its own).
+Renaming the map key is the whole fix, since an MCP tool's `execute` closes over
+the name the *server* gave it and the call still goes out under that name.
+`parseToolCalls` in `prompts/context-builder.ts` runs stored names through the
+same deterministic, idempotent function, so replayed history agrees with the
+tools block.
+
 ## Key Services
 
 | Service | File | Purpose |
@@ -441,7 +462,8 @@ src/
 │   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
 │   ├── media-store.ts          # Attachment bytes as files under `<data dir>/media`: write/read/remove, filename sanitizing, stray-file reaper
-│   └── prisma.ts               # Prisma client singleton (runtime database)
+│   ├── prisma.ts               # Prisma client singleton (runtime database)
+│   └── tool-names.ts           # Single owner of what a tool may be *called* for a model: charset, no leading digit, 64-char cap (`toModelToolName`, `capToolNames`)
 ├── prisma/
 │   └── schema.prisma           # Prisma schema for runtime PostgreSQL database
 └── prompts/
@@ -912,11 +934,9 @@ need. The standard defines exactly two component types and nothing else.
   malformed file. A `$schema` that is *present* and names an unimplemented
   version is still refused: absent means unstated, present-and-different is a
   real declaration.
-- **Tool names** are `<pluginId>__<serverName>__<toolName>`, capped at **64**
-  characters — Bedrock Converse's `toolSpec.name` limit binds tighter than
-  Anthropic's 128, and this runtime defaults to Bedrock. Over-long names are
-  truncated with a digest suffix so they stay distinct and stable across
-  restarts. In `collectTools()` plugin tools merge **last** behind an explicit
+- **Tool names** are `<pluginId>__<serverName>__<toolName>`, shortened when
+  needed by the shared rule in `lib/tool-names.ts` (see **Tool naming** under
+  Tools). In `collectTools()` plugin tools merge **last** behind an explicit
   guard, and `filterToolsByMode()` now wraps the *merged* map so MCP tools no
   longer bypass mode gating.
 - **Failure isolation is graduated** (spec §11.3), and every level is covered by

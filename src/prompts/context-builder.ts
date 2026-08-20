@@ -14,6 +14,7 @@ import { SlackTriggerMessage } from '../types';
 import { skillCatalogService, type SkillSource } from '../services/skill-catalog.service';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
 import { resolveSkillsDir, resolvePluginsDir } from '../lib/data-dir';
+import { toModelToolName } from '../lib/tool-names';
 
 // Minimal type for conversation messages (matches Prisma's shape).
 // toolCalls uses Prisma's Json? type (any JSON value); parseToolCalls() validates at runtime.
@@ -392,7 +393,9 @@ function buildPluginsSection(): string {
     (overflow > 0 ? `\n\n(+${overflow} more installed.)` : '') +
     `\n\nA plugin's tools are named \`<plugin>__<server>__<tool>\`, so a tool called ` +
     `\`example__probe__search\` would be the \`search\` tool of the \`probe\` server in a ` +
-    `plugin called \`example\`.\n\n${install}`
+    `plugin called \`example\`. A name too long for the model's limit is shortened, so ` +
+    `always call a tool by the name your tool set gives it rather than one built from ` +
+    `this scheme.\n\n${install}`
   );
 }
 
@@ -540,6 +543,14 @@ function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
 /**
  * Parse and validate tool calls from a conversation message.
  * Returns an empty array if toolCalls is missing, empty, or malformed.
+ *
+ * Stored names go through `toModelToolName` — the same function that names the
+ * tools block — because this is the one choke point for every path that replays
+ * history into a request: an ordinary thread, a Slack live-read thread, and
+ * compaction. A name stored when it was still sent whole would otherwise be
+ * re-sent on every later turn, naming a tool the request no longer offers. The
+ * function is deterministic and idempotent, so an old name maps onto exactly the
+ * name the current tools block carries.
  */
 function parseToolCalls(msg: ConversationMessage): Array<{
   id: string;
@@ -566,7 +577,7 @@ function parseToolCalls(msg: ConversationMessage): Array<{
 
     results.push({
       id: `${msg.id}-tc-${i}`,
-      tool: tc.tool,
+      tool: toModelToolName(tc.tool),
       parsedInput,
       output: typeof tc.output === 'string' ? tc.output : '',
     });
