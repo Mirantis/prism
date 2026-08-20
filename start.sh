@@ -79,7 +79,7 @@ else
     /BEGIN CERTIFICATE/ { in_cert = 1; b64 = ""; next }
     /END CERTIFICATE/   { in_cert = 0; print b64; next }
     in_cert             { sub(/\r$/, ""); b64 = b64 $0 }
-  ' "$CA_BUNDLE" | grep -Fxv -f "$CA_BASE") || added=''
+  ' "$CA_BUNDLE" | grep -Fxv -f "$CA_BASE" | awk '!seen[$0]++') || added=''
 
   count=0
   [ -z "$added" ] || count=$(printf '%s\n' "$added" | wc -l | tr -d ' ')
@@ -88,9 +88,12 @@ else
     drop_policy
     echo 'chromium CA policy: bundle holds only what the image shipped, left no policy'
   elif [ "$count" -gt 10 ]; then
-    # A sandbox appends about three. Double digits means the comparison is not
-    # measuring what it is meant to, and trusting the result would be the wrong
-    # way to fail: these would be public roots, installed as local anchors.
+    # A first boot adds three: the two the server pushes and one the sandbox mints.
+    # The mint is per container start and the supervisor tracks what it installed in
+    # memory only, so a restart in place appends another, and the ceiling has to sit
+    # above three to leave room for that. Well above it is a different matter: the
+    # certificates on offer would then be public roots, and installing those as local
+    # anchors is the outcome comparing by content exists to prevent.
     drop_policy
     echo "chromium CA policy: refusing $count added certificates, expected a handful; left no policy" >&2
   else
