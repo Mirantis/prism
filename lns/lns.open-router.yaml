@@ -1,0 +1,21 @@
+# This mixin is used to configure the OpenRouter LLM provider for Prims Agent.
+apiVersion: lns.run/v1
+kind: mixin
+name: openrouter
+spec:
+  env:
+    LLM_PROVIDER: openai
+    OPENAI_BASE_URL: https://openrouter.ai/api/v1
+    OPENAI_MODEL_ID: openrouter/free
+    OPENAI_CLASSIFICATION_MODEL_ID: openrouter/free
+  credentials:
+    - envVar: OPENAI_API_KEY
+      placeholder: sk-or-v1-lns-placeholder-prism-openrouter-00000000
+      injections:
+        - kind: bearer_header
+          domain: openrouter.ai
+  egress:
+    http:
+      - match: openrouter.ai
+        verdict: allow
+        description: the OpenRouter endpoint the credential authenticates to
