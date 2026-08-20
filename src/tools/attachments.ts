@@ -376,10 +376,13 @@ export function getAttachmentTools(
   return {
     hydrate_attachment: tool({
       description:
-        'Write a message attachment to a workspace file so you can inspect it with shell tools. ' +
-        'Use this when you need to examine an attachment beyond what the chat context shows ' +
-        '(e.g. run `file`, `pdftotext`, `exiftool`, `hexdump`, or read binary formats). ' +
-        'Returns the absolute path to the hydrated file.',
+        'Make a message attachment available on the workspace filesystem. ' +
+        'Attachment bytes are NOT on disk until you call this: the filename in the attachment ' +
+        "stub is not a path, so shell tools (`cat`, `grep`, `jq`, `unzip`, `python`) will fail with 'no such file' " +
+        'until the file is hydrated. ' +
+        'Returns the absolute path to the hydrated file — use that path in shell commands. ' +
+        'Use it for text, code, archives and data files, and for any file you want to inspect ' +
+        'with `file`, `pdftotext`, `exiftool` or `hexdump`.',
       inputSchema: z.object({
         attachmentId: z
           .string()
