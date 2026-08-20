@@ -220,6 +220,12 @@ decides whether you called it, allowing for a clear mishearing. The same check
 knows the difference between talking *to* it and talking *about* it, so "I asked
 Prism about that yesterday" doesn't summon it.
 
+It is also told who else is in the call, which is what lets it stay out of a
+sentence meant for one of them. "Emma, could you check that with Prism?" is Emma's
+to answer even though it names the agent, because the name being spoken *to* is the
+one that counts. This matters most with **two agents in one call**: they address each
+other out loud, and without the roster each one answers the other's questions.
+
 It answers to whatever it's called in its workspace, so renaming the agent renames
 what you say to get its attention.
 

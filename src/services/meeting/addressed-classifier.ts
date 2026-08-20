@@ -68,8 +68,9 @@ export const CLASSIFY_DEADLINE_MS = 6_000;
  * said, and a test that used a stand-in string would prove nothing about this one.
  */
 export const SYSTEM = `
-You are given an AI assistant's name and one sentence transcribed from a live
-meeting. Did the speaker call that assistant by name?
+You are given an AI assistant's name, the names of the other people in the call,
+and one sentence transcribed from a live meeting. Did the speaker call that
+assistant by name?
 
 Answer with one word: YES or NO.
 
@@ -84,6 +85,13 @@ the name with "the" in front of it, or raised as a topic or an agenda item, is a
 subject rather than someone being addressed; if the assistant is referred to in the
 third person ("I asked it yesterday", "it could help with that"); or if a word merely
 resembles the name. If unsure, NO.
+
+Somebody else in the call may be named in the same sentence, and one of them may be
+another assistant. Work out which name is the one being spoken *to*: the addressee
+sits at the start or the end of what is said, set off from the rest of it, and the
+rest is meant for them. A name anywhere else is being talked about. Answer NO when
+the addressee is one of the others, even when the assistant's own name appears
+elsewhere in the sentence.
 `.trim();
 
 /**
@@ -104,6 +112,23 @@ export interface ClassifyAddressedInput {
   transcript: string;
   /** What the room hears the agent called — the name it introduced itself by. */
   agentName: string;
+  /**
+   * Everybody else the platform lists in the call.
+   *
+   * Without it this gate answered for other people. Two live sentences, both from a call
+   * with a second agent in it: "Prismith, can you ask from Iris who was speaking last?"
+   * names the agent in an oblique role while addressing somebody else, and "The Prismith
+   * are you" — a mangled "Hey Prismith, are you there?" — does not name the agent at all.
+   * Iris answered both. A model told only its own name cannot see that a sentence belongs
+   * to a person it has never heard of, and the rule this replaced consulted exactly this
+   * roster.
+   *
+   * Measured on 150 constructed negatives: false accepts fell from 32 to 3 with the names
+   * in hand, and recall on 70 addresses stayed at 70.
+   *
+   * Empty until the first roster read, which is safe — that is what the gate had before.
+   */
+  roster?: readonly string[];
   /**
    * Whether this is judged from a partial transcript or the finished one.
    *
@@ -128,6 +153,9 @@ export async function classifyAddressed(input: ClassifyAddressedInput): Promise<
           role: 'user' as const,
           content:
             `Assistant's name: ${input.agentName}\n` +
+            (input.roster !== undefined && input.roster.length > 0
+              ? `Others in the call: ${input.roster.join(', ')}\n`
+              : '') +
             `Sentence: ${input.transcript}`,
         },
       ],

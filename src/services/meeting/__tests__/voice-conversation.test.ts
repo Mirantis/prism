@@ -744,6 +744,7 @@ describe('staying in an exchange after the agent has spoken', () => {
     );
     vi.mocked(judgeFollowUp).mockResolvedValue(true);
     h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
+    h.conversation.setParticipantNames(['Mario Sarcher', 'Prismith']);
 
     // Addressed by name, which arms the window.
     send({
@@ -786,6 +787,10 @@ describe('staying in an exchange after the agent has spoken', () => {
     expect(vi.mocked(judgeFollowUp).mock.calls[0][0]).toEqual({
       agentName: 'Emma',
       itemId: 'item-51',
+      // Who else is in the room, which is what stops a question for one of them reading as
+      // a continuation. Asserted here rather than only in the judge's own tests, because
+      // the wiring is what broke live: the gates were given the sentence and nothing else.
+      roster: ['Mario Sarcher', 'Prismith'],
       lines: [
         { speaker: 'Mario Sarcher', text: 'Emma, can you check the deploy?' },
         { speaker: 'Emma', text: '(answered)' },
@@ -938,6 +943,30 @@ describe('staying in an exchange after the agent has spoken', () => {
       expect.objectContaining({ transcript: 'Tom, do you know the default port for MySQL?' }),
     );
     expect(h.conversation.statistics.followUpDeclined).toBe(1);
+  });
+});
+
+describe('who else is in the room', () => {
+  it('gives the addressed gate the names it needs to rule a sentence out', async () => {
+    // The live failure this covers: with a second agent in the call, "Prismith, can you ask
+    // from Iris who was speaking last?" was answered by Iris. The gate is asked about one
+    // name and shown a sentence — without the others it cannot see whose the sentence is.
+    const { h, send } = await speakingHarness();
+    active = h;
+    vi.mocked(classifyAddressed).mockResolvedValue(false);
+    h.conversation.setParticipantNames(['Mario Sarcher', 'Prismith']);
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-80',
+      transcript: 'Prismith, can you ask from Emma who was speaking last?',
+    });
+    await settle();
+    await settle();
+
+    expect(vi.mocked(classifyAddressed)).toHaveBeenCalledWith(
+      expect.objectContaining({ roster: ['Mario Sarcher', 'Prismith'] }),
+    );
   });
 });
 

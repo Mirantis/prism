@@ -556,6 +556,7 @@ export class VoiceConversation {
         transcript,
         agentName: this.options.agentName,
         stage,
+        roster: this.lastRoster,
       }));
 
     // Every verdict is recorded; whether the sentence goes with it is a setting, and
@@ -635,6 +636,7 @@ export class VoiceConversation {
       agentName: this.options.agentName,
       lines: this.transcriptLines.slice(-TRANSCRIPT_LINES_KEPT),
       itemId,
+      roster: this.lastRoster,
     });
     if (this.stopped) return;
 

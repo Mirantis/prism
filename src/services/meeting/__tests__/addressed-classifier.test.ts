@@ -109,6 +109,37 @@ describe('classifyAddressed', () => {
     expect(await classifyAddressed({ transcript: 'add apples', agentName: 'Prism', stage: 'final' })).toBe(false);
   });
 
+  it('tells the model who else is in the call, so a sentence can belong to them', async () => {
+    // Both of these were answered in a live call with a second agent in the room, and both
+    // are wrong: the first addresses Prismith and names the agent in an oblique role, the
+    // second is a mangled "Hey Prismith, are you there?" and does not name the agent at all.
+    // A model given only its own name cannot see that a sentence belongs to somebody it has
+    // never heard of.
+    generateText.mockResolvedValue({ text: 'NO' });
+    await classifyAddressed({
+      transcript: 'Prismith, can you ask from Iris who was speaking last?',
+      agentName: 'Iris',
+      stage: 'final',
+      roster: ['Mario Sarcher', 'Prismith'],
+    });
+
+    const call = generateText.mock.calls[0][0];
+    expect(call.messages[0].content).toContain('Others in the call: Mario Sarcher, Prismith');
+    // The rule that uses them: whichever name is being spoken *to* wins, so the agent's own
+    // name appearing somewhere in the sentence is not enough.
+    expect(call.system).toMatch(/spoken \*to\*/i);
+    expect(call.system).toMatch(/the addressee is one of the others/i);
+  });
+
+  it('names nobody else when the roster has not been read yet', async () => {
+    // A call's first seconds, and every call on a platform whose roster cannot be read. An
+    // empty line reads as "the agent is alone", which is a claim the runtime cannot make.
+    generateText.mockResolvedValue({ text: 'YES' });
+    await classifyAddressed({ transcript: 'Iris, hello?', agentName: 'Iris', stage: 'final', roster: [] });
+
+    expect(generateText.mock.calls[0][0].messages[0].content).not.toContain('Others in the call');
+  });
+
   it('asks only whether the agent was named, not whether it sounds like a request', async () => {
     generateText.mockResolvedValue({ text: 'NO' });
     await classifyAddressed({

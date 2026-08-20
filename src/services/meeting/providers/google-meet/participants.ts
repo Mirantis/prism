@@ -233,6 +233,11 @@ export async function openParticipants(page: Page): Promise<void> {
 
     if (outcome === 'opened') {
       logger.info('[Meeting] Opened the participants panel, so I can tell who is speaking');
+    } else if (outcome === 'open') {
+      // The profile persists, so a call whose panel was left open arrives with it open. This
+      // said nothing at all, and a log with no panel line in it read as a call with no
+      // attribution — which is what one live diagnosis mistook it for.
+      logger.info('[Meeting] The participants panel was already open');
     } else if (outcome === 'no-list') {
       logger.debug('[Meeting] Clicked the participants control but no list appeared');
     } else if (outcome === 'gave-up') {

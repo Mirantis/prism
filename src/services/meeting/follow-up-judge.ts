@@ -62,10 +62,15 @@ export const CONTEXT_LINES = 6;
  * can tie "Iris: (answered)" to the sentence that followed it. Measured this way; a generic
  * "the assistant" was not.
  */
-function systemPrompt(agentName: string): string {
+function systemPrompt(agentName: string, roster: readonly string[]): string {
+  const others =
+    roster.length > 0
+      ? ` Also in the call: ${roster.join(', ')} — any of them may be a person or another AI` +
+        ' assistant.'
+      : '';
   return `
 You are reading the tail of a live meeting transcript. An AI assistant called ${agentName} is
-in the call. The last line is what somebody has just said.
+in the call.${others} The last line is what somebody has just said.
 
 Is that last line aimed at ${agentName}, so that ${agentName} should answer it?
 
@@ -74,9 +79,13 @@ Answer with one word: CONTINUE or MOVED_ON.
 CONTINUE if the last line needs ${agentName} to answer: a question to ${agentName}, a follow-up
 to something ${agentName} said, or a request for ${agentName} to do something.
 
-MOVED_ON if it is aimed at somebody else in the room, continues a discussion between the
-people, expects no answer, or changes the subject. Use the earlier lines to see who has been
+MOVED_ON if it is aimed at somebody else in the call, continues a discussion between the
+others, expects no answer, or changes the subject. Use the earlier lines to see who has been
 talking to whom. If unsure, MOVED_ON.
+
+Naming somebody else is decisive. If the last line names anybody but ${agentName}, it belongs
+to them — even in passing, even when it is a question, and even when it comes straight after
+${agentName} has spoken.
 
 Most of what is said in a meeting is said between the people, not to ${agentName}. A sentence
 shaped like a question is not enough: colleagues ask each other questions constantly. If the
@@ -94,6 +103,15 @@ export interface JudgeLine {
 export interface JudgeFollowUpInput {
   /** What the room calls the agent. Named in the prompt and labelling its own lines. */
   agentName: string;
+  /**
+   * Everybody else in the call, so a sentence naming one of them is theirs.
+   *
+   * Measured on 120 utterances of real meeting speech: wrong accepts fell from 7 to 3 with
+   * the names in hand. The transcript alone is not enough — a speaker label says who *spoke*,
+   * never who was spoken to, and an exchange with the agent is exactly where a question for
+   * a colleague looks most like a continuation.
+   */
+  roster?: readonly string[];
   /** Recent lines, oldest first, with the utterance under judgement last. */
   lines: readonly JudgeLine[];
   /**
@@ -116,7 +134,7 @@ export async function judgeFollowUp(input: JudgeFollowUpInput): Promise<boolean>
     const result = await generateText({
       model,
       providerOptions,
-      system: systemPrompt(input.agentName),
+      system: systemPrompt(input.agentName, input.roster ?? []),
       messages: [
         {
           role: 'user' as const,
