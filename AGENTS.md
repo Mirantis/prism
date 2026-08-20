@@ -109,10 +109,11 @@ One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
 `file:/data/agent.db`. The image is `ghcr.io/lensapp/prism-agent`, published
 under five tag families: `latest` and `vYYYY.M.DDHHMMSS` (production),
 `canary` (every merge to `main`), a commit-SHA tag from both release workflows,
-and `pr-<n>` + `pr-<n>-<branch-slug>` from `docker-build.yml` on every pull
-request that rebuilds the image. The PR pair moves with each such push and
-`pr-image-cleanup.yml` deletes it when the PR closes. A fork's PR builds the
-image and pushes nothing — its token is read-only. Slack creds come from env
+and `pr-<n>-<branch-slug>` from `docker-build.yml` on every pull request that
+rebuilds the image (a branch whose name slugifies to nothing leaves `pr-<n>`).
+That tag moves with each such push and `pr-image-cleanup.yml` deletes every
+`pr-<n>`-prefixed tag when the PR closes. A fork's PR builds the image and
+pushes nothing — its token is read-only. Slack creds come from env
 (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`), validated via `auth.test` on boot; may
 be Nexus credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy.

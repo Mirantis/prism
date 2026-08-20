@@ -21,7 +21,7 @@ permissions:
   packages: write # push the PR image to ghcr.io (same-repo PRs only)
   pull-requests: read
 
-# The PR's tags move with every push, so two runs in flight would race in
+# The PR's tag moves with every push, so two runs in flight would race in
 # `imagetools create` and the tag would end up on whichever build finished
 # last rather than on the newest commit.
 concurrency:
@@ -158,7 +158,7 @@ jobs:
           retention-days: 1
 
   # Merge the per-platform images into one multi-arch manifest list and apply
-  # the PR's tags. Skipped on a fork PR, and skipped when either platform
+  # the PR's tag. Skipped on a fork PR, and skipped when either platform
   # failed — a manifest carrying one arch, under a tag an environment is about
   # to deploy, is worse than no manifest at all. The second half of that comes
   # from the `if:` below holding no status function, which keeps the default
@@ -189,19 +189,14 @@ jobs:
         env:
           GHCR_REPO: ghcr.io/lensapp/prism-agent
           IMAGE_TAG: ${{ needs.tag.outputs.image_tag }}
-          # Short alias for a deployment config that should follow the PR's head
-          # without being edited when the branch is renamed.
-          PR_ALIAS: pr-${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           cd /tmp/digests
           docker buildx imagetools create \
             -t "$GHCR_REPO:$IMAGE_TAG" \
-            -t "$GHCR_REPO:$PR_ALIAS" \
             $(printf "$GHCR_REPO@sha256:%s " *)
           {
             printf '### PR image pushed\n\n'
             printf '```\ndocker pull %s:%s\n```\n' "$GHCR_REPO" "$IMAGE_TAG"
-            printf '\nAlso tagged `%s`. Both tags follow this PR' "$PR_ALIAS"
-            printf ' and are deleted when it closes.\n'
+            printf '\nThe tag follows this PR and is deleted when it closes.\n'
           } >> "$GITHUB_STEP_SUMMARY"
