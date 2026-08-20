@@ -123,7 +123,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #
 # Must stay in this layer: `ca-certificates` above is what creates the bundle. Kept
 # under /app rather than beside it, which is update-ca-certificates' own directory.
-RUN awk '/BEGIN CERTIFICATE/{c=1;b="";next} /END CERTIFICATE/{c=0;print b;next} c{b=b $0}' \
+RUN awk '/BEGIN CERTIFICATE/{c=1;b="";next} /END CERTIFICATE/{c=0;print b;next} c{sub(/\r$/,"");b=b $0}' \
       /etc/ssl/certs/ca-certificates.crt > /app/.ca-certificates.base
 
 # Install only production dependencies. Scope to root + cli — the web

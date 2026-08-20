@@ -66,7 +66,7 @@ else
   added=$(awk '
     /BEGIN CERTIFICATE/ { in_cert = 1; b64 = ""; next }
     /END CERTIFICATE/   { in_cert = 0; print b64; next }
-    in_cert             { b64 = b64 $0 }
+    in_cert             { sub(/\r$/, ""); b64 = b64 $0 }
   ' "$CA_BUNDLE" | grep -Fxv -f "$CA_BASE") || added=''
 
   count=0
