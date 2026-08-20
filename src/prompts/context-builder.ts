@@ -523,7 +523,7 @@ function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
     // PDFs at view_attachment — not just the system-prompt section.
     const hint =
       att.category === 'image'
-        ? 'use view_attachment to look at it.'
+        ? 'use view_attachment to look at it, or hydrate_attachment to save it to disk.'
         : att.category === 'pdf'
           ? 'use view_attachment to read it, or hydrate_attachment + pdftotext for shell inspection.'
           : 'not on disk yet. Call hydrate_attachment to write it to the filesystem, then inspect it with shell tools.';

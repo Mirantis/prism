@@ -776,8 +776,10 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
     expect(stub).toContain('pic.png');
     expect(stub).toContain('id=a');
     expect(stub).toContain('image/png');
-    // The image hint points at view_attachment — that's the tool that can look.
+    // The image hint leads with view_attachment — that's the tool that can
+    // look. hydrate_attachment follows as the way to get the file on disk.
     expect(stub).toContain('view_attachment');
+    expect(stub).toContain('hydrate_attachment');
   });
 
   it('emits a text metadata stub (not a file part) for a PDF attachment', () => {
