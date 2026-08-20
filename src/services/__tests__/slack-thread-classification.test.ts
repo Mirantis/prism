@@ -123,6 +123,18 @@ describe('Slack thread classification', () => {
     expect(mockGenerateObject.mock.calls[0][0]).not.toHaveProperty('temperature');
   });
 
+  it('opts out of LLM tracing', async () => {
+    // The prompt here is a transcript of a Slack channel, and a registered
+    // telemetry integration traces every call that does not say otherwise. No
+    // behavior of the bot changes if this opt-out goes missing — the messages
+    // just start arriving in the trace store.
+    await classify(TRANSCRIPT);
+
+    expect(mockGenerateObject).toHaveBeenCalledWith(
+      expect.objectContaining({ experimental_telemetry: { isEnabled: false } }),
+    );
+  });
+
   it('returns the reaction emoji the model chose', async () => {
     mockGenerateObject.mockResolvedValue({ object: { action: 'react', emoji: 'thumbsup' } });
 

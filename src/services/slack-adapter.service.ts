@@ -1640,6 +1640,12 @@ class SlackAdapterService implements ChannelAdapter {
         // temperature: 0 on the vendors that accept it, omitted elsewhere.
         ...samplingParams,
         providerOptions,
+        // Traced by nobody, and stated rather than left to a default: once a
+        // telemetry integration is registered every call is traced with its
+        // prompt recorded, and this prompt is a transcript of a Slack channel.
+        // Every other call site opts in through `langfuseTelemetry()`; this one
+        // opts out, so the transcript stays out of the trace store.
+        experimental_telemetry: { isEnabled: false },
         system: [
           'You are a Slack thread classifier for an AI assistant bot.',
           'Given the recent messages in a thread, decide what the bot should do with the LAST message.',

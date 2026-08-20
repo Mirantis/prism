@@ -225,10 +225,9 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     const guardContext = { agentId, userId: request.userId, mode: request.mode, guard };
 
     // Steering messages already folded into this turn, each pinned to the index
-    // it was inserted at. `prepareStep` receives a freshly-built
-    // `[...history, ...responseMessages]` every step — our injections are not
-    // part of the SDK's own message list, so they must be re-spliced each step
-    // to stay in the conversation at a stable position.
+    // it was inserted at. Our injections are not part of the SDK's own message
+    // list, so they must be re-spliced each step to stay in the conversation at
+    // a stable position.
     const injections: Array<{ at: number; message: ModelMessage }> = [];
 
     // The turn's request ingredients as a compaction fork (see
@@ -269,7 +268,14 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       // breakpoint on the latest last message so the growing conversation
       // prefix is cached between steps (Bedrock doesn't support automatic
       // caching — only the direct Anthropic API does).
-      prepareStep: async ({ messages: stepMessages }) => {
+      prepareStep: async ({ initialMessages, responseMessages }) => {
+        // Rebuilt from the SDK's discrete pieces, not from the hook's own
+        // `messages`: a returned `messages` override is the base for later
+        // steps, so `messages` already carries the previous step's injections
+        // and cache breakpoint. Splicing onto it duplicates each injection per
+        // remaining step and spends a cache block per step.
+        const base: ModelMessage[] = [...initialMessages, ...responseMessages];
+
         // Async so the steering source can load a mid-turn message's files
         // before shaping it — the SDK awaits this hook.
         for (const pending of (await request.steering?.()) ?? []) {
@@ -278,7 +284,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
             `Steering the in-flight turn with a mid-turn message (${pending.text.length} chars${files})`,
           );
           injections.push({
-            at: stepMessages.length,
+            at: base.length,
             message: buildSteeringMessage(pending),
           });
         }
@@ -288,12 +294,12 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         // result that attached it, then re-spliced every later step like any
         // other injection.
         for (const message of pendingAttachmentInjections.splice(0)) {
-          injections.push({ at: stepMessages.length, message });
+          injections.push({ at: base.length, message });
         }
 
         // Splice highest index first so each injection lands before the
         // step-message it was recorded against, unshifted by the others.
-        const merged = [...stepMessages];
+        const merged = [...base];
         for (let i = injections.length - 1; i >= 0; i--) {
           merged.splice(injections[i].at, 0, injections[i].message);
         }
