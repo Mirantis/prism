@@ -109,9 +109,9 @@ function summarize(value: unknown): Record<string, unknown> | string {
  * Pino's `err` serializer: replaces the default, which copies every own property.
  *
  * Takes `unknown` because it has to. A `catch` block receives whatever was thrown,
- * and the one this exists for (`addressed-classifier.ts`) is no exception — a
- * string, `undefined` or a plain object all have to come out as something readable
- * rather than as a crash inside the logger.
+ * and the classification gates this exists for are no exception — a string,
+ * `undefined` or a plain object all have to come out as something readable rather
+ * than as a crash inside the logger.
  */
 export function serializeError(err: unknown): Record<string, unknown> {
   if (err === null || typeof err !== 'object') {
