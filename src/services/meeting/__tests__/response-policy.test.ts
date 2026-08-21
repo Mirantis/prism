@@ -4,34 +4,20 @@
  * Everything here is about false positives: a "yes" from this object always
  * reaches the room, because once `response.create` goes out the model has no way
  * to decline. So the tests that matter most are the ones asserting silence.
+ *
+ * A whole class of test that used to live here is gone, and its absence is the
+ * point. An utterance used to be seen twice — once when the turn detector closed
+ * it, once when its words arrived — so half of these cases existed to stop one
+ * sentence being answered by both paths. The audio gate is asked at the turn
+ * boundary and nowhere else, so one utterance produces one decision and one
+ * verdict, and there is no second path left to collide with.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { ResponsePolicy } from '../response-policy';
 
 const policy = (over: Partial<ConstructorParameters<typeof ResponsePolicy>[0]> = {}) =>
   new ResponsePolicy({ mode: 'auto', ...over });
-
-/**
- * One utterance through both paths.
- *
- * `'classify'` means this object declined to decide — the window did not cover it,
- * so whether the agent was named is a question for the model. The decision then
- * continues in `resolveClassification`.
- */
-const utterance = (p: ResponsePolicy, itemId: string): boolean | 'classify' => {
-  if (p.onUtteranceCommitted(itemId)) return true;
-  const decision = p.onTranscript(itemId);
-  return decision === 'classify' ? 'classify' : decision === 'respond';
-};
-
-beforeEach(() => {
-  vi.useFakeTimers();
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 describe('choosing a mode from the room', () => {
   it('answers everything when there is one other person', () => {
@@ -41,16 +27,16 @@ describe('choosing a mode from the room', () => {
     expect(p.effectiveMode).toBe('open');
     // No transcript needed, and none waited for: this fires at the turn boundary,
     // which is exactly where the server would have created the response itself.
-    expect(p.onUtteranceCommitted('i1')).toBe(true);
+    expect(p.onUtteranceCommitted('i1')).toBe('respond');
   });
 
-  it('defers to the classifier once a third person joins', () => {
+  it('asks the gate once a third person joins', () => {
     const p = policy();
     p.setParticipantCount(2);
     p.setParticipantCount(3);
 
     expect(p.effectiveMode).toBe('addressed');
-    expect(utterance(p, 'i1')).toBe('classify');
+    expect(p.onUtteranceCommitted('i1')).toBe('gate');
   });
 
   it('assumes a crowd until it has been told otherwise', () => {
@@ -103,7 +89,7 @@ describe('an agent nobody can hear', () => {
     p.setAudible(false);
 
     expect(p.effectiveMode).toBe('addressed');
-    expect(p.onUtteranceCommitted('i1')).toBe(false);
+    expect(p.onUtteranceCommitted('i1')).toBe('gate');
   });
 
   it('does not drift back into open mode on the next count reading', () => {
@@ -146,7 +132,7 @@ describe('an agent nobody can hear', () => {
     p.setParticipantCount(4);
     p.setAudible(false);
 
-    expect(utterance(p, 'i1')).toBe('classify');
+    expect(p.onUtteranceCommitted('i1')).toBe('gate');
   });
 });
 
@@ -157,43 +143,40 @@ describe('being addressed', () => {
     return p;
   };
 
-  it('answers when the model says the agent was named', () => {
+  it('answers when the model says the utterance was for the agent', () => {
     const p = crowded();
-    expect(utterance(p, 'i1')).toBe('classify');
-    expect(p.resolveClassification('i1', true)).toBe(true);
+    expect(p.onUtteranceCommitted('i1')).toBe('gate');
+    expect(p.resolveVerdict('i1', true)).toBe(true);
     expect(p.statistics.addressedMatches).toBe(1);
   });
 
-  it('stays quiet when the model says it was not for the agent', () => {
+  it('stays quiet when the model says it was not', () => {
     const p = crowded();
 
-    expect(utterance(p, 'i1')).toBe('classify');
-    expect(p.resolveClassification('i1', false)).toBe(false);
+    expect(p.onUtteranceCommitted('i1')).toBe('gate');
+    expect(p.resolveVerdict('i1', false)).toBe(false);
     expect(p.statistics.suppressed).toBe(1);
     expect(p.statistics.answered).toBe(0);
   });
 
-  it('answers an utterance once, not once per path', () => {
-    // Both the commit and the transcript path see every utterance. A double yes
-    // would not be dropped by the session — it defers and then replays it — so
-    // the room would hear the same answer twice.
-    const p = policy();
-    p.setParticipantCount(2);
+  it('drops a second verdict for an utterance already answered', () => {
+    // A retried probe, or a late duplicate from the server. Answering both would
+    // not be deduplicated by the session — it queues the second — so the room
+    // would hear the same reply twice.
+    const p = crowded();
 
-    expect(p.onUtteranceCommitted('i1')).toBe(true);
-    expect(p.onTranscript('i1')).toBe('ignore');
+    expect(p.resolveVerdict('i1', true)).toBe(true);
+    expect(p.resolveVerdict('i1', true)).toBe(false);
     expect(p.statistics.answered).toBe(1);
   });
 
-  it('drops a verdict for an utterance already answered', () => {
-    // Two verdicts can be in flight for one utterance — one judged from a partial
-    // transcript, one from the finished text. Answering both would not be
-    // deduplicated by the session; it queues the second, so the room hears the
-    // same reply twice.
-    const p = crowded();
+  it('ignores an utterance the boundary already answered', () => {
+    const p = policy();
+    p.setParticipantCount(2);
 
-    expect(p.resolveClassification('i1', true)).toBe(true);
-    expect(p.resolveClassification('i1', true)).toBe(false);
+    expect(p.onUtteranceCommitted('i1')).toBe('respond');
+    // Same id arriving again — a duplicated commit — must not answer twice.
+    expect(p.onUtteranceCommitted('i1')).toBe('ignore');
     expect(p.statistics.answered).toBe(1);
   });
 
@@ -203,127 +186,79 @@ describe('being addressed', () => {
     // each other — the exact failure this gate exists to prevent.
     const p = crowded();
 
-    expect(p.resolveClassification('i1', true)).toBe(true);
-    expect(p.onUtteranceCommitted('i2')).toBe(false);
-    expect(p.onTranscript('i2')).toBe('classify');
+    expect(p.resolveVerdict('i1', true)).toBe(true);
+    expect(p.onUtteranceCommitted('i2')).toBe('gate');
   });
 });
 
 describe('degraded inputs', () => {
-  it('still ignores an id-less transcript when the room filled mid-utterance', () => {
-    // Open mode answered it at the boundary; a participant joining before the words
-    // arrive must not unlatch the guard and let the same sentence be answered twice.
+  it('answers an id-less utterance in open mode', () => {
+    // Nothing to remember it by, but nothing needs to: one utterance is decided
+    // once now, so there is no second path that could answer it again.
     const p = policy();
     p.setParticipantCount(2);
 
-    expect(p.onUtteranceCommitted('')).toBe(true);
-    p.setParticipantCount(4);
-
-    expect(p.onTranscript('')).toBe('ignore');
+    expect(p.onUtteranceCommitted('')).toBe('respond');
   });
 
-  it('ignores an id-less transcript in open mode, rather than risk a double', () => {
-    // Open mode answered at the boundary, and with no id there is nothing to
-    // recognise that by here. A second request for one utterance is queued rather
-    // than dropped, so the room would hear the same reply twice.
-    const p = policy();
-    p.setParticipantCount(2);
-
-    expect(p.onUtteranceCommitted('')).toBe(true);
-    expect(p.onTranscript('')).toBe('ignore');
-  });
-
-  it('still judges an id-less transcript when nothing answered it', () => {
+  it('still puts an id-less utterance to the gate in a crowd', () => {
     const p = policy();
     p.setParticipantCount(4);
 
-    expect(p.onUtteranceCommitted('')).toBe(false);
-    expect(p.onTranscript('')).toBe('classify');
+    // The gate refuses it for want of something to point at — see
+    // `addressed-audio-gate.ts` — but that is the gate's judgement, not this
+    // object's, and the mode decision is unaffected.
+    expect(p.onUtteranceCommitted('')).toBe('gate');
   });
 });
 
 describe('counting what happened', () => {
-  it('counts one suppression per utterance, not one per verdict', () => {
-    // An utterance is judged twice — once while the speaker is still talking, once
-    // on the finished sentence — and both verdicts land here. Counting each "no"
-    // would report roughly double, and `suppressed` against `utterances` is exactly
-    // the ratio that says whether the gate earned its keep.
+  it('counts every utterance the room produced, answered or not', () => {
     const p = policy({ mode: 'addressed' });
 
-    expect(p.resolveClassification('i1', false, 'partial')).toBe(false);
-    expect(p.resolveClassification('i1', false, 'final')).toBe(false);
+    p.onUtteranceCommitted('i1');
+    p.onUtteranceCommitted('i2');
+    p.resolveVerdict('i1', true);
+    p.resolveVerdict('i2', false);
 
+    expect(p.statistics.utterances).toBe(2);
+    expect(p.statistics.answered).toBe(1);
     expect(p.statistics.suppressed).toBe(1);
   });
 
   it('counts an answer once however many verdicts arrive', () => {
     const p = policy({ mode: 'addressed' });
 
-    expect(p.resolveClassification('i1', true, 'partial')).toBe(true);
-    expect(p.resolveClassification('i1', true, 'final')).toBe(false);
+    expect(p.resolveVerdict('i1', true)).toBe(true);
+    expect(p.resolveVerdict('i1', true)).toBe(false);
 
     expect(p.statistics.answered).toBe(1);
     expect(p.statistics.addressedMatches).toBe(1);
   });
 });
 
-describe('a mode flip mid-utterance', () => {
+describe('a mode flip while a verdict is in flight', () => {
   it('still answers someone who used the name as the room emptied', () => {
     // The count is polled, so it can land in the second between an utterance
-    // closing and its words arriving.
+    // closing and its verdict arriving. The question was already asked; the
+    // answer is still worth acting on.
     const p = policy();
     p.setParticipantCount(4);
 
-    expect(p.onUtteranceCommitted('i1')).toBe(false);
+    expect(p.onUtteranceCommitted('i1')).toBe('gate');
     p.setParticipantCount(2);
 
-    expect(p.onTranscript('i1')).toBe('classify');
-    expect(p.resolveClassification('i1', true)).toBe(true);
+    expect(p.resolveVerdict('i1', true)).toBe(true);
   });
 
   it('does not answer twice when the room filled instead', () => {
     const p = policy();
     p.setParticipantCount(2);
 
-    expect(p.onUtteranceCommitted('i1')).toBe(true);
+    expect(p.onUtteranceCommitted('i1')).toBe('respond');
     p.setParticipantCount(4);
 
-    expect(p.onTranscript('i1')).toBe('ignore');
-  });
-});
-
-describe('not paying for a verdict that cannot matter', () => {
-  it('skips the early look in open mode', () => {
-    // One human in the room: the utterance is answered at its turn boundary
-    // whatever the gate would say. Judging it anyway bought nothing and cost a
-    // model call per sentence — on a live one-to-one call a verdict arrived 1.5s
-    // after the agent had already begun answering that same utterance.
-    const policy = new ResponsePolicy({ mode: 'auto' });
-    policy.setParticipantCount(2);
-
-    expect(policy.onTranscript('item-1', 'partial')).toBe('ignore');
-  });
-
-  it('still judges the finished transcript in open mode', () => {
-    // The mode can flip between an utterance closing and its words arriving, so
-    // the authoritative pass is not skipped — only the speculative one.
-    const policy = new ResponsePolicy({ mode: 'auto' });
-    policy.setParticipantCount(2);
-
-    expect(policy.onTranscript('item-1', 'final')).toBe('classify');
-  });
-
-  it('keeps the early look when the agent must be named', () => {
-    const policy = new ResponsePolicy({ mode: 'addressed' });
-
-    expect(policy.onTranscript('item-1', 'partial')).toBe('classify');
-  });
-
-  it('never re-judges an utterance already answered', () => {
-    const policy = new ResponsePolicy({ mode: 'auto' });
-    policy.setParticipantCount(2);
-    policy.onUtteranceCommitted('item-1');
-
-    expect(policy.onTranscript('item-1', 'final')).toBe('ignore');
+    // A verdict for an utterance open mode already spoke to must not add a second.
+    expect(p.resolveVerdict('i1', true)).toBe(false);
   });
 });

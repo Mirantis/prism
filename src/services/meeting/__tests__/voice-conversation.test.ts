@@ -11,7 +11,6 @@ import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { VoiceConversation } from '../voice-conversation';
-import { classifyAddressed } from '../addressed-classifier';
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -25,27 +24,25 @@ function infoLines(): string {
     .join('\n');
 }
 
-// The gate is a network call to a classification model; what these tests exercise
-// is the ordering around its verdict, not the verdict itself. `CLASSIFY_DEADLINE_MS`
-// stays real — the code compares elapsed time against it, and a mocked-away constant
-// would quietly disable a staleness check the tests depend on *not* firing.
-vi.mock('../addressed-classifier', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../addressed-classifier')>()),
-  classifyAddressed: vi.fn(),
-}));
+/**
+ * Requests the conversation made for itself — the ones that put the agent's voice
+ * in the room. A gate probe is also a `response.create`, but carries a `response`
+ * body; the conversation's asks for nothing special.
+ */
+function spokenRequests(sent: Record<string, unknown>[]): Record<string, unknown>[] {
+  return sent.filter((e) => e.type === 'response.create' && !e.response);
+}
 
-beforeAll(async () => {
-  // These tests run the *real* vocative read — several of them check which path decides
-  // — and its POS tagger is imported lazily, measured at ~59ms. Inside a test, that
-  // import competes with an assertion window built from two 20ms settles, so a slow
-  // runner would see no response at all. Warmed once here so no test races a module load.
-  const { isVocativeAddress } = await import('../vocative');
-  await isVocativeAddress('warm the tagger', 'nobody');
-});
+/** The gate probe on the wire, if one has been sent. */
+function probeSent(sent: Record<string, unknown>[]): Record<string, any> | undefined {
+  return sent.find((e) => e.type === 'response.create' && e.response) as
+    | Record<string, any>
+    | undefined;
+}
 
 beforeEach(() => {
-  vi.mocked(classifyAddressed).mockResolvedValue(true);
   vi.mocked(logger.info).mockClear();
+  vi.mocked(config).meetingTranscriptLogging = 'off';
 });
 
 interface Harness {
@@ -203,251 +200,6 @@ describe('losing the Realtime session', () => {
  * classification still runs early, concurrently with the rest of the sentence, so
  * nothing is waiting on it once the speaker stops.
  */
-describe('answering a request judged early', () => {
-  it('stays quiet until the speaker stops, then answers', async () => {
-    const { h, send, sent } = await speakingHarness();
-    active = h;
-
-    // Mid-sentence: enough text for the gate, which says the agent was named.
-    send({
-      type: 'conversation.item.input_audio_transcription.delta',
-      item_id: 'item-1',
-      delta: 'Emma, could you check the',
-    });
-    await settle();
-    await settle();
-
-    // The speaker is still talking. Answering here would cut across the rest of
-    // the request — the failure this ordering exists to prevent.
-    expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(0);
-
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-1' });
-    await settle();
-
-    expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(1);
-  });
-
-  it('answers once, not once per verdict', async () => {
-    const { h, send, sent } = await speakingHarness();
-    active = h;
-
-    // The same utterance is judged repeatedly as it grows; only one answer may
-    // result, or the room hears the reply twice (a second `response.create` is
-    // queued by the session, not dropped).
-    send({
-      type: 'conversation.item.input_audio_transcription.delta',
-      item_id: 'item-1',
-      delta: 'Emma, could you check the deployment',
-    });
-    await settle();
-    send({
-      type: 'conversation.item.input_audio_transcription.delta',
-      item_id: 'item-1',
-      delta: ' in staging and tell us what you find?',
-    });
-    await settle();
-    await settle();
-
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-1' });
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-1',
-      transcript: 'Emma, could you check the deployment in staging and tell us what you find?',
-    });
-    await settle();
-    await settle();
-
-    expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(1);
-  });
-
-  it('records the reasoning effort beside the latency it bought', async () => {
-    const { h, send } = await speakingHarness();
-    active = h;
-
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-6',
-      transcript: 'Prism, how many pods are unhealthy?',
-    });
-    await settle();
-    await settle();
-
-    // The first audio is when the room stops waiting, so this is the figure the
-    // effort level moves. Without the level on the same line, a call at `high` and
-    // a call at `medium` produce indistinguishable logs and the trade cannot be
-    // judged after the fact.
-    send({
-      type: 'response.output_audio.delta',
-      item_id: 'item-6',
-      delta: Buffer.alloc(960).toString('base64'),
-    });
-    await settle();
-
-    expect(infoLines()).toMatch(/voice started \d+ms after asking .*effort high/);
-  });
-});
-
-describe('recording what each verdict was reached on', () => {
-  // Names the agent without addressing it, so the local vocative read defers and these
-  // tests keep exercising the model path they are about. A vocative ("Emma, can you take
-  // a look?") is decided locally, which makes the mocked gate irrelevant and every
-  // `addressed=false` assertion below unreachable. The verdict line itself is still
-  // written either way — it says `path=local` — so what changes is the verdict, not
-  // whether there is a line to redact.
-  const UTTERANCE = 'I asked Emma about that yesterday';
-
-  afterEach(() => {
-    // Put the default back by hand. `mockReset`/`restoreMocks` restore spies, not a
-    // plain property assigned on the mocked config object, so a test that left this
-    // at `full` would un-redact every test that ran after it — and the one that
-    // asserts nothing leaks would pass for the wrong reason.
-    vi.mocked(config).meetingTranscriptLogging = 'off';
-  });
-
-  it('records the verdict, the item and the keyword count, but not the words', async () => {
-    const { h, send } = await speakingHarness();
-    active = h;
-    vi.mocked(classifyAddressed).mockResolvedValue(false);
-    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
-
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-4',
-      transcript: UTTERANCE,
-    });
-    await settle();
-    await settle();
-
-    // What the default keeps: enough to tell "the gate said no" from "the gate never
-    // ran", to pair a partial verdict with the final one, and to see whether a roster
-    // had arrived — the agent's own name leads the list, so a count of 3 means two
-    // participants were read.
-    const line = infoLines();
-    expect(line).toContain('addressed=false');
-    expect(line).toContain('item=item-4');
-    expect(line).toContain('mode=addressed');
-    expect(line).toContain('keywords=3');
-    // What it drops: the sentence, and any stand-in for it — no length, no digest.
-    expect(line).not.toContain(UTTERANCE);
-    expect(line).not.toContain('sha256');
-    expect(line).not.toContain('chars=');
-    // Not even an empty `transcript=`: a token with nothing after it reads as a
-    // sentence that failed to transcribe rather than one deliberately not written.
-    expect(line).not.toContain('transcript=');
-  });
-
-  it('keeps the roster out of the log even once the participants have been read', async () => {
-    const { h, send } = await speakingHarness();
-    active = h;
-    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
-
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-7',
-      transcript: UTTERANCE,
-    });
-    await settle();
-    await settle();
-
-    // Attendee names are the other half of what a meeting log was leaking, and they
-    // arrive from a scrape of the call's UI — nobody in the room asked for them to be
-    // written down. Asserted across every line, not just the gate's: the roster is
-    // also seeded to the transcriber, and that line used to be the count it is now.
-    const line = infoLines();
-    expect(line).not.toContain('Mario Sarcher');
-    expect(line).not.toContain('Lee');
-  });
-
-  it('pairs the partial verdict with the final one by item id alone', async () => {
-    const { h, send } = await speakingHarness();
-    active = h;
-    vi.mocked(classifyAddressed).mockResolvedValue(false);
-
-    // One utterance judged twice: once from a partial transcript (long enough to earn
-    // an early verdict), then from the finished one. With the words off the line,
-    // `item=` is the only thing tying those two verdicts to the same sentence — so it
-    // is the one token whose absence would make the default setting undiagnosable.
-    send({
-      type: 'conversation.item.input_audio_transcription.delta',
-      item_id: 'item-8',
-      delta: 'I asked Emma about that',
-    });
-    await settle();
-    await settle();
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-8',
-      transcript: UTTERANCE,
-    });
-    await settle();
-    await settle();
-
-    const lines = infoLines();
-    expect(lines.match(/item=item-8/g)).toHaveLength(2);
-    expect(lines).toContain('partial verdict');
-    expect(lines).toContain('final verdict');
-    expect(lines).not.toContain(UTTERANCE);
-  });
-
-  it('writes the sentence and the roster only when asked for them', async () => {
-    const { h, send } = await speakingHarness();
-    active = h;
-    vi.mocked(config).meetingTranscriptLogging = 'full';
-    vi.mocked(classifyAddressed).mockResolvedValue(false);
-    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
-
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-4',
-      transcript: UTTERANCE,
-    });
-    await settle();
-    await settle();
-
-    // A `no` on a sentence that names the agent and a `no` on one that never
-    // mentions it are the same line without the transcript, which is what made a
-    // live report of "it stopped answering to its name" undiagnosable after the
-    // fact. This is the mode to turn on for that, in a room that knows.
-    const line = infoLines();
-    expect(line).toContain(UTTERANCE);
-    expect(line).toContain('addressed=false');
-    expect(line).toContain('item=item-4');
-    // The roster is seeded to the transcriber, so it is an input to whether the name
-    // survived at all — and it is the one that changes across a call.
-    expect(line).toMatch(/keywords=\[Emma, Lee, Mario Sarcher\]/);
-  });
-
-  it('reports the connect-time keyword list before any roster arrives', async () => {
-    const { h, send } = await speakingHarness();
-    active = h;
-
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-5',
-      transcript: 'Emma, hello',
-    });
-    await settle();
-    await settle();
-
-    // The session seeds the agent's own name at connect; a verdict logged before the
-    // first participant poll must say so rather than claim nothing was set. Under the
-    // default that is what `keywords=1` means, and it is the reason the count is
-    // written at all when the names are not.
-    expect(infoLines()).toContain('keywords=1');
-
-    vi.mocked(config).meetingTranscriptLogging = 'full';
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-6',
-      transcript: 'Emma, still there?',
-    });
-    await settle();
-    await settle();
-
-    expect(infoLines()).toMatch(/keywords=\[Emma\]/);
-  });
-});
-
 describe('telling the session who is in the room', () => {
   it('hints the transcriber and informs the model, once per change', async () => {
     const { h, sent } = await speakingHarness();
@@ -515,68 +267,149 @@ describe('a roster read from a moving UI', () => {
   });
 });
 
-describe('answering a spoken name without asking the model', () => {
-  it('skips the gate entirely when the sentence is a vocative', async () => {
-    const { h, send, sent } = await speakingHarness();
-    active = h;
-    // Made to say no, so a response can only come from the local read. If the gate
-    // were still consulted the agent would stay silent here.
-    vi.mocked(classifyAddressed).mockResolvedValue(false);
-
+/**
+ * The whole decision, end to end over a real socket: the turn detector closes an
+ * utterance, the gate is asked about that utterance, and the answer follows or
+ * does not.
+ */
+describe('deciding whether to answer', () => {
+  /** Answer the probe the client has sent, the way the server would. */
+  async function answerGate(
+    send: (event: Record<string, unknown>) => void,
+    sent: Record<string, unknown>[],
+    verdict: 'YES' | 'NO',
+    responseId = 'r-gate',
+  ): Promise<void> {
+    const probe = probeSent(sent);
+    if (!probe) throw new Error('the gate was never asked');
     send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-30',
-      transcript: 'Emma, can you take a look?',
+      type: 'response.created',
+      response: { id: responseId, metadata: probe.response.metadata },
+    });
+    send({
+      type: 'response.done',
+      response: { id: responseId, status: 'completed', output: [{ content: [{ text: verdict }] }] },
     });
     await settle();
-    await settle();
+  }
 
-    expect(vi.mocked(classifyAddressed)).not.toHaveBeenCalled();
-    expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(1);
-    expect(infoLines()).toContain('path=local');
-  });
-
-  it('still asks the model about a sentence that only mentions the agent', async () => {
+  it('asks about the utterance that just closed, and answers when told to', async () => {
     const { h, send, sent } = await speakingHarness();
     active = h;
-    vi.mocked(classifyAddressed).mockResolvedValue(false);
 
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-31',
-      transcript: 'I asked Emma about that yesterday',
-    });
-    await settle();
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-1' });
     await settle();
 
-    // The local read only ever says yes, so everything it declines must go to the
-    // model — otherwise the fast path would be silencing utterances, which its
-    // YES-only contract forbids.
-    expect(vi.mocked(classifyAddressed)).toHaveBeenCalledTimes(1);
-    expect(sent.filter((e) => e.type === 'response.create')).toHaveLength(0);
-    expect(infoLines()).toContain('path=model');
+    // Judged from the audio, with the call as context: no `input` array, so the
+    // probe inherits the session's conversation rather than seeing one utterance
+    // in isolation. No transcript is involved either way.
+    const probe = probeSent(sent)!;
+    expect(probe.response.input).toBeUndefined();
+    expect(probe.response.conversation).toBe('none');
+    expect(spokenRequests(sent)).toHaveLength(0);
+
+    await answerGate(send, sent, 'YES');
+
+    expect(spokenRequests(sent)).toHaveLength(1);
   });
 
-  it('counts which path decided, so the saving is measurable on a real call', async () => {
+  it('stays quiet when the utterance was not for the agent', async () => {
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-2' });
+    await settle();
+    await answerGate(send, sent, 'NO');
+
+    expect(spokenRequests(sent)).toHaveLength(0);
+    expect(h.conversation.statistics).toMatchObject({ gateCalls: 1, gateFailed: 0 });
+  });
+
+  it('answers an utterance once even if the turn closes twice', async () => {
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-3' });
+    await settle();
+    await answerGate(send, sent, 'YES');
+    // A duplicated commit for the same utterance. A second request is queued by the
+    // session rather than dropped, so the room would hear the reply twice.
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-3' });
+    await settle();
+
+    expect(spokenRequests(sent)).toHaveLength(1);
+  });
+
+  it('counts a verdict that never came, so a deaf agent is visible', async () => {
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-4' });
+    await settle();
+    // The socket dies under the probe — the common way a call ends.
+    h.dropFromServer();
+    await settle();
+
+    expect(spokenRequests(sent)).toHaveLength(0);
+    // Silence from a broken gate and silence from a room nobody addressed are
+    // indistinguishable without this.
+    expect(h.conversation.statistics).toMatchObject({ gateCalls: 1, gateFailed: 1 });
+  });
+
+  it('records the reasoning effort beside the latency it bought', async () => {
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-6' });
+    await settle();
+    await answerGate(send, sent, 'YES');
+
+    // The first audio is when the room stops waiting, so this is the figure the
+    // effort level moves. Without the level on the same line, a call at `high` and
+    // a call at `medium` produce indistinguishable logs and the trade cannot be
+    // judged after the fact.
+    send({
+      type: 'response.output_audio.delta',
+      item_id: 'item-6',
+      delta: Buffer.alloc(960).toString('base64'),
+    });
+    await settle();
+
+    expect(infoLines()).toMatch(/voice started \d+ms after asking .*effort high/);
+  });
+});
+
+describe('what a call leaves in the log', () => {
+  it('keeps the room out of it by default', async () => {
     const { h, send } = await speakingHarness();
     active = h;
-    vi.mocked(classifyAddressed).mockResolvedValue(false);
 
     send({
       type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-32',
-      transcript: 'Emma, are you there?',
+      item_id: 'item-7',
+      transcript: 'Emma, can you take a look at the staging cluster?',
     });
-    await settle();
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-33',
-      transcript: 'the deploy went out at four',
-    });
-    await settle();
     await settle();
 
-    // Their ratio is what the `meeting ended` event reports as `gate_local_share`.
-    expect(h.conversation.statistics).toMatchObject({ gateLocalYes: 1, gateModelCalls: 1 });
+    // A call is unauthenticated third-party speech and the log outlives it.
+    expect(infoLines()).not.toContain('staging cluster');
+    expect(infoLines()).not.toContain('Meeting:Heard');
+  });
+
+  it('writes what was said when asked, paired to the utterance by id', async () => {
+    vi.mocked(config).meetingTranscriptLogging = 'full';
+    const { h, send } = await speakingHarness();
+    active = h;
+
+    send({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-8',
+      transcript: 'Emma, can you take a look at the staging cluster?',
+    });
+    await settle();
+
+    // Transcription lags the decision, so the words arrive on their own line and
+    // `item=` is what pairs them with the verdict.
+    expect(infoLines()).toMatch(/\[Meeting:Heard\] item=item-8 transcript=".*staging cluster/);
   });
 });

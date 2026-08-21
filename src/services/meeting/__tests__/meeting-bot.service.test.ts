@@ -100,8 +100,9 @@ class FakeVoiceConversation {
       suppressed: 6,
       addressedMatches: 2,
       modeSwitches: 1,
-      gateLocalYes: 3,
-      gateModelCalls: 1,
+      gateCalls: 4,
+      gateFailed: 1,
+      gateLatencyMs: 3200,
     };
   }
 }
@@ -1112,24 +1113,26 @@ describe('telemetry', () => {
     expect(ended?.[2]).not.toHaveProperty('fail_step');
   });
 
-  it('reports how much of the addressed gate ran locally', async () => {
+  it('reports how the addressed gate fared, including how often it failed', async () => {
     await service.join(input);
     await settle();
     await service.leave();
 
-    // The share is emitted rather than derived, so a dashboard needs no arithmetic to
-    // show it. Three of four here.
+    // `gate_failed` is the one that matters: the gate fails closed, so a failing
+    // gate and a room nobody addressed both produce silence, and nothing else
+    // tells them apart. The mean is emitted rather than derived so a dashboard
+    // needs no arithmetic — 3200ms over four calls here.
     const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
     expect(ended?.[2]).toMatchObject({
-      gate_local_yes: '3',
-      gate_model_calls: '1',
-      gate_local_share: '75',
+      gate_calls: '4',
+      gate_failed: '1',
+      gate_latency_ms: '800',
     });
   });
 
-  it('reports a zero share for a call nobody spoke to the agent in', async () => {
+  it('reports zeroes for a call nobody spoke to the agent in', async () => {
     // A common outcome. Absent properties would look the same as a build that never
-    // emitted them.
+    // emitted them, and a mean over no calls must not be NaN.
     vi.spyOn(FakeVoiceConversation.prototype, 'statistics', 'get').mockReturnValue({
       responses: 0,
       toolCalls: 0,
@@ -1138,8 +1141,9 @@ describe('telemetry', () => {
       suppressed: 0,
       addressedMatches: 0,
       modeSwitches: 0,
-      gateLocalYes: 0,
-      gateModelCalls: 0,
+      gateCalls: 0,
+      gateFailed: 0,
+      gateLatencyMs: 0,
     });
 
     await service.join(input);
@@ -1147,7 +1151,11 @@ describe('telemetry', () => {
     await service.leave();
 
     const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
-    expect(ended?.[2]).toMatchObject({ gate_local_share: '0' });
+    expect(ended?.[2]).toMatchObject({
+      gate_calls: '0',
+      gate_failed: '0',
+      gate_latency_ms: '0',
+    });
   });
 });
 
