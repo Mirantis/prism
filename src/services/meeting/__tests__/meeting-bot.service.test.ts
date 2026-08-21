@@ -7,6 +7,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// Annotated below rather than inferred so the shape is stated where it is built.
+// Note it does not *enforce* the shape: `tsconfig.json` excludes `*.test.ts`, so
+// `tsc` never sees this file — a field added to the real stats has to be added here
+// by hand or the telemetry assertions quietly read a default.
+import type { VoiceConversationStats } from '../voice-conversation';
 
 const audioStop = vi.fn();
 const audioStart = vi.fn();
@@ -91,7 +96,7 @@ class FakeVoiceConversation {
   get responseMode() {
     return 'addressed';
   }
-  get statistics() {
+  get statistics(): VoiceConversationStats {
     return {
       responses: 2,
       toolCalls: 1,
@@ -103,6 +108,7 @@ class FakeVoiceConversation {
       gateCalls: 4,
       gateFailed: 1,
       gateLatencyMs: 3200,
+      responsesFailed: 2,
     };
   }
 }
@@ -1127,6 +1133,9 @@ describe('telemetry', () => {
       gate_calls: '4',
       gate_failed: '1',
       gate_latency_ms: '800',
+      // Distinct from `gate_failed`: there the verdict never arrived, here it did
+      // and the response the agent asked for produced no audio.
+      responses_failed: '2',
     });
   });
 
@@ -1144,6 +1153,7 @@ describe('telemetry', () => {
       gateCalls: 0,
       gateFailed: 0,
       gateLatencyMs: 0,
+      responsesFailed: 0,
     });
 
     await service.join(input);
@@ -1155,6 +1165,7 @@ describe('telemetry', () => {
       gate_calls: '0',
       gate_failed: '0',
       gate_latency_ms: '0',
+      responses_failed: '0',
     });
   });
 });

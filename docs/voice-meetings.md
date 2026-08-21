@@ -169,10 +169,11 @@ call:
 
 - **Just you and the agent.** It answers everything you say, as an assistant on a
   call with you would.
-- **Anyone else in the call.** It stays quiet unless you call it by name ("Prism,
-  can you check the cluster?") — every time, including follow-ups. Everything else —
-  two people working through a problem with each other — it sits through in silence,
-  however much a sentence might have sounded like a request.
+- **Anyone else in the call.** It stays quiet until you bring it in by name
+  ("Prism, can you check the cluster?"), and then stays with the exchange — a
+  follow-up like "did you find anything?" doesn't need the name again. Everything
+  else — two people working through a problem with each other — it sits through in
+  silence, however much a sentence might have sounded like a request.
 
 It switches over as people join and leave, within about ten seconds. You don't
 have to ask for any of this, but you can override it per call:
@@ -180,11 +181,14 @@ have to ask for any of this, but you can override it per call:
 > Join `https://meet.google.com/abc-defg-hij` and only speak when someone says your
 > name
 
-**Say its name every time, including follow-ups.** There's no grace period. An
-earlier version stayed engaged for fifteen seconds after speaking, so a follow-up
-didn't need the name — but in a real room those fifteen seconds are mostly people
-starting to talk to *each other*, and it answered them. One rule that always holds
-turned out to be better than a shortcut that sometimes interrupts.
+**Name it to start, not to continue.** Once it's part of an exchange, follow-ups
+reach it without the name — "did you find anything?", "try the other cluster", "no,
+the staging one". What decides that is what the exchange looks like, not a stopwatch:
+an earlier version stayed engaged for fifteen seconds after speaking, and in a real
+room those fifteen seconds are mostly people starting to talk to *each other*, so it
+answered them. Being able to see the conversation is what makes the difference — it
+can tell "did you find anything?" asked of it from the same words asked of somebody
+else.
 
 **Its name is what gets its attention, but it isn't matched literally.** It listens
 to what you actually said — the audio, not a transcript of it — and decides whether
@@ -207,8 +211,8 @@ It deliberately does **not** try to work out whether a sentence merely sounds li
 request for an assistant. A call is a single mixed audio channel with no speaker
 labels, so "can you add that to the list?" is the same whether it was said to the
 agent or to the person next to you — and a bot guessing at that is a bot that
-interrupts. The cost of the stricter rule is that the first thing you say to it in a
-group call needs its name.
+interrupts. The cost of that is the one rule you have to remember: bring it in by
+name the first time.
 
 **If it can't tell, it says nothing.** Working out whether it was addressed is one
 question put to the model on every utterance, and when that question can't be
@@ -321,9 +325,9 @@ minute** with the default `gpt-realtime-2.1`. Two levers:
 
 Working out whether you were talking to the agent is one short question per
 utterance, asked of the same model that is already listening. It answers in a single
-word and re-reads only the utterance being judged, so it adds a little to the input
-side of a minute that was being billed anyway — and none at all in a one-to-one
-call, where nothing needs deciding.
+word, and it looks back over the last few turns of the call rather than the whole
+thing, so what it costs does not grow as the meeting goes on. None at all in a
+one-to-one call, where nothing needs deciding.
 
 Input transcription also runs on every call, billed per audio minute at a small
 fraction of the Realtime audio rate for the same minute. Nothing depends on it: it
@@ -380,7 +384,7 @@ Every utterance the agent judges produces one line in the runtime's log, and
 | Value | What a line carries |
 |-------|---------------------|
 | `off` (default) | The verdict, which utterance it belongs to, how long it took, and **how many** people were in the room. No words, no attendee names. |
-| `full` | The above, plus a second line per utterance carrying what was said, the room's roster, and anything the model said beyond the verdict itself. |
+| `full` | The above, plus the room's roster and anything the model said beyond the verdict, and a second line per utterance carrying what was said. |
 
 Under `full` the words arrive on a line of their own rather than beside the verdict.
 Transcription finishes after the decision has already been made, so the two cannot

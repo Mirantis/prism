@@ -932,7 +932,10 @@ export class MeetingBotService {
         gate_calls: String(stats?.gateCalls ?? 0),
         gate_failed: String(stats?.gateFailed ?? 0),
         gate_latency_ms: String(meanGateLatencyMs(stats)),
-        gate_overlaps: String(stats?.gateOverlaps ?? 0),
+        // Answers the agent gave that the room never heard. Distinct from
+        // `gate_failed`: there the decision never arrived, here it did and the
+        // response produced nothing.
+        responses_failed: String(stats?.responsesFailed ?? 0),
       });
     }
 

@@ -18,18 +18,30 @@ vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-/** A session that answers every probe with `answer`, recording what it was asked. */
-function sessionAnswering(answer: string | null): OutOfBandAsk & {
-  asked: Array<Record<string, unknown>>;
-} {
+/**
+ * A session that answers every probe with `answer`, recording what it was asked.
+ *
+ * `items` stands in for the spoken turns the real session tracks — oldest first,
+ * newest last, which is the order a window is built from.
+ */
+function sessionAnswering(
+  answer: string | null,
+  items: string[] = ['older-1', 'older-2', 'item-9'],
+): OutOfBandAsk & { asked: Array<Record<string, unknown>> } {
   const asked: Array<Record<string, unknown>> = [];
   return {
     asked,
+    recentConversationItems: (limit) => items.slice(-limit),
     requestOutOfBandText: (request) => {
       asked.push(request as unknown as Record<string, unknown>);
       return Promise.resolve(answer);
     },
   };
+}
+
+/** The `item_reference` ids in a recorded request, in order. */
+function referencedIds(request: Record<string, unknown>): string[] {
+  return ((request.input ?? []) as Array<{ id: string }>).map((r) => r.id);
 }
 
 function lines(level: 'info' | 'warn'): string {
@@ -47,19 +59,16 @@ beforeEach(() => {
 });
 
 describe('what the gate asks', () => {
-  it('inherits the call rather than scoping itself to one utterance', async () => {
+  it('looks back over a few turns, ending on the one being judged', async () => {
     const session = sessionAnswering('YES');
     await judgeAddressed(session, { ...room, itemId: 'item-9' });
 
     expect(session.asked).toHaveLength(1);
     const request = session.asked[0];
-    // No `input`, deliberately: an explicit one replaces the session's conversation,
-    // and a probe that can only see the utterance being judged cannot tell an
-    // unnamed follow-up ("did you find anything?") from one colleague asking
-    // another. The conversation is the evidence that question needs.
-    expect(request.input).toBeUndefined();
-    // The utterance is still named in metadata, so a verdict can be logged and
-    // filed against the turn it belongs to.
+    // The recent turns are what make an unnamed follow-up answerable; ending on the
+    // judged item is what keeps the verdict attached to the right sentence, since
+    // the prompt tells the model to judge the last one.
+    expect(referencedIds(request)).toEqual(['older-1', 'older-2', 'item-9']);
     expect(request.metadata).toMatchObject({ item: 'item-9' });
     expect(request.deadlineMs).toBe(ADDRESSED_DEADLINE_MS);
     // Measured against a live session: inheriting the session's `high` effort
@@ -136,12 +145,51 @@ describe('when there is no verdict to be had', () => {
     const session = sessionAnswering('YES');
     const verdict = await judgeAddressed(session, { ...room, itemId: '' });
 
-    // Nothing needs pointing at any more: the probe judges the conversation's
-    // latest utterance, so a missing id costs a legible log line rather than a
-    // verdict. It used to be refused outright, when an `item_reference` was the
-    // only way to say which utterance was meant.
+    // An id-less commit still has its turn tracked, so the window's last entry is
+    // that utterance anyway and "judge the last one" still means the right thing.
     expect(session.asked).toHaveLength(1);
+    expect(referencedIds(session.asked[0])).toEqual(['older-1', 'older-2', 'item-9']);
     expect(verdict).toMatchObject({ addressed: true, failed: false });
+  });
+});
+
+describe('the window a verdict looks back over', () => {
+  it('never references the judged utterance twice', async () => {
+    // The judged item is normally already the newest tracked turn. Referencing it
+    // both in place and again at the end would leave the model two candidates for
+    // "the last one".
+    const session = sessionAnswering('NO', ['a', 'b', 'judged']);
+    await judgeAddressed(session, { ...room, itemId: 'judged' });
+
+    expect(referencedIds(session.asked[0])).toEqual(['a', 'b', 'judged']);
+  });
+
+  it('puts the judged utterance last even when it is not the newest turn', async () => {
+    // A turn can close while an earlier verdict is still in flight, so the newest
+    // tracked item is not always the one being judged.
+    const session = sessionAnswering('NO', ['a', 'judged', 'newer']);
+    await judgeAddressed(session, { ...room, itemId: 'judged' });
+
+    expect(referencedIds(session.asked[0])).toEqual(['a', 'newer', 'judged']);
+  });
+
+  it('asks for a bounded window rather than the whole call', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => `item-${i}`);
+    const session = sessionAnswering('NO', many);
+    await judgeAddressed(session, { ...room, itemId: 'item-29' });
+
+    // Six turns: the cost of a probe must not grow with the length of the call,
+    // which is what tripped the token rate limit when it inherited everything.
+    expect(referencedIds(session.asked[0])).toHaveLength(6);
+    expect(referencedIds(session.asked[0]).at(-1)).toBe('item-29');
+  });
+
+  it('works from the very start of a call, before there is any history', async () => {
+    const session = sessionAnswering('YES', ['first']);
+    const verdict = await judgeAddressed(session, { ...room, itemId: 'first' });
+
+    expect(referencedIds(session.asked[0])).toEqual(['first']);
+    expect(verdict.addressed).toBe(true);
   });
 });
 

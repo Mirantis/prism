@@ -6,7 +6,7 @@
  * for — only exists at the socket level.
  */
 
-import { describe, it, expect, afterEach, beforeAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
@@ -124,7 +124,7 @@ async function speakingHarness(): Promise<{
     tools: { declarations: [], count: 0, execute: vi.fn() },
     sink: { write: vi.fn() },
     agentName: 'Emma',
-    // Named, so the gate decides — the path the early verdict lives on.
+    // Named, so every utterance goes to the gate rather than being answered outright.
     responseMode: 'addressed',
     endpointOverride: { url: `ws://127.0.0.1:${port}`, headers: {} },
   });
@@ -190,16 +190,6 @@ describe('losing the Realtime session', () => {
   });
 });
 
-/**
- * A verdict reached from a partial transcript decides *whether* to answer; the
- * turn boundary decides *when*.
- *
- * Acting on the verdict the moment it arrived is what made the agent talk over the
- * end of a request and answer only the part it had heard — reported from a live
- * call as "it didn't hear the full sentence before it started to answer". The
- * classification still runs early, concurrently with the rest of the sentence, so
- * nothing is waiting on it once the speaker stops.
- */
 describe('telling the session who is in the room', () => {
   it('hints the transcriber and informs the model, once per change', async () => {
     const { h, sent } = await speakingHarness();
@@ -300,12 +290,13 @@ describe('deciding whether to answer', () => {
     send({ type: 'input_audio_buffer.committed', item_id: 'item-1' });
     await settle();
 
-    // Judged from the audio, with the call as context: no `input` array, so the
-    // probe inherits the session's conversation rather than seeing one utterance
-    // in isolation. No transcript is involved either way.
+    // Judged from the audio, with a bounded slice of the call as context and the
+    // utterance in question last. No transcript is involved.
     const probe = probeSent(sent)!;
-    expect(probe.response.input).toBeUndefined();
     expect(probe.response.conversation).toBe('none');
+    const referenced = (probe.response.input as Array<{ type: string; id: string }>).map((r) => r.id);
+    expect(referenced.at(-1)).toBe('item-1');
+    expect(referenced.length).toBeLessThanOrEqual(6);
     expect(spokenRequests(sent)).toHaveLength(0);
 
     await answerGate(send, sent, 'YES');
@@ -332,12 +323,19 @@ describe('deciding whether to answer', () => {
     send({ type: 'input_audio_buffer.committed', item_id: 'item-3' });
     await settle();
     await answerGate(send, sent, 'YES');
+    const probesAfterFirst = sent.filter((e) => e.type === 'response.create' && e.response).length;
+
     // A duplicated commit for the same utterance. A second request is queued by the
     // session rather than dropped, so the room would hear the reply twice.
     send({ type: 'input_audio_buffer.committed', item_id: 'item-3' });
     await settle();
 
     expect(spokenRequests(sent)).toHaveLength(1);
+    // And the duplicate is refused *before* it costs anything: asking again would
+    // spend a probe on a question already answered.
+    expect(sent.filter((e) => e.type === 'response.create' && e.response)).toHaveLength(
+      probesAfterFirst,
+    );
   });
 
   it('counts a verdict that never came, so a deaf agent is visible', async () => {
