@@ -34,6 +34,21 @@ export function formatKeywords(keywords: string[]): string {
 }
 
 /**
+ * Who is in the room, or how many.
+ *
+ * The same rule as the keyword list, for the same reason — these are real people's
+ * names — but a separate token because it answers a different question. The gate is
+ * given the roster so it can tell a request aimed at the agent from one aimed at
+ * somebody else by name, so `roster=0` explains a verdict that had only word order
+ * to go on.
+ */
+export function formatRoster(roster: string[]): string {
+  return config.meetingTranscriptLogging === 'full'
+    ? `roster=[${roster.join(', ')}]`
+    : `roster=${roster.length}`;
+}
+
+/**
  * The sentence, or nothing at all.
  *
  * Returns `''` under `off`, which the caller drops rather than writing an empty token.
