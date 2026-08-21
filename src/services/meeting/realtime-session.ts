@@ -3,8 +3,8 @@
  *
  * This is a speech-to-speech session: meeting audio goes in as pcm16 and the
  * model's speech comes back as pcm16. There is deliberately no transcript in the
- * conversation path — transcription is only ever used to decide whether the agent
- * was addressed (see `response-policy.ts`), never as the model's input.
+ * conversation path — transcription exists only so a call can be read back in the
+ * log, and nothing decides anything from it.
  *
  * The model carries the agent's real system prompt as session `instructions` and
  * the agent's real tools as Realtime function tools, so the participant in the
@@ -25,6 +25,11 @@
  *   much of its audio actually reached the room, so after an interruption we tell
  *   it via `conversation.item.truncate` — otherwise the model's context claims it
  *   said things nobody heard, and later turns get incoherent.
+ * - The same session answers *two* kinds of question. Alongside the conversation it
+ *   takes out-of-band probes (`requestOutOfBandText`) — a short text question about
+ *   an utterance it has already heard, which is how "was that said to me?" is
+ *   decided. Those responses never enter the conversation, and the bookkeeping that
+ *   keeps them apart from the agent's own turns is the delicate part of this file.
  */
 
 import { EventEmitter } from 'events';
@@ -66,6 +71,82 @@ export interface RealtimeFunctionTool {
   parameters: Record<string, unknown>;
 }
 
+/**
+ * The metadata key that marks a response as ours-and-out-of-band.
+ *
+ * Set by this class rather than by the caller, so recognising a probe on the way
+ * back never depends on a convention a caller might get wrong. Its value is the
+ * client `event_id` of the `response.create` that opened it, which is what ties a
+ * verdict — or a rejection — back to the request that asked for it.
+ */
+const OUT_OF_BAND_MARKER = 'prism_oob';
+
+/**
+ * A question asked of the model *beside* the conversation rather than in it.
+ *
+ * `conversation: "none"` keeps the answer out of the session's conversation
+ * state, so asking does not become part of what the agent has said. The reply is
+ * text, and short: this exists for one-word judgements, not for speech.
+ */
+export interface OutOfBandRequest {
+  /** Replaces the session prompt for this one response. */
+  instructions: string;
+  /**
+   * The context for this response, in place of the conversation.
+   *
+   * An `{ type: 'item_reference', id }` entry points at an item the session
+   * already holds, so referencing an utterance re-sends no audio. Omitting
+   * `input` entirely falls back to the whole conversation, which is both far more
+   * expensive and — for anything judged per-utterance — ambiguous about *which*
+   * utterance it means, so callers are expected to pass it.
+   */
+  input?: unknown[];
+  /** Merged into the frame's metadata; the marker key is added on top. */
+  metadata?: Record<string, string>;
+  /** After this, stop waiting and answer `null`. */
+  deadlineMs: number;
+  maxOutputTokens?: number;
+  /**
+   * Reasoning effort for this response alone. Omitted inherits the session's.
+   *
+   * Worth setting for anything that wants a short answer. The session runs at
+   * `high` for the sake of the agent's own turns, and a probe inheriting it spends
+   * its token budget thinking before it writes anything: measured against a live
+   * session, a one-word question at `high` burned 36 reasoning tokens and took
+   * 1401ms for an answer that needed five. At a budget of 16 it never got to the
+   * word at all — the response came back `incomplete` with empty output, which for
+   * a caller that treats no answer as a failure means silence every time.
+   */
+  reasoningEffort?: string;
+}
+
+/** The out-of-band send id carried in a response's metadata, if any. */
+function readMarker(metadata: Record<string, unknown> | undefined): string | undefined {
+  const value = metadata?.[OUT_OF_BAND_MARKER];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+/** A probe on the wire, waiting for the model to answer it. */
+interface PendingProbe {
+  sendId: string;
+  settle: (text: string | null) => void;
+  timer: NodeJS.Timeout;
+  /** Accumulated `output_text` deltas, used when `response.done` carries no output. */
+  text: string;
+}
+
+/** A `response.create` the server has not acknowledged yet. */
+interface PendingCreate {
+  /** The client `event_id` sent with it, so a rejection can remove the right one. */
+  eventId: string;
+  /** Set when a probe asked for this one; absent means the conversation did. */
+  probeSendId?: string;
+  at: number;
+}
+
+/** Most response ids remembered as a probe's. Bounded; turns are short-lived. */
+const PROBE_RESPONSE_LIMIT = 32;
+
 export interface RealtimeSessionOptions {
   /** The agent's system prompt — Soul, User, Agent Guide, memory, and the rest. */
   instructions: string;
@@ -76,14 +157,14 @@ export interface RealtimeSessionOptions {
   /**
    * What the room calls the agent, handed to the transcriber as a keyword.
    *
-   * The one word the transcript exists to find is the hardest one in it: a name
-   * is arbitrary, often short, and unstressed in the vocative ("hey Emma, …"),
-   * which is exactly where a speech model reaches for a common function word
-   * instead. A live call rendered "Hey Emma, what's on the agenda" as "Hey,
-   * **I'm** what's on the agenda" — the gate then correctly found no name and
-   * stayed silent, having been asked a direct question. No amount of judgement
-   * downstream recovers a word that never reached the text, so the fix belongs
-   * here, in the decoder's prior.
+   * Names are the words a transcript gets wrong most: arbitrary, often short, and
+   * unstressed in the vocative ("hey Emma, …"), which is exactly where a speech
+   * model reaches for a common function word instead — a live call rendered "Hey
+   * Emma, what's on the agenda" as "Hey, **I'm** what's on the agenda".
+   *
+   * This no longer decides anything: nothing is judged from the transcript any
+   * more. It is kept because a log nobody can read the names in is a log that
+   * cannot be used to work out why a call went wrong.
    */
   agentName?: string;
   /** Injected in tests so they can point at a local mock server. */
@@ -194,6 +275,39 @@ export class RealtimeSession extends EventEmitter {
   private generatedMsByItem = new Map<string, number>();
   /** The response currently generating, for attributing a barge-in. */
   private activeResponseId: string | null = null;
+  /**
+   * Out-of-band probes that have been sent but not yet answered, by send id.
+   *
+   * Bounded by the deadline every probe carries: each entry removes itself when it
+   * settles, and a probe the server never answers settles on its own timer.
+   */
+  private readonly probesBySendId = new Map<string, PendingProbe>();
+  /**
+   * Probe send ids by the response id the server gave them.
+   *
+   * Kept until that response finishes, not until the probe settles — a probe that
+   * gave up on its deadline may still have a response generating behind it, and
+   * anything arriving on that response has to stay recognisable as *not the
+   * conversation's*. Bounded like `abandonedResponseIds`, since a response that
+   * never finishes would otherwise leave an entry for the rest of the call.
+   */
+  private readonly probeIdsByResponse = new Map<string, string>();
+  private probeCounter = 0;
+  private mainCreateCounter = 0;
+  /**
+   * Every `response.create` on the wire that the server has not opened yet, oldest
+   * first, each knowing whether a probe asked for it.
+   *
+   * This is what lets `response.created` be attributed without relying on the
+   * server echoing `metadata` — documented for `response.done`, but not for
+   * `response.created`, and reported missing on at least one deployment. It has to
+   * be a queue rather than a flag: `created` events arrive in the order their
+   * requests were sent, and with a probe request and a conversation request both
+   * un-acked, a flag cannot say which of the two is opening. Getting that wrong
+   * swaps them — the probe claims the conversation's slot and never releases it,
+   * and the call goes mute for good.
+   */
+  private readonly pendingCreates: PendingCreate[] = [];
 
   constructor(private readonly options: RealtimeSessionOptions) {
     super();
@@ -228,6 +342,12 @@ export class RealtimeSession extends EventEmitter {
     });
     ws.on('close', (code, reason) => {
       this.closed = true;
+      // Settled here rather than only in `close()`: this is the *common* way a call
+      // ends from the session's point of view, and by the time teardown calls
+      // `close()` the `closed` flag is already set, so its own settling loop never
+      // runs. Without this a caller waits out its whole deadline after the socket
+      // is already gone.
+      this.settleAllProbes();
       this.emitEvent('closed', reason.toString() || `code ${code}`);
     });
 
@@ -290,25 +410,23 @@ export class RealtimeSession extends EventEmitter {
             ...(config.noiseReduction === 'off'
               ? {}
               : { noise_reduction: { type: config.noiseReduction } }),
-            // Only ever used to decide who was addressed — never fed back as the
-            // model's input. On for every call, because the mode can change under
-            // a live session as people join, and transcription cannot be turned on
-            // retroactively for an utterance already past. It is billed per audio
-            // minute, but at whisper-class rates that is a rounding error beside
-            // the Realtime audio tokens the same minute costs.
-            // `gpt-live-transcribe` is the streaming transcriber that also accepts
-            // `keywords`. That pairing is what this path needs and only two models
-            // offer it (`gpt-transcribe` is the same family without the live
-            // streaming the early-verdict path reads from). The previous default,
-            // `gpt-realtime-whisper`, supports neither `keywords` nor `prompt` in
-            // GA Realtime sessions, so there was no way to tell it which word
-            // mattered — see `agentName` above for what that cost.
+            // For the log, and nothing else. Whether the agent was addressed is
+            // judged from the audio now (`addressed-audio-gate.ts`), so no decision
+            // waits on these words and a transcription that fails or comes back
+            // empty costs a log line rather than an answer. It is kept because
+            // reading a call back beside its verdicts is how every wrong verdict so
+            // far has been diagnosed, and it is billed per audio minute — at
+            // whisper-class rates a rounding error beside the Realtime audio tokens
+            // the same minute costs. `MEETING_TRANSCRIPT_LOGGING` decides whether
+            // any of it is written down; this only decides whether it exists.
+            // `gpt-live-transcribe` accepts `keywords`, which is how the agent's
+            // name and the room's roster are given to it. The previous default,
+            // `gpt-realtime-whisper`, supports neither `keywords` nor `prompt` in GA
+            // Realtime sessions, so there was no way to tell it which word mattered.
             // Pinned to English rather than auto-detected. Left to itself the
             // transcriber drifts language mid-call — one real meeting came back
-            // with German, Korean and Bulgarian renderings of English speech —
-            // and a wrong language guess also mangles the agent's name, which is
-            // the one word this transcript exists to find. Voice meetings are
-            // English-only today, and the prompt says so to the model.
+            // with German, Korean and Bulgarian renderings of English speech.
+            // Voice meetings are English-only today, and the prompt says so.
             transcription: {
               model: config.openaiTranscriptionModel,
               language: 'en',
@@ -360,6 +478,9 @@ export class RealtimeSession extends EventEmitter {
         const itemId = typeof event.item_id === 'string' ? event.item_id : '';
         const responseId = typeof event.response_id === 'string' ? event.response_id : this.activeResponseId;
         if (typeof delta !== 'string' || delta.length === 0) return;
+        // A probe asks for text only, so audio on one is a contract violation
+        // rather than something to play into the room.
+        if (responseId && this.isProbeResponse(responseId)) return;
         // Tail of a turn we already yielded the floor on — see
         // `abandonedResponseIds`. Dropped before it can restart playback.
         if (responseId && this.abandonedResponseIds.has(responseId)) return;
@@ -441,14 +562,27 @@ export class RealtimeSession extends EventEmitter {
       }
 
       case 'response.created': {
+        const created = event.response as
+          | { id?: string; metadata?: Record<string, unknown> }
+          | undefined;
+        // An out-of-band probe does not occupy the conversation's response slot, so
+        // none of the slot bookkeeping below may run for one. In particular it must
+        // not set `responseConfirmed`: a dropped conversation request followed by a
+        // probe opening would otherwise satisfy the watchdog that exists to undo it,
+        // and the agent would go mute for the rest of the call.
+        const probeSendId = this.attributeCreatedToProbe(created);
+        if (probeSendId) {
+          if (created?.id) this.rememberProbeResponse(created.id, probeSendId);
+          return;
+        }
         // Confirms the optimistic flag `requestResponse()` set on send. Setting it
         // here as well keeps the bookkeeping right for any response the server
         // opens that we did not ask for — with `create_response` off there should
         // be none, but colliding with one would wedge the session.
         this.responseActive = true;
         this.responseConfirmed = true;
-        const created = event.response as { id?: string } | undefined;
         this.activeResponseId = created?.id ?? null;
+        logger.info(`[Meeting:Resp] Conversation response ${this.activeResponseId ?? '?'} opened`);
         return;
       }
 
@@ -460,13 +594,81 @@ export class RealtimeSession extends EventEmitter {
           logger.warn('[Meeting] Function call event missing call_id or name');
           return;
         }
+        // A probe must never reach the tool bridge. Every probe is sent with
+        // `tools: []` and `tool_choice: 'none'`, so this should be unreachable —
+        // but the session's tools are the agent's real ones, including shell and
+        // its own configuration, and a tool call is executed for real. Two
+        // independent guards, because one of them silently not applying is exactly
+        // the kind of thing that only shows up in a live call.
+        //
+        // This one depends on the event naming its response: attribution is
+        // genuinely impossible without it, and unlike the audio path there is no
+        // safe fallback — guessing the conversation would execute the call, and
+        // guessing a probe would drop a real one. It has always been present in
+        // practice.
+        const responseId = typeof event.response_id === 'string' ? event.response_id : '';
+        if (this.isProbeResponse(responseId)) {
+          logger.warn(
+            `[Meeting] Ignored a tool call (${name}) on an out-of-band response — ` +
+              'probes carry no tools',
+          );
+          return;
+        }
         this.emitEvent('functionCall', { callId, name, argumentsJson });
         return;
       }
 
-      case 'response.done':
+      // GA streams a text-only response as `response.output_text.*`; the older
+      // `response.text.*` names are accepted too. Only probes ask for text, so
+      // these deltas are theirs — the conversation's responses are audio.
+      case 'response.output_text.delta':
+      case 'response.text.delta': {
+        const responseId = typeof event.response_id === 'string' ? event.response_id : '';
+        const probe = this.probeFor(responseId);
+        if (probe && typeof event.delta === 'string') probe.text += event.delta;
+        return;
+      }
+
+      case 'response.done': {
+        const done = event.response as
+          | {
+              id?: string;
+              metadata?: Record<string, unknown>;
+              status?: string;
+              status_details?: unknown;
+              output?: { content?: { text?: string; transcript?: string }[] }[];
+            }
+          | undefined;
+        // A probe finishing must release nothing: the conversation's own response
+        // may still be generating, and clearing the slot here would both fire a
+        // deferred duplicate and count the probe as something the room heard.
+        const probeSendId = this.probeSendIdFor(done);
+        if (probeSendId) {
+          const probe = this.probesBySendId.get(probeSendId);
+          if (done?.id) this.probeIdsByResponse.delete(done.id);
+          if (probe) {
+            const fromOutput = (done?.output ?? [])
+              .flatMap((item) => item.content ?? [])
+              .map((part) => part.text ?? part.transcript ?? '')
+              .join(' ')
+              .trim();
+            probe.settle(fromOutput || probe.text.trim() || null);
+          }
+          return;
+        }
         this.responseActive = false;
         this.responseConfirmed = false;
+        // `status` says whether the room actually heard it: a response that ends
+        // `incomplete` or `failed` produced nothing, which looks identical to one
+        // that was never asked for.
+        logger.info(
+          `[Meeting:Resp] Conversation response ${done?.id ?? '?'} done ` +
+            `status=${done?.status ?? 'unknown'}` +
+            (done?.status && done.status !== 'completed'
+              ? ` details=${JSON.stringify(done.status_details ?? {})}`
+              : '') +
+            `${this.responsePending ? ' — releasing the queued request' : ''}`,
+        );
         this.emitEvent('responseDone');
         // Release a response that was requested while this one was still open.
         if (this.responsePending) {
@@ -474,10 +676,25 @@ export class RealtimeSession extends EventEmitter {
           this.requestResponse();
         }
         return;
+      }
 
       case 'error': {
         const err = event.error as { message?: string } | undefined;
         const message = err?.message ?? 'unknown Realtime API error';
+        // A rejected `response.create` never opens a response, so metadata never
+        // comes back for it — the client `event_id` echoed here is the only thing
+        // that says which request failed. Settle that probe and touch no slot
+        // state: a probe rejected with "already has an active response" must not
+        // set `responsePending`, or the rejection queues a phantom answer that
+        // speaks unprompted when the open response finishes.
+        const failedSendId = typeof event.event_id === 'string' ? event.event_id : '';
+        if (failedSendId) this.dropCreate(failedSendId);
+        const failedProbe = this.probesBySendId.get(failedSendId);
+        if (failedProbe) {
+          logger.warn(`[Meeting] Out-of-band request rejected: ${message}`);
+          failedProbe.settle(null);
+          return;
+        }
         // Two opposite errors mention an active response, and confusing them wedges
         // the session: matching them loosely once meant a failed *cancel* was read
         // as "a response is running", after which every later request deferred
@@ -533,6 +750,13 @@ export class RealtimeSession extends EventEmitter {
    */
   requestResponse(): void {
     if (this.responseActive) {
+      // Only one can be queued. A second request while one is already waiting is
+      // dropped here, silently — which is invisible without this line, and reads in
+      // the room as the agent ignoring something it was asked.
+      logger.info(
+        `[Meeting:Resp] Deferred a request — response ${this.activeResponseId ?? '(unconfirmed)'} ` +
+          `is still open${this.responsePending ? ', and one was already queued' : ''}`,
+      );
       this.responsePending = true;
       return;
     }
@@ -542,7 +766,160 @@ export class RealtimeSession extends EventEmitter {
     // response in progress" — after which the second answer is simply lost.
     this.responseActive = true;
     this.responseCreatedWatchdog();
-    this.send({ type: 'response.create' });
+    // Given an id of its own so that a rejection — which echoes it — can remove
+    // this request from the queue rather than leaving it to misplace a later
+    // `response.created`.
+    const eventId = `main_${++this.mainCreateCounter}`;
+    this.noteCreateSent(eventId);
+    this.send({ type: 'response.create', event_id: eventId });
+  }
+
+  /**
+   * Ask the model a question beside the conversation and wait for its text.
+   *
+   * Resolves `null` when there is no answer to be had — the socket is shut, the
+   * request was rejected, the deadline passed, or the model returned nothing. The
+   * caller decides what silence means; this only reports it.
+   *
+   * Deliberately *not* routed through `requestResponse()`. That method guards the
+   * conversation's single response slot, and a probe does not compete for it: going
+   * through it would defer the probe behind whatever the agent is saying, which is
+   * the opposite of what a "should I answer this?" question is for.
+   */
+  requestOutOfBandText(request: OutOfBandRequest): Promise<string | null> {
+    if (!this.isOpen) return Promise.resolve(null);
+
+    const sendId = `oob_${++this.probeCounter}`;
+    return new Promise<string | null>((resolve) => {
+      const settle = (text: string | null): void => {
+        if (!this.probesBySendId.has(sendId)) return;
+        this.probesBySendId.delete(sendId);
+        clearTimeout(timer);
+        resolve(text);
+      };
+      const timer = setTimeout(() => {
+        logger.warn(`[Meeting] Out-of-band request ${sendId} went unanswered`);
+        settle(null);
+      }, request.deadlineMs);
+      timer.unref?.();
+
+      this.probesBySendId.set(sendId, { sendId, settle, timer, text: '' });
+      this.noteCreateSent(sendId, sendId);
+      this.send({
+        type: 'response.create',
+        event_id: sendId,
+        response: {
+          // Keeps the answer out of the conversation, so asking is not something
+          // the agent has said.
+          conversation: 'none',
+          output_modalities: ['text'],
+          instructions: request.instructions,
+          metadata: { ...(request.metadata ?? {}), [OUT_OF_BAND_MARKER]: sendId },
+          // Not inherited from the session: the agent's real tools are live in a
+          // meeting, and a probe reading an untrusted utterance must not be able
+          // to reach them. See the guard in `response.function_call_arguments.done`.
+          tools: [],
+          tool_choice: 'none',
+          ...(request.reasoningEffort ? { reasoning: { effort: request.reasoningEffort } } : {}),
+          ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
+          ...(request.input ? { input: request.input } : {}),
+        },
+      });
+    });
+  }
+
+  /**
+   * Whether a response id is a probe's rather than the conversation's.
+   *
+   * Deliberately independent of whether that probe is still waiting: a probe can
+   * give up on its deadline while the server keeps generating, and anything
+   * arriving on such a response is still not the conversation's — least of all a
+   * tool call, which would otherwise be executed for real.
+   */
+  private isProbeResponse(responseId: string): boolean {
+    return responseId !== '' && this.probeIdsByResponse.has(responseId);
+  }
+
+  /**
+   * Give up on every probe still waiting.
+   *
+   * Nobody is going to answer them once the socket is gone. Settling rather than
+   * leaving them pending is what stops a caller awaiting a verdict for the whole
+   * length of its deadline after the call has already ended.
+   */
+  private settleAllProbes(): void {
+    for (const probe of [...this.probesBySendId.values()]) probe.settle(null);
+  }
+
+  /** The probe still waiting on a response id, if one is. */
+  private probeFor(responseId: string): PendingProbe | undefined {
+    const sendId = responseId ? this.probeIdsByResponse.get(responseId) : undefined;
+    return sendId ? this.probesBySendId.get(sendId) : undefined;
+  }
+
+  /** Remember a response as a probe's, evicting the oldest past the cap. */
+  private rememberProbeResponse(responseId: string, sendId: string): void {
+    this.probeIdsByResponse.set(responseId, sendId);
+    while (this.probeIdsByResponse.size > PROBE_RESPONSE_LIMIT) {
+      this.probeIdsByResponse.delete(this.probeIdsByResponse.keys().next().value as string);
+    }
+  }
+
+  /** Note a `response.create` on the wire, so its `response.created` can be placed. */
+  private noteCreateSent(eventId: string, probeSendId?: string): void {
+    this.pendingCreates.push({ eventId, probeSendId, at: Date.now() });
+  }
+
+  /** Forget a request the server rejected — no `response.created` is coming for it. */
+  private dropCreate(eventId: string): void {
+    const index = this.pendingCreates.findIndex((c) => c.eventId === eventId);
+    if (index >= 0) this.pendingCreates.splice(index, 1);
+  }
+
+  /**
+   * Which request a bare `response.created` belongs to.
+   *
+   * Oldest first, because the server opens responses in the order it received the
+   * requests. Anything older than the watchdog's patience is discarded first: a
+   * request the API dropped silently gets no `created`, and leaving it at the head
+   * of the queue would misplace every later one.
+   */
+  private takeCreate(): PendingCreate | undefined {
+    const cutoff = Date.now() - RESPONSE_CREATED_TIMEOUT_MS;
+    while (this.pendingCreates.length > 0 && (this.pendingCreates[0]?.at ?? 0) < cutoff) {
+      this.pendingCreates.shift();
+    }
+    return this.pendingCreates.shift();
+  }
+
+  /**
+   * Which probe a finished response belongs to — by the id recorded when it opened,
+   * or failing that by the marker the server echoes on `response.done`.
+   */
+  private probeSendIdFor(
+    done: { id?: string; metadata?: Record<string, unknown> } | undefined,
+  ): string | undefined {
+    const byId = done?.id ? this.probeIdsByResponse.get(done.id) : undefined;
+    return byId ?? readMarker(done?.metadata);
+  }
+
+  /**
+   * Decide whether a newly opened response is a probe's, and which.
+   *
+   * The marker settles it when the server echoes metadata, and is trusted even if
+   * that probe has already given up — a response we know is out-of-band must never
+   * be allowed to claim the conversation's slot, because nothing would then
+   * release it. Otherwise the send queue decides, in order.
+   */
+  private attributeCreatedToProbe(
+    created: { id?: string; metadata?: Record<string, unknown> } | undefined,
+  ): string | undefined {
+    const marked = readMarker(created?.metadata);
+    if (marked) {
+      this.dropCreate(marked);
+      return marked;
+    }
+    return this.takeCreate()?.probeSendId;
   }
 
   /**
@@ -558,6 +935,9 @@ export class RealtimeSession extends EventEmitter {
       this.responseWatchdog = null;
       if (this.responseActive && !this.responseConfirmed) {
         logger.warn('[Meeting] No response.created arrived; clearing the active-response flag');
+        // The queue entry for the dropped request is not removed here: it ages out
+        // on the same timeout inside `takeCreate()`, which is also what covers a
+        // request dropped without any watchdog running.
         this.responseActive = false;
         if (this.responsePending) {
           this.responsePending = false;
@@ -579,10 +959,24 @@ export class RealtimeSession extends EventEmitter {
     // A response queued behind this one is abandoned with it: the human now has
     // the floor, and their speech is what should decide the next turn. (Any tool
     // result already sits in the conversation, so nothing is lost.)
+    if (this.responsePending) {
+      logger.info('[Meeting:Resp] Dropped a queued request — a human took the floor');
+    }
     this.responsePending = false;
     if (this.responseActive) {
-      this.send({ type: 'response.cancel' });
+      // Named explicitly so a probe in flight cannot be the thing that gets
+      // cancelled. Without an id the API cancels "an in-progress response in the
+      // default conversation", which is also what we want — but only the id makes
+      // that a guarantee rather than a documented default, and the id is unknown
+      // only in the round trip before `response.created` lands.
+      this.send({
+        type: 'response.cancel',
+        ...(this.activeResponseId ? { response_id: this.activeResponseId } : {}),
+      });
       this.responseActive = false;
+      // The send queue is deliberately left alone: cancelling does not stop the
+      // `response.created` for a request already on the wire, so dropping its
+      // entry here would misplace that event when it lands.
     }
 
     items.forEach(({ itemId, playedMs, sentMs }, index) => {
@@ -686,6 +1080,7 @@ export class RealtimeSession extends EventEmitter {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.settleAllProbes();
     // 1000 = normal closure; anything else shows up as an error in OpenAI's logs.
     try {
       this.ws?.close(1000, 'meeting ended');

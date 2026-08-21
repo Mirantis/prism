@@ -27,6 +27,8 @@ interface Harness {
   sent: Array<Record<string, unknown>>;
   /** Push a server event to the session. */
   emit: (event: Record<string, unknown>) => void;
+  /** Close the socket from the server's side, as OpenAI would on a drop. */
+  dropFromServer: () => void;
   close: () => Promise<void>;
 }
 
@@ -55,6 +57,7 @@ async function harness(options: Partial<Parameters<typeof makeSession>[0]> = {})
     session,
     sent,
     emit: (event) => socket?.send(JSON.stringify(event)),
+    dropFromServer: () => socket?.close(1011, 'server gone'),
     close: async () => {
       session.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -661,5 +664,542 @@ describe('RealtimeSession connection failure', () => {
     });
 
     await expect(session.connect()).rejects.toThrow(/Realtime connection failed/);
+  });
+});
+
+/**
+ * A question asked beside the conversation, so the agent can be asked "was that
+ * for you?" without the asking becoming something it said.
+ *
+ * The risk these cover is not the frame — it is that a second response now exists
+ * on a session whose bookkeeping was written for exactly one. Each test below is a
+ * way the conversation's own turn gets corrupted by the probe finishing, failing,
+ * or merely opening.
+ */
+describe('RealtimeSession out-of-band probes', () => {
+  /**
+   * The probe frame. Both kinds of request carry an `event_id`; only a probe
+   * carries a `response` body, since the conversation's asks for nothing special.
+   */
+  function probeFrame(sent: Array<Record<string, unknown>>): Record<string, any> | undefined {
+    return sent.find((f) => f.type === 'response.create' && f.response) as
+      | Record<string, any>
+      | undefined;
+  }
+
+  /** Requests the conversation made for itself. */
+  function mainRequests(sent: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+    return sent.filter((f) => f.type === 'response.create' && !f.response);
+  }
+
+  /** Answer a probe the way the server would, by the id it was opened with. */
+  function answerProbe(h: Harness, responseId: string, text: string): void {
+    h.emit({
+      type: 'response.done',
+      response: { id: responseId, status: 'completed', output: [{ content: [{ text }] }] },
+    });
+  }
+
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 20));
+
+  it('asks out of band, out of conversation, and without tools', async () => {
+    active = await harness();
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'Answer YES or NO.',
+      input: [{ type: 'item_reference', id: 'item-7' }],
+      metadata: { purpose: 'addressed-gate' },
+      deadlineMs: 500,
+      maxOutputTokens: 16,
+      reasoningEffort: 'low',
+    });
+    await settle();
+
+    const frame = probeFrame(active.sent)!;
+    expect(frame).toBeDefined();
+    // Out of the conversation, so a verdict never becomes part of what the agent
+    // has said — and a word rather than speech.
+    expect(frame.response.conversation).toBe('none');
+    expect(frame.response.output_modalities).toEqual(['text']);
+    expect(frame.response.instructions).toBe('Answer YES or NO.');
+    // One reference, naming the utterance being judged. No audio is re-sent.
+    expect(frame.response.input).toEqual([{ type: 'item_reference', id: 'item-7' }]);
+    expect(frame.response.max_output_tokens).toBe(16);
+    // Not inherited from the session, which runs at `high` for the agent's own
+    // turns. A probe that thinks first spends its budget before writing a word.
+    expect(frame.response.reasoning).toEqual({ effort: 'low' });
+    // The session's tools are the agent's real ones, shell included. A probe reads
+    // an untrusted utterance, so it must not be able to reach them.
+    expect(frame.response.tools).toEqual([]);
+    expect(frame.response.tool_choice).toBe('none');
+    // The caller's metadata survives beside the marker that routes the reply.
+    expect(frame.response.metadata.purpose).toBe('addressed-gate');
+    expect(frame.response.metadata.prism_oob).toBe(frame.event_id);
+
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    await settle();
+    answerProbe(active, 'r-probe', 'YES');
+    await expect(verdict).resolves.toBe('YES');
+  });
+
+  it('matches a verdict by its echoed marker when the open event was missed', async () => {
+    active = await harness();
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    const sendId = probeFrame(active.sent)!.event_id as string;
+
+    // No `response.created` to record an id against — so the marker the server
+    // echoes on `response.done` is the only way back to the waiting caller.
+    active.emit({
+      type: 'response.done',
+      response: {
+        id: 'r-unseen',
+        status: 'completed',
+        metadata: { prism_oob: sendId },
+        output: [{ content: [{ text: 'YES' }] }],
+      },
+    });
+
+    await expect(verdict).resolves.toBe('YES');
+  });
+
+  it('reads a verdict that arrives only as deltas', async () => {
+    active = await harness();
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 500,
+    });
+    await settle();
+
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    active.emit({ type: 'response.output_text.delta', response_id: 'r-probe', delta: 'NO' });
+    active.emit({ type: 'response.done', response: { id: 'r-probe', status: 'completed' } });
+
+    await expect(verdict).resolves.toBe('NO');
+  });
+
+  it('does not let a probe finishing release the conversation slot', async () => {
+    active = await harness();
+    // The agent is speaking.
+    active.emit({ type: 'response.created', response: { id: 'r-main' } });
+    await settle();
+
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    await settle();
+
+    // A tool result lands mid-turn and is deferred, as it always was.
+    active.session.sendFunctionOutput('call-1', '{"ok":true}');
+    await settle();
+    expect(mainRequests(active.sent)).toHaveLength(0);
+
+    // The probe finishes first. It must not look like the speaking turn ending:
+    // that would fire the deferred request over the agent's own voice.
+    answerProbe(active, 'r-probe', 'YES');
+    await expect(verdict).resolves.toBe('YES');
+    await settle();
+    expect(mainRequests(active.sent)).toHaveLength(0);
+
+    // Only the real turn ending releases it.
+    active.emit({ type: 'response.done', response: { id: 'r-main', status: 'completed' } });
+    await settle();
+    expect(mainRequests(active.sent)).toHaveLength(1);
+  });
+
+  it('does not count a probe as a response the room heard', async () => {
+    active = await harness();
+    const done = vi.fn();
+    active.session.on('responseDone', done);
+
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    answerProbe(active, 'r-probe', 'NO');
+    await verdict;
+
+    // `responseDone` drives the spoken-response count and the latency marker.
+    expect(done).not.toHaveBeenCalled();
+  });
+
+  it('cancels the speaking turn by id, leaving a probe in flight alone', async () => {
+    active = await harness();
+    active.emit({ type: 'response.created', response: { id: 'r-main' } });
+    active.emit({ type: 'response.output_audio.delta', delta: silenceDelta(200), item_id: 'i-1' });
+    await settle();
+
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-2' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    await settle();
+
+    // Somebody talks over the agent.
+    active.session.interrupt([{ itemId: 'i-1', playedMs: 100, sentMs: 200 }]);
+    await settle();
+
+    const cancel = active.sent.find((f) => f.type === 'response.cancel') as Record<string, unknown>;
+    // Named, so the probe cannot be what gets cancelled.
+    expect(cancel.response_id).toBe('r-main');
+
+    // The interrupted turn's tail is dropped...
+    const audio = vi.fn();
+    active.session.on('audio', audio);
+    active.emit({
+      type: 'response.output_audio.delta',
+      delta: 'AAAA',
+      item_id: 'i-1',
+      response_id: 'r-main',
+    });
+    await settle();
+    expect(audio).not.toHaveBeenCalled();
+
+    // ...while the verdict for the interrupter's own utterance still lands.
+    answerProbe(active, 'r-probe', 'YES');
+    await expect(verdict).resolves.toBe('YES');
+  });
+
+  it('keeps two probes apart when the model answers them out of order', async () => {
+    active = await harness();
+    const first = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    active.emit({ type: 'response.created', response: { id: 'r-1' } });
+    await settle();
+
+    const second = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-2' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    active.emit({ type: 'response.created', response: { id: 'r-2' } });
+    await settle();
+
+    // Answered newest-first. Each verdict must land on its own utterance — this is
+    // the whole reason a probe names the item it is judging.
+    answerProbe(active, 'r-2', 'YES');
+    answerProbe(active, 'r-1', 'NO');
+
+    await expect(first).resolves.toBe('NO');
+    await expect(second).resolves.toBe('YES');
+  });
+
+  it('gives up on a probe the server never answers, and ignores a late verdict', async () => {
+    active = await harness();
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 40,
+    });
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+
+    // No answer: silence is reported as silence, and the caller decides.
+    await expect(verdict).resolves.toBeNull();
+    expect(warnings()).toMatch(/went unanswered/);
+
+    // A verdict nobody is waiting for must not throw or resolve twice.
+    answerProbe(active, 'r-probe', 'YES');
+    await settle();
+  });
+
+  it('fails a rejected probe by its event id without touching the conversation', async () => {
+    active = await harness();
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    const sendId = probeFrame(active.sent)!.event_id as string;
+
+    // A rejected response.create never opens a response, so the echoed client
+    // event_id is the only thing that says which request failed.
+    active.emit({
+      type: 'error',
+      event_id: sendId,
+      error: { message: 'Conversation already has an active response in progress' },
+    });
+    await expect(verdict).resolves.toBeNull();
+
+    // The rejection must not queue a phantom answer: were the probe's failure read
+    // as the conversation's, this request would be deferred rather than sent, and
+    // would later speak unprompted.
+    active.session.requestResponse();
+    await settle();
+    expect(mainRequests(active.sent)).toHaveLength(1);
+  });
+
+  it('never executes a tool call arriving on a probe', async () => {
+    active = await harness();
+    const calls = vi.fn();
+    active.session.on('functionCall', calls);
+
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    await settle();
+
+    active.emit({
+      type: 'response.function_call_arguments.done',
+      response_id: 'r-probe',
+      call_id: 'call-1',
+      name: 'shell_exec',
+      arguments: '{"command":"rm -rf /"}',
+    });
+    await settle();
+
+    // A meeting is unauthenticated speech and `meeting` mode withholds nothing.
+    expect(calls).not.toHaveBeenCalled();
+    expect(warnings()).toMatch(/out-of-band response/);
+
+    answerProbe(active, 'r-probe', 'NO');
+    await verdict;
+  });
+
+  it('attributes an opened response correctly when metadata is not echoed', async () => {
+    active = await harness();
+    // The conversation's own request is on the wire...
+    active.session.requestResponse();
+    await settle();
+    // ...so a bare response.created belongs to it, not to any probe.
+    active.emit({ type: 'response.created', response: { id: 'r-main' } });
+    await settle();
+
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    // Nothing outstanding for the conversation now, and a probe is waiting, so a
+    // bare response.created is the probe's.
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    active.emit({ type: 'response.output_text.delta', response_id: 'r-probe', delta: 'YES' });
+    active.emit({ type: 'response.done', response: { id: 'r-probe', status: 'completed' } });
+
+    await expect(verdict).resolves.toBe('YES');
+
+    // The speaking turn is still the one a barge-in cancels.
+    active.session.interrupt([]);
+    await settle();
+    const cancel = active.sent.find((f) => f.type === 'response.cancel') as Record<string, unknown>;
+    expect(cancel.response_id).toBe('r-main');
+  });
+
+  it('resolves a probe left in flight when the call ends', async () => {
+    active = await harness();
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 10_000,
+    });
+    await settle();
+
+    active.session.close();
+
+    // Otherwise a caller waits the whole deadline after the meeting is over.
+    await expect(verdict).resolves.toBeNull();
+  });
+
+  it('answers null rather than hanging when the socket is already shut', async () => {
+    active = await harness();
+    active.session.close();
+    const before = active.sent.length;
+
+    // Answered from the closed socket, not by waiting out the deadline — so this
+    // must resolve without a frame ever going out.
+    await expect(
+      active.session.requestOutOfBandText({ instructions: 'gate', deadlineMs: 10_000 }),
+    ).resolves.toBeNull();
+    expect(active.sent).toHaveLength(before);
+  });
+
+  it('places two responses opening at once by the order they were asked for', async () => {
+    active = await harness();
+    // A probe goes out, and before the server acknowledges it the conversation
+    // asks for a response too — routine, since a tool result or the previous
+    // utterance's verdict can land at any moment.
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-2' }],
+      deadlineMs: 500,
+    });
+    active.session.requestResponse();
+    await settle();
+
+    // Both open, bare, in the order they were sent. Swapping them would hand the
+    // conversation's slot to the probe, and nothing would ever release it.
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    active.emit({ type: 'response.created', response: { id: 'r-main' } });
+    await settle();
+
+    // The speaking turn is the one a barge-in cancels...
+    active.session.interrupt([]);
+    await settle();
+    const cancel = active.sent.find((f) => f.type === 'response.cancel') as Record<string, unknown>;
+    expect(cancel.response_id).toBe('r-main');
+
+    // ...the probe still resolves...
+    answerProbe(active, 'r-probe', 'YES');
+    await expect(verdict).resolves.toBe('YES');
+
+    // ...and the session can still speak afterwards. A misplacement here left
+    // `responseActive` set for good and the agent mute for the rest of the call.
+    active.emit({ type: 'response.done', response: { id: 'r-main', status: 'completed' } });
+    await settle();
+    const before = mainRequests(active.sent).length;
+    active.session.requestResponse();
+    await settle();
+    expect(mainRequests(active.sent)).toHaveLength(before + 1);
+  });
+
+  it('forgets a rejected conversation request so it cannot misplace a later one', async () => {
+    active = await harness();
+    active.session.requestResponse();
+    await settle();
+    const rejected = (mainRequests(active.sent)[0] as Record<string, unknown>).event_id as string;
+
+    // The server refuses it, naming the request. No `response.created` is coming.
+    active.emit({
+      type: 'error',
+      event_id: rejected,
+      error: { message: 'Conversation already has an active response in progress' },
+    });
+    await settle();
+
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    // Left in the queue, the dead request would claim this event and the probe
+    // would be read as the conversation's.
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    active.emit({ type: 'response.output_text.delta', response_id: 'r-probe', delta: 'NO' });
+    active.emit({ type: 'response.done', response: { id: 'r-probe', status: 'completed' } });
+
+    await expect(verdict).resolves.toBe('NO');
+  });
+
+  it('never plays audio that arrives on a probe', async () => {
+    active = await harness();
+    const audio = vi.fn();
+    active.session.on('audio', audio);
+
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    await settle();
+
+    // A probe asks for text. Audio on one is a contract violation, not something
+    // to put in the room.
+    active.emit({
+      type: 'response.output_audio.delta',
+      delta: silenceDelta(100),
+      item_id: 'i-x',
+      response_id: 'r-probe',
+    });
+    await settle();
+    expect(audio).not.toHaveBeenCalled();
+
+    answerProbe(active, 'r-probe', 'NO');
+    await verdict;
+  });
+
+  it('still refuses a tool call on a probe that has already given up', async () => {
+    active = await harness();
+    const calls = vi.fn();
+    active.session.on('functionCall', calls);
+
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 40,
+    });
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    await expect(verdict).resolves.toBeNull();
+
+    // The deadline passing does not stop the server generating — and a response
+    // misbehaving badly enough to time out is exactly when it might emit
+    // something it was told it had no tools for.
+    active.emit({
+      type: 'response.function_call_arguments.done',
+      response_id: 'r-probe',
+      call_id: 'call-1',
+      name: 'shell_exec',
+      arguments: '{"command":"rm -rf /"}',
+    });
+    await settle();
+
+    expect(calls).not.toHaveBeenCalled();
+  });
+
+  it('does not let a response we know is out-of-band claim the conversation slot', async () => {
+    active = await harness();
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 200,
+    });
+    await settle();
+    const sendId = probeFrame(active.sent)!.event_id as string;
+    await expect(verdict).resolves.toBeNull();
+
+    // Opens after its probe gave up, but still carries our marker. Treating it as
+    // the conversation's would claim a slot that nothing then releases.
+    active.emit({
+      type: 'response.created',
+      response: { id: 'r-late', metadata: { prism_oob: sendId } },
+    });
+    await settle();
+
+    const before = mainRequests(active.sent).length;
+    active.session.requestResponse();
+    await settle();
+    expect(mainRequests(active.sent)).toHaveLength(before + 1);
+  });
+
+  it('settles a probe when the server drops the socket', async () => {
+    active = await harness();
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 10_000,
+    });
+    await settle();
+
+    // The common way a call ends. Waiting out the deadline after the socket is
+    // gone would hold the gate — and so the room — for ten seconds.
+    active.dropFromServer();
+
+    await expect(verdict).resolves.toBeNull();
   });
 });
