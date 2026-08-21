@@ -296,7 +296,7 @@ describe('deciding whether to answer', () => {
     expect(probe.response.conversation).toBe('none');
     const referenced = (probe.response.input as Array<{ type: string; id: string }>).map((r) => r.id);
     expect(referenced.at(-1)).toBe('item-1');
-    expect(referenced.length).toBeLessThanOrEqual(6);
+    expect(referenced.length).toBeLessThanOrEqual(12);
     expect(spokenRequests(sent)).toHaveLength(0);
 
     await answerGate(send, sent, 'YES');

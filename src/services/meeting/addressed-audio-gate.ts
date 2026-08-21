@@ -94,22 +94,29 @@ const VERDICT_REASONING_EFFORT = 'low';
 /**
  * How many spoken turns of the call a verdict may look back over.
  *
- * The judged utterance plus the five before it. Both extremes were tried live and
+ * The judged utterance plus the eleven before it. Both extremes were tried live and
  * both failed: judging the utterance alone cannot answer an unnamed follow-up,
  * because "did you find anything?" carries no evidence of who it is for, while
- * inheriting the whole conversation answered them well and then tripped the token
- * rate limit — 21,382 tokens for one response against a 40,000-per-minute ceiling,
- * which is under two responses a minute where a busy room produces ten to twenty
- * utterances.
+ * inheriting the whole conversation grows without bound for the length of the call.
  *
- * Six because the follow-ups seen failing needed two or three turns of context —
- * the question, the agent's answer, the follow-up — and this leaves room either
- * side without the cost growing for the length of the call. Tool output never
- * enters the window at all (see `recentConversationItems`), which measurement
- * suggests matters more than the count: one 12,000-character tool result came to
- * ~2,900 tokens, more than the entire spoken conversation around it.
+ * Twelve rather than the six this started at, because a bare exchange is not what a
+ * room looks like. A follow-up needs the agent's own turn in view to be recognisable
+ * as one, and people talk in between: four remarks between "Iris, check the docs"
+ * and "did you find anything?" is ordinary, and at six turns the agent's answer has
+ * already fallen out of the window — which puts the original failure straight back.
+ *
+ * What bounds it now is **latency, not tokens**. A verdict is silence in the room
+ * and measures 780–1230ms; a low-tier key made tokens the binding constraint
+ * (40,000 a minute, where one post-tool response asked for 25,187), but a normal
+ * one has orders of magnitude more headroom. So raise this while watching the
+ * figure on `[Meeting:Gate]`, and treat a rise there as the reason to stop.
+ *
+ * Tool output never enters the window at all (see `recentConversationItems`), and
+ * that matters more than the count: one 12,000-character tool result measured
+ * ~2,900 tokens, more than the entire spoken conversation around it, while saying
+ * nothing about who was addressed.
  */
-const CONTEXT_WINDOW_TURNS = 6;
+const CONTEXT_WINDOW_TURNS = 12;
 
 export interface AddressedGatePromptInput {
   /** What the room hears the agent called — the name it introduced itself by. */

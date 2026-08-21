@@ -178,9 +178,11 @@ describe('the window a verdict looks back over', () => {
     const session = sessionAnswering('NO', many);
     await judgeAddressed(session, { ...room, itemId: 'item-29' });
 
-    // Six turns: the cost of a probe must not grow with the length of the call,
-    // which is what tripped the token rate limit when it inherited everything.
-    expect(referencedIds(session.asked[0])).toHaveLength(6);
+    // Bounded: a probe's cost must not grow with the length of the call. The exact
+    // number is a judgement about how far back a follow-up stays recognisable, so
+    // this asserts the bound holds rather than pinning the value.
+    expect(referencedIds(session.asked[0]).length).toBeLessThanOrEqual(12);
+    expect(referencedIds(session.asked[0]).length).toBeGreaterThan(1);
     expect(referencedIds(session.asked[0]).at(-1)).toBe('item-29');
   });
 
