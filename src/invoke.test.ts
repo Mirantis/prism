@@ -658,7 +658,8 @@ describe('invoke', () => {
   });
 
   describe('tool filtering while locked in', () => {
-    // The six workspace-markdown writers, i.e. the whole locked set.
+    // The six workspace-markdown writers plus the two long-term memory writers,
+    // i.e. the whole locked set.
     const LOCKED_TOOLS = [
       'update_soul',
       'update_memory',
@@ -666,6 +667,8 @@ describe('invoke', () => {
       'update_vision',
       'update_heartbeat_config',
       'clear_bootstrap',
+      'memory_write',
+      'memory_delete',
     ];
 
     beforeEach(() => {
@@ -692,7 +695,7 @@ describe('invoke', () => {
     // subagent or the next heartbeat.
     const modes = ['chat', 'subagent', 'heartbeat', 'cron', 'goal', 'webhook'] as const;
 
-    it.each(modes)('%s mode omits every workspace-markdown writer while locked', async (mode) => {
+    it.each(modes)('%s mode omits every document and memory writer while locked', async (mode) => {
       await invoke(createTestInvokeRequest({ mode }));
 
       const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
@@ -701,16 +704,15 @@ describe('invoke', () => {
       }
     });
 
-    it.each(modes)('%s mode keeps rename_self, update_settings and memory tools while locked', async (mode) => {
+    it.each(modes)('%s mode keeps rename_self, update_settings and memory_search while locked', async (mode) => {
       await invoke(createTestInvokeRequest({ mode }));
 
       const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
-      // Renames, behavioural settings and vector memory stay editable.
+      // Renames and behavioural settings stay editable, and the agent still
+      // reads the memories it recorded before the lock.
       expect(toolNames).toContain('rename_self');
       expect(toolNames).toContain('update_settings');
       expect(toolNames).toContain('memory_search');
-      expect(toolNames).toContain('memory_write');
-      expect(toolNames).toContain('memory_delete');
       expect(toolNames).toContain('shell_exec');
     });
 

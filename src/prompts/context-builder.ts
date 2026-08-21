@@ -733,8 +733,9 @@ Only your **final message** in a multi-step turn is delivered to the user. Inter
 }
 
 /**
- * Locked-in mode notice: why the workspace-markdown writers are absent from the
- * tool set, what to do instead, and who can lift the lock.
+ * Locked-in mode notice: why the workspace-markdown writers and the long-term
+ * memory writers are absent from the tool set, what to do instead, and who can
+ * lift the lock.
  *
  * `inBootstrapPhase` adds the paused-onboarding paragraph. The bootstrap script
  * is dropped from a locked prompt, so this is the only way an agent locked before
@@ -750,11 +751,11 @@ function getLockedInInstructions(inBootstrapPhase: boolean): string {
 
   return `# Locked-In Mode
 
-Locked-in mode is **on**, so your workspace files — soul, memory summary, user profile, vision, heartbeat config, and bootstrap notes — are read-only.
+Locked-in mode is **on**, so your workspace files — soul, memory summary, user profile, vision, heartbeat config, and bootstrap notes — are read-only. Your long-term memory is frozen too: you can search it, but you cannot add or delete entries.
 
-This is the user's choice, not a fault. When you notice something you would normally have written to one of those files, say so in your reply — describe the change you would have made and why — and note that the user can turn locked-in mode off in their agent settings. Do not try to work around it by editing files through the shell.${onboarding}
+This is the user's choice, not a fault. When you notice something you would normally have written to one of those files or remembered for later, say so in your reply — describe what you would have recorded and why — and note that the user can turn locked-in mode off in their agent settings. Do not try to work around it by editing files through the shell.${onboarding}
 
-Everything else is unaffected: you can still search and write long-term memories, run tools, and change behavioural settings such as your heartbeat interval or timezone.`;
+Everything else is unaffected: you can still search long-term memory, run tools, and change behavioural settings such as your heartbeat interval or timezone.`;
 }
 
 // Exported for unit tests: these sections read the filesystem, so asserting on

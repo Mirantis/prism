@@ -1,5 +1,6 @@
 Feature: Locked-in mode
-  As a user I want to freeze my agent's identity documents against its own edits
+  As a user I want to freeze my agent's identity documents and long-term memory
+  against its own edits
 
   Background:
     Given I am logged in
@@ -25,3 +26,17 @@ Feature: Locked-in mode
     And I type "Use your update_soul tool to append the line PIRATEMODE7K to your soul document. Then tell me whether it worked." in the chat input
     And I send the message
     Then the stored soul document changes
+
+  Scenario: A locked agent stores no long-term memory
+    Given the agent is locked in
+    When I navigate to the agent chat page
+    And I type "Use your memory_write tool to remember exactly this observation: PIRATEMEMO4X. Then tell me whether it worked." in the chat input
+    And I send the message
+    Then no stored memory entry holds the marker
+
+  Scenario: An unlocked agent still stores a long-term memory
+    Given the agent is not locked in
+    When I navigate to the agent chat page
+    And I type "Use your memory_write tool to remember exactly this observation: PIRATEMEMO4X. Then tell me whether it worked." in the chat input
+    And I send the message
+    Then a stored memory entry holds the marker

@@ -19,6 +19,9 @@ Manage long-term memory. See **[Memory](memory.md)** for the full picture.
   action / decision / event) and an importance score.
 - **Delete** — remove entries that are no longer accurate.
 
+**Write** and **Delete** are withheld and refused while
+**[locked-in mode](configuration.md#locked-in-mode)** is on. **Search** stays.
+
 ## Self-management
 
 The agent can edit its own identity from inside a conversation — this is how
@@ -33,8 +36,8 @@ The agent can edit its own identity from inside a conversation — this is how
 - **Clear the bootstrap** prompt once first-run onboarding is done.
 
 When **[locked-in mode](configuration.md#locked-in-mode)** is on, the document
-writers and "clear the bootstrap" are withheld and their writes refused — renames,
-settings and memory search stay available.
+writers, "clear the bootstrap" and the memory write/delete tools are withheld and
+their writes refused — renames, settings and memory search stay available.
 
 ## Scheduling
 

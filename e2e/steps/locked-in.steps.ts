@@ -2,20 +2,21 @@
  * Locked-in mode step definitions.
  *
  * The lock's guarantee is about stored state, so every assertion reads the soul
- * document out of the database rather than matching on reply text. Each chat
- * scenario ends on one DB assertion and never chains two agent-response
- * assertions: concise mode delivers exactly one bubble per turn.
+ * document or the memory entries out of the database rather than matching on
+ * reply text. Each chat scenario ends on one DB assertion and never chains two
+ * agent-response assertions: concise mode delivers exactly one bubble per turn.
  *
  * The `agent locked write refused` event is not asserted here. The writer tools
  * are withheld from a locked turn, so the refusal is reachable only on a
- * mid-turn flip. It is covered in `src/tools/__tests__/agent-config.test.ts`.
+ * mid-turn flip. It is covered in `src/tools/__tests__/agent-config.test.ts` and
+ * `src/tools/__tests__/memory.test.ts`.
  *
- * The locked and unlocked scenarios are a pair, and neither half stands alone.
+ * The locked and unlocked scenarios are pairs, and neither half stands alone.
  * "The stored soul document is unchanged" also passes when the turn failed for a
  * reason that has nothing to do with the lock — a model error, a lost socket, a
  * refusal to use the tool at all. The unlocked control is what rules that out: it
  * sends the same prompt and requires the write to land. Delete either scenario and
- * the other stops proving anything.
+ * the other stops proving anything. The memory pair works the same way.
  */
 
 import { createBdd } from 'playwright-bdd';
@@ -31,6 +32,16 @@ let soulBefore = '';
 
 /** Sentinel the prompt asks the agent to write into the soul document. */
 const SOUL_MARKER = 'PIRATEMODE7K';
+
+/** Sentinel the prompt asks the agent to store as a long-term memory. */
+const MEMORY_MARKER = 'PIRATEMEMO4X';
+
+async function markedMemoryCount(): Promise<number> {
+  const prisma = dbHelper.getPrisma();
+  return prisma.memoryEntry.count({
+    where: { agentId: DEFAULT_AGENT_ID, content: { contains: MEMORY_MARKER } },
+  });
+}
 
 async function setLockedIn(lockedIn: boolean): Promise<void> {
   const prisma = dbHelper.getPrisma();
@@ -100,4 +111,22 @@ Then('the stored soul document changes', async ({ page }) => {
       { timeout: 30_000 },
     )
     .toContain(SOUL_MARKER);
+});
+
+Then('no stored memory entry holds the marker', async ({ page }) => {
+  const homePage = new HomePage(page);
+  await homePage.waitForAgentResponse();
+  await homePage.waitForStreamComplete();
+
+  expect(await markedMemoryCount()).toBe(0);
+});
+
+Then('a stored memory entry holds the marker', async ({ page }) => {
+  const homePage = new HomePage(page);
+  await homePage.waitForAgentResponse();
+  await homePage.waitForStreamComplete();
+
+  // The control for the scenario above: without the lock the same request stores
+  // the memory, so "no entry holds the marker" says something about the lock.
+  await expect.poll(markedMemoryCount, { timeout: 30_000 }).toBeGreaterThan(0);
 });

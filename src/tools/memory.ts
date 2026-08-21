@@ -11,6 +11,8 @@ import {
   memoryManagerService,
   MemoryWriteInput,
 } from '../services/memory-manager.service';
+import { agentWorkspaceService } from '../services/agent-workspace.service';
+import { refuseLockedWrite } from '../lib/locked-in';
 
 export function getMemoryTools(
   userId: string,
@@ -44,6 +46,11 @@ export function getMemoryTools(
         importance: z.number().optional().describe('Importance score 1-10 (default: 5)'),
       }),
       execute: async ({ content, category, importance }) => {
+        // Locked-in mode freezes long-term memory too. Read live, so the lock
+        // holds when it is switched on mid-turn.
+        if (await agentWorkspaceService.isLockedIn()) {
+          return refuseLockedWrite(agentId, 'memoryEntry');
+        }
         const entry = await memoryManagerService.write(
           userId,
           { content, category, importance } as MemoryWriteInput,
@@ -60,6 +67,9 @@ export function getMemoryTools(
         reason: z.string().optional().describe('Brief reason for deletion'),
       }),
       execute: async ({ entryIds, reason }) => {
+        if (await agentWorkspaceService.isLockedIn()) {
+          return refuseLockedWrite(agentId, 'memoryEntry');
+        }
         const deletedCount = await memoryManagerService.deleteMany(userId, entryIds, { agentId });
         return { success: true, deletedCount, reason };
       },
