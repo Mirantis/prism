@@ -8,7 +8,7 @@
 
 import { trackEvent } from './telemetry';
 
-/** Fields the lock protects, as they are named in the database. */
+/** Lock-protected targets used for telemetry and error text — not agentWorkspace column names (`memoryEntry` is a logical discriminator). */
 export type LockedField =
   | 'soulMd'
   | 'memoryMd'
