@@ -45,9 +45,11 @@ export interface CollectToolsInput {
    */
   registerAttachmentInjection?: (message: ModelMessage) => void;
   /**
-   * Locked-in mode, taken from the caller's context. Not re-read here: two
-   * requests built from the same context must produce a byte-identical tools
-   * block, or they miss the shared prompt-cache prefix.
+   * Locked-in mode, taken from the caller's context. Withholds the
+   * workspace-markdown writers and the long-term memory writers
+   * (`memory_write`, `memory_delete`); `memory_search` stays. Not re-read here:
+   * two requests built from the same context must produce a byte-identical
+   * tools block, or they miss the shared prompt-cache prefix.
    *
    * Required, not optional: a caller that omits the flag would leave the
    * writers in its schema and lean on the runtime refusal alone.
@@ -149,14 +151,14 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   // name with a built-in the current mode removed must not survive either.
   const modeFilteredTools = filterToolsByMode(merged, input.mode);
 
-  // Locked-in mode: withhold the workspace-markdown writers. Applied after the
-  // mode filter so it holds for every mode, and over the merged map so a
-  // platform MCP tool cannot answer to a withheld name — those names are
-  // un-namespaced. A plugin tool is namespaced by plugin and server, so it
-  // never collides either way. The refusal in agent-config.ts is what enforces
-  // the lock.
+  // Locked-in mode: withhold the workspace-markdown writers and the long-term
+  // memory writers. Applied after the mode filter so it holds for every mode,
+  // and over the merged map so a platform MCP tool cannot answer to a withheld
+  // name — those names are un-namespaced. A plugin tool is namespaced by plugin
+  // and server, so it never collides either way. The refusals in
+  // agent-config.ts and memory.ts are what enforce the lock.
   const filteredTools = input.lockedIn
-    ? omitLockedWorkspaceTools(modeFilteredTools)
+    ? omitLockedTools(modeFilteredTools)
     : modeFilteredTools;
 
   // Fetch subagents (skip for subagent invocations to prevent recursion)
@@ -213,26 +215,29 @@ export function withToolsCacheControl(
 }
 
 /**
- * Tools that write the locked workspace markdown fields. Withheld from the tool
- * set while locked-in mode is on. `rename_self` and `update_settings` are not in
- * the set: renames and behavioural settings (heartbeat interval, timezone,
- * verbose) stay editable while locked, and `update_settings` cannot reach
- * `lockedIn`.
+ * Tools that write the locked workspace markdown fields or long-term memory.
+ * Withheld from the tool set while locked-in mode is on. `memory_search` is not
+ * in the set: a locked agent still reads its memories, it just cannot add or
+ * remove them. `rename_self` and `update_settings` are not in the set either:
+ * renames and behavioural settings (heartbeat interval, timezone, verbose) stay
+ * editable while locked, and `update_settings` cannot reach `lockedIn`.
  */
-const LOCKED_WORKSPACE_TOOL_NAMES = new Set([
+const LOCKED_TOOL_NAMES = new Set([
   'update_soul',
   'update_memory',
   'update_user_profile',
   'update_vision',
   'update_heartbeat_config',
   'clear_bootstrap',
+  'memory_write',
+  'memory_delete',
 ]);
 
-/** Drop the workspace-markdown writers while locked-in mode is on. */
-function omitLockedWorkspaceTools(tools: Record<string, Tool>): Record<string, Tool> {
+/** Drop the workspace-markdown and memory writers while locked-in mode is on. */
+function omitLockedTools(tools: Record<string, Tool>): Record<string, Tool> {
   const result: Record<string, Tool> = {};
   for (const [name, tool] of Object.entries(tools)) {
-    if (!LOCKED_WORKSPACE_TOOL_NAMES.has(name)) result[name] = tool;
+    if (!LOCKED_TOOL_NAMES.has(name)) result[name] = tool;
   }
   return result;
 }

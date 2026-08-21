@@ -78,6 +78,17 @@ describe('buildSystemPrompt', () => {
     expect(prompt).not.toMatch(/\n{3}/);
   });
 
+  it('does not promise memory writes to a locked agent', async () => {
+    const prompt = await buildSystemPrompt(createTestAgentContext({ lockedIn: true }), 'chat');
+
+    const locked = prompt.slice(prompt.indexOf('# Locked-In Mode'));
+    // The lock covers long-term memory too, so the notice must not tell the model
+    // it can still write memories — the tools are gone and the write is refused.
+    expect(locked).not.toContain('write long-term memories');
+    expect(locked).toContain('cannot add or delete entries');
+    expect(locked).toContain('search long-term memory');
+  });
+
   it('omits the locked-in section and keeps the install guidance when unlocked', async () => {
     const prompt = await buildSystemPrompt(createTestAgentContext({ lockedIn: false }), 'chat');
 

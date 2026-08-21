@@ -12,6 +12,7 @@ import prisma from '../lib/prisma';
 import { heartbeatService } from '../services/heartbeat.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { applyEdits } from '../lib/apply-edit';
+import { refuseLockedWrite } from '../lib/locked-in';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { config } from '../config';
@@ -34,29 +35,6 @@ type WorkspaceFileInput = z.infer<typeof workspaceFileInputSchema>;
 
 /** DB field names for workspace markdown files. */
 type WorkspaceFileField = 'soulMd' | 'memoryMd' | 'userMd' | 'heartbeatMd' | 'visionMd';
-
-/**
- * Refusal returned to the model when a workspace-markdown write is attempted
- * while locked-in mode is on.
- */
-const LOCKED_IN_REFUSAL =
-  'Locked-in mode is on, so your workspace files are read-only and this change was not saved. ' +
-  'Tell the user what you would have changed and that they can turn locked-in mode off in their agent settings.';
-
-/**
- * The one emitter for the refused-write event, so a refusal is never
- * double-counted.
- */
-function refuseLockedWrite(
-  agentId: string,
-  field: WorkspaceFileField | 'bootstrapMd',
-): { success: false; error: string } {
-  trackEvent('agent locked write refused', null, {
-    'agent.id': agentId,
-    'config.field': field,
-  });
-  return { success: false, error: LOCKED_IN_REFUSAL };
-}
 
 /**
  * Resolve the final content for a workspace-file update, then persist it.

@@ -131,21 +131,23 @@ that were already delivered.
 ## Locked-in mode
 
 `lockedIn` stops the agent from reshaping itself. While the lock is on, the
-agent's own tools may no longer rewrite the six workspace markdown files:
+agent's own tools may no longer rewrite the six workspace markdown files, nor add
+to or delete from its long-term memory:
 
 | Frozen while locked | Still editable while locked |
 |---------------------|-----------------------------|
-| **Soul**, **User**, **Memory** (the curated summary), **Vision**, **Heartbeat** config, **Bootstrap** | **Behavioural settings** — heartbeat interval, timezone, `verbose`; the agent's **name** (`rename_self`); **vector memory** (search/write/delete), so it keeps learning |
+| **Soul**, **User**, **Memory** (the curated summary), **Vision**, **Heartbeat** config, **Bootstrap**; **long-term memory** writes and deletes | **Behavioural settings** — heartbeat interval, timezone, `verbose`; the agent's **name** (`rename_self`); **long-term memory search**, so it still reads what it learned before the lock |
 
 The **Agent Guide** is in neither column. No tool writes it, so it is read-only to
 the agent whether the lock is on or off.
 
-The lock works in two layers. The workspace-writing tools (`update_soul`,
-`update_memory`, `update_user_profile`, `update_vision`,
-`update_heartbeat_config`, `clear_bootstrap`) are withheld from the tool set, and
-every one of those writes is refused at the point it happens. Turning the lock on
-takes effect immediately. A locked agent that is asked to change one of these
-files says what it would have changed and points you at the setting.
+The lock works in two layers. The writing tools (`update_soul`, `update_memory`,
+`update_user_profile`, `update_vision`, `update_heartbeat_config`,
+`clear_bootstrap`, `memory_write`, `memory_delete`) are withheld from the tool
+set, and every one of those writes is refused at the point it happens.
+`memory_search` stays. Turning the lock on takes effect immediately. A locked
+agent that is asked to change one of these files, or to remember something, says
+what it would have done and points you at the setting.
 
 **The agent cannot unlock itself.** Only you can, via:
 

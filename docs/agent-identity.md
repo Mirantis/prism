@@ -43,8 +43,9 @@ The Web UI and TUI panels show these documents as **read-only viewers**.
 
 Editing the documents is disabled in
 **[locked-in mode](configuration.md#locked-in-mode)**: the agent's document
-writers are refused and the bootstrap script is paused. Ask a locked agent to
-change its soul and it tells you what it would have changed instead.
+writers are refused, its long-term memory writes and deletes are refused, and the
+bootstrap script is paused. Ask a locked agent to change its soul and it tells you
+what it would have changed instead.
 
 ## The bootstrap flow
 
@@ -62,8 +63,8 @@ Beyond the documents, a few dials shape behavior and are stored on the agent:
 - **Timezone** (default `UTC`) — used for scheduling and daily resets.
 - **Heartbeat interval** (default 8 hours) — see **[Heartbeat](heartbeat.md)**.
 - **Model** — the LLM it runs on (defaults to the runtime's configured model).
-- **Locked-in mode** (default off) — freezes the documents above against the
-  agent's own tools; see
+- **Locked-in mode** (default off) — freezes the documents above, plus long-term
+  memory writes, against the agent's own tools; see
   **[Configuration → Locked-in mode](configuration.md#locked-in-mode)**.
 
 You can adjust these by asking the agent, or via the Web UI / TUI where exposed.

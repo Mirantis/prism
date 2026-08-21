@@ -47,9 +47,9 @@ export function LockedInField({ details }: { details: AgentDetails }) {
       </div>
       <span className="text-xs text-muted-foreground">
         While locked, the agent's own tools can't rewrite Soul, User, Memory, Vision, Heartbeat
-        or Bootstrap — and it can't unlock itself. Settings, renames and memory search still
-        work. First-run onboarding is paused while this is on, and runs when you unlock the
-        agent.
+        or Bootstrap, and can't add or delete long-term memories — and it can't unlock itself.
+        Settings, renames and memory search still work. First-run onboarding is paused while
+        this is on, and runs when you unlock the agent.
       </span>
       {error && <span className="text-xs text-destructive">{error}</span>}
     </div>
