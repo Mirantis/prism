@@ -41,7 +41,7 @@ import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { BargeInPolicy } from './barge-in';
 import { ResponsePolicy, type EffectiveMode, type ResponseMode } from './response-policy';
 import { judgeAddressed, ADDRESSED_DEADLINE_MS } from './addressed-audio-gate';
-import { formatKeywords, formatTranscript } from './transcript-log';
+import { formatTranscript } from './transcript-log';
 
 /**
  * Most names handed to the transcriber at once.
@@ -101,13 +101,13 @@ export interface VoiceConversationStats {
   gateFailed: number;
   gateLatencyMs: number;
   /**
-   * Utterances that closed while an earlier verdict was still in flight.
+   * Answers the agent decided to give that the room never heard.
    *
-   * The probe judges the conversation's latest utterance rather than a named one, so
-   * this counts how often that could have attributed a verdict to the wrong sentence.
-   * Zero means the ambiguity never arose in the call, whatever the design allows.
+   * A response can end without producing audio — a rate limit, a server error. The
+   * gate said yes, the request went out, and the room got silence, which is
+   * indistinguishable from never having been addressed unless it is counted here.
    */
-  gateOverlaps: number;
+  responsesFailed: number;
 }
 
 export class VoiceConversation {
@@ -123,9 +123,7 @@ export class VoiceConversation {
   private gateCalls = 0;
   private gateFailed = 0;
   private gateLatencyMs = 0;
-  /** Verdicts awaiting an answer, so an ambiguous attribution window is visible. */
-  private gateInFlight = 0;
-  private gateOverlaps = 0;
+  private responsesFailed = 0;
   private currentItemId: string | null = null;
   /**
    * When the room last fell silent, and why the agent is about to break it.
@@ -140,14 +138,6 @@ export class VoiceConversation {
   private pendingAnswer: { at: number; via: string } | null = null;
   /** Last keyword list sent, so the poll doesn't resend an unchanged roster. */
   private keywordSignature: string | null = null;
-  /**
-   * The keyword list currently in force, for the diagnostic line below.
-   *
-   * Starts as the session's connect-time list — the agent's name alone — so a
-   * verdict logged before the first roster poll names what was actually seeded
-   * rather than nothing.
-   */
-  private keywords: string[] = [];
   /**
    * Everyone else the room currently holds, agent excluded.
    *
@@ -169,9 +159,6 @@ export class VoiceConversation {
       agentName: options.agentName,
       endpointOverride: options.endpointOverride,
     });
-
-    // Mirrors what `RealtimeSession` seeds at connect time.
-    this.keywords = [options.agentName];
 
     this.responsePolicy = new ResponsePolicy({ mode: options.responseMode });
 
@@ -249,6 +236,10 @@ export class VoiceConversation {
       this.pendingAnswer = null;
     });
 
+    this.session.on('responseFailed', () => {
+      this.responsesFailed += 1;
+    });
+
     this.session.on('functionCall', (call) => {
       this.toolCalls += 1;
       void this.runTool(call.callId, call.name, call.argumentsJson);
@@ -300,35 +291,28 @@ export class VoiceConversation {
    *
    * Not awaited by the caller: the room keeps talking while this is in flight, and
    * a later utterance must be free to be judged before an earlier verdict lands.
-   * Each probe names the utterance it is judging, so verdicts arriving out of order
-   * still land on the right sentence.
+   * Each probe ends its context on the utterance it is judging, so verdicts arriving
+   * out of order still land on the right sentence.
    */
   private async judgeThenMaybeAnswer(itemId: string): Promise<void> {
     const asked = Date.now();
     this.gateCalls += 1;
-
-    // The probe judges "the latest utterance" rather than a named one, so a turn
-    // closing while another verdict is still in flight can leave that verdict filed
-    // against the wrong utterance. Overlapping speech is the whole reason this is
-    // worth saying out loud: without the line, a verdict that looks simply wrong is
-    // indistinguishable from one that was correct about a different sentence.
-    if (this.gateInFlight > 0) {
-      this.gateOverlaps += 1;
-      logger.warn(
-        `[Meeting:Gate] item=${itemId || 'none'} closed while ${this.gateInFlight} verdict(s) ` +
-          'were still in flight — verdicts may be attributed to the wrong utterance',
-      );
-    }
-    this.gateInFlight += 1;
 
     const verdict = await judgeAddressed(this.session, {
       itemId,
       agentName: this.options.agentName,
       roster: this.roster,
     });
-    this.gateInFlight -= 1;
     this.gateLatencyMs += verdict.elapsedMs;
-    if (verdict.failed) this.gateFailed += 1;
+
+    // A failure is counted here and nowhere else. It must not reach the policy: a
+    // verdict that never happened is not a suppression, and counting it as one
+    // would put failures into `suppressed` as well as `gate_failed` — leaving no
+    // way to read "the gate earned its keep" off the two numbers.
+    if (verdict.failed) {
+      this.gateFailed += 1;
+      return;
+    }
 
     // The call ended under the probe. Nothing to answer into.
     if (this.stopped) return;
@@ -350,11 +334,11 @@ export class VoiceConversation {
   /**
    * Ask for a response, and record how long the room waited to get one.
    *
-   * `via` names the path that decided it, because the paths have very different
-   * costs and the point of measuring is to tell them apart: a verdict reached from a
-   * partial transcript is free (it ran while the speaker was still talking), while
-   * one reached from the finished transcript is a model round trip the room sits
-   * through in silence.
+   * `via` names what decided it — `open-mode` when a one-to-one call answers at the
+   * turn boundary without asking anything, `gate` when a verdict was fetched. The
+   * two cost the room very differently, and the point of measuring is to tell them
+   * apart: the first is free, the second is a model round trip the room sits through
+   * in silence.
    */
   private answer(via: string): void {
     const waited = this.silenceSince === null ? null : Date.now() - this.silenceSince;
@@ -466,7 +450,6 @@ export class VoiceConversation {
     const signature = keywords.join('\u0000');
     if (signature === this.keywordSignature) return;
     this.keywordSignature = signature;
-    this.keywords = keywords;
     // The gate is given the names uncapped: the cap above exists because every
     // keyword biases the transcriber toward hearing it, and a prompt has no such
     // cost. Telling the gate about somebody the transcriber was not told about is
@@ -508,7 +491,7 @@ export class VoiceConversation {
       gateCalls: this.gateCalls,
       gateFailed: this.gateFailed,
       gateLatencyMs: this.gateLatencyMs,
-      gateOverlaps: this.gateOverlaps,
+      responsesFailed: this.responsesFailed,
     };
   }
 

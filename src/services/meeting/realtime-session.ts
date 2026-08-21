@@ -94,11 +94,17 @@ export interface OutOfBandRequest {
   /**
    * The context for this response, in place of the conversation.
    *
-   * An `{ type: 'item_reference', id }` entry points at an item the session
-   * already holds, so referencing an utterance re-sends no audio. Omitting
-   * `input` entirely falls back to the whole conversation, which is both far more
-   * expensive and — for anything judged per-utterance — ambiguous about *which*
-   * utterance it means, so callers are expected to pass it.
+   * An `{ type: 'item_reference', id }` entry points at an item the session already
+   * holds, so referencing an utterance re-sends no audio — but the tokens are still
+   * processed and still counted against the rate limit, so a reference saves
+   * bandwidth rather than cost.
+   *
+   * **Pass it.** Omitting it inherits the entire conversation, which grows for the
+   * length of the call: measured at 21,382 tokens on a live call against a 40,000
+   * tokens-per-minute limit, which is under two responses a minute. It is also
+   * ambiguous about *which* utterance is being judged, since the model can only be
+   * told "the most recent one" and two turns can close while one verdict is in
+   * flight. A bounded list ending on the item in question fixes both.
    */
   input?: unknown[];
   /** Merged into the frame's metadata; the marker key is added on top. */
@@ -146,6 +152,14 @@ interface PendingCreate {
 
 /** Most response ids remembered as a probe's. Bounded; turns are short-lived. */
 const PROBE_RESPONSE_LIMIT = 32;
+
+/**
+ * Spoken turns kept for a probe to draw context from.
+ *
+ * Comfortably more than any window asks for, so the cap here is only a guard
+ * against an hour-long call growing a list forever.
+ */
+const CONVERSATION_ITEM_LIMIT = 40;
 
 export interface RealtimeSessionOptions {
   /** The agent's system prompt — Soul, User, Agent Guide, memory, and the rest. */
@@ -197,18 +211,19 @@ export interface RealtimeSessionEvents {
    * call answer as promptly as it did when the server created responses itself.
    */
   utteranceCommitted: (itemId: string) => void;
-  /**
-   * Transcription so far for an utterance still being transcribed.
-   *
-   * Carries the text accumulated up to this point, not just the new fragment.
-   * People put a name at the *start* of a sentence, so this usually settles the
-   * question a good few hundred milliseconds before `transcript` would.
-   */
-  transcriptPartial: (itemId: string, textSoFar: string) => void;
   /** A participant's finished utterance, transcribed. */
   transcript: (itemId: string, text: string) => void;
   functionCall: (call: RealtimeFunctionCall) => void;
   responseDone: () => void;
+  /**
+   * A conversation response ended without producing anything.
+   *
+   * The agent decided to speak and the room heard silence — a rate limit, a server
+   * error, an exhausted token budget. Indistinguishable from never having been
+   * asked unless it is counted, which is what made this take two rounds to explain
+   * the first time it happened.
+   */
+  responseFailed: (status: string) => void;
   /** A protocol-level error from the API; the socket usually stays open. */
   apiError: (message: string) => void;
   closed: (reason: string) => void;
@@ -233,12 +248,14 @@ export class RealtimeSession extends EventEmitter {
 
   private ws: WebSocket | null = null;
   /**
-   * Transcription accumulated per utterance while it is still being transcribed.
+   * Spoken turns the conversation holds, oldest first, bounded.
    *
-   * Bounded by the conversation itself: an entry is added when an utterance starts
-   * being transcribed and removed when it finishes, so at most a handful are live.
+   * What a gate probe's context window is drawn from. Bounded because a call runs
+   * for an hour and a probe only ever wants the recent few — and because an
+   * unbounded list is how the probe came to re-read the whole call and trip the
+   * token rate limit.
    */
-  private readonly partialTranscripts = new Map<string, string>();
+  private readonly conversationItems: string[] = [];
   private closed = false;
   /** The audio item currently being spoken, for targeted truncation. */
   private currentItemId: string | null = null;
@@ -514,32 +531,30 @@ export class RealtimeSession extends EventEmitter {
         return;
       }
 
-      case 'conversation.item.input_audio_transcription.delta': {
-        const itemId = typeof event.item_id === 'string' ? event.item_id : '';
-        const delta = typeof event.delta === 'string' ? event.delta : '';
-        if (!itemId || !delta) return;
-        const soFar = (this.partialTranscripts.get(itemId) ?? '') + delta;
-        this.partialTranscripts.set(itemId, soFar);
-        this.emitEvent('transcriptPartial', itemId, soFar);
+      // Every item the conversation gains, which is what a gate probe's context
+      // window is drawn from. Only spoken turns are kept: a `function_call_output`
+      // can be 12,000 characters of tool result (`tool-bridge.ts`) — measured at
+      // ~2,900 tokens for one — and says nothing about who was addressed, so
+      // including it would make each probe cost more than the room does.
+      case 'conversation.item.added':
+      case 'conversation.item.created': {
+        const item = event.item as { id?: string; type?: string; role?: string } | undefined;
+        if (item?.id && item.type === 'message' && (item.role === 'user' || item.role === 'assistant')) {
+          this.rememberConversationItem(item.id);
+        }
         return;
       }
 
-      // Transcription can fail outright. Nothing to judge, but the partial text
-      // accumulated so far has to go, or it sits in the map for the rest of the call.
-      //
-      // `warn`, not `debug`: no transcript means no `transcript` event, so the
-      // addressed gate is never consulted and the agent stays silent through an
-      // utterance that may well have named it — the same outward symptom as a gate
-      // that heard the sentence and judged it unaddressed, and the two need opposite
-      // fixes. At `debug` this was invisible in production (the runtime defaults to
-      // `info`), so a count of zero proved only that the level was too low to say.
+      // Transcription can fail outright. Nothing reads these words any more, so this
+      // costs a log line rather than a verdict — but it is still worth `warn`: a
+      // room whose transcripts fail cannot be read back at all, and that is the
+      // difference between diagnosing a bad verdict and guessing at it.
       case 'conversation.item.input_audio_transcription.failed': {
         const itemId = typeof event.item_id === 'string' ? event.item_id : '';
-        if (itemId) this.partialTranscripts.delete(itemId);
         const err = event.error as { message?: string } | undefined;
         logger.warn(
           `[Meeting] Transcription failed for ${itemId || 'an utterance'}` +
-            `${err?.message ? `: ${err.message}` : ''} — the gate never saw it`,
+            `${err?.message ? `: ${err.message}` : ''} — it will not appear in the log`,
         );
         return;
       }
@@ -547,16 +562,13 @@ export class RealtimeSession extends EventEmitter {
       case 'conversation.item.input_audio_transcription.completed': {
         const transcript = event.transcript;
         const itemId = typeof event.item_id === 'string' ? event.item_id : '';
-        this.partialTranscripts.delete(itemId);
         if (typeof transcript === 'string' && transcript.trim()) {
           this.emitEvent('transcript', itemId, transcript.trim());
           return;
         }
-        // A success that carries nothing is the same silence as a failure — no
-        // event, so no gate call — and it used to leave no trace at all.
         logger.warn(
           `[Meeting] Transcription came back empty for ${itemId || 'an utterance'} ` +
-            `— the gate never saw it`,
+            `— it will not appear in the log`,
         );
         return;
       }
@@ -658,17 +670,27 @@ export class RealtimeSession extends EventEmitter {
         }
         this.responseActive = false;
         this.responseConfirmed = false;
-        // `status` says whether the room actually heard it: a response that ends
-        // `incomplete` or `failed` produced nothing, which looks identical to one
-        // that was never asked for.
-        logger.info(
-          `[Meeting:Resp] Conversation response ${done?.id ?? '?'} done ` +
-            `status=${done?.status ?? 'unknown'}` +
-            (done?.status && done.status !== 'completed'
-              ? ` details=${JSON.stringify(done.status_details ?? {})}`
-              : '') +
-            `${this.responsePending ? ' — releasing the queued request' : ''}`,
-        );
+        const queued = this.responsePending ? ' — releasing the queued request' : '';
+        if (done?.status && done.status !== 'completed') {
+          // The room heard nothing. Deliberately **not** retried: the API's own
+          // suggested delay for a rate limit was 26 seconds, and answering a
+          // question the room asked half a minute ago is worse than not answering
+          // it — the same reason a stale verdict is dropped. Someone repeating
+          // themselves recovers this; a queue of late answers arriving together
+          // does not. So it is reported loudly and counted instead, and the real
+          // fix is not needing to retry.
+          logger.warn(
+            `[Meeting:Resp] Conversation response ${done.id ?? '?'} produced nothing ` +
+              `(status=${done.status}, details=${JSON.stringify(done.status_details ?? {})})` +
+              `${queued}`,
+          );
+          this.emitEvent('responseFailed', done.status);
+        } else {
+          logger.info(
+            `[Meeting:Resp] Conversation response ${done?.id ?? '?'} done ` +
+              `status=${done?.status ?? 'unknown'}${queued}`,
+          );
+        }
         this.emitEvent('responseDone');
         // Release a response that was requested while this one was still open.
         if (this.responsePending) {
@@ -814,7 +836,7 @@ export class RealtimeSession extends EventEmitter {
           conversation: 'none',
           output_modalities: ['text'],
           instructions: request.instructions,
-          metadata: { ...(request.metadata ?? {}), [OUT_OF_BAND_MARKER]: sendId },
+          metadata: { ...request.metadata, [OUT_OF_BAND_MARKER]: sendId },
           // Not inherited from the session: the agent's real tools are live in a
           // meeting, and a probe reading an untrusted utterance must not be able
           // to reach them. See the guard in `response.function_call_arguments.done`.
@@ -838,6 +860,26 @@ export class RealtimeSession extends EventEmitter {
    */
   private isProbeResponse(responseId: string): boolean {
     return responseId !== '' && this.probeIdsByResponse.has(responseId);
+  }
+
+  /** Note a spoken turn, evicting the oldest past the cap. */
+  private rememberConversationItem(itemId: string): void {
+    if (this.conversationItems.includes(itemId)) return;
+    this.conversationItems.push(itemId);
+    while (this.conversationItems.length > CONVERSATION_ITEM_LIMIT) {
+      this.conversationItems.shift();
+    }
+  }
+
+  /**
+   * The most recent spoken turns, oldest first — the context a probe can draw on.
+   *
+   * Tool calls and their output are deliberately absent: one tool result can be
+   * 12,000 characters, measured at ~2,900 tokens, and it says nothing about who was
+   * addressed. Including them is what made a probe cost more than the room did.
+   */
+  recentConversationItems(limit: number): string[] {
+    return limit <= 0 ? [] : this.conversationItems.slice(-limit);
   }
 
   /**

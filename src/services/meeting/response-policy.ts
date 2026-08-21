@@ -15,10 +15,10 @@
  *   It answers on end-of-utterance, which is the same instant the server would
  *   have created the response itself, so a one-to-one call is no slower than it
  *   was with the API driving.
- * - **addressed** — more than one human, so the agent has to be called by name,
- *   every time. Whether it was is decided by `addressed-audio-gate.ts`, which asks
- *   the meeting model about the utterance it just heard. Not by matching a string:
- *   an agent can be called anything, and a name can be mentioned without being
+ * - **addressed** — more than one human, so most of what is said is not for the
+ *   agent. Which utterances are is decided by `addressed-audio-gate.ts`, which asks
+ *   the meeting model about the one it just heard. Not by matching a string: an
+ *   agent can be called anything, and a name can be mentioned without being
  *   addressed ("I asked Prism about that yesterday").
  *
  * Deliberately *not* judged: whether a sentence merely sounds like a request for
@@ -27,13 +27,13 @@
  * person in the next chair. Guessing there is how a meeting bot ends up in the
  * middle of other people's conversations.
  *
- * **No grace period after the agent speaks.** An earlier version kept a 15-second
- * window in which any utterance counted as addressed, so a follow-up needn't
- * repeat the name. Testing on real calls killed it: fifteen seconds after the
- * agent stops talking is mostly other people starting to talk to *each other*,
- * which is the exact failure this file exists to prevent. Being named every time
- * is slightly more effort to talk to and much harder to get wrong, and it leaves
- * one rule to explain instead of three interacting ones.
+ * **No clock decides a follow-up.** An earlier version kept a 15-second window in
+ * which any utterance counted as addressed, so a follow-up needn't repeat the name.
+ * Real calls killed it: fifteen seconds after the agent stops talking is mostly
+ * other people starting to talk to *each other*, and a window cannot tell those
+ * apart from a genuine follow-up. Nothing here replaced it — an unnamed follow-up
+ * is answered, but because the gate can *see* the exchange it belongs to, which is
+ * a judgement rather than a grace period. This object holds no timers.
  *
  * Every "yes" from this object *will* be spoken: unlike prompt-level gating there
  * is no path for the model to decline once `response.create` goes out. That makes
@@ -127,13 +127,6 @@ export class ResponsePolicy {
   }
 
   /**
-   * Take a participant-count reading (including the agent itself).
-   *
-   * `null` means the UI could not be read, which is never a reason to change
-   * behaviour — the last known mode stands. Ignored entirely unless the caller
-   * asked for `auto`.
-   */
-  /**
    * Say whether the room can hear the agent.
    *
    * Gates the *transition* into `open` rather than filtering its decisions, so
@@ -162,6 +155,13 @@ export class ResponsePolicy {
     }
   }
 
+  /**
+   * Take a participant-count reading (including the agent itself).
+   *
+   * `null` means the UI could not be read, which is never a reason to change
+   * behaviour — the last known mode stands. Ignored entirely unless the caller
+   * asked for `auto`.
+   */
   setParticipantCount(count: number | null): void {
     if (count === null || this.options.mode !== 'auto') return;
     // Nothing the agent says is arriving, so `open` would answer a room that hears
@@ -193,10 +193,15 @@ export class ResponsePolicy {
    * deferral rather than dropped, so the room would hear the same reply twice.
    */
   onUtteranceCommitted(itemId: string): TurnDecision {
-    this.stats.utterances += 1;
+    // Counted *after* the duplicate check, so a commit the room only made once is
+    // not tallied twice. Otherwise `utterances` drifts above what was said and the
+    // suppressed-against-utterances ratio the stats exist for slowly stops meaning
+    // anything.
     if (this.wasHandled(itemId)) return 'ignore';
+    this.stats.utterances += 1;
     if (this.mode !== 'open') return 'gate';
-    return this.answer(itemId) ? 'respond' : 'ignore';
+    this.answer(itemId);
+    return 'respond';
   }
 
   /**

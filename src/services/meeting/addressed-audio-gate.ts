@@ -19,13 +19,22 @@
  * - **The sentence stops being data we hold.** The decision no longer takes the
  *   utterance as text, so there is no prompt containing a participant's words to
  *   keep out of a log or a trace. The audio never leaves the session it arrived
- *   in: `item_reference` points at an item the model already has.
+ *   in: an `item_reference` points at an item the model already has.
  *
- * **Stateless, deliberately.** Each utterance is judged on its own. A running
- * history of past verdicts was considered and dropped: that idea comes from the
- * text gate, where it compensated for a model that could not hear which name a
- * voice was turning toward. This model can. If a room with two agents in it proves
- * otherwise, the evidence should come from this gate rather than the old one.
+ * **A verdict sees a few turns, not one and not all of them.** Both extremes were
+ * tried on live calls. Judging the utterance by itself cannot answer an unnamed
+ * follow-up — "did you find anything?" carries no evidence of who it is for —
+ * and the room quickly stops repeating the name. Inheriting the whole conversation
+ * answered follow-ups well and then tripped the token rate limit, because every
+ * Realtime response re-reads its context in full and this one runs on *every*
+ * utterance rather than only on the agent's turns. `CONTEXT_WINDOW_TURNS` is the
+ * middle: enough to see the exchange, bounded so the cost does not grow with the
+ * call.
+ *
+ * No history of past *verdicts* is kept. That idea came from the text gate, where
+ * it compensated for a model that could not hear which name a voice was turning
+ * toward. This one can, and the turns themselves carry more than a list of yes and
+ * no ever did.
  *
  * **Fails closed.** The delivery gates elsewhere fail open, because a dropped
  * alert is worse than a redundant one. Here the opposite holds: this sits in front
@@ -81,6 +90,26 @@ const VERDICT_TOKEN_BUDGET = 64;
  * applied would put this back to inheriting `high`.
  */
 const VERDICT_REASONING_EFFORT = 'low';
+
+/**
+ * How many spoken turns of the call a verdict may look back over.
+ *
+ * The judged utterance plus the five before it. Both extremes were tried live and
+ * both failed: judging the utterance alone cannot answer an unnamed follow-up,
+ * because "did you find anything?" carries no evidence of who it is for, while
+ * inheriting the whole conversation answered them well and then tripped the token
+ * rate limit — 21,382 tokens for one response against a 40,000-per-minute ceiling,
+ * which is under two responses a minute where a busy room produces ten to twenty
+ * utterances.
+ *
+ * Six because the follow-ups seen failing needed two or three turns of context —
+ * the question, the agent's answer, the follow-up — and this leaves room either
+ * side without the cost growing for the length of the call. Tool output never
+ * enters the window at all (see `recentConversationItems`), which measurement
+ * suggests matters more than the count: one 12,000-character tool result came to
+ * ~2,900 tokens, more than the entire spoken conversation around it.
+ */
+const CONTEXT_WINDOW_TURNS = 6;
 
 export interface AddressedGatePromptInput {
   /** What the room hears the agent called — the name it introduced itself by. */
@@ -156,6 +185,21 @@ function readVerdict(text: string): boolean {
 }
 
 /**
+ * The context list for one verdict: recent turns, judged utterance last.
+ *
+ * The judged item is normally already the newest tracked turn, so it is pulled out
+ * and re-appended rather than assumed to be in position — a duplicate reference, or
+ * a judged item sitting mid-list, would each undermine "judge the last one".
+ */
+function windowFor(session: OutOfBandAsk, judgedItemId: string): unknown[] {
+  const recent = session.recentConversationItems(CONTEXT_WINDOW_TURNS);
+  const ordered = judgedItemId
+    ? [...recent.filter((id) => id !== judgedItemId), judgedItemId]
+    : recent;
+  return ordered.map((id) => ({ type: 'item_reference', id }));
+}
+
+/**
  * Just the part of the session this needs, so a test needs no socket.
  *
  * The request type is the session's own rather than a copy of it: a copy would let
@@ -164,6 +208,8 @@ function readVerdict(text: string): boolean {
  */
 export interface OutOfBandAsk {
   requestOutOfBandText(request: OutOfBandRequest): Promise<string | null>;
+  /** The most recent spoken turns, oldest first, tool output excluded. */
+  recentConversationItems(limit: number): string[];
 }
 
 export interface JudgeAddressedInput extends AddressedGatePromptInput {
@@ -201,18 +247,15 @@ export async function judgeAddressed(
 
   const answer = await session.requestOutOfBandText({
     instructions: buildAddressedGatePrompt(input),
-    // No `input` array, deliberately. An explicit one *replaces* the session's
-    // conversation as this response's context, and scoping the probe to a single
-    // utterance is what made an unnamed follow-up unanswerable: "did you find
-    // anything?" carries no evidence of who it is for, so the model was being asked
-    // to judge an exchange it could not see. Omitting it inherits the conversation —
-    // every utterance so far and the agent's own turns — which is the evidence the
-    // question actually needs.
+    // A bounded slice of the call, ending on the utterance being judged.
     //
-    // The cost of that is attribution. Without a reference this judges "the latest
-    // utterance", and two turns closing inside one probe's flight can leave a verdict
-    // filed against the wrong one; `voice-conversation.ts` logs when that window is
-    // open so a wrong verdict can be recognised rather than guessed at.
+    // Both halves matter. The recent turns are what make an unnamed follow-up
+    // answerable — "did you find anything?" means nothing on its own, and everything
+    // after the agent has just been asked to look something up. Ending on the judged
+    // item is what keeps a verdict attached to the right sentence: the prompt tells
+    // the model to judge the last one, so two turns closing while a verdict is in
+    // flight can no longer swap them.
+    input: windowFor(session, input.itemId),
     metadata: { purpose: 'addressed-gate', item: input.itemId || 'none' },
     deadlineMs: ADDRESSED_DEADLINE_MS,
     maxOutputTokens: VERDICT_TOKEN_BUDGET,

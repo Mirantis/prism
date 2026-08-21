@@ -235,56 +235,35 @@ describe('RealtimeSession events', () => {
     expect(committed).toEqual(['item-7']);
   });
 
-  it('accumulates partial transcription and reports the text so far', async () => {
+  it('tracks spoken turns for a probe to draw context from, tool output excluded', async () => {
     active = await harness();
-    const partials: Array<[string, string]> = [];
-    active.session.on('transcriptPartial', (itemId, text) => partials.push([itemId, text]));
 
+    active.emit({ type: 'conversation.item.added', item: { id: 'u-1', type: 'message', role: 'user' } });
+    active.emit({ type: 'conversation.item.added', item: { id: 'a-1', type: 'message', role: 'assistant' } });
+    // One tool result can be 12,000 characters — measured at ~2,900 tokens — and
+    // says nothing about who was addressed. Including it would make a probe cost
+    // more than the room does.
+    active.emit({ type: 'conversation.item.added', item: { id: 'fc-1', type: 'function_call', name: 'shell_exec' } });
     active.emit({
-      type: 'conversation.item.input_audio_transcription.delta',
-      item_id: 'item-9',
-      delta: 'Hey ',
+      type: 'conversation.item.added',
+      item: { id: 'fo-1', type: 'function_call_output', call_id: 'c1' },
     });
-    active.emit({
-      type: 'conversation.item.input_audio_transcription.delta',
-      item_id: 'item-9',
-      delta: 'Prism,',
-    });
+    active.emit({ type: 'conversation.item.added', item: { id: 'u-2', type: 'message', role: 'user' } });
     await new Promise((r) => setTimeout(r, 20));
 
-    // The accumulated text, not the fragment: a name is only recognisable whole,
-    // and it is what lets the gate answer before the sentence has finished.
-    expect(partials).toEqual([
-      ['item-9', 'Hey '],
-      ['item-9', 'Hey Prism,'],
-    ]);
+    expect(active.session.recentConversationItems(10)).toEqual(['u-1', 'a-1', 'u-2']);
+    // Oldest first, so a window takes the newest by slicing the tail.
+    expect(active.session.recentConversationItems(2)).toEqual(['a-1', 'u-2']);
+    expect(active.session.recentConversationItems(0)).toEqual([]);
   });
 
-  it('drops the buffered partial when transcription fails outright', async () => {
+  it('does not record the same turn twice when both item events arrive', async () => {
     active = await harness();
-    const partials: string[] = [];
-    active.session.on('transcriptPartial', (_id, text) => partials.push(text));
-
-    active.emit({
-      type: 'conversation.item.input_audio_transcription.delta',
-      item_id: 'item-8',
-      delta: 'Hey ',
-    });
-    active.emit({
-      type: 'conversation.item.input_audio_transcription.failed',
-      item_id: 'item-8',
-    });
-    // A failed utterance emits no words and leaves nothing behind: the accumulator
-    // would otherwise hold that text for the rest of the call, and a later delta on
-    // the same id would be judged with a stale prefix in front of it.
-    active.emit({
-      type: 'conversation.item.input_audio_transcription.delta',
-      item_id: 'item-8',
-      delta: 'Prism',
-    });
+    active.emit({ type: 'conversation.item.added', item: { id: 'u-1', type: 'message', role: 'user' } });
+    active.emit({ type: 'conversation.item.created', item: { id: 'u-1', type: 'message', role: 'user' } });
     await new Promise((r) => setTimeout(r, 20));
 
-    expect(partials).toEqual(['Hey ', 'Prism']);
+    expect(active.session.recentConversationItems(10)).toEqual(['u-1']);
   });
 
   // Both of the following leave the agent silent through an utterance without the
@@ -292,7 +271,7 @@ describe('RealtimeSession events', () => {
   // heard the sentence and judged it unaddressed. They are logged loudly enough to
   // be read back from a deployed container, because that is the only thing that
   // tells the two apart.
-  it('warns when transcription fails, since the gate never sees the utterance', async () => {
+  it('warns when transcription fails, since the call cannot then be read back', async () => {
     active = await harness();
 
     active.emit({
@@ -304,7 +283,7 @@ describe('RealtimeSession events', () => {
 
     expect(warnings()).toContain('item-8');
     expect(warnings()).toContain('audio too short');
-    expect(warnings()).toMatch(/gate never saw it/);
+    expect(warnings()).toMatch(/will not appear in the log/);
   });
 
   it('warns when a completed transcription carries no text', async () => {
