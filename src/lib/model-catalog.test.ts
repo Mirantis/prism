@@ -10,7 +10,7 @@ vi.mock('../logger', () => ({ logger: mockLogger }));
 
 vi.mock('../config', () => ({
   config: {
-    llmProvider: 'bedrock' as 'bedrock' | 'azure' | 'openai',
+    llmProvider: 'bedrock' as 'bedrock' | 'azure' | 'openai' | 'anthropic',
     contextWindowTokens: null as number | null,
     modelsDevUrl: null as string | null,
   },

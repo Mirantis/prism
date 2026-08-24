@@ -1,6 +1,6 @@
 /**
- * create-provider switch tests: vendor (bedrock/azure/bedrock-mantle/openai)
- * x routing (direct/gateway).
+ * create-provider switch tests: vendor (bedrock/azure/bedrock-mantle/openai/
+ * openrouter/anthropic) x routing (direct/gateway; anthropic is direct-only).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -12,22 +12,26 @@ const {
   mockCreateBedrockMantleProvider,
   mockCreateOpenAiProvider,
   mockCreateOpenRouterProvider,
+  mockCreateAnthropicProvider,
   mockIsBedrockConfigured,
   mockIsAzureConfigured,
   mockIsBedrockMantleConfigured,
   mockIsOpenAiConfigured,
   mockIsOpenRouterConfigured,
+  mockIsAnthropicConfigured,
 } = vi.hoisted(() => ({
   mockCreateBedrockProvider: vi.fn(() => 'bedrock-provider'),
   mockCreateAzureProvider: vi.fn(() => 'azure-provider'),
   mockCreateBedrockMantleProvider: vi.fn(() => 'bedrock-mantle-provider'),
   mockCreateOpenAiProvider: vi.fn(() => 'openai-provider'),
   mockCreateOpenRouterProvider: vi.fn(() => 'openrouter-provider'),
+  mockCreateAnthropicProvider: vi.fn(() => 'anthropic-provider'),
   mockIsBedrockConfigured: vi.fn(() => true),
   mockIsAzureConfigured: vi.fn(() => true),
   mockIsBedrockMantleConfigured: vi.fn(() => true),
   mockIsOpenAiConfigured: vi.fn(() => true),
   mockIsOpenRouterConfigured: vi.fn(() => true),
+  mockIsAnthropicConfigured: vi.fn(() => true),
 }));
 
 vi.mock('./bedrock/bedrock-provider', () => ({
@@ -50,6 +54,10 @@ vi.mock('./openrouter/openrouter-provider', () => ({
   createOpenRouterProvider: mockCreateOpenRouterProvider,
   isOpenRouterConfigured: mockIsOpenRouterConfigured,
 }));
+vi.mock('./anthropic/anthropic-provider', () => ({
+  createAnthropicProvider: mockCreateAnthropicProvider,
+  isAnthropicConfigured: mockIsAnthropicConfigured,
+}));
 
 import { createProvider, isProviderConfigured } from './create-provider';
 
@@ -60,6 +68,7 @@ describe('createProvider', () => {
     config.nexusAzureBaseUrl = null;
     config.nexusBedrockMantleBaseUrl = null;
     config.nexusOpenAiBaseUrl = null;
+    config.nexusOpenRouterBaseUrl = null;
     vi.clearAllMocks();
   });
 
@@ -152,6 +161,29 @@ describe('createProvider', () => {
     createProvider();
     expect(mockCreateOpenAiProvider).toHaveBeenCalledWith(undefined);
   });
+
+  it('anthropic → the direct-only factory, no baseURL argument', () => {
+    config.llmProvider = 'anthropic';
+    expect(createProvider()).toBe('anthropic-provider');
+    expect(mockCreateAnthropicProvider).toHaveBeenCalledWith();
+    expect(mockCreateBedrockProvider).not.toHaveBeenCalled();
+    expect(mockCreateAzureProvider).not.toHaveBeenCalled();
+    expect(mockCreateBedrockMantleProvider).not.toHaveBeenCalled();
+    expect(mockCreateOpenAiProvider).not.toHaveBeenCalled();
+    expect(mockCreateOpenRouterProvider).not.toHaveBeenCalled();
+  });
+
+  it('anthropic stays direct even with every gateway mount set', () => {
+    config.llmProvider = 'anthropic';
+    config.nexusLlmBaseUrl = 'https://nexus.example/llm/bedrock/us-east-1';
+    config.nexusAzureBaseUrl = 'https://nexus.example/llm/azure/anthropic/v1';
+    config.nexusBedrockMantleBaseUrl =
+      'https://nexus.example/llm/bedrock-mantle/anthropic/us-east-1/v1';
+    config.nexusOpenAiBaseUrl = 'https://nexus.example/llm/openai/v1';
+    config.nexusOpenRouterBaseUrl = 'https://nexus.example/llm/openrouter/openai/v1';
+    expect(createProvider()).toBe('anthropic-provider');
+    expect(mockCreateAnthropicProvider).toHaveBeenCalledWith();
+  });
 });
 
 describe('isProviderConfigured', () => {
@@ -197,5 +229,15 @@ describe('isProviderConfigured', () => {
     expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
     expect(mockIsAzureConfigured).not.toHaveBeenCalled();
     expect(mockIsBedrockMantleConfigured).not.toHaveBeenCalled();
+  });
+
+  it('delegates to isAnthropicConfigured for anthropic', () => {
+    config.llmProvider = 'anthropic';
+    mockIsAnthropicConfigured.mockReturnValue(false);
+    expect(isProviderConfigured()).toBe(false);
+    expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
+    expect(mockIsAzureConfigured).not.toHaveBeenCalled();
+    expect(mockIsBedrockMantleConfigured).not.toHaveBeenCalled();
+    expect(mockIsOpenAiConfigured).not.toHaveBeenCalled();
   });
 });

@@ -52,12 +52,19 @@ export async function trackAgentStarted(
       // yet, and 'pending' (i.e. slower than boot) is itself the useful signal.
       // Deliberately not awaited: the census must never gate on a network call.
       'model_catalog.state': modelCatalogState(),
-      // Empty when embeddings are disabled (AZURE_EMBEDDING_MODEL_ID='',
-      // BEDROCK_MANTLE_EMBEDDING_MODEL_ID='', or OPENAI_EMBEDDING_MODEL_ID='').
+      // Which vendor embeds memory — its own selection, decoupled from the
+      // chat vendor (EMBEDDING_PROVIDER). 'none' only when the selector disabled
+      // embeddings; a vendor whose embedding model id is set to '' still
+      // reports the vendor, so the disabled signal is the absence of
+      // `llm.embedding_model` below, not this value.
+      'llm.embedding_provider': config.embeddingProvider,
+      // Empty when embeddings are disabled (EMBEDDING_PROVIDER=none, or the
+      // active `*_EMBEDDING_MODEL_ID` set to '').
       ...(config.embeddingModelId ? { 'llm.embedding_model': config.embeddingModelId } : {}),
-      // Both AWS endpoints are regional; meaningless on Azure (the resource
-      // name pins the region) and on OpenAI (no region at all).
-      ...(config.llmProvider !== 'azure' && config.llmProvider !== 'openai'
+      // Only the AWS endpoints are regional; meaningless on Azure (the
+      // resource name pins the region) and on OpenAI/Anthropic (no region at
+      // all) — an allowlist, so a new region-less vendor never inherits it.
+      ...(config.llmProvider === 'bedrock' || config.llmProvider === 'bedrock-mantle'
         ? { 'llm.region': config.awsRegion }
         : {}),
       'tool_risk_gate.mode': config.toolRiskGateMode,

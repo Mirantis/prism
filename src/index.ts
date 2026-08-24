@@ -121,15 +121,33 @@ const initialize = async () => {
 
     // Active LLM provider + routing, so the deployed vendor is observable in
     // logs. `routing` is 'nexus' when the selected vendor's gateway chat mount
-    // is set, else 'direct'.
+    // is set, else 'direct'. `embeddings` surfaces the embedding vendor at boot —
+    // it can be off (e.g. anthropic without an OpenAI key), and without this
+    // line the only signal is a per-call warn once a memory write happens.
     logger.info(
       {
         provider: config.llmProvider,
         routing: config.nexusChatBaseUrl ? 'nexus' : 'direct',
         chatModel: config.chatModelId,
+        embeddings: config.embeddingModelId
+          ? `${config.embeddingProvider}:${config.embeddingModelId}`
+          : 'disabled',
       },
       '[Startup] LLM provider',
     );
+
+    // A typo'd EMBEDDING_PROVIDER keeps the derived default running, so
+    // nothing ever looks broken without this line (same pattern as the
+    // TOOL_RISK_GATE_MODE warning below).
+    if (config.invalidEmbeddingProvider) {
+      logger.warn(
+        {
+          configuredProvider: config.invalidEmbeddingProvider,
+          effectiveProvider: config.embeddingProvider,
+        },
+        '[Startup] invalid EMBEDDING_PROVIDER; using the chat vendor default',
+      );
+    }
 
     if (config.invalidToolRiskGateMode) {
       logger.warn(

@@ -141,7 +141,7 @@ Default models:
 
 - **Main loop**: Claude Opus 5
 - **Classification gates**: Claude Haiku (fast heartbeat delivery and optional tool-risk decisions)
-- **Embeddings**: Amazon Titan v2
+- **Embeddings**: Amazon Titan v2 (Bedrock default; other platforms via `EMBEDDING_PROVIDER`)
 
 All three are configurable. Heartbeat and scheduled (cron) runs use the main
 loop model by default, but each can be pointed at its own model — e.g. a
@@ -176,8 +176,9 @@ Two layers, both persisted in the embedded database:
    present in its system prompt. Bounded, durable, low-latency recall of the
    things the agent has decided are worth keeping permanently.
 2. **Searchable memory** — an embedding-indexed store for everything else,
-   queryable by meaning rather than keyword. Embeddings come from Bedrock
-   Titan v2; vector search runs on the embedded SQLite database.
+   queryable by meaning rather than keyword. Embeddings come from the
+   configured embedding platform (Bedrock Titan v2 by default); vector search
+   runs on the embedded SQLite database.
 
 ### The agent's "self"
 
@@ -339,7 +340,8 @@ restarts.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `PORT` | HTTP port | `3003` |
-| `LLM_PROVIDER` | LLM platform: `bedrock`, `azure`, `bedrock-mantle`, or `openai` — see [Configuration](docs/configuration.md#provider-selection) for the non-default platforms' credentials and model IDs | `bedrock` |
+| `LLM_PROVIDER` | LLM platform: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, or `anthropic` — see [Configuration](docs/configuration.md#provider-selection) for the non-default platforms' credentials and model IDs | `bedrock` |
+| `EMBEDDING_PROVIDER` | Memory-embedding platform, independent of `LLM_PROVIDER`: `bedrock`, `azure-openai`, `openai`, `openrouter`, or `none` — see [Configuration](docs/configuration.md#memory-embeddings) | derived from `LLM_PROVIDER` |
 | `DATABASE_URL` | SQLite URL. The local default resolves to `prisma/sqlite/agent.db` (Prisma's schema-relative rule); the Docker image's `start.sh` overrides to `file:/data/agent.db` so the mounted `/data` volume is used | `file:./agent.db` (Docker: `file:/data/agent.db`) |
 | `AGENT_ID` | Pin the agent's UUID. When unset, a fresh UUID is generated on first boot and reused on subsequent boots via the workspace row in the DB | generated |
 | `NEXUS_API_URL` | Base URL of the Lens Agents instance used for WebSocket authorization and the MCP/LLM proxy | `http://localhost:3002` |
@@ -353,7 +355,8 @@ restarts.
 | `CONTEXT_WINDOW_TOKENS` | Context window to assume for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry at startup (e.g. `https://models.dev/api.json`); unset means no outbound call, bundled catalog only | — (disabled) |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check on the Slack app identity | — |
-| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) (OpenAI Realtime API, connected directly — not via the Lens Agents gateway); also the chat credential when `LLM_PROVIDER=openai` | — (disabled) |
+| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) (OpenAI Realtime API, connected directly — not via the Lens Agents gateway); also the chat credential when `LLM_PROVIDER=openai`, and the default embedding credential when `LLM_PROVIDER=anthropic` | — (disabled) |
+| `ANTHROPIC_API_KEY` | Chat credential when `LLM_PROVIDER=anthropic` (the first-party Anthropic API; always direct — no gateway mount) | — |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice (pinned snapshot) | `gpt-realtime-2.1` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one meeting call | `60` |
 | `LANGFUSE_SECRET_KEY` | Enables Langfuse tracing when set | — |

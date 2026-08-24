@@ -10,19 +10,13 @@ const {
   mockCreateAmazonBedrock,
   mockAnthropicModel,
   mockGenericModel,
-  mockGenericEmbeddingFn,
   mockDefaultProvider,
 } = vi.hoisted(() => {
   const mockAnthropicModel = vi.fn((modelId: string) => ({ provider: 'anthropic', modelId }));
-  const mockGenericEmbeddingFn = vi.fn((modelId: string) => ({ kind: 'embedding', modelId }));
-  const mockGenericModel = Object.assign(
-    vi.fn((modelId: string) => ({ provider: 'generic', modelId })),
-    { embedding: mockGenericEmbeddingFn },
-  );
+  const mockGenericModel = vi.fn((modelId: string) => ({ provider: 'generic', modelId }));
   return {
     mockAnthropicModel,
     mockGenericModel,
-    mockGenericEmbeddingFn,
     mockCreateBedrockAnthropic: vi.fn(() => mockAnthropicModel),
     mockCreateAmazonBedrock: vi.fn(() => mockGenericModel),
     mockDefaultProvider: vi.fn(() => async () => ({
@@ -179,13 +173,5 @@ describe('createBedrockProvider', () => {
     // arrives uncached until someone remembers to add it.
     expect(provider.cachePoint('moonshotai.kimi-k2.5')).toEqual(bedrockPoint);
     expect(provider.cachePoint('meta.llama3-70b-instruct-v1:0')).toEqual(bedrockPoint);
-  });
-
-  it('exposes .embedding() that delegates to the generic provider', () => {
-    const provider = createBedrockProvider();
-    provider.embedding('amazon.titan-embed-text-v2:0');
-    expect(mockGenericEmbeddingFn).toHaveBeenCalledWith('amazon.titan-embed-text-v2:0');
-    expect(mockGenericModel).not.toHaveBeenCalled();
-    expect(mockAnthropicModel).not.toHaveBeenCalled();
   });
 });

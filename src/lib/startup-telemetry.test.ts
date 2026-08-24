@@ -36,6 +36,7 @@ const BEDROCK_CONFIG = {
   chatModelId: 'us.anthropic.claude-opus-4-8',
   classificationModelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
   toolRiskGateMode: 'off',
+  embeddingProvider: 'bedrock',
   embeddingModelId: 'amazon.titan-embed-text-v2:0',
   awsRegion: 'us-east-1',
   nexusLlmBaseUrl: 'https://gateway.test/llm/bedrock/us-east-1',
@@ -87,6 +88,7 @@ describe('trackAgentStarted', () => {
       'llm.chat_model': 'us.anthropic.claude-opus-4-8',
       'llm.classification_model': 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
       'tool_risk_gate.mode': 'off',
+      'llm.embedding_provider': 'bedrock',
       'llm.embedding_model': 'amazon.titan-embed-text-v2:0',
       'llm.region': 'us-east-1',
       'slack.enabled': 'true',
@@ -109,6 +111,7 @@ describe('trackAgentStarted', () => {
       llmProvider: 'azure',
       chatModelId: 'claude-opus-4-8',
       classificationModelId: 'claude-haiku-4-5',
+      embeddingProvider: 'azure-openai',
       embeddingModelId: 'text-embedding-3-small',
       nexusLlmBaseUrl: null,
       nexusAzureBaseUrl: null,
@@ -128,6 +131,7 @@ describe('trackAgentStarted', () => {
       'llm.routing': 'direct',
       'llm.chat_model': 'claude-opus-4-8',
       'llm.classification_model': 'claude-haiku-4-5',
+      'llm.embedding_provider': 'azure-openai',
       'llm.embedding_model': 'text-embedding-3-small',
       'slack.enabled': 'false',
       'nexus.enabled': 'false',
@@ -222,12 +226,41 @@ describe('trackAgentStarted', () => {
     expect(emittedProps()['llm.routing']).toBe('nexus');
   });
 
-  it('omits the embedding model when embeddings are disabled', async () => {
-    setConfig({ embeddingModelId: '' });
+  it('reports direct routing and omits the region on Anthropic — even beside Nexus', async () => {
+    setConfig({
+      llmProvider: 'anthropic',
+      chatModelId: 'claude-opus-5',
+      classificationModelId: 'claude-haiku-4-5',
+      embeddingProvider: 'none',
+      embeddingModelId: '',
+      // NEXUS_API_URL is set (the bedrock mount exists) but anthropic has no
+      // mount, so config resolves the chat mount to null and routing stays
+      // direct.
+      nexusChatBaseUrl: null,
+    });
 
     await trackAgentStarted(AGENT, { cronTasks: 0 });
 
-    expect(emittedProps()).not.toHaveProperty('llm.embedding_model');
+    const props = emittedProps();
+    expect(props).toMatchObject({
+      'llm.provider': 'anthropic',
+      'llm.routing': 'direct',
+      'llm.chat_model': 'claude-opus-5',
+      'llm.classification_model': 'claude-haiku-4-5',
+      'llm.embedding_provider': 'none',
+    });
+    expect(props).not.toHaveProperty('llm.region');
+    expect(props).not.toHaveProperty('llm.embedding_model');
+  });
+
+  it('omits the embedding model when embeddings are disabled, keeping the provider', async () => {
+    setConfig({ embeddingProvider: 'none', embeddingModelId: '' });
+
+    await trackAgentStarted(AGENT, { cronTasks: 0 });
+
+    const props = emittedProps();
+    expect(props).not.toHaveProperty('llm.embedding_model');
+    expect(props).toMatchObject({ 'llm.embedding_provider': 'none' });
   });
 
   it('gathers nothing when telemetry is disabled', async () => {

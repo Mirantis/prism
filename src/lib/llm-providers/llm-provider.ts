@@ -2,9 +2,8 @@
  * The shape every LLM vendor factory returns.
  *
  * A provider is a callable chat dispatcher — `(modelId) => LanguageModel` —
- * with an `.embedding(modelId)` method attached, so callers of
- * `createProvider()` never have to know which vendor (Bedrock, Azure,
- * bedrock-mantle or OpenAI) or route (direct or gateway) is in use.
+ * plus the per-vendor declarations below, so callers of `createProvider()`
+ * never have to know which vendor or route (direct or gateway) is in use.
  *
  * Why an explicit named type rather than inference: the vendor SDKs re-export
  * their own nested `@ai-sdk/provider` copies, so an inferred return type can't
@@ -14,11 +13,10 @@
  *
  * The member types come from `ai` (a direct dependency) rather than
  * `@ai-sdk/provider` (only ever hoisted transitively). They are the same types
- * `generateText()` and `embed()`/`embedMany()` accept, which is all any
- * consumer here needs.
+ * `generateText()` accepts, which is all any consumer here needs.
  */
 
-import type { EmbeddingModel, LanguageModel } from 'ai';
+import type { LanguageModel } from 'ai';
 
 /**
  * A `providerOptions` fragment — vendor namespace → option bag.
@@ -76,7 +74,6 @@ export const BEDROCK_CACHE_POINT: CachePointFragment = {
 export const NO_CACHE_POINT: CachePointFragment = {};
 
 export type LlmProvider = ((modelId: string) => LanguageModel) & {
-  embedding: (modelId: string) => EmbeddingModel;
   /**
    * The prompt-cache breakpoint fragment for one model; see
    * CachePointFragment.

@@ -1,20 +1,14 @@
 /**
- * Shared bedrock-runtime plumbing — credential resolution, the generic
- * provider, and the Anthropic model-id predicate. Both AWS vendors depend on
- * these, so they are tested here rather than in either vendor's spec.
+ * Shared bedrock-runtime plumbing — credential resolution and the Anthropic
+ * model-id predicate. Both AWS vendors depend on these, so they are tested
+ * here rather than in either vendor's spec.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { config } from '../../config';
 
-const { mockCreateAmazonBedrock, mockGenericProvider, mockDefaultProvider } = vi.hoisted(() => {
-  const mockGenericProvider = Object.assign(
-    vi.fn((modelId: string) => ({ provider: 'generic', modelId })),
-    { embedding: vi.fn((modelId: string) => ({ kind: 'embedding', modelId })) },
-  );
+const { mockDefaultProvider } = vi.hoisted(() => {
   return {
-    mockGenericProvider,
-    mockCreateAmazonBedrock: vi.fn(() => mockGenericProvider),
     mockDefaultProvider: vi.fn(() => async () => ({
       accessKeyId: 'chain-key',
       secretAccessKey: 'chain-secret',
@@ -23,14 +17,9 @@ const { mockCreateAmazonBedrock, mockGenericProvider, mockDefaultProvider } = vi
   };
 });
 
-vi.mock('@ai-sdk/amazon-bedrock', () => ({ createAmazonBedrock: mockCreateAmazonBedrock }));
 vi.mock('@aws-sdk/credential-provider-node', () => ({ defaultProvider: mockDefaultProvider }));
 
-import {
-  createBedrockEmbeddingProvider,
-  createSharedBedrockOptions,
-  isAnthropicModelId,
-} from './bedrock-shared';
+import { createSharedBedrockOptions, isAnthropicModelId } from './bedrock-shared';
 
 describe('createSharedBedrockOptions', () => {
   beforeEach(() => {
@@ -70,43 +59,6 @@ describe('createSharedBedrockOptions', () => {
       region: 'us-west-2',
       credentialProvider: expect.any(Function),
     });
-  });
-});
-
-describe('createBedrockEmbeddingProvider', () => {
-  beforeEach(() => {
-    config.awsRegion = 'us-west-2';
-    config.awsAccessKeyId = 'explicit-key';
-    config.awsSecretAccessKey = 'explicit-secret';
-    config.awsSessionToken = undefined;
-    vi.clearAllMocks();
-  });
-
-  it('builds the generic provider with the resolved credentials', () => {
-    createBedrockEmbeddingProvider();
-
-    expect(mockCreateAmazonBedrock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        region: 'us-west-2',
-        accessKeyId: 'explicit-key',
-        secretAccessKey: 'explicit-secret',
-      }),
-    );
-  });
-
-  it('attaches no credentials when routed through the gateway (the gateway signs)', () => {
-    createBedrockEmbeddingProvider('https://gateway.example/llm/bedrock/us-east-1');
-
-    expect(mockCreateAmazonBedrock).toHaveBeenCalledWith({
-      region: 'us-west-2',
-      baseURL: 'https://gateway.example/llm/bedrock/us-east-1',
-    });
-  });
-
-  it('exposes the generic provider embedding models', () => {
-    createBedrockEmbeddingProvider().embedding('amazon.titan-embed-text-v2:0');
-
-    expect(mockGenericProvider.embedding).toHaveBeenCalledWith('amazon.titan-embed-text-v2:0');
   });
 });
 

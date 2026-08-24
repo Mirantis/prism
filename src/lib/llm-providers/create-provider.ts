@@ -3,13 +3,13 @@
  *
  * Two orthogonal choices:
  *  - Vendor: `config.llmProvider` (`bedrock` default, `azure`,
- *    `bedrock-mantle`, or `openai`).
+ *    `bedrock-mantle`, `openai`, `openrouter`, or `anthropic`).
  *  - Routing: each vendor's factory takes an optional gateway base URL — set →
  *    route through the Lens Agents gateway, unset → direct to the vendor.
  *
  * Every underlying factory returns the same call shape — `LlmProvider`, a
- * callable `(modelId) => LanguageModel` with `.embedding(modelId)` attached —
- * so callers don't have to care which vendor or route is in use.
+ * callable `(modelId) => LanguageModel` — so callers don't have to care which
+ * vendor or route is in use.
  *
  * **bedrock-mantle** is AWS's second Bedrock inference endpoint
  * (`bedrock-mantle.{region}.api.aws`; a Lens Agents managed-inference
@@ -21,17 +21,22 @@
  * the native Bedrock one. Neither amazon-bedrock entry point works today:
  * `createBedrockAnthropic` appends `/model/{id}/invoke`, and
  * `@ai-sdk/amazon-bedrock/mantle` is OpenAI-compatible-only — re-evaluate if
- * vercel/ai#17141 lands. Two consequences worth knowing at this seam: model
+ * vercel/ai#17141 lands. One consequence worth knowing at this seam: model
  * IDs must be **bare** (mantle has no cross-region inference profiles, so the
- * mantle dispatcher strips `us.`/`eu.`/… prefixes), and embeddings do not run
- * on mantle at all — they stay on Titan over bedrock-runtime, so the mantle
- * provider reaches for `nexusLlmBaseUrl`, not its own route.
+ * mantle dispatcher strips `us.`/`eu.`/… prefixes).
  *
  * **openai** is the one vendor serving OpenAI models rather than Claude, on a
- * single surface: chat, classification and embeddings all ride one base URL —
- * the Lens Agents `…/llm/openai/v1` mount or api.openai.com direct. Only the
- * voice-meeting Realtime WebSocket stays off the gateway (the mount routes
- * POST only); see `openai/openai-provider.ts`.
+ * single surface: chat and classification ride one base URL — the Lens Agents
+ * `…/llm/openai/v1` mount or api.openai.com direct. Only the voice-meeting
+ * Realtime WebSocket stays off the gateway (the mount routes POST only); see
+ * `openai/openai-provider.ts`. **openrouter** rides the same OpenAI-compatible
+ * surface at openrouter.ai (or the `…/llm/openrouter/openai/v1` mount) with
+ * `vendor/model` ids; see `openrouter/openrouter-provider.ts`.
+ *
+ * **anthropic** is the first-party Anthropic API, and the one vendor that is
+ * **direct-only**: no gateway mount serves api.anthropic.com, so its factory
+ * takes no baseURL and `ANTHROPIC_API_KEY` is always required. Model IDs are
+ * bare first-party IDs (`claude-opus-5`).
  */
 
 import { config } from '../../config';
@@ -46,6 +51,7 @@ import {
   createOpenRouterProvider,
   isOpenRouterConfigured,
 } from './openrouter/openrouter-provider';
+import { createAnthropicProvider, isAnthropicConfigured } from './anthropic/anthropic-provider';
 import type { LlmProvider } from './llm-provider';
 
 export function createProvider(): LlmProvider {
@@ -58,6 +64,8 @@ export function createProvider(): LlmProvider {
       return createOpenAiProvider(config.nexusOpenAiBaseUrl ?? undefined);
     case 'openrouter':
       return createOpenRouterProvider(config.nexusOpenRouterBaseUrl ?? undefined);
+    case 'anthropic':
+      return createAnthropicProvider();
     default:
       return createBedrockProvider(config.nexusLlmBaseUrl ?? undefined);
   }
@@ -74,6 +82,8 @@ export function isProviderConfigured(): boolean {
       return isOpenAiConfigured();
     case 'openrouter':
       return isOpenRouterConfigured();
+    case 'anthropic':
+      return isAnthropicConfigured();
     default:
       return isBedrockConfigured();
   }

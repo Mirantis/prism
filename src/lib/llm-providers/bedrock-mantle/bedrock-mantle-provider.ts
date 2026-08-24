@@ -10,17 +10,11 @@
  *
  * This provider implements the Anthropic surface only, which makes it
  * structurally identical to the Azure provider (Claude-on-Foundry) rather than
- * to the native Bedrock one:
- *
- *  - Chat + classification → `@ai-sdk/anthropic` pointed at mantle. Not
- *    `createBedrockAnthropic`, which appends `/model/{id}/invoke` (a path
- *    mantle does not serve), and not `@ai-sdk/amazon-bedrock/mantle`, which is
- *    OpenAI-compatible-only. vercel/ai#17141 tracks first-class support; until
- *    it lands, `createAnthropic` with a baseURL is the supported route.
- *  - Embeddings → the generic Bedrock provider (Titan on bedrock-runtime).
- *    Mantle has no embedding models, so this leg keys off `nexusLlmBaseUrl`
- *    rather than the mantle route, and is built lazily so a chat-only
- *    deployment never resolves AWS credentials for it.
+ * to the native Bedrock one: `@ai-sdk/anthropic` pointed at mantle. Not
+ * `createBedrockAnthropic`, which appends `/model/{id}/invoke` (a path mantle
+ * does not serve), and not `@ai-sdk/amazon-bedrock/mantle`, which is
+ * OpenAI-compatible-only. vercel/ai#17141 tracks first-class support; until it
+ * lands, `createAnthropic` with a baseURL is the supported route.
  *
  * Model IDs are plain Bedrock IDs but must be **bare**: mantle does not
  * support cross-region inference profiles, so `us.anthropic.…` is rejected
@@ -48,7 +42,7 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
-import { createBedrockEmbeddingProvider, isAnthropicModelId } from '../bedrock-shared';
+import { isAnthropicModelId } from '../bedrock-shared';
 import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
 
 /**
@@ -90,8 +84,7 @@ export function toBareBedrockModelId(modelId: string): string {
 /**
  * Create a Bedrock Mantle provider.
  *
- * Returns a callable `(modelId) => LanguageModel` for chat, plus an
- * `.embedding(modelId)` method that reaches Titan on bedrock-runtime.
+ * Returns a callable `(modelId) => LanguageModel` for chat.
  *
  * `baseURL` selects chat routing: unset → direct to the AWS mantle endpoint
  * (requires the Bedrock API key); set → the Lens Agents gateway, which holds
@@ -116,14 +109,6 @@ export function createBedrockMantleProvider(baseURL?: string): LlmProvider {
     baseURL: baseURL ?? config.bedrockMantleBaseUrl,
   });
 
-  // Embeddings — Titan on bedrock-runtime, NOT mantle. So this keys off
-  // `nexusLlmBaseUrl` (the `…/llm/bedrock/{region}` mount) rather than the
-  // `baseURL` argument. Lazy + memoized: a deployment with embeddings disabled
-  // never pays for (or logs) the AWS credential-chain resolution.
-  let embeddings: ReturnType<typeof createBedrockEmbeddingProvider> | undefined;
-  const getEmbeddings = () =>
-    (embeddings ??= createBedrockEmbeddingProvider(config.nexusLlmBaseUrl ?? undefined));
-
   const dispatcher = (modelId: string) => {
     const bare = toBareBedrockModelId(modelId);
     if (!isAnthropicModelId(bare) && !warnedNonAnthropicIds.has(bare)) {
@@ -142,7 +127,6 @@ export function createBedrockMantleProvider(baseURL?: string): LlmProvider {
   };
 
   return Object.assign(dispatcher, {
-    embedding: (modelId: string) => getEmbeddings().embedding(modelId),
     // Mantle rejects Anthropic's native structured-output path with a 400
     // ("output_config.format: Extra inputs are not permitted"), so ask the SDK
     // for the tool-based JSON path instead.
@@ -157,7 +141,6 @@ export function createBedrockMantleProvider(baseURL?: string): LlmProvider {
  * the API key and an endpoint: unlike the native Bedrock provider there is no
  * SigV4 fallback, and without an explicit key `createAnthropic` would silently
  * pick up an ambient `ANTHROPIC_API_KEY` and fail at first request instead.
- * Embedding config is deliberately NOT required — memory embeddings fail-open.
  */
 export function isBedrockMantleConfigured(): boolean {
   if (!config.bedrockMantleModelId) return false;

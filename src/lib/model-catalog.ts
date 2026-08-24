@@ -53,7 +53,7 @@ export interface CatalogEntry {
   output: number | null;
 }
 
-/** Provider (`bedrock` | `azure` | `openai`) -> model ID -> limits. */
+/** Provider (`bedrock` | `azure` | `openai` | `anthropic`) -> model ID -> limits. */
 export type ModelCatalog = Record<string, Record<string, CatalogEntry | undefined> | undefined>;
 
 export type CatalogState =
@@ -76,6 +76,7 @@ export const REGISTRY_PROVIDERS: Record<string, string> = {
   'amazon-bedrock': 'bedrock',
   azure: 'azure',
   openai: 'openai',
+  anthropic: 'anthropic',
 };
 
 /**
@@ -91,6 +92,7 @@ const REGISTRY_FAMILY: Record<string, RegExp> = {
   'amazon-bedrock': CLAUDE,
   azure: CLAUDE,
   openai: OPENAI_FAMILY,
+  anthropic: CLAUDE,
 };
 
 /**

@@ -6,9 +6,9 @@
  * path to a running agent — no cloud account, no IAM, no region. Its API is
  * OpenAI-compatible (it serves `/responses` alongside `/chat/completions`), so
  * the provider object comes from `../openai-compatible` — the same Responses
- * dispatcher, embeddings client, cache-point fragment and classification knobs
- * the OpenAI provider uses. Its own factory rather than a flag on that one, so
- * the startup log names who is actually serving the call and either vendor can
+ * dispatcher, cache-point fragment and classification declarations the OpenAI
+ * provider uses. Its own factory rather than a flag on that one, so the
+ * startup log names who is actually serving the call and either vendor can
  * diverge without disturbing the other.
  *
  * What is OpenRouter-specific lives here:
@@ -37,7 +37,7 @@ import { createOpenAiCompatibleProvider } from '../openai-compatible';
 import type { LlmProvider } from '../llm-provider';
 
 /** OpenRouter's own API root. Ends at `/v1`; the SDK appends `/responses`. */
-const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 export function createOpenRouterProvider(baseURL?: string): LlmProvider {
   logger.info({ routing: baseURL ? 'nexus' : 'direct' }, 'Creating OpenRouter provider');
@@ -54,8 +54,7 @@ export function createOpenRouterProvider(baseURL?: string): LlmProvider {
 /**
  * Check if OpenRouter is configured. Through the gateway only the model id is
  * needed — the gateway holds the key (Azure/mantle/OpenAI parity). Direct mode
- * needs `OPENROUTER_API_KEY`. Embedding config is deliberately NOT required —
- * memory embeddings fail-open without it, and OpenRouter ships no default one.
+ * needs `OPENROUTER_API_KEY`.
  */
 export function isOpenRouterConfigured(): boolean {
   if (!config.openrouterModelId) return false;

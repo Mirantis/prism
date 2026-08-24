@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 vi.mock('../config', () => ({
   config: {
-    llmProvider: 'bedrock' as 'bedrock' | 'azure' | 'openai',
+    llmProvider: 'bedrock' as 'bedrock' | 'azure' | 'openai' | 'anthropic',
     contextWindowTokens: null as number | null,
     // Importing context-window now transitively pulls in model-catalog; keep the
     // refresh disabled so nothing here can reach the network.
@@ -22,6 +22,8 @@ const AZURE_CHAT_DEFAULT = 'claude-opus-5';
 const AZURE_CLASSIFICATION_DEFAULT = 'claude-haiku-4-5';
 const OPENAI_CHAT_DEFAULT = 'gpt-5.6-sol';
 const OPENAI_CLASSIFICATION_DEFAULT = 'gpt-5.6-luna';
+const ANTHROPIC_CHAT_DEFAULT = 'claude-opus-5';
+const ANTHROPIC_CLASSIFICATION_DEFAULT = 'claude-haiku-4-5';
 
 describe('contextWindowFor', () => {
   beforeEach(() => {
@@ -56,6 +58,16 @@ describe('contextWindowFor', () => {
     it('resolves the OpenAI classification default', () => {
       config.llmProvider = 'openai';
       expect(contextWindowFor(OPENAI_CLASSIFICATION_DEFAULT)).toEqual({ tokens: 1_050_000 });
+    });
+
+    it('resolves the Anthropic chat default', () => {
+      config.llmProvider = 'anthropic';
+      expect(contextWindowFor(ANTHROPIC_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000 });
+    });
+
+    it('resolves the Anthropic classification default', () => {
+      config.llmProvider = 'anthropic';
+      expect(contextWindowFor(ANTHROPIC_CLASSIFICATION_DEFAULT)).toEqual({ tokens: 200_000 });
     });
   });
 

@@ -5,17 +5,17 @@
  * own API is OpenAI-compatible. What differs between them — the endpoint, the
  * credential, the model-id convention, the startup log line — stays in their
  * own factories; everything here is a property of the *SDK surface*:
- * `createOpenAI()(modelId)` dispatches to the Responses API, embeddings ride
- * the same client, prompt caching is automatic (no breakpoints), and the
- * Responses API's own limits shape what a gate call may send.
+ * `createOpenAI()(modelId)` dispatches to the Responses API, prompt caching is
+ * automatic (no breakpoints), and the Responses API's own limits shape what a
+ * gate call may send.
  *
- * Shared rather than duplicated because those last four are a matched set: a
+ * Shared rather than duplicated because those last three are a matched set: a
  * copy that drifts on one of them fails at the gate, not at startup — every
  * classification call 400s and the gate is silently disabled. One definition
  * keeps the two vendors from diverging by accident, and each keeps its own
  * factory so it can diverge on purpose.
  *
- * Classification caveat (why the three gate knobs exist): elsewhere the gates
+ * Classification caveat (why the three gate declarations exist): elsewhere the gates
  * run the classification model with `temperature: 0` and tiny output-token
  * budgets — assumptions GPT-5.x breaks three ways. `reasoningEffort: 'none'`
  * (reasoning tokens would eat the budget before the verdict), a 16-token
@@ -47,8 +47,6 @@ export function createOpenAiCompatibleProvider({
 
   const dispatcher = (modelId: string) => openai(modelId);
   return Object.assign(dispatcher, {
-    // Same client, same mount: the OpenAI surface has no split for embeddings.
-    embedding: (modelId: string) => openai.embedding(modelId),
     // No breakpoints: OpenAI caches long prompts automatically, so there is
     // nothing to mark and the empty fragment spreads into `providerOptions` as
     // a no-op. Same on OpenRouter for the openai models it routes; a vendor
@@ -56,8 +54,8 @@ export function createOpenAiCompatibleProvider({
     // `cache_control` marker, which the OpenAI SDK has no way to send — so an
     // OpenRouter deployment pointed at those models runs uncached rather than
     // wrong. Off the default path (the defaults are `openai/*`), and the fix
-    // when someone wants it is a cache point of OpenRouter's own, not a knob
-    // here.
+    // when someone wants it is a cache point of OpenRouter's own, not a
+    // setting here.
     cachePoint: () => NO_CACHE_POINT,
     // See the classification caveat in the header: reasoning off, or the
     // gates' tiny token budgets are spent on reasoning instead of the

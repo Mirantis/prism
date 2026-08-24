@@ -1,12 +1,10 @@
 /**
  * OpenAI Provider for Vercel AI SDK — the official OpenAI API
  *
- * Unlike the other three vendors this one serves OpenAI models, not Claude,
- * on a single surface: chat, classification and embeddings all speak the
- * OpenAI API at one base URL. `createOpenAI()(modelId)` dispatches to the
- * **Responses API** (the SDK's default), so a custom endpoint — direct
- * override or gateway — must serve `/responses`, not just
- * `/chat/completions`.
+ * Unlike the other vendors this one serves OpenAI models, not Claude.
+ * `createOpenAI()(modelId)` dispatches to the **Responses API** (the SDK's
+ * default), so a custom endpoint — direct override or gateway — must serve
+ * `/responses`, not just `/chat/completions`.
  *
  * Routing: a `baseURL` argument (the Lens Agents OpenAI mount, computed from
  * `NEXUS_API_URL` as `…/llm/openai/v1`) routes everything
@@ -22,9 +20,9 @@
  * the gateway no local key is needed (it holds its own), but the SDK
  * insists on one, so fall back to a decoy like the Azure/mantle factories do.
  *
- * The provider object itself — the Responses dispatcher, embeddings on the
- * same client, the empty cache-point fragment (OpenAI caching is automatic)
- * and the three classification knobs GPT-5.x needs — comes from
+ * The provider object itself — the Responses dispatcher, the empty
+ * cache-point fragment (OpenAI caching is automatic) and the three
+ * classification declarations GPT-5.x needs — comes from
  * `../openai-compatible`, which is the SDK surface rather than this vendor.
  * Everything decided here is what makes it *OpenAI*: the endpoint, the key
  * and the bare model ids.
@@ -51,8 +49,7 @@ export function createOpenAiProvider(baseURL?: string): LlmProvider {
 /**
  * Check if OpenAI is configured. Through the gateway only the model id is needed —
  * the gateway holds the key (Azure/mantle parity). Direct mode needs the key
- * too. Embedding config is deliberately NOT required — memory embeddings
- * fail-open without it.
+ * too.
  */
 export function isOpenAiConfigured(): boolean {
   if (!config.openaiModelId) return false;
