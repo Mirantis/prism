@@ -338,6 +338,24 @@ describe('deciding whether to answer', () => {
     );
   });
 
+  it('drops a verdict once a later utterance has closed', async () => {
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-first' });
+    await settle();
+    // Somebody else speaks before the verdict lands. The response would carry the
+    // conversation as it now stands, so answering would answer *their* utterance —
+    // which nothing judged.
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-second' });
+    await settle();
+
+    await answerGate(send, sent, 'YES');
+
+    expect(spokenRequests(sent)).toHaveLength(0);
+    expect(h.conversation.statistics).toMatchObject({ gateSuperseded: 1 });
+  });
+
   it('counts a verdict that never came, so a deaf agent is visible', async () => {
     const { h, send, sent } = await speakingHarness();
     active = h;

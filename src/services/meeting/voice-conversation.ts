@@ -101,6 +101,14 @@ export interface VoiceConversationStats {
   gateFailed: number;
   gateLatencyMs: number;
   /**
+   * Verdicts thrown away because a newer utterance had closed first.
+   *
+   * The conservative half of a deliberate trade: the agent never answers a turn
+   * nothing judged, at the price of occasionally missing one it was asked. A high
+   * count means the room is busy enough that the price is being paid often.
+   */
+  gateSuperseded: number;
+  /**
    * Answers the agent decided to give that the room never heard.
    *
    * A response can end without producing audio — a rate limit, a server error. The
@@ -123,7 +131,18 @@ export class VoiceConversation {
   private gateCalls = 0;
   private gateFailed = 0;
   private gateLatencyMs = 0;
+  private gateSuperseded = 0;
   private responsesFailed = 0;
+  /**
+   * The newest utterance the turn detector has closed.
+   *
+   * A verdict names the utterance it judged, but the response that follows does
+   * not: `requestResponse()` asks the model to answer the conversation as it now
+   * stands. So a yes for one utterance, arriving after a later one has closed,
+   * would make the agent answer the later one — which nothing judged. Compared
+   * before speaking so that cannot happen.
+   */
+  private newestItemId: string | null = null;
   private currentItemId: string | null = null;
   /**
    * When the room last fell silent, and why the agent is about to break it.
@@ -252,6 +271,7 @@ export class VoiceConversation {
     // nothing back for a later boundary, and cannot produce two verdicts for one
     // sentence.
     this.session.on('utteranceCommitted', (itemId) => {
+      this.newestItemId = itemId;
       const decision = this.responsePolicy.onUtteranceCommitted(itemId);
       if (decision === 'respond') {
         this.answer('open-mode');
@@ -323,6 +343,21 @@ export class VoiceConversation {
     // kept because the cost of being wrong here is paid out loud.
     if (Date.now() - asked > ADDRESSED_DEADLINE_MS) {
       logger.info(`[Meeting] Dropped a late verdict for item=${itemId} — the room has moved on`);
+      return;
+    }
+
+    // Somebody else has spoken since. Answering now would answer *their* utterance,
+    // because the response carries the conversation as it stands rather than the
+    // turn that was judged — so a yes for a question asked of the agent could
+    // interrupt an exchange between two other people. Dropped instead, on the same
+    // principle as the deadline above: speaking out of turn is the failure this gate
+    // exists to prevent, and someone repeating themselves recovers a lost answer.
+    if (this.newestItemId !== null && this.newestItemId !== itemId) {
+      this.gateSuperseded += 1;
+      logger.info(
+        `[Meeting] Dropped a verdict for item=${itemId || 'none'} — ` +
+          `item=${this.newestItemId || 'none'} has closed since, and the answer would land on that`,
+      );
       return;
     }
 
@@ -491,6 +526,7 @@ export class VoiceConversation {
       gateCalls: this.gateCalls,
       gateFailed: this.gateFailed,
       gateLatencyMs: this.gateLatencyMs,
+      gateSuperseded: this.gateSuperseded,
       responsesFailed: this.responsesFailed,
     };
   }

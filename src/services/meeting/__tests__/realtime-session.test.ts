@@ -238,7 +238,13 @@ describe('RealtimeSession events', () => {
   it('tracks spoken turns for a probe to draw context from, tool output excluded', async () => {
     active = await harness();
 
-    active.emit({ type: 'conversation.item.added', item: { id: 'u-1', type: 'message', role: 'user' } });
+    const spoken = (id: string) => ({
+      id,
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_audio' }],
+    });
+    active.emit({ type: 'conversation.item.added', item: spoken('u-1') });
     active.emit({ type: 'conversation.item.added', item: { id: 'a-1', type: 'message', role: 'assistant' } });
     // One tool result can be 12,000 characters — measured at ~2,900 tokens — and
     // says nothing about who was addressed. Including it would make a probe cost
@@ -248,7 +254,13 @@ describe('RealtimeSession events', () => {
       type: 'conversation.item.added',
       item: { id: 'fo-1', type: 'function_call_output', call_id: 'c1' },
     });
-    active.emit({ type: 'conversation.item.added', item: { id: 'u-2', type: 'message', role: 'user' } });
+    // Injected by the runtime rather than said out loud — an admission note or a
+    // roster update. It would otherwise fill the window with our own writing.
+    active.emit({
+      type: 'conversation.item.added',
+      item: { id: 'ctx-1', type: 'message', role: 'user', content: [{ type: 'input_text' }] },
+    });
+    active.emit({ type: 'conversation.item.added', item: spoken('u-2') });
     await new Promise((r) => setTimeout(r, 20));
 
     expect(active.session.recentConversationItems(10)).toEqual(['u-1', 'a-1', 'u-2']);
@@ -259,8 +271,9 @@ describe('RealtimeSession events', () => {
 
   it('does not record the same turn twice when both item events arrive', async () => {
     active = await harness();
-    active.emit({ type: 'conversation.item.added', item: { id: 'u-1', type: 'message', role: 'user' } });
-    active.emit({ type: 'conversation.item.created', item: { id: 'u-1', type: 'message', role: 'user' } });
+    const turn = { id: 'u-1', type: 'message', role: 'user', content: [{ type: 'input_audio' }] };
+    active.emit({ type: 'conversation.item.added', item: turn });
+    active.emit({ type: 'conversation.item.created', item: turn });
     await new Promise((r) => setTimeout(r, 20));
 
     expect(active.session.recentConversationItems(10)).toEqual(['u-1']);
@@ -912,10 +925,16 @@ describe('RealtimeSession out-of-band probes', () => {
 
     // A rejected response.create never opens a response, so the echoed client
     // event_id is the only thing that says which request failed.
+    // `error.event_id` names the client event that failed; the top-level one is the
+    // server's id for the error itself. Reading the wrong one matched nothing, so
+    // every rejection fell through and queued a phantom conversation response.
     active.emit({
       type: 'error',
-      event_id: sendId,
-      error: { message: 'Conversation already has an active response in progress' },
+      event_id: 'event_server_side',
+      error: {
+        message: 'Conversation already has an active response in progress',
+        event_id: sendId,
+      },
     });
     await expect(verdict).resolves.toBeNull();
 
@@ -1064,8 +1083,11 @@ describe('RealtimeSession out-of-band probes', () => {
     // The server refuses it, naming the request. No `response.created` is coming.
     active.emit({
       type: 'error',
-      event_id: rejected,
-      error: { message: 'Conversation already has an active response in progress' },
+      event_id: 'event_server_side',
+      error: {
+        message: 'Conversation already has an active response in progress',
+        event_id: rejected,
+      },
     });
     await settle();
 

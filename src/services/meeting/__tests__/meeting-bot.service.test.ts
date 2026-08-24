@@ -108,6 +108,7 @@ class FakeVoiceConversation {
       gateCalls: 4,
       gateFailed: 1,
       gateLatencyMs: 3200,
+      gateSuperseded: 1,
       responsesFailed: 2,
     };
   }
@@ -1133,6 +1134,7 @@ describe('telemetry', () => {
       gate_calls: '4',
       gate_failed: '1',
       gate_latency_ms: '800',
+      gate_superseded: '1',
       // Distinct from `gate_failed`: there the verdict never arrived, here it did
       // and the response the agent asked for produced no audio.
       responses_failed: '2',
@@ -1153,6 +1155,7 @@ describe('telemetry', () => {
       gateCalls: 0,
       gateFailed: 0,
       gateLatencyMs: 0,
+      gateSuperseded: 0,
       responsesFailed: 0,
     });
 
@@ -1165,6 +1168,7 @@ describe('telemetry', () => {
       gate_calls: '0',
       gate_failed: '0',
       gate_latency_ms: '0',
+      gate_superseded: '0',
       responses_failed: '0',
     });
   });

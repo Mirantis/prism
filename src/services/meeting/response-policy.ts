@@ -105,7 +105,16 @@ export class ResponsePolicy {
    * even when the confirmation does not.
    */
   private audible = true;
-  private readonly handledItems: string[] = [];
+  /**
+   * Utterances a decision has been taken on, verdict or not.
+   *
+   * Two lists rather than one because the states are different questions: a claimed
+   * utterance must not be judged again, while a *decided* one must not be answered
+   * again. Collapsing them would either let a duplicate commit spend a second probe
+   * or stop the first verdict from ever being applied.
+   */
+  private readonly claimedItems: string[] = [];
+  private readonly decidedItems: string[] = [];
   private readonly stats: ResponsePolicyStats = {
     utterances: 0,
     answered: 0,
@@ -188,32 +197,41 @@ export class ResponsePolicy {
    * `respond` in a one-to-one call, where there is nothing to decide: the answer
    * starts at the same instant the server would have started it. `gate` otherwise,
    * meaning "ask the model whether this was aimed at us". `ignore` for an utterance
-   * already handled, which is what stops one sentence being answered twice — a
-   * second `response.create` is *queued* by the session's pending-response
-   * deferral rather than dropped, so the room would hear the same reply twice.
+   * this has already taken a decision on.
+   *
+   * An utterance is claimed here, before its verdict exists, and that is the point.
+   * Remembering it only once a verdict said *yes* left three holes: a duplicated
+   * commit arriving while the first probe was still in flight launched a second
+   * probe, two no-verdicts on one utterance counted it twice in both `utterances`
+   * and `suppressed`, and a no followed by a yes could answer a sentence the gate
+   * had already declined. Either verdict is terminal now, so each utterance is
+   * decided exactly once.
    */
   onUtteranceCommitted(itemId: string): TurnDecision {
-    // Counted *after* the duplicate check, so a commit the room only made once is
-    // not tallied twice. Otherwise `utterances` drifts above what was said and the
-    // suppressed-against-utterances ratio the stats exist for slowly stops meaning
-    // anything.
-    if (this.wasHandled(itemId)) return 'ignore';
+    if (this.isClaimed(itemId)) return 'ignore';
+    this.claim(itemId);
     this.stats.utterances += 1;
     if (this.mode !== 'open') return 'gate';
-    this.answer(itemId);
+    // Answering here *is* the decision, so record it as one. A verdict can still
+    // arrive for this utterance — the mode may have been `addressed` when the probe
+    // went out and flipped to `open` before the turn closed — and it must not add a
+    // second answer.
+    this.decide(itemId);
+    this.stats.answered += 1;
     return 'respond';
   }
 
   /**
    * Apply the verdict on whether the agent was addressed.
    *
-   * Re-checks the item rather than trusting the caller: a verdict arrives a few
-   * hundred milliseconds after the utterance closed, and the room does not wait.
-   * By then the mode may have flipped, or — for an id-less utterance — something
-   * else may already have answered it.
+   * Re-checks that this utterance is still awaiting one rather than trusting the
+   * caller: a verdict arrives a few hundred milliseconds after the utterance
+   * closed, the room does not wait, and a retried or duplicated probe can answer
+   * twice. The first verdict to arrive decides, whichever way it goes.
    */
   resolveVerdict(itemId: string, addressed: boolean): boolean {
-    if (this.wasHandled(itemId)) return false;
+    if (this.isDecided(itemId)) return false;
+    this.decide(itemId);
 
     if (!addressed) {
       this.stats.suppressed += 1;
@@ -221,24 +239,32 @@ export class ResponsePolicy {
     }
 
     this.stats.addressedMatches += 1;
-    logger.info('[Meeting] Addressed — responding');
-    return this.answer(itemId);
-  }
-
-  /** Record a yes: remember the item so the other path can't answer it twice. */
-  private answer(itemId: string): boolean {
-    this.remember(itemId);
     this.stats.answered += 1;
+    logger.info('[Meeting] Addressed — responding');
     return true;
   }
 
-  private remember(itemId: string): void {
-    if (!itemId) return;
-    this.handledItems.push(itemId);
-    if (this.handledItems.length > HANDLED_ITEM_LIMIT) this.handledItems.shift();
+  /** Claimed: a decision has been taken, whether or not a verdict has landed. */
+  private isClaimed(itemId: string): boolean {
+    return itemId !== '' && this.claimedItems.includes(itemId);
   }
 
-  private wasHandled(itemId: string): boolean {
-    return itemId !== '' && this.handledItems.includes(itemId);
+  /** Decided: a verdict has been applied, so no later one may. */
+  private isDecided(itemId: string): boolean {
+    return itemId !== '' && this.decidedItems.includes(itemId);
+  }
+
+  private claim(itemId: string): void {
+    this.remember(this.claimedItems, itemId);
+  }
+
+  private decide(itemId: string): void {
+    this.remember(this.decidedItems, itemId);
+  }
+
+  private remember(items: string[], itemId: string): void {
+    if (!itemId) return;
+    items.push(itemId);
+    if (items.length > HANDLED_ITEM_LIMIT) items.shift();
   }
 }
