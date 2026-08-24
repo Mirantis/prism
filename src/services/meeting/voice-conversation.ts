@@ -271,8 +271,12 @@ export class VoiceConversation {
     // nothing back for a later boundary, and cannot produce two verdicts for one
     // sentence.
     this.session.on('utteranceCommitted', (itemId) => {
-      this.newestItemId = itemId;
       const decision = this.responsePolicy.onUtteranceCommitted(itemId);
+      // Only a turn the policy actually accepted moves this. A duplicated commit
+      // for an earlier utterance is answered `ignore`, and letting it set the marker
+      // anyway would rewind the guard below — that earlier utterance's late yes
+      // would then pass, and the bare response would answer whatever came after it.
+      if (decision !== 'ignore') this.newestItemId = itemId;
       if (decision === 'respond') {
         this.answer('open-mode');
         return;

@@ -1020,6 +1020,101 @@ describe('RealtimeSession out-of-band probes', () => {
     expect(cancel.response_id).toBe('r-main');
   });
 
+  it('ignores a completion for a response that is no longer the live one', async () => {
+    active = await harness();
+    active.emit({ type: 'response.created', response: { id: 'r-a' } });
+    active.emit({ type: 'response.output_audio.delta', delta: silenceDelta(200), item_id: 'i-1' });
+    await settle();
+
+    // A barge-in cancels A, then B is asked for and opens.
+    active.session.interrupt([{ itemId: 'i-1', playedMs: 100, sentMs: 200 }]);
+    active.session.requestResponse();
+    await settle();
+    active.emit({ type: 'response.created', response: { id: 'r-b' } });
+    await settle();
+
+    // A's cancelled completion arrives late. Clearing the slot here would wipe B's
+    // state while B is still speaking.
+    active.emit({ type: 'response.done', response: { id: 'r-a', status: 'cancelled' } });
+    await settle();
+
+    // B is still the live response, so a second interruption still cancels it...
+    const cancelsBefore = active.sent.filter((f) => f.type === 'response.cancel').length;
+    active.session.interrupt([]);
+    await settle();
+    const cancels = active.sent.filter((f) => f.type === 'response.cancel') as Record<
+      string,
+      unknown
+    >[];
+    expect(cancels).toHaveLength(cancelsBefore + 1);
+    expect(cancels.at(-1)?.response_id).toBe('r-b');
+  });
+
+  it('keeps a live response when a cancel reports nothing to cancel', async () => {
+    active = await harness();
+    active.session.requestResponse();
+    await settle();
+    active.emit({ type: 'response.created', response: { id: 'r-live' } });
+    await settle();
+
+    // The error answers an *earlier* cancel. Releasing the flags for it would
+    // strand the response that is running now.
+    active.emit({ type: 'error', error: { message: 'Cancellation failed: no active response' } });
+    await settle();
+
+    active.session.interrupt([]);
+    await settle();
+    const cancel = active.sent.find((f) => f.type === 'response.cancel') as Record<string, unknown>;
+    expect(cancel.response_id).toBe('r-live');
+  });
+
+  it('still recognises a rejection for a probe that has already given up', async () => {
+    active = await harness();
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 40,
+    });
+    await settle();
+    const sendId = probeFrame(active.sent)!.event_id as string;
+    await expect(verdict).resolves.toBeNull();
+
+    // The rejection outlives the caller. Read as the conversation's, it would set
+    // `responsePending` and speak an answer nothing asked for.
+    active.emit({
+      type: 'error',
+      error: {
+        message: 'Conversation already has an active response in progress',
+        event_id: sendId,
+      },
+    });
+    await settle();
+
+    const before = mainRequests(active.sent).length;
+    active.session.requestResponse();
+    await settle();
+    expect(mainRequests(active.sent)).toHaveLength(before + 1);
+  });
+
+  it('keeps a probe attributable for longer than the conversation waits', async () => {
+    active = await harness();
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      // Longer than the 5s the conversation's watchdog allows, which is the window
+      // that used to discard a probe's queue entry while the probe was still live.
+      deadlineMs: 8_000,
+    });
+    await settle();
+
+    // No metadata on the open event, so attribution rides the send queue alone.
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    active.emit({ type: 'response.output_text.delta', response_id: 'r-probe', delta: 'YES' });
+    active.emit({ type: 'response.done', response: { id: 'r-probe', status: 'completed' } });
+
+    await expect(verdict).resolves.toBe('YES');
+  });
+
   it('resolves a probe left in flight when the call ends', async () => {
     active = await harness();
     const verdict = active.session.requestOutOfBandText({
