@@ -338,10 +338,11 @@ word, and it looks back over the last few turns of the call rather than the whol
 thing, so what it costs does not grow as the meeting goes on. None at all in a
 one-to-one call, where nothing needs deciding.
 
-Input transcription also runs on every call, billed per audio minute at a small
-fraction of the Realtime audio rate for the same minute. Nothing depends on it: it
-exists so a call can be read back in the log, and the conversation itself stays pure
-audio.
+Input transcription costs nothing unless you ask for it. Nothing depends on it — it
+exists so a call can be read back in the log — so it is only requested when
+`MEETING_TRANSCRIPT_LOGGING=full`. Turn that on and it bills per audio minute, at a
+small fraction of the Realtime audio rate for the same minute. The conversation
+itself stays pure audio either way.
 
 **A call cannot run past an hour.** OpenAI's Realtime sessions end at 60 minutes,
 which is not configurable and applies regardless of `MEETING_TIMEOUT_MINUTES`. When
@@ -376,7 +377,7 @@ is the same thing to tell them about as the agent's presence.
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model thinks before answering or picking a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults higher than the API's own `low` — see [Reasoning effort](#reasoning-effort). Empty takes the API default. | `high` |
-| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used only so a call can be read back in the log. Runs on every call, billed per minute; never fed to the model, and nothing waits on it. The default accepts name hints, which is what keeps names legible in the log — see [Names](#names). | `gpt-live-transcribe` |
+| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used only so a call can be read back in the log — never fed to the model, and nothing waits on it. Only requested when `MEETING_TRANSCRIPT_LOGGING=full`, since it bills per audio minute and by default the words are dropped. The default accepts name hints, which is what keeps names legible in the log — see [Names](#names). | `gpt-live-transcribe` |
 | `OPENAI_NOISE_REDUCTION` | Server-side noise reduction over the meeting audio before turn detection and transcription see it: `off`, `near_field`, `far_field`. Off by default on purpose — what arrives is Meet's already-cleaned mix, and reducing it again cost a live agent most of what a quieter person in the room said. | `off` |
 | `MEETING_TRANSCRIPT_LOGGING` | Whether what was said may appear in the runtime's log: `off` or `full`. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |

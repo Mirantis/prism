@@ -160,21 +160,34 @@ describe('RealtimeSession configuration', () => {
     expect(update.session.instructions).toContain('You are **Prism**');
   });
 
-  it('always enables transcription, since the mode can change mid-call', async () => {
+  it('asks for no transcription when the words will not be written down', async () => {
+    // Nothing decides anything from the transcript any more, so under the default
+    // `off` it was billing per audio minute for text that was then deliberately
+    // dropped.
     active = await harness();
     const update = active.sent.find((f) => f.type === 'session.update') as { session: Record<string, any> };
 
-    // Only ever used to decide who was addressed, never as model input. On for
-    // every call because a third person can join at any moment, and an utterance
-    // already past cannot be transcribed retroactively.
-    // Language is pinned rather than auto-detected: left to itself the transcriber
-    // drifted to German, Korean and Bulgarian inside one English call, and a wrong
-    // language guess mangles the agent's own name — the one word this transcript
-    // exists to find.
-    expect(update.session.audio.input.transcription).toEqual({
-      model: 'gpt-realtime-whisper',
-      language: 'en',
-    });
+    expect('transcription' in update.session.audio.input).toBe(false);
+  });
+
+  it('transcribes when the log is going to carry it', async () => {
+    const restore = config.meetingTranscriptLogging;
+    (config as { meetingTranscriptLogging: string }).meetingTranscriptLogging = 'full';
+    try {
+      active = await harness();
+      const update = active.sent.find((f) => f.type === 'session.update') as {
+        session: Record<string, any>;
+      };
+
+      // Language is pinned rather than auto-detected: left to itself the transcriber
+      // drifted to German, Korean and Bulgarian inside one English call.
+      expect(update.session.audio.input.transcription).toEqual({
+        model: 'gpt-realtime-whisper',
+        language: 'en',
+      });
+    } finally {
+      (config as { meetingTranscriptLogging: string }).meetingTranscriptLogging = restore;
+    }
   });
 
   it('sends no noise-reduction key by default, because Meet has already cleaned this audio', async () => {

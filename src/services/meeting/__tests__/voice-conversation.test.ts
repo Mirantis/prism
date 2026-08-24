@@ -191,7 +191,8 @@ describe('losing the Realtime session', () => {
 });
 
 describe('telling the session who is in the room', () => {
-  it('hints the transcriber and informs the model, once per change', async () => {
+  it('hints the transcriber when the log will carry the words', async () => {
+    vi.mocked(config).meetingTranscriptLogging = 'full';
     const { h, sent } = await speakingHarness();
     active = h;
 
@@ -205,22 +206,44 @@ describe('telling the session who is in the room', () => {
     const keywords = (
       update?.session as { audio?: { input?: { transcription?: { keywords?: string[] } } } }
     )?.audio?.input?.transcription?.keywords;
-    // The agent's own name leads: it is the one word the gate cannot work without.
+    // The agent's own name leads: it is the hardest word in the transcript and the
+    // one a reader needs to be right.
     expect(keywords?.[0]).toBe('Emma');
     expect(keywords).toContain('Mario Sarcher');
-
-    // The model is told separately — it cannot read the transcriber's config, and
-    // "who is in this call?" is a question the room actually asks.
-    const context = sent.filter((e) => e.type === 'conversation.item.create');
-    expect(JSON.stringify(context)).toContain('Mario Sarcher');
-    // ...and not told it is talking to itself.
-    expect(JSON.stringify(context)).not.toContain('are now: Emma');
 
     // Re-sending an unchanged roster would mutate a live session every poll.
     const before = sent.length;
     h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
     await settle();
     expect(sent.length).toBe(before);
+  });
+
+  it('sends no transcriber config at all when nothing will read it', async () => {
+    // `off` by default, so this is the ordinary case: the roster poll must not
+    // quietly switch transcription back on and start billing per minute.
+    const { h, sent } = await speakingHarness();
+    active = h;
+
+    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher']);
+    await settle();
+
+    const updates = sent.filter((e) => e.type === 'session.update');
+    expect(JSON.stringify(updates)).not.toContain('transcription');
+  });
+
+  it('tells the model who is in the room either way', async () => {
+    const { h, sent } = await speakingHarness();
+    active = h;
+
+    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
+    await settle();
+
+    // Independent of the transcript setting: the model cannot read the
+    // transcriber's config, and "who is in this call?" is a question the room asks.
+    const context = sent.filter((e) => e.type === 'conversation.item.create');
+    expect(JSON.stringify(context)).toContain('Mario Sarcher');
+    // ...and it is not told it is talking to itself.
+    expect(JSON.stringify(context)).not.toContain('are now: Emma');
   });
 });
 
