@@ -3,8 +3,10 @@
  *
  * This is a speech-to-speech session: meeting audio goes in as pcm16 and the
  * model's speech comes back as pcm16. There is deliberately no transcript in the
- * conversation path — transcription exists only so a call can be read back in the
- * log, and nothing decides anything from it.
+ * conversation path — nothing decides anything from words. Transcription exists
+ * only so a call can be read back in the log, so it is requested only when
+ * `MEETING_TRANSCRIPT_LOGGING` says the words will actually be written: it bills
+ * per audio minute whether or not anybody reads them.
  *
  * The model carries the agent's real system prompt as session `instructions` and
  * the agent's real tools as Realtime function tools, so the participant in the
@@ -454,15 +456,17 @@ export class RealtimeSession extends EventEmitter {
             ...(config.noiseReduction === 'off'
               ? {}
               : { noise_reduction: { type: config.noiseReduction } }),
-            // For the log, and nothing else. Whether the agent was addressed is
-            // judged from the audio now (`addressed-audio-gate.ts`), so no decision
-            // waits on these words and a transcription that fails or comes back
-            // empty costs a log line rather than an answer. It is kept because
-            // reading a call back beside its verdicts is how every wrong verdict so
-            // far has been diagnosed, and it is billed per audio minute — at
-            // whisper-class rates a rounding error beside the Realtime audio tokens
-            // the same minute costs. `MEETING_TRANSCRIPT_LOGGING` decides whether
-            // any of it is written down; this only decides whether it exists.
+            // Only when the log is going to carry it. Whether the agent was
+            // addressed is judged from the audio now (`addressed-audio-gate.ts`),
+            // so nothing else reads these words — and transcription bills per audio
+            // minute whether or not anybody looks. Under the default `off` it was
+            // paying for a transcript that was then deliberately dropped.
+            //
+            // Read once, at connect. `MEETING_TRANSCRIPT_LOGGING` is a container
+            // env var, so it cannot change mid-call — and an utterance already past
+            // cannot be transcribed retroactively anyway, so there is nothing to
+            // gain from deciding this per utterance.
+            //
             // `gpt-live-transcribe` accepts `keywords`, which is how the agent's
             // name and the room's roster are given to it. The previous default,
             // `gpt-realtime-whisper`, supports neither `keywords` nor `prompt` in GA
@@ -471,13 +475,15 @@ export class RealtimeSession extends EventEmitter {
             // transcriber drifts language mid-call — one real meeting came back
             // with German, Korean and Bulgarian renderings of English speech.
             // Voice meetings are English-only today, and the prompt says so.
-            transcription: {
-              model: config.openaiTranscriptionModel,
-              language: 'en',
-              ...(this.options.agentName
-                ? { keywords: [this.options.agentName] }
-                : {}),
-            },
+            ...(config.meetingTranscriptLogging === 'full'
+              ? {
+                  transcription: {
+                    model: config.openaiTranscriptionModel,
+                    language: 'en',
+                    ...(this.options.agentName ? { keywords: [this.options.agentName] } : {}),
+                  },
+                }
+              : {}),
           },
           output: {
             format: pcm,
@@ -1144,10 +1150,14 @@ export class RealtimeSession extends EventEmitter {
    * detection under a live conversation).
    *
    * Silently a no-op before the socket opens; the connect-time config already
-   * carries the agent's own name, which is the one that matters most.
+   * carries the agent's own name, which is the one that matters most. Also a no-op
+   * when the transcript is not being written down — this would otherwise re-enable
+   * transcription on the roster poll for a call that had deliberately switched it
+   * off, and start billing per minute for words nothing reads.
    */
   setTranscriptionKeywords(keywords: string[]): void {
     if (!this.isOpen || keywords.length === 0) return;
+    if (config.meetingTranscriptLogging !== 'full') return;
     this.send({
       type: 'session.update',
       session: {
