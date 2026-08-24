@@ -259,6 +259,18 @@ describe('config', () => {
       );
     });
 
+    it('exposes the OpenRouter key and endpoint override for direct mode', async () => {
+      // Direct is a supported mode, not just a gateway one: the key rides a
+      // header (so it may be a credential sentinel) and the endpoint is
+      // overridable like OPENAI_BASE_URL.
+      process.env.LLM_PROVIDER = 'openrouter';
+      process.env.OPENROUTER_API_KEY = '__nexus_cred:00000000-0000-0000-0000-000000000000__';
+      process.env.OPENROUTER_BASE_URL = 'https://proxy.example/openrouter/v1';
+      const cfg = await loadConfig();
+      expect(cfg.openrouterApiKey).toBe('__nexus_cred:00000000-0000-0000-0000-000000000000__');
+      expect(cfg.openrouterBaseUrl).toBe('https://proxy.example/openrouter/v1');
+    });
+
     it('disables embeddings on openrouter by default', async () => {
       // OpenRouter is an inference router; its embedding coverage is thin and
       // model-dependent, so defaulting one on would fail at the first index
