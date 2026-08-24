@@ -2,16 +2,13 @@
  * Shared bedrock-runtime plumbing for the two AWS vendors.
  *
  * `bedrock` and `bedrock-mantle` are separate providers — they speak different
- * protocols to different hosts — but they overlap on three things that are
+ * protocols to different hosts — but they overlap on two things that are
  * properties of AWS Bedrock itself rather than of either provider:
  *
  *  - **Credential resolution.** Explicit keys, or the AWS default chain (ECS
  *    task role → container metadata). A bearer token in
  *    `AWS_BEARER_TOKEN_BEDROCK` short-circuits both; the SDK reads it from the
  *    environment itself.
- *  - **The generic (Converse + embeddings) provider.** Mantle serves no
- *    embedding models, so its embedding leg reaches bedrock-runtime through
- *    exactly the provider `bedrock` uses for Titan.
  *  - **What an Anthropic model id looks like** on Bedrock.
  *
  * It lives here, beside the shared contract and the selector, rather than in
@@ -20,7 +17,6 @@
  * the two, which neither is.
  */
 
-import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { defaultProvider } from '@aws-sdk/credential-provider-node';
 import { config } from '../../config';
 import { logger } from '../../logger';
@@ -69,16 +65,4 @@ export function createSharedBedrockOptions() {
  */
 export function isAnthropicModelId(modelId: string): boolean {
   return /^anthropic\.|\.anthropic\./i.test(modelId);
-}
-/**
- * The generic (Converse + embeddings) bedrock-runtime provider on its own.
- *
- * `baseURL` selects routing exactly as in `createBedrockProvider`: unset →
- * direct to AWS with resolved credentials; set → the Lens Agents gateway,
- * which does its own signing.
- */
-export function createBedrockEmbeddingProvider(baseURL?: string) {
-  return createAmazonBedrock(
-    baseURL ? { region: config.awsRegion, baseURL } : createSharedBedrockOptions(),
-  );
 }

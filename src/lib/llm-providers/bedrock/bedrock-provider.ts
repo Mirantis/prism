@@ -5,7 +5,7 @@
  * the Anthropic-native Bedrock provider (Messages API via InvokeModel), and
  * any other model — Kimi, Llama, Mistral, etc. — goes through the generic
  * provider which uses Bedrock's Converse API (which normalizes tool/message
- * shapes across vendors). Embeddings always use the generic provider.
+ * shapes across vendors).
  *
  * Why this matters: the Anthropic-native provider hardcodes Anthropic's tool
  * wire format (`{ name, description, input_schema }`). Pointing it at a Kimi
@@ -38,12 +38,9 @@ import { ANTHROPIC_CACHE_POINT, BEDROCK_CACHE_POINT, type LlmProvider } from '..
 /**
  * Create an Amazon Bedrock provider that dispatches on model family.
  *
- * Returns a callable `(modelId) => LanguageModel` for chat, plus an
- * `.embedding(modelId)` method for text embeddings:
+ * Returns a callable `(modelId) => LanguageModel` for chat:
  *  - Anthropic chat model IDs route through the Anthropic-native provider.
  *  - Anything else routes through the generic Converse-API provider.
- *  - Embeddings always route through the generic provider (the Anthropic
- *    provider doesn't expose embedding models).
  *
  * `baseURL` selects routing: unset → direct AWS (credentials via explicit keys
  * or the default credential chain); set → the Lens Agents gateway, which does
@@ -59,7 +56,6 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
   const dispatcher = (modelId: string) =>
     isAnthropicModelId(modelId) ? anthropic(modelId) : generic(modelId);
   return Object.assign(dispatcher, {
-    embedding: (modelId: string) => generic.embedding(modelId),
     // Dispatched like the model itself, because the breakpoint belongs to the
     // protocol rather than to the vendor: the Anthropic-native provider reads
     // Anthropic's namespace, Converse reads Bedrock's, and a fragment in the

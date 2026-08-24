@@ -204,11 +204,14 @@ describe('config', () => {
 
   describe('LLM_PROVIDER selection', () => {
     // These assert built-in defaults, so any model-id var the developer happens
-    // to have exported would otherwise leak in through `originalEnv`.
+    // to have exported would otherwise leak in through `originalEnv` — and the
+    // anthropic cases assert embedding *derivation*, which an ambient
+    // EMBEDDING_PROVIDER would override.
     beforeEach(() => {
       for (const key of Object.keys(process.env)) {
         if (/_MODEL_ID$/.test(key)) delete process.env[key];
       }
+      delete process.env.EMBEDDING_PROVIDER;
     });
 
     it('defaults to bedrock when unset', async () => {
@@ -335,6 +338,162 @@ describe('config', () => {
       process.env.OPENAI_BASE_URL = 'https://gw.example/openai/v1';
       expect((await loadConfig()).openaiBaseUrl).toBe('https://gw.example/openai/v1');
     });
+
+    it('selects anthropic (case-insensitive) and resolves bare first-party model IDs', async () => {
+      process.env.LLM_PROVIDER = 'Anthropic';
+      const cfg = await loadConfig();
+      expect(cfg.llmProvider).toBe('anthropic');
+      expect(cfg.chatModelId).toBe('claude-opus-5');
+      expect(cfg.classificationModelId).toBe('claude-haiku-4-5');
+    });
+
+    it('anthropic without an OpenAI key or gateway runs without embeddings', async () => {
+      process.env.LLM_PROVIDER = 'anthropic';
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.NEXUS_API_URL;
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('none');
+      expect(cfg.embeddingModelId).toBe('');
+    });
+
+    it('anthropic with an OpenAI key borrows OpenAI embeddings', async () => {
+      process.env.LLM_PROVIDER = 'anthropic';
+      process.env.OPENAI_API_KEY = 'sk-test';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('openai');
+      expect(cfg.embeddingModelId).toBe('text-embedding-3-small');
+    });
+
+    it('anthropic without a local key still embeds through the gateway openai mount', async () => {
+      // The gateway holds the platform credentials, so a sandbox deployment
+      // with no local OPENAI_API_KEY can still reach OpenAI embeddings — the
+      // embedding factory sends a decoy key and the gateway injects the real
+      // one on the outbound leg.
+      process.env.LLM_PROVIDER = 'anthropic';
+      delete process.env.OPENAI_API_KEY;
+      process.env.NEXUS_API_URL = 'https://gateway.example.com';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('openai');
+      expect(cfg.embeddingModelId).toBe('text-embedding-3-small');
+    });
+
+    it('reads ANTHROPIC_API_KEY verbatim so a credential sentinel survives', async () => {
+      process.env.ANTHROPIC_API_KEY = '__nexus_cred:1234-uuid__';
+      const cfg = await loadConfig();
+      expect(cfg.anthropicApiKey).toBe('__nexus_cred:1234-uuid__');
+    });
+
+    it('anthropicBaseUrl is undefined by default (SDK default endpoint)', async () => {
+      delete process.env.ANTHROPIC_BASE_URL;
+      expect((await loadConfig()).anthropicBaseUrl).toBeUndefined();
+    });
+
+    it('reads ANTHROPIC_BASE_URL as the direct endpoint override', async () => {
+      process.env.ANTHROPIC_BASE_URL = 'https://gw.example/anthropic/v1';
+      expect((await loadConfig()).anthropicBaseUrl).toBe('https://gw.example/anthropic/v1');
+    });
+  });
+
+  describe('EMBEDDING_PROVIDER selection', () => {
+    beforeEach(() => {
+      for (const key of Object.keys(process.env)) {
+        if (/_MODEL_ID$/.test(key)) delete process.env[key];
+      }
+      delete process.env.EMBEDDING_PROVIDER;
+      delete process.env.LLM_PROVIDER;
+    });
+
+    it('derives bedrock from a bedrock chat deployment', async () => {
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('bedrock');
+      expect(cfg.embeddingModelId).toBe('amazon.titan-embed-text-v2:0');
+    });
+
+    it('derives azure-openai from an azure chat deployment', async () => {
+      process.env.LLM_PROVIDER = 'azure';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('azure-openai');
+      expect(cfg.embeddingModelId).toBe('text-embedding-3-small');
+    });
+
+    it('derives bedrock from a bedrock-mantle chat deployment (Titan)', async () => {
+      process.env.LLM_PROVIDER = 'bedrock-mantle';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('bedrock');
+      expect(cfg.embeddingModelId).toBe('amazon.titan-embed-text-v2:0');
+    });
+
+    it('derives openai from an openai chat deployment', async () => {
+      process.env.LLM_PROVIDER = 'openai';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('openai');
+      expect(cfg.embeddingModelId).toBe('text-embedding-3-small');
+    });
+
+    it('derives openrouter from an openrouter chat deployment, embeddings off by default', async () => {
+      process.env.LLM_PROVIDER = 'openrouter';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('openrouter');
+      expect(cfg.embeddingModelId).toBe('');
+    });
+
+    it('openrouter embeddings switch on when a model id is named', async () => {
+      process.env.LLM_PROVIDER = 'openrouter';
+      process.env.OPENROUTER_EMBEDDING_MODEL_ID = 'openai/text-embedding-3-small';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingModelId).toBe('openai/text-embedding-3-small');
+    });
+
+    it('an explicit EMBEDDING_PROVIDER wins over the derived default', async () => {
+      process.env.LLM_PROVIDER = 'bedrock';
+      process.env.EMBEDDING_PROVIDER = 'openai';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('openai');
+      expect(cfg.embeddingModelId).toBe('text-embedding-3-small');
+    });
+
+    it('is case-insensitive and tolerates stray whitespace', async () => {
+      // A quoted compose value like "none " must not silently leave
+      // embeddings on — the exact opposite of the request.
+      for (const messy of ['Azure-OpenAI', ' azure-openai ', 'AZURE-OPENAI']) {
+        process.env.EMBEDDING_PROVIDER = messy;
+        vi.resetModules();
+        const cfg = await loadConfig();
+        expect(cfg.embeddingProvider).toBe('azure-openai');
+      }
+    });
+
+    it('none disables embeddings entirely', async () => {
+      process.env.EMBEDDING_PROVIDER = 'none';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('none');
+      expect(cfg.embeddingModelId).toBe('');
+      expect(cfg.invalidEmbeddingProvider).toBeNull();
+    });
+
+    it('falls back to the derived default on an unrecognized value, preserving it for the startup warning', async () => {
+      // A typo like EMBEDDING_PROVIDER=azure (meaning azure-openai) keeps the
+      // derived default running, so nothing ever looks broken — the preserved
+      // value is what index.ts warns with at boot.
+      process.env.EMBEDDING_PROVIDER = 'voyage';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('bedrock');
+      expect(cfg.invalidEmbeddingProvider).toBe('voyage');
+    });
+
+    it('unset is not invalid — it is the documented way to ask for the default', async () => {
+      delete process.env.EMBEDDING_PROVIDER;
+      const cfg = await loadConfig();
+      expect(cfg.invalidEmbeddingProvider).toBeNull();
+    });
+
+    it('mantle carve-out: BEDROCK_MANTLE_EMBEDDING_MODEL_ID="" disables even under an explicit bedrock selection', async () => {
+      process.env.LLM_PROVIDER = 'bedrock-mantle';
+      process.env.EMBEDDING_PROVIDER = 'bedrock';
+      process.env.BEDROCK_MANTLE_EMBEDDING_MODEL_ID = '';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingModelId).toBe('');
+    });
   });
 
   describe('bedrock-mantle endpoints', () => {
@@ -443,6 +602,12 @@ describe('config', () => {
       const cfg = await loadConfig();
       expect(cfg.nexusChatBaseUrl).toBeNull();
       expect(cfg.nexusOpenAiBaseUrl).toBeNull();
+    });
+
+    it('is null on anthropic even when NEXUS_API_URL is set — no mount serves api.anthropic.com', async () => {
+      process.env.LLM_PROVIDER = 'anthropic';
+      const cfg = await loadConfig();
+      expect(cfg.nexusChatBaseUrl).toBeNull();
     });
   });
 

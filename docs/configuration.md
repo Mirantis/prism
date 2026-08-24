@@ -11,9 +11,9 @@ The runtime talks to one LLM provider per container, chosen by `LLM_PROVIDER`:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS), `azure` (Claude via Microsoft Foundry), `bedrock-mantle` (AWS's second Bedrock inference endpoint), `openai` (the official OpenAI API), or `openrouter`. Any other value falls back to `bedrock`. | `bedrock` |
+| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS), `azure` (Claude via Microsoft Foundry), `bedrock-mantle` (AWS's second Bedrock inference endpoint), `openai` (the official OpenAI API), `openrouter`, or `anthropic` (the first-party Anthropic API). Any other value falls back to `bedrock`. | `bedrock` |
 
-The three Claude platforms serve **Claude** through the Anthropic Messages API
+The four Claude platforms serve **Claude** through the Anthropic Messages API
 — `azure` mode runs the agent on Claude deployed in [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
 (`https://{resource}.services.ai.azure.com/anthropic/v1/messages`). On Azure,
 memory embeddings come from an Azure OpenAI `text-embedding-3` deployment
@@ -65,18 +65,29 @@ authenticated with the same `OPENAI_API_KEY` that enables
 [voice meetings](voice-meetings.md) — setting it for chat also switches the
 meeting tools on where the browser/audio toolchain is present.
 
-Each platform can run **direct** or **through the Lens Agents LLM gateway**.
-Routing is automatic: set `NEXUS_API_URL` and the runtime routes through the
-gateway (`…/llm/bedrock/{region}` for Bedrock; for Azure, chat rides
-`…/llm/azure/anthropic/v1` and embeddings `…/llm/azure/openai/v1`; for mantle,
-chat rides `…/llm/bedrock-mantle/anthropic/{region}/v1` while embeddings stay
-on the `…/llm/bedrock/{region}` mount; for OpenAI, chat, classification and
-embeddings all ride `…/llm/openai/v1`; for OpenRouter, the same three ride
-`…/llm/openrouter/openai/v1`), otherwise it talks to the platform
-directly. Through the gateway the platform credentials are held for you, so no
-local LLM credential is needed. The one exception is the voice-meeting Realtime
-WebSocket, which always goes direct to `api.openai.com` — the gateway's openai
-mount routes POST only. The credentials and model IDs below are grouped per
+`anthropic` runs the agent on **Claude at the first-party Anthropic API**
+(`api.anthropic.com`), authenticated with `ANTHROPIC_API_KEY`. Model IDs are
+bare first-party names (`claude-opus-5`). It is the one **direct-only**
+platform — no gateway mount serves `api.anthropic.com`, so the key is always
+required and chat stays direct even when `NEXUS_API_URL` is set. Anthropic
+serves no embedding models: memory embeddings default to OpenAI
+(`text-embedding-3-small`) when `OPENAI_API_KEY` is set or when the Lens
+Agents gateway holds the key (`NEXUS_API_URL` set), and are otherwise
+disabled — see [Memory embeddings](#memory-embeddings).
+
+Each platform except `anthropic` can run **direct** or **through the Lens
+Agents LLM gateway**. Routing is automatic: set `NEXUS_API_URL` and chat and
+classification route through the gateway (`…/llm/bedrock/{region}` for
+Bedrock, `…/llm/azure/anthropic/v1` for Azure,
+`…/llm/bedrock-mantle/anthropic/{region}/v1` for mantle, `…/llm/openai/v1` for
+OpenAI, `…/llm/openrouter/openai/v1` for OpenRouter), otherwise they go
+direct. Memory embeddings route independently, on the embedding platform's own
+mount — see [Memory embeddings](#memory-embeddings). Through the gateway the
+platform credentials are held for you, so no local LLM credential is needed.
+Two exceptions stay off the gateway: the voice-meeting Realtime WebSocket,
+which always goes direct to `api.openai.com` (the gateway's openai mount
+routes POST only), and `anthropic` chat as above. The credentials and model
+IDs below are grouped per
 platform.
 
 ## Credentials
@@ -93,6 +104,8 @@ platform.
 | `OPENAI_BASE_URL` | **(OpenAI, direct)** Override the chat/embeddings endpoint (must serve the Responses API). Does not move the voice-meeting Realtime WebSocket. |
 | `OPENROUTER_API_KEY` | **(OpenRouter)** API key, sent as a bearer header. Required for direct mode only — through the Lens Agents gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `OPENROUTER_BASE_URL` | **(OpenRouter, direct)** Override the endpoint (must serve the Responses API). Defaults to `https://openrouter.ai/api/v1`. |
+| `ANTHROPIC_API_KEY` | **(Anthropic)** API key, sent as the `x-api-key` header. Always required — this platform is direct-only, so there is no gateway mode to hold the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `ANTHROPIC_BASE_URL` | **(Anthropic)** Override the chat endpoint (must end at `/v1`). |
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). Enables the Slack adapter; validated via `auth.test` on boot. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-…`) for Socket Mode. |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check — the bot token's app ID must match this if set. |
@@ -232,7 +245,8 @@ identifiers; **Azure model IDs are Foundry deployment names** (which default to
 Claude model IDs when you deploy without renaming); **mantle model IDs are bare
 Bedrock identifiers** — same names, no `us.`/`eu.`/`global.` prefix; **OpenAI
 model IDs are plain OpenAI API model names**; **OpenRouter model IDs are
-`vendor/model`**.
+`vendor/model`**; **Anthropic model IDs are bare first-party names**
+(`claude-opus-5`).
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -254,6 +268,8 @@ model IDs are plain OpenAI API model names**; **OpenRouter model IDs are
 | `OPENROUTER_MODEL_ID` | **(OpenRouter)** Main model, as `vendor/model` — OpenRouter addresses every model that way, so a bare `gpt-5.6-sol` is not one it can route. The default mirrors the OpenAI tier so the provider's GPT-5.x parameter handling stays valid; point it at another vendor (`google/gemini-3-pro`, `deepseek/deepseek-v3.2`, `anthropic/claude-sonnet-5`) and those assumptions may not hold. | `openai/gpt-5.6-sol` |
 | `OPENROUTER_CLASSIFICATION_MODEL_ID` | **(OpenRouter)** Fast `vendor/model` for the heartbeat gate, under the same parameter caveat as the OpenAI one. | `openai/gpt-5.6-luna` |
 | `OPENROUTER_EMBEDDING_MODEL_ID` | **(OpenRouter)** Embedding model, as `vendor/model`. **Off by default**, unlike the other platforms: OpenRouter routes embedding models from several vendors whose native dimensionalities differ, and the memory index is fixed at 1024 dims — so there is no id that is right by default. Name one that can deliver 1024 (`openai/text-embedding-3-small` truncates to it) to switch memory embeddings on. | `''` (disabled) |
+| `ANTHROPIC_MODEL_ID` | **(Anthropic)** Main model (the agent's reasoning loop) | `claude-opus-5` |
+| `ANTHROPIC_CLASSIFICATION_MODEL_ID` | **(Anthropic)** Fast model for the heartbeat gate | `claude-haiku-4-5` |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-[compact](compaction.md) a conversation when its context occupancy reaches this percent of the model's window. `0` disables auto-compaction; out-of-range values fall back to the default. | `90` |
@@ -280,7 +296,33 @@ DELIVER/SUPPRESS gate (heartbeat and scheduled tasks) always uses the active
 platform's classification model (`BEDROCK_CLASSIFICATION_MODEL_ID` on Bedrock,
 `AZURE_CLASSIFICATION_MODEL_ID` on Azure,
 `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` on mantle,
-`OPENAI_CLASSIFICATION_MODEL_ID` on OpenAI), independent of this.
+`OPENAI_CLASSIFICATION_MODEL_ID` on OpenAI,
+`OPENROUTER_CLASSIFICATION_MODEL_ID` on OpenRouter,
+`ANTHROPIC_CLASSIFICATION_MODEL_ID` on Anthropic), independent of this.
+
+### Memory embeddings
+
+Which platform embeds [searchable memory](memory.md) is its own choice,
+separate from `LLM_PROVIDER`:
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `EMBEDDING_PROVIDER` | Embedding platform: `bedrock` (Titan on `bedrock-runtime`), `azure-openai` (a `text-embedding-3` deployment on the Foundry resource), `openai` (the OpenAI API), `openrouter` (openrouter.ai's OpenAI-compatible `/embeddings`), or `none` (embeddings off — memory still works, vector search returns nothing). Unset — or any other value — derives the default from `LLM_PROVIDER`: `bedrock` and `bedrock-mantle` → `bedrock`, `azure` → `azure-openai`, `openai` → `openai`, `openrouter` → `openrouter` (whose embedding model defaults to off), `anthropic` → `openai` when `OPENAI_API_KEY` or `NEXUS_API_URL` is set (the gateway holds the key) and `none` otherwise (Anthropic serves no embedding models). | derived |
+
+The embedding model itself still comes from the selected platform's
+`*_EMBEDDING_MODEL_ID` variable above, with the same credentials. With
+`NEXUS_API_URL` set, embeddings ride the embedding platform's own gateway
+mount (`…/llm/bedrock/{region}` for `bedrock`, `…/llm/azure/openai/v1` for
+`azure-openai`, `…/llm/openai/v1` for `openai`,
+`…/llm/openrouter/openai/v1` for `openrouter`), independent of how chat
+routes. So a Bedrock deployment can embed on OpenAI with
+`EMBEDDING_PROVIDER=openai` plus an `OPENAI_API_KEY`, and any deployment can
+turn embeddings off with `EMBEDDING_PROVIDER=none`. Setting
+`AZURE_EMBEDDING_MODEL_ID` / `BEDROCK_MANTLE_EMBEDDING_MODEL_ID` /
+`OPENAI_EMBEDDING_MODEL_ID` / `OPENROUTER_EMBEDDING_MODEL_ID` to `''` also
+still disables embeddings;
+`BEDROCK_EMBEDDING_MODEL_ID` has no `''` skip (empty falls back to Titan) —
+use `EMBEDDING_PROVIDER=none` there.
 
 ### Context-window size
 
@@ -365,7 +407,7 @@ under the data dir, so sign-in happens once rather than per meeting.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `OPENAI_API_KEY` | Enables voice meetings. The same key drives chat when `LLM_PROVIDER=openai` — see [Provider selection](#provider-selection). | — (disabled) |
+| `OPENAI_API_KEY` | Enables voice meetings. The same key drives chat when `LLM_PROVIDER=openai`, and memory embeddings by default when `LLM_PROVIDER=anthropic` — see [Provider selection](#provider-selection). | — (disabled) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot so a new one cannot change behaviour under you; `gpt-realtime-mini` is materially cheaper. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the in-meeting model thinks before it answers or picks a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. The API's own default is `low`, which suits a voice agent that reads out an order status; the model in a call here holds the agent's real toolset — shell, kubectl, integrations, its own configuration — so this defaults higher. The cost is latency, and latency in a call is silence in a room, so lower it if the pause is more noticeable than the mistakes it prevents. Set empty to send no setting and take the API's default. | `high` |

@@ -354,9 +354,10 @@ be platform credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy.
 
 One LLM provider per container, selected by `LLM_PROVIDER` (`bedrock`
-default, `azure`, `bedrock-mantle`, `openai`, or `openrouter`). The first
-three serve **Claude**; `openai` serves OpenAI models and `openrouter`
-whatever vendor its `vendor/model` id names.
+default, `azure`, `bedrock-mantle`, `openai`, `openrouter`, or `anthropic`).
+`bedrock`, `azure`, `bedrock-mantle` and `anthropic` serve **Claude**;
+`openai` serves OpenAI models and `openrouter` whatever vendor its
+`vendor/model` id names.
 **Bedrock** via Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the SDK
 auto-selects Bearer over SigV4 when set. **Azure = Claude via Microsoft
 Foundry**: chat/classification
@@ -395,20 +396,36 @@ of vendors, direct at `https://openrouter.ai/api/v1` with `OPENROUTER_API_KEY`
 `vendor/model` id does not resolve) or through the gateway, which holds the key
 like every other vendor. Its API is OpenAI-compatible — it serves `/responses`
 alongside `/chat/completions` — so it and `openai` are both built from
-`lib/llm-providers/openai-compatible.ts` — the Responses dispatcher,
-embeddings on the same client, the empty cache point and the three GPT-5.x
-gate knobs — while each keeps its own factory for what differs: the mount, the
-credential, the startup log line, and model ids that must be `vendor/model`
-(defaults `openai/gpt-5.6-sol` / `openai/gpt-5.6-luna`). Embeddings default to
-**off**: OpenRouter routes several vendors' embedding models whose native
-dimensionalities differ, while the index is fixed at 1024, so no id is right by
-default (`OPENROUTER_EMBEDDING_MODEL_ID=openai/text-embedding-3-small` turns
-them on). The gate knobs and the empty cache point are written for the GPT-5.x
+`lib/llm-providers/openai-compatible.ts` — the Responses dispatcher, the empty
+cache point and the three GPT-5.x gate declarations — while each keeps its own
+factory for what differs: the mount, the credential, the startup log line, and
+model ids that must be `vendor/model` (defaults `openai/gpt-5.6-sol` /
+`openai/gpt-5.6-luna`). Embeddings default to **off**: OpenRouter routes
+several vendors' embedding models whose native dimensionalities differ, while
+the index is fixed at 1024, so no id is right by default
+(`OPENROUTER_EMBEDDING_MODEL_ID=openai/text-embedding-3-small` turns them on).
+The gate declarations and the empty cache point are written for the GPT-5.x
 defaults; a `vendor/model` naming Anthropic or Gemini runs uncached, since
-their caching needs explicit markers the OpenAI SDK cannot send. Any provider
-can run direct or through the Lens Agents LLM gateway — routing is automatic when
-`NEXUS_API_URL` is set (`…/llm/bedrock/{region}` for Bedrock; Azure chat
-rides `…/llm/azure/anthropic/v1` and Azure embeddings
+their caching needs explicit markers the OpenAI SDK cannot send.
+**Anthropic** is the first-party API: chat/classification speak the Anthropic
+Messages API direct to `api.anthropic.com` (or `ANTHROPIC_BASE_URL`) with
+`ANTHROPIC_API_KEY` sent as `x-api-key` (may be a `__nexus_cred:<uuid>__`
+sentinel); model IDs are bare first-party names (defaults `claude-opus-5` /
+`claude-haiku-4-5`). It is the one **direct-only** vendor — no gateway mount
+serves api.anthropic.com, so the key is always required and `nexusChatBaseUrl`
+resolves to null even with `NEXUS_API_URL` set. Anthropic serves no embedding
+models; under it the embedding provider defaults to `openai` when
+`OPENAI_API_KEY` is set or the gateway can hold the key (`NEXUS_API_URL`
+set), else `none`.
+Memory embeddings are their own feature (`lib/embedding-providers/`), selected
+by `EMBEDDING_PROVIDER` (`bedrock` | `azure-openai` | `openai` | `openrouter`
+| `none`; unset derives the chat vendor's default) — decoupled from
+`LLM_PROVIDER` so a chat vendor without embedding models borrows another's,
+and a future embedding vendor (e.g. Voyage AI) lands without touching chat
+code. Every provider but anthropic can run direct or through the Lens Agents
+LLM gateway — routing is automatic when `NEXUS_API_URL` is set
+(`…/llm/bedrock/{region}` for Bedrock; Azure chat rides
+`…/llm/azure/anthropic/v1` and Azure embeddings
 `…/llm/azure/openai/v1`; mantle chat rides
 `…/llm/bedrock-mantle/anthropic/{region}/v1` while its embeddings stay on the
 bedrock mount; openai chat, classification and embeddings all ride
@@ -699,21 +716,30 @@ src/
 │   ├── attachment-boot.ts      # Boot-time attachment storage reconciliation, in order: missing media files → content expiry → legacy BLOB backfill
 │   ├── attachment-janitor.ts   # Hourly attachment sweep: orphaned uploads, stale hydrate scratch dirs, over-TTL content, stray media files
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
-│   ├── llm-providers/          # One folder per LLM vendor, plus the shared contract and the selector
-│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` + `.embedding(modelId)` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (Anthropic breakpoint or the empty `NO_CACHE_POINT`) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares
-│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai/openrouter), passes each its optional gateway baseURL; `isProviderConfigured()`
-│   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors need: AWS credential resolution, the generic Converse/embeddings provider (mantle's Titan leg), `isAnthropicModelId()`
+│   ├── llm-providers/          # One folder per chat vendor, plus the shared contract and the selector
+│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (Anthropic breakpoint or the empty `NO_CACHE_POINT`) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares
+│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai/openrouter/anthropic), passes each its optional gateway baseURL (anthropic is direct-only, no argument); `isProviderConfigured()`
+│   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors (and the bedrock embedding provider) need: AWS credential resolution, `isAnthropicModelId()`
 │   │   ├── bedrock/
 │   │   │   └── bedrock-provider.ts # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or gateway-routed when baseURL set)
 │   │   ├── azure/
-│   │   │   └── azure-provider.ts   # Azure provider factory (Claude via MS Foundry, Anthropic Messages API; embeddings via Azure OpenAI): `createAzureProvider(baseURL?)`
+│   │   │   └── azure-provider.ts   # Azure provider factory (Claude via MS Foundry, Anthropic Messages API): `createAzureProvider(baseURL?)`
 │   │   ├── bedrock-mantle/
-│   │   │   └── bedrock-mantle-provider.ts # Bedrock Mantle factory (Anthropic Messages surface only; bare model IDs, embeddings borrowed from bedrock-runtime): `createBedrockMantleProvider(baseURL?)`
-│   │   ├── openai-compatible.ts # The OpenAI-shaped provider object both OpenAI-surface vendors are built from: Responses dispatcher, embeddings on the same client, empty cache point, the three GPT-5.x gate knobs
+│   │   │   └── bedrock-mantle-provider.ts # Bedrock Mantle factory (Anthropic Messages surface only; bare model IDs): `createBedrockMantleProvider(baseURL?)`
+│   │   ├── openai-compatible.ts # The OpenAI-shaped provider object both OpenAI-surface vendors are built from: Responses dispatcher, empty cache point, the three GPT-5.x gate declarations
 │   │   ├── openai/
-│   │   │   └── openai-provider.ts # OpenAI factory (Responses API; one surface for chat/classification/embeddings; pins gate calls to reasoningEffort 'none'): `createOpenAiProvider(baseURL?)`
-│   │   └── openrouter/
-│   │       └── openrouter-provider.ts # OpenRouter factory (same OpenAI surface; direct at openrouter.ai or the gateway mount, `vendor/model` ids): `createOpenRouterProvider(baseURL?)`
+│   │   │   └── openai-provider.ts # OpenAI factory (Responses API; pins gate calls to reasoningEffort 'none'): `createOpenAiProvider(baseURL?)`
+│   │   ├── openrouter/
+│   │   │   └── openrouter-provider.ts # OpenRouter factory (same OpenAI surface; direct at openrouter.ai or the gateway mount, `vendor/model` ids): `createOpenRouterProvider(baseURL?)`
+│   │   └── anthropic/
+│   │       └── anthropic-provider.ts # First-party Anthropic API factory (api.anthropic.com; direct-only, bare model IDs): `createAnthropicProvider()`
+│   ├── embedding-providers/    # Memory-embedding vendors, a feature of their own decoupled from the chat provider (`EMBEDDING_PROVIDER`)
+│   │   ├── embedding-provider.ts # Shared `EmbeddingProvider` type: `model(modelId)` + the vendor's `providerOptions` fragment carrying the 1024-dim truncation target; `EMBEDDING_DIMENSIONS`
+│   │   ├── create-embedding-provider.ts # Embedding selector: picks vendor (bedrock/azure-openai/openai/openrouter) off `config.embeddingProvider`, passes each its own gateway mount; `none` → null
+│   │   ├── bedrock-embedding-provider.ts # Titan on bedrock-runtime (serves bedrock and bedrock-mantle deployments)
+│   │   ├── azure-openai-embedding-provider.ts # text-embedding-3 deployment on the Foundry resource's Azure OpenAI surface
+│   │   ├── openai-embedding-provider.ts # text-embedding-3 on the OpenAI API
+│   │   └── openrouter-embedding-provider.ts # OpenAI SDK at openrouter.ai (`vendor/model` ids; off by default)
 │   ├── classification.ts       # Classification-gate request factories (`getGateRequest()` for the generateText gates, `getClassificationRequest()` for generateObject) — model + the active vendor's merged `providerOptions`
 │   ├── classification-gate.ts  # Shared one-word-verdict gate call (`runClassificationGate`) + `isRecentDuplicate`, used by the heartbeat and cron DELIVER/SUPPRESS gates
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
@@ -757,7 +783,8 @@ What the operator sets on `docker run`:
 | `NEXUS_API_URL` | Lens Agents server URL (LLM proxy + MCP tools) | — |
 | `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
 | `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
-| `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, or `openrouter` (one per container) | `bedrock` |
+| `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, or `anthropic` (one per container) | `bedrock` |
+| `EMBEDDING_PROVIDER` | Memory-embedding vendor, decoupled from the chat vendor: `bedrock`, `azure-openai`, `openai`, `openrouter`, or `none` (embeddings off). Unset or unrecognized derives the chat vendor's default. The model still comes from the selected vendor's `*_EMBEDDING_MODEL_ID` var | derived from `LLM_PROVIDER` (anthropic: `openai` with `OPENAI_API_KEY` or `NEXUS_API_URL`, else `none`) |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key; on Bedrock selected over SigV4 when set, on mantle sent as `x-api-key` and **required** direct | — |
 | `AWS_REGION` | AWS region for Bedrock and for the mantle host | `us-east-1` |
 | `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
@@ -779,6 +806,9 @@ What the operator sets on `docker run`:
 | `OPENROUTER_API_KEY` | OpenRouter API key, sent as a bearer header. Required direct; not needed through the gateway. May be a `__nexus_cred:<uuid>__` sentinel since it only rides a header | — |
 | `OPENROUTER_BASE_URL` | Override the direct OpenRouter endpoint (must serve the Responses API) | `https://openrouter.ai/api/v1` |
 | `OPENAI_BASE_URL` | Override the direct chat/embeddings endpoint (must serve the Responses API; does not move the Realtime socket) | SDK default (`https://api.openai.com/v1`) |
+| `ANTHROPIC_API_KEY` | First-party Anthropic API key, sent as `x-api-key`; **always required** under `LLM_PROVIDER=anthropic` (direct-only — no Nexus mount). May be a `__nexus_cred:<uuid>__` sentinel | — |
+| `ANTHROPIC_MODEL_ID` / `ANTHROPIC_CLASSIFICATION_MODEL_ID` | Bare first-party model IDs (chat / classification gate) | `claude-opus-5` / `claude-haiku-4-5` |
+| `ANTHROPIC_BASE_URL` | Override the direct chat endpoint (must end at `/v1`) | SDK default (`https://api.anthropic.com/v1`) |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window assumed for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |

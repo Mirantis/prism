@@ -1,22 +1,17 @@
 /**
  * OpenAI Provider Tests — the official OpenAI API
  *
- * One surface: chat, classification and embeddings all dispatch through the
- * same @ai-sdk/openai client, direct or through the Lens Agents openai mount.
+ * Chat and classification dispatch through the same @ai-sdk/openai client,
+ * direct or through the Lens Agents openai mount.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { config } from '../../../config';
 
-const { mockCreateOpenAI, mockOpenAiModel, mockEmbeddingFn } = vi.hoisted(() => {
-  const mockEmbeddingFn = vi.fn((modelId: string) => ({ kind: 'embedding', modelId }));
-  const mockOpenAiModel = Object.assign(
-    vi.fn((modelId: string) => ({ provider: 'openai', modelId })),
-    { embedding: mockEmbeddingFn },
-  );
+const { mockCreateOpenAI, mockOpenAiModel } = vi.hoisted(() => {
+  const mockOpenAiModel = vi.fn((modelId: string) => ({ provider: 'openai', modelId }));
   return {
     mockOpenAiModel,
-    mockEmbeddingFn,
     mockCreateOpenAI: vi.fn(() => mockOpenAiModel),
   };
 });
@@ -83,13 +78,6 @@ describe('createOpenAiProvider', () => {
     expect(mockOpenAiModel).toHaveBeenCalledWith('gpt-5.6-sol');
   });
 
-  it('embeddings dispatch through .embedding on the same client', () => {
-    const provider = createOpenAiProvider();
-    provider.embedding('text-embedding-3-small');
-    expect(mockEmbeddingFn).toHaveBeenCalledWith('text-embedding-3-small');
-    expect(mockOpenAiModel).not.toHaveBeenCalled();
-  });
-
   it('declares the empty cache-point fragment — OpenAI caching is automatic', () => {
     expect(createOpenAiProvider().cachePoint('gpt-5.6')).toEqual({});
   });
@@ -118,7 +106,6 @@ describe('isOpenAiConfigured', () => {
     config.openaiModelId = 'gpt-5.6-sol';
     config.openaiApiKey = 'sk-test';
     config.nexusOpenAiBaseUrl = null;
-    config.openaiEmbeddingModelId = '';
   });
 
   it('true with key + model (direct)', () => {
@@ -128,11 +115,6 @@ describe('isOpenAiConfigured', () => {
   it('true with model + gateway mount and NO key (gateway holds the key)', () => {
     config.openaiApiKey = undefined;
     config.nexusOpenAiBaseUrl = 'https://gateway.example/llm/openai/v1';
-    expect(isOpenAiConfigured()).toBe(true);
-  });
-
-  it('does not require embedding config (embeddings fail-open)', () => {
-    config.openaiEmbeddingModelId = '';
     expect(isOpenAiConfigured()).toBe(true);
   });
 

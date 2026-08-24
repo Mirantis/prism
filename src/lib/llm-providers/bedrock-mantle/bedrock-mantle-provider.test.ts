@@ -2,37 +2,22 @@
  * Bedrock Mantle Provider Tests
  *
  * Chat must dispatch to @ai-sdk/anthropic pointed at the mantle Anthropic
- * surface, with bare model IDs; embeddings must fall back to the generic
- * Bedrock provider (Titan on bedrock-runtime), since mantle serves none.
+ * surface, with bare model IDs.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { config } from '../../../config';
 
-const {
-  mockCreateAnthropic,
-  mockAnthropicModel,
-  mockCreateBedrockEmbeddingProvider,
-  mockBedrockEmbeddingFn,
-} = vi.hoisted(() => {
+const { mockCreateAnthropic, mockAnthropicModel } = vi.hoisted(() => {
   const mockAnthropicModel = vi.fn((modelId: string) => ({ provider: 'anthropic', modelId }));
-  const mockBedrockEmbeddingFn = vi.fn((modelId: string) => ({ kind: 'embedding', modelId }));
   return {
     mockAnthropicModel,
-    mockBedrockEmbeddingFn,
     mockCreateAnthropic: vi.fn(() => mockAnthropicModel),
-    mockCreateBedrockEmbeddingProvider: vi.fn(() => ({ embedding: mockBedrockEmbeddingFn })),
   };
 });
 
 vi.mock('@ai-sdk/anthropic', () => ({
   createAnthropic: mockCreateAnthropic,
-}));
-vi.mock('../bedrock-shared', () => ({
-  createBedrockEmbeddingProvider: mockCreateBedrockEmbeddingProvider,
-  // The real predicate — the warning path is about model IDs, not about the
-  // shared module, so there is nothing to fake here.
-  isAnthropicModelId: (modelId: string) => /^anthropic\.|\.anthropic\./i.test(modelId),
 }));
 
 import {
@@ -115,41 +100,10 @@ describe('createBedrockMantleProvider', () => {
     expect(mockAnthropicModel).toHaveBeenCalledWith('openai.gpt-oss-120b');
   });
 
-  it('embeddings dispatch through the generic Bedrock provider (Titan on bedrock-runtime)', () => {
-    const provider = createBedrockMantleProvider();
-    provider.embedding('amazon.titan-embed-text-v2:0');
-
-    expect(mockCreateBedrockEmbeddingProvider).toHaveBeenCalledWith(undefined);
-    expect(mockBedrockEmbeddingFn).toHaveBeenCalledWith('amazon.titan-embed-text-v2:0');
-    expect(mockAnthropicModel).not.toHaveBeenCalled();
-  });
-
-  it('embeddings ride the bedrock-runtime gateway mount, not the mantle one', () => {
-    config.nexusLlmBaseUrl = 'https://gateway.example/llm/bedrock/us-east-1';
-    const provider = createBedrockMantleProvider(
-      'https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1',
-    );
-    provider.embedding('amazon.titan-embed-text-v2:0');
-
-    expect(mockCreateBedrockEmbeddingProvider).toHaveBeenCalledWith(
-      'https://gateway.example/llm/bedrock/us-east-1',
-    );
-  });
-
   it('asks for the tool-based JSON path — mantle rejects native structured output', () => {
     expect(createBedrockMantleProvider().structuredOutputOptions).toEqual({
       anthropic: { structuredOutputMode: 'jsonTool' },
     });
-  });
-
-  it('does not build the embedding provider until one is asked for', () => {
-    const provider = createBedrockMantleProvider();
-    provider('anthropic.claude-opus-5');
-    expect(mockCreateBedrockEmbeddingProvider).not.toHaveBeenCalled();
-
-    provider.embedding('amazon.titan-embed-text-v2:0');
-    provider.embedding('amazon.titan-embed-text-v2:0');
-    expect(mockCreateBedrockEmbeddingProvider).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -177,7 +131,6 @@ describe('isBedrockMantleConfigured', () => {
     config.bedrockApiKey = 'bedrock-key';
     config.bedrockMantleBaseUrl = 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1';
     config.nexusBedrockMantleBaseUrl = null;
-    config.bedrockMantleEmbeddingModelId = '';
   });
 
   it('true with model + key + endpoint (direct)', () => {
@@ -188,11 +141,6 @@ describe('isBedrockMantleConfigured', () => {
     config.bedrockApiKey = undefined;
     config.nexusBedrockMantleBaseUrl =
       'https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1';
-    expect(isBedrockMantleConfigured()).toBe(true);
-  });
-
-  it('does not require embedding config (embeddings fail-open)', () => {
-    config.bedrockMantleEmbeddingModelId = '';
     expect(isBedrockMantleConfigured()).toBe(true);
   });
 

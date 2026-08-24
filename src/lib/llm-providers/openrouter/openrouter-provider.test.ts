@@ -10,15 +10,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { config } from '../../../config';
 
-const { mockCreateOpenAI, mockOpenAiModel, mockEmbeddingFn } = vi.hoisted(() => {
-  const mockEmbeddingFn = vi.fn((modelId: string) => ({ kind: 'embedding', modelId }));
-  const mockOpenAiModel = Object.assign(
-    vi.fn((modelId: string) => ({ provider: 'openai', modelId })),
-    { embedding: mockEmbeddingFn },
-  );
+const { mockCreateOpenAI, mockOpenAiModel } = vi.hoisted(() => {
+  const mockOpenAiModel = vi.fn((modelId: string) => ({ provider: 'openai', modelId }));
   return {
     mockOpenAiModel,
-    mockEmbeddingFn,
     mockCreateOpenAI: vi.fn(() => mockOpenAiModel),
   };
 });
@@ -87,14 +82,7 @@ describe('createOpenRouterProvider', () => {
     expect(mockOpenAiModel).toHaveBeenCalledWith('anthropic/claude-sonnet-5');
   });
 
-  it('dispatches embeddings through .embedding on the same client', () => {
-    const provider = createOpenRouterProvider();
-    provider.embedding('openai/text-embedding-3-small');
-    expect(mockEmbeddingFn).toHaveBeenCalledWith('openai/text-embedding-3-small');
-    expect(mockOpenAiModel).not.toHaveBeenCalled();
-  });
-
-  it('carries the OpenAI surface’s gate knobs', () => {
+  it('carries the OpenAI surface’s gate declarations', () => {
     // The defaults are `openai/*` models, so the same GPT-5.x constraints
     // apply: reasoning off, a 16-token floor, and no explicit temperature.
     const provider = createOpenRouterProvider();

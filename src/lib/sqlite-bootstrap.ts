@@ -20,8 +20,13 @@ import * as sqliteVec from 'sqlite-vec';
 import { config } from '../config';
 import { logger } from '../logger';
 import { resolvePrismaSqlitePath } from './sqlite-path';
+import { EMBEDDING_DIMENSIONS } from './embedding-providers/embedding-provider';
 
-const EMBEDDING_DIM = 1024;
+// One source of truth for the vector width: the embedding-provider contract
+// declares it (a light, dependency-free module every vendor imports), and the
+// vec0 index here consumes it — so the index and the vendors' truncation
+// targets cannot drift apart.
+const EMBEDDING_DIM = EMBEDDING_DIMENSIONS;
 
 let handle: Database.Database | null = null;
 

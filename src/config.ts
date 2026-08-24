@@ -36,28 +36,32 @@ const projectId = process.env.PROJECT_ID;
 const awsRegion = process.env.AWS_REGION || 'us-east-1';
 
 // Which vendor the runtime talks to. One provider per container (matching one
-// AGENT_ID per container). Anything unrecognized falls back to `bedrock` so an
-// unset/typo'd value never silently breaks a Bedrock deployment.
-const rawLlmProvider = (process.env.LLM_PROVIDER || 'bedrock').toLowerCase();
-const llmProvider: 'bedrock' | 'azure' | 'bedrock-mantle' | 'openai' | 'openrouter' =
-  rawLlmProvider === 'azure'
-    ? 'azure'
-    : rawLlmProvider === 'bedrock-mantle'
-      ? 'bedrock-mantle'
-      : rawLlmProvider === 'openai'
-        ? 'openai'
-        : rawLlmProvider === 'openrouter'
-          ? 'openrouter'
-          : 'bedrock';
+// AGENT_ID per container). Anything unrecognized falls back to the default,
+// `bedrock`, so an unset/typo'd value never silently breaks a Bedrock
+// deployment.
+const LLM_PROVIDERS = [
+  'bedrock',
+  'azure',
+  'bedrock-mantle',
+  'openai',
+  'openrouter',
+  'anthropic',
+] as const;
+type LlmProviderName = (typeof LLM_PROVIDERS)[number];
+const rawLlmProvider = (process.env.LLM_PROVIDER || '').trim().toLowerCase();
+const llmProvider: LlmProviderName = (LLM_PROVIDERS as readonly string[]).includes(rawLlmProvider)
+  ? (rawLlmProvider as LlmProviderName)
+  : 'bedrock';
 
 // Lens Agents LLM proxy base URL for native Bedrock (bedrock-runtime). Mirrors
 // the gateway's route mounts:
 //   /projects/{projectId}/llm/bedrock/{region}  (explicit project — PROJECT_ID set)
 //   /llm/bedrock/{region}                        (auto-resolve project — PROJECT_ID unset)
 // null when NEXUS_API_URL itself is unset (callers route direct to Bedrock
-// instead of going through the gateway). On `bedrock-mantle` this still carries the
-// *embedding* leg (Titan lives on bedrock-runtime, not on mantle) even though
-// chat rides `nexusBedrockMantleBaseUrl`.
+// instead of going through the gateway). This mount also carries the `bedrock`
+// embedding provider's leg (Titan lives on bedrock-runtime), so on
+// `bedrock-mantle` it stays in use even though chat rides
+// `nexusBedrockMantleBaseUrl`.
 const nexusLlmBaseUrl = nexusApiUrl
   ? (projectId
       ? `${nexusApiUrl}/projects/${projectId}/llm/bedrock/${awsRegion}`
@@ -140,7 +144,12 @@ const nexusChatBaseUrl =
         ? nexusOpenAiBaseUrl
         : llmProvider === 'openrouter'
           ? nexusOpenRouterBaseUrl
-          : nexusLlmBaseUrl;
+          : llmProvider === 'anthropic'
+            ? // No gateway mount serves api.anthropic.com — anthropic chat is
+              // always direct, even with NEXUS_API_URL set. Explicit rather
+              // than the fall-through, which would report the bedrock mount.
+              null
+            : nexusLlmBaseUrl;
 
 // Foundry Anthropic chat endpoint for Azure (Claude via Microsoft Foundry).
 // Explicit override wins; else derived from the resource name. Must end at
@@ -163,7 +172,8 @@ const bedrockMantleBaseUrl =
   process.env.BEDROCK_MANTLE_BASE_URL || `https://bedrock-mantle.${awsRegion}.api.aws/anthropic/v1`;
 
 // Resolved once so the vendor-specific fields and the provider-neutral
-// `chatModelId`/`classificationModelId`/`embeddingModelId` share one source.
+// `chatModelId`/`classificationModelId`/`embeddingModelId` (the last keyed
+// off the embedding provider, further below) share one source.
 // The chat and classification defaults use the `global.` inference profile: it
 // costs less than a regional one (AWS charges 10% more for `us.`/`eu.`/`au.`)
 // and has the same context and output limits. Mantle IDs stay unprefixed.
@@ -244,37 +254,6 @@ const openrouterApiKey = process.env.OPENROUTER_API_KEY;
 // undefined → the SDK's own default, https://api.openai.com/v1.
 const openaiBaseUrl = process.env.OPENAI_BASE_URL || undefined;
 
-// Provider-neutral model IDs, resolved once. The runtime (invoke, the
-// classification gate, embeddings, the per-agent model fallback) reads these so
-// it never has to know which vendor is active.
-const modelIds = {
-  bedrock: {
-    chat: bedrockModelId,
-    classification: bedrockClassificationModelId,
-    embedding: bedrockEmbeddingModelId,
-  },
-  azure: {
-    chat: azureModelId,
-    classification: azureClassificationModelId,
-    embedding: azureEmbeddingModelId,
-  },
-  'bedrock-mantle': {
-    chat: bedrockMantleModelId,
-    classification: bedrockMantleClassificationModelId,
-    embedding: bedrockMantleEmbeddingModelId,
-  },
-  openai: {
-    chat: openaiModelId,
-    classification: openaiClassificationModelId,
-    embedding: openaiEmbeddingModelId,
-  },
-  openrouter: {
-    chat: openrouterModelId,
-    classification: openrouterClassificationModelId,
-    embedding: openrouterEmbeddingModelId,
-  },
-}[llmProvider];
-
 // The OpenAI API key, serving double duty: live voice meetings (OpenAI
 // Realtime API) and, when LLM_PROVIDER=openai, the chat provider. The
 // *Realtime WebSocket* is the one model call that never rides the Lens Agents
@@ -287,6 +266,107 @@ const modelIds = {
 // disables the meeting tools entirely (they're also gated on the browser and
 // audio toolchain being present).
 const openaiApiKey = process.env.OPENAI_API_KEY;
+
+// Anthropic model IDs (used when LLM_PROVIDER=anthropic) — bare first-party
+// IDs on api.anthropic.com. No embedding var: Anthropic serves no embedding
+// models, so memory embeddings come from the embedding provider (OpenAI when
+// OPENAI_API_KEY is set or the gateway's openai mount can hold the key, else
+// disabled — see EMBEDDING_PROVIDER_DEFAULTS below).
+const anthropicModelId = process.env.ANTHROPIC_MODEL_ID || 'claude-opus-5';
+const anthropicClassificationModelId =
+  process.env.ANTHROPIC_CLASSIFICATION_MODEL_ID || 'claude-haiku-4-5';
+// The Anthropic API key, sent as the `x-api-key` header. Required — this
+// vendor is direct-only (no Nexus mount serves api.anthropic.com), so there is
+// no gateway to hold the credential. May be a `__nexus_cred:<uuid>__` sentinel
+// the MITM proxy rewrites on the wire, since it only ever rides a header.
+const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+// Direct Anthropic endpoint override, mirroring OPENAI_BASE_URL. Must end at
+// `/v1` — the anthropic SDK appends `/messages`.
+// undefined → the SDK's own default, https://api.anthropic.com/v1.
+const anthropicBaseUrl = process.env.ANTHROPIC_BASE_URL || undefined;
+
+// Provider-neutral model IDs, resolved once. The runtime (invoke, the
+// classification gate, the per-agent model fallback) reads these so it never
+// has to know which vendor is active. Embeddings resolve separately below —
+// they follow the *embedding* provider, not the chat vendor.
+const modelIds = {
+  bedrock: {
+    chat: bedrockModelId,
+    classification: bedrockClassificationModelId,
+  },
+  azure: {
+    chat: azureModelId,
+    classification: azureClassificationModelId,
+  },
+  'bedrock-mantle': {
+    chat: bedrockMantleModelId,
+    classification: bedrockMantleClassificationModelId,
+  },
+  openai: {
+    chat: openaiModelId,
+    classification: openaiClassificationModelId,
+  },
+  openrouter: {
+    chat: openrouterModelId,
+    classification: openrouterClassificationModelId,
+  },
+  anthropic: {
+    chat: anthropicModelId,
+    classification: anthropicClassificationModelId,
+  },
+}[llmProvider];
+
+// Which vendor serves memory embeddings. Its own selection, decoupled from
+// LLM_PROVIDER: chat vendors don't all have embedding models, and an
+// embedding vendor need not serve chat. `none` disables embeddings entirely
+// (memory rows persist without vectors, vector search returns nothing).
+const EMBEDDING_PROVIDERS = ['bedrock', 'azure-openai', 'openai', 'openrouter', 'none'] as const;
+type EmbeddingProviderName = (typeof EMBEDDING_PROVIDERS)[number];
+
+// The default when EMBEDDING_PROVIDER is unset (or unrecognized): each chat
+// vendor's historical embedding vendor, so existing deployments are
+// unchanged. bedrock and bedrock-mantle embed on Titan over bedrock-runtime;
+// azure on its Azure OpenAI deployment; openai and openrouter on themselves
+// (openrouter's embedding model id defaults to '', so it stays off until one
+// is named). anthropic serves no embedding models, so it borrows OpenAI's when
+// a local key is present or the gateway's openai mount can hold one
+// (NEXUS_API_URL set), and otherwise runs without vectors.
+const EMBEDDING_PROVIDER_DEFAULTS: Record<LlmProviderName, EmbeddingProviderName> = {
+  bedrock: 'bedrock',
+  azure: 'azure-openai',
+  'bedrock-mantle': 'bedrock',
+  openai: 'openai',
+  openrouter: 'openrouter',
+  anthropic: openaiApiKey || nexusOpenAiBaseUrl ? 'openai' : 'none',
+};
+const rawEmbeddingProvider = (process.env.EMBEDDING_PROVIDER || '').trim().toLowerCase();
+const isValidEmbeddingProvider = (EMBEDDING_PROVIDERS as readonly string[]).includes(
+  rawEmbeddingProvider,
+);
+const embeddingProvider: EmbeddingProviderName = isValidEmbeddingProvider
+  ? (rawEmbeddingProvider as EmbeddingProviderName)
+  : EMBEDDING_PROVIDER_DEFAULTS[llmProvider];
+// Preserved for the startup warning (same pattern as invalidToolRiskGateMode):
+// a typo like EMBEDDING_PROVIDER=azure keeps the derived default running, so
+// nothing ever looks broken without a log line. Empty means unset — the
+// documented way to ask for the default — so only a non-empty mismatch counts.
+const invalidEmbeddingProvider =
+  rawEmbeddingProvider === '' || isValidEmbeddingProvider ? null : rawEmbeddingProvider;
+
+// The embedding model id, keyed off the *embedding* provider. One legacy
+// carve-out: when a bedrock-mantle deployment embeds on Titan, the
+// mantle-scoped var stays authoritative, so BEDROCK_MANTLE_EMBEDDING_MODEL_ID=''
+// keeps disabling embeddings there.
+const embeddingModelIds: Record<EmbeddingProviderName, string> = {
+  bedrock:
+    llmProvider === 'bedrock-mantle' ? bedrockMantleEmbeddingModelId : bedrockEmbeddingModelId,
+  'azure-openai': azureEmbeddingModelId,
+  openai: openaiEmbeddingModelId,
+  openrouter: openrouterEmbeddingModelId,
+  none: '',
+};
+const embeddingModelId = embeddingModelIds[embeddingProvider];
+
 // Pinned to a snapshot rather than the `gpt-realtime` alias. The alias silently
 // follows OpenAI's current snapshot, and a voice model changing under a live
 // deployment shifts turn-taking and prosody with no code change to point at.
@@ -482,10 +562,19 @@ export const config = {
   awsSessionToken: process.env.AWS_SESSION_TOKEN, // Optional, only needed for temporary credentials
 
   // LLM provider selection. `bedrock` (default), `azure`, `bedrock-mantle`,
-  // or `openai`. See the neutral `chatModelId`/`classificationModelId`/
-  // `embeddingModelId` below, which the rest of the runtime reads instead of
-  // the vendor-specific fields.
+  // `openai`, or `anthropic`. See the neutral `chatModelId`/
+  // `classificationModelId`/`embeddingModelId` below, which the rest of the
+  // runtime reads instead of the vendor-specific fields.
   llmProvider,
+
+  // Embedding provider selection (EMBEDDING_PROVIDER): `bedrock`,
+  // `azure-openai`, `openai`, `openrouter`, or `none`. Its own feature
+  // (`lib/embedding-providers/`), decoupled from `llmProvider`; unset derives
+  // the chat vendor's historical default (see EMBEDDING_PROVIDER_DEFAULTS).
+  embeddingProvider,
+  // The unrecognized non-empty EMBEDDING_PROVIDER value, kept for the startup
+  // warning; null when the value was valid or unset.
+  invalidEmbeddingProvider,
 
   // Azure — Claude via Microsoft Foundry (used when LLM_PROVIDER=azure).
   // Chat/classification speak the Anthropic Messages API at
@@ -541,6 +630,16 @@ export const config = {
   openrouterBaseUrl,
   openrouterApiKey,
   nexusOpenRouterBaseUrl,
+
+  // Anthropic (used when LLM_PROVIDER=anthropic). Chat/classification speak
+  // the Anthropic Messages API direct to api.anthropic.com (or
+  // `anthropicBaseUrl`) — the one vendor with no gateway mount, so
+  // `anthropicApiKey` is always required. Anthropic serves no embedding
+  // models; memory embeddings come from the embedding provider.
+  anthropicApiKey,
+  anthropicModelId,
+  anthropicClassificationModelId,
+  anthropicBaseUrl,
 
   // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
   // either picks up the existing row via findFirst() or creates a fresh
@@ -622,10 +721,12 @@ export const config = {
   // Provider-neutral model IDs (see the `modelIds` lookup above). The runtime
   // (invoke, classification gate, embeddings, per-agent model fallback) reads
   // these so it never has to know which vendor is active. For Azure these are
-  // deployment names; on bedrock-mantle they are bare Bedrock IDs.
+  // deployment names; on bedrock-mantle they are bare Bedrock IDs. The
+  // embedding id follows `embeddingProvider`, not the chat vendor; '' means
+  // embeddings are disabled (embedding.service skips the SDK call entirely).
   chatModelId: modelIds.chat,
   classificationModelId: modelIds.classification,
-  embeddingModelId: modelIds.embedding,
+  embeddingModelId,
 
   // Fast-model pre-execution policy gate for sensitive tool calls. Invalid
   // values resolve to off; index.ts emits a startup warning using the companion
