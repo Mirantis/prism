@@ -169,6 +169,17 @@ interface PendingCreate {
   /** Set when a probe asked for this one; absent means the conversation did. */
   probeSendId?: string;
   at: number;
+  /**
+   * When this stops being attributable.
+   *
+   * Per entry rather than one shared cutoff, because a probe waits longer than the
+   * conversation's watchdog does. Pruning a probe's entry at the watchdog's five
+   * seconds while its own deadline is six left a live probe opening in that second
+   * misread as the conversation's — which wedges the slot, since its
+   * metadata-marked `response.done` then takes the probe branch and releases
+   * nothing.
+   */
+  expiresAt: number;
 }
 
 /**
@@ -710,6 +721,24 @@ export class RealtimeSession extends EventEmitter {
           }
           return;
         }
+        // A completion for a response that is no longer the live one says nothing
+        // about the live one. Sequence that made this matter: A opens, a barge-in
+        // cancels A, B is requested and opens, and *then* A's delayed cancelled
+        // `response.done` arrives. Clearing the slot here would wipe B's state
+        // while B is still speaking, after which a later interruption sends no
+        // cancel at all and a second request can go out concurrently.
+        const stale =
+          !!done?.id &&
+          ((!!this.activeResponseId && done.id !== this.activeResponseId) ||
+            this.abandonedResponseIds.has(done.id));
+        if (stale) {
+          logger.debug(
+            `[Meeting:Resp] Ignoring a completion for ${done?.id ?? '?'} — ` +
+              `${this.activeResponseId ?? 'nothing'} is the live response`,
+          );
+          return;
+        }
+
         this.responseActive = false;
         this.responseConfirmed = false;
         // Cleared with the response it names. Left set, the next `requestResponse()`
@@ -765,11 +794,19 @@ export class RealtimeSession extends EventEmitter {
         // which is precisely the phantom-response path the paragraph above claims
         // to prevent, and a test written against the same wrong shape passed.
         const failedSendId = typeof err?.event_id === 'string' ? err.event_id : '';
-        if (failedSendId) this.dropCreate(failedSendId);
+        const failedCreate = failedSendId ? this.dropCreate(failedSendId) : undefined;
         const failedProbe = this.probesBySendId.get(failedSendId);
-        if (failedProbe) {
-          logger.warn(`[Meeting] Out-of-band request rejected: ${message}`);
-          failedProbe.settle(null);
+        // Classified from the queue entry, not from whether anybody is still
+        // waiting. A probe that already hit its deadline is gone from
+        // `probesBySendId`, and treating its late rejection as the conversation's
+        // is how an `already has an active response` error queues a phantom answer
+        // for a question nothing asked.
+        if (failedProbe || failedCreate?.probeSendId) {
+          logger.warn(
+            `[Meeting] Out-of-band request rejected: ${message}` +
+              (failedProbe ? '' : ' (after it had already given up)'),
+          );
+          failedProbe?.settle(null);
           return;
         }
         // Two opposite errors mention an active response, and confusing them wedges
@@ -786,6 +823,16 @@ export class RealtimeSession extends EventEmitter {
           return;
         }
         if (/no active response/i.test(message)) {
+          // Same correlation problem as a stale completion: this error answers a
+          // *cancel* we sent, and by the time it arrives a new response may already
+          // be running. Clearing the flags then would strand that one exactly as a
+          // stale `response.done` would, so a confirmed live response wins.
+          if (this.responseConfirmed && this.activeResponseId) {
+            logger.debug(
+              '[Meeting] A cancel found nothing to cancel, but a newer response is live',
+            );
+            return;
+          }
           // We cancelled something already finished — a barge-in landing just as the
           // model stopped. The response is over, so release the flags rather than
           // leaving them set on a response that no longer exists.
@@ -847,7 +894,7 @@ export class RealtimeSession extends EventEmitter {
     // this request from the queue rather than leaving it to misplace a later
     // `response.created`.
     const eventId = `main_${++this.mainCreateCounter}`;
-    this.noteCreateSent(eventId);
+    this.noteCreateSent(eventId, undefined, RESPONSE_CREATED_TIMEOUT_MS);
     this.send({ type: 'response.create', event_id: eventId });
   }
 
@@ -881,7 +928,9 @@ export class RealtimeSession extends EventEmitter {
       timer.unref?.();
 
       this.probesBySendId.set(sendId, { sendId, settle, timer, text: '' });
-      this.noteCreateSent(sendId, sendId);
+      // Attributable for its whole deadline and a little past it: a probe that
+      // opens at the last moment must still be recognised as a probe.
+      this.noteCreateSent(sendId, sendId, request.deadlineMs + RESPONSE_CREATED_TIMEOUT_MS);
       this.send({
         type: 'response.create',
         event_id: sendId,
@@ -969,27 +1018,36 @@ export class RealtimeSession extends EventEmitter {
   }
 
   /** Note a `response.create` on the wire, so its `response.created` can be placed. */
-  private noteCreateSent(eventId: string, probeSendId?: string): void {
-    this.pendingCreates.push({ eventId, probeSendId, at: Date.now() });
+  private noteCreateSent(eventId: string, probeSendId: string | undefined, ttlMs: number): void {
+    const at = Date.now();
+    this.pendingCreates.push({ eventId, probeSendId, at, expiresAt: at + ttlMs });
   }
 
-  /** Forget a request the server rejected — no `response.created` is coming for it. */
-  private dropCreate(eventId: string): void {
+  /**
+   * Forget a request the server rejected, handing back what it was.
+   *
+   * The entry is the only surviving record of *whose* request an error belongs to
+   * once the probe itself has given up, so the caller needs it returned rather
+   * than merely removed: a probe that timed out is still not the conversation, and
+   * treating its late rejection as one queues a phantom answer.
+   */
+  private dropCreate(eventId: string): PendingCreate | undefined {
     const index = this.pendingCreates.findIndex((c) => c.eventId === eventId);
-    if (index >= 0) this.pendingCreates.splice(index, 1);
+    if (index < 0) return undefined;
+    return this.pendingCreates.splice(index, 1)[0];
   }
 
   /**
    * Which request a bare `response.created` belongs to.
    *
    * Oldest first, because the server opens responses in the order it received the
-   * requests. Anything older than the watchdog's patience is discarded first: a
-   * request the API dropped silently gets no `created`, and leaving it at the head
-   * of the queue would misplace every later one.
+   * requests. Entries past their own expiry are discarded first: a request the API
+   * dropped silently gets no `created`, and leaving it at the head of the queue
+   * would misplace every later one.
    */
   private takeCreate(): PendingCreate | undefined {
-    const cutoff = Date.now() - RESPONSE_CREATED_TIMEOUT_MS;
-    while (this.pendingCreates.length > 0 && (this.pendingCreates[0]?.at ?? 0) < cutoff) {
+    const now = Date.now();
+    while (this.pendingCreates.length > 0 && (this.pendingCreates[0]?.expiresAt ?? 0) < now) {
       this.pendingCreates.shift();
     }
     return this.pendingCreates.shift();

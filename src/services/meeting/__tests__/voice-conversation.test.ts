@@ -379,6 +379,26 @@ describe('deciding whether to answer', () => {
     expect(h.conversation.statistics).toMatchObject({ gateSuperseded: 1 });
   });
 
+  it('does not let a duplicated commit rewind the supersession guard', async () => {
+    const { h, send, sent } = await speakingHarness();
+    active = h;
+
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-a' });
+    await settle();
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-b' });
+    await settle();
+    // A duplicate for the *earlier* utterance. The policy ignores it, but if it
+    // still moved the marker, item-a's late yes would pass the guard and the bare
+    // response would answer item-b.
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-a' });
+    await settle();
+
+    await answerGate(send, sent, 'YES');
+
+    expect(spokenRequests(sent)).toHaveLength(0);
+    expect(h.conversation.statistics).toMatchObject({ gateSuperseded: 1 });
+  });
+
   it('counts a verdict that never came, so a deaf agent is visible', async () => {
     const { h, send, sent } = await speakingHarness();
     active = h;
