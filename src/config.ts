@@ -212,15 +212,28 @@ const openaiEmbeddingModelId = process.env.OPENAI_EMBEDDING_MODEL_ID ?? 'text-em
 // temperature on the gates) stays valid; point them at any vendor's models
 // instead and those assumptions may not hold.
 //
-// Embeddings default to OFF. OpenRouter is an inference router and its embedding
-// coverage is thin and model-dependent, so shipping a default would fail at the
-// first index rather than at configuration time. `??` not `||`, matching the
-// sibling vars, so an operator who has one can set it — and can also set '' to
-// keep them off explicitly.
+// Embeddings default to OFF, unlike the sibling vendors. OpenRouter serves an
+// `/embeddings` endpoint routing several vendors' models, whose native
+// dimensionalities differ — and the memory index is fixed at 1024 dims, so
+// there is no id that is right by default. Name one that can deliver 1024
+// (`openai/text-embedding-3-small` truncates to it) to switch memory embeddings
+// on. `??` not `||`, matching the sibling vars, so '' keeps them off
+// explicitly.
 const openrouterModelId = process.env.OPENROUTER_MODEL_ID || 'openai/gpt-5.6-sol';
 const openrouterClassificationModelId =
   process.env.OPENROUTER_CLASSIFICATION_MODEL_ID || 'openai/gpt-5.6-luna';
 const openrouterEmbeddingModelId = process.env.OPENROUTER_EMBEDDING_MODEL_ID ?? '';
+// Direct OpenRouter endpoint override, mirroring OPENAI_BASE_URL: applies to
+// direct mode only (gateway routing has its own mount). Must serve the
+// Responses API — the SDK appends `/responses`, which openrouter.ai serves
+// alongside `/chat/completions`.
+// undefined → openrouter.ai, resolved in the provider (the SDK's own default
+// is api.openai.com, which is not where these `vendor/model` ids resolve).
+const openrouterBaseUrl = process.env.OPENROUTER_BASE_URL || undefined;
+// The OpenRouter API key, for direct mode. Not needed through the gateway,
+// which holds its own. May be a `__nexus_cred:<uuid>__` sentinel the MITM proxy
+// rewrites on the wire, since it only ever rides a header.
+const openrouterApiKey = process.env.OPENROUTER_API_KEY;
 // Direct OpenAI endpoint override, mirroring AZURE_FOUNDRY_BASE_URL /
 // BEDROCK_MANTLE_BASE_URL: applies to direct mode only (gateway routing has its
 // own mount), and must serve the Responses API — the SDK appends `/responses`,
@@ -497,11 +510,19 @@ export const config = {
   openaiModelId,
   openaiClassificationModelId,
   openaiEmbeddingModelId,
+  openaiBaseUrl,
+  nexusOpenAiBaseUrl,
+
+  // OpenRouter (used when LLM_PROVIDER=openrouter). Same OpenAI surface, a
+  // different vendor behind it: direct to openrouter.ai (or
+  // `openrouterBaseUrl`) with `openrouterApiKey`, or through the Lens Agents
+  // `…/llm/openrouter/openai/v1` mount when NEXUS_API_URL is set, which holds
+  // the key for you. Model ids are `vendor/model`.
   openrouterModelId,
   openrouterClassificationModelId,
   openrouterEmbeddingModelId,
-  openaiBaseUrl,
-  nexusOpenAiBaseUrl,
+  openrouterBaseUrl,
+  openrouterApiKey,
   nexusOpenRouterBaseUrl,
 
   // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`

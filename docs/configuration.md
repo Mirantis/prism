@@ -11,7 +11,7 @@ The runtime talks to one LLM provider per container, chosen by `LLM_PROVIDER`:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS), `azure` (Claude via Microsoft Foundry), `bedrock-mantle` (AWS's second Bedrock inference endpoint), `openai` (the official OpenAI API), or `openrouter` (one key, ~400 models across ~60 vendors, through the Lens Agents gateway). Any other value falls back to `bedrock`. | `bedrock` |
+| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS), `azure` (Claude via Microsoft Foundry), `bedrock-mantle` (AWS's second Bedrock inference endpoint), `openai` (the official OpenAI API), or `openrouter`. Any other value falls back to `bedrock`. | `bedrock` |
 
 The three Claude platforms serve **Claude** through the Anthropic Messages API
 — `azure` mode runs the agent on Claude deployed in [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
@@ -21,14 +21,20 @@ memory embeddings come from an Azure OpenAI `text-embedding-3` deployment
 if that deployment doesn't exist, memory embedding fails open (search
 degraded, no crash).
 
-`openrouter` is not a fifth cloud but a reseller: one API key reaches ~400 models
-from ~60 vendors, which makes it the shortest path to a running agent (no cloud
-account, no IAM, no region). Its API is OpenAI-compatible, so what distinguishes
-it from `openai` is the gateway mount (`…/llm/openrouter/openai/v1`) and the
-`vendor/model` id convention. It is supported **through the Lens Agents gateway
-only**: the gateway holds the OpenRouter key, a sandbox is never given one, and
-reaching openrouter.ai directly would be unmetered spend that the sandbox's
-egress policy normally denies.
+`openrouter` is not a fifth cloud but a reseller: one API key reaches hundreds
+of models from dozens of vendors, which makes it the shortest path to a running
+agent (no cloud account, no IAM, no region). Its API is OpenAI-compatible, so
+what distinguishes it from `openai` is where it points — `https://openrouter.ai/api/v1`
+with `OPENROUTER_API_KEY`, or the `…/llm/openrouter/openai/v1` gateway mount —
+and that **model IDs are `vendor/model`**: `openai/gpt-5.6-sol`,
+`anthropic/claude-sonnet-5`, `google/gemini-3-pro`. A bare `gpt-5.6-sol` is not
+an id OpenRouter can route.
+
+Two things to know when pointing it at a non-OpenAI vendor. The gates send
+`reasoningEffort: 'none'` and no `temperature`, which is written for the
+GPT-5.x defaults; and prompt caching is left to the model, so a vendor whose
+caching needs explicit markers (Anthropic, Gemini) runs uncached through
+OpenRouter.
 
 `bedrock-mantle` targets [Amazon Bedrock's mantle endpoint](https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html)
 (`https://bedrock-mantle.{region}.api.aws/anthropic/v1/messages`), which AWS
@@ -67,10 +73,8 @@ chat rides `…/llm/bedrock-mantle/anthropic/{region}/v1` while embeddings stay
 on the `…/llm/bedrock/{region}` mount; for OpenAI, chat, classification and
 embeddings all ride `…/llm/openai/v1`; for OpenRouter, the same three ride
 `…/llm/openrouter/openai/v1`), otherwise it talks to the platform
-directly. OpenRouter is the one platform with no direct mode — without
-`NEXUS_API_URL` there is nothing for it to route through. Through the gateway
-the platform credentials are held for you, so no local LLM credential is
-needed. The one exception is the voice-meeting Realtime
+directly. Through the gateway the platform credentials are held for you, so no
+local LLM credential is needed. The one exception is the voice-meeting Realtime
 WebSocket, which always goes direct to `api.openai.com` — the gateway's openai
 mount routes POST only. The credentials and model IDs below are grouped per
 platform.
@@ -87,6 +91,8 @@ platform.
 | `AZURE_FOUNDRY_BASE_URL` | **(Azure)** Override the derived Foundry Anthropic chat endpoint (must end at `/anthropic/v1`). |
 | `OPENAI_API_KEY` | **(OpenAI)** API key, sent as a bearer header. Required for direct mode only — through the Lens Agents gateway it holds the key. Shared with [voice meetings](voice-meetings.md): setting it also enables the meeting tools when the browser/audio toolchain is present. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `OPENAI_BASE_URL` | **(OpenAI, direct)** Override the chat/embeddings endpoint (must serve the Responses API). Does not move the voice-meeting Realtime WebSocket. |
+| `OPENROUTER_API_KEY` | **(OpenRouter)** API key, sent as a bearer header. Required for direct mode only — through the Lens Agents gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `OPENROUTER_BASE_URL` | **(OpenRouter, direct)** Override the endpoint (must serve the Responses API). Defaults to `https://openrouter.ai/api/v1`. |
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). Enables the Slack adapter; validated via `auth.test` on boot. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-…`) for Socket Mode. |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check — the bot token's app ID must match this if set. |
@@ -212,7 +218,7 @@ model IDs are plain OpenAI API model names**; **OpenRouter model IDs are
 | `OPENAI_EMBEDDING_MODEL_ID` | **(OpenAI)** Embedding model (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). Set to `''` to skip embeddings entirely. | `text-embedding-3-small` |
 | `OPENROUTER_MODEL_ID` | **(OpenRouter)** Main model, as `vendor/model` — OpenRouter addresses every model that way, so a bare `gpt-5.6-sol` is not one it can route. The default mirrors the OpenAI tier so the provider's GPT-5.x parameter handling stays valid; point it at another vendor (`google/gemini-3-pro`, `deepseek/deepseek-v3.2`, `anthropic/claude-sonnet-5`) and those assumptions may not hold. | `openai/gpt-5.6-sol` |
 | `OPENROUTER_CLASSIFICATION_MODEL_ID` | **(OpenRouter)** Fast `vendor/model` for the heartbeat gate, under the same parameter caveat as the OpenAI one. | `openai/gpt-5.6-luna` |
-| `OPENROUTER_EMBEDDING_MODEL_ID` | **(OpenRouter)** Embedding model. **Off by default**: OpenRouter is an inference router and its embedding coverage is thin and model-dependent, so a default would fail at the first index rather than at configuration time. Name one only if you know it is served. | `''` (disabled) |
+| `OPENROUTER_EMBEDDING_MODEL_ID` | **(OpenRouter)** Embedding model, as `vendor/model`. **Off by default**, unlike the other platforms: OpenRouter routes embedding models from several vendors whose native dimensionalities differ, and the memory index is fixed at 1024 dims — so there is no id that is right by default. Name one that can deliver 1024 (`openai/text-embedding-3-small` truncates to it) to switch memory embeddings on. | `''` (disabled) |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-[compact](compaction.md) a conversation when its context occupancy reaches this percent of the model's window. `0` disables auto-compaction; out-of-range values fall back to the default. | `90` |

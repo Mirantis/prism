@@ -168,17 +168,23 @@ provider declares `classificationProviderOptions: { openai: { reasoningEffort:
 OpenAI rather than track which model/SDK combination accepts it — so their
 tiny token budgets stay valid on a GPT-5.x classification model, and the empty
 cache-point fragment (OpenAI prompt caching is automatic — no breakpoints).
-**OpenRouter** is a reseller reached through the gateway *only*
-(`isOpenRouterConfigured` requires the mount, not a key: the gateway holds the
-OpenRouter credential and a sandbox is never given one). Its API is
-OpenAI-compatible, so it and `openai` are both built from
+**OpenRouter** is a reseller: one key reaches hundreds of models across dozens
+of vendors, direct at `https://openrouter.ai/api/v1` with `OPENROUTER_API_KEY`
+(spelled out because the SDK's default is api.openai.com, where a
+`vendor/model` id does not resolve) or through the gateway, which holds the key
+like every other vendor. Its API is OpenAI-compatible — it serves `/responses`
+alongside `/chat/completions` — so it and `openai` are both built from
 `lib/llm-providers/openai-compatible.ts` — the Responses dispatcher,
 embeddings on the same client, the empty cache point and the three GPT-5.x
 gate knobs — while each keeps its own factory for what differs: the mount, the
-credential, the startup log line, and model ids that must be `vendor/model` (defaults
-`openai/gpt-5.6-sol` / `openai/gpt-5.6-luna`; embeddings default to **off**,
-since OpenRouter's embedding coverage is thin — `OPENROUTER_EMBEDDING_MODEL_ID`
-names one). Any provider
+credential, the startup log line, and model ids that must be `vendor/model`
+(defaults `openai/gpt-5.6-sol` / `openai/gpt-5.6-luna`). Embeddings default to
+**off**: OpenRouter routes several vendors' embedding models whose native
+dimensionalities differ, while the index is fixed at 1024, so no id is right by
+default (`OPENROUTER_EMBEDDING_MODEL_ID=openai/text-embedding-3-small` turns
+them on). The gate knobs and the empty cache point are written for the GPT-5.x
+defaults; a `vendor/model` naming Anthropic or Gemini runs uncached, since
+their caching needs explicit markers the OpenAI SDK cannot send. Any provider
 can run direct or through the Lens Agents LLM gateway — routing is automatic when
 `NEXUS_API_URL` is set (`…/llm/bedrock/{region}` for Bedrock; Azure chat
 rides `…/llm/azure/anthropic/v1` and Azure embeddings
@@ -487,7 +493,7 @@ src/
 │   │   ├── openai/
 │   │   │   └── openai-provider.ts # OpenAI factory (Responses API; one surface for chat/classification/embeddings; pins gate calls to reasoningEffort 'none'): `createOpenAiProvider(baseURL?)`
 │   │   └── openrouter/
-│   │       └── openrouter-provider.ts # OpenRouter factory (same OpenAI surface, gateway mount only, `vendor/model` ids): `createOpenRouterProvider(baseURL?)`
+│   │       └── openrouter-provider.ts # OpenRouter factory (same OpenAI surface; direct at openrouter.ai or the gateway mount, `vendor/model` ids): `createOpenRouterProvider(baseURL?)`
 │   ├── classification.ts       # Classification-gate request factories (`getGateRequest()` for the generateText gates, `getClassificationRequest()` for generateObject) — model + the active vendor's merged `providerOptions`
 │   ├── classification-gate.ts  # Shared one-word-verdict gate call (`runClassificationGate`) + `isRecentDuplicate`, used by the heartbeat and cron DELIVER/SUPPRESS gates
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
@@ -549,7 +555,9 @@ What the operator sets on `docker run`:
 | `OPENAI_MODEL_ID` / `OPENAI_CLASSIFICATION_MODEL_ID` | OpenAI model IDs (chat / classification gate). The provider pins gate calls to `reasoningEffort: 'none'` and omits their `temperature`, keeping the gates' tiny token budgets valid on GPT-5.x | `gpt-5.6-sol` / `gpt-5.6-luna` |
 | `OPENAI_EMBEDDING_MODEL_ID` | Memory embeddings under openai — a `text-embedding-3` model truncated to 1024 dims (`''` to skip) | `text-embedding-3-small` |
 | `OPENROUTER_MODEL_ID` / `OPENROUTER_CLASSIFICATION_MODEL_ID` | OpenRouter model IDs (chat / classification gate). Every id is `vendor/model`; the defaults mirror the OpenAI tiers so the shared provider's GPT-5.x parameter handling stays valid | `openai/gpt-5.6-sol` / `openai/gpt-5.6-luna` |
-| `OPENROUTER_EMBEDDING_MODEL_ID` | Memory embeddings under openrouter — **off by default**, since OpenRouter's embedding coverage is thin and model-dependent | `''` (disabled) |
+| `OPENROUTER_EMBEDDING_MODEL_ID` | Memory embeddings under openrouter — **off by default**: the vendors it routes differ in native dimensionality and the index is fixed at 1024 (`openai/text-embedding-3-small` truncates to it) | `''` (disabled) |
+| `OPENROUTER_API_KEY` | OpenRouter API key, sent as a bearer header. Required direct; not needed through the gateway. May be a `__nexus_cred:<uuid>__` sentinel since it only rides a header | — |
+| `OPENROUTER_BASE_URL` | Override the direct OpenRouter endpoint (must serve the Responses API) | `https://openrouter.ai/api/v1` |
 | `OPENAI_BASE_URL` | Override the direct chat/embeddings endpoint (must serve the Responses API; does not move the Realtime socket) | SDK default (`https://api.openai.com/v1`) |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window assumed for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
