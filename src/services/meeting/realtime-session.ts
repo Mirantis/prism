@@ -126,6 +126,25 @@ export interface OutOfBandRequest {
   reasoningEffort?: string;
 }
 
+/**
+ * Whether a conversation item is somebody's turn in the room.
+ *
+ * The agent's own speech qualifies; so does a participant's audio. What does *not*
+ * is a message this runtime wrote into the conversation itself — `sendContext()`
+ * creates `role: 'user'` items carrying `input_text` for things nobody said out
+ * loud ("you have just been admitted", "the people in the call are now…"). Those
+ * would otherwise fill a probe's context window with the runtime's own notes and
+ * change whether the latest utterance looks like it continues an exchange.
+ *
+ * Judged on content rather than role for that reason: role alone cannot tell a
+ * spoken turn from an injected one.
+ */
+function isSpokenTurn(item: { role?: string; content?: { type?: string }[] }): boolean {
+  if (item.role === 'assistant') return true;
+  if (item.role !== 'user') return false;
+  return (item.content ?? []).some((part) => part.type === 'input_audio');
+}
+
 /** The out-of-band send id carried in a response's metadata, if any. */
 function readMarker(metadata: Record<string, unknown> | undefined): string | undefined {
   const value = metadata?.[OUT_OF_BAND_MARKER];
@@ -150,8 +169,16 @@ interface PendingCreate {
   at: number;
 }
 
-/** Most response ids remembered as a probe's. Bounded; turns are short-lived. */
-const PROBE_RESPONSE_LIMIT = 32;
+/**
+ * How long a response id stays recognisable as a probe's after it was opened.
+ *
+ * Not a count. Capping the *number* trades a few hundred bytes for the chance of
+ * forgetting a response that is still generating, after which its audio would be
+ * played into the room and — far worse — a tool call on it would reach the bridge
+ * and execute for real. An age bound cannot do that: no response outlives this, and
+ * an entry is normally removed the moment its `response.done` arrives.
+ */
+const PROBE_RESPONSE_TTL_MS = 120_000;
 
 /**
  * Spoken turns kept for a probe to draw context from.
@@ -308,7 +335,7 @@ export class RealtimeSession extends EventEmitter {
    * conversation's*. Bounded like `abandonedResponseIds`, since a response that
    * never finishes would otherwise leave an entry for the rest of the call.
    */
-  private readonly probeIdsByResponse = new Map<string, string>();
+  private readonly probeIdsByResponse = new Map<string, { sendId: string; at: number }>();
   private probeCounter = 0;
   private mainCreateCounter = 0;
   /**
@@ -538,8 +565,10 @@ export class RealtimeSession extends EventEmitter {
       // including it would make each probe cost more than the room does.
       case 'conversation.item.added':
       case 'conversation.item.created': {
-        const item = event.item as { id?: string; type?: string; role?: string } | undefined;
-        if (item?.id && item.type === 'message' && (item.role === 'user' || item.role === 'assistant')) {
+        const item = event.item as
+          | { id?: string; type?: string; role?: string; content?: { type?: string }[] }
+          | undefined;
+        if (item?.id && item.type === 'message' && isSpokenTurn(item)) {
           this.rememberConversationItem(item.id);
         }
         return;
@@ -658,6 +687,13 @@ export class RealtimeSession extends EventEmitter {
         if (probeSendId) {
           const probe = this.probesBySendId.get(probeSendId);
           if (done?.id) this.probeIdsByResponse.delete(done.id);
+          // The send queue entry has to go too. When this probe was matched by its
+          // marker rather than by an id recorded at `response.created` — because
+          // that event was missed — its entry is still queued, and the next bare
+          // conversation `created` would take it, be classified out-of-band, have
+          // its audio discarded and never release the slot. That is a mute call for
+          // the rest of the meeting.
+          this.dropCreate(probeSendId);
           if (probe) {
             const fromOutput = (done?.output ?? [])
               .flatMap((item) => item.content ?? [])
@@ -670,6 +706,12 @@ export class RealtimeSession extends EventEmitter {
         }
         this.responseActive = false;
         this.responseConfirmed = false;
+        // Cleared with the response it names. Left set, the next `requestResponse()`
+        // has a window before its own `response.created` lands in which `interrupt()`
+        // would cancel and abandon *this* finished response instead — so the new one
+        // is neither cancelled nor marked abandoned, and carries on speaking over the
+        // person who interrupted.
+        this.activeResponseId = null;
         const queued = this.responsePending ? ' — releasing the queued request' : '';
         if (done?.status && done.status !== 'completed') {
           // The room heard nothing. Deliberately **not** retried: the API's own
@@ -701,7 +743,7 @@ export class RealtimeSession extends EventEmitter {
       }
 
       case 'error': {
-        const err = event.error as { message?: string } | undefined;
+        const err = event.error as { message?: string; event_id?: string } | undefined;
         const message = err?.message ?? 'unknown Realtime API error';
         // A rejected `response.create` never opens a response, so metadata never
         // comes back for it — the client `event_id` echoed here is the only thing
@@ -709,7 +751,14 @@ export class RealtimeSession extends EventEmitter {
         // state: a probe rejected with "already has an active response" must not
         // set `responsePending`, or the rejection queues a phantom answer that
         // speaks unprompted when the open response finishes.
-        const failedSendId = typeof event.event_id === 'string' ? event.event_id : '';
+        //
+        // The id lives on `error.event_id`, **not** the top level. This event has
+        // two: the outer one is the server's id for the error itself, and the inner
+        // one names the client event that caused it. Reading the outer one matches
+        // nothing, so every rejection fell through to the regex branches below —
+        // which is precisely the phantom-response path the paragraph above claims
+        // to prevent, and a test written against the same wrong shape passed.
+        const failedSendId = typeof err?.event_id === 'string' ? err.event_id : '';
         if (failedSendId) this.dropCreate(failedSendId);
         const failedProbe = this.probesBySendId.get(failedSendId);
         if (failedProbe) {
@@ -895,16 +944,22 @@ export class RealtimeSession extends EventEmitter {
 
   /** The probe still waiting on a response id, if one is. */
   private probeFor(responseId: string): PendingProbe | undefined {
-    const sendId = responseId ? this.probeIdsByResponse.get(responseId) : undefined;
-    return sendId ? this.probesBySendId.get(sendId) : undefined;
+    const entry = responseId ? this.probeIdsByResponse.get(responseId) : undefined;
+    return entry ? this.probesBySendId.get(entry.sendId) : undefined;
   }
 
-  /** Remember a response as a probe's, evicting the oldest past the cap. */
+  /**
+   * Remember a response as a probe's, dropping only entries too old to be live.
+   *
+   * Deliberately never evicts by count: an entry forgotten while its response is
+   * still generating is one whose tool calls stop being recognised as a probe's.
+   */
   private rememberProbeResponse(responseId: string, sendId: string): void {
-    this.probeIdsByResponse.set(responseId, sendId);
-    while (this.probeIdsByResponse.size > PROBE_RESPONSE_LIMIT) {
-      this.probeIdsByResponse.delete(this.probeIdsByResponse.keys().next().value as string);
+    const cutoff = Date.now() - PROBE_RESPONSE_TTL_MS;
+    for (const [id, entry] of this.probeIdsByResponse) {
+      if (entry.at < cutoff) this.probeIdsByResponse.delete(id);
     }
+    this.probeIdsByResponse.set(responseId, { sendId, at: Date.now() });
   }
 
   /** Note a `response.create` on the wire, so its `response.created` can be placed. */
@@ -941,7 +996,7 @@ export class RealtimeSession extends EventEmitter {
   private probeSendIdFor(
     done: { id?: string; metadata?: Record<string, unknown> } | undefined,
   ): string | undefined {
-    const byId = done?.id ? this.probeIdsByResponse.get(done.id) : undefined;
+    const byId = done?.id ? this.probeIdsByResponse.get(done.id)?.sendId : undefined;
     return byId ?? readMarker(done?.metadata);
   }
 

@@ -180,6 +180,41 @@ describe('being addressed', () => {
     expect(p.statistics.answered).toBe(1);
   });
 
+  it('does not spend a second probe on a duplicated commit', () => {
+    // The first decision claims the utterance before any verdict exists. Waiting
+    // for a yes to remember it meant a duplicate commit arriving mid-flight sent a
+    // second probe for a question already being judged.
+    const p = crowded();
+
+    expect(p.onUtteranceCommitted('i1')).toBe('gate');
+    expect(p.onUtteranceCommitted('i1')).toBe('ignore');
+    expect(p.statistics.utterances).toBe(1);
+  });
+
+  it('makes a no terminal, so a later yes cannot answer it', () => {
+    const p = crowded();
+    p.onUtteranceCommitted('i1');
+
+    expect(p.resolveVerdict('i1', false)).toBe(false);
+    // A retried probe, or a duplicate from the server. The first verdict decided.
+    expect(p.resolveVerdict('i1', true)).toBe(false);
+    expect(p.statistics.answered).toBe(0);
+    expect(p.statistics.suppressed).toBe(1);
+  });
+
+  it('counts one suppression per utterance, not one per verdict', () => {
+    const p = crowded();
+    p.onUtteranceCommitted('i1');
+
+    p.resolveVerdict('i1', false);
+    p.resolveVerdict('i1', false);
+
+    // `suppressed` against `utterances` is the ratio the stats exist for; double
+    // counting either side quietly makes it meaningless.
+    expect(p.statistics.suppressed).toBe(1);
+    expect(p.statistics.utterances).toBe(1);
+  });
+
   it('needs the name every time, with no grace period after it speaks', () => {
     // A 15s window used to make any utterance count as addressed after the agent
     // spoke. On real calls that window was mostly other people starting to talk to

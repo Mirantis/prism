@@ -932,6 +932,10 @@ export class MeetingBotService {
         gate_calls: String(stats?.gateCalls ?? 0),
         gate_failed: String(stats?.gateFailed ?? 0),
         gate_latency_ms: String(meanGateLatencyMs(stats)),
+        // Verdicts thrown away because a later utterance had closed first. The
+        // agent never answers a turn nothing judged; this is what that costs, and a
+        // high count means a busy room is paying it often.
+        gate_superseded: String(stats?.gateSuperseded ?? 0),
         // Answers the agent gave that the room never heard. Distinct from
         // `gate_failed`: there the decision never arrived, here it did and the
         // response produced nothing.
