@@ -23,16 +23,31 @@ import type { MemorySearchResult } from './memory-manager.service';
 // The sqlite-vec index is fixed at 1024 dims (see EMBEDDING_DIM in
 // sqlite-bootstrap.ts), so every vendor must emit exactly that. Titan v2 takes
 // the target under the `bedrock` key; the text-embedding-3 models Azure and
-// OpenAI serve truncate to it under the `openai` key. The provider-option key
-// must match the SDK actually serving embeddings or the setting is silently
-// ignored (wrong dimensionality) — which is why `bedrock-mantle` belongs on
-// the `bedrock` arm rather than getting one of its own: its embeddings are
-// Titan.
+// OpenAI serve truncate to it under the `openai` key.
+//
+// The key must match the SDK actually serving embeddings, not the vendor's name:
+// the AI SDK ignores provider options addressed elsewhere, so a mismatch is
+// silent — the model returns its native dimensionality and the only symptom is
+// vectors the index cannot hold. That is why the arms are split by SDK.
+// `bedrock-mantle` is on the `bedrock` arm because it has no embedding surface
+// of its own (those calls go to Titan on bedrock-runtime), and `openrouter` is
+// on the `openai` arm because it rides the OpenAI provider code.
+//
+// A function rather than an inline conditional so the rule can be asserted per
+// provider without re-importing this module (which drags in the sqlite-vec
+// handle) just to vary one env var.
 const EMBEDDING_DIMENSIONS = 1024;
-const EMBEDDING_PROVIDER_OPTIONS: Record<string, Record<string, number>> =
-  config.llmProvider === 'azure' || config.llmProvider === 'openai'
+
+export function embeddingProviderOptions(
+  provider: string,
+): Record<string, Record<string, number>> {
+  const openAiShaped = provider === 'azure' || provider === 'openai' || provider === 'openrouter';
+  return openAiShaped
     ? { openai: { dimensions: EMBEDDING_DIMENSIONS } }
     : { bedrock: { dimensions: EMBEDDING_DIMENSIONS } };
+}
+
+const EMBEDDING_PROVIDER_OPTIONS = embeddingProviderOptions(config.llmProvider);
 
 class EmbeddingService {
   private getEmbeddingModel(): EmbeddingModel {
