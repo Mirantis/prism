@@ -11,19 +11,23 @@ const {
   mockCreateAzureProvider,
   mockCreateBedrockMantleProvider,
   mockCreateOpenAiProvider,
+  mockCreateOpenRouterProvider,
   mockIsBedrockConfigured,
   mockIsAzureConfigured,
   mockIsBedrockMantleConfigured,
   mockIsOpenAiConfigured,
+  mockIsOpenRouterConfigured,
 } = vi.hoisted(() => ({
   mockCreateBedrockProvider: vi.fn(() => 'bedrock-provider'),
   mockCreateAzureProvider: vi.fn(() => 'azure-provider'),
   mockCreateBedrockMantleProvider: vi.fn(() => 'bedrock-mantle-provider'),
   mockCreateOpenAiProvider: vi.fn(() => 'openai-provider'),
+  mockCreateOpenRouterProvider: vi.fn(() => 'openrouter-provider'),
   mockIsBedrockConfigured: vi.fn(() => true),
   mockIsAzureConfigured: vi.fn(() => true),
   mockIsBedrockMantleConfigured: vi.fn(() => true),
   mockIsOpenAiConfigured: vi.fn(() => true),
+  mockIsOpenRouterConfigured: vi.fn(() => true),
 }));
 
 vi.mock('./bedrock/bedrock-provider', () => ({
@@ -41,6 +45,10 @@ vi.mock('./bedrock-mantle/bedrock-mantle-provider', () => ({
 vi.mock('./openai/openai-provider', () => ({
   createOpenAiProvider: mockCreateOpenAiProvider,
   isOpenAiConfigured: mockIsOpenAiConfigured,
+}));
+vi.mock('./openrouter/openrouter-provider', () => ({
+  createOpenRouterProvider: mockCreateOpenRouterProvider,
+  isOpenRouterConfigured: mockIsOpenRouterConfigured,
 }));
 
 import { createProvider, isProviderConfigured } from './create-provider';
@@ -122,6 +130,21 @@ describe('createProvider', () => {
     expect(mockCreateOpenAiProvider).toHaveBeenCalledWith('https://gateway.example/llm/openai/v1');
   });
 
+  it('openrouter → the OpenRouter mount, never the openai one', () => {
+    // Both speak the same OpenAI-shaped protocol, so the mount is the only
+    // thing that distinguishes them — and it is what the managed-inference gate
+    // checks: a policy selecting openrouter answers 403 on `/llm/openai/*`.
+    config.llmProvider = 'openrouter';
+    config.nexusOpenRouterBaseUrl = 'https://gateway.example/llm/openrouter/openai/v1';
+    config.nexusOpenAiBaseUrl = 'https://gateway.example/llm/openai/v1';
+
+    expect(createProvider()).toBe('openrouter-provider');
+    expect(mockCreateOpenRouterProvider).toHaveBeenCalledWith(
+      'https://gateway.example/llm/openrouter/openai/v1',
+    );
+    expect(mockCreateOpenAiProvider).not.toHaveBeenCalled();
+  });
+
   it('openai ignores the other vendors’ gateway mounts', () => {
     config.llmProvider = 'openai';
     config.nexusLlmBaseUrl = 'https://gateway.example/llm/bedrock/us-east-1';
@@ -142,6 +165,13 @@ describe('isProviderConfigured', () => {
     expect(isProviderConfigured()).toBe(false);
     expect(mockIsAzureConfigured).not.toHaveBeenCalled();
     expect(mockIsBedrockMantleConfigured).not.toHaveBeenCalled();
+  });
+
+  it('delegates to isOpenRouterConfigured for openrouter', () => {
+    config.llmProvider = 'openrouter';
+    mockIsOpenRouterConfigured.mockReturnValue(false);
+    expect(isProviderConfigured()).toBe(false);
+    expect(mockIsOpenAiConfigured).not.toHaveBeenCalled();
   });
 
   it('delegates to isAzureConfigured for azure', () => {
