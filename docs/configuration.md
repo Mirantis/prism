@@ -11,7 +11,7 @@ The runtime talks to one LLM provider per container, chosen by `LLM_PROVIDER`:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS), `azure` (Claude via Microsoft Foundry), `bedrock-mantle` (AWS's second Bedrock inference endpoint), or `openai` (the official OpenAI API). Any other value falls back to `bedrock`. | `bedrock` |
+| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS), `azure` (Claude via Microsoft Foundry), `bedrock-mantle` (AWS's second Bedrock inference endpoint), `openai` (the official OpenAI API), or `openrouter` (one key, ~400 models across ~60 vendors, through the Lens Agents gateway). Any other value falls back to `bedrock`. | `bedrock` |
 
 The three Claude platforms serve **Claude** through the Anthropic Messages API
 — `azure` mode runs the agent on Claude deployed in [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
@@ -20,6 +20,15 @@ memory embeddings come from an Azure OpenAI `text-embedding-3` deployment
 (Anthropic has no embedding model), defaulting to `text-embedding-3-small`;
 if that deployment doesn't exist, memory embedding fails open (search
 degraded, no crash).
+
+`openrouter` is not a fifth cloud but a reseller: one API key reaches ~400 models
+from ~60 vendors, which makes it the shortest path to a running agent (no cloud
+account, no IAM, no region). Its API is OpenAI-compatible, so what distinguishes
+it from `openai` is the gateway mount (`…/llm/openrouter/openai/v1`) and the
+`vendor/model` id convention. It is supported **through the Lens Agents gateway
+only**: the gateway holds the OpenRouter key, a sandbox is never given one, and
+reaching openrouter.ai directly would be unmetered spend that the sandbox's
+egress policy normally denies.
 
 `bedrock-mantle` targets [Amazon Bedrock's mantle endpoint](https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html)
 (`https://bedrock-mantle.{region}.api.aws/anthropic/v1/messages`), which AWS
@@ -51,14 +60,17 @@ authenticated with the same `OPENAI_API_KEY` that enables
 meeting tools on where the browser/audio toolchain is present.
 
 Each platform can run **direct** or **through the Lens Agents LLM gateway**.
-Routing is automatic for all four: set `NEXUS_API_URL` and the runtime routes
-through the gateway (`…/llm/bedrock/{region}` for Bedrock; for Azure, chat rides
+Routing is automatic: set `NEXUS_API_URL` and the runtime routes through the
+gateway (`…/llm/bedrock/{region}` for Bedrock; for Azure, chat rides
 `…/llm/azure/anthropic/v1` and embeddings `…/llm/azure/openai/v1`; for mantle,
 chat rides `…/llm/bedrock-mantle/anthropic/{region}/v1` while embeddings stay
 on the `…/llm/bedrock/{region}` mount; for OpenAI, chat, classification and
-embeddings all ride `…/llm/openai/v1`), otherwise it talks to the platform
-directly. Through the gateway the platform credentials are held for you, so no
-local LLM credential is needed. The one exception is the voice-meeting Realtime
+embeddings all ride `…/llm/openai/v1`; for OpenRouter, the same three ride
+`…/llm/openrouter/openai/v1`), otherwise it talks to the platform
+directly. OpenRouter is the one platform with no direct mode — without
+`NEXUS_API_URL` there is nothing for it to route through. Through the gateway
+the platform credentials are held for you, so no local LLM credential is
+needed. The one exception is the voice-meeting Realtime
 WebSocket, which always goes direct to `api.openai.com` — the gateway's openai
 mount routes POST only. The credentials and model IDs below are grouped per
 platform.
@@ -178,7 +190,8 @@ Which set applies depends on `LLM_PROVIDER`. Bedrock model IDs are Bedrock model
 identifiers; **Azure model IDs are Foundry deployment names** (which default to
 Claude model IDs when you deploy without renaming); **mantle model IDs are bare
 Bedrock identifiers** — same names, no `us.`/`eu.`/`global.` prefix; **OpenAI
-model IDs are plain OpenAI API model names**.
+model IDs are plain OpenAI API model names**; **OpenRouter model IDs are
+`vendor/model`**.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -197,6 +210,9 @@ model IDs are plain OpenAI API model names**.
 | `OPENAI_MODEL_ID` | **(OpenAI)** Main model (the agent's reasoning loop) | `gpt-5.6-sol` |
 | `OPENAI_CLASSIFICATION_MODEL_ID` | **(OpenAI)** Fast model for the heartbeat gate. The gates pin it to `reasoningEffort: 'none'` (the SDK name for the API's `reasoning.effort`) and send no `temperature` — GPT-5.x models reject or strip an explicit temperature, and reasoning tokens would eat the gates' tiny output budgets. | `gpt-5.6-luna` |
 | `OPENAI_EMBEDDING_MODEL_ID` | **(OpenAI)** Embedding model (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). Set to `''` to skip embeddings entirely. | `text-embedding-3-small` |
+| `OPENROUTER_MODEL_ID` | **(OpenRouter)** Main model, as `vendor/model` — OpenRouter addresses every model that way, so a bare `gpt-5.6-sol` is not one it can route. The default mirrors the OpenAI tier so the provider's GPT-5.x parameter handling stays valid; point it at another vendor (`google/gemini-3-pro`, `deepseek/deepseek-v3.2`, `anthropic/claude-sonnet-5`) and those assumptions may not hold. | `openai/gpt-5.6-sol` |
+| `OPENROUTER_CLASSIFICATION_MODEL_ID` | **(OpenRouter)** Fast `vendor/model` for the heartbeat gate, under the same parameter caveat as the OpenAI one. | `openai/gpt-5.6-luna` |
+| `OPENROUTER_EMBEDDING_MODEL_ID` | **(OpenRouter)** Embedding model. **Off by default**: OpenRouter is an inference router and its embedding coverage is thin and model-dependent, so a default would fail at the first index rather than at configuration time. Name one only if you know it is served. | `''` (disabled) |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-[compact](compaction.md) a conversation when its context occupancy reaches this percent of the model's window. `0` disables auto-compaction; out-of-range values fall back to the default. | `90` |

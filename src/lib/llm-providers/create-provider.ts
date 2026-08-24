@@ -42,6 +42,10 @@ import {
   isBedrockMantleConfigured,
 } from './bedrock-mantle/bedrock-mantle-provider';
 import { createOpenAiProvider, isOpenAiConfigured } from './openai/openai-provider';
+import {
+  createOpenRouterProvider,
+  isOpenRouterConfigured,
+} from './openrouter/openrouter-provider';
 import type { LlmProvider } from './llm-provider';
 
 export function createProvider(): LlmProvider {
@@ -52,6 +56,8 @@ export function createProvider(): LlmProvider {
       return createBedrockMantleProvider(config.nexusBedrockMantleBaseUrl ?? undefined);
     case 'openai':
       return createOpenAiProvider(config.nexusOpenAiBaseUrl ?? undefined);
+    case 'openrouter':
+      return createOpenRouterProvider(config.nexusOpenRouterBaseUrl ?? undefined);
     default:
       return createBedrockProvider(config.nexusLlmBaseUrl ?? undefined);
   }
@@ -66,6 +72,8 @@ export function isProviderConfigured(): boolean {
       return isBedrockMantleConfigured();
     case 'openai':
       return isOpenAiConfigured();
+    case 'openrouter':
+      return isOpenRouterConfigured();
     default:
       return isBedrockConfigured();
   }

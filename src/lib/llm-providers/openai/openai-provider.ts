@@ -22,56 +22,29 @@
  * the gateway no local key is needed (it holds its own), but the SDK
  * insists on one, so fall back to a decoy like the Azure/mantle factories do.
  *
- * Prompt caching is automatic on OpenAI — no breakpoint concept — so this
- * provider declares the empty cache-point fragment; spreading it into
- * `providerOptions` is a no-op on the wire. Structured output works on the
- * SDK's native path, so no `structuredOutputOptions` either.
- *
- * Classification caveat: elsewhere the gates run the classification model
- * with `temperature: 0` and tiny output-token budgets — assumptions GPT-5.x
- * breaks three ways, so this provider declares all three gate knobs:
- * `reasoningEffort: 'none'` (reasoning tokens would eat the budgets before
- * the verdict), a 16-token output floor (the Responses API rejects any
- * `max_output_tokens` below 16, and a gate whose every call 400s is a gate
- * disabled), and empty sampling params — GPT-5.x models reject an explicit
- * temperature outside effort 'none', and whether the SDK even forwards it
- * there depends on its per-model support matrix (< 3.0.91 strips it for
- * gpt-5.6 with a warning). Omitting the param beats tracking any of that,
- * which is the same rule the main invoke path applies: it sends no sampling
- * params at all and runs the chat model at its default reasoning effort.
+ * The provider object itself — the Responses dispatcher, embeddings on the
+ * same client, the empty cache-point fragment (OpenAI caching is automatic)
+ * and the three classification knobs GPT-5.x needs — comes from
+ * `../openai-compatible`, which is the SDK surface rather than this vendor.
+ * Everything decided here is what makes it *OpenAI*: the endpoint, the key
+ * and the bare model ids.
  */
 
-import { createOpenAI } from '@ai-sdk/openai';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
-import { NO_CACHE_POINT, type LlmProvider } from '../llm-provider';
+import { createOpenAiCompatibleProvider } from '../openai-compatible';
+import type { LlmProvider } from '../llm-provider';
 
 export function createOpenAiProvider(baseURL?: string): LlmProvider {
   logger.info({ routing: baseURL ? 'nexus' : 'direct' }, 'Creating OpenAI provider');
 
-  // Through the gateway the real key is injected on the outbound leg, so no
-  // local key is needed — but the SDK insists on one, so fall back to a decoy
-  // (the same pattern as the Azure and mantle factories).
-  const decoyableKey = config.openaiApiKey || (baseURL ? 'nexus-managed' : undefined);
-  const openai = createOpenAI({
-    apiKey: decoyableKey,
+  return createOpenAiCompatibleProvider({
+    // Through the gateway the real key is injected on the outbound leg, so no
+    // local key is needed — but the SDK insists on one, so fall back to a
+    // decoy (the same pattern as the Azure and mantle factories).
+    apiKey: config.openaiApiKey || (baseURL ? 'nexus-managed' : undefined),
     // undefined → the SDK's own default, https://api.openai.com/v1.
     baseURL: baseURL ?? config.openaiBaseUrl,
-  });
-
-  const dispatcher = (modelId: string) => openai(modelId);
-  return Object.assign(dispatcher, {
-    // Same client, same mount: OpenAI has no split surface for embeddings.
-    embedding: (modelId: string) => openai.embedding(modelId),
-    cachePoint: NO_CACHE_POINT,
-    // See the classification caveat in the header: reasoning off, or the
-    // gates' tiny token budgets are spent on reasoning instead of the
-    // verdict.
-    classificationProviderOptions: { openai: { reasoningEffort: 'none' } },
-    // The Responses API rejects max_output_tokens < 16.
-    classificationMinOutputTokens: 16,
-    // No explicit temperature: GPT-5.x rejects or strips it (see header).
-    classificationSamplingParams: {},
   });
 }
 

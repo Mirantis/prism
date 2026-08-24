@@ -236,6 +236,38 @@ describe('config', () => {
       expect(cfg.embeddingModelId).toBe('');
     });
 
+    it('selects openrouter and resolves vendor-qualified model IDs', async () => {
+      // OpenRouter addresses every model as `vendor/model`, so a bare `gpt-5.6-sol`
+      // — correct against api.openai.com — is not a model it can route.
+      process.env.LLM_PROVIDER = 'OpenRouter';
+      const cfg = await loadConfig();
+      expect(cfg.llmProvider).toBe('openrouter');
+      expect(cfg.chatModelId).toMatch(/^[a-z0-9-]+\//);
+      expect(cfg.classificationModelId).toMatch(/^[a-z0-9-]+\//);
+    });
+
+    it('routes openrouter through the openrouter mount, not the openai one', async () => {
+      // The mount is what the managed-inference gate checks: a policy selecting
+      // openrouter answers 403 on `/llm/openai/*`, so borrowing that path would
+      // fail every call.
+      process.env.LLM_PROVIDER = 'openrouter';
+      process.env.NEXUS_API_URL = 'https://gateway.example.com';
+      process.env.PROJECT_ID = 'proj-1';
+      const cfg = await loadConfig();
+      expect(cfg.nexusChatBaseUrl).toBe(
+        'https://gateway.example.com/projects/proj-1/llm/openrouter/openai/v1',
+      );
+    });
+
+    it('disables embeddings on openrouter by default', async () => {
+      // OpenRouter is an inference router; its embedding coverage is thin and
+      // model-dependent, so defaulting one on would fail at the first index
+      // rather than at configuration time. An operator who has one names it.
+      process.env.LLM_PROVIDER = 'openrouter';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingModelId).toBe('');
+    });
+
     it('selects openai (case-insensitive) and resolves the neutral model IDs', async () => {
       process.env.LLM_PROVIDER = 'OpenAI';
       const cfg = await loadConfig();

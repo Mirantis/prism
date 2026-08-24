@@ -39,14 +39,16 @@ const awsRegion = process.env.AWS_REGION || 'us-east-1';
 // AGENT_ID per container). Anything unrecognized falls back to `bedrock` so an
 // unset/typo'd value never silently breaks a Bedrock deployment.
 const rawLlmProvider = (process.env.LLM_PROVIDER || 'bedrock').toLowerCase();
-const llmProvider: 'bedrock' | 'azure' | 'bedrock-mantle' | 'openai' =
+const llmProvider: 'bedrock' | 'azure' | 'bedrock-mantle' | 'openai' | 'openrouter' =
   rawLlmProvider === 'azure'
     ? 'azure'
     : rawLlmProvider === 'bedrock-mantle'
       ? 'bedrock-mantle'
       : rawLlmProvider === 'openai'
         ? 'openai'
-        : 'bedrock';
+        : rawLlmProvider === 'openrouter'
+          ? 'openrouter'
+          : 'bedrock';
 
 // Lens Agents LLM proxy base URL for native Bedrock (bedrock-runtime). Mirrors
 // the gateway's route mounts:
@@ -111,6 +113,21 @@ const nexusOpenAiBaseUrl = nexusApiUrl
       : `${nexusApiUrl}/llm/openai/v1`)
   : null;
 
+// Lens Agents LLM proxy base URL for OpenRouter, mounted as
+// `…/llm/openrouter/openai/{path}`. OpenRouter's own API is OpenAI-compatible,
+// so this speaks the same protocol as the `openai` mount — only the mount and
+// the model-id convention differ. Ends at `/v1` because the openai SDK appends
+// `/responses`, `/chat/completions` or `/embeddings` to its base. Keyless: the
+// gateway injects the OpenRouter key on the outbound leg, and it must be THIS
+// mount rather than `/llm/openai/*` — the managed-inference gate compares the
+// path's backend against the policy's and answers 403 on a mismatch.
+// null when NEXUS_API_URL is unset (nothing to route through).
+const nexusOpenRouterBaseUrl = nexusApiUrl
+  ? (projectId
+      ? `${nexusApiUrl}/projects/${projectId}/llm/openrouter/openai/v1`
+      : `${nexusApiUrl}/llm/openrouter/openai/v1`)
+  : null;
+
 // The selected vendor's gateway *chat* mount, resolved once so callers that
 // only need "is chat routed through the gateway?" (the startup log, startup
 // telemetry) don't each re-derive the per-vendor branch. null → chat goes direct.
@@ -121,7 +138,9 @@ const nexusChatBaseUrl =
       ? nexusBedrockMantleBaseUrl
       : llmProvider === 'openai'
         ? nexusOpenAiBaseUrl
-        : nexusLlmBaseUrl;
+        : llmProvider === 'openrouter'
+          ? nexusOpenRouterBaseUrl
+          : nexusLlmBaseUrl;
 
 // Foundry Anthropic chat endpoint for Azure (Claude via Microsoft Foundry).
 // Explicit override wins; else derived from the resource name. Must end at
@@ -186,6 +205,22 @@ const bedrockMantleEmbeddingModelId =
 const openaiModelId = process.env.OPENAI_MODEL_ID || 'gpt-5.6-sol';
 const openaiClassificationModelId = process.env.OPENAI_CLASSIFICATION_MODEL_ID || 'gpt-5.6-luna';
 const openaiEmbeddingModelId = process.env.OPENAI_EMBEDDING_MODEL_ID ?? 'text-embedding-3-small';
+// OpenRouter model IDs (used when LLM_PROVIDER=openrouter). Every id it routes is
+// `vendor/model`, so the bare ids above — correct against api.openai.com — are
+// not models it can resolve. Defaults mirror the OpenAI tier choices so the
+// provider's GPT-5.x parameter handling (pinned `reasoningEffort`, no
+// temperature on the gates) stays valid; point them at any vendor's models
+// instead and those assumptions may not hold.
+//
+// Embeddings default to OFF. OpenRouter is an inference router and its embedding
+// coverage is thin and model-dependent, so shipping a default would fail at the
+// first index rather than at configuration time. `??` not `||`, matching the
+// sibling vars, so an operator who has one can set it — and can also set '' to
+// keep them off explicitly.
+const openrouterModelId = process.env.OPENROUTER_MODEL_ID || 'openai/gpt-5.6-sol';
+const openrouterClassificationModelId =
+  process.env.OPENROUTER_CLASSIFICATION_MODEL_ID || 'openai/gpt-5.6-luna';
+const openrouterEmbeddingModelId = process.env.OPENROUTER_EMBEDDING_MODEL_ID ?? '';
 // Direct OpenAI endpoint override, mirroring AZURE_FOUNDRY_BASE_URL /
 // BEDROCK_MANTLE_BASE_URL: applies to direct mode only (gateway routing has its
 // own mount), and must serve the Responses API — the SDK appends `/responses`,
@@ -216,6 +251,11 @@ const modelIds = {
     chat: openaiModelId,
     classification: openaiClassificationModelId,
     embedding: openaiEmbeddingModelId,
+  },
+  openrouter: {
+    chat: openrouterModelId,
+    classification: openrouterClassificationModelId,
+    embedding: openrouterEmbeddingModelId,
   },
 }[llmProvider];
 
@@ -457,8 +497,12 @@ export const config = {
   openaiModelId,
   openaiClassificationModelId,
   openaiEmbeddingModelId,
+  openrouterModelId,
+  openrouterClassificationModelId,
+  openrouterEmbeddingModelId,
   openaiBaseUrl,
   nexusOpenAiBaseUrl,
+  nexusOpenRouterBaseUrl,
 
   // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
   // either picks up the existing row via findFirst() or creates a fresh
