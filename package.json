@@ -117,6 +117,7 @@
     "postcss": "^8.5.23",
     "@cucumber/messages": {
       "uuid": "^11.1.1"
-    }
+    },
+    "deepmerge-ts": "^8.0.2"
   }
 }
