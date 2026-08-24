@@ -45,13 +45,13 @@ describe('config', () => {
   it('reads BEDROCK_MODEL_ID with default', async () => {
     delete process.env.BEDROCK_MODEL_ID;
     const cfg = await loadConfig();
-    expect(cfg.bedrockModelId).toBe('us.anthropic.claude-opus-5');
+    expect(cfg.bedrockModelId).toBe('global.anthropic.claude-opus-5');
   });
 
   it('reads BEDROCK_CLASSIFICATION_MODEL_ID with default', async () => {
     delete process.env.BEDROCK_CLASSIFICATION_MODEL_ID;
     const cfg = await loadConfig();
-    expect(cfg.bedrockClassificationModelId).toBe('us.anthropic.claude-haiku-4-5-20251001-v1:0');
+    expect(cfg.bedrockClassificationModelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0');
   });
 
   it('reads AWS_REGION with default us-east-1', async () => {
@@ -185,7 +185,7 @@ describe('config', () => {
       delete process.env.LLM_PROVIDER;
       const cfg = await loadConfig();
       expect(cfg.llmProvider).toBe('bedrock');
-      expect(cfg.chatModelId).toBe('us.anthropic.claude-opus-5');
+      expect(cfg.chatModelId).toBe('global.anthropic.claude-opus-5');
     });
 
     it('falls back to bedrock on an unrecognized value', async () => {
