@@ -26,9 +26,9 @@ missing or malformed config falls back silently to the bundled defaults.
 ```json
 {
   "agentName": "Prism",
-  "modelId": "us.anthropic.claude-opus-5",
-  "heartbeatModelId": "us.anthropic.claude-haiku-4-5",
-  "cronModelId": "us.anthropic.claude-sonnet-4-6",
+  "modelId": "global.anthropic.claude-opus-5",
+  "heartbeatModelId": "global.anthropic.claude-haiku-4-5",
+  "cronModelId": "global.anthropic.claude-sonnet-4-6",
   "hideCursor": false,
   "hideStatusBar": false,
   "httpUrl": "http://localhost:3003"
@@ -38,7 +38,7 @@ missing or malformed config falls back silently to the bundled defaults.
 | Key                | Type    | Default                          | Purpose                                                              |
 | ------------------ | ------- | -------------------------------- | -------------------------------------------------------------------- |
 | `agentName`        | string  | `Prism`                          | Display name in the chat prefix and header.                          |
-| `modelId`          | string  | `us.anthropic.claude-opus-5`   | Status-bar display, and the main-model default a fresh agent is bootstrapped with. |
+| `modelId`          | string  | `global.anthropic.claude-opus-5`   | Status-bar display, and the main-model default a fresh agent is bootstrapped with. |
 | `heartbeatModelId` | string  | _(unset)_                        | Heartbeat-model default a fresh agent is bootstrapped with. Empty → falls back to the main model. |
 | `cronModelId`      | string  | _(unset)_                        | Scheduled-task-model default a fresh agent is bootstrapped with. Empty → falls back to the main model. |
 | `hideCursor`       | boolean | `false`                          | Hide the input cursor (a11y).                                        |

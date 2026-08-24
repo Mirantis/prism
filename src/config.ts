@@ -145,9 +145,12 @@ const bedrockMantleBaseUrl =
 
 // Resolved once so the vendor-specific fields and the provider-neutral
 // `chatModelId`/`classificationModelId`/`embeddingModelId` share one source.
-const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-opus-5';
+// The chat and classification defaults use the `global.` inference profile: it
+// costs less than a regional one (AWS charges 10% more for `us.`/`eu.`/`au.`)
+// and has the same context and output limits. Mantle IDs stay unprefixed.
+const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'global.anthropic.claude-opus-5';
 const bedrockClassificationModelId =
-  process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+  process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'global.anthropic.claude-haiku-4-5-20251001-v1:0';
 const bedrockEmbeddingModelId = process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0';
 // Azure model IDs are deployment names. Chat/classification default to
 // Foundry's default Claude deployment names; embeddings default to an Azure

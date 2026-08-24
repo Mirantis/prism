@@ -519,8 +519,8 @@ What the operator sets on `docker run`:
 | `AWS_REGION` | AWS region for Bedrock and for the mantle host | `us-east-1` |
 | `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
 | `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | — |
-| `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `us.anthropic.claude-opus-5` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat & scheduled-task DELIVER/SUPPRESS) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `global.anthropic.claude-opus-5` |
+| `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat & scheduled-task DELIVER/SUPPRESS) | `global.anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
 | `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-5` / `claude-haiku-4-5` |
 | `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (fail-open if absent; `''` to skip) | `text-embedding-3-small` |
