@@ -49,12 +49,9 @@ const MAX_TOOL_INPUT_CHARS = 8_000;
  * credential read — the very verdict it is recording. `memory_delete` stays
  * evaluated, since that is the one memory operation that loses something.
  *
- * Matching is by bare name, and platform MCP tool names are un-namespaced and
- * override a built-in of the same name (`lib/tool-collection.ts` merges them
- * over the built-ins, guarding only plugin tools). So a platform tool called
- * `memory_write` would inherit this exemption. That is the same trust already
- * placed in that endpoint elsewhere, not a hole this list opens — but the list
- * is a name list, not an identity check, and should be read as one.
+ * Matching is by bare name, which is safe because `lib/tool-collection.ts`
+ * merges every other source behind a guard: nothing can answer to a built-in's
+ * name, so a name on this list is the built-in it names.
  */
 const ALWAYS_ALLOWED_TOOL_NAMES = new Set([
   'memory_search',
