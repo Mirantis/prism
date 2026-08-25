@@ -8,7 +8,7 @@
  */
 
 import { createBdd } from 'playwright-bdd';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { getPrisma } from '../support/db-helper';
 import {
   createSlackUserClient,
@@ -122,6 +122,35 @@ Given('the bot is invited to the channel', async () => {
   await new Promise((r) => setTimeout(r, 2_000));
 });
 
+/**
+ * Post a channel link code until the channel shows up on /channels. Socket Mode
+ * gives each event to one connection and never redelivers it, so a lost code
+ * needs another post rather than a longer wait; a code stays valid 15 minutes.
+ */
+async function linkChannelByCode(
+  page: Page,
+  channelsPage: ChannelsPage,
+  channelId: string,
+  channelName: string,
+): Promise<void> {
+  const slack = getSlackState();
+  const code = await channelsPage.getChannelLinkCode();
+  const linked = page.getByText(`#${channelName}`);
+
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    await slack.userClient!.chat.postMessage({ channel: channelId, text: code });
+    try {
+      // The UI auto-refreshes every 3s; wait for the channel to appear.
+      await linked.waitFor({ timeout: 20_000 });
+      return;
+    } catch {
+      if (attempt === 4) {
+        throw new Error(`channel #${channelName} never linked after ${attempt} codes`);
+      }
+    }
+  }
+}
+
 Given('I link the channel to the agent via the UI', async ({ page }) => {
   const slack = getSlackState();
   const channelsPage = new ChannelsPage(page);
@@ -129,19 +158,7 @@ Given('I link the channel to the agent via the UI', async ({ page }) => {
   // Channel link codes live on /channels (the legacy agent-detail page
   // no longer hosts this flow).
   await channelsPage.navigate();
-
-  // Click "Get Channel Link Code" and grab the 6-char hex code
-  const code = await channelsPage.getChannelLinkCode();
-
-  // Post the verification code in the Slack channel
-  await slack.userClient!.chat.postMessage({
-    channel: slack.channelId,
-    text: code,
-  });
-
-  // Wait for the bot to verify the code and create the mapping.
-  // The UI auto-refreshes every 3s; wait for the channel to appear.
-  await page.getByText(`#${slack.channelName}`).waitFor({ timeout: 30_000 });
+  await linkChannelByCode(page, channelsPage, slack.channelId, slack.channelName!);
 });
 
 Given('a second test Slack channel exists', async () => {
@@ -177,14 +194,10 @@ Given('I link the second channel to the agent via the UI', async ({ page }) => {
   const channelsPage = new ChannelsPage(page);
   await channelsPage.navigate();
 
-  // "Add channel" stays available even with a channel already linked.
-  const code = await channelsPage.getChannelLinkCode();
-  await slack.userClient!.chat.postMessage({
-    channel: slack.secondChannelId,
-    text: code,
-  });
-
-  await page.getByText(`#${slack.secondChannelName}`).waitFor({ timeout: 30_000 });
+  // "Add channel" stays available even with a channel already linked. Same
+  // re-posting as the first channel, and for the same reason — this code was the
+  // one-shot message that made the scenario fail whenever its event was taken.
+  await linkChannelByCode(page, channelsPage, slack.secondChannelId!, slack.secondChannelName!);
 });
 
 // Regression for AGENT-74: agents migrated from the old multi-tenant world

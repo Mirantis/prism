@@ -13,6 +13,9 @@ Feature: Slack file sharing
     Then the bot should reply about the file within 90 seconds
     And the file reply should contain "SLACKIN42"
 
+  # @slow triples the per-test budget, which also has to cover the Background —
+  # otherwise the 120s wait below and the 120s test timeout are the same number.
+  @slow
   Scenario: The agent creates a file and shares it back to the channel
     When I send a message mentioning the bot "Create a file named result.txt whose exact contents are SLACKOUT7, then share that file with me."
     Then the bot should share a file named "result.txt" in the thread within 120 seconds

@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import SlackLastSequencer from './slack-last-sequencer';
 
 export default defineConfig({
   test: {
@@ -25,6 +26,9 @@ export default defineConfig({
     // isolation; serialize files (each file owns one runtime).
     pool: 'forks',
     fileParallelism: false,
+    // Order matters for exactly one file — see slack-last-sequencer.ts. With
+    // `fileParallelism: false` the sequencer's order is the run order.
+    sequence: { sequencer: SlackLastSequencer },
     // Specs wire their own beforeAll/beforeEach; these only harden Vitest's
     // source-map symbolication so a malformed inline map can't fail an
     // otherwise-green run. The setup file patches each worker fork; globalSetup

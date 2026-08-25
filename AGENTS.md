@@ -304,6 +304,10 @@ code and docs (`src/prompts/meeting-prompt.ts`, `docs/voice-meetings.md`).
   comprehensive, robust, careful, thorough or battle-tested. Do not narrate the
   process ("Let me...", "I'll now..."). Do not praise a finding. State what
   changed and what it does.
+- **Describe the present, not the road there.** A comment or doc says what the
+  code does now and why. Do not document what it does *not* do, an approach that
+  was rejected, or a bug that used to exist; that belongs in the commit message,
+  the PR description or an ADR. Prefer one or two lines to a paragraph.
 - **Simplified Technical English (STE), the parts to use.** The rules above
   follow [ASD-STE100](https://www.asd-ste100.org/). Take these parts from it:
   - One instruction or one idea per sentence.

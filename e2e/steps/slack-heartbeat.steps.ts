@@ -29,7 +29,6 @@ Given(
   'the channel is configured as a heartbeat trigger with throttle {int}',
   async ({}, throttleSeconds: number) => {
     const slack = getSlackState();
-    const agentId = getCurrentAgentId();
 
     // The Slack connection is synthesized from env by lib/slack-config.ts
     // with id === teamId, so SLACK_E2E_TEAM_ID is also the connectionId
@@ -39,7 +38,10 @@ Given(
       throw new Error('SLACK_E2E_TEAM_ID is not set — required for slack heartbeat e2e');
     }
 
-    const url = `${process.env.AGENT_RUNTIME_URL}/agents/${agentId}/slack-heartbeat-trigger`;
+    // No agent id in the path: this runtime owns exactly one agent, and the
+    // single-agent refactor dropped the segment. The scenario has been skipped
+    // ever since, so nothing caught the 404 until it ran again.
+    const url = `${process.env.AGENT_RUNTIME_URL}/agents/slack-heartbeat-trigger`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {
