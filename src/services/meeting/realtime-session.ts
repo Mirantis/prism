@@ -694,6 +694,7 @@ export class RealtimeSession extends EventEmitter {
               metadata?: Record<string, unknown>;
               status?: string;
               status_details?: unknown;
+              usage?: { output_token_details?: Record<string, unknown> };
               output?: { content?: { text?: string; transcript?: string }[] }[];
             }
           | undefined;
@@ -717,7 +718,21 @@ export class RealtimeSession extends EventEmitter {
               .map((part) => part.text ?? part.transcript ?? '')
               .join(' ')
               .trim();
-            probe.settle(fromOutput || probe.text.trim() || null);
+            const answer = fromOutput || probe.text.trim() || null;
+            // A response that completes with nothing to say is the failure this
+            // gate cannot otherwise explain: it looks identical to a rejection and
+            // to a timeout in the log, and the cause is usually the token budget
+            // being spent on reasoning before the word. Say which it was, with the
+            // numbers, so it never has to be inferred from timing again.
+            if (answer === null) {
+              logger.warn(
+                `[Meeting:Resp] Probe ${done?.id ?? '?'} answered nothing ` +
+                  `(status=${done?.status ?? 'unknown'}, ` +
+                  `details=${JSON.stringify(done?.status_details ?? {})}, ` +
+                  `output_tokens=${JSON.stringify(done?.usage?.output_token_details ?? {})})`,
+              );
+            }
+            probe.settle(answer);
           }
           return;
         }

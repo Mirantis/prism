@@ -1115,6 +1115,38 @@ describe('RealtimeSession out-of-band probes', () => {
     await expect(verdict).resolves.toBe('YES');
   });
 
+  it('says why a probe answered nothing, rather than leaving it to timing', async () => {
+    active = await harness();
+    const verdict = active.session.requestOutOfBandText({
+      instructions: 'gate',
+      input: [{ type: 'item_reference', id: 'i-1' }],
+      deadlineMs: 500,
+    });
+    await settle();
+    active.emit({ type: 'response.created', response: { id: 'r-probe' } });
+    await settle();
+
+    // The shape a live call produced: completed, inside the deadline, no rejection
+    // — and empty, because the budget went on reasoning before the word.
+    active.emit({
+      type: 'response.done',
+      response: {
+        id: 'r-probe',
+        status: 'incomplete',
+        status_details: { reason: 'max_output_tokens' },
+        usage: { output_token_details: { reasoning_tokens: 64, text_tokens: 0 } },
+        output: [],
+      },
+    });
+
+    await expect(verdict).resolves.toBeNull();
+    // Without this the log cannot tell an exhausted budget from a rejection or a
+    // timeout, which is what made ten of these take a session to explain.
+    expect(warnings()).toMatch(/answered nothing/);
+    expect(warnings()).toMatch(/max_output_tokens/);
+    expect(warnings()).toMatch(/reasoning_tokens/);
+  });
+
   it('resolves a probe left in flight when the call ends', async () => {
     active = await harness();
     const verdict = active.session.requestOutOfBandText({
