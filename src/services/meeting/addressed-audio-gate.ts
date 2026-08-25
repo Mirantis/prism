@@ -67,12 +67,22 @@ export const ADDRESSED_DEADLINE_MS = 6_000;
 /**
  * How many output tokens a one-word verdict is allowed.
  *
- * A cap, not a target: the answer measured five tokens. Sixty-four rather than
- * sixteen because it costs nothing when unused and the failure it guards against is
- * total — a response that runs out of budget comes back `incomplete` with *empty*
- * output, and an empty answer is a failure, which for this gate means silence.
+ * A ceiling, not a target: the answer itself measures five tokens, and unused
+ * budget costs nothing. What it has to leave room for is the *reasoning* before the
+ * word, which is invisible in the answer and varies with how hard the utterance is.
+ *
+ * Sixty-four was too tight and cost real answers. A live call returned no verdict on
+ * ten utterances, every one at ~1.0–1.6s — far inside the deadline, and with no
+ * rejection logged — so they were responses that completed having spent the whole
+ * budget thinking and never reached the word. `incomplete` with empty output reads
+ * here as a failure, and a failure means silence: three of those ten were genuinely
+ * addressed to the agent, and the room had to prompt it again by name.
+ *
+ * The failures clustered on long or ambiguous utterances, which is exactly where a
+ * model reasons more, so the cap is now far above anything a verdict should need.
+ * Being generous here has no downside; being tight has a total one.
  */
-const VERDICT_TOKEN_BUDGET = 64;
+const VERDICT_TOKEN_BUDGET = 512;
 
 /**
  * How hard to think about a one-word question: as little as the API documents.

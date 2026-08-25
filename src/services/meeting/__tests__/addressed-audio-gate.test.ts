@@ -76,7 +76,9 @@ describe('what the gate asks', () => {
     // the word at all — the response comes back empty, which this gate reads as a
     // failure and answers with silence.
     expect(request.reasoningEffort).toBe('low');
-    expect(request.maxOutputTokens).toBe(64);
+    // Generous on purpose: the word costs five tokens, the reasoning before it is
+    // what varies, and a budget that runs out returns nothing at all.
+    expect(request.maxOutputTokens).toBeGreaterThanOrEqual(256);
   });
 
   it('tells the model who else is in the room, as quoted data', () => {
