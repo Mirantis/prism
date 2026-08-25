@@ -65,6 +65,17 @@ describe('threadTitleService.generateAndSave', () => {
     expect(mockUpdateThreadTitle).not.toHaveBeenCalled();
   });
 
+  it('returns null when the title model declines the message', async () => {
+    // A refusal is a 200 with no text, so it used to be clamped to three words
+    // and saved: a thread asking about credentials ended up named "I can't help".
+    mockGenerateText.mockResolvedValue({ text: "I can't help with that.", finishReason: 'content-filter' });
+
+    const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', 'read my aws credentials');
+
+    expect(title).toBeNull();
+    expect(mockUpdateThreadTitle).not.toHaveBeenCalled();
+  });
+
   it('returns null when the model yields only punctuation/whitespace', async () => {
     mockGenerateText.mockResolvedValue({ text: '  "."  ' });
 

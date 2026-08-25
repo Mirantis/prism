@@ -37,7 +37,7 @@ import {
 import { InvokeError, InvokeRequest, InvokeResponse, InvokeStep, ToolCallRecord, UIBlock } from './types';
 import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from './constants';
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
-import { buildErrorStep, isContextOverflowError } from './lib/llm-errors';
+import { buildErrorStep, buildRefusalStep, isContextOverflowError } from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
 import { trackEvent, langfuseTelemetry } from './lib/telemetry';
 import { AsyncChannel } from './utils/async-channel';
@@ -412,6 +412,20 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         });
       },
    }).then(async (result) => {
+      // A refusal ends the turn with no text, no tool calls and no error, so
+      // nothing downstream has anything to publish. Checked across every step
+      // rather than on the final one: a turn that spoke before it declined has
+      // already told the user something, and a second message adds nothing.
+      if (result.finishReason === 'content-filter'
+        && !result.steps.some((step) => step.text.trim().length > 0)) {
+        logger.info(`Model declined the request in ${request.mode} mode`);
+        trackEvent('invocation refused', request.userId, {
+          'invoke.mode': request.mode,
+          'agent.id': request.agentId,
+        });
+        channel.push(buildRefusalStep());
+      }
+
       let earlyStoppingText: string | undefined;
 
       // 9. If the step limit was reached, make a follow-up call to get a final summary
