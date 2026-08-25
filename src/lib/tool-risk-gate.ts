@@ -311,9 +311,9 @@ export async function evaluateToolRisk(
     schema: toolRiskDecisionSchema,
     schemaName: 'tool_risk_decision',
     providerOptions,
-    // temperature: 0 on the vendors that accept it, omitted on the ones that
-    // reject it — hardcoding it would 400 every call on those, which under
-    // `enforce` fails closed and takes every gated tool down with it.
+    // Spread, never hardcode: a sampling param a vendor rejects 400s every
+    // call, and under `enforce` that fails closed and takes every gated tool
+    // down with it. Each provider declares what its models accept.
     ...samplingParams,
     maxOutputTokens: RISK_EVALUATION_MAX_OUTPUT_TOKENS,
     // No maxRetries override: `abortSignal` already bounds the wall clock, so a
