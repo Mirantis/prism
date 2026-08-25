@@ -742,10 +742,11 @@ export class RealtimeSession extends EventEmitter {
         // `response.done` arrives. Clearing the slot here would wipe B's state
         // while B is still speaking, after which a later interruption sends no
         // cancel at all and a second request can go out concurrently.
+        const finishedId = done?.id ?? '';
         const stale =
-          !!done?.id &&
-          ((!!this.activeResponseId && done.id !== this.activeResponseId) ||
-            this.abandonedResponseIds.has(done.id));
+          finishedId !== '' &&
+          ((this.activeResponseId !== null && finishedId !== this.activeResponseId) ||
+            this.abandonedResponseIds.has(finishedId));
         if (stale) {
           logger.debug(
             `[Meeting:Resp] Ignoring a completion for ${done?.id ?? '?'} — ` +
