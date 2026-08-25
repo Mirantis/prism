@@ -13,6 +13,16 @@ interface OverrideModelInfo {
   effective: string;
 }
 
+/** The Agent tab's editable box — the only document the user writes here. */
+function guideBox(page: Page) {
+  return page.getByRole('textbox', { name: 'Agent guide' });
+}
+
+/** The guide editor's own Save, told apart from the inline model editors'. */
+function guideSaveButton(page: Page) {
+  return page.locator('[data-slot="tabs-content"]').getByRole('button', { name: 'Save' });
+}
+
 /**
  * Edit one of the inline model fields on the Profile page: click its pencil,
  * type the value, Save, and wait for the editor to close on the new value.
@@ -23,7 +33,9 @@ async function setModelField(page: Page, label: string, value: string): Promise<
   await page.getByRole('button', { name: `Edit ${label.toLowerCase()}` }).click();
   const input = page.getByRole('textbox', { name: `${label} ID` });
   await input.fill(value);
-  await page.getByRole('button', { name: 'Save' }).click();
+  // Scoped to the row: the agent guide editor keeps a Save button of its own,
+  // mounted whether or not its tab is showing.
+  await input.locator('..').getByRole('button', { name: 'Save' }).click();
   // Editor closes and shows the saved value; waiting here avoids racing the
   // REST read against the in-flight PATCH.
   await expect(page.getByText(value, { exact: true })).toBeVisible();
@@ -114,4 +126,44 @@ Then('the scheduled-task model override is empty and falls back to the main mode
     expect(body.model).toBeNull();
     expect(body.effective.length).toBeGreaterThan(0);
   }).toPass({ timeout: 5000 });
+});
+
+// ---------------------------------------------------------------------------
+// Agent guide editor (Profile page → Agent tab)
+// ---------------------------------------------------------------------------
+
+Then('the agent guide editor shows the stored guide', async ({ page }) => {
+  const res = await page.request.get('/agents/details');
+  const stored = (await res.json()).agent.agentMd as string;
+  // The seed gives the agent a guide, so this also proves the box is populated
+  // from the row rather than starting empty.
+  expect(stored.length).toBeGreaterThan(0);
+  await expect(guideBox(page)).toHaveValue(stored);
+});
+
+When('I set the agent guide to {string}', async ({ page }, value: string) => {
+  await guideBox(page).fill(value);
+});
+
+When('I save the agent guide', async ({ page }) => {
+  await guideSaveButton(page).click();
+  // The button re-disables once the PATCH lands and the box is clean again,
+  // which is what makes the REST read below race-free.
+  await expect(guideSaveButton(page)).toBeDisabled();
+});
+
+Then('the stored agent guide is {string}', async ({ page }, value: string) => {
+  const res = await page.request.get('/agents/details');
+  expect(res.ok()).toBeTruthy();
+  expect((await res.json()).agent.agentMd).toBe(value);
+});
+
+When('I open the {string} tab', async ({ page }, label: string) => {
+  await page.getByRole('tab', { name: label, exact: true }).click();
+});
+
+Then('that document is read-only', async ({ page }) => {
+  const boxes = page.locator('[data-slot="tabs-content"] textarea:visible');
+  await expect(boxes).toHaveCount(1);
+  await expect(boxes.first()).toHaveJSProperty('readOnly', true);
 });

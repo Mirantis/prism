@@ -123,6 +123,14 @@ export const runtimeApi = {
       body: JSON.stringify({ lockedIn }),
     }),
 
+  // Agent guide — the one workspace document the user edits directly; no tool
+  // writes it, so this is the only way it changes.
+  updateAgentGuide: (agentMd: string) =>
+    request<{ agentMd: string }>('/agents/agent-guide', {
+      method: 'PATCH',
+      body: JSON.stringify({ agentMd }),
+    }),
+
   // Threads
   getOrCreateLatestThread: (agentId: string, userId: string) =>
     request<ConversationThread>('/agents/threads/get-or-create-latest', {

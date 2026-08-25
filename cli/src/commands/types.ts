@@ -46,6 +46,12 @@ export interface CommandContext {
   stageAttachment: (att: AttachmentMeta) => void;
   /** Empties the staging area (UI state only — server deletes are the command's job). */
   clearStagedAttachments: () => void;
+  /**
+   * Runs `fn` with the TUI's own input handling paused, for a child process
+   * that needs the terminal itself (an editor). Ink holds stdin in raw mode, so
+   * without this the editor and the composer read the same keystrokes.
+   */
+  suspendInput: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 export interface SlashCommand {

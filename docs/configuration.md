@@ -181,15 +181,16 @@ that were already delivered.
 ## Locked-in mode
 
 `lockedIn` stops the agent from reshaping itself. While the lock is on, the
-agent's own tools may no longer rewrite the six workspace markdown files, nor add
+agent's own tools may no longer rewrite six of the workspace markdown files, nor add
 to or delete from its long-term memory:
 
 | Frozen while locked | Still editable while locked |
 |---------------------|-----------------------------|
 | **Soul**, **User**, **Memory** (the curated summary), **Vision**, **Heartbeat** config, **Bootstrap**; **long-term memory** writes and deletes | **Behavioural settings** — heartbeat interval, timezone, `verbose`; the agent's **name** (`rename_self`); **long-term memory search**, so it still reads what it learned before the lock |
 
-The **Agent Guide** is in neither column. No tool writes it, so it is read-only to
-the agent whether the lock is on or off.
+The **Agent Guide** is in neither column: no tool writes it, so the lock has
+nothing to take away. You edit it yourself, and that keeps working while the lock
+is on — see [The agent's identity](agent-identity.md#how-editing-works).
 
 The lock works in two layers. The writing tools (`update_soul`, `update_memory`,
 `update_user_profile`, `update_vision`, `update_heartbeat_config`,

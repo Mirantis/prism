@@ -43,6 +43,7 @@ import { RestoreBackupDialog } from '@/components/profile/restore-backup-dialog'
 import { ModelField } from '@/components/profile/model-field';
 import { VerbosityField } from '@/components/profile/verbosity-field';
 import { LockedInField } from '@/components/profile/locked-in-field';
+import { AgentGuideEditor } from '@/components/profile/agent-guide-editor';
 import type { AgentDetails } from '@/types';
 
 const SECTIONS = [
@@ -163,11 +164,17 @@ function ProfilePage() {
               </TabsList>
               {SECTIONS.map((s) => (
                 <TabsContent key={s.key} value={s.key}>
-                  <Textarea
-                    value={details[s.key as SectionKey] ?? ''}
-                    readOnly
-                    className="mt-3 h-64 resize-none font-mono text-xs"
-                  />
+                  {/* The Agent guide is the user's document — no tool writes it,
+                      so this is where it gets edited. The rest stay viewers. */}
+                  {s.key === 'agentMd' ? (
+                    <AgentGuideEditor details={details} />
+                  ) : (
+                    <Textarea
+                      value={details[s.key as SectionKey] ?? ''}
+                      readOnly
+                      className="mt-3 h-64 resize-none font-mono text-xs"
+                    />
+                  )}
                 </TabsContent>
               ))}
             </Tabs>

@@ -26,6 +26,17 @@ describe('applyEdit', () => {
     expect(result).toEqual({ success: true, content: 'goodbye\nearth' });
   });
 
+  it('rejects an ambiguous line-trimmed match instead of editing the first one', () => {
+    // Two indented copies of the passage, neither an exact match for the
+    // unindented search text.
+    const content = '  - item\n  - other\n\n  - item\n  - other';
+    const result = applyEdit(content, '- item\n- other', '- changed');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('2 whitespace-tolerant matches');
+    }
+  });
+
   it('returns error when nothing matches', () => {
     const result = applyEdit('hello world', 'missing', 'replacement');
     expect(result.success).toBe(false);

@@ -14,6 +14,12 @@ import {
 } from './commands.js';
 import { ApiClient, ApiError } from './api-client.js';
 
+const { mockEditText } = vi.hoisted(() => ({ mockEditText: vi.fn() }));
+vi.mock('./editor.js', () => ({
+  editText: mockEditText,
+  resolveEditor: () => 'test-editor',
+}));
+
 /**
  * Build a stub ApiClient where every method is a `vi.fn()`. Callers override
  * the methods they exercise with concrete resolved values.
@@ -23,6 +29,7 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     getMe: vi.fn(),
     getDetails: vi.fn(),
     setName: vi.fn(),
+    setAgentGuide: vi.fn(),
     getModel: vi.fn(),
     setModel: vi.fn(),
     getHeartbeatModel: vi.fn(),
@@ -67,6 +74,8 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
     stagedAttachments: [],
     stageAttachment: vi.fn(),
     clearStagedAttachments: vi.fn(),
+    // Run the editor inline: a test has no terminal to hand over.
+    suspendInput: (fn) => fn(),
     ...overrides,
   };
 }
@@ -575,6 +584,96 @@ describe('/schedules and /config open panels', () => {
     const out = await cmd('/config').run(makeCtx({ openPanel }));
     expect(openPanel).toHaveBeenCalledWith('config');
     expect(out).toBe('');
+  });
+});
+
+describe('/agent-guide', () => {
+  function ctxWithGuide(stored: string, api = stubApi()) {
+    api.getDetails.mockResolvedValue({ agentMd: stored });
+    return { api, ctx: makeCtx({ api: api as unknown as ApiClient }) };
+  }
+
+  it('PATCHes what the editor saved, then discards the temp file', async () => {
+    const { api, ctx } = ctxWithGuide('# Guide\nold');
+    const discard = vi.fn();
+    mockEditText.mockResolvedValue({
+      text: '# Guide\nnew',
+      changed: true,
+      file: '/tmp/prism-edit-x/document.md',
+      discard,
+    });
+    api.setAgentGuide.mockResolvedValue({ agentMd: '# Guide\nnew' });
+
+    const out = await cmd('/agent-guide').run(ctx);
+
+    expect(mockEditText).toHaveBeenCalledWith('# Guide\nold', { suffix: '.md' });
+    expect(api.setAgentGuide).toHaveBeenCalledWith('# Guide\nnew');
+    expect(discard).toHaveBeenCalled();
+    expect(out).toContain('saved');
+  });
+
+  it('writes nothing when the editor changed nothing', async () => {
+    const { api, ctx } = ctxWithGuide('# Guide');
+    mockEditText.mockResolvedValue({ text: '# Guide', changed: false, file: '/tmp/x', discard: vi.fn() });
+
+    const out = await cmd('/agent-guide').run(ctx);
+
+    expect(api.setAgentGuide).not.toHaveBeenCalled();
+    expect(out).toBe('Agent guide unchanged.');
+  });
+
+  // The editor owns the terminal while it runs, so the command must go through
+  // suspendInput rather than spawning underneath Ink's stdin reader.
+  it('pauses the TUI input around the editor', async () => {
+    const api = stubApi();
+    api.getDetails.mockResolvedValue({ agentMd: '' });
+    mockEditText.mockResolvedValue({ text: 'x', changed: true, file: '/tmp/x', discard: vi.fn() });
+    api.setAgentGuide.mockResolvedValue({ agentMd: 'x' });
+    const order: string[] = [];
+    const suspendInput = async <T,>(fn: () => Promise<T>): Promise<T> => {
+      order.push('suspend');
+      const result = await fn();
+      order.push('resume');
+      return result;
+    };
+    mockEditText.mockImplementation(async () => {
+      order.push('edit');
+      return { text: 'x', changed: true, file: '/tmp/x', discard: vi.fn() };
+    });
+
+    await cmd('/agent-guide').run(makeCtx({ api: api as unknown as ApiClient, suspendInput }));
+
+    expect(order).toEqual(['suspend', 'edit', 'resume']);
+  });
+
+  // Losing the edit on a failed save would be the worst outcome here, so the
+  // file survives and the message says where it is.
+  it('keeps the edit and names its file when the save fails', async () => {
+    const { api, ctx } = ctxWithGuide('# Guide');
+    const discard = vi.fn();
+    mockEditText.mockResolvedValue({
+      text: '# Guide 2',
+      changed: true,
+      file: '/tmp/prism-edit-y/document.md',
+      discard,
+    });
+    api.setAgentGuide.mockRejectedValue(new ApiError('runtime unreachable', 500));
+
+    const out = await cmd('/agent-guide').run(ctx);
+
+    expect(out).toContain('runtime unreachable');
+    expect(out).toContain('/tmp/prism-edit-y/document.md');
+    expect(discard).not.toHaveBeenCalled();
+  });
+
+  it('reports an editor that could not start', async () => {
+    const { ctx } = ctxWithGuide('# Guide');
+    mockEditText.mockRejectedValue(new Error('spawn test-editor ENOENT'));
+
+    const out = await cmd('/agent-guide').run(ctx);
+
+    expect(out).toContain('Could not open test-editor');
+    expect(out).toContain('ENOENT');
   });
 });
 

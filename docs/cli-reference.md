@@ -50,6 +50,7 @@ to complete, **Enter** to run.
 | `/compact` | — | Summarize older history to free up context ([compaction](compaction.md)). |
 | `/schedules` | — | Open the scheduled-tasks panel. |
 | `/config` | — | Open the identity/config viewer panel. |
+| `/agent-guide` | — | Edit the agent guide in `$EDITOR` (the agent cannot write it). |
 | `/exit` | — | Shut down the TUI. |
 
 ## Keyboard shortcuts

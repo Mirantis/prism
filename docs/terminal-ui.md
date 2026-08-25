@@ -128,8 +128,17 @@ name, model (plus the heartbeat and scheduled-task models, or `(main)` when they
 inherit it), timezone, and heartbeat status, plus a list of the seven identity
 documents (Soul, User, Memory, Heartbeat, Vision, Agent, Bootstrap). The right pane shows the selected document's content. Use Tab or the
 left/right arrows to move between panes, up/down to scroll, and Page Up/Down to
-page through long documents. It's a viewer — edit these documents through
-conversation (see **[The agent's identity](agent-identity.md)**).
+page through long documents. It's a viewer: the agent maintains those documents
+through conversation (see **[The agent's identity](agent-identity.md)**), except
+the **Agent** guide, which you edit yourself with `/agent-guide`.
+
+### Editing the agent guide (`/agent-guide`)
+
+`/agent-guide` opens the agent guide in your editor — `$VISUAL`, else `$EDITOR`,
+else `vi` — as a temporary markdown file. Save and quit and the CLI stores the
+document; quit without saving, or abort (`:cq` in vi), and it stays as it was.
+The agent has no tool that writes this document, so this and the Web UI's
+**Agent** tab are the only ways it changes.
 
 ## Status bar
 

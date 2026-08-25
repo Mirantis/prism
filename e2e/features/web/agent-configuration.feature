@@ -19,6 +19,20 @@ Feature: Agent Configuration
     When I navigate to the agent detail page
     Then I should see the heartbeat interval "Every 8h"
 
+  Scenario: Edit the agent guide and save it
+    When I navigate to the profile page
+    Then the agent guide editor shows the stored guide
+    When I set the agent guide to "Answer with GUIDEEDIT7K."
+    And I save the agent guide
+    Then the stored agent guide is "Answer with GUIDEEDIT7K."
+
+  # The agent maintains the other documents through conversation, so the Profile
+  # page must not offer them as editable boxes.
+  Scenario: The other identity documents stay read-only
+    When I navigate to the profile page
+    And I open the "Soul" tab
+    Then that document is read-only
+
   Scenario: Configure separate heartbeat and scheduled-task models
     When I navigate to the agent detail page
     And I set the heartbeat model to "hb-web-model"

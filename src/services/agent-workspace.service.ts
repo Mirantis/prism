@@ -405,8 +405,9 @@ class AgentWorkspaceService {
    * Set locked-in mode. When on, the agent's own tools may no longer rewrite
    * the workspace markdown files (soul, memory summary, user profile, vision,
    * heartbeat config, bootstrap) — those tools are withheld from the tool set
-   * and their writes refused. Vector memory, behavioural settings and renames
-   * stay editable.
+   * and their writes refused. The agent guide is not in the set because no tool
+   * writes it — only the user does, over REST. Vector memory, behavioural
+   * settings and renames stay editable.
    */
   async updateLockedIn(lockedIn: unknown): Promise<boolean> {
     if (typeof lockedIn !== 'boolean') {
@@ -428,6 +429,29 @@ class AgentWorkspaceService {
   async isLockedIn(): Promise<boolean> {
     const agent = await this.getAgent();
     return agent.lockedIn;
+  }
+
+  /**
+   * Replace the agent guide (`agentMd`), which reaches the system prompt as
+   * `# Agent Guide`. The user owns this document: no tool writes it, so this is
+   * the only write path, and locked-in mode does not gate it — that lock covers
+   * what the agent's own tools may rewrite.
+   */
+  async updateAgentGuide(agentMd: unknown): Promise<string> {
+    if (typeof agentMd !== 'string') {
+      throw new ValidationError('agentMd must be a string');
+    }
+    const agent = await this.getAgent();
+    const updated = await prisma.agentWorkspace.update({
+      where: { id: agent.id },
+      data: { agentMd },
+    });
+    trackEvent('agent config updated', null, {
+      'agent.id': updated.id,
+      'config.field': 'agentMd',
+      'config.method': 'rest',
+    });
+    return updated.agentMd;
   }
 
   /** Cron equivalent of {@link updateHeartbeatModel}. */

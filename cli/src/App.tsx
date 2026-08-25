@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import {
   tuiAdapterService,
   ContextUsage,
@@ -248,6 +248,44 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   }, [shuttingDown, exit]);
 
   const openPanel = useCallback((id: PanelId) => setActivePanel(id), []);
+
+  // Hand the whole terminal to a child process that needs it (an editor), then
+  // take it back. Two things have to stop, not one:
+  //
+  // - **Input.** Ink refcounts raw mode: `setRawMode(false)` from one holder
+  //   decrements a counter and only leaves raw mode at zero. Three hooks hold
+  //   it here (the Ctrl+C hook, the chat-mode hook, the composer), so going
+  //   through Ink would leave the child on a raw tty — no line editing, no
+  //   echo, and Ctrl+C never arriving as SIGINT. `suspended` deactivates this
+  //   component's hooks and unmounts the composer with them, and the tty mode
+  //   is then set directly, so the child gets a cooked terminal whatever
+  //   Ink's counter says.
+  // - **Output.** A WebSocket delivery mid-edit — an agent reply, a heartbeat,
+  //   a cron result — repaints Ink's frame on top of the editor. Rendering
+  //   nothing while suspended means Ink erases its frame once and then writes
+  //   nothing more, because the output stops changing.
+  const { stdin, isRawModeSupported } = useStdin();
+  const [suspended, setSuspended] = useState(false);
+  const suspendInput = useCallback(
+    async <T,>(fn: () => Promise<T>): Promise<T> => {
+      if (!isRawModeSupported) return fn();
+      setSuspended(true);
+      // Let that render commit — the hooks unsubscribe and the frame clears —
+      // before the child takes the screen.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const wasRaw = stdin.isRaw === true;
+      if (wasRaw) stdin.setRawMode(false);
+      stdin.pause();
+      try {
+        return await fn();
+      } finally {
+        stdin.resume();
+        if (wasRaw) stdin.setRawMode(true);
+        setSuspended(false);
+      }
+    },
+    [stdin, isRawModeSupported],
+  );
   const stageAttachment = useCallback(
     (att: AttachmentMeta) => setStaged((prev) => [...prev, att]),
     [],
@@ -285,22 +323,24 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         stagedAttachments: staged,
         stageAttachment,
         clearStagedAttachments,
+        suspendInput,
       };
       const result = await cmd.run(ctx);
       // Panel commands return '' (the panel is their output); only surface a
       // synthetic SYSTEM message when there's actual text to show.
       if (result) appendSystemMessage(result);
     },
-    [entries, appendSystemMessage, triggerShutdown, openPanel, staged, stageAttachment, clearStagedAttachments, activeThreadId],
+    [entries, appendSystemMessage, triggerShutdown, openPanel, staged, stageAttachment, clearStagedAttachments, activeThreadId, suspendInput],
   );
 
   // Ctrl+C must work everywhere, including while a panel owns the screen, so
-  // it lives in its own always-active hook that handles nothing else.
+  // it lives in its own hook that handles nothing else. It stands down only
+  // while a child process owns the terminal, where Ctrl+C belongs to the child.
   useInput(
     (input, key) => {
       if (key.ctrl && input === 'c') triggerShutdown();
     },
-    { isActive: true },
+    { isActive: !suspended },
   );
 
   // Ctrl+O / Up / Down / Tab handling. ink-text-input v6 explicitly returns
@@ -396,7 +436,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       setInputValue(history[nextIndex] ?? '');
       setInputResetKey((k) => k + 1);
     }
-  }, { isActive: activePanel === null && resumePhase === 'chat' });
+  }, { isActive: !suspended && activePanel === null && resumePhase === 'chat' });
 
   const onSubmit = useCallback(
     async (text: string) => {
@@ -487,6 +527,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       />
     );
   }
+
+  // A child process owns the terminal: draw nothing, so Ink's frame does not
+  // land on top of the editor when state changes underneath it.
+  if (suspended) return null;
 
   return (
     <Box flexDirection="column" paddingX={1}>

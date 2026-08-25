@@ -77,7 +77,9 @@ async function resolveWorkspaceFileUpdate(
     const currentContent = agent[field] ?? '';
     const result = applyEdits(currentContent, edits!);
     if (!result.success) {
-      return { success: false, error: result.error };
+      // Name the document, so a model that copied `oldText` from another
+      // workspace file can see which one it searched.
+      return { success: false, error: `${label}: ${result.error}` };
     }
     finalContent = result.content;
   }

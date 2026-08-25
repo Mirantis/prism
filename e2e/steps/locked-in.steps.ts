@@ -1,10 +1,11 @@
 /**
  * Locked-in mode step definitions.
  *
- * The lock's guarantee is about stored state, so every assertion reads the soul
- * document or the memory entries out of the database rather than matching on
- * reply text. Each chat scenario ends on one DB assertion and never chains two
- * agent-response assertions: concise mode delivers exactly one bubble per turn.
+ * The lock's guarantee is about stored state, so every assertion reads the
+ * database rather than matching on reply text: the soul document and the memory
+ * entries. Each chat scenario ends on one DB assertion and never chains two
+ * agent-response assertions: concise mode delivers exactly one bubble per
+ * turn.
  *
  * The `agent locked write refused` event is not asserted here. The writer tools
  * are withheld from a locked turn, so the refusal is reachable only on a
