@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { webSocketUrl } from '@/api/runtime-client';
-import type { CompactionEvent, ContextUsage, ConversationMessage } from '@/types';
+import type { CompactionEvent, ContextUsage, ConversationMessage, UpdateEvent } from '@/types';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 export type MessageMode = 'followup' | 'collect';
@@ -14,7 +14,17 @@ interface ChatMessage {
 }
 
 interface WebSocketMessage {
-  type: 'chat' | 'status' | 'error' | 'typing' | 'heartbeat' | 'pong' | 'thread' | 'context' | 'compaction';
+  type:
+    | 'chat'
+    | 'status'
+    | 'error'
+    | 'typing'
+    | 'heartbeat'
+    | 'pong'
+    | 'thread'
+    | 'context'
+    | 'compaction'
+    | 'update';
   payload?: unknown;
 }
 
@@ -34,6 +44,8 @@ interface UseWebSocketOptions {
    * caller knows which thread is on screen.
    */
   onCompaction?: (event: CompactionEvent) => void;
+  /** Self-update progress (available/updating/failed). Install-level, not thread-scoped. */
+  onUpdate?: (event: UpdateEvent) => void;
   reconnectInterval?: number;
   maxReconnectAttempts?: number;
 }
@@ -44,6 +56,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     onThreadUpdate,
     onContextUsage,
     onCompaction,
+    onUpdate,
     reconnectInterval = 3000,
     maxReconnectAttempts = 10,
   } = opts;
@@ -62,10 +75,12 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const onThreadUpdateRef = useRef(onThreadUpdate);
   const onContextUsageRef = useRef(onContextUsage);
   const onCompactionRef = useRef(onCompaction);
+  const onUpdateRef = useRef(onUpdate);
   onMessageRef.current = onMessage;
   onThreadUpdateRef.current = onThreadUpdate;
   onContextUsageRef.current = onContextUsage;
   onCompactionRef.current = onCompaction;
+  onUpdateRef.current = onUpdate;
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [isTyping, setIsTyping] = useState(false);
@@ -139,6 +154,18 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
               (p.trigger === 'auto' || p.trigger === 'manual')
             ) {
               onCompactionRef.current?.(p as CompactionEvent);
+            }
+            break;
+          }
+          case 'update': {
+            const p = data.payload as Partial<UpdateEvent> | undefined;
+            // Same strictness as the context case: a malformed frame must not
+            // raise an update banner nothing can dismiss.
+            if (
+              typeof p?.version === 'string' &&
+              (p.status === 'available' || p.status === 'updating' || p.status === 'failed')
+            ) {
+              onUpdateRef.current?.(p as UpdateEvent);
             }
             break;
           }

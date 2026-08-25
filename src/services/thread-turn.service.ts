@@ -190,6 +190,16 @@ class ThreadTurnService {
     return this.threads.has(threadId);
   }
 
+  /**
+   * Whether any thread is mid-exchange — a turn running or queued on the
+   * mutex, a claim still open between turns, or a follow-up waiting in an
+   * inbox. `forget()` drops a thread's entry as soon as all three are clear,
+   * so a tracked thread is exactly a busy one.
+   */
+  hasLiveExchange(): boolean {
+    return this.threads.size > 0;
+  }
+
   private async withMutex<T>(threadId: string, fn: () => Promise<T>): Promise<T> {
     const state = this.stateFor(threadId);
     state.refs += 1;

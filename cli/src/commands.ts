@@ -27,6 +27,7 @@ import { compactCommand } from './commands/compact.js';
 import { attachCommand } from './commands/attach.js';
 import { detachCommand } from './commands/detach.js';
 import { saveCommand } from './commands/save.js';
+import { updateCommand } from './commands/update.js';
 import { makeHelpCommand } from './commands/help.js';
 import { exitCommand } from './commands/exit.js';
 
@@ -52,6 +53,7 @@ export const COMMANDS: SlashCommand[] = [
   attachCommand,
   detachCommand,
   saveCommand,
+  updateCommand,
   // /help lists the registry. The getter reads COMMANDS lazily (at run() time,
   // after this array is built) so help can live in its own file without a
   // circular import.

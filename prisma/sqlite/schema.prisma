@@ -519,3 +519,40 @@ model WebhookSubscription {
   @@index([agentId])
   @@map("webhook_subscriptions")
 }
+
+// ============================================================================
+// Updates
+// ============================================================================
+//
+// One row per self-update attempt of a standalone (SEA) install. A row is
+// written PENDING before the process hands off to the new version; the next
+// boot resolves it — SUCCESS when the running version matches versionTo,
+// FAILURE otherwise. An attempt that fails before the handoff is resolved in
+// place. Install-level, not agent-level, so there is no AgentWorkspace
+// relation.
+
+enum UpdateTrigger {
+  AUTO
+  MANUAL
+}
+
+enum UpdateOutcome {
+  PENDING
+  SUCCESS
+  FAILURE
+}
+
+model UpdateAttempt {
+  id          String        @id @default(uuid())
+  versionFrom String
+  versionTo   String
+  trigger     UpdateTrigger
+  outcome     UpdateOutcome @default(PENDING)
+  errorCode   String? // download_failed | asset_not_found | verify_failed | swap_failed | spawn_failed | restart_version_mismatch
+  errorDetail String?
+  startedAt   DateTime      @default(now())
+  finishedAt  DateTime?
+
+  @@index([startedAt])
+  @@map("update_attempts")
+}

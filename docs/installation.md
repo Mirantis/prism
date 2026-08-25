@@ -123,6 +123,36 @@ Native binaries are published for:
 Binaries are attached to each [GitHub Release](https://github.com/lensapp/prism-agent/releases).
 The installer downloads the latest release automatically.
 
+## Automatic updates
+
+A native install has an auto-updater. It checks the release registry hourly
+and, when a newer release exists, downloads it, verifies it, installs it, and
+restarts the background service. The web UI and the terminal UI show an
+"update available" notice, and both show "Backend updating…" during the restart.
+An automatic update waits until the agent is idle — it never interrupts a
+running turn, a scheduled task, a goal, or a live meeting. An update you ask
+for applies immediately.
+
+To update on demand, run:
+
+```bash
+prism update
+```
+
+Set `DISABLE_UPDATER=1` in `~/.prism/.env` to turn off the checks, the
+automatic updates, and the `prism update` command. Docker doesn't have
+auto-update — pull a newer image tag and recreate the container instead (see
+**[Docker](docker.md)**).
+
+Each update replaces the binaries and their sidecar files, but not the service
+definition (the launchd plist, systemd unit, or scheduled task). If a release
+changes those, re-run the installer.
+
+To roll back, install a specific release: download its archive from the
+[releases page](https://github.com/lensapp/prism-agent/releases), extract it,
+and run the bundled installer with `PRISM_DIST` pointing at the extracted
+platform directory.
+
 ## Verifying
 
 Once installed, the runtime listens on port 3003:

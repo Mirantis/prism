@@ -77,19 +77,65 @@ try {
   Write-Host "Installing Prism Agent into $PrismHome (from $dist)"
   New-Item -ItemType Directory -Path $PrismHome -Force | Out-Null
 
-  # Stop a running instance first so its exe isn't locked while we overwrite it
-  # (matters on reinstall -- Windows refuses to replace an in-use file).
+  # Stop the server so nothing maps prism-server.exe or the native addons under
+  # node_modules\. `prism.exe` is deliberately left alone: a self-update is
+  # normally driven *by* it -- `prism update` polls the runtime for minutes, and
+  # the TUI's /update runs inside it -- so killing it would kill the poller
+  # mid-update.
   try { Stop-ScheduledTask -TaskName 'PrismServer' -ErrorAction Stop | Out-Null } catch { }
   Get-Process -Name 'prism-server' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 500
 
-  Copy-Item -Path (Join-Path $dist 'prism.exe') -Destination (Join-Path $PrismHome 'prism.exe') -Force
-  Copy-Item -Path (Join-Path $dist 'prism-server.exe') -Destination (Join-Path $PrismHome 'prism-server.exe') -Force
-  foreach ($sub in 'node_modules', 'web') {
-    $target = Join-Path $PrismHome $sub
-    if (Test-Path $target) { Remove-Item -Recurse -Force $target }
-    Copy-Item -Path (Join-Path $dist $sub) -Destination $target -Recurse -Force
+  # Activate by renaming rather than copying over the target. Windows refuses to
+  # overwrite a mapped executable, and `prism.exe` is usually mapped here, but it
+  # allows *renaming* one -- the running process keeps the handle to the file
+  # under its new name. Copying also had no rollback: `Remove-Item node_modules`
+  # followed by a failing `Copy-Item` left the install with no native sidecar and
+  # a scheduled task restarting a binary that cannot boot.
+  #
+  # So: stage every entry beside its target, then rename the old ones aside and
+  # the new ones in. A failure during the renames puts back what was moved.
+  $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  $trash = Join-Path $PrismHome ".update-trash-$stamp"
+  $entries = @('prism.exe', 'prism-server.exe', 'node_modules', 'web')
+
+  # Stage first: a failure here has touched nothing that is live.
+  $staged = @{}
+  foreach ($e in $entries) {
+    $src = Join-Path $dist $e
+    if (-not (Test-Path $src)) { throw "Staged release is missing $e" }
+    $tmp = Join-Path $PrismHome ".update-new-$stamp-$e"
+    if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
+    Copy-Item -Path $src -Destination $tmp -Recurse -Force
+    $staged[$e] = $tmp
   }
+
+  New-Item -ItemType Directory -Path $trash -Force | Out-Null
+  $moved = New-Object System.Collections.ArrayList
+  try {
+    foreach ($e in $entries) {
+      $target = Join-Path $PrismHome $e
+      if (Test-Path $target) {
+        Move-Item -Path $target -Destination (Join-Path $trash $e) -Force
+        [void]$moved.Add($e)
+      }
+      Move-Item -Path $staged[$e] -Destination $target -Force
+    }
+  } catch {
+    Write-Warning "Update failed while activating ($_). Restoring the previous install."
+    foreach ($e in $moved) {
+      $target = Join-Path $PrismHome $e
+      # The new entry may or may not have landed before the failure.
+      if (Test-Path $target) { Move-Item -Path $target -Destination $staged[$e] -Force }
+      Move-Item -Path (Join-Path $trash $e) -Destination $target -Force
+    }
+    throw
+  }
+
+  # Only reached once every entry is in place; the old copies are dead weight.
+  # `prism.exe` may still be mapped by the process driving this update, so its
+  # old inode can refuse deletion until that exits -- hence best-effort.
+  Remove-Item -Recurse -Force $trash -ErrorAction SilentlyContinue
 
   # License, attribution and third-party notices. Guarded like install.sh -- a dist
   # built by build-sea.mjs + collect-natives.mjs alone has none, and

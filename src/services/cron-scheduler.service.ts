@@ -78,6 +78,11 @@ class CronSchedulerService {
    */
   private runningTasks: Set<string> = new Set();
 
+  /** Whether any cron task run is currently in flight. */
+  hasRunningTask(): boolean {
+    return this.runningTasks.size > 0;
+  }
+
   /**
    * List active cron tasks from the database.
    * Called during startup to initialize the scheduler.

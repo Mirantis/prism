@@ -35,6 +35,19 @@ class AgentStatusService {
     }
   }
 
+  /**
+   * Whether any invoke-loop turn (chat, heartbeat, cron, goal) is in flight.
+   * Counts what setProcessing/setDoneProcessing bracket — the auxiliary model
+   * calls (classification gates, thread titles) are not tracked here; they
+   * are sub-second, fail-open calls whose loss on a restart is harmless.
+   */
+  isBusy(): boolean {
+    for (const count of this.activeProcessingCount.values()) {
+      if (count > 0) return true;
+    }
+    return false;
+  }
+
   async updateAgentById(agentId: string, data: Prisma.AgentWorkspaceUpdateInput): Promise<void> {
     await prisma.agentWorkspace.update({
       where: { id: agentId },

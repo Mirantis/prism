@@ -4,6 +4,7 @@ import { Separator } from '@/components/ui/separator';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { AppSidebar } from '@/components/layout/app-sidebar';
 import { AppBreadcrumb } from '@/components/layout/app-breadcrumb';
+import { UpdateBanner } from '@/components/layout/update-banner';
 import { AgentProvider } from '@/lib/agent-context';
 
 export const Route = createRootRoute({
@@ -24,6 +25,7 @@ function RootLayout() {
                 <AppBreadcrumb />
               </div>
             </header>
+            <UpdateBanner />
             <main className="relative flex-1 overflow-auto p-4 pt-0 min-w-0">
               <Outlet />
             </main>

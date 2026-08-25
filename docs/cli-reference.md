@@ -5,8 +5,15 @@ keyboard shortcuts, and the settings file. For a guided tour, see
 **[Terminal UI](terminal-ui.md)**.
 
 ```
-prism [flags]
+prism [command] [flags]
 ```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `prism` | Start the terminal UI. |
+| `prism update` | Check for a newer release and install it. The server downloads, verifies, and restarts; the command waits until the new version is up. |
 
 ## Flags
 
@@ -48,6 +55,7 @@ or **Enter** to complete the selection, then **Enter** to run.
 | `/skills` | `[list]` \| `run <name>` | List installed [skills](skills.md), or run one. |
 | `/plugins` | — | List installed [plugins](plugins.md) and what each contributes. |
 | `/compact` | — | Summarize older history to free up context ([compaction](compaction.md)). |
+| `/update` | — | Check for a newer Prism release and install it (native installs only). |
 | `/schedules` | — | Open the scheduled-tasks panel. |
 | `/config` | — | Open the identity/config viewer panel. |
 | `/agent-guide` | — | Edit the agent guide in `$EDITOR` (the agent cannot write it). |

@@ -117,6 +117,27 @@ export interface PluginSummary {
   diagnostics: string[];
 }
 
+/** GET /agents/update/status response (mirrors web/src/types.ts). */
+export interface UpdateStatus {
+  enabled: boolean;
+  /** Why the updater is off; null when enabled. */
+  reason: 'disabled_by_env' | 'not_sea_install' | 'dev_build' | null;
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  checkedAt: string | null;
+  applying: boolean;
+  lastAttempt: {
+    versionFrom: string;
+    versionTo: string;
+    trigger: 'AUTO' | 'MANUAL';
+    outcome: 'PENDING' | 'SUCCESS' | 'FAILURE';
+    errorCode: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+  } | null;
+}
+
 export interface ApiClient {
   getMe(): Promise<{ agentId: string; userId: string; name: string }>;
   getDetails(): Promise<AgentDetails>;
@@ -153,6 +174,8 @@ export interface ApiClient {
   runSkill(name: string, threadId?: string): Promise<{ threadId: string; skill: string }>;
   listPlugins(): Promise<PluginSummary[]>;
   compactThread(threadId: string): Promise<{ threadId: string }>;
+  updateStatus(): Promise<UpdateStatus>;
+  applyUpdate(): Promise<{ ok: true; version: string }>;
 }
 
 export class HttpApiClient implements ApiClient {
@@ -360,6 +383,18 @@ export class HttpApiClient implements ApiClient {
   // `compaction` frames carry the progress; 409 when there's nothing to compact.
   compactThread(threadId: string): Promise<{ threadId: string }> {
     return this.request('POST', `/agents/threads/${encodeURIComponent(threadId)}/compact`);
+  }
+
+  // Self-update. POST answers 202 before the download starts; the outcome
+  // arrives via WS `update` frames and the status endpoint's attempt record.
+  // 409 when the updater is off, nothing is newer, or an update is already in
+  // progress.
+  updateStatus(): Promise<UpdateStatus> {
+    return this.request('GET', '/agents/update/status');
+  }
+
+  applyUpdate(): Promise<{ ok: true; version: string }> {
+    return this.request('POST', '/agents/update');
   }
 
   /**

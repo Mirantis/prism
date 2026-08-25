@@ -115,12 +115,15 @@ export class AgentTaskManager {
     this.spawner = spawner;
   }
 
+  /** Number of tasks that haven't completed yet. */
+  runningCount(): number {
+    let n = 0;
+    for (const entry of this.tasks.values()) if (!entry.state.completed) n++;
+    return n;
+  }
+
   startTask(params: AgentTaskParams): string {
-    let running = 0;
-    for (const entry of this.tasks.values()) {
-      if (!entry.state.completed) running++;
-    }
-    if (running >= MAX_CONCURRENT) {
+    if (this.runningCount() >= MAX_CONCURRENT) {
       throw new Error(`Max concurrent agent tasks (${MAX_CONCURRENT}) reached`);
     }
 

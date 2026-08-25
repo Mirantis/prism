@@ -37,7 +37,14 @@ if (target !== 'prism' && target !== 'prism-server') {
 
 const isWin = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
-const version = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+// Release builds pass the release tag (vYYYY.M.DDHHMMSS) via VERSION so the
+// binaries know which release they are — the updater compares it against the
+// registry. Anything else (PR builds pass `dev`) falls back to package.json,
+// which is not release-shaped and keeps the updater off.
+const RELEASE_VERSION_RE = /^v\d{4}\.\d{1,2}\.\d+$/;
+const version = RELEASE_VERSION_RE.test(process.env.VERSION ?? '')
+  ? process.env.VERSION
+  : JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
 /**
  * Deps that cannot go through the bundler, needed by both targets.

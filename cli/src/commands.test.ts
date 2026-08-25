@@ -57,6 +57,8 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     runSkill: vi.fn(),
     listPlugins: vi.fn(),
     compactThread: vi.fn(),
+    updateStatus: vi.fn(),
+    applyUpdate: vi.fn(),
   };
 }
 

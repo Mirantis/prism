@@ -8,6 +8,7 @@ import {
   TuiStatus,
 } from './tui-adapter.js';
 import { useCompaction } from './hooks/use-compaction.js';
+import { useUpdateNotice } from './hooks/use-update-notice.js';
 import { Header } from './components/Header.js';
 import { MessageList, ChatEntry } from './components/MessageList.js';
 import { Input } from './components/Input.js';
@@ -220,6 +221,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // Shown as the spinner-row label — compaction runs outside a chat turn, so
   // the ordinary thinking spinner is idle while it works.
   const compacting = useCompaction(activeThreadId, appendSystemMessage);
+
+  // A newer release the runtime announced (status-bar hint), plus SYSTEM lines
+  // when the backend restarts to apply one or a manual update fails.
+  const updateAvailableVersion = useUpdateNotice(appendSystemMessage);
 
   // Centralized shutdown trigger shared by Ctrl+C and the /exit command.
   // Only flips state here; the effect below calls Ink's `exit()` AFTER the
@@ -610,6 +615,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
           status={status}
           detail={statusDetail}
           contextUsedPercent={contextUsage?.usedPercent ?? null}
+          updateAvailableVersion={updateAvailableVersion}
         />
       )}
     </Box>

@@ -13,6 +13,8 @@ interface Props {
    * guess.
    */
   contextUsedPercent?: number | null;
+  /** A newer release the runtime announced; null when up to date. */
+  updateAvailableVersion?: string | null;
 }
 
 // Map Bedrock model IDs like "us.anthropic.claude-opus-4-7",
@@ -50,7 +52,13 @@ export function contextColor(usedPercent: number): string {
   return CONTEXT_GREEN;
 }
 
-export const StatusBar: React.FC<Props> = ({ modelId, status, detail, contextUsedPercent }) => {
+export const StatusBar: React.FC<Props> = ({
+  modelId,
+  status,
+  detail,
+  contextUsedPercent,
+  updateAvailableVersion,
+}) => {
   const showContext = typeof contextUsedPercent === 'number';
   return (
     // One left-aligned row: the leading pipe in "| context 58%" reads as a
@@ -65,6 +73,9 @@ export const StatusBar: React.FC<Props> = ({ modelId, status, detail, contextUse
       */}
       {showContext ? (
         <Text color={contextColor(contextUsedPercent)}>{` | context ${contextUsedPercent}%`}</Text>
+      ) : null}
+      {updateAvailableVersion ? (
+        <Text color="yellow">{` | update available: ${updateAvailableVersion} (/update)`}</Text>
       ) : null}
       {/* An error is appended, so it reports alongside the gauge instead of hiding it. */}
       {status === 'error' ? <Text color="red"> ● error{detail ? `: ${detail}` : ''}</Text> : null}

@@ -161,6 +161,11 @@ class CompactionService {
    */
   private readonly inFlight = new Set<string>();
 
+  /** Whether any compaction is currently running. */
+  hasInFlight(): boolean {
+    return this.inFlight.size > 0;
+  }
+
   /**
    * Auto path. Synchronous and never throws — invokeStream calls it on the hot
    * path right before closing the step stream. All trigger policy lives here so

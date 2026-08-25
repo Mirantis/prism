@@ -17,6 +17,7 @@ import type {
   PluginSummary,
   Goal,
   WebhookSubscription,
+  UpdateStatus,
 } from '@/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -316,6 +317,14 @@ export const runtimeApi = {
       body: fd,
     });
   },
+
+  // Self-update. POST answers 202 before the download starts; progress
+  // arrives as WS `update` frames and the outcome lands in updateStatus().
+  updateStatus: () => request<UpdateStatus>('/agents/update/status'),
+  applyUpdate: () =>
+    request<{ ok: true; version: string }>('/agents/update', {
+      method: 'POST',
+    }),
 
   // Shared files
   uploadAttachment: (file: File, threadId?: string) => {

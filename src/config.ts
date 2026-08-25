@@ -709,6 +709,21 @@ export const config = {
   // (rather than reported as a misleading literal default like `unknown`).
   serviceVersion: process.env.SERVICE_VERSION || '',
 
+  // The runtime's own version, as the updater compares it: the release tag
+  // baked into a SEA binary at build time (PRISM_VERSION, an esbuild define —
+  // see scripts/build-sea.mjs), else the image's SERVICE_VERSION, else ''.
+  // Only a SEA binary with a release-shaped version ever updates itself, so
+  // the container/dev values are informational.
+  appVersion: sea.isSea()
+    ? process.env.PRISM_VERSION || ''
+    : process.env.SERVICE_VERSION || '',
+
+  // DISABLE_UPDATER=1 (or =true) turns off update checks, autoupdate, and the
+  // manual update command. The updater is already off wherever the install
+  // isn't a released SEA binary (containers, dev runs), so this is the kill
+  // switch for standalone installs.
+  disableUpdater: ['1', 'true'].includes((process.env.DISABLE_UPDATER || '').trim().toLowerCase()),
+
   // Goals — autonomous multi-turn objectives. `goalMaxTurns` overrides the
   // GOAL_MAX_TURNS hard cap. `goalDefaultTokenBudget` is the per-goal token
   // budget applied when the caller doesn't specify one — null means unbounded
