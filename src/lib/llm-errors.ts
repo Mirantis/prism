@@ -218,11 +218,9 @@ export function buildErrorStep(error: unknown): InvokeStep {
  * The model declined the request outright.
  *
  * A refusal is not a failure: it arrives as a 200 with `finishReason:
- * 'content-filter'`, and the chat model sends no text and no content blocks
- * with it (a smaller model may still write out its refusal). Nothing is published, so
- * every surface sits on a spinner for a turn that has already ended — the
- * runtime looks hung when it is idle. This is the one place that turns that
- * outcome into something a user can read.
+ * 'content-filter'`, with the refusal written out or with no text at all. In
+ * the silent shape the engine has nothing to publish; this is the one place
+ * that turns that outcome into something a user can read.
  *
  * Untagged on purpose. `InvokeError` marks a turn that went wrong so callers
  * can react — route around the cron gate, detect an exhausted budget — and a

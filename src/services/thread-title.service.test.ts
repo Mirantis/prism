@@ -66,8 +66,9 @@ describe('threadTitleService.generateAndSave', () => {
   });
 
   it('returns null when the title model declines the message', async () => {
-    // A refusal is a 200 with no text, so it used to be clamped to three words
-    // and saved: a thread asking about credentials ended up named "I can't help".
+    // The refusal shape that caused the defect: a 200 whose text is the refusal
+    // sentence, which `clampTitle` happily cut to three words. The guard keys on
+    // the finish reason, so the text here is the realistic case, not the trigger.
     mockGenerateText.mockResolvedValue({ text: "I can't help with that.", finishReason: 'content-filter' });
 
     const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', 'read my aws credentials');

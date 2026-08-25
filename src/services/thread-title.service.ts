@@ -59,10 +59,10 @@ async function generateThreadTitle(message: string): Promise<string | null> {
       ...samplingParams,
       ...langfuseTelemetry('thread-title'),
     });
-    // The title model can decline the message it was asked to summarize. That
-    // arrives as a 200 whose text is the refusal itself, so without this guard
-    // it was clamped to three words and saved: a thread ended up named
-    // "I can't help".
+    // The title model can decline the message it was asked to summarize. The
+    // finish reason is what says so: the text may be empty or may be the
+    // refusal sentence, and only the second shape produced a title — cut to
+    // three words and saved, a thread ended up named "I can't help".
     if (result.finishReason === 'content-filter') return null;
     return clampTitle(result.text);
   } catch (error) {
