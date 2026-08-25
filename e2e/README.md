@@ -87,11 +87,22 @@ Bot Token Scopes:
 
 - `channels:history`, `channels:join`, `channels:read`
 - `chat:write`, `reactions:add`, `users:read`
+- `files:write`, `files:read`
 
 User Token Scopes:
 
 - `channels:manage`, `channels:write.invites`
 - `chat:write`, `channels:history`
+- `files:write`, `files:read`
+
+The four `files:*` entries were missing until 2026-08-25, so the file-sharing
+scenarios could not pass on an app built from this list — they had been skipped
+since the day they were written, and nothing reported the gap. Both tokens need
+both: each side of those scenarios uploads a file and reads the other's back.
+Without them the upload fails `missing_scope`.
+
+Reinstall the app after changing scopes — an already-issued token keeps the
+permissions it was granted.
 
 ### 3. Enable Socket Mode
 
@@ -115,7 +126,7 @@ User Token Scopes:
 | `SLACK_E2E_TEAM_ID` | Visible in workspace URL: `app.slack.com/client/T.../...` |
 | `SLACK_E2E_TEAM_NAME` | Your workspace display name |
 | `SLACK_E2E_BOT_USER_ID` | Run: `curl -s -H "Authorization: Bearer xoxb-..." https://slack.com/api/auth.test` → `user_id` field |
-| `SLACK_E2E_EXPECTED_APP_ID` | Basic Information → App ID (`A...`). Forwarded to the backend as `SLACK_EXPECTED_APP_ID` so the configure-Slack flow accepts tokens from this app. |
+| `SLACK_E2E_EXPECTED_APP_ID` | Basic Information → App ID (`A...`). Forwarded to the runtime as `SLACK_EXPECTED_APP_ID`, which checks the bot token's own `app_id` against it on boot — a value from a different app fails startup rather than a test. Required by the `@slack` skip guard, so all six of those scenarios skip while it is unset. |
 
 ### 6. Configure Credentials
 

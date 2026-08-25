@@ -9,7 +9,11 @@
     "test:headed": "npx bddgen && npx playwright test --headed",
     "test:debug": "npx bddgen && npx playwright test --debug",
     "test:report": "npx playwright show-report",
-    "test:e2e:tui": "vitest run -c tui/vitest.config.ts"
+    "test:e2e:tui": "vitest run -c tui/vitest.config.ts",
+    "test:e2e:web": "npx bddgen && npx playwright test --grep-invert @slack",
+    "test:e2e:slack:web": "npx bddgen && npx playwright test --grep @slack",
+    "test:e2e:slack:tui": "vitest run -c tui/vitest.config.ts tui/tests/bedrock-mantle-slack.test.ts",
+    "test:run": "vitest run -c vitest.unit.config.ts"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^6.5.0",

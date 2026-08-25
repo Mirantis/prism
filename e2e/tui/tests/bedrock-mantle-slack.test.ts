@@ -2,20 +2,17 @@
  * Slack thread classification on `LLM_PROVIDER=bedrock-mantle`.
  *
  * The classifier is the runtime's only `generateObject` caller, and mantle
- * rejects the SDK's native structured-output path with a 400. That failure is
- * invisible from the outside — `classifyThreadMessage` catches it and returns
- * `respond` — so the bot would answer every threaded message and look merely
- * chatty. Only an end-to-end run through a real workspace tells the difference,
- * which is why this exists alongside the unit tests.
+ * rejects the SDK's native structured-output path with a 400. `classifyThreadMessage`
+ * catches that and returns `respond`, so from the outside the bot just looks
+ * chatty — only a real workspace tells the difference.
  *
- * Slack rather than the PTY, and its own runtime rather than the Playwright
- * one: the Socket Mode connection is exclusive per bot token, and the
- * Playwright suite holds it for its whole run on the `bedrock` provider. The
- * two suites are separate steps of the same CI job, so they never overlap.
+ * Socket Mode is per *app*: Slack hands each event to one of the connections
+ * open for that token and never redelivers it, so any other holder can swallow
+ * a message. CI keeps the token to one job (`e2e-slack`); the re-posting below
+ * covers the connections a workflow cannot account for, and is gated on the
+ * runtime's receipt line so it only ever answers a message that never arrived.
  *
- * Skips itself when the Slack e2e credentials are absent, matching the
- * Playwright `@slack` scenarios — the mantle chat coverage in
- * `bedrock-mantle.test.ts` needs no Slack and still runs.
+ * Skips itself when the Slack e2e credentials are absent.
  */
 
 import { readFileSync } from 'node:fs';
@@ -26,6 +23,7 @@ import stripAnsi from 'strip-ansi';
 import Database from 'better-sqlite3';
 import { WebClient } from '@slack/web-api';
 import { setupRuntime, type RuntimeTestEnv } from '../setup';
+import { SLACK_CLIENT_OPTIONS, pollUntil } from '../../support/slack-helper';
 
 const feature = loadFeatureFromText(
   readFileSync(join(import.meta.dirname, '../features/bedrock-mantle-slack.feature'), 'utf8'),
@@ -37,11 +35,19 @@ const USER_TOKEN = process.env.SLACK_E2E_USER_TOKEN;
 const BOT_USER_ID = process.env.SLACK_E2E_BOT_USER_ID;
 const hasSlack = Boolean(BOT_TOKEN && APP_TOKEN && USER_TOKEN && BOT_USER_ID);
 
+/** Echoed by the opening mention's reply, so a late one is identifiable. */
+const MENTION_MARKER = 'MANTLESLACK1';
+
+/** The chatter the classifier must judge — no @mention, or the heuristic short-circuits. */
+const FOLLOW_UP_TEXT =
+  'thanks Dana, I will take the rest of this one — no need for anyone else to jump in';
+
 /** The message the classifier must judge, and the thread it lives in. */
 interface ThreadUnderTest {
   channelId: string;
   threadTs: string;
-  followUpTs: string;
+  /** Every follow-up posted, oldest first: any of them may be the one the runtime saw. */
+  followUpTs: string[];
 }
 
 let env: RuntimeTestEnv;
@@ -53,7 +59,7 @@ let thread: ThreadUnderTest;
 describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) => {
   BeforeAllScenarios(async () => {
     if (!hasSlack) return;
-    user = new WebClient(USER_TOKEN);
+    user = new WebClient(USER_TOKEN, SLACK_CLIENT_OPTIONS);
     env = await setupRuntime({
       runtimeEnvOverrides: {
         LLM_PROVIDER: 'bedrock-mantle',
@@ -116,18 +122,31 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
         // that is the web suite's subject, not this one's, and there is no
         // browser here.
         linkChannel(env.dbPath, agentId, ownerUserId, channelId, name);
-        thread = { channelId, threadTs: '', followUpTs: '' };
+        thread = { channelId, threadTs: '', followUpTs: [] };
       });
 
       And('the bot has replied in a thread', async () => {
         if (skip()) return;
         // The classifier only runs on threads the bot already participates in,
         // so this mention both opens the thread and gets the bot into it.
-        const posted = await user.chat.postMessage({
-          channel: thread.channelId,
-          text: `<@${BOT_USER_ID}> reply with exactly: MANTLESLACK1`,
-        });
-        thread.threadTs = posted.ts!;
+        const text = `<@${BOT_USER_ID}> reply with exactly: ${MENTION_MARKER}`;
+        const opening = await user.chat.postMessage({ channel: thread.channelId, text });
+        thread.threadTs = opening.ts!;
+
+        // Re-post only while the runtime has not received it; a mention that
+        // *was* received and went unanswered fails below. Re-posts go into the
+        // same thread so `threadTs` stays the thread under test.
+        const delivered = await postUntilReceived(
+          () =>
+            user.chat.postMessage({
+              channel: thread.channelId,
+              thread_ts: thread.threadTs,
+              text,
+            }),
+          'mention',
+        );
+        expect(delivered, 'runtime never received the opening mention').toBe(true);
+
         const reply = await waitForBotReply(thread.channelId, thread.threadTs, 120_000);
         expect(reply, 'bot never replied to the opening mention').not.toBeNull();
       });
@@ -143,7 +162,8 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
         //
         // The turn has already replied by now, so the line is in the log; the
         // wait only absorbs the gap between the reply and the status log.
-        await waitForLog(/Slack thread status accepted/, 30_000);
+        const accepted = await waitForLog(/Slack thread status accepted/, 30_000);
+        expect(accepted, 'runtime never logged an accepted Slack thread status').toBe(true);
         expect(logText(), 'status rejected — the cue fell back to the reaction').not.toMatch(
           /Slack thread status rejected/,
         );
@@ -154,26 +174,28 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
         // No @mention: a mention of another user would trip the pre-LLM
         // heuristic branch, which reacts without ever calling the classifier —
         // and this scenario is about the classifier.
-        const posted = await user.chat.postMessage({
-          channel: thread.channelId,
-          thread_ts: thread.threadTs,
-          text: 'thanks Dana, I will take the rest of this one — no need for anyone else to jump in',
-        });
-        thread.followUpTs = posted.ts!;
+        await postFollowUp();
       });
 
       Then('the classifier decides on a reaction rather than a reply', async () => {
         if (skip()) return;
-        // The log line is the authoritative signal: it names the LLM branch, so
-        // it distinguishes a real classification from the heuristic shortcut
-        // and from the catch's fallback.
-        await waitForLog(/LLM classifier decided only a reaction \(no response\)/, 90_000);
+        // The log line names the LLM branch, so it separates a real
+        // classification from the heuristic shortcut and the catch's fallback.
+        // Re-post while the chatter is dropped, then wait out the model call.
+        const delivered = await postUntilReceived(postFollowUp, 'chatter');
+        expect(delivered, 'runtime never received the follow-up').toBe(true);
+
+        const decided = /LLM classifier decided only a reaction \(no response\)/;
+        const seen = await waitForLog(decided, 90_000);
+        expect(seen, `runtime log never matched ${decided}`).toBe(true);
       });
 
       And('the bot adds an emoji reaction to that message', async () => {
         if (skip()) return;
-        const reactions = await waitForReaction(thread.channelId, thread.followUpTs, 30_000);
-        expect(reactions, 'no reaction appeared on the follow-up').not.toHaveLength(0);
+        // Whichever follow-up the runtime was actually handed is the one that
+        // carries the reaction, and that is not necessarily the last one posted.
+        const reacted = await waitForAnyReaction(thread.channelId, thread.followUpTs, 30_000);
+        expect(reacted, 'no reaction appeared on any follow-up').toBe(true);
       });
 
       And('the bot posts no reply to the follow-up', async () => {
@@ -191,8 +213,17 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
           ts: thread.threadTs,
           limit: 50,
         });
+        // Anchored on the first follow-up, so a reply to any of them counts.
+        // Matched by author, not `bot_id`: a user token belonging to a Slack app
+        // stamps `bot_id` on this spec's own posts too. The marker excludes a
+        // late answer to the mention, which is not the classifier's doing.
+        expect(thread.followUpTs.length, 'no follow-up was ever posted').toBeGreaterThan(0);
+        const firstFollowUp = Number(thread.followUpTs[0]);
         const after = (replies.messages ?? []).filter(
-          (m) => m.bot_id && Number(m.ts) > Number(thread.followUpTs),
+          (m) =>
+            m.user === BOT_USER_ID &&
+            Number(m.ts) > firstFollowUp &&
+            !m.text?.includes(MENTION_MARKER),
         );
         expect(after.map((m) => m.text)).toEqual([]);
       });
@@ -237,7 +268,7 @@ async function runtimeAgent(port: number): Promise<{ agentId: string; userId: st
 /**
  * Insert the channel→agent mapping the adapter looks up per message.
  *
- * `lensUserId` is load-bearing, not decoration: the channel handler skips any
+ * `lensUserId` is required: the channel handler skips any
  * mapping without one ("has no lensUserId - skipping (legacy mapping?)"), so
  * omitting it drops every message silently. The product flow stamps the
  * verifying user's id there; here that is the agent's owner.
@@ -276,45 +307,126 @@ function linkChannel(
   }
 }
 
+/**
+ * A delivered event arrives in about four seconds; one routed elsewhere never
+ * does. The window only has to tell those apart — the patience this spec needs
+ * is for the model call that follows.
+ */
+const RECEIPT_WINDOW_MS = 12_000;
+
+/** With three connections live a post lands here a third of the time. */
+const MAX_POSTS = 8;
+
+/**
+ * Count the channel messages the adapter has logged receiving. `isMentioned`
+ * separates the opening mention from the chatter without matching on wording:
+ * the mention carries one, and the follow-up deliberately carries none.
+ */
+function countReceived(kind: 'mention' | 'chatter'): number {
+  const re =
+    kind === 'mention'
+      ? /Slack channel message from .*isMentioned=true/g
+      : /Slack channel message from .*isMentioned=false/g;
+  return (logText().match(re) ?? []).length;
+}
+
+/**
+ * Wait for the runtime to receive a message of `kind`, re-posting via `post`
+ * while it has not. The caller has already posted once, so this waits first.
+ * Reports only whether it arrived; what the runtime did with it is the caller's
+ * assertion.
+ */
+async function postUntilReceived(
+  post: () => Promise<unknown>,
+  kind: 'mention' | 'chatter',
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= MAX_POSTS; attempt++) {
+    if (await waitUntil(() => countReceived(kind) >= 1, RECEIPT_WINDOW_MS)) return true;
+    if (attempt === MAX_POSTS) break;
+    console.warn(`[mantle-slack] ${kind} not received in ${RECEIPT_WINDOW_MS}ms; re-posting`);
+    await post();
+  }
+  return false;
+}
+
+/** Poll a local predicate (the runtime's log) until it holds, or give up. */
+async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (predicate()) return true;
+    if (Date.now() > deadline) return false;
+    await sleep(1_000);
+  }
+}
+
+/** Post one more copy of the chatter and remember its ts. */
+async function postFollowUp(): Promise<void> {
+  const posted = await user.chat.postMessage({
+    channel: thread.channelId,
+    thread_ts: thread.threadTs,
+    text: FOLLOW_UP_TEXT,
+  });
+  thread.followUpTs.push(posted.ts!);
+}
+
+/**
+ * Wait for a message the *bot* wrote in the thread, matched by author: a user
+ * token belonging to a Slack app stamps `bot_id` on this spec's own posts, so
+ * only `user` separates the bot's replies from them.
+ */
 async function waitForBotReply(
   channel: string,
   threadTs: string,
   timeoutMs: number,
 ): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const res = await user.conversations.replies({ channel, ts: threadTs, limit: 20 });
-    const bot = res.messages?.find((m) => m.bot_id && m.ts !== threadTs);
-    if (bot?.text) return bot.text;
-    await sleep(2_000);
-  }
-  return null;
+  return pollUntil(
+    async () => {
+      const res = await user.conversations.replies({ channel, ts: threadTs, limit: 20 });
+      const reply = res.messages?.find(
+        (m) => m.user === BOT_USER_ID && m.ts !== threadTs && m.text,
+      );
+      return reply?.text ?? null;
+    },
+    { timeoutMs, label: `bot reply in ${channel}/${threadTs}` },
+  );
 }
 
-async function waitForReaction(
+/**
+ * True as soon as any of `timestamps` carries a reaction. One
+ * `conversations.replies` carries every message's reactions at once, on a more
+ * generous rate limit than per-message `reactions.get`.
+ */
+async function waitForAnyReaction(
   channel: string,
-  ts: string,
+  timestamps: string[],
   timeoutMs: number,
-): Promise<Array<{ name?: string }>> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const res = await user.reactions.get({ channel, timestamp: ts, full: true });
-    const reactions = (res.message as { reactions?: Array<{ name?: string }> } | undefined)
-      ?.reactions;
-    if (reactions?.length) return reactions;
-    if (Date.now() > deadline) return [];
-    await sleep(2_000);
-  }
+): Promise<boolean> {
+  const wanted = new Set(timestamps);
+  const found = await pollUntil(
+    async () => {
+      const res = await user.conversations.replies({ channel, ts: thread.threadTs, limit: 50 });
+      const reacted = (res.messages ?? []).some(
+        (m) =>
+          m.ts !== undefined &&
+          wanted.has(m.ts) &&
+          ((m as { reactions?: unknown[] }).reactions?.length ?? 0) > 0,
+      );
+      return reacted ? true : null;
+    },
+    { timeoutMs, label: `reaction on ${timestamps.length} follow-up(s)` },
+  );
+  return found === true;
 }
 
-/** Poll the runtime log until `pattern` shows up. */
-async function waitForLog(pattern: RegExp, timeoutMs: number): Promise<void> {
+/**
+ * Poll the runtime log for `pattern`. Reports whether it showed up rather than
+ * throwing, so a caller can re-post and wait again instead of failing outright.
+ */
+async function waitForLog(pattern: RegExp, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (pattern.test(logText())) return;
-    if (Date.now() > deadline) {
-      throw new Error(`runtime log never matched ${pattern} within ${timeoutMs}ms`);
-    }
+    if (pattern.test(logText())) return true;
+    if (Date.now() > deadline) return false;
     await sleep(2_000);
   }
 }

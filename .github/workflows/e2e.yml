@@ -30,6 +30,9 @@ permissions:
 # Keyed on the PR number rather than just `github.ref`: a `pull_request` run's
 # ref is the merge ref, so ref-only keying groups and ungroups surprisingly
 # across event types.
+#
+# Per-PR, so two PRs run their e2e concurrently. `e2e-slack` adds a repo-wide
+# group of its own for the one thing that cannot overlap.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   # Only PR runs are superseded: a newer push makes the older run's verdict
@@ -72,46 +75,24 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: e2e
 
+      # No SLACK_* env, and `--grep-invert @slack` so a token added here later
+      # still cannot make those scenarios run. They belong to `e2e-slack`.
       - name: Run E2E tests
-        run: npm run test --workspace=prism-agent-e2e
+        run: npm run test:e2e:web --workspace=prism-agent-e2e
         env:
           CI: true
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
-          # Slack E2E — @slack tests skip gracefully if these aren't set
-          SLACK_CLIENT_ID: ${{ secrets.SLACK_E2E_CLIENT_ID }}
-          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_E2E_CLIENT_SECRET }}
-          SLACK_APP_TOKEN: ${{ secrets.SLACK_E2E_APP_TOKEN }}
-          SLACK_E2E_BOT_TOKEN: ${{ secrets.SLACK_E2E_BOT_TOKEN }}
-          SLACK_E2E_USER_TOKEN: ${{ secrets.SLACK_E2E_USER_TOKEN }}
-          SLACK_E2E_BOT_USER_ID: ${{ secrets.SLACK_E2E_BOT_USER_ID }}
-          SLACK_E2E_TEAM_ID: ${{ secrets.SLACK_E2E_TEAM_ID }}
-          SLACK_E2E_TEAM_NAME: ${{ secrets.SLACK_E2E_TEAM_NAME }}
 
       - name: Run TUI E2E tests
         # The two suites are independent, and a red Playwright step used to
         # skip this one — throwing away every TUI result for that run, which
         # is where most of the failures actually are. A later step running
         # does not mask the earlier failure: the job still ends up red.
-        # `!cancelled()` rather than `always()` so cancelling a superseded run
-        # doesn't keep the (per-token exclusive) Socket Mode connection held
-        # for another ~9 minutes while its replacement boots.
         if: ${{ !cancelled() }}
         run: npm run test:e2e:tui --workspace=prism-agent-e2e
         env:
           CI: true
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
-          # Slack — only the bedrock-mantle thread-classifier spec uses these,
-          # and it skips itself when they are absent. Deliberately passed under
-          # the SLACK_E2E_* names rather than SLACK_BOT_TOKEN: `setupRuntime`
-          # spreads process.env into every runtime it boots, so the deployed
-          # names would put every TUI spec's runtime on Socket Mode at once.
-          # Runs after the Playwright step, so the two never hold the
-          # (per-token exclusive) Socket Mode connection concurrently.
-          SLACK_APP_TOKEN: ${{ secrets.SLACK_E2E_APP_TOKEN }}
-          SLACK_E2E_BOT_TOKEN: ${{ secrets.SLACK_E2E_BOT_TOKEN }}
-          SLACK_E2E_USER_TOKEN: ${{ secrets.SLACK_E2E_USER_TOKEN }}
-          SLACK_E2E_BOT_USER_ID: ${{ secrets.SLACK_E2E_BOT_USER_ID }}
-          SLACK_E2E_TEAM_ID: ${{ secrets.SLACK_E2E_TEAM_ID }}
 
       - name: Upload test report
         if: ${{ !cancelled() }}
@@ -132,4 +113,88 @@ jobs:
           path: |
             e2e/test-results/
             e2e/tui-test-results/
+          retention-days: 7
+
+  # Every Slack-touching e2e test, serialized repo-wide: two of these running at
+  # once share one Slack app and steal each other's events.
+  e2e-slack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    # `queue: max` makes waiters line up instead of cancelling each other, which
+    # is what a shared Slack app needs: only one of these may hold the token.
+    concurrency:
+      group: e2e-slack
+      queue: max
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '26'
+          cache: 'npm'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Install npm 11.12.1
+        run: npm install -g npm@11.12.1
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Prisma client
+        run: npx prisma generate --schema prisma/sqlite/schema.prisma
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      # The TUI spec runs first because its runtime closes its websocket on
+      # SIGTERM, while Playwright kills its webServer and leaves a socket Slack
+      # keeps routing to. Only one connection may be live at a time.
+      - name: Run Slack TUI E2E tests
+        run: npm run test:e2e:slack:tui --workspace=prism-agent-e2e
+        env:
+          CI: true
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          # Under the SLACK_E2E_* names rather than SLACK_BOT_TOKEN, except for
+          # SLACK_APP_TOKEN: `setupRuntime` spreads process.env into every
+          # runtime it boots, and the deployed names would put every runtime on
+          # Socket Mode. The spec passes the two it needs through explicitly.
+          SLACK_APP_TOKEN: ${{ secrets.SLACK_E2E_APP_TOKEN }}
+          SLACK_E2E_BOT_TOKEN: ${{ secrets.SLACK_E2E_BOT_TOKEN }}
+          SLACK_E2E_USER_TOKEN: ${{ secrets.SLACK_E2E_USER_TOKEN }}
+          SLACK_E2E_BOT_USER_ID: ${{ secrets.SLACK_E2E_BOT_USER_ID }}
+          SLACK_E2E_TEAM_ID: ${{ secrets.SLACK_E2E_TEAM_ID }}
+
+      # `!cancelled()` so a red TUI step still reports the browser scenarios.
+      - name: Run Slack web E2E tests
+        if: ${{ !cancelled() }}
+        run: npm run test:e2e:slack:web --workspace=prism-agent-e2e
+        env:
+          CI: true
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          # playwright.config.ts maps SLACK_E2E_BOT_TOKEN onto SLACK_BOT_TOKEN
+          # for the webServer it spawns, so the runtime reaches Slack through
+          # the same tokens the test process uses.
+          SLACK_APP_TOKEN: ${{ secrets.SLACK_E2E_APP_TOKEN }}
+          SLACK_E2E_BOT_TOKEN: ${{ secrets.SLACK_E2E_BOT_TOKEN }}
+          SLACK_E2E_USER_TOKEN: ${{ secrets.SLACK_E2E_USER_TOKEN }}
+          SLACK_E2E_BOT_USER_ID: ${{ secrets.SLACK_E2E_BOT_USER_ID }}
+          SLACK_E2E_TEAM_ID: ${{ secrets.SLACK_E2E_TEAM_ID }}
+          # Required by the `@slack` skip guard. The runtime also checks the bot
+          # token's app_id against it, so a wrong value fails the boot.
+          SLACK_E2E_EXPECTED_APP_ID: ${{ secrets.SLACK_E2E_EXPECTED_APP_ID }}
+
+      - name: Upload Slack test results
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: slack-test-results
+          path: |
+            e2e/tui-test-results/
+            e2e/test-results/
+            e2e/playwright-report/
           retention-days: 7
