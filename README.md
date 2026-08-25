@@ -140,7 +140,7 @@ conversations and multi-turn threads.
 Default models:
 
 - **Main loop**: Claude Opus 5
-- **Classification gate**: Claude Haiku (fast, deterministic)
+- **Classification gates**: Claude Haiku (fast heartbeat delivery and optional tool-risk decisions)
 - **Embeddings**: Amazon Titan v2
 
 All three are configurable. Heartbeat and scheduled (cron) runs use the main

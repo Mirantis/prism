@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 import type { ChildProcess } from 'child_process';
+import { config } from '../../../config';
 import {
   AgentTaskManager,
   AgentTaskParams,
@@ -137,6 +138,7 @@ describe('AgentTaskManager', () => {
   let getChild: () => FakeChild;
 
   beforeEach(() => {
+    config.toolRiskGateMode = 'off';
     const m = makeManager();
     manager = m.manager;
     getChild = m.getChild;
@@ -449,5 +451,51 @@ describe('AgentTaskManager', () => {
     expect(capturedEnv?.HUSKY).toBeUndefined();
     // Non-server vars still pass through to the CLI.
     expect(capturedEnv?.PATH).toBe(process.env.PATH);
+  });
+
+  it.each(['off', 'observe'] as const)(
+    'preserves bypass permissions in %s mode',
+    (gateMode) => {
+      config.toolRiskGateMode = gateMode;
+      let capturedArgs: readonly string[] = [];
+      const capturingSpawner: Spawner = (_command, args) => {
+        capturedArgs = args;
+        return new FakeChild() as unknown as ChildProcess;
+      };
+
+      new AgentTaskManager(capturingSpawner).startTask(sampleParams);
+
+      expect(capturedArgs).toContain('--dangerously-skip-permissions');
+      expect(capturedArgs).not.toContain('auto');
+    },
+  );
+
+  it('uses Claude Code auto permission mode without bypass when enforcing', () => {
+    config.toolRiskGateMode = 'enforce';
+    let capturedArgs: readonly string[] = [];
+    const capturingSpawner: Spawner = (_command, args) => {
+      capturedArgs = args;
+      return new FakeChild() as unknown as ChildProcess;
+    };
+
+    new AgentTaskManager(capturingSpawner).startTask(sampleParams);
+
+    expect(capturedArgs).not.toContain('--dangerously-skip-permissions');
+    expect(capturedArgs).toEqual(expect.arrayContaining(['--permission-mode', 'auto']));
+  });
+
+  it('keeps Claude Code in plan mode without bypass when enforcing', () => {
+    config.toolRiskGateMode = 'enforce';
+    let capturedArgs: readonly string[] = [];
+    const capturingSpawner: Spawner = (_command, args) => {
+      capturedArgs = args;
+      return new FakeChild() as unknown as ChildProcess;
+    };
+
+    new AgentTaskManager(capturingSpawner).startTask({ ...sampleParams, mode: 'plan' });
+
+    expect(capturedArgs).not.toContain('--dangerously-skip-permissions');
+    expect(capturedArgs).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+    expect(capturedArgs).not.toContain('auto');
   });
 });
