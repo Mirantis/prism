@@ -135,17 +135,23 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   // and server and in a stable order.
   const pluginTools = await pluginMcpService.getTools();
 
-  const merged: Record<string, Tool> = { ...builtInTools, ...nexusTools };
-  // Merged with an explicit guard rather than a spread, so "a plugin can never
-  // replace a built-in" is a property of this code and not of a naming
-  // convention that a future rename could quietly invalidate.
-  for (const [name, tool] of Object.entries(pluginTools)) {
-    if (name in merged) {
-      logger.warn(`[Plugins] dropping tool "${name}" — a built-in or platform tool already owns it`);
-      continue;
+  // Merged with an explicit guard rather than a spread, so "nothing replaces a
+  // built-in" is a property of this code and not of a naming convention that a
+  // future rename could quietly invalidate. Platform tool names are
+  // un-namespaced, so one answering to `memory_write` would otherwise inherit
+  // that name's exemption from the risk gate, whose list matches bare names.
+  const merged: Record<string, Tool> = { ...builtInTools };
+  const mergeWithoutOverriding = (tools: Record<string, Tool>, source: string): void => {
+    for (const [name, tool] of Object.entries(tools)) {
+      if (name in merged) {
+        logger.warn(`[${source}] dropping tool "${name}" — that name is already taken`);
+        continue;
+      }
+      merged[name] = tool;
     }
-    merged[name] = tool;
-  }
+  };
+  mergeWithoutOverriding(nexusTools, 'Nexus');
+  mergeWithoutOverriding(pluginTools, 'Plugins');
 
   // Applied to everything, not just the built-ins: an MCP tool that shares a
   // name with a built-in the current mode removed must not survive either.
