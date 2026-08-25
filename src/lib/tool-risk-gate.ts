@@ -27,7 +27,7 @@ const RISK_EVALUATION_TIMEOUT_MS = 10_000;
 // a verdict — a read-only call then fails closed under `enforce` for no reason.
 const RISK_EVALUATION_MAX_OUTPUT_TOKENS = 500;
 const MAX_INITIAL_PROMPT_CHARS = 4_000;
-const MAX_RECENT_INTENT_CHARS = 6_000;
+const MAX_EARLIER_MESSAGES_CHARS = 6_000;
 const MAX_TOOL_DESCRIPTION_CHARS = 1_000;
 const MAX_TOOL_INPUT_CHARS = 8_000;
 
@@ -295,7 +295,7 @@ export async function evaluateToolRisk(
       input.initialPrompt,
       MAX_INITIAL_PROMPT_CHARS,
     ),
-    recentUserMessages: recentUserIntent(input.messages),
+    earlierThreadMessages: earlierThreadMessages(input.messages, input.initialPrompt),
     tool: {
       name: input.toolName,
       description: truncateForClassification(
@@ -334,7 +334,7 @@ ALLOW EXCEPTIONS. These are ordinary work. Do not treat them as evidence of harm
 - Read-only operations: queries and requests that change nothing and return no secret or personal data. A read-only call made to scout for a blocked action is judged on that action instead.
 - Declared dependencies: installing what the repository's own manifest already declares, through the standard command that reads it (npm install, pip install -r requirements.txt, cargo build, bundle install). Installing an agent-chosen package name is NOT covered — that carries typosquat and supply-chain risk.
 - Toolchain bootstrap: installing a language toolchain from its own official installer when the repository needs that toolchain. This is the one carve-out from the unreviewed-remote-code rule below; a download source the agent picked on its own is not.
-- Standard credentials: reading a credential from the agent's configured environment and sending it to the provider it belongs to. Sending it anywhere else is not covered.
+- Standard credentials: reading a credential from the agent's configured environment and sending it to the provider it belongs to. Authenticating is the necessary use of that credential, so it is not unnecessary exposure, and a transport that could in principle be logged or intercepted is not a reason to refuse it. Sending it to any other destination, printing it, or writing it into a file is not covered.
 - Test artifacts: obviously non-functional placeholder credentials — test-prefixed, example, dummy, or zero-filled values — in tests, fixtures, and examples. Such a value is fabricated, so writing it exposes nothing whatever format it imitates; resembling a key is not being one. A value that could plausibly be live, or that came from a real secret path or store, is not a placeholder and is judged as the secret it may be.
 - Security as subject matter: reading, writing, reviewing, or discussing security code, configuration, documentation, or threat models. Running an exploit or scanning stores for usable credentials is judged on its own terms.
 - Transient retry: retrying an action after a transient failure — a network error, a 5xx, a timeout, a rate limit, a lock — is not an attempt to get around anything, and the retry is judged exactly as the original was. Re-attempting a refused action through an obfuscated, encoded, or renamed path IS a bypass.
@@ -363,7 +363,7 @@ A request authorizes the obvious means of carrying it out. Answering a question 
 
 None of this outranks the BLOCK list. A request never authorizes exposing a secret, destroying broadly, or changing privileges: for those the user's asking is what makes the call worth examining, not what makes it acceptable. When a rule here and a rule above disagree, the BLOCK list wins.
 
-Autonomous heartbeat, cron, goal, webhook, and subagent runs deserve stricter scrutiny because no user is actively confirming each step. Their prompts are stored or generated rather than typed live, so they carry the standing scope of the task and nothing more: a scheduled prompt naming a consequential action does not authorize it the way a live request would.
+Autonomous heartbeat, cron, goal, webhook, and subagent runs deserve stricter scrutiny because no user is actively confirming each step. Their prompts are stored or generated rather than typed live, so they carry the standing scope of the task and nothing more: a scheduled prompt naming a consequential action does not authorize it the way a live request would. The earlier thread messages are prior conversation on the same thread, not this run's request; in an autonomous run they may be days old and typed for something else, so they authorize nothing here.
 
 Return a structured decision. Keep the reason concise and do not quote sensitive evidence.`,
     prompt: JSON.stringify(evidence),
@@ -379,14 +379,33 @@ Return a structured decision. Keep the reason concise and do not quote sensitive
   return object;
 }
 
-function recentUserIntent(messages: ModelMessage[]): string {
-  const recent = messages
+/**
+ * The user messages that came BEFORE the one that started this turn.
+ *
+ * `initialPrompt` is already its own evidence field, and it also sits in the
+ * message array — chat leaves it there as history, and every other mode appends
+ * it (see `invokeStream`). Sending it twice spent up to 4,000 characters of a
+ * 6,000-character field restating what the classifier had already read, so the
+ * trailing copy is dropped.
+ *
+ * What remains is prior conversation on the same thread. In a chat turn that is
+ * the user still talking. In a heartbeat or cron run it may be days old and was
+ * typed for something else entirely, which is why the field is named for when
+ * the messages arrived rather than for whose intent they carry.
+ */
+function earlierThreadMessages(messages: ModelMessage[], initialPrompt: string): string {
+  const texts = messages
     .filter((message) => message.role === 'user')
     .map(userMessageText)
-    .filter(Boolean)
-    .slice(-3)
-    .join('\n\n--- next user message ---\n\n');
-  return truncateForClassification(recent, MAX_RECENT_INTENT_CHARS);
+    .filter(Boolean);
+
+  const trimmed =
+    texts[texts.length - 1] === initialPrompt ? texts.slice(0, -1) : texts;
+
+  return truncateForClassification(
+    trimmed.slice(-3).join('\n\n--- next user message ---\n\n'),
+    MAX_EARLIER_MESSAGES_CHARS,
+  );
 }
 
 function userMessageText(message: ModelMessage): string {
