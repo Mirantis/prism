@@ -29,6 +29,7 @@ const {
   mockGetShellTools,
   mockGetShareFileTools,
   mockGetSkillTools,
+  mockWithToolRiskGate,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
   mockIsBedrockConfigured: vi.fn(),
@@ -50,6 +51,7 @@ const {
   mockGetShellTools: vi.fn(),
   mockGetShareFileTools: vi.fn(),
   mockGetSkillTools: vi.fn(),
+  mockWithToolRiskGate: vi.fn(),
 }));
 
 /**
@@ -78,9 +80,9 @@ vi.mock('ai', () => ({
   jsonSchema: <T,>(spec: T) => spec,
 }));
 
-vi.mock('./lib/llm-providers/bedrock/bedrock-provider', () => ({
-  isBedrockConfigured: mockIsBedrockConfigured,
-  createBedrockProvider: mockCreateBedrockProvider,
+vi.mock('./lib/llm-providers/create-provider', () => ({
+  isProviderConfigured: mockIsBedrockConfigured,
+  createProvider: mockCreateBedrockProvider,
 }));
 
 vi.mock('./lib/mcp-client', () => ({
@@ -135,6 +137,14 @@ vi.mock('./prompts/task-tool-prompt', () => ({
 
 vi.mock('./lib/task-tool', () => ({
   createTaskTool: mockCreateTaskTool,
+}));
+
+// Only the wrapper is faked. `isToolRiskGateError` comes from the real module:
+// a copy of the predicate here would drift from the one invoke.ts actually calls,
+// and the test would keep passing while the recognition it asserts had broken.
+vi.mock('./lib/tool-risk-gate', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./lib/tool-risk-gate')>()),
+  withToolRiskGate: mockWithToolRiskGate,
 }));
 
 vi.mock('./services/agent-workspace.service', () => ({
@@ -239,6 +249,7 @@ describe('invoke', () => {
     // Built-in tools are direct AI SDK now; only the Lens Agents MCP url
     // (cross-process) still matters here.
     config.nexusMcpUrl = 'http://localhost:3002/mcp';
+    config.toolRiskGateMode = 'off';
 
     // Default empty built-in tool factories — individual tests
     // override per-describe.
@@ -248,6 +259,7 @@ describe('invoke', () => {
     mockGetShellTools.mockReturnValue({});
     mockGetShareFileTools.mockReturnValue({});
     mockGetSkillTools.mockReturnValue({});
+    mockWithToolRiskGate.mockImplementation((tools) => tools);
 
     mockIsBedrockConfigured.mockReturnValue(true);
     mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', { cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' } } } }));
@@ -961,6 +973,77 @@ describe('invoke', () => {
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0].tool).toBe('memory_search');
     expect(result.toolCalls[0].success).toBe(true);
+  });
+
+  it('passes every collected tool through the configured risk gate', async () => {
+    mockGetShellTools.mockReturnValue({ shell_exec: { description: 'exec' } });
+    config.toolRiskGateMode = 'observe';
+
+    await invoke(createTestInvokeRequest({ mode: 'cron', prompt: 'check deployment' }));
+
+    expect(mockWithToolRiskGate).toHaveBeenCalledWith(
+      expect.objectContaining({ shell_exec: expect.any(Object) }),
+      {
+        mode: 'observe',
+        invocationMode: 'cron',
+        initialPrompt: 'check deployment',
+        userId: 'user-test-456',
+        agentId: 'agent-test-123',
+      },
+    );
+  });
+
+  it('records a risk-policy tool error as a visible unsuccessful call', async () => {
+    const policyError = {
+      name: 'ToolRiskGateError',
+      message:
+        'Tool call blocked by the configured risk policy (category=destructive, risk=critical).',
+      code: 'TOOL_RISK_BLOCKED',
+      risk: 'critical',
+      category: 'destructive',
+    };
+    mockGenerateText.mockResolvedValue({
+      text: 'I did not run that command.',
+      steps: [
+        {
+          text: '',
+          toolCalls: [
+            { toolCallId: 'tc-blocked', toolName: 'shell_exec', input: { command: 'dangerous' } },
+          ],
+          toolResults: [],
+          content: [
+            {
+              type: 'tool-error',
+              toolCallId: 'tc-blocked',
+              toolName: 'shell_exec',
+              input: { command: 'dangerous' },
+              error: policyError,
+            },
+          ],
+        },
+        {
+          text: 'I did not run that command.',
+          toolCalls: [],
+          toolResults: [],
+          content: [],
+        },
+      ],
+    });
+
+    const result = await invoke(createTestInvokeRequest());
+
+    expect(result.toolCalls).toEqual([
+      expect.objectContaining({
+        tool: 'shell_exec',
+        success: false,
+        output: JSON.stringify({
+          error: policyError.message,
+          code: 'TOOL_RISK_BLOCKED',
+          risk: 'critical',
+          category: 'destructive',
+        }),
+      }),
+    ]);
   });
 
   it('extracts blocks from JSON in response', async () => {

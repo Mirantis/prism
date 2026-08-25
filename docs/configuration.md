@@ -114,6 +114,7 @@ See **[Slack](slack.md)** for how the tokens are used.
 | `PRISM_SKILLS_DIR` | Override the [skills](skills.md) directory specifically. | `<data dir>/skills` |
 | `PRISM_PLUGINS_DIR` | Override the [plugins](plugins.md) directory specifically. | `<data dir>/plugins` |
 | `ATTACHMENT_TTL_HOURS` | How long shared-file content is kept before the hourly sweep deletes it. The conversation keeps a *content expired* stub. See [Tools](tools.md#attachments). | `168` (7 days) |
+| `TOOL_RISK_GATE_MODE` | Fast-model pre-execution evaluation for sensitive [tool calls](tools.md#risk-gate): `off`, `observe`, or `enforce`. | `off` |
 
 `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID` only matter on the **first** boot
 with an empty database; later boots reuse the stored workspace.
@@ -123,6 +124,39 @@ subscriptions live in the database, managed from the Web UI. Note that the
 runtime does not authenticate inbound webhook calls itself (auth is the
 platform's job in front of the container), so don't expose the runtime port
 directly to the internet.
+
+## Tool risk gate
+
+`TOOL_RISK_GATE_MODE` enables an optional Haiku-class policy check before
+sensitive tools execute. It uses the active provider's classification model and
+applies to built-in tools, Nexus MCP tools, shell operations, and sub-agent
+delegation. Known low-risk status helpers bypass the model; unknown MCP tools
+are evaluated by default.
+
+| Mode | Behavior |
+|------|----------|
+| `off` | No risk evaluation. This is the default and preserves existing behavior and latency. |
+| `observe` | Evaluate calls and emit decision telemetry, but execute them regardless of the verdict. Evaluator failures also fail open. |
+| `enforce` | Block calls classified as unsafe. If the evaluator errors or times out, the evaluated call is blocked rather than executed. Claude Code edit sub-agents use `--permission-mode auto` instead of bypassing permissions. |
+
+Invalid values resolve to `off` and produce a startup warning. A rejection is
+returned to the agent as a failed tool call, so it can explain the refusal or
+choose a safer approach. Tool arguments and user text are not included in
+product telemetry.
+
+The outer gate can evaluate the initial `claude_code` delegation, but not every
+shell command or file edit the resulting Claude Code process proposes. In
+`enforce` mode, Prism therefore removes `--dangerously-skip-permissions` from
+Claude Code and launches edit tasks with its
+[auto permission mode](https://code.claude.com/docs/en/permission-modes).
+Plan tasks remain in `plan` mode without bypass permissions. Auto mode has its
+own Claude Code model and platform requirements; if it is unavailable, the task
+fails rather than falling back to bypass mode. `off` and `observe` retain the
+existing bypass behavior so observe-only rollout does not change execution.
+
+This gate is defense in depth, not a sandbox: both the main agent and the risk
+classifier are language models and can make mistakes. Keep OS permissions and
+[Lens Sandbox](lens-sandbox.md) policy as the hard security boundary.
 
 ## Chat verbosity
 
@@ -204,15 +238,15 @@ model IDs are plain OpenAI API model names**; **OpenRouter model IDs are
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `BEDROCK_MODEL_ID` | **(Bedrock)** Main model (the agent's reasoning loop) | `global.anthropic.claude-opus-5` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | **(Bedrock)** Fast model for the [heartbeat](heartbeat.md) and [scheduled-task](scheduled-tasks.md) DELIVER/SUPPRESS gate | a Claude Haiku model |
+| `BEDROCK_CLASSIFICATION_MODEL_ID` | **(Bedrock)** Fast model for classification gates: the [heartbeat](heartbeat.md) and [scheduled-task](scheduled-tasks.md) DELIVER/SUPPRESS gate, and the optional [tool-risk gate](tools.md#risk-gate) | a Claude Haiku model |
 | `BEDROCK_EMBEDDING_MODEL_ID` | **(Bedrock)** Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | **(Bedrock)** AWS region for Bedrock | `us-east-1` |
 | `AZURE_MODEL_ID` | **(Azure)** Main model — a Claude chat deployment name | `claude-opus-5` |
-| `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast Claude deployment for the heartbeat gate | `claude-haiku-4-5` |
+| `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast Claude deployment for classification gates | `claude-haiku-4-5` |
 | `AZURE_EMBEDDING_MODEL_ID` | **(Azure)** Azure OpenAI embedding deployment (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). The deployment must exist on the resource, else memory embedding fails open (no vector). Set to `''` to skip embeddings entirely. | `text-embedding-3-small` |
 | `AZURE_API_VERSION` | **(Azure)** Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
 | `BEDROCK_MANTLE_MODEL_ID` | **(Mantle)** Main model — a **bare** Bedrock ID | `anthropic.claude-opus-5` |
-| `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` | **(Mantle)** Fast **bare** Bedrock ID for the heartbeat gate. Unversioned — mantle 404s the `…-20251001-v1:0` shape `bedrock-runtime` uses. | `anthropic.claude-haiku-4-5` |
+| `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` | **(Mantle)** Fast **bare** Bedrock ID for classification gates. Unversioned — mantle 404s the `…-20251001-v1:0` shape `bedrock-runtime` uses. | `anthropic.claude-haiku-4-5` |
 | `BEDROCK_MANTLE_EMBEDDING_MODEL_ID` | **(Mantle)** Embedding model, served by Titan on `bedrock-runtime` — mantle has none of its own. Set to `''` to skip embeddings entirely. | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | **(Mantle)** Region for both the mantle host and the Titan embedding leg | `us-east-1` |
 | `OPENAI_MODEL_ID` | **(OpenAI)** Main model (the agent's reasoning loop) | `gpt-5.6-sol` |

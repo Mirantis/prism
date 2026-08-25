@@ -131,6 +131,18 @@ const initialize = async () => {
       '[Startup] LLM provider',
     );
 
+    if (config.invalidToolRiskGateMode) {
+      logger.warn(
+        { configuredMode: config.invalidToolRiskGateMode, effectiveMode: config.toolRiskGateMode },
+        '[Startup] invalid TOOL_RISK_GATE_MODE; risk gate is disabled',
+      );
+    } else {
+      logger.info(
+        { mode: config.toolRiskGateMode },
+        '[Startup] tool risk gate',
+      );
+    }
+
     // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
     // either picks up the existing row via findFirst() or creates a
     // fresh one with a generated UUID. Auth is handled by Lens Agents inbound

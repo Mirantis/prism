@@ -9,6 +9,21 @@ When the agent uses a tool, you can see it: the **[Web UI](web-ui.md#chat)** and
 **[Terminal UI](terminal-ui.md#chatting)** both show tool calls (with their
 inputs and outputs) inline in the agent's messages.
 
+## Risk gate
+
+Operators can optionally put sensitive tool calls through a fast-model safety
+check before execution by setting `TOOL_RISK_GATE_MODE`. In `observe` mode the
+runtime records what the gate would block without changing behavior; in
+`enforce` mode rejected calls do not execute and appear as failed tool calls.
+See [Configuration](configuration.md#tool-risk-gate) for rollout and failure
+behavior.
+
+The gate covers mutation-capable built-ins, shell operations, sub-agent
+delegation, and unknown MCP tools. Routine status helpers bypass it to avoid a
+classification round trip for every poll. It is an additional check rather
+than a confinement boundary; OS and Lens Sandbox policy still determine what
+the runtime can actually access.
+
 ## Memory
 
 Manage long-term memory. See **[Memory](memory.md)** for the full picture.
@@ -109,6 +124,12 @@ autonomous sub-agent in the workspace:
 This lets the agent delegate a self-contained engineering job — "refactor this
 module," "investigate this failing test" — and check back on the result, rather
 than doing everything in its own turn-by-turn loop.
+
+When the [risk gate](#risk-gate) is in `enforce` mode, edit sub-agents run with
+Claude Code's `auto` permission mode and without the permissions-bypass flag.
+Plan sub-agents stay in `plan` mode without bypass. This gives nested shell and
+file actions their own Claude Code policy check after Prism approves the initial
+delegation.
 
 ## Sharing files
 

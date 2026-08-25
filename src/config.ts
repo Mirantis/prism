@@ -454,6 +454,20 @@ function resolveAttachmentTtlHours(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : ATTACHMENT_CONTENT_TTL_HOURS;
 }
 
+// Optional pre-execution risk evaluation for mutation-capable and otherwise
+// sensitive tools. Keep the default off so existing deployments retain their
+// current latency and behavior until an operator opts in. `observe` runs the
+// classifier and records its verdict without changing execution; `enforce`
+// blocks rejected calls and fails closed when the classifier is unavailable.
+export type ToolRiskGateMode = 'off' | 'observe' | 'enforce';
+const TOOL_RISK_GATE_MODES: ToolRiskGateMode[] = ['off', 'observe', 'enforce'];
+const rawToolRiskGateMode = (process.env.TOOL_RISK_GATE_MODE ?? 'off').trim().toLowerCase();
+const isValidToolRiskGateMode = (TOOL_RISK_GATE_MODES as string[]).includes(rawToolRiskGateMode);
+const toolRiskGateMode = isValidToolRiskGateMode
+  ? (rawToolRiskGateMode as ToolRiskGateMode)
+  : 'off';
+const invalidToolRiskGateMode = isValidToolRiskGateMode ? null : rawToolRiskGateMode;
+
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
@@ -612,6 +626,12 @@ export const config = {
   chatModelId: modelIds.chat,
   classificationModelId: modelIds.classification,
   embeddingModelId: modelIds.embedding,
+
+  // Fast-model pre-execution policy gate for sensitive tool calls. Invalid
+  // values resolve to off; index.ts emits a startup warning using the companion
+  // field so a typo never silently enables enforcement or changes behavior.
+  toolRiskGateMode,
+  invalidToolRiskGateMode,
 
   // Overrides the input-context window used by the context-window indicator.
   // Normally derived from the model ID via the models.dev catalog

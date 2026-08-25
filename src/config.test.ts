@@ -172,6 +172,36 @@ describe('config', () => {
     });
   });
 
+  describe('TOOL_RISK_GATE_MODE', () => {
+    it('defaults to off when unset', async () => {
+      delete process.env.TOOL_RISK_GATE_MODE;
+      const cfg = await loadConfig();
+      expect(cfg.toolRiskGateMode).toBe('off');
+      expect(cfg.invalidToolRiskGateMode).toBeNull();
+    });
+
+    it.each(['off', 'observe', 'enforce'] as const)('accepts %s', async (mode) => {
+      process.env.TOOL_RISK_GATE_MODE = mode;
+      const cfg = await loadConfig();
+      expect(cfg.toolRiskGateMode).toBe(mode);
+      expect(cfg.invalidToolRiskGateMode).toBeNull();
+    });
+
+    it('is case-insensitive and trims whitespace', async () => {
+      process.env.TOOL_RISK_GATE_MODE = '  ENFORCE  ';
+      const cfg = await loadConfig();
+      expect(cfg.toolRiskGateMode).toBe('enforce');
+      expect(cfg.invalidToolRiskGateMode).toBeNull();
+    });
+
+    it('falls back to off and preserves an invalid value for the startup warning', async () => {
+      process.env.TOOL_RISK_GATE_MODE = 'enabled';
+      const cfg = await loadConfig();
+      expect(cfg.toolRiskGateMode).toBe('off');
+      expect(cfg.invalidToolRiskGateMode).toBe('enabled');
+    });
+  });
+
   describe('LLM_PROVIDER selection', () => {
     // These assert built-in defaults, so any model-id var the developer happens
     // to have exported would otherwise leak in through `originalEnv`.

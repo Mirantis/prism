@@ -30,6 +30,10 @@ import { getChannelBehaviorInstructions } from './prompts/channel-prompt';
 import { getTaskToolInstructions } from './prompts/task-tool-prompt';
 import { withOutputLimits } from './lib/tool-output-limiter';
 import { withToolLifecycleEvents } from './lib/tool-lifecycle';
+import {
+  isToolRiskGateError,
+  withToolRiskGate,
+} from './lib/tool-risk-gate';
 import { InvokeError, InvokeRequest, InvokeResponse, InvokeStep, ToolCallRecord, UIBlock } from './types';
 import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from './constants';
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
@@ -145,10 +149,20 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       lockedIn: context.lockedIn,
     });
 
-    // 5. Wrap tools with output limits, lifecycle events, and cache control
+    // 5. Wrap tools with output limits, lifecycle events, the optional
+    // pre-execution risk gate, and cache control. The gate is outside the
+    // lifecycle wrapper: a rejected call never claims the underlying tool
+    // started running.
     const limitedTools = withOutputLimits(tools);
     const observedTools = withToolLifecycleEvents(limitedTools, request.onToolEvent);
-    const cachedTools = withToolsCacheControl(observedTools, cachePoint);
+    const gatedTools = withToolRiskGate(observedTools, {
+      mode: config.toolRiskGateMode,
+      invocationMode: request.mode,
+      initialPrompt: request.prompt,
+      userId: request.userId,
+      agentId: request.agentId,
+    });
+    const cachedTools = withToolsCacheControl(gatedTools, cachePoint);
 
     // 6. Build system prompt parts (stable vs dynamic for granular caching)
     const systemParts = await buildSystemPromptParts(
@@ -328,10 +342,29 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         const stepToolCalls: ToolCallRecord[] = [];
         for (const tc of step.toolCalls) {
           const tr = step.toolResults.find((r) => r.toolCallId === tc.toolCallId);
+          const riskErrorPart = step.content?.find(
+            (part) =>
+              part.type === 'tool-error' &&
+              part.toolCallId === tc.toolCallId &&
+              isToolRiskGateError(part.error),
+          );
+          const riskError =
+            riskErrorPart?.type === 'tool-error' && isToolRiskGateError(riskErrorPart.error)
+              ? riskErrorPart.error
+              : undefined;
           stepToolCalls.push({
             tool: tc.toolName,
             input: JSON.stringify(tc.input),
-            output: tr ? JSON.stringify(tr.output) : '',
+            output: tr
+              ? JSON.stringify(tr.output)
+              : riskError
+                ? JSON.stringify({
+                    error: riskError.message,
+                    code: riskError.code,
+                    risk: riskError.risk,
+                    category: riskError.category,
+                  })
+                : '',
             success: Boolean(tr),
             timestamp: new Date().toISOString(),
           });

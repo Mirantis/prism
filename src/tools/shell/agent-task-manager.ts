@@ -16,6 +16,7 @@
 import { ChildProcess, spawn } from 'child_process';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
+import { config } from '../../config';
 import { logger } from '../../logger';
 import { sandboxEnv } from './sandbox-env';
 
@@ -441,8 +442,23 @@ function buildCliCommand(params: AgentTaskParams): {
     '--verbose', // required with --output-format stream-json + -p
     '--max-turns',
     String(maxTurns),
-    '--dangerously-skip-permissions',
   ];
+
+  // The outer tool-risk gate can only assess the delegation call itself, not
+  // each action Claude Code takes after it starts. In enforce mode, delegate
+  // those nested checks to Claude Code's auto-mode classifier and never retain
+  // the permissions bypass. Plan mode is already more restrictive, so keep it
+  // in plan without making bypass permissions available.
+  if (config.toolRiskGateMode === 'enforce') {
+    args.push('--permission-mode', params.mode === 'plan' ? 'plan' : 'auto');
+  } else {
+    // Preserve existing behavior in off/observe mode. Observe mode promises to
+    // measure policy decisions without changing whether calls execute.
+    args.push('--dangerously-skip-permissions');
+    if (params.mode === 'plan') {
+      args.push('--permission-mode', 'plan');
+    }
+  }
 
   const effectiveSystemPrompt =
     params.mode === 'plan' && !params.systemPrompt
@@ -453,9 +469,6 @@ function buildCliCommand(params: AgentTaskParams): {
   }
   if (params.sessionId) {
     args.push('--resume', params.sessionId);
-  }
-  if (params.mode === 'plan') {
-    args.push('--permission-mode', 'plan');
   }
   args.push('--disallowed-tools', 'AskUserQuestion');
   if (params.debug) args.push('--debug');
