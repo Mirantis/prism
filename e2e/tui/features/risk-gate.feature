@@ -1,12 +1,12 @@
 Feature: Tool risk gate (TUI)
-  As an operator running the gate in enforce mode I want a destructive call
-  outside the workspace to be refused before it runs, and ordinary work to carry
-  on untouched.
+  As an operator running the gate in enforce mode I want a call the policy
+  refuses to be stopped before it runs, even when I asked for it, and ordinary
+  work to carry on untouched.
 
-  Scenario: A destructive call outside the workspace is refused before it runs
-    When I ask the agent to delete a directory outside its workspace
-    Then a tool call is recorded as blocked by the risk policy
-    And the directory still exists
+  Scenario: Running a downloaded script is refused before it runs
+    When I ask the agent to install a tool by piping a downloaded script to a shell
+    Then the refused tool call is the one that would run the downloaded script
+    And the script never ran
 
   Scenario: Ordinary work still runs under enforce mode
     When I ask the agent to write a note in its workspace
