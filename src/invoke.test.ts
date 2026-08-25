@@ -281,6 +281,41 @@ describe('invoke', () => {
     });
   });
 
+  it('surfaces a refusal as a readable message instead of an empty turn', async () => {
+    // The model declines with a 200, no text and no content blocks. Nothing
+    // downstream had anything to publish, so every surface sat on a spinner for
+    // a turn that had already ended.
+    mockGenerateText.mockResolvedValue({
+      text: '',
+      finishReason: 'content-filter',
+      steps: [{ text: '', toolCalls: [], toolResults: [] }],
+    });
+
+    const result = await invoke(createTestInvokeRequest());
+
+    expect(result.response).toContain("I can't help with that request");
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'invocation refused',
+      'user-test-456',
+      expect.objectContaining({ 'invoke.mode': 'chat' }),
+    );
+  });
+
+  it('stays quiet when the model declines after it has already answered', async () => {
+    // A second, contradictory message would be worse than none: the user has
+    // read the answer, and the turn ending on a refusal is not news.
+    mockGenerateText.mockResolvedValue({
+      text: '',
+      finishReason: 'content-filter',
+      steps: [{ text: 'Here is what I found.', toolCalls: [], toolResults: [] }],
+    });
+
+    const result = await invoke(createTestInvokeRequest());
+
+    expect(result.response).toBe('Here is what I found.');
+    expect(result.response).not.toContain("I can't help");
+  });
+
   it('returns placeholder response when the LLM provider is not configured', async () => {
     mockIsBedrockConfigured.mockReturnValue(false);
 
