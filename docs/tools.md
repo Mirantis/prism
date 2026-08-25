@@ -18,11 +18,10 @@ runtime records what the gate would block without changing behavior; in
 See [Configuration](configuration.md#tool-risk-gate) for rollout and failure
 behavior.
 
-The gate covers mutation-capable built-ins, shell operations, sub-agent
-delegation, and unknown MCP tools. Routine status helpers bypass it to avoid a
-classification round trip for every poll. It is an additional check rather
-than a confinement boundary; OS and Lens Sandbox policy still determine what
-the runtime can actually access.
+The gate covers every tool call, apart from low-risk helpers that bypass it to
+avoid a classification round trip for every poll. It is an additional
+check rather than a confinement boundary; OS and Lens Sandbox policy still
+determine what the runtime can actually access.
 
 ## Memory
 

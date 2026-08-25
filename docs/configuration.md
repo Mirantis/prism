@@ -127,11 +127,9 @@ directly to the internet.
 
 ## Tool risk gate
 
-`TOOL_RISK_GATE_MODE` enables an optional Haiku-class policy check before
-sensitive tools execute. It uses the active provider's classification model and
-applies to built-in tools, Nexus MCP tools, shell operations, and sub-agent
-delegation. Known low-risk status helpers bypass the model; unknown MCP tools
-are evaluated by default.
+`TOOL_RISK_GATE_MODE` enables an optional policy check before tools execute,
+using the active provider's classification model. It applies to every tool
+call, apart from a few low-risk helpers that bypass it.
 
 | Mode | Behavior |
 |------|----------|
