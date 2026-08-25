@@ -88,6 +88,7 @@ export async function seed(): Promise<string> {
     agentType: 'AGENT' as const,
     soulMd: DEFAULT_AGENT_SEED.soulMd,
     userMd: DEFAULT_AGENT_SEED.userMd,
+    agentMd: DEFAULT_AGENT_SEED.agentMd,
     memoryMd: DEFAULT_AGENT_SEED.memoryMd,
     heartbeatMd: DEFAULT_AGENT_SEED.heartbeatMd,
     bootstrapMd: '',

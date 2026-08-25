@@ -121,6 +121,7 @@ export interface ApiClient {
   getMe(): Promise<{ agentId: string; userId: string; name: string }>;
   getDetails(): Promise<AgentDetails>;
   setName(name: string): Promise<{ name: string }>;
+  setAgentGuide(agentMd: string): Promise<{ agentMd: string }>;
   getModel(): Promise<{ model: string | null }>;
   setModel(model: string | null): Promise<{ model: string | null }>;
   getHeartbeatModel(): Promise<{ model: string | null; effective: string }>;
@@ -204,6 +205,10 @@ export class HttpApiClient implements ApiClient {
 
   setName(name: string): Promise<{ name: string }> {
     return this.request('PATCH', '/agents/name', { name });
+  }
+
+  setAgentGuide(agentMd: string): Promise<{ agentMd: string }> {
+    return this.request('PATCH', '/agents/agent-guide', { agentMd });
   }
 
   getModel(): Promise<{ model: string | null }> {

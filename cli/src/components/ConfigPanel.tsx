@@ -196,6 +196,7 @@ export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({
         {listFocused
           ? '↑↓ select · →/tab content · esc close'
           : '↑↓ scroll · ←/tab files · esc close'}
+        {DOCS[selected]!.field === 'agentMd' ? ' · esc then /agent-guide to edit' : ''}
       </Text>
     </Box>
   );

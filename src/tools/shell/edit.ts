@@ -46,8 +46,8 @@ export function applyEdit(
   }
 
   // Line-trimmed match (whitespace-tolerant)
-  const lineMatch = lineTrimmedMatch(content, oldString);
-  if (lineMatch !== null) {
+  const lineMatches = lineTrimmedMatches(content, oldString);
+  if (lineMatches.length > 0) {
     if (replaceAll) {
       return {
         ok: false,
@@ -55,7 +55,15 @@ export function applyEdit(
           'replaceAll requires exact match — the match was found via whitespace-tolerant search',
       };
     }
-    const [start, end] = lineMatch;
+    // Ambiguity is an error on this path too, as it is for an exact match:
+    // editing the first of several places is a silent wrong edit.
+    if (lineMatches.length > 1) {
+      return {
+        ok: false,
+        message: `oldString has ${lineMatches.length} whitespace-tolerant matches — provide more context to make it unique`,
+      };
+    }
+    const [start, end] = lineMatches[0]!;
     return { ok: true, content: content.slice(0, start) + newString + content.slice(end) };
   }
 
@@ -78,9 +86,11 @@ function countOccurrences(haystack: string, needle: string): number {
  * inclusive/exclusive byte range of the match in `content`, or `null`
  * if no match.
  */
-function lineTrimmedMatch(content: string, find: string): [number, number] | null {
+/** Every place `find` matches `content` line by line after trimming each line. */
+function lineTrimmedMatches(content: string, find: string): Array<[number, number]> {
   const contentLines = content.split('\n');
   const searchLines = find.split('\n');
+  const found: Array<[number, number]> = [];
 
   // Upstream drops a trailing empty line from the search pattern so
   // `"b\nc\n"` matches two lines, not "two lines plus a blank".
@@ -88,7 +98,7 @@ function lineTrimmedMatch(content: string, find: string): [number, number] | nul
     searchLines.pop();
   }
 
-  if (searchLines.length > contentLines.length) return null;
+  if (searchLines.length > contentLines.length) return found;
 
   for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
     let matches = true;
@@ -108,8 +118,8 @@ function lineTrimmedMatch(content: string, find: string): [number, number] | nul
       for (const line of matched) matchedLen += line.length;
       // newlines between matched lines (n-1 of them)
       const end = start + matchedLen + Math.max(0, matched.length - 1);
-      return [start, end];
+      found.push([start, end]);
     }
   }
-  return null;
+  return found;
 }

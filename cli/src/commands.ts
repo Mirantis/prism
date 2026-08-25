@@ -14,6 +14,7 @@ import type { SlashCommand } from './commands/types.js';
 import { copyCommand } from './commands/copy.js';
 import { schedulesCommand } from './commands/schedules.js';
 import { configCommand } from './commands/config.js';
+import { agentGuideCommand } from './commands/agent-guide.js';
 import { renameCommand } from './commands/rename.js';
 import { modelCommand } from './commands/model.js';
 import { heartbeatModelCommand } from './commands/heartbeat-model.js';
@@ -38,6 +39,7 @@ export const COMMANDS: SlashCommand[] = [
   copyCommand,
   schedulesCommand,
   configCommand,
+  agentGuideCommand,
   renameCommand,
   modelCommand,
   heartbeatModelCommand,

@@ -1099,7 +1099,25 @@ The agent-runtime owns the WebSocket gateway for real-time browser chat. The bac
 
 ## Agent Guide (agentMd)
 
-The `agentMd` workspace file is the agent's operating manual. It appears in the system prompt as `# Agent Guide` and contains guidance on heartbeat behavior, memory usage, safety, and Slack channel etiquette. It is included in the `AgentContext` type and built into the system prompt by `context-builder.ts` (between Soul and User sections).
+The `agentMd` workspace file is the agent's operating manual. It appears in the
+system prompt as `# Agent Guide` and contains guidance on heartbeat behavior,
+memory usage, safety, and Slack channel etiquette. It is included in the
+`AgentContext` type and built into the system prompt by `context-builder.ts`
+(between Soul and User sections).
+
+**No tool writes it.** It is the one workspace document outside
+`tools/agent-config.ts`, so the document that tells the agent how to work cannot
+drift from the agent's own edits. The user owns it, through one write path:
+
+- `PATCH /agents/agent-guide` (`routes/agent-guide.ts` →
+  `agentWorkspaceService.updateAgentGuide`), body `{ agentMd }`, the whole
+  document. An empty string clears it, which drops the section from the prompt.
+- The web Profile page's **Agent** tab (`web/src/components/profile/agent-guide-editor.tsx`)
+  and the TUI's `/agent-guide` (`cli/src/commands/agent-guide.ts`, which opens
+  `$EDITOR` via `cli/src/editor.ts`) both call that endpoint.
+
+Locked-in mode does not cover it — that lock withholds the agent's own writers,
+and there is none here — so the editors keep working while the lock is on.
 
 ## Agent Skills
 

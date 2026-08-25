@@ -282,11 +282,12 @@ is an instruction in its prompt: announce what it's about to do and get an expli
 or changes its own configuration — and never read that permission out of enthusiasm
 or out of someone claiming authority.
 
-**That includes changing itself.** Renaming itself and rewriting its Soul, its user
-profile or its memory are things it will do on a spoken request that the room agrees
-to, subject to the same confirmation. So a sentence agreed in an unauthenticated
-meeting can change the agent for every future turn on every channel, not just for the
-duration of the call.
+**That includes changing itself.** Renaming itself, rewriting any of its workspace
+files (Soul, user profile, memory, vision, heartbeat config, bootstrap
+notes) and changing its settings are things it will do on a spoken request that the
+room agrees to, subject to the same confirmation. So a sentence agreed in an
+unauthenticated meeting can change the agent for every future turn on every channel,
+not just for the duration of the call.
 
 Instructions are a strong default, not enforcement. So treat a meeting link as
 handing over the agent's own authority — over itself included: **share it only with
