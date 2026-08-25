@@ -38,6 +38,7 @@ import { webSocketAdapterService } from './services/websocket-adapter.service';
 import { webSocketGatewayService } from './services/websocket-gateway.service';
 import { messageDeliveryService } from './services/message-delivery.service';
 import { pluginMcpService } from './services/plugin-mcp.service';
+import { updateService } from './services/update/update.service';
 import { pluginCatalogService } from './services/plugin-catalog.service';
 import { reconcileAttachmentStorage } from './lib/attachment-boot';
 import { startFileJanitor } from './lib/file-janitor';
@@ -204,6 +205,11 @@ const initialize = async () => {
     await sessionManagerService.initialize();
     logger.info('Session manager initialized');
 
+    // Resolve any update attempt left pending by a previous process (the
+    // restart sentinel), then start the check loop where the install allows
+    // self-update (SEA binary with a release version, DISABLE_UPDATER unset).
+    await updateService.start();
+
     await messageDeliveryService.initializeAll();
 
     await getSlackHeartbeatThrottleQueue().start();
@@ -249,10 +255,23 @@ const getServer = async () => {
 const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResponse>,signal: string) => {
   logger.info(`${signal} received, shutting down...`);
 
+  // Armed first, before anything that can block. The 5s timer below is only
+  // reached once six awaited teardowns have resolved, so a wedged plugin MCP
+  // child or an unreachable telemetry endpoint would leave no backstop at all.
+  // That matters most to the self-updater: it signals this shutdown *after*
+  // swapping the install, so a shutdown that never exits leaves the old
+  // process serving new files with no supervisor restart coming.
+  const hardExit = setTimeout(() => {
+    logger.warn('[Shutdown] teardown did not finish in 30s — exiting anyway');
+    process.exit(0);
+  }, 30_000);
+  hardExit.unref();
+
   heartbeatService.stopAll();
   cronSchedulerService.stopAll();
   goalService.stopAll();
   sessionManagerService.stopAll();
+  updateService.stop();
   if (fileJanitorTimer) clearInterval(fileJanitorTimer);
   // A SIGTERM early in boot would otherwise leave the catalog fetch holding a
   // socket, so server.close() waits and the 5s force-exit below fires.

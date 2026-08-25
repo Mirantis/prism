@@ -22,6 +22,11 @@ tasks, and when the agent was created. The stat cards are clickable shortcuts
 into Profile, Channels, Scheduled Tasks, and Chat. (To rename the agent, use the
 Name field on the [Profile](#profile) page.)
 
+On a native install, a strip under the header announces a newer release with an
+**Update now** button, shows "Backend updating…" while the runtime restarts, and
+reloads the page when it's back — see
+**[Automatic updates](installation.md#automatic-updates)**.
+
 ## Chat
 
 The main conversation surface.
@@ -36,9 +41,11 @@ The main conversation surface.
   `/help`, **`/skills`** (list installed [skills](skills.md), or `/skills run
   <name>`), **`/plugins`** (list installed [plugins](plugins.md) and what each
   contributes), **`/goal`** (set or manage a background goal — `/goal
-  <objective>`, `status`, `list`, `pause`, `resume`, `stop`), and **`/compact`**
+  <objective>`, `status`, `list`, `pause`, `resume`, `stop`), **`/compact`**
   (summarize older history to free up context — see
-  **[Compaction](compaction.md)**). Commands run
+  **[Compaction](compaction.md)**), and **`/update`** (install a newer Prism
+  release — see **[Automatic updates](installation.md#automatic-updates)**;
+  native installs only). Commands run
   locally and call the runtime directly; their output appears as a system note
   in the conversation, and `/goal`/`/skills run` stream the agent's reply in.
   A one-line note renders as a centered aside; a listing (`/skills`, `/plugins`)

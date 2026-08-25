@@ -18,6 +18,7 @@ import { conversationEngineService } from './conversation-engine.service';
 import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
 import { compactionService, type CompactionEvent } from './compaction.service';
+import { updateService, type UpdateEvent } from './update/update.service';
 
 // ============================================================================
 // Types
@@ -53,7 +54,7 @@ interface WebSocketMessage {
 type ThreadedMessage = WebSocketMessage & { threadId: string };
 
 interface WebSocketResponse {
-  type: 'chat' | 'pong' | 'error' | 'status' | 'thread' | 'context' | 'compaction';
+  type: 'chat' | 'pong' | 'error' | 'status' | 'thread' | 'context' | 'compaction' | 'update';
   threadId?: string;
   messageId?: string;
   content?: string;
@@ -99,6 +100,13 @@ class WebSocketGatewayService {
     // owned by compactionService (channel-agnostic).
     compactionService.events.on('compaction', ({ userId, ...payload }: CompactionEvent) => {
       this.broadcast(userId, { type: 'compaction', payload });
+    });
+
+    // Push update progress (available/updating/failed). Updates are owned by
+    // updateService (channel-agnostic) and are install-level, so they go to
+    // the one owner user every connection is pinned to.
+    updateService.events.on('update', (payload: UpdateEvent) => {
+      this.broadcast(config.ownerUserId, { type: 'update', payload });
     });
   }
 

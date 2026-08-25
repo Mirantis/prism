@@ -40,7 +40,12 @@ vi.mock('../config', () => ({
   config: {
     port: 3003,
     agentId: 'test-agent-id',
+    ownerUserId: 'test-owner-id',
     agentDefaults: {},
+    // Self-update: off in unit tests (dev shape). The gate matrix is asserted
+    // in update.service.test.ts, which overrides these per case.
+    appVersion: '',
+    disableUpdater: false,
     // Keep the boot-time models.dev refresh off in unit tests
     modelsDevUrl: null,
     bedrockModelId: 'anthropic.claude-3-sonnet-20240229-v1:0',

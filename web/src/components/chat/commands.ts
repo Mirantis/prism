@@ -18,6 +18,7 @@ import { skillsCommand } from './commands/skills';
 import { pluginsCommand } from './commands/plugins';
 import { goalCommand } from './commands/goal';
 import { compactCommand } from './commands/compact';
+import { updateCommand } from './commands/update';
 import { makeHelpCommand } from './commands/help';
 
 export type { CommandContext, SlashCommand } from './commands/types';
@@ -28,6 +29,7 @@ export const COMMANDS: SlashCommand[] = [
   pluginsCommand,
   goalCommand,
   compactCommand,
+  updateCommand,
   makeHelpCommand(() => COMMANDS),
 ];
 

@@ -63,4 +63,12 @@ else
   NAME="prism-$VERSION-$OS_ARCH.tar.gz"
   tar -czf "../$NAME" "$OS_ARCH"
 fi
+cd ..
+
+# Checksum next to the archive — the updater verifies the download against it.
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum "$NAME" > "$NAME.sha256"
+else
+  shasum -a 256 "$NAME" > "$NAME.sha256"
+fi
 echo "Built: $NAME"

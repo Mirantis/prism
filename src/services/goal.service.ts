@@ -58,6 +58,11 @@ class GoalService {
   /** Per-goal runtime handles, keyed by goalId. DB is the source of truth. */
   private runtimes = new Map<string, GoalRuntime>();
 
+  /** Whether any goal loop is live, including one sleeping between turns. */
+  hasLiveLoops(): boolean {
+    return this.runtimes.size > 0;
+  }
+
   // ==========================================================================
   // Lifecycle
   // ==========================================================================

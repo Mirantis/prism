@@ -85,4 +85,5 @@ jobs:
           path: |
             prism-*.tar.gz
             prism-*.zip
+            prism-*.sha256
           if-no-files-found: error

@@ -98,6 +98,9 @@ Every commit must be signed off (DCO): commit with `git commit -s` so a
 Wrap commit body prose at 100 characters, but never wrap a long URL or an
 attribution trailer line (e.g. the `Agent:` trailer) — leave those intact.
 
+Never reference competing products in a commit message or a PR description.
+Describe the design on its own terms.
+
 When a PR branch conflicts with `main`, resolve by rebasing the branch
 onto `main` (`git rebase origin/main`, then force-push) — never with a
 merge commit. PR branches stay merge-commit-free.

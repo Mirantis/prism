@@ -36,6 +36,19 @@ const { adapterStub, apiStub } = vi.hoisted(() => {
         category: 'text',
       }),
       deleteAttachment: vi.fn().mockResolvedValue({ success: true }),
+      // useUpdateNotice fetches this once on mount; a disabled report keeps
+      // the status-bar hint off in these smoke tests.
+      updateStatus: vi.fn().mockResolvedValue({
+        enabled: false,
+        reason: 'not_sea_install',
+        currentVersion: '',
+        latestVersion: null,
+        updateAvailable: false,
+        checkedAt: null,
+        applying: false,
+        lastAttempt: null,
+      }),
+      applyUpdate: vi.fn().mockResolvedValue({ ok: true, version: 'v2026.1.1000000' }),
     },
   };
 });

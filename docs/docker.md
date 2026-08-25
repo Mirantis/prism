@@ -28,6 +28,10 @@ docs-only push leaves them on the previous commit. They are deleted when the pul
 request closes. A pull request from a fork publishes no image, because its
 registry token is read-only.
 
+A running container never updates itself — [automatic updates](installation.md#automatic-updates)
+apply to native installs only. To update, pull a newer tag and recreate the
+container; the agent's state survives on the `/data` volume.
+
 ## Run the agent and boot into the terminal UI
 
 ```bash

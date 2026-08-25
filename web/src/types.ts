@@ -90,6 +90,35 @@ export interface CompactionEvent {
   detail?: string;
 }
 
+/** Update progress frame (WS `update` envelope). Install-level, not per-thread. */
+export interface UpdateEvent {
+  status: 'available' | 'updating' | 'failed';
+  version: string;
+  /** Failed only — machine-readable reason. */
+  errorCode?: string;
+}
+
+/** GET /agents/update/status response. */
+export interface UpdateStatus {
+  enabled: boolean;
+  /** Why the updater is off; null when enabled. */
+  reason: 'disabled_by_env' | 'not_sea_install' | 'dev_build' | null;
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  checkedAt: string | null;
+  applying: boolean;
+  lastAttempt: {
+    versionFrom: string;
+    versionTo: string;
+    trigger: 'AUTO' | 'MANUAL';
+    outcome: 'PENDING' | 'SUCCESS' | 'FAILURE';
+    errorCode: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+  } | null;
+}
+
 export interface ConversationThread {
   id: string;
   agentId: string;

@@ -65,6 +65,14 @@ export interface CompactionEvent {
   detail?: string;
 }
 
+/** Update progress frame (WS `update` envelope). Install-level, not per-thread. */
+export interface UpdateEvent {
+  status: 'available' | 'updating' | 'failed';
+  version: string;
+  /** Failed only — machine-readable reason. */
+  errorCode?: string;
+}
+
 export interface TuiAdapterEvents {
   message: (msg: TuiMessage) => void;
   status: (status: TuiStatus, detail?: string) => void;
@@ -76,6 +84,7 @@ export interface TuiAdapterEvents {
   thread: (threadId: string) => void;
   contextUsage: (usage: ContextUsage) => void;
   compaction: (event: CompactionEvent) => void;
+  update: (event: UpdateEvent) => void;
 }
 
 /** A resumable conversation thread, as listed by the `--resume` picker. */
@@ -205,6 +214,24 @@ function coerceCompactionEvent(raw: unknown): CompactionEvent | null {
     messagesCompacted: typeof e.messagesCompacted === 'number' ? e.messagesCompacted : undefined,
     error: typeof e.error === 'string' ? e.error : undefined,
     detail: typeof e.detail === 'string' ? e.detail : undefined,
+  };
+}
+
+function coerceUpdateEvent(raw: unknown): UpdateEvent | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const e = raw as Partial<UpdateEvent>;
+  // Same strictness as coerceCompactionEvent: a malformed frame must not raise
+  // an update notice nothing can clear.
+  if (
+    typeof e.version !== 'string' ||
+    (e.status !== 'available' && e.status !== 'updating' && e.status !== 'failed')
+  ) {
+    return null;
+  }
+  return {
+    status: e.status,
+    version: e.version,
+    errorCode: typeof e.errorCode === 'string' ? e.errorCode : undefined,
   };
 }
 
@@ -415,6 +442,11 @@ class TuiAdapter {
       case 'compaction': {
         const event = coerceCompactionEvent(env.payload);
         if (event) this.events.emit('compaction', event);
+        break;
+      }
+      case 'update': {
+        const event = coerceUpdateEvent(env.payload);
+        if (event) this.events.emit('update', event);
         break;
       }
       // typing / heartbeat / pong intentionally ignored
