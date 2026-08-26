@@ -103,11 +103,14 @@ export async function runShareFile(
   const filename = (input.filename?.trim() || path.basename(fullPath)) || 'file';
   const mediaType = detectMediaType(data, filename);
   const category = classifyMediaType(mediaType);
+  // Persist the bytes actually read, not the earlier stat — a concurrent
+  // writer can change the file between stat and read.
+  const sizeBytes = data.length;
 
   const row = await attachmentService.create({
     filename,
     mediaType,
-    sizeBytes: stat.size,
+    sizeBytes,
     data,
     category,
     source: 'agent',
@@ -117,7 +120,7 @@ export async function runShareFile(
     success: true,
     attachmentId: row.id,
     filename,
-    sizeBytes: stat.size,
+    sizeBytes,
     mediaType,
     category,
   };
@@ -135,7 +138,8 @@ export function getShareFileTools(): Record<string, Tool> {
       description:
         'Share a file from your workspace with the user as a downloadable attachment. ' +
         'Use this whenever the user asks for a file, report, export, document, image, or generated artifact — ' +
-        'first create it on disk (e.g. with shell_write_file or shell_exec), then call share_file with its path. ' +
+        'first create it on disk (e.g. with shell_write_file or shell_exec) and wait for that tool result, then call share_file with its path. ' +
+        'Do not call share_file in the same parallel tool block as the write — this tool snapshots bytes at execute time. ' +
         'The file is delivered as a download in the web/CLI chat and uploaded natively to Slack. ' +
         'Max 10 MB per file. Do NOT paste large file contents into your reply or invent download links — use this tool.',
       inputSchema: shareFileInput,

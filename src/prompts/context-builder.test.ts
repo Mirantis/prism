@@ -272,6 +272,20 @@ describe('buildSystemPrompt', () => {
     const prompt = await buildSystemPrompt(context, 'chat');
     expect(prompt).not.toContain('# Agent Guide');
   });
+
+  it('always includes completion-claim rules for existing instances (empty agentMd)', async () => {
+    const context = createTestAgentContext({ agentMd: '' });
+    const prompt = await buildSystemPrompt(context, 'chat');
+    expect(prompt).toContain('## Completion claims');
+    expect(prompt).toContain('same turn');
+    expect(prompt).toContain('share_file');
+  });
+
+  it('omits completion-claim rules for subagents', async () => {
+    const context = createTestAgentContext({ agentMd: '' });
+    const prompt = await buildSystemPrompt(context, 'subagent');
+    expect(prompt).not.toContain('## Completion claims');
+  });
 });
 
 describe('buildSystemPromptParts', () => {

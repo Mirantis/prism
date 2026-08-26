@@ -15,6 +15,7 @@ import { skillCatalogService, type SkillSource } from '../services/skill-catalog
 import { pluginCatalogService } from '../services/plugin-catalog.service';
 import { resolveSkillsDir, resolvePluginsDir } from '../lib/data-dir';
 import { toModelToolName } from '../lib/tool-names';
+import { COMPLETION_CLAIM_INSTRUCTIONS } from '../lib/completion-claims';
 
 // Minimal type for conversation messages (matches Prisma's shape).
 // toolCalls uses Prisma's Json? type (any JSON value); parseToolCalls() validates at runtime.
@@ -136,6 +137,7 @@ export async function buildSystemPromptParts(
   // they have no user thread), so don't advertise them.
   if (mode !== 'subagent') {
     stableSections.push(getAttachmentsInstructions());
+    stableSections.push(COMPLETION_CLAIM_INSTRUCTIONS);
   }
 
   // Skills — Agent Skills (agentskills.io). Progressive disclosure: only name +

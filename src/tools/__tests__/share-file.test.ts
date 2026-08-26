@@ -95,6 +95,7 @@ describe('runShareFile', () => {
     if (!result.success) return;
     expect(result.attachmentId).toBe('att-generated');
     expect(result.filename).toBe('chart.png');
+    expect(result.sizeBytes).toBe(PNG_HEADER.length);
     expect(result.mediaType).toBe('image/png');
     expect(result.category).toBe('image');
 
