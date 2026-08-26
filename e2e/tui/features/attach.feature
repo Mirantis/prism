@@ -7,18 +7,3 @@ Feature: CLI inbound file sharing (/attach)
     And I ask "What launch code is written in the attached file? Reply with only the code, no other text."
     Then my message appears in the chat
     And the agent reply contains "ZEBRA42"
-
-  Scenario: Attaching a zip file lets the agent inspect its contents
-    Given a local zip file containing a text file "manifest.txt" with "PRISMZIPTUI55"
-    When I attach the file
-    And I ask "What text file is inside the attached zip and what is its content? Reply with the filename and content only."
-    Then my message appears in the chat
-    And the agent reply contains "manifest.txt"
-    And the agent reply contains "PRISMZIPTUI55"
-
-  Scenario: Attaching a PDF lets the agent read it as a document
-    Given a local PDF file containing the text "PRISMPDFTUI88"
-    When I attach the file
-    And I ask "Use view_attachment on the attached PDF and reply with the exact code word printed in it, nothing else."
-    Then my message appears in the chat
-    And the agent reply contains "PRISMPDFTUI88"

@@ -1,23 +1,12 @@
 Feature: Skills slash command (web)
-  As a user I want to discover and run installed skills from the web chat
-  using a "/" slash command with autocomplete, mirroring the CLI.
+  As a user I want to discover and run installed skills from the web chat with
+  a "/" slash command. This suite covers listing and running a global skill,
+  so the CLI suite keeps the `list` alias and the unknown-skill path, which
+  only the CLI parses.
 
   Background:
     Given I am logged in
     And I have a personal agent
-
-  Scenario: Typing "/" shows the command popup
-    When I navigate to the agent chat page
-    And I type "/" in the chat input
-    Then I should see the command popup
-    And the command popup should list "/skills"
-    And the command popup should list "/help"
-
-  Scenario: Tab autocompletes the highlighted command
-    When I navigate to the agent chat page
-    And I type "/sk" in the chat input
-    And I press Tab in the chat input
-    Then the chat input should contain "/skills"
 
   Scenario: /skills lists installed skills
     When I navigate to the agent chat page

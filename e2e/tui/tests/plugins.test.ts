@@ -1,6 +1,10 @@
 /**
- * Plugins slash command e2e: `/plugins` (list + diagnostics), a plugin skill
- * surfacing in `/skills`, and running one end to end.
+ * Plugins slash command e2e for what the web suite does not assert: the
+ * contribution lines `/plugins` prints for a healthy plugin, the diagnostics a
+ * malformed plugin produces, and a real stdio MCP server. The web suite checks
+ * the plugin's name and version and runs its skill
+ * (`e2e/features/web/plugins.feature`); it installs neither a broken plugin nor
+ * an MCP server.
  *
  * The runtime boots with PRISM_DATA_DIR pointed at a hermetic temp dir seeded
  * before boot with three plugins: a healthy one contributing a skill, one whose
@@ -53,7 +57,8 @@ describeFeature(
       const pluginsDir = join(dataDir, 'plugins');
       mkdirSync(pluginsDir, { recursive: true });
 
-      // Healthy: contributes one skill whose instructions produce a fixed marker.
+      // Healthy: contributes one skill, which `/plugins` must name. Nothing here
+      // runs it — the web suite does — so its body only matches that fixture.
       writePluginFile(
         pluginsDir,
         'demo',
@@ -203,22 +208,13 @@ describeFeature(
       });
     });
 
-    Scenario('/plugins lists an installed plugin and what it contributes', () => {
+    Scenario('/plugins reports what the plugin contributes', () => {
       // Covered by the shared steps.
     });
     Scenario('/plugins reports a plugin that failed to load its MCP servers', () => {
       // Covered by the shared steps.
     });
-    Scenario('a plugin skill appears in /skills labelled with its plugin', () => {
-      // Covered by the shared steps.
-    });
     Scenario('a broken plugin does not stop a healthy one', () => {
-      // Covered by the shared steps.
-    });
-    Scenario('the agent can run a skill contributed by a plugin', () => {
-      // Covered by the shared steps.
-    });
-    Scenario('/plugins reports the MCP server the plugin contributes', () => {
       // Covered by the shared steps.
     });
     Scenario('the agent can call a tool from a plugin\'s stdio MCP server', () => {
