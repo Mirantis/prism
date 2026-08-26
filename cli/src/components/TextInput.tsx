@@ -1,5 +1,5 @@
 /**
- * TextInput — a fork of `ink-text-input@6.0.0` (MIT, © Vadim Demedes).
+ * TextInput — a fork of `ink-text-input@6.0.0` (MIT). See `THIRD_PARTY_NOTICES`.
  *
  * One behavioural change from upstream: a key carrying **Ctrl**, and a lone
  * **Escape**, are ignored instead of being inserted as their bare letter.

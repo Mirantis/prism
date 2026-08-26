@@ -17,6 +17,9 @@
  * future divergence is picked up by rerunning this script, not by debugging why
  * the indicator is wrong in one region.
  *
+ * The registry data is MIT licensed by models.dev and recorded in
+ * `THIRD_PARTY_NOTICES`. A regeneration must keep that entry.
+ *
  * Run: `npm run generate:model-limits`, then commit the JSON diff.
  */
 import { writeFileSync } from 'node:fs';
