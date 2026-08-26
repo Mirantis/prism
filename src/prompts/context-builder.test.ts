@@ -363,6 +363,9 @@ describe('buildSystemPromptParts', () => {
 
     expect(stable.cacheable).toBe(true);
     expect(stable.text).not.toContain('### Last Alert');
+    // The alert body too, not just the heading: a renamed heading would leave
+    // the drifting content in the prefix with the assertion still green.
+    expect(stable.text).not.toContain('Pod crashed');
     expect(parts.map((part) => part.text).join('\n')).toContain('Pod crashed');
   });
 
@@ -376,6 +379,8 @@ describe('buildSystemPromptParts', () => {
 
     expect(stable.cacheable).toBe(true);
     expect(stable.text).not.toContain('### Recent Slack Messages');
+    expect(stable.text).not.toContain('Alice');
+    expect(stable.text).not.toContain('deploy failed');
     expect(parts.map((part) => part.text).join('\n')).toContain('Alice');
   });
 
