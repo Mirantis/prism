@@ -262,7 +262,7 @@ describe('invoke', () => {
     mockWithToolRiskGate.mockImplementation((tools) => tools);
 
     mockIsBedrockConfigured.mockReturnValue(true);
-    mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', { cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' } } } }));
+    mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', { cachePoint: () => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }) }));
     mockGetMCPTools.mockResolvedValue({});
     mockGetPluginTools.mockResolvedValue({});
     mockBuildSystemPromptParts.mockResolvedValue([
@@ -504,7 +504,7 @@ describe('invoke', () => {
     // The mocked provider is `(modelId) => LanguageModel`; capture the modelId
     // it's called with to assert which model each mode resolves to.
     function captureModelId() {
-      const modelFn = Object.assign(vi.fn(() => 'model-instance'), { cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' } } } });
+      const modelFn = Object.assign(vi.fn(() => 'model-instance'), { cachePoint: () => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }) });
       mockCreateBedrockProvider.mockReturnValue(modelFn);
       return modelFn;
     }

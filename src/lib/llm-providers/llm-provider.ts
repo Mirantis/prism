@@ -35,6 +35,16 @@ export type ProviderOptionsFragment = Record<string, Record<string, string | num
 export type AnthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral' } } };
 
 /**
+ * Bedrock Converse's own breakpoint — a `cachePoint` block in the request,
+ * which is a different wire form and a different `providerOptions` namespace
+ * than Anthropic's `cache_control`. `@ai-sdk/amazon-bedrock` reads it from
+ * `bedrock` (or `amazonBedrock`) and drops any other namespace without an
+ * error, so a fragment aimed at the wrong one costs a silent cache miss on
+ * every request rather than a failure anyone would notice.
+ */
+export type BedrockCachePoint = { bedrock: { cachePoint: { type: 'default' } } };
+
+/**
  * A `providerOptions` fragment that marks a prompt-cache breakpoint on
  * whatever element carries it (a system message, a chat message, the last
  * tool). The Claude-serving vendors declare Anthropic's ephemeral
@@ -43,20 +53,42 @@ export type AnthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemera
  * is automatic (OpenAI) declares the empty fragment instead: spreading it
  * into `providerOptions` is a harmless no-op on the wire.
  */
-export type CachePointFragment = AnthropicCachePoint | Record<string, never>;
+export type CachePointFragment =
+  | AnthropicCachePoint
+  | BedrockCachePoint
+  | Record<string, never>;
 
 /** The fragment the Claude-serving vendors declare as their `cachePoint`. */
 export const ANTHROPIC_CACHE_POINT: CachePointFragment = {
   anthropic: { cacheControl: { type: 'ephemeral' } },
 };
 
-/** The fragment for vendors whose prompt caching needs no breakpoints. */
+/** The fragment Bedrock's Converse surface reads. */
+export const BEDROCK_CACHE_POINT: CachePointFragment = {
+  bedrock: { cachePoint: { type: 'default' } },
+};
+
+/**
+ * The fragment for vendors whose prompt caching needs no breakpoints — and for
+ * the ones whose support for them is unknown. Both mean "send nothing", which
+ * spreads into `providerOptions` as a no-op.
+ */
 export const NO_CACHE_POINT: CachePointFragment = {};
 
 export type LlmProvider = ((modelId: string) => LanguageModel) & {
   embedding: (modelId: string) => EmbeddingModel;
-  /** The vendor's prompt-cache breakpoint fragment; see CachePointFragment. */
-  cachePoint: CachePointFragment;
+  /**
+   * The prompt-cache breakpoint fragment for one model; see
+   * CachePointFragment.
+   *
+   * Keyed on the model rather than fixed per provider because a single vendor
+   * can serve two protocols: Bedrock routes Claude through the Anthropic
+   * Messages API and everything else through Converse, and the two read their
+   * breakpoints from different namespaces. Getting it wrong is invisible —
+   * the SDK drops an unrecognized namespace silently — so the choice belongs
+   * beside the dispatcher that picks the protocol, not at the call site.
+   */
+  cachePoint: (modelId: string) => CachePointFragment;
   /**
    * `providerOptions` to merge into structured-output (`generateObject`) calls
    * on this vendor, or undefined when the SDK's default path already works.

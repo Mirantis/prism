@@ -30,6 +30,7 @@ import {
   createBedrockEmbeddingProvider,
   createSharedBedrockOptions,
   isAnthropicModelId,
+  isXaiModelId,
 } from './bedrock-shared';
 
 describe('createSharedBedrockOptions', () => {
@@ -131,5 +132,25 @@ describe('isAnthropicModelId', () => {
     expect(isAnthropicModelId('moonshot.kimi-k2-thinking')).toBe(false);
     expect(isAnthropicModelId('meta.llama3-70b-instruct-v1:0')).toBe(false);
     expect(isAnthropicModelId('mistral.mistral-large-2402-v1:0')).toBe(false);
+  });
+});
+
+describe('isXaiModelId', () => {
+  it('matches bare and inference-profile xAI IDs', () => {
+    expect(isXaiModelId('xai.grok-4.6')).toBe(true);
+    expect(isXaiModelId('us.xai.grok-4.6')).toBe(true);
+    expect(isXaiModelId('global.xai.grok-4.6')).toBe(true);
+  });
+
+  it('matches an xAI ID embedded in an ARN', () => {
+    expect(
+      isXaiModelId('arn:aws:bedrock:us-east-1:123:inference-profile/us.xai.grok-4.6'),
+    ).toBe(true);
+  });
+
+  it('does not match other vendors', () => {
+    expect(isXaiModelId('us.anthropic.claude-opus-5')).toBe(false);
+    expect(isXaiModelId('us.amazon.nova-2-lite-v1:0')).toBe(false);
+    expect(isXaiModelId('meta.llama3-70b-instruct-v1:0')).toBe(false);
   });
 });

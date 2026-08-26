@@ -87,7 +87,7 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
     // caveat above), so ask the SDK for the tool-based JSON path rather than
     // Anthropic's native `output_config.format`.
     structuredOutputOptions: { anthropic: { structuredOutputMode: 'jsonTool' } },
-    cachePoint: ANTHROPIC_CACHE_POINT,
+    cachePoint: () => ANTHROPIC_CACHE_POINT,
   });
 }
 

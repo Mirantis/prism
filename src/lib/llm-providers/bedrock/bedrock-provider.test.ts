@@ -157,6 +157,36 @@ describe('createBedrockProvider', () => {
     expect(createBedrockProvider().structuredOutputOptions).toBeUndefined();
   });
 
+  it('gives Anthropic models the Anthropic cacheControl fragment', () => {
+    expect(createBedrockProvider().cachePoint('us.anthropic.claude-opus-5')).toEqual({
+      anthropic: { cacheControl: { type: 'ephemeral' } },
+    });
+  });
+
+  it('gives xAI models the Bedrock cachePoint fragment, which is what Converse reads', () => {
+    // The generic branch speaks Converse, and `@ai-sdk/amazon-bedrock` reads
+    // `providerOptions.bedrock.cachePoint` / `.amazonBedrock.cachePoint`. An
+    // Anthropic-namespaced fragment here is dropped without an error, so the
+    // breakpoints never reach the wire and every turn pays full input price.
+    const provider = createBedrockProvider();
+    expect(provider.cachePoint('us.xai.grok-4.6')).toEqual({
+      bedrock: { cachePoint: { type: 'default' } },
+    });
+    expect(provider.cachePoint('global.xai.grok-4.6')).toEqual({
+      bedrock: { cachePoint: { type: 'default' } },
+    });
+  });
+
+  it('sends no breakpoint for a Converse model whose caching support is undocumented', () => {
+    // AWS guarantees a below-minimum checkpoint fails silently only on a model
+    // that supports caching at all; an unsupported one plausibly rejects the
+    // block outright. Absent is the safe answer — the empty fragment spreads
+    // into `providerOptions` as a no-op, exactly as today.
+    const provider = createBedrockProvider();
+    expect(provider.cachePoint('moonshotai.kimi-k2.5')).toEqual({});
+    expect(provider.cachePoint('meta.llama3-70b-instruct-v1:0')).toEqual({});
+  });
+
   it('exposes .embedding() that delegates to the generic provider', () => {
     const provider = createBedrockProvider();
     provider.embedding('amazon.titan-embed-text-v2:0');

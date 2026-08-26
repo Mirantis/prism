@@ -260,7 +260,7 @@ class CompactionService {
         const modelId = resolveEffectiveModel(context.model);
         const provider = createProvider();
         const model = provider(modelId);
-        const cachePoint = provider.cachePoint;
+        const cachePoint = provider.cachePoint(modelId);
 
         // Same tool set as a chat turn, sent with toolChoice 'none': the tools
         // block must match byte-for-byte or the request misses the

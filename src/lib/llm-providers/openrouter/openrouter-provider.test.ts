@@ -103,7 +103,7 @@ describe('createOpenRouterProvider', () => {
     });
     expect(provider.classificationMinOutputTokens).toBe(16);
     expect(provider.classificationSamplingParams).toEqual({});
-    expect(provider.cachePoint).toEqual({});
+    expect(provider.cachePoint('openai/gpt-5.6')).toEqual({});
   });
 });
 
