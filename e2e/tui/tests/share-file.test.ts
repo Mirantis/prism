@@ -6,6 +6,15 @@
  * A unique sentinel in the file body makes the on-disk assertion deterministic.
  * The runtime gets a writable temp workspace via SHELL_WORKSPACE_ROOT so
  * shell_write_file/share_file don't hit the non-writable `/home/node` default.
+ *
+ * The edit-then-reshare step covers the case where the tool was called correctly
+ * and still delivered the wrong revision: `share_file` reads the file when it
+ * runs, so a share issued alongside the edit captured the bytes from before it.
+ * Comparing the saved bytes is the only assertion that catches that — proving the
+ * tool was called does not. It is a net rather than a gate: real Bedrock cannot be
+ * made to batch the edit and the share into one tool block, so a run where it
+ * sequences them passes without exercising the defect. The deterministic proof is
+ * the unit test in `src/tools/__tests__/share-file.test.ts`.
  */
 
 import fs from 'node:fs';
@@ -15,7 +24,13 @@ import { readFileSync } from 'node:fs';
 import { expect } from 'vitest';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
 import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../harness';
-import { setupRuntime, resetThread, type RuntimeTestEnv } from '../setup';
+import {
+  setupRuntime,
+  resetThread,
+  countMessages,
+  waitForMessageCount,
+  type RuntimeTestEnv,
+} from '../setup';
 
 const feature = loadFeatureFromText(
   readFileSync(path.join(import.meta.dirname, '../features/share-file.feature'), 'utf8'),
@@ -107,5 +122,50 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       expect(await waitForFile(savedPath), `expected ${savedPath} to exist`).toBe(true);
       expect(fs.readFileSync(savedPath, 'utf8')).toContain(content);
     });
+    When('I ask the agent to change it to {string} and share it again', async (_ctx, content: string) => {
+      // Wait on the stored count, not on a frame: the chip and the /save hint from
+      // the FIRST share are still on screen, so a frame matcher for either is
+      // satisfied instantly and the step would assert against the old attachment.
+      const agentsBefore = countMessages(env.dbPath, 'AGENT');
+
+      // Phrased as one request so the model is free to batch the edit and the
+      // share into a single tool block — which is what provoked the defect.
+      const prompt =
+        `Replace the contents of ${sharedName} with exactly "${content}", ` +
+        `and share the updated file with me. Reply with just "done".`;
+      session.send(prompt);
+      await sleep(200);
+      session.send(KEYS.ENTER);
+      await session.waitForFrame(/▌ You/, 5_000);
+
+      await waitForMessageCount(env.dbPath, 'AGENT', agentsBefore + 1, 300_000);
+      // /save reads the newest agent message carrying attachments, so give the
+      // client a moment to render that message before invoking it.
+      await sleep(1_000);
+    });
+    Then(
+      '{string} is saved again containing {string} and not {string}',
+      async (_ctx, name: string, fresh: string, stale: string) => {
+        // A fresh directory, so this asserts on the bytes of the *second* share
+        // rather than re-reading the first one.
+        const secondDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-save-out2-'));
+        try {
+          session.send(`/save ${secondDir}`);
+          await sleep(300);
+          session.send(KEYS.ENTER);
+          await session.waitForFrame(/Saved \d+ file/, 30_000);
+
+          const savedPath = path.join(secondDir, name);
+          expect(await waitForFile(savedPath), `expected ${savedPath} to exist`).toBe(true);
+          const body = fs.readFileSync(savedPath, 'utf8');
+          expect(body).toContain(fresh);
+          // The reported defect, as an assertion: the attachment announced as the
+          // revised file held the bytes it replaced.
+          expect(body).not.toContain(stale);
+        } finally {
+          fs.rmSync(secondDir, { recursive: true, force: true });
+        }
+      },
+    );
   });
 });
