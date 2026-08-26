@@ -3,6 +3,7 @@
  */
 
 import { Tool, tool } from 'ai';
+import { z } from 'zod';
 import { runShellExec, shellExecInput } from './exec';
 import {
   DEFAULT_EXEC_OUTPUT_LIMIT_BYTES,
@@ -17,6 +18,8 @@ import {
   writeFileInput,
   editFileInput,
 } from './files';
+import { resolvePath } from './workspace';
+import type { PendingFileWrites } from '../../lib/pending-file-writes';
 import {
   runClaudeCode,
   runClaudeCodeStatus,
@@ -41,9 +44,40 @@ import {
  * persisted from the CLI's launch cwd); it's resolved once here via
  * `resolveWorkspace` — the single owner of the per-thread-vs-global fallback —
  * and the concrete path is handed to every tool's handler.
+ *
+ * `pendingWrites` lets a reader in the same step wait for a write to the file it
+ * is about to read — see `lib/pending-file-writes.ts`. Only the two tools whose
+ * target path is in their input can take part: `shell_exec` and `claude_code`
+ * write files too, but nothing here can know which. Optional, because a caller
+ * that passes none (the meeting tool bridge, tests) must keep today's behaviour.
  */
-export function getShellTools(workspaceRoot?: string): Record<string, Tool> {
+export function getShellTools(
+  workspaceRoot?: string,
+  pendingWrites?: PendingFileWrites,
+): Record<string, Tool> {
   const workspace = resolveWorkspace(workspaceRoot);
+
+  /**
+   * Announce the path before the step's tools start, and release it once the
+   * write has returned — including when it returns an error, so a failed write
+   * never strands a reader for the whole timeout.
+   */
+  const tracked = <I extends { path: string }, R>(
+    toolName: string,
+    run: (input: I) => Promise<R>,
+  ) => ({
+    onInputAvailable: ({ input, toolCallId }: { input: I; toolCallId: string }) => {
+      pendingWrites?.register(toolCallId, toolName, resolvePath(workspace, input.path));
+    },
+    execute: async (input: I, { toolCallId }: { toolCallId: string }) => {
+      try {
+        return await run(input);
+      } finally {
+        pendingWrites?.settle(toolCallId);
+      }
+    },
+  });
+
   return {
     shell_exec: tool({
       description: `Run a single shell command. Returns { stdout, stderr, exitCode }. Each stream is capped (default ${DEFAULT_EXEC_OUTPUT_LIMIT_BYTES} bytes per stream; pass \`limit\` up to ${MAX_EXEC_OUTPUT_LIMIT} to read more). Truncated output ends with "... (truncated; exceeded N bytes)". For multi-step workflows or interactive tasks use claude_code instead.`,
@@ -64,14 +98,18 @@ export function getShellTools(workspaceRoot?: string): Record<string, Tool> {
       description:
         'Write a file. Overwrites existing files. Use shell_edit_file for modifying existing files; only use this for new files or full rewrites.',
       inputSchema: writeFileInput,
-      execute: async (input) => runWriteFile(input, workspace),
+      ...tracked('shell_write_file', (input: z.infer<typeof writeFileInput>) =>
+        runWriteFile(input, workspace),
+      ),
     }),
 
     shell_edit_file: tool({
       description:
         'Perform exact string replacement in a file. Must call shell_read_file first. Fails if old_string is not found, or matches multiple times without replace_all. Falls back to whitespace-tolerant matching if the exact match fails.',
       inputSchema: editFileInput,
-      execute: async (input) => runEditFile(input, workspace),
+      ...tracked('shell_edit_file', (input: z.infer<typeof editFileInput>) =>
+        runEditFile(input, workspace),
+      ),
     }),
 
     claude_code: tool({

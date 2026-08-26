@@ -26,6 +26,7 @@ import { getSkillTools } from '../tools/skills/index';
 import { getMeetingTools, MEETING_TOOL_NAMES, isMeetingSupported } from '../tools/meeting';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { pluginMcpService } from '../services/plugin-mcp.service';
+import type { PendingFileWrites } from './pending-file-writes';
 
 export interface CollectToolsInput {
   userId: string;
@@ -44,6 +45,13 @@ export interface CollectToolsInput {
    * converter accepts for file content.
    */
   registerAttachmentInjection?: (message: ModelMessage) => void;
+  /**
+   * The current step's announced file writes, so `share_file` can wait for a write
+   * to the file it is about to read instead of racing it. Optional: a caller that
+   * passes none keeps today's unsequenced behaviour, which is what the meeting
+   * tool bridge (no invoke loop, no steps) and unit tests want.
+   */
+  pendingFileWrites?: PendingFileWrites;
   /**
    * Locked-in mode, taken from the caller's context. Withholds the
    * workspace-markdown writers and the long-term memory writers
@@ -103,8 +111,10 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     ...getCronTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
     ...getGoalTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
     ...getAgentConfigTools(),
-    ...getShellTools(input.workspaceRoot),
-    ...getShareFileTools(),
+    ...getShellTools(input.workspaceRoot, input.pendingFileWrites),
+    // Same workspaceRoot as the shell tools: write-then-share has to agree on what
+    // a relative path means, and the write/read sequencing compares resolved paths.
+    ...getShareFileTools(input.workspaceRoot, input.pendingFileWrites),
     ...getAttachmentTools(
       input.userId,
       input.agentId,

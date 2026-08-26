@@ -11,6 +11,7 @@ import { config } from './config';
 import { logger } from './logger';
 import { createProvider, isProviderConfigured } from './lib/llm-providers/create-provider';
 import { collectTools, withToolsCacheControl } from './lib/tool-collection';
+import { createPendingFileWrites } from './lib/pending-file-writes';
 import { SHARE_FILE_TOOL_NAME } from './tools/share-file';
 import { contextService } from './services/context.service';
 import { contextUsageService, type ContextUsageSnapshot } from './services/context-usage.service';
@@ -134,6 +135,12 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // which pins each message right after the tool result that asked for it.
     const pendingAttachmentInjections: ModelMessage[] = [];
 
+  // The current step's file writes, so `share_file` can wait for a write to the
+  // file it is about to read rather than racing it — a step's tool calls run
+  // concurrently, and reading first captures the file as it was before the edit.
+  // Scoped to one step by the `clear()` in `prepareStep` below.
+  const pendingFileWrites = createPendingFileWrites();
+
     // 4. Collect tools (see lib/tool-collection.ts).
     const { tools, subagents } = await collectTools({
       userId: request.userId,
@@ -145,6 +152,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       workspaceRoot: request.workspaceRoot,
       taskInvoker: invoke,
       registerAttachmentInjection: (message) => pendingAttachmentInjections.push(message),
+    pendingFileWrites,
       // While locked in, the workspace-markdown writers are withheld.
       lockedIn: context.lockedIn,
     });
@@ -310,6 +318,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         for (const message of pendingAttachmentInjections.splice(0)) {
           injections.push({ at: base.length, message });
         }
+
+        // A step boundary is the exact scope: the previous step's tools have all
+        // settled and the next step's calls do not exist yet, so nothing can be
+        // waiting and nothing can leak across steps.
+        pendingFileWrites.clear();
 
         // Splice highest index first so each injection lands before the
         // step-message it was recorded against, unshifted by the others.
