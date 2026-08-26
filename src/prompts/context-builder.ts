@@ -188,6 +188,23 @@ export async function buildSystemPromptParts(
     stableSections.push(getSubagentInstructions());
   }
 
+  // A completion claim is only as good as the tool result behind it. Hoisted out
+  // of the mode branches rather than repeated in six of them, and placed *after*
+  // them deliberately: those sections all push for action ("be proactive",
+  // "configure it immediately", "make concrete progress"), and this qualifies how
+  // that work is reported. It comes *before* `# Locked-In Mode`, which asks the
+  // agent to describe what it would have recorded — the one sanctioned
+  // stated-intention case, and it reads as an exception only if it comes second.
+  //
+  // An exclusion, not an inclusion list: the safe default is on, so a mode added
+  // later inherits the rule and an exemption has to be written down. Meeting mode
+  // is the exemption — `prompts/meeting-prompt.ts` is authoritative for a live
+  // call's delivery, `share_file` is withheld there, and speech is the only way
+  // out of a call.
+  if (mode !== 'meeting') {
+    stableSections.push(getClaimsEvidenceInstructions());
+  }
+
   // Locked-in mode: the workspace-markdown writers are absent from the tool set,
   // so say why. Last of the stable sections: the mode instructions above ask the
   // model to record things with `update_memory`, so the constraint must come
@@ -730,6 +747,35 @@ function getConciseDeliveryInstructions(): string {
   return `# Response Delivery (Concise Mode)
 
 Only your **final message** in a multi-step turn is delivered to the user. Intermediate text you produce while using tools is saved but not shown. Therefore your final message must be self-contained: state the outcome of the work you did, include any relevant results, and do not reference earlier narration the user cannot see, unless specifically asked by the user.`;
+}
+
+/**
+ * The rule that a completion claim is backed by a tool result from the same turn.
+ *
+ * Deliberately about *tense and evidence*, never about caution. There is no
+ * "double-check your work" and no "add a caveat if unsure": the failure mode of a
+ * rule like this is padding ("I attempted to…, though I cannot confirm…") that
+ * would fight `# Response Delivery (Concise Mode)` and burn steps re-reading files
+ * a tool already confirmed. Bullet 3 constrains the *claim*, not the action, so it
+ * never mandates a verification pass; and nothing here says "don't describe work
+ * you have not done", which would contradict locked-in mode outright.
+ *
+ * Takes no arguments and interpolates nothing. It sits in the cacheable prefix,
+ * which `invoke.ts` and `services/compaction.service.ts` must produce
+ * byte-identically for a compaction request to hit the same warm prefix as a chat
+ * turn — so it must not come to depend on anything the compaction call site
+ * cannot pass.
+ */
+function getClaimsEvidenceInstructions(): string {
+  return `# Claims and Evidence
+
+Your reply is the only record the user sees, so it has to match what your tools actually did. Report precisely; don't hedge.
+
+- Say you created, edited, deleted, moved, posted or shared something **only after** a tool call in this same turn returned a result showing it happened. If it failed, or you decided not to do it, say that instead — plainly.
+- Phrase an intention as an intention. "I'll write this up" is accurate only if the write follows in this turn or you have scheduled it; otherwise say what you are about to do, or ask.
+- "Verified", "confirmed" and "checked" mean you read the current state in this turn. Name what you read — the path you listed, the command you ran — next to the claim.
+- Your own reasoning, a plan, a subagent's report and a \`claude_code\` transcript are not artifacts. Nothing is on disk until a write tool returns success, and nothing has reached anyone until a delivery tool returns success.
+- When the user is meant to receive a file, write it first, then call \`share_file\` on the path the write returned. Announcing a file you have not written yet leaves the user with nothing to open.`;
 }
 
 /**
