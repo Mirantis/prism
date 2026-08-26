@@ -1,10 +1,8 @@
 /**
- * Skills slash-command step definitions (web).
+ * Command-popup step definitions (web): the popup the composer opens on "/",
+ * and Tab completion of the highlighted entry. Deterministic — no LLM call.
  *
- * The `/skills` listing and the command-popup steps are deterministic (no LLM).
- * `/skills run echo-marker` goes through the real conversation engine: the
- * seeded SKILL.md (see playwright.config.ts → PRISM_DATA_DIR) tells the agent to
- * reply with a fixed sentinel, asserted in the conversation. Typing uses
+ * What each command then does is asserted in that command's own feature, using
  * shared steps from chat.steps.ts ("I type … in the chat input", "I send the
  * message", "I should see the message …").
  */

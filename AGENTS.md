@@ -151,9 +151,9 @@ attaching one as evidence is worse than attaching nothing.
 
 ## Testing
 
-Every new **user-facing feature must ship with comprehensive end-to-end
-tests** covering each surface it touches — exercise the real flow, not just
-unit-level mocks. The e2e suites live in `e2e/`:
+Every new **user-facing feature must ship with end-to-end tests** for the
+behavior it adds. Exercise the real flow, not unit-level mocks. The e2e suites
+live in `e2e/`:
 
 - **Web**: Playwright BDD — a `.feature` in `e2e/features/` with step
   definitions in `e2e/steps/` driving the SPA against a real agent-runtime
@@ -165,10 +165,18 @@ unit-level mocks. The e2e suites live in `e2e/`:
   `AfterEachScenario`/`AfterAllScenarios` hooks; shared steps go through
   `defineSteps`. Run via `npm run test:e2e:tui --workspace=prism-agent-e2e`.
 
-A feature that spans both web and CLI needs e2e coverage on both. Assert on
-authoritative state where possible (downloaded file bytes, DB rows via the
-management API) rather than only on-screen text. Both suites need Node 24+
-and AWS/Bedrock credentials in the shell (see `e2e/README.md`).
+Test each runtime behavior once, in the web suite. It is not necessary to test
+the same backend functionality through several clients, since every UI is a
+client of the same code, and each extra suite costs another runtime boot and,
+usually, another real LLM turn. Two things sit outside that rule. A UI surface
+is written once per UI: a slash command and its parser, a popup, a key binding,
+a status bar, a picker, an `$EDITOR` hand-off. Each suite keeps its own tests
+for those. A path only one suite can reach also stays where it is: a case
+needing fixtures the other suite does not install, and a channel adapter such
+as Slack, whose API calls no other suite makes.
+
+Both suites need Node 24+ and AWS/Bedrock credentials in the shell (see
+`e2e/README.md`).
 
 A test may assert on an observed example — a real transcript line, a captured
 provider response, a payload the runtime actually produced. Recorded output is

@@ -1,15 +1,16 @@
 /**
- * Skills slash command e2e: `/skills` (list), `/skills run <name>` (manual
- * trigger), and the unknown-skill path.
+ * Skills slash command e2e for the two paths the CLI owns: the `/skills list`
+ * alias and the unknown-skill report. The CLI parses both and renders what the
+ * runtime answers — the listing from `GET /agents/skills`, the report from the
+ * 404 of `POST /agents/skills/:name/run` — so neither makes an LLM call.
+ * Running a skill end to end is the web suite's job
+ * (`e2e/features/web/skills.feature`).
  *
  * The runtime is booted with PRISM_DATA_DIR pointed at a hermetic temp dir we
- * seed with two SKILL.md bundles before boot — so the catalog, the `# Skills`
- * system-prompt section, and the `skill` tool are all populated. Listing and
- * the 404 path are deterministic (no LLM); running `echo-marker` goes through
- * the real conversation engine — its SKILL.md tells the agent to reply with a
- * fixed marker, which we assert in the PTY frame, proving the whole path:
- * listing → tool registration → `skill` tool loads the body → the agent follows
- * it → the reply streams over WebSocket to the TUI.
+ * seed with two SKILL.md bundles before boot, so the catalog holds them from
+ * the first request. Nothing here runs a skill, so the bundle bodies are not
+ * exercised; they match the web suite's fixture (playwright.config.ts) rather
+ * than diverging from it.
  *
  * Written with @amiceli/vitest-cucumber (features/skills.feature).
  */
@@ -79,21 +80,15 @@ describeFeature(
         await dispatch(line);
       });
       Step('I see {string}', async (_ctx, text: string) => {
-        // Running a skill awaits a full LLM turn; give it generous headroom.
+        // Listing is deterministic; the headroom is for a slow CI frame.
         await session.waitForFrame(text, 45_000);
       });
     });
 
-    Scenario('/skills lists installed skills with their descriptions', () => {
-      // Covered by the shared steps.
-    });
-    Scenario('/skills list shows the same listing', () => {
+    Scenario('/skills list shows the installed skills with their descriptions', () => {
       // Covered by the shared steps.
     });
     Scenario('/skills run with an unknown skill reports it', () => {
-      // Covered by the shared steps.
-    });
-    Scenario('/skills run loads the skill and the agent follows its instructions', () => {
       // Covered by the shared steps.
     });
   },

@@ -17,18 +17,6 @@ Feature: Background goals
     And the agent runs at least one autonomous goal turn
     And the goal reaches a terminal status
 
-  Scenario: The /goal slash command is offered in the command popup
-    When I navigate to the agent chat page
-    And I type "/" in the chat input
-    Then I should see the command popup
-    And the command popup should list "/goal"
-
-  Scenario: Tab autocompletes the /goal command
-    When I navigate to the agent chat page
-    And I type "/go" in the chat input
-    And I press Tab in the chat input
-    Then the chat input should contain "/goal"
-
   Scenario: /goal list reports no goals initially
     When I navigate to the agent chat page
     And I type "/goal list" in the chat input

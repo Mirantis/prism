@@ -1,16 +1,12 @@
 Feature: Plugins slash command (web)
   As a user I want to see which Agent Plugins are installed and what each one
-  contributes, from the web chat, mirroring the CLI.
+  contributes, from the web chat. The CLI suite keeps the malformed-plugin
+  cases and the MCP servers, which need fixtures the web suite does not
+  install.
 
   Background:
     Given I am logged in
     And I have a personal agent
-
-  Scenario: The command popup lists /plugins
-    When I navigate to the agent chat page
-    And I type "/" in the chat input
-    Then I should see the command popup
-    And the command popup should list "/plugins"
 
   Scenario: /plugins lists the installed plugin and what it contributes
     When I navigate to the agent chat page
