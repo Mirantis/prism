@@ -173,10 +173,6 @@ For implementation tasks, follow a two-phase approach:
 1. **Plan first** — read existing code, understand the architecture, and produce a step-by-step plan before writing any code. Use plan mode or a planning prompt.
 2. **Implement in chunks** — work through the plan one logical piece at a time, committing and pushing after each chunk.
 
-## Completion claims
-
-A claim that you created, edited, deleted, posted or shared an artifact requires a tool result in the same turn. Phrase intent as intent ("I will X") and either do X now or schedule it. A verification claim names what you read in this turn. Never share a file in the same parallel tool block as the write that produced it — share_file snapshots at execute time.
-
 `;
 
 /**

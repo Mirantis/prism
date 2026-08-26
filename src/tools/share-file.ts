@@ -60,6 +60,10 @@ export interface ShareFileFailure {
   error: string;
 }
 
+function tooLargeError(bytes: number): string {
+  return `File too large (${(bytes / (1024 * 1024)).toFixed(1)} MB) — max ${MAX_FILE_SIZE_MB} MB.`;
+}
+
 /**
  * Read a workspace file and persist it as an agent-sourced attachment.
  * Pure (no closure over user/agent) so it's unit-testable; the `workspace`
@@ -83,14 +87,10 @@ export async function runShareFile(
   if (stat.isDirectory()) {
     return { success: false, error: `${input.path} is a directory — share a single file.` };
   }
-  if (stat.size === 0) {
-    return { success: false, error: `File is empty: ${input.path}` };
-  }
+  // Cheap pre-filter only, so a huge file is refused before it is read into
+  // memory. The authoritative checks below run on the bytes.
   if (stat.size > MAX_FILE_SIZE_BYTES) {
-    return {
-      success: false,
-      error: `File too large (${(stat.size / (1024 * 1024)).toFixed(1)} MB) — max ${MAX_FILE_SIZE_MB} MB.`,
-    };
+    return { success: false, error: tooLargeError(stat.size) };
   }
 
   let data: Buffer;
@@ -100,12 +100,20 @@ export async function runShareFile(
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 
+  // Validate and report the bytes actually read, not the earlier stat. A writer
+  // that truncates or extends the file between stat and read would otherwise
+  // store an empty or over-cap attachment and report success.
+  const sizeBytes = data.length;
+  if (sizeBytes === 0) {
+    return { success: false, error: `File is empty: ${input.path}` };
+  }
+  if (sizeBytes > MAX_FILE_SIZE_BYTES) {
+    return { success: false, error: tooLargeError(sizeBytes) };
+  }
+
   const filename = (input.filename?.trim() || path.basename(fullPath)) || 'file';
   const mediaType = detectMediaType(data, filename);
   const category = classifyMediaType(mediaType);
-  // Persist the bytes actually read, not the earlier stat — a concurrent
-  // writer can change the file between stat and read.
-  const sizeBytes = data.length;
 
   const row = await attachmentService.create({
     filename,

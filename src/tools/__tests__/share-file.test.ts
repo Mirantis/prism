@@ -17,6 +17,25 @@ import { MAX_FILE_SIZE_BYTES } from '../../constants';
 // 8-byte PNG signature — detectMediaType sniffs the first bytes for the type.
 const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+// A writer can change the file between the stat and the read, and the tests for
+// that need a read whose bytes disagree with the stat. An ESM namespace is not
+// spyable, so `readFile` is replaced through the module factory and returns
+// `readFileResult` when a test sets one. The override covers every `readFile` in
+// the module graph, not only this tool's, so `afterEach` clears it.
+const mocks = vi.hoisted(() => ({ readFileResult: null as Buffer | null }));
+
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return {
+    ...actual,
+    default: actual,
+    readFile: (...args: Parameters<typeof actual.readFile>) =>
+      mocks.readFileResult
+        ? Promise.resolve(mocks.readFileResult)
+        : actual.readFile(...args),
+  };
+});
+
 describe('runShareFile', () => {
   let workspace: string;
   let createSpy: ReturnType<typeof vi.spyOn>;
@@ -40,6 +59,7 @@ describe('runShareFile', () => {
 
   afterEach(async () => {
     createSpy.mockRestore();
+    mocks.readFileResult = null;
     await fs.rm(workspace, { recursive: true, force: true });
   });
 
@@ -82,6 +102,43 @@ describe('runShareFile', () => {
     await handle.truncate(MAX_FILE_SIZE_BYTES + 1);
     await handle.close();
     const result = await runShareFile({ path: 'big.bin' }, workspace);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error).toMatch(/too large/i);
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a file emptied between the stat and the read', async () => {
+    await fs.writeFile(path.join(workspace, 'race.csv'), 'a,b\n1,2\n');
+    // stat sees those bytes; the read lands after another writer truncated the
+    // file. Only a check on the bytes read catches it.
+    mocks.readFileResult = Buffer.alloc(0);
+
+    const result = await runShareFile({ path: 'race.csv' }, workspace);
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error).toMatch(/empty/i);
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it('reports the size of the bytes read, not the earlier stat size', async () => {
+    const padded = Buffer.concat([PNG_HEADER, Buffer.alloc(200)]);
+    await fs.writeFile(path.join(workspace, 'shrink.png'), padded);
+    mocks.readFileResult = Buffer.concat([PNG_HEADER, Buffer.alloc(8)]);
+
+    const result = await runShareFile({ path: 'shrink.png' }, workspace);
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.sizeBytes).toBe(16);
+    expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({ sizeBytes: 16 }));
+  });
+
+  it('rejects a file grown past the cap between the stat and the read', async () => {
+    await fs.writeFile(path.join(workspace, 'grow.bin'), PNG_HEADER);
+    mocks.readFileResult = Buffer.alloc(MAX_FILE_SIZE_BYTES + 1);
+
+    const result = await runShareFile({ path: 'grow.bin' }, workspace);
+
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error).toMatch(/too large/i);
     expect(createSpy).not.toHaveBeenCalled();

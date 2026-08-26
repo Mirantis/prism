@@ -273,7 +273,7 @@ describe('buildSystemPrompt', () => {
     expect(prompt).not.toContain('# Agent Guide');
   });
 
-  it('always includes completion-claim rules for existing instances (empty agentMd)', async () => {
+  it('includes completion-claim rules when the agent guide is empty', async () => {
     const context = createTestAgentContext({ agentMd: '' });
     const prompt = await buildSystemPrompt(context, 'chat');
     expect(prompt).toContain('## Completion claims');
@@ -284,6 +284,12 @@ describe('buildSystemPrompt', () => {
   it('omits completion-claim rules for subagents', async () => {
     const context = createTestAgentContext({ agentMd: '' });
     const prompt = await buildSystemPrompt(context, 'subagent');
+    expect(prompt).not.toContain('## Completion claims');
+  });
+
+  it('omits completion-claim rules in a meeting, which has no share_file', async () => {
+    const context = createTestAgentContext({ agentMd: '' });
+    const prompt = await buildSystemPrompt(context, 'meeting');
     expect(prompt).not.toContain('## Completion claims');
   });
 });
