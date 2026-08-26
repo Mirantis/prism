@@ -135,11 +135,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // which pins each message right after the tool result that asked for it.
     const pendingAttachmentInjections: ModelMessage[] = [];
 
-  // The current step's file writes, so `share_file` can wait for a write to the
-  // file it is about to read rather than racing it — a step's tool calls run
-  // concurrently, and reading first captures the file as it was before the edit.
-  // Scoped to one step by the `clear()` in `prepareStep` below.
-  const pendingFileWrites = createPendingFileWrites();
+    // The current step's file writes, so `share_file` can wait for a write to the
+    // file it is about to read rather than racing it — a step's tool calls run
+    // concurrently, and reading first captures the file as it was before the edit.
+    // Scoped to one step by the `clear()` in `prepareStep` below.
+    const pendingFileWrites = createPendingFileWrites();
 
     // 4. Collect tools (see lib/tool-collection.ts).
     const { tools, subagents } = await collectTools({
@@ -152,7 +152,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       workspaceRoot: request.workspaceRoot,
       taskInvoker: invoke,
       registerAttachmentInjection: (message) => pendingAttachmentInjections.push(message),
-    pendingFileWrites,
+      pendingFileWrites,
       // While locked in, the workspace-markdown writers are withheld.
       lockedIn: context.lockedIn,
     });

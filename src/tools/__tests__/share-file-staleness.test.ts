@@ -54,6 +54,7 @@ vi.mock('fs/promises', async (importOriginal) => {
 const fs = await import('fs/promises');
 const { runShareFile } = await import('../share-file');
 const { attachmentService } = await import('../../services/attachment.service');
+const { MAX_FILE_SIZE_BYTES } = await import('../../constants');
 
 const sha256 = (data: string) => `sha256:${createHash('sha256').update(data).digest('hex')}`;
 
@@ -111,6 +112,41 @@ describe('runShareFile staleness', () => {
     if (!result.success) return;
     expect(result.digest).toBe(sha256(settled));
     expect(result.sizeBytes).toBe(Buffer.byteLength(settled));
+  });
+
+  // The size and empty guards run on the stat taken before the read, and `data` is
+  // what goes into the media store. A background writer between the two turns that
+  // stat into a claim about a file that no longer exists in that form.
+  it('refuses a file that grew past the cap after the guard stat', async () => {
+    const file = path.join(workspace, 'growing.log');
+    await fs.writeFile(file, 'small\n');
+    hooks.afterRead = async (reads) => {
+      // Grow it once, so the retry reads the oversized file and the re-checked
+      // guard is the only thing standing between it and the media store.
+      if (reads === 1) await fs.writeFile(file, 'x'.repeat(MAX_FILE_SIZE_BYTES + 1));
+    };
+
+    const result = await runShareFile({ path: 'growing.log' }, workspace);
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toMatch(/too large/i);
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a file truncated to nothing after the guard stat', async () => {
+    const file = path.join(workspace, 'vanishing.txt');
+    await fs.writeFile(file, 'had contents\n');
+    hooks.afterRead = async (reads) => {
+      if (reads === 1) await fs.writeFile(file, '');
+    };
+
+    const result = await runShareFile({ path: 'vanishing.txt' }, workspace);
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toMatch(/empty/i);
+    expect(createSpy).not.toHaveBeenCalled();
   });
 
   it('refuses rather than guess when the file keeps changing across both reads', async () => {
