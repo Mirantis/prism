@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { render } from 'ink-testing-library';
 import { Spinner } from './Spinner.js';
 
+// The `dots` frames from cli-spinners (MIT). See `THIRD_PARTY_NOTICES`.
 const BRAILLE_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 describe('Spinner', () => {
