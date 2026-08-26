@@ -74,14 +74,16 @@ export function isAnthropicModelId(modelId: string): boolean {
 /**
  * Returns true when `modelId` is an xAI Grok model on Bedrock — bare
  * (`xai.grok-…`), cross-region inference profile (`us.xai.…`, `global.xai.…`),
- * or an ARN containing `/xai.…`.
+ * or either ARN form. The separator alternation is what covers both: an
+ * inference-profile ARN carries a region token, putting a dot before the
+ * vendor, while a foundation-model ARN puts it straight behind the slash.
  *
  * An application inference profile does not match: its ARN carries a generated
- * id with no vendor token. That is the same blind spot `isAnthropicModelId`
- * has, so such a profile already routes to Converse today.
+ * id with no vendor token at all. That is the same blind spot
+ * `isAnthropicModelId` has, so such a profile already routes to Converse today.
  */
 export function isXaiModelId(modelId: string): boolean {
-  return /^xai\.|\.xai\./i.test(modelId);
+  return /^xai\.|[./]xai\./i.test(modelId);
 }
 
 /**
