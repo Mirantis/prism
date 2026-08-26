@@ -349,10 +349,10 @@ describe('buildSystemPromptParts', () => {
     expect(stable.text).toContain('Check items.');
   });
 
-  // Both sections are rendered with `formatTimeAgo`, which measures against
-  // `Date.now()` — so they differ between runs of the same heartbeat. Keeping
-  // them out of the stable part is what lets that part stay a byte-identical
-  // prefix across runs, which is where nearly all the cached tokens live.
+  // The last alert and the Slack triggers are both rendered with `formatTimeAgo`,
+  // measured against `Date.now()`, so each differs between runs of the same
+  // heartbeat. Keeping them out of the stable part is what lets that part stay a
+  // byte-identical prefix across runs.
   it('heartbeat mode keeps the last alert out of the stable part', async () => {
     const context = createTestAgentContext({
       lastHeartbeatAlert: 'Pod crashed',
