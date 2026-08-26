@@ -146,6 +146,11 @@ describe('isXaiModelId', () => {
     expect(
       isXaiModelId('arn:aws:bedrock:us-east-1:123:inference-profile/us.xai.grok-4.6'),
     ).toBe(true);
+    // A foundation-model ARN carries no region token, so the vendor sits
+    // directly behind the slash rather than behind a dot.
+    expect(
+      isXaiModelId('arn:aws:bedrock:us-east-1::foundation-model/xai.grok-4.6'),
+    ).toBe(true);
   });
 
   it('does not match other vendors', () => {
