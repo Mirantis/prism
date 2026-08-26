@@ -162,9 +162,18 @@ export async function buildSystemPromptParts(
   // Mode-specific instructions
   if (mode === 'heartbeat') {
     stableSections.push(getHeartbeatBaseInstructions(context.heartbeatMd));
+    // Dynamic, as its own doc comment says: it renders `formatTimeAgo` strings
+    // measured against `Date.now()`, so "5min ago" becomes "6min ago" a minute
+    // later. In the stable part that rewrote the prefix meant to cache across
+    // conversations — the one carrying nearly all the cached tokens — on every
+    // run that had an alert or a Slack trigger to report.
+    //
+    // Moved rather than made absolute: relative phrasing is the question a
+    // heartbeat is answering, and the dynamic part is rebuilt per invocation
+    // anyway, so it costs nothing there.
     const heartbeatContext = getHeartbeatContextInstructions(context, slackMessages);
     if (heartbeatContext) {
-      stableSections.push(heartbeatContext);
+      dynamicSections.push(heartbeatContext);
     }
   } else if (mode === 'cron') {
     stableSections.push(getCronInstructions());

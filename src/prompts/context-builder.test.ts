@@ -349,28 +349,34 @@ describe('buildSystemPromptParts', () => {
     expect(stable.text).toContain('Check items.');
   });
 
-  it('heartbeat mode puts last alert in stable part', async () => {
+  // Both sections are rendered with `formatTimeAgo`, which measures against
+  // `Date.now()` — so they differ between runs of the same heartbeat. Keeping
+  // them out of the stable part is what lets that part stay a byte-identical
+  // prefix across runs, which is where nearly all the cached tokens live.
+  it('heartbeat mode keeps the last alert out of the stable part', async () => {
     const context = createTestAgentContext({
       lastHeartbeatAlert: 'Pod crashed',
       lastHeartbeatAlertAt: Date.now() - 30 * 60 * 1000,
     });
     const parts = await buildSystemPromptParts(context, 'heartbeat');
-    const stable = parts.find((p) => p.cacheable)!;
+    const stable = parts[0];
 
-    expect(stable.text).toContain('### Last Alert');
-    expect(stable.text).toContain('Pod crashed');
+    expect(stable.cacheable).toBe(true);
+    expect(stable.text).not.toContain('### Last Alert');
+    expect(parts.map((part) => part.text).join('\n')).toContain('Pod crashed');
   });
 
-  it('heartbeat mode puts Slack messages in stable part', async () => {
+  it('heartbeat mode keeps Slack triggers out of the stable part', async () => {
     const context = createTestAgentContext();
     const slackMessages = [
       { sender: 'Alice', text: 'deploy failed', timestamp: new Date().toISOString() },
     ];
     const parts = await buildSystemPromptParts(context, 'heartbeat', slackMessages);
-    const stable = parts.find((p) => p.cacheable)!;
+    const stable = parts[0];
 
-    expect(stable.text).toContain('### Recent Slack Messages');
-    expect(stable.text).toContain('Alice');
+    expect(stable.cacheable).toBe(true);
+    expect(stable.text).not.toContain('### Recent Slack Messages');
+    expect(parts.map((part) => part.text).join('\n')).toContain('Alice');
   });
 
   it('backward-compatible buildSystemPrompt joins all parts', async () => {
