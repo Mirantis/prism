@@ -162,9 +162,15 @@ export async function buildSystemPromptParts(
   // Mode-specific instructions
   if (mode === 'heartbeat') {
     stableSections.push(getHeartbeatBaseInstructions(context.heartbeatMd));
+    // Dynamic, as its own doc comment says: it carries `formatTimeAgo` strings
+    // measured against `Date.now()`, so "5min ago" becomes "6min ago" a minute
+    // later. Sitting in the stable part, that rewrote the prefix meant to cache
+    // across conversations on every run — and heartbeats are the most frequent
+    // run there is. Relative phrasing is what a heartbeat wants, so it moves to
+    // the dynamic bucket rather than being made absolute.
     const heartbeatContext = getHeartbeatContextInstructions(context, slackMessages);
     if (heartbeatContext) {
-      stableSections.push(heartbeatContext);
+      dynamicSections.push(heartbeatContext);
     }
   } else if (mode === 'cron') {
     stableSections.push(getCronInstructions());
