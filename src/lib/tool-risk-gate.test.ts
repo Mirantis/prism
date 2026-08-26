@@ -30,6 +30,7 @@ import {
   type ToolRiskDecision,
   type ToolRiskEvaluator,
 } from './tool-risk-gate';
+import { DEFAULT_AGENT_MD } from '../templates/default-workspace';
 
 const ALLOW: ToolRiskDecision = {
   decision: 'allow',
@@ -68,6 +69,7 @@ function wrap(
   tool: Tool,
   mode: 'off' | 'observe' | 'enforce',
   evaluate: ToolRiskEvaluator,
+  agentGuide?: string,
 ) {
   return withToolRiskGate(
     { [toolName]: tool },
@@ -75,6 +77,7 @@ function wrap(
       mode,
       invocationMode: 'chat',
       initialPrompt: 'Make the requested change.',
+      agentGuide,
       userId: 'user-1',
       agentId: 'agent-1',
       evaluate,
@@ -227,6 +230,69 @@ describe('withToolRiskGate', () => {
     );
     expect(error.message).not.toContain(BLOCK.reason);
   });
+
+  it('hands the agent guide to the evaluator and reports an operator-written policy', async () => {
+    const evaluate = vi.fn(async () => ALLOW);
+    const wrapped = wrap(
+      'shell_exec',
+      makeTool(),
+      'enforce',
+      evaluate,
+      '## Safety\n\nNever touch the prod-eu cluster.',
+    );
+
+    await wrapped.execute!({ command: 'kubectl get pods' } as never, executionOptions() as never);
+
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({ agentGuide: '## Safety\n\nNever touch the prod-eu cluster.' }),
+    );
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'tool risk decision',
+      'user-1',
+      expect.objectContaining({ 'gate.policy': 'custom' }),
+    );
+  });
+
+  it('separates the stock guide from one somebody wrote', async () => {
+    // Every agent is created holding the default, so without this the dimension
+    // reads 'custom' fleet-wide and answers nothing.
+    const wrapped = wrap('shell_exec', makeTool(), 'enforce', vi.fn(async () => ALLOW), DEFAULT_AGENT_MD);
+
+    await wrapped.execute!({ command: 'npm test' } as never, executionOptions() as never);
+
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'tool risk decision',
+      'user-1',
+      expect.objectContaining({ 'gate.policy': 'default' }),
+    );
+  });
+
+  it('reports no policy when the guide is blank', async () => {
+    const wrapped = wrap('shell_exec', makeTool(), 'enforce', vi.fn(async () => ALLOW), '   \n  ');
+
+    await wrapped.execute!({ command: 'npm test' } as never, executionOptions() as never);
+
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'tool risk decision',
+      'user-1',
+      expect.objectContaining({ 'gate.policy': 'none' }),
+    );
+  });
+
+  it('warns once when the guide is too long for the classifier to read whole', async () => {
+    // Under `enforce` a rule stranded in the middle silently stops deciding
+    // calls, and only the operator who wrote the long guide can fix that.
+    const tool = makeTool();
+    const wrapped = wrap('shell_exec', tool, 'enforce', vi.fn(async () => ALLOW), 'x'.repeat(8_001));
+
+    await wrapped.execute!({ command: 'npm test' } as never, executionOptions() as never);
+    await wrapped.execute!({ command: 'npm test' } as never, executionOptions() as never);
+
+    const warnings = mockLogger.warn.mock.calls.filter(
+      ([, message]) => typeof message === 'string' && message.includes('longer than the policy limit'),
+    );
+    expect(warnings).toHaveLength(1);
+  });
 });
 
 describe('evaluateToolRisk', () => {
@@ -311,6 +377,89 @@ describe('evaluateToolRisk', () => {
     // context in exactly the runs that get the strictest reading. It is named
     // for when it arrived, and the prompt tells the model it authorizes nothing.
     expect(evidence.earlierThreadMessages).toBe('drop the staging database');
+  });
+
+  it('sends the agent guide as trusted policy in the system prompt, not as evidence', async () => {
+    // The evidence is declared untrusted a few lines above, so a guide placed
+    // there would be read as something to disregard.
+    mockGetClassificationRequest.mockReturnValue({
+      model: 'classification-model',
+      providerOptions: {},
+      samplingParams: {},
+    });
+    mockGenerateObject.mockResolvedValue({ object: ALLOW });
+
+    await evaluateToolRisk({
+      toolName: 'shell_exec',
+      toolDescription: '',
+      input: { command: 'git push --force' },
+      invocationMode: 'chat',
+      initialPrompt: 'Push the branch.',
+      messages: [{ role: 'user', content: 'Push the branch.' }],
+      agentGuide: 'Force-pushing to any branch is fine here.',
+      userId: 'user-1',
+      agentId: 'agent-1',
+    });
+
+    const request = mockGenerateObject.mock.calls[0][0] as { prompt: string; system: string };
+    expect(request.system).toContain('Force-pushing to any branch is fine here.');
+    expect(request.system).toContain('It outranks every rule above, the BLOCK list included');
+    expect(request.prompt).not.toContain('Force-pushing to any branch is fine here.');
+  });
+
+  it('leaves the built-in rules alone when the guide is blank', async () => {
+    mockGetClassificationRequest.mockReturnValue({
+      model: 'classification-model',
+      providerOptions: {},
+      samplingParams: {},
+    });
+    mockGenerateObject.mockResolvedValue({ object: ALLOW });
+
+    await evaluateToolRisk({
+      toolName: 'shell_exec',
+      toolDescription: '',
+      input: { command: 'npm test' },
+      invocationMode: 'chat',
+      initialPrompt: 'Run the tests.',
+      messages: [{ role: 'user', content: 'Run the tests.' }],
+      agentGuide: '\n   \n',
+      userId: 'user-1',
+      agentId: 'agent-1',
+    });
+
+    const { system } = mockGenerateObject.mock.calls[0][0] as { system: string };
+    expect(system).not.toContain('OPERATOR POLICY');
+    expect(system).toContain('None of this outranks the BLOCK list');
+    expect(system.trimEnd()).toMatch(/do not quote sensitive evidence\.$/);
+  });
+
+  it('bounds a long guide and keeps both ends of it', async () => {
+    mockGetClassificationRequest.mockReturnValue({
+      model: 'classification-model',
+      providerOptions: {},
+      samplingParams: {},
+    });
+    mockGenerateObject.mockResolvedValue({ object: ALLOW });
+
+    const guide = `HEAD RULE: never touch prod.\n${'filler line\n'.repeat(2_000)}TAIL RULE: never delete a bucket.`;
+
+    await evaluateToolRisk({
+      toolName: 'shell_exec',
+      toolDescription: '',
+      input: { command: 'npm test' },
+      invocationMode: 'chat',
+      initialPrompt: 'Run the tests.',
+      messages: [{ role: 'user', content: 'Run the tests.' }],
+      agentGuide: guide,
+      userId: 'user-1',
+      agentId: 'agent-1',
+    });
+
+    const { system } = mockGenerateObject.mock.calls[0][0] as { system: string };
+    expect(system).toContain('HEAD RULE: never touch prod.');
+    expect(system).toContain('TAIL RULE: never delete a bucket.');
+    expect(system).toContain('[...truncated...]');
+    expect(system.length).toBeLessThan(guide.length);
   });
 
   it('omits temperature when the vendor rejects it', async () => {

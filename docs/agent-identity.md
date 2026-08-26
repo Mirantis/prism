@@ -17,7 +17,7 @@ All seven live in the embedded database and are visible in the
 | **User** | What the agent knows about the person/team it works for. | The agent (it keeps this current as it learns) |
 | **Memory** | A curated long-term summary the agent always keeps in context. | The agent |
 | **Vision** | The user's longer-term goals for the agent to advance proactively. | You |
-| **Agent Guide** | The operating manual — how the agent should behave, when to reach out, safety norms, Slack etiquette, coding workflow. | You, directly — the agent has no tool for it |
+| **Agent Guide** | The operating manual — how the agent should behave, when to reach out, safety norms, Slack etiquette, coding workflow. It is also the policy for the optional [tool risk gate](configuration.md#tool-risk-gate). | You, directly — the agent has no tool for it |
 | **Heartbeat** | The checks the agent runs on its [heartbeat](heartbeat.md) schedule. | You |
 | **Bootstrap** | First-run onboarding instructions; cleared once setup is done. | The agent (clears it) |
 
@@ -40,6 +40,12 @@ no credential from inside the container, so a shell can `PATCH
 localhost:3003/agents/agent-guide` as easily as you can from the UI. What this
 removes is the ordinary path — a tool the model reaches for while doing its
 work — not every path.
+
+The guide is also where you set the policy for the optional
+**[tool risk gate](configuration.md#tool-risk-gate)**. With the gate on, a rule
+you write here decides what the agent may and may not do, and it wins over the
+gate's built-in rules. The caveat above applies to that too, so treat the gate as
+a guardrail rather than a lock.
 
 ## How editing works
 

@@ -23,6 +23,12 @@ avoid a classification round trip for every poll. It is an additional
 check rather than a confinement boundary; OS and Lens Sandbox policy still
 determine what the runtime can actually access.
 
+Your **[Agent Guide](agent-identity.md)** is the gate's policy. Write a rule in
+it and the check follows that rule: name a cluster the agent must not touch, or
+a job it may do without asking. Where the guide says nothing, the built-in
+rules apply. See [Configuration](configuration.md#tool-risk-gate) for what a
+rule in the guide can override.
+
 ## Memory
 
 Manage long-term memory. See **[Memory](memory.md)** for the full picture.
