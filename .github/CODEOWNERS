@@ -2,10 +2,3 @@
 
 # Default owners. Both are current maintainers.
 * @panuhorsmalahti @msa0311
-
-# CI, release workflows and this file.
-/.github/ @panuhorsmalahti
-
-# Voice meeting subsystem.
-/src/services/meeting/ @msa0311
-/docs/voice-meetings.md @msa0311
