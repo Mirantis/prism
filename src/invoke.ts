@@ -159,6 +159,8 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       mode: config.toolRiskGateMode,
       invocationMode: request.mode,
       initialPrompt: request.prompt,
+      // Read as policy by the classifier, not as evidence — see the gate.
+      agentGuide: context.agentMd,
       userId: request.userId,
       agentId: request.agentId,
     });

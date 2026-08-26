@@ -1022,9 +1022,29 @@ describe('invoke', () => {
         mode: 'observe',
         invocationMode: 'cron',
         initialPrompt: 'check deployment',
+        agentGuide: '',
         userId: 'user-test-456',
         agentId: 'agent-test-123',
       },
+    );
+  });
+
+  it('gives the risk gate the agent guide as the operator policy', async () => {
+    // The guide is the one workspace document no tool writes, which is what lets
+    // the classifier read it as policy rather than as evidence.
+    mockGetShellTools.mockReturnValue({ shell_exec: { description: 'exec' } });
+    config.toolRiskGateMode = 'enforce';
+    mockGetAgentContext.mockResolvedValue(
+      createTestAgentContext({ agentMd: '## Safety\n\nNever touch the prod-eu cluster.' }),
+    );
+
+    await invoke(createTestInvokeRequest());
+
+    expect(mockWithToolRiskGate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        agentGuide: '## Safety\n\nNever touch the prod-eu cluster.',
+      }),
     );
   });
 

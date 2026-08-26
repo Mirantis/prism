@@ -137,6 +137,43 @@ call, apart from a few low-risk helpers that bypass it.
 | `observe` | Evaluate calls and emit decision telemetry, but execute them regardless of the verdict. Evaluator failures also fail open. |
 | `enforce` | Block calls classified as unsafe. If the evaluator errors or times out, the evaluated call is blocked rather than executed. Claude Code edit sub-agents use `--permission-mode auto` instead of bypassing permissions. |
 
+### Writing your own policy
+
+The check reads your **[Agent Guide](agent-identity.md)** and treats it as the
+policy for the deployment. Two kinds of rule work:
+
+- **Forbid more.** "Never touch the `prod-eu` cluster." The check now refuses a
+  call it would otherwise have allowed.
+- **Allow more.** "Force-pushing to any branch is fine here." The check now
+  allows a call it would otherwise have refused.
+
+Your guide wins on any point it covers, and the built-in rules apply everywhere
+else. So a rule you write can switch off any part of the check, including the
+refusal of broad deletion, secret exposure and permission changes. Write it as
+narrowly as the work needs.
+
+The guide is an operating manual, so most of it is advice on how to work rather
+than a rule about what is allowed. The check reads it for the rules and takes
+the rest as background.
+
+Read your guide before you switch from `observe` to `enforce`. The guide a new
+agent starts with says "read-only by default" under `## Safety`, and as policy
+that refuses the file edits, builds and dependency installs the agent needs to
+work. Any rule you already wrote for the agent to read now decides what it may
+do. Run `observe` mode first: it shows every rule that would block work, before
+any work is blocked.
+
+The guide is read as one block up to about 8,000 characters. Past that the check
+sees the start and the end of it, so keep a rule out of the middle of a very long
+guide. The runtime logs a warning when your guide is over the limit.
+
+The guide is a guardrail rather than a security boundary, for the reason
+[Agent identity](agent-identity.md) gives. The agent holds a shell, and the
+Management API needs no credential from inside the container. So the agent can
+still edit the document even though it has no tool for it.
+
+### Rollout and failures
+
 Invalid values resolve to `off` and produce a startup warning. A rejection is
 returned to the agent as a failed tool call, so it can explain the refusal or
 choose a safer approach. Tool arguments and user text are not included in

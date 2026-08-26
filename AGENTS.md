@@ -1118,6 +1118,24 @@ drift from the agent's own edits. The user owns it, through one write path:
 Locked-in mode does not cover it — that lock withholds the agent's own writers,
 and there is none here — so the editors keep working while the lock is on.
 
+**It is also the tool risk gate's policy.** `lib/tool-risk-gate.ts` puts the
+guide in the classifier's **system** prompt, not in the evidence JSON — the
+evidence is declared untrusted a few lines above, so guide text there would be
+correctly ignored. It can sit in the system prompt for the reason above: the
+agent has no tool that writes it, so a policy the operator wrote is not one the
+agent rewrites while working. On any point the guide addresses it **outranks the
+built-in rules, the BLOCK list included**: it can permit what those rules refuse,
+and refuse what they permit. That authority is the operator's, since they run the
+container and hold the credentials. The prompt also says the guide is an
+operating manual, so ordinary working advice in it does not read as a verdict.
+Bounded at 8,000 characters (head and tail kept, and a longer guide logs a
+warning once per invocation, since a rule stranded in the middle silently stops
+deciding calls), paid per gated call since the gate runs no prompt cache.
+`gate.policy` on both gate telemetry events says which policy the classifier
+read — `none`, `default` (the stock `DEFAULT_AGENT_MD`) or `custom` — because
+every agent is created holding the default, so "non-blank" would be true
+fleet-wide. The guide text itself never leaves the prompt.
+
 ## Agent Skills
 
 The runtime supports **Agent Skills** following the open standard at
