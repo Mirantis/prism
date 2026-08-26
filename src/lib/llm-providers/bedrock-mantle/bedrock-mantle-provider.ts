@@ -147,7 +147,7 @@ export function createBedrockMantleProvider(baseURL?: string): LlmProvider {
     // ("output_config.format: Extra inputs are not permitted"), so ask the SDK
     // for the tool-based JSON path instead.
     structuredOutputOptions: { anthropic: { structuredOutputMode: 'jsonTool' } },
-    cachePoint: ANTHROPIC_CACHE_POINT,
+    cachePoint: () => ANTHROPIC_CACHE_POINT,
   });
 }
 

@@ -125,7 +125,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // vendor (Bedrock/Azure) and routing (direct vs the Lens Agents gateway).
     const provider = createProvider();
     const model = provider(modelId);
-    const cachePoint = provider.cachePoint;
+    const cachePoint = provider.cachePoint(modelId);
 
     // Queue for messages a tool asks to append to the running conversation,
     // for content a tool result cannot carry and that must arrive as a user

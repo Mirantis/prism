@@ -91,7 +91,7 @@ describe('createOpenAiProvider', () => {
   });
 
   it('declares the empty cache-point fragment — OpenAI caching is automatic', () => {
-    expect(createOpenAiProvider().cachePoint).toEqual({});
+    expect(createOpenAiProvider().cachePoint('gpt-5.6')).toEqual({});
   });
 
   it('declares no structuredOutputOptions — the SDK native path works', () => {

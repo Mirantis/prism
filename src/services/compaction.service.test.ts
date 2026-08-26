@@ -77,7 +77,7 @@ vi.mock('../lib/langfuse', () => ({ isLangfuseEnabled: () => false }));
 const { mockCreateProvider, mockBuildSystemPromptParts, mockBuildConversationMessages } = vi.hoisted(() => ({
   mockCreateProvider: vi.fn(() =>
     Object.assign((modelId: string) => ({ modelId }), {
-      cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      cachePoint: () => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }),
     }),
   ),
   mockBuildSystemPromptParts: vi.fn(),

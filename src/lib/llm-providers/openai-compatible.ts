@@ -58,7 +58,7 @@ export function createOpenAiCompatibleProvider({
     // wrong. Off the default path (the defaults are `openai/*`), and the fix
     // when someone wants it is a cache point of OpenRouter's own, not a knob
     // here.
-    cachePoint: NO_CACHE_POINT,
+    cachePoint: () => NO_CACHE_POINT,
     // See the classification caveat in the header: reasoning off, or the
     // gates' tiny token budgets are spent on reasoning instead of the
     // verdict. Written for GPT-5.x, which is what both vendors' defaults name;

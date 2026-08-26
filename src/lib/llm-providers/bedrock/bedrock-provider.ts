@@ -32,8 +32,13 @@ import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
-import { createSharedBedrockOptions, isAnthropicModelId } from '../bedrock-shared';
-import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
+import { createSharedBedrockOptions, isAnthropicModelId, isXaiModelId } from '../bedrock-shared';
+import {
+  ANTHROPIC_CACHE_POINT,
+  BEDROCK_CACHE_POINT,
+  NO_CACHE_POINT,
+  type LlmProvider,
+} from '../llm-provider';
 
 /**
  * Create an Amazon Bedrock provider that dispatches on model family.
@@ -60,7 +65,23 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
     isAnthropicModelId(modelId) ? anthropic(modelId) : generic(modelId);
   return Object.assign(dispatcher, {
     embedding: (modelId: string) => generic.embedding(modelId),
-    cachePoint: ANTHROPIC_CACHE_POINT,
+    // Same dispatch as the model itself, and for the same reason: the
+    // Anthropic-native provider reads Anthropic's namespace, Converse reads
+    // Bedrock's, and the SDK discards a fragment in the wrong one without
+    // complaint. Grok ran uncached this way — breakpoints placed correctly,
+    // addressed to a namespace Converse never looks at.
+    //
+    // Anything else on the Converse branch gets nothing. AWS's guarantee that
+    // an undersized checkpoint fails silently covers models that support
+    // caching; on one that does not, a `cachePoint` block is a rejected
+    // request. Absent is the honest answer until a model card says otherwise,
+    // and it is byte-identical to what those models send today.
+    cachePoint: (modelId: string) =>
+      isAnthropicModelId(modelId)
+        ? ANTHROPIC_CACHE_POINT
+        : isXaiModelId(modelId)
+          ? BEDROCK_CACHE_POINT
+          : NO_CACHE_POINT,
   });
 }
 
