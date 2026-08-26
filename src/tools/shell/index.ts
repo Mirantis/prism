@@ -76,7 +76,7 @@ export function getShellTools(workspaceRoot?: string): Record<string, Tool> {
 
     claude_code: tool({
       description:
-        'Start Claude Code as an autonomous sub-agent. Returns { taskId } immediately; poll with claude_code_status to stream output and check completion, or claude_code_stop to abandon it. Use for multi-step code workflows, debugging, exploration, builds, and anything where the next step depends on the previous result. Plan-then-edit: call once with mode="plan" to produce a plan, then call again with mode="edit" and the sessionId from the plan response to implement it. Max 3 concurrent tasks.',
+        'Start Claude Code as an autonomous sub-agent. Returns { taskId } immediately; poll with claude_code_status to stream output and check completion, or claude_code_stop to abandon it. Use for multi-step code workflows, debugging, exploration, builds, and anything where the next step depends on the previous result. Plan-then-edit: call once with mode="plan" to produce a plan, then call again with mode="edit" and the sessionId from the plan response to implement it. If a plan comes back with open questions, settle them (asking the user if you cannot) and resume the same session — mode="plan" with its sessionId — putting your answers in the prompt, rather than abandoning the sub-agent or moving on to mode="edit"; switch to edit only once the plan has no open questions left. Max 3 concurrent tasks.',
       inputSchema: claudeCodeInput,
       execute: async (input) => runClaudeCode(input, workspace),
     }),
