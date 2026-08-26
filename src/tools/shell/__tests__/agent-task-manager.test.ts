@@ -4,7 +4,7 @@
  * exercise the full parse/drain/complete state machine without
  * launching the real Claude Code CLI.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 import type { ChildProcess } from 'child_process';
@@ -13,6 +13,7 @@ import {
   AgentTaskManager,
   AgentTaskParams,
   MAX_BUFFER_SIZE,
+  PLAN_ONLY_INSTRUCTION,
   MAX_CONCURRENT,
   type Spawner,
 } from '../agent-task-manager';
@@ -497,5 +498,86 @@ describe('AgentTaskManager', () => {
     expect(capturedArgs).not.toContain('--dangerously-skip-permissions');
     expect(capturedArgs).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
     expect(capturedArgs).not.toContain('auto');
+  });
+});
+
+/**
+ * `--system-prompt` *replaces* Claude Code's default prompt, stripping the sub-agent of
+ * its tool-selection, todo and search conventions — so the invariant every case here
+ * checks is that the flag is never emitted, whatever the mode. Plan mode's read-only
+ * constraint and any caller framing are appended instead, on one flag.
+ */
+describe('buildCliCommand system prompt args', () => {
+  beforeEach(() => {
+    config.toolRiskGateMode = 'off';
+  });
+
+  afterEach(() => {
+    config.toolRiskGateMode = 'off';
+  });
+
+  /** Start a task with a spawner that records the args instead of running anything. */
+  function captureArgs(params: AgentTaskParams): readonly string[] {
+    let captured: readonly string[] | undefined;
+    const capturingSpawner: Spawner = (_command, args) => {
+      captured = args;
+      return new FakeChild() as unknown as ChildProcess;
+    };
+    new AgentTaskManager(capturingSpawner).startTask(params);
+    if (!captured) throw new Error('spawner was not called');
+    return captured;
+  }
+
+  /** The value carried by a flag, or undefined when the flag is absent. */
+  function valueOf(args: readonly string[], flag: string): string | undefined {
+    const i = args.indexOf(flag);
+    return i === -1 ? undefined : args[i + 1];
+  }
+
+  it('never replaces the default prompt, in any mode', () => {
+    for (const mode of ['plan', 'edit', undefined] as const) {
+      for (const appendSystemPrompt of ['custom', undefined]) {
+        const args = captureArgs({ ...sampleParams, mode, appendSystemPrompt });
+        expect(args).not.toContain('--system-prompt');
+      }
+    }
+  });
+
+  it('constrains plan mode by instruction, since the permission mode does not', () => {
+    // The off/observe branch passes bypass permissions, under which Claude Code
+    // auto-approves writes even in plan mode — so the instruction is the real guard.
+    const args = captureArgs({ ...sampleParams, mode: 'plan' });
+    expect(valueOf(args, '--append-system-prompt')).toBe(PLAN_ONLY_INSTRUCTION);
+    expect(args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+  });
+
+  it('carries the plan constraint and a caller prompt on one flag', () => {
+    const args = captureArgs({ ...sampleParams, mode: 'plan', appendSystemPrompt: 'custom' });
+    // One occurrence, so neither part can silently drop the other.
+    expect(args.filter((a) => a === '--append-system-prompt')).toHaveLength(1);
+    const value = valueOf(args, '--append-system-prompt');
+    expect(value).toContain(PLAN_ONLY_INSTRUCTION);
+    expect(value).toContain('custom');
+  });
+
+  it('leaves edit mode with the caller prompt alone and no plan constraint', () => {
+    const args = captureArgs({ ...sampleParams, mode: 'edit', appendSystemPrompt: 'custom' });
+    expect(valueOf(args, '--append-system-prompt')).toBe('custom');
+  });
+
+  it('passes no prompt flag at all for a default-mode task with no caller prompt', () => {
+    const args = captureArgs(sampleParams);
+    expect(args).not.toContain('--append-system-prompt');
+  });
+
+  it('keeps the plan constraint under the enforcing tool-risk gate too', () => {
+    // Enforce mode withholds bypass, so plan really is read-only there; the
+    // instruction still rides along, since `claude` on PATH is not version-pinned.
+    config.toolRiskGateMode = 'enforce';
+    const args = captureArgs({ ...sampleParams, mode: 'plan', appendSystemPrompt: 'custom' });
+    expect(args).not.toContain('--dangerously-skip-permissions');
+    const value = valueOf(args, '--append-system-prompt');
+    expect(value).toContain(PLAN_ONLY_INSTRUCTION);
+    expect(value).toContain('custom');
   });
 });

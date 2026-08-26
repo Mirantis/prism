@@ -27,7 +27,12 @@ export const claudeCodeInput = z.object({
     .describe(
       'Working directory. Relative paths resolve from the workspace root; absolute paths pass through.',
     ),
-  systemPrompt: z.string().optional().describe('Custom system prompt for the sub-agent'),
+  appendSystemPrompt: z
+    .string()
+    .optional()
+    .describe(
+      "Extra instructions appended to Claude Code's default system prompt. Its built-in tool, todo and search conventions are always kept.",
+    ),
   mode: z
     .enum(['edit', 'plan'])
     .optional()
@@ -73,7 +78,7 @@ export async function runClaudeCode(
   const params: AgentTaskParams = {
     prompt: input.prompt,
     workdir,
-    systemPrompt: input.systemPrompt,
+    appendSystemPrompt: input.appendSystemPrompt,
     mode: input.mode,
     maxTurns: input.maxTurns,
     sessionId: input.sessionId,

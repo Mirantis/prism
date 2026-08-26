@@ -26,13 +26,20 @@ export const MAX_BUFFER_SIZE = 1024 * 1024; // 1 MiB
 /** How long a stopped child gets to honour SIGTERM before SIGKILL. */
 export const STOP_GRACE_MS = 2_000;
 
-const PLAN_ONLY_SYSTEM_PROMPT =
-  'You are in plan-only mode. Analyze, explore, and create a detailed plan. Do not create or modify any files. Return your plan as your final text response.';
+/**
+ * Plan mode's read-only promise needs an instruction, not just a permission mode.
+ * In the off/observe gate branch the sub-agent runs with bypass permissions, and
+ * Claude Code auto-approves writes under `--permission-mode plan` whenever bypass
+ * is available — verified: a plan-mode run with both flags overwrote a file on
+ * request. Appended rather than substituted, so the default harness survives.
+ */
+export const PLAN_ONLY_INSTRUCTION =
+  'You are in plan mode: analyze and plan only. Do not create, modify or delete any files, and do not run commands that change state (installs, commits, pushes, deployments).';
 
 export interface AgentTaskParams {
   prompt: string;
   workdir?: string;
-  systemPrompt?: string;
+  appendSystemPrompt?: string;
   mode?: 'edit' | 'plan';
   maxTurns?: number;
   sessionId?: string;
@@ -460,12 +467,18 @@ function buildCliCommand(params: AgentTaskParams): {
     }
   }
 
-  const effectiveSystemPrompt =
-    params.mode === 'plan' && !params.systemPrompt
-      ? PLAN_ONLY_SYSTEM_PROMPT
-      : params.systemPrompt;
-  if (effectiveSystemPrompt) {
-    args.push('--system-prompt', effectiveSystemPrompt);
+  // Always append, never replace: --system-prompt would substitute Claude Code's
+  // default harness (tool selection, todo discipline, search conventions), which is
+  // what a plan-mode delegation most needs. Both the plan constraint and a caller's
+  // own framing ride one flag, so neither can drop the other.
+  const appended = [
+    params.mode === 'plan' ? PLAN_ONLY_INSTRUCTION : undefined,
+    params.appendSystemPrompt,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  if (appended) {
+    args.push('--append-system-prompt', appended);
   }
   if (params.sessionId) {
     args.push('--resume', params.sessionId);
