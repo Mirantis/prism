@@ -27,9 +27,10 @@
  * attempted at all. Proving the model *follows* prose needs a repeatable eval
  * harness, which this repo does not have.
  *
- * It also depends on not running as root. `id -u` is checked in the arrange step
- * and the scenario is skipped rather than passed vacuously, because root ignores
- * the permission bits and the arranged failure would silently disappear.
+ * It also depends on not running as root, which is checked rather than assumed:
+ * root ignores the permission bits, so the arranged failure would quietly not
+ * happen and a pass would prove nothing. The scenario therefore *fails* under root
+ * rather than passing vacuously.
  */
 
 import fs from 'node:fs';

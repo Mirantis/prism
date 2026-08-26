@@ -108,15 +108,31 @@ describe('createPendingFileWrites', () => {
     expect(registry.wasAnnounced('c3')).toBe(false);
   });
 
-  it('releases an outstanding waiter when the step boundary clears the registry', async () => {
+  // Released, not resolved-as-success: a write abandoned at a step boundary is
+  // exactly the case where nobody knows what is on disk, so the reader must treat
+  // it like a timeout rather than read the file as if the write had landed.
+  it('releases an outstanding waiter as cleared when the step boundary wipes the registry', async () => {
     const registry = createPendingFileWrites();
     registry.register('c1', 'shell_edit_file', '/ws/draft.md');
 
     const waiting = registry.waitFor('/ws/draft.md', { timeoutMs: 10_000 });
     registry.clear();
 
-    // Without clear() resolving the deferred this would sit for the full timeout.
-    await expect(waiting).resolves.toMatchObject({ status: 'settled' });
+    // Without clear() releasing the deferred this would sit for the full timeout.
+    await expect(waiting).resolves.toMatchObject({ status: 'cleared' });
+  });
+
+  it('reports cleared when only one of several writes to the path was abandoned', async () => {
+    const registry = createPendingFileWrites();
+    registry.register('c1', 'shell_write_file', '/ws/draft.md');
+    registry.register('c2', 'shell_edit_file', '/ws/draft.md');
+
+    const waiting = registry.waitFor('/ws/draft.md', { timeoutMs: 10_000 });
+    registry.settle('c1');
+    registry.clear();
+
+    // One abandoned write is enough to make the file's contents unknown.
+    await expect(waiting).resolves.toMatchObject({ status: 'cleared' });
   });
 
   it('forgets announcements and writes across a step boundary', async () => {

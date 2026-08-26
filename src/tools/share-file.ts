@@ -152,7 +152,9 @@ export async function runShareFile(
       data = await fs.readFile(fullPath);
       after = await fs.stat(fullPath);
       if (after.size !== data.length) {
-        trackShareRace('changed_during_read', 0, 1);
+        // Zero pending writes by definition: this detector exists for the writers
+        // the registry cannot see.
+        trackShareRace('changed_during_read', 0, 0);
         return {
           success: false,
           error:
@@ -163,6 +165,19 @@ export async function runShareFile(
     }
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  // Re-check the guards against the bytes actually read. The stat above can be
+  // stale by now — a background writer may have grown the file past the cap or
+  // truncated it to nothing — and `data` is what goes into the media store.
+  if (data.length === 0) {
+    return { success: false, error: `File is empty: ${input.path}` };
+  }
+  if (data.length > MAX_FILE_SIZE_BYTES) {
+    return {
+      success: false,
+      error: `File too large (${(data.length / (1024 * 1024)).toFixed(1)} MB) — max ${MAX_FILE_SIZE_MB} MB.`,
+    };
   }
 
   const filename = (input.filename?.trim() || path.basename(fullPath)) || 'file';
@@ -199,7 +214,7 @@ export async function runShareFile(
  * create event, so this does not duplicate a count.
  */
 function trackShareRace(
-  outcome: 'settled' | 'timeout' | 'aborted' | 'changed_during_read' | 'hook_missing',
+  outcome: 'settled' | 'timeout' | 'aborted' | 'cleared' | 'changed_during_read' | 'hook_missing',
   waitMs: number,
   pendingWrites: number,
 ): void {
@@ -253,13 +268,22 @@ async function awaitPendingWrites(
 
   const writer = outcome.toolNames[0] ?? 'a write';
   const reason =
-    outcome.status === 'aborted' ? 'the turn was cancelled' : 'it has not finished';
+    outcome.status === 'aborted'
+      ? 'the turn was cancelled'
+      : outcome.status === 'cleared'
+        ? 'it was abandoned before it finished'
+        : 'it has not returned';
   return {
     success: false,
     error:
-      `Not shared: ${writer} is still writing ${path.basename(fullPath)} in this same tool block and ${reason}. ` +
+      `Not shared: ${writer} was writing ${path.basename(fullPath)} in this same tool block and ${reason}. ` +
       `share_file captures the file when it runs, so the attachment would have held the bytes from before that write. ` +
-      `Call share_file again in your next step, once the write has returned its result, and the download will match what you describe.`,
+      // Deliberately not "once the write has returned its result": the write may
+      // have been rejected outright (the tool risk gate blocks before the handler
+      // runs), in which case waiting for a result it will never produce is a
+      // dead end. Check the write's own outcome first.
+      `Check that write's result: if it succeeded, share the file again in your next step and the download will match ` +
+      `what you describe; if it was rejected or failed, say so instead of describing a file you did not write.`,
   };
 }
 

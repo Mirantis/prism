@@ -775,7 +775,7 @@ Your reply is the only record the user sees, so it has to match what your tools 
 - Phrase an intention as an intention. "I'll write this up" is accurate only if the write follows in this turn or you have scheduled it; otherwise say what you are about to do, or ask.
 - "Verified", "confirmed" and "checked" mean you read the current state in this turn. Name what you read — the path you listed, the command you ran — next to the claim.
 - Your own reasoning, a plan, a subagent's report and a \`claude_code\` transcript are not artifacts. Nothing is on disk until a write tool returns success, and nothing has reached anyone until a delivery tool returns success.
-- When the user is meant to receive a file, write it first, then call \`share_file\` on the path the write returned. Announcing a file you have not written yet leaves the user with nothing to open.`;
+- When the user is meant to receive a file, write it first, then call \`share_file\` on the path you wrote. Announcing a file you have not written yet leaves the user with nothing to open.`;
 }
 
 /**

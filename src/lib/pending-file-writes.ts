@@ -31,7 +31,7 @@ import { logger } from '../logger';
 export type PendingWaitOutcome =
   | { status: 'none' }
   | { status: 'settled'; toolNames: string[]; elapsedMs: number }
-  | { status: 'timeout' | 'aborted'; toolNames: string[]; elapsedMs: number };
+  | { status: 'timeout' | 'aborted' | 'cleared'; toolNames: string[]; elapsedMs: number };
 
 export interface PendingFileWrites {
   /**
@@ -56,15 +56,19 @@ export interface PendingFileWrites {
     fullPath: string,
     options: { timeoutMs: number; abortSignal?: AbortSignal },
   ): Promise<PendingWaitOutcome>;
-  /** Drop everything. Resolves outstanding waiters first so none of them hang. */
+  /**
+   * Drop everything. Releases outstanding waiters first so none of them hang —
+   * as `'cleared'` rather than `'settled'`, because a write abandoned at a step
+   * boundary is precisely the case where nobody knows what is on disk.
+   */
   clear(): void;
 }
 
 interface PendingWrite {
   toolName: string;
   fullPath: string;
-  done: Promise<void>;
-  resolve: () => void;
+  done: Promise<'settled' | 'cleared'>;
+  resolve: (how: 'settled' | 'cleared') => void;
 }
 
 export function createPendingFileWrites(): PendingFileWrites {
@@ -78,8 +82,8 @@ export function createPendingFileWrites(): PendingFileWrites {
       // A duplicate id would mean the SDK announced one call twice; keep the
       // first deferred so an existing waiter still has something to await.
       if (writes.has(toolCallId)) return;
-      let resolve!: () => void;
-      const done = new Promise<void>((r) => {
+      let resolve!: (how: 'settled' | 'cleared') => void;
+      const done = new Promise<'settled' | 'cleared'>((r) => {
         resolve = r;
       });
       writes.set(toolCallId, { toolName, fullPath, done, resolve });
@@ -90,7 +94,7 @@ export function createPendingFileWrites(): PendingFileWrites {
       const entry = writes.get(toolCallId);
       if (!entry) return;
       writes.delete(toolCallId);
-      entry.resolve();
+      entry.resolve('settled');
     },
 
     announce(toolCallId, _toolName) {
@@ -113,8 +117,12 @@ export function createPendingFileWrites(): PendingFileWrites {
       const { abortSignal } = options;
 
       try {
-        const outcome = await Promise.race<'settled' | 'timeout' | 'aborted'>([
-          Promise.all(matching.map((w) => w.done)).then(() => 'settled' as const),
+        const outcome = await Promise.race<'settled' | 'timeout' | 'aborted' | 'cleared'>([
+          // Any entry released by `clear()` poisons the whole wait: one abandoned
+          // write is enough to make the file's contents unknown.
+          Promise.all(matching.map((w) => w.done)).then((hows) =>
+            hows.includes('cleared') ? ('cleared' as const) : ('settled' as const),
+          ),
           new Promise<'timeout'>((resolve) => {
             timer = setTimeout(() => resolve('timeout'), options.timeoutMs);
           }),
@@ -144,7 +152,7 @@ export function createPendingFileWrites(): PendingFileWrites {
           { pendingWrites: [...writes.values()].map((w) => w.toolName) },
           'pending file writes left unsettled at step boundary',
         );
-        for (const entry of writes.values()) entry.resolve();
+        for (const entry of writes.values()) entry.resolve('cleared');
       }
       writes.clear();
       announced.clear();

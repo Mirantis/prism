@@ -204,9 +204,11 @@ describe('runShareFile', () => {
 
       expect(result.success).toBe(false);
       if (result.success) return;
-      expect(result.error).toMatch(/still writing/i);
+      expect(result.error).toMatch(/was writing/i);
       expect(result.error).toMatch(/shell_edit_file/);
-      expect(result.error).toMatch(/next step/i);
+      // Points at the write's own result rather than promising one it may never
+      // return: the risk gate can reject a call before its handler ever runs.
+      expect(result.error).toMatch(/Check that write's result/i);
       expect(createSpy).not.toHaveBeenCalled();
     });
 
