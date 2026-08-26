@@ -2,7 +2,7 @@
  * Context Builder Tests
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { mockBuildMemoryContext } = vi.hoisted(() => ({
   mockBuildMemoryContext: vi.fn(),
@@ -310,13 +310,13 @@ describe('buildSystemPromptParts', () => {
     expect(stable).toContain('untrusted DATA');
   });
 
-  it('dynamic part contains runtime context timestamp', async () => {
+  it('dynamic part contains the runtime date', async () => {
     const context = createTestAgentContext();
     const parts = await buildSystemPromptParts(context, 'chat');
     const dynamic = parts[1].text;
 
     expect(dynamic).toContain('# Runtime Context');
-    expect(dynamic).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(dynamic).toMatch(/\d{4}-\d{2}-\d{2}/);
     // Includes the weekday name to prevent the model miscalculating the day of week.
     expect(dynamic).toMatch(/\((Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\)/);
   });
@@ -983,5 +983,61 @@ describe('buildSteeringMessage', () => {
     expect(typeof message.content).toBe('string');
     expect(message.content as string).toContain('doc.pdf');
     expect(message.content as string).toContain('id=c');
+  });
+});
+
+describe('buildSystemPromptParts runtime stamp', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockBuildMemoryContext.mockResolvedValue('');
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('holds the stamp steady across a day so the cache prefix survives turns', async () => {
+    // Bedrock chains its cache checkpoints tools → system → messages, so any
+    // byte that changes inside `system` between turns invalidates the
+    // message-history cache sitting behind it — the whole conversation is
+    // re-read at full input price. This is the property that matters; the
+    // wording of the section is not.
+    const context = createTestAgentContext();
+
+    vi.setSystemTime(new Date('2026-08-26T00:00:00.000Z'));
+    const first = await buildSystemPromptParts(context, 'chat');
+
+    vi.setSystemTime(new Date('2026-08-26T23:59:59.999Z'));
+    const second = await buildSystemPromptParts(context, 'chat');
+
+    expect(second.map((part) => part.text)).toEqual(first.map((part) => part.text));
+  });
+
+  it('carries no clock reading at all', async () => {
+    // A truncated clock is stabler than a precise one and still wrong by up to
+    // its own granularity, while reading as exact. The date claims only what
+    // stays true for the turn.
+    const context = createTestAgentContext();
+    vi.setSystemTime(new Date('2026-08-26T14:37:12.500Z'));
+
+    const parts = await buildSystemPromptParts(context, 'chat');
+    const runtime = parts.find((part) => part.text.includes('# Runtime Context'));
+
+    expect(runtime?.text).toContain('2026-08-26');
+    expect(runtime?.text).not.toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it('advances at the date boundary', async () => {
+    const context = createTestAgentContext();
+
+    vi.setSystemTime(new Date('2026-08-26T23:59:59.999Z'));
+    const before = await buildSystemPromptParts(context, 'chat');
+
+    vi.setSystemTime(new Date('2026-08-27T00:00:00.000Z'));
+    const after = await buildSystemPromptParts(context, 'chat');
+
+    expect(after[1].text).not.toEqual(before[1].text);
+    expect(after[1].text).toContain('2026-08-27');
   });
 });

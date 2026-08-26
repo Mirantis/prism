@@ -209,10 +209,21 @@ export async function buildSystemPromptParts(
     }
   }
 
-  // Runtime context — dynamic (timestamp changes every call)
+  // Runtime context — the date, with no clock. This string sits inside a cached
+  // system part, and Bedrock chains its cache checkpoints tools → system →
+  // messages, so a byte that changes here between turns invalidates the
+  // message-history cache behind it and the conversation is re-read at full
+  // input price. Relocating the stamp does not help: `system` always precedes
+  // `messages`, so anywhere in the system prompt is inside that prefix.
+  //
+  // A clock reading makes every turn a miss. Truncating one to the hour would
+  // trade most of that away for a stamp that is wrong by up to an hour and
+  // still reads as exact — the date is both stabler and honest about what it
+  // claims. Time is a mutable fact: an agent that needs it should read a clock
+  // when it needs it, not trust one frozen when the turn began.
   const now = new Date();
   const weekday = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
-  dynamicSections.push(`# Runtime Context\n\nCurrent UTC date and time (ISO-8601): ${now.toISOString()} (${weekday})`);
+  dynamicSections.push(`# Runtime Context\n\nCurrent UTC date: ${now.toISOString().slice(0, 10)} (${weekday})`);
 
   const parts: SystemPromptPart[] = [];
   if (stableSections.length > 0) {
