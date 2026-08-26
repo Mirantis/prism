@@ -200,7 +200,9 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // Prompt caching: system prompt parts marked cacheable get cache breakpoints.
     // [0] stable prefix (identity, soul, memory, instructions) — cached across conversations
     // [1] recalled memories + timestamp — cached within multi-step invocations
-    // Bedrock allows max 4 breakpoints: 2 system + last message (via prepareStep) + last tool.
+    // Bedrock allows 4 breakpoints. The Anthropic Messages path uses all four:
+    // 2 system + last message (via prepareStep) + last tool. Converse ignores
+    // the tools one (see withToolsCacheControl), so it receives 3.
     const cachedSystem: SystemModelMessage[] = systemParts.map((part) => ({
       role: 'system' as const,
       content: part.text,

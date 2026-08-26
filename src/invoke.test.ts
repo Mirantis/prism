@@ -504,7 +504,8 @@ describe('invoke', () => {
     // The mocked provider is `(modelId) => LanguageModel`; capture the modelId
     // it's called with to assert which model each mode resolves to.
     function captureModelId() {
-      const modelFn = Object.assign(vi.fn(() => 'model-instance'), { cachePoint: () => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }) });
+      const cachePoint = vi.fn(() => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }));
+      const modelFn = Object.assign(vi.fn(() => 'model-instance'), { cachePoint });
       mockCreateBedrockProvider.mockReturnValue(modelFn);
       return modelFn;
     }
@@ -551,6 +552,23 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ mode: 'cron' }));
 
       expect(modelFn).toHaveBeenCalledWith('cron-model');
+    });
+
+    it('asks for the cache breakpoint of the model the turn actually runs', async () => {
+      // The breakpoint namespace follows the protocol, and on Bedrock the
+      // protocol follows the model — so resolving it against the wrong id hands
+      // Converse an Anthropic fragment it discards, uncached and unremarked. A
+      // mode override is where the turn's model and the agent's default model
+      // diverge, so it is the case that would catch a stale id.
+      mockGetAgentContext.mockResolvedValue(
+        createTestAgentContext({ cronModel: 'cron-model', model: 'main-model' }),
+      );
+      const modelFn = captureModelId();
+
+      await invoke(createTestInvokeRequest({ mode: 'cron' }));
+
+      expect(modelFn).toHaveBeenCalledWith('cron-model');
+      expect(modelFn.cachePoint).toHaveBeenCalledWith('cron-model');
     });
 
     it('chat mode ignores heartbeat/cron overrides and uses the main model', async () => {

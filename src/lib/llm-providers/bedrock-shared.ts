@@ -76,13 +76,9 @@ export function isAnthropicModelId(modelId: string): boolean {
  * (`xai.grok-…`), cross-region inference profile (`us.xai.…`, `global.xai.…`),
  * or an ARN containing `/xai.…`.
  *
- * Its one caller is the cache-point selector. Grok reaches Bedrock over
- * Converse, whose breakpoints live in a different `providerOptions` namespace
- * than Anthropic's, and AWS documents prompt caching as supported for it — the
- * two facts that make it safe to send a breakpoint at all. Vendors whose
- * caching support is undocumented are deliberately not enumerated here: a
- * `cachePoint` block on a model that does not accept one is a request-level
- * rejection, not a missed cache.
+ * An application inference profile does not match: its ARN carries a generated
+ * id with no vendor token. That is the same blind spot `isAnthropicModelId`
+ * has, so such a profile already routes to Converse today.
  */
 export function isXaiModelId(modelId: string): boolean {
   return /^xai\.|\.xai\./i.test(modelId);
