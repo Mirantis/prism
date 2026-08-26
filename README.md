@@ -401,3 +401,6 @@ Prism exposes the following surfaces:
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
+
+Some files are copied or adapted from third-party projects. See
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
