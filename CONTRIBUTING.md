@@ -77,6 +77,12 @@ New behavior should ship with tests. The suite runs on [vitest](https://vitest.d
   under `web/` and the TUI under `cli/`.
 - Update documentation when you change public behavior, configuration, or env
   vars. Keep [`AGENTS.md`](AGENTS.md) in sync when you touch architecture.
+- A file copied or adapted from another project lands in the same pull request as
+  its [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES) entry. The entry names the
+  project, the version, the license, the copyright holder, and the files it
+  covers, and reproduces the upstream license text verbatim. A paraphrase is not
+  acceptable. The file itself points at `THIRD_PARTY_NOTICES`, in a header comment
+  or in a README beside it.
 
 ## Commit Style
 
