@@ -174,8 +174,14 @@ export function countMessages(dbPath: string, role: 'USER' | 'AGENT'): number {
   }
 }
 
-/** How many rows of `role` contain `text`. */
-function countMessagesContaining(dbPath: string, role: 'USER' | 'AGENT', text: string): number {
+/**
+ * How many rows of `role` contain `text`.
+ *
+ * Exported for the assertions that need a sentinel to be *absent*:
+ * `waitForStoredMessage` only proves presence, and `session.output()` is a
+ * wrapped, truncated frame buffer rather than the stored message.
+ */
+export function countMessagesContaining(dbPath: string, role: 'USER' | 'AGENT', text: string): number {
   const db = new Database(dbPath, { readonly: true });
   try {
     const row = db

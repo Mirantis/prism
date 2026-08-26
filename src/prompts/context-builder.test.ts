@@ -260,6 +260,59 @@ describe('buildSystemPrompt', () => {
     expect(prompt).not.toContain('# Scheduled Task Mode');
   });
 
+  it('states the claims-and-evidence rule', async () => {
+    const prompt = await buildSystemPrompt(createTestAgentContext(), 'chat');
+    expect(prompt).toContain('# Claims and Evidence');
+    expect(prompt).toContain('only after');
+    expect(prompt).toContain('Phrase an intention as an intention');
+    expect(prompt).toContain('Name what you read');
+    expect(prompt).toContain('are not artifacts');
+    expect(prompt).toContain('then call `share_file`');
+  });
+
+  // A reply is the only record the user sees in every one of these modes: a
+  // heartbeat or cron result lands as a bare message, a webhook reply reports a
+  // remediation, a goal turn's prose is read by a checker deciding completion,
+  // and a subagent's report is acted on by its parent.
+  it('carries the claims-and-evidence rule in every mode that reports to a human', async () => {
+    for (const mode of ['chat', 'heartbeat', 'cron', 'webhook', 'goal', 'subagent'] as const) {
+      const prompt = await buildSystemPrompt(createTestAgentContext(), mode);
+      expect(prompt, `mode ${mode}`).toContain('# Claims and Evidence');
+    }
+  });
+
+  it('leaves the claims-and-evidence rule to the meeting prompt in meeting mode', async () => {
+    const prompt = await buildSystemPrompt(createTestAgentContext(), 'meeting');
+    expect(prompt).not.toContain('# Claims and Evidence');
+    // The omission must not leave a dangling section separator behind.
+    expect(prompt).not.toMatch(/\n{3}/);
+  });
+
+  // Locked-in mode asks the agent to describe what it *would* have recorded — an
+  // intention it cannot fulfil, and the one sanctioned exception to the rule
+  // above. It only reads as an exception if it comes second.
+  it('states the rule after the mode instructions and before the locked-in exception', async () => {
+    const prompt = await buildSystemPrompt(createTestAgentContext({ lockedIn: true }), 'chat');
+    expect(prompt.indexOf('# Claims and Evidence')).toBeGreaterThan(prompt.indexOf('# Chat Mode'));
+    expect(prompt.indexOf('# Claims and Evidence')).toBeLessThan(prompt.indexOf('# Locked-In Mode'));
+  });
+
+  // The rule is a repo-owned literal, not a line in the agent guide: the guide is
+  // seeded once at creation and is the user's to edit, so a deployed agent whose
+  // guide is empty or has diverged must still be governed by it.
+  it('reaches an agent whose guide is empty and one whose guide has diverged', async () => {
+    const empty = await buildSystemPrompt(createTestAgentContext({ agentMd: '' }), 'chat');
+    expect(empty).not.toContain('# Agent Guide');
+    expect(empty).toContain('# Claims and Evidence');
+
+    const diverged = await buildSystemPrompt(
+      createTestAgentContext({ agentMd: 'A guide rewritten by its user, saying nothing about claims.' }),
+      'chat',
+    );
+    expect(diverged).toContain('# Agent Guide');
+    expect(diverged).toContain('# Claims and Evidence');
+  });
+
   it('includes agent guide when agentMd is non-empty', async () => {
     const context = createTestAgentContext({ agentMd: 'Be proactive with heartbeats.' });
     const prompt = await buildSystemPrompt(context, 'chat');
@@ -308,6 +361,7 @@ describe('buildSystemPromptParts', () => {
     expect(stable).toContain('hydrate_attachment');
     expect(stable).toContain('view_attachment');
     expect(stable).toContain('untrusted DATA');
+    expect(stable).toContain('# Claims and Evidence');
   });
 
   it('dynamic part contains runtime context timestamp', async () => {
@@ -382,6 +436,55 @@ describe('buildSystemPromptParts', () => {
       const joined = await buildSystemPrompt(context, 'chat');
 
       expect(joined).toBe(parts.map((p) => p.text).join('\n\n---\n\n'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The stable part carries a cache breakpoint, so a value that changes between
+  // turns costs a full prefix rewrite on every request — a silent cost regression
+  // with nothing to fail. Advance the clock rather than freeze it: a frozen clock
+  // makes a Date.now() read produce identical bytes, so the test would pass while
+  // the bug was present.
+  it('builds a byte-identical stable prefix when only the clock has moved', async () => {
+    vi.useFakeTimers();
+    try {
+      const context = createTestAgentContext();
+      for (const mode of ['chat', 'heartbeat', 'cron', 'webhook', 'goal', 'subagent'] as const) {
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+        const first = await buildSystemPromptParts(context, mode);
+        vi.setSystemTime(new Date('2026-01-02T09:30:00Z'));
+        const second = await buildSystemPromptParts(context, mode);
+
+        expect(second[0].cacheable, `mode ${mode}`).toBe(true);
+        expect(second[0].text, `mode ${mode}`).toBe(first[0].text);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The one known exception, pinned rather than wished away: a heartbeat's last
+  // alert is rendered as a relative time inside the cacheable part, so that prefix
+  // really does churn turn to turn. Documented here so nobody "fixes" the test
+  // above by deleting its heartbeat case.
+  it('churns the stable prefix when a heartbeat renders its last alert as a relative time', async () => {
+    vi.useFakeTimers();
+    try {
+      const start = new Date('2026-01-01T00:00:00Z');
+      const context = createTestAgentContext({
+        lastHeartbeatAlert: 'Pod crashed',
+        lastHeartbeatAlertAt: start.getTime() - 30 * 60 * 1000,
+      });
+
+      vi.setSystemTime(start);
+      const first = await buildSystemPromptParts(context, 'heartbeat');
+      vi.setSystemTime(new Date('2026-01-02T09:30:00Z'));
+      const second = await buildSystemPromptParts(context, 'heartbeat');
+
+      expect(first[0].text).toContain('30min ago');
+      expect(second[0].text).toContain('1d ago');
+      expect(second[0].text).not.toBe(first[0].text);
     } finally {
       vi.useRealTimers();
     }
