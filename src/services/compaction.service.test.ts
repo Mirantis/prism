@@ -77,7 +77,10 @@ vi.mock('../lib/langfuse', () => ({ isLangfuseEnabled: () => false }));
 const { mockCreateProvider, mockBuildSystemPromptParts, mockBuildConversationMessages } = vi.hoisted(() => ({
   mockCreateProvider: vi.fn(() =>
     Object.assign((modelId: string) => ({ modelId }), {
-      cachePoint: () => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }),
+      // A spy rather than a constant, so the chat-parity test can pin which
+      // model id the breakpoint was resolved against. On Bedrock the namespace
+      // follows the model, and a mismatch is discarded without an error.
+      cachePoint: vi.fn(() => ({ anthropic: { cacheControl: { type: 'ephemeral' } } })),
     }),
   ),
   mockBuildSystemPromptParts: vi.fn(),
@@ -612,6 +615,10 @@ describe('compactNow (manual)', () => {
     );
     expect(request.tools).toEqual({ shell: { description: 'sh' } });
     expect(request.toolChoice).toBe('none');
+    // Resolved against the model this compaction actually runs, not the agent's
+    // stored default — the two differ under a mode override, and a breakpoint
+    // aimed at the wrong protocol is dropped silently.
+    expect(mockCreateProvider.mock.results[0]?.value.cachePoint).toHaveBeenCalledWith('stored-model');
     // Cacheable system parts carry the Anthropic breakpoint, like invoke.ts.
     expect(request.system).toEqual([
       {

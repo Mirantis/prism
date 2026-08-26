@@ -198,9 +198,18 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
 }
 
 /**
- * Mark the last tool with the provider's cache breakpoint so the entire tools
- * block is cached across requests. Tools are stable per agent, so this yields
- * near-100% cache hit rates after the first request.
+ * Mark the last tool with the provider's cache breakpoint. Tools are stable per
+ * agent, so a checkpoint here is the cheapest one to keep warm.
+ *
+ * It reaches the wire on the Anthropic Messages path only. Bedrock's Converse
+ * conversion builds each `toolSpec` from the tool's name, description and
+ * schema and never reads its `providerOptions`, so on that path this is a
+ * no-op and the tools block carries no checkpoint of its own. AWS documents
+ * the checkpoint order as tools → system → messages with the minimum measured
+ * across all three, which implies a later `system` checkpoint still covers the
+ * tools ahead of it — the loss is a separate cache segment for tools, not the
+ * tokens going uncached. Worth re-checking against `cacheReadInputTokens` if
+ * the Converse hit rate lands materially below the Messages one.
  */
 export function withToolsCacheControl(
   tools: Record<string, Tool>,
