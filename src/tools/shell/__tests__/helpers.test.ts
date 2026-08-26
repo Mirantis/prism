@@ -93,6 +93,15 @@ describe('edit.applyEdit', () => {
     if (result.ok) expect(result.content).toContain('function bar()');
   });
 
+  it('rejects an ambiguous line-trimmed match instead of editing the first one', () => {
+    // Two indented copies of the passage, neither an exact match for the
+    // unindented search text: editing the first would be a silent wrong edit.
+    const content = '  - item\n  - other\n\n  - item\n  - other';
+    const result = applyEdit(content, '- item\n- other', '- changed', false);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain('2 whitespace-tolerant matches');
+  });
+
   it('keeps the exact-match path when both exact and trimmed would match', () => {
     // If exact match hits first the line-trimmed branch isn't even tried.
     const result = applyEdit('  hello\n', 'hello', 'goodbye', true);

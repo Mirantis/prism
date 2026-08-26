@@ -21,6 +21,7 @@ export const DEFAULT_AGENT_SEED = {
   name: 'Test Agent',
   soulMd: 'You are a helpful test agent.',
   userMd: 'E2E test user profile.',
+  agentMd: 'E2E agent guide.',
   memoryMd: '',
   heartbeatMd: '## Heartbeat\nNo active checks configured.',
 };

@@ -274,6 +274,24 @@ describe('getAgentConfigTools', () => {
     });
   });
 
+  describe('edit failures', () => {
+    it('names the document when an edit does not match', async () => {
+      // Observed in chat: the model took `oldText` from one document and sent
+      // it to another, so the error has to say which one was searched.
+      mockPrisma.agentWorkspace.findUnique.mockResolvedValue(
+        createTestAgentWorkspace({ soulMd: '# Soul\n- Reply in English' }),
+      );
+      const result = (await tools.update_soul.execute({
+        edits: [{ oldText: '## Vibe\nBalanced between conciseness and thoroughness.', newText: '## Vibe\nVery concise.' }],
+        changeDescription: 'be concise',
+      })) as AgentConfigResult;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/^Soul: .*oldText not found/);
+      expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('clear_bootstrap', () => {
     it('clears bootstrapMd', async () => {
       await tools.clear_bootstrap.execute({ confirmationMessage: 'done' });

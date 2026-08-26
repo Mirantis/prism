@@ -6,9 +6,16 @@
  * logger records the object it was handed and would pass whatever the serializer
  * does or does not do. So the assertions read the JSON line pino actually writes.
  *
- * The error is a real `APICallError` from the SDK, carrying the real gate prompt and
- * a sentence standing in for something someone said in a meeting — the exact payload
- * that reached production logs.
+ * The error is a real `APICallError` from the SDK, carrying a real gate prompt and a
+ * sentence standing in for private user content — the exact payload shape that
+ * reached production logs.
+ *
+ * The prompt is the scheduled-task gate's because it is a real, surviving
+ * `generateText` payload. It used to be the meeting addressed-gate's, which was the
+ * call that produced the production leak; that gate now judges audio over a
+ * WebSocket and builds no such prompt, so the payload had to come from one of the
+ * gates that still makes one. What is being proved is a property of the serializer,
+ * not of any one caller.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -16,7 +23,7 @@ import { APICallError, RetryError } from 'ai';
 import pino from 'pino';
 import { serializeError } from '../log-redaction';
 import { logger } from '../../logger';
-import { SYSTEM } from '../../services/meeting/addressed-classifier';
+import { CRON_TASK_GATE_PROMPT } from '../../prompts/cron-prompt';
 
 const TRANSCRIPT = 'Emma, can you take a look at the staging cluster?';
 const RESPONSE_BODY = '{"message":"model access denied for account 1234"}';
@@ -27,7 +34,7 @@ function apiError(overrides: Partial<Parameters<typeof APICallError>[0]> = {}) {
     message: 'Bad Request',
     url: 'https://bedrock-runtime.us-east-1.amazonaws.com/model/haiku/converse',
     requestBodyValues: {
-      system: SYSTEM,
+      system: CRON_TASK_GATE_PROMPT,
       messages: [{ role: 'user', content: `Assistant's name: Emma\nSentence: ${TRANSCRIPT}` }],
     },
     statusCode: 400,
@@ -53,12 +60,12 @@ describe('serializing an error into a log', () => {
   it('writes neither the request it sent nor the response it got', () => {
     const { lines, log } = capturing();
 
-    log.error({ err: apiError() }, '[Meeting:Gate] Call failed, staying quiet');
+    log.error({ err: apiError() }, '[Cron] Gate call failed');
 
     const line = lines.join('\n');
-    // What someone said in the meeting, and the prompt it was judged with.
+    // The user's own content, and the prompt it was judged with.
     expect(line).not.toContain(TRANSCRIPT);
-    expect(line).not.toContain('call that assistant by name');
+    expect(line).not.toContain('decide whether its result should be delivered');
     expect(line).not.toContain('Emma');
     // What the vendor sent back, headers included.
     expect(line).not.toContain(RESPONSE_BODY);

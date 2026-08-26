@@ -178,10 +178,11 @@ call:
 
 - **Just you and the agent.** It answers everything you say, as an assistant on a
   call with you would.
-- **Anyone else in the call.** It stays quiet unless you call it by name ("Prism,
-  can you check the cluster?") — every time, including follow-ups. Everything else —
-  two people working through a problem with each other — it sits through in silence,
-  however much a sentence might have sounded like a request.
+- **Anyone else in the call.** It stays quiet until you bring it in by name
+  ("Prism, can you check the cluster?"), and then stays with the exchange — a
+  follow-up like "did you find anything?" doesn't need the name again. Everything
+  else — two people working through a problem with each other — it sits through in
+  silence, however much a sentence might have sounded like a request.
 
 It switches over as people join and leave, within about ten seconds. You don't
 have to ask for any of this, but you can override it per call:
@@ -189,47 +190,48 @@ have to ask for any of this, but you can override it per call:
 > Join `https://meet.google.com/abc-defg-hij` and only speak when someone says your
 > name
 
-**Say its name every time, including follow-ups.** There's no grace period. An
-earlier version stayed engaged for fifteen seconds after speaking, so a follow-up
-didn't need the name — but in a real room those fifteen seconds are mostly people
-starting to talk to *each other*, and it answered them. One rule that always holds
-turned out to be better than a shortcut that sometimes interrupts.
+**Name it to start, not to continue.** Once it's part of an exchange, follow-ups
+reach it without the name — "did you find anything?", "try the other cluster", "no,
+the staging one". What decides that is what the exchange looks like, not a stopwatch:
+an earlier version stayed engaged for fifteen seconds after speaking, and in a real
+room those fifteen seconds are mostly people starting to talk to *each other*, so it
+answered them. Being able to see the conversation is what makes the difference — it
+can tell "did you find anything?" asked of it from the same words asked of somebody
+else.
 
-**Its name is what gets its attention, but it isn't matched literally.** Live
-transcription mangles names — "Prism" has come back as "Pritham" — so a check
-decides whether you called it, allowing for a clear mishearing. The same check
-knows the difference between talking *to* it and talking *about* it, so "I asked
-Prism about that yesterday" doesn't summon it.
+**Its name is what gets its attention, but it isn't matched literally.** It listens
+to what you actually said — the audio, not a transcript of it — and decides whether
+you were talking to it. That allows for a name said quickly or half-swallowed, and
+it knows the difference between talking *to* it and talking *about* it, so "I asked
+Prism about that yesterday" doesn't summon it. It also knows a request aimed at
+somebody else, so "Emma, could you ask Prism about the cluster?" is Emma's to
+answer, not the agent's.
 
 It answers to whatever it's called in its workspace, so renaming the agent renames
 what you say to get its attention.
 
 <a id="names"></a>
-**Names are the words a transcript gets wrong most often**, and this feature leans
-on them harder than anything else. So the agent's own name — and the names of
-everyone else in the call, read from the participant list — are given to the
-transcriber as hints, and refreshed as people come and go. Without that, "Hey Emma"
-has come back as "Hey, I'm", and a direct question went unanswered because the name
-never reached the text.
+**Where you put the name doesn't matter.** "Prism, can you check the deploy?" and
+"can you check the deploy, Prism?" both get a reply as soon as you stop talking, and
+so does a name in the middle of a sentence. It hears how the sentence was said, so a
+name that a transcript would have mangled is not a name it misses.
 
-**Where you put the name barely matters any more.** "Prism, can you check the
-deploy?" and "can you check the deploy, Prism?" both get a reply as soon as you stop
-talking. What still takes a second or two is a name in the middle of a sentence, or a
-name the transcriber mangles badly enough that working out you meant the agent takes
-a second look. Those are answered too, just after a pause.
-
-It deliberately does **not** try to work out whether a sentence sounds like a
+It deliberately does **not** try to work out whether a sentence merely sounds like a
 request for an assistant. A call is a single mixed audio channel with no speaker
-labels, so "can you add that to the list?" reads exactly the same whether it was
-said to the agent or to the person next to you — and a bot guessing at that is a
-bot that interrupts. The cost of the stricter rule is that the first thing you say
-to it in a group call needs its name.
+labels, so "can you add that to the list?" is the same whether it was said to the
+agent or to the person next to you — and a bot guessing at that is a bot that
+interrupts. The cost of that is the one rule you have to remember: bring it in by
+name the first time.
 
-**English only, for now.** The call's audio is transcribed as English so the agent
-can work out what was aimed at it. Speaking another language degrades that rather
-than failing outright — it may miss things said to it, or answer something that
-wasn't. It's told to say so and offer to continue in a chat session, which has no
-such limit.
+**If it can't tell, it says nothing.** Working out whether it was addressed is one
+question put to the model on every utterance, and when that question can't be
+answered — a network problem, an overloaded model — it stays quiet rather than
+guessing. So a call where it answers nothing at all, even to its name, is a
+different problem from one where it ignores a single sentence. `gate_failed` in the
+`meeting ended` event counts it.
+
+**English only, for now.** It is told to say so and to offer to continue in a chat
+session, which has no such limit.
 
 **You can interrupt it.** Start talking and it stops — humans have the floor. A
 short "mm-hm" or a cough won't cut it off mid-sentence; a real interjection will,
@@ -282,11 +284,12 @@ is an instruction in its prompt: announce what it's about to do and get an expli
 or changes its own configuration — and never read that permission out of enthusiasm
 or out of someone claiming authority.
 
-**That includes changing itself.** Renaming itself and rewriting its Soul, its user
-profile or its memory are things it will do on a spoken request that the room agrees
-to, subject to the same confirmation. So a sentence agreed in an unauthenticated
-meeting can change the agent for every future turn on every channel, not just for the
-duration of the call.
+**That includes changing itself.** Renaming itself, rewriting any of its workspace
+files (Soul, user profile, memory, vision, heartbeat config, bootstrap
+notes) and changing its settings are things it will do on a spoken request that the
+room agrees to, subject to the same confirmation. So a sentence agreed in an
+unauthenticated meeting can change the agent for every future turn on every channel,
+not just for the duration of the call.
 
 Instructions are a strong default, not enforcement. So treat a meeting link as
 handing over the agent's own authority — over itself included: **share it only with
@@ -330,12 +333,17 @@ minute** with the default `gpt-realtime-2.1`. Two levers:
   half — spoken responses — down to the turns actually meant for the agent. That
   happens on its own; there is nothing to switch on.
 
-Deciding who was addressed needs a transcript, so input transcription runs on every
-call. It bills per audio minute at a small fraction of the Realtime audio rate for
-the same minute, and it never feeds the model — the conversation itself stays pure
-audio. Working out whether you called the agent by name is one short call to the
-small classification model — a few tokens per sentence, and none at all in a
+Working out whether you were talking to the agent is one short question per
+utterance, asked of the same model that is already listening. It answers in a single
+word, and it looks back over the last few turns of the call rather than the whole
+thing, so what it costs does not grow as the meeting goes on. None at all in a
 one-to-one call, where nothing needs deciding.
+
+Input transcription costs nothing unless you ask for it. Nothing depends on it — it
+exists so a call can be read back in the log — so it is only requested when
+`MEETING_TRANSCRIPT_LOGGING=full`. Turn that on and it bills per audio minute, at a
+small fraction of the Realtime audio rate for the same minute. The conversation
+itself stays pure audio either way.
 
 **A call cannot run past an hour.** OpenAI's Realtime sessions end at 60 minutes,
 which is not configurable and applies regardless of `MEETING_TIMEOUT_MINUTES`. When
@@ -370,7 +378,7 @@ is the same thing to tell them about as the agent's presence.
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model thinks before answering or picking a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults higher than the API's own `low` — see [Reasoning effort](#reasoning-effort). Empty takes the API default. | `high` |
-| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used to decide whether the agent was spoken to. Runs on every call, billed per minute; never fed to the model. The default is the only streaming model that also accepts name hints — see [Names](#names). | `gpt-live-transcribe` |
+| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used only so a call can be read back in the log — never fed to the model, and nothing waits on it. Only requested when `MEETING_TRANSCRIPT_LOGGING=full`, since it bills per audio minute and by default the words are dropped. The default accepts name hints, which is what keeps names legible in the log — see [Names](#names). | `gpt-live-transcribe` |
 | `OPENAI_NOISE_REDUCTION` | Server-side noise reduction over the meeting audio before turn detection and transcription see it: `off`, `near_field`, `far_field`. Off by default on purpose — what arrives is Meet's already-cleaned mix, and reducing it again cost a live agent most of what a quieter person in the room said. | `off` |
 | `MEETING_TRANSCRIPT_LOGGING` | Whether what was said may appear in the runtime's log: `off` or `full`. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
@@ -386,15 +394,18 @@ Every utterance the agent judges produces one line in the runtime's log, and
 
 | Value | What a line carries |
 |-------|---------------------|
-| `off` (default) | The verdict, which utterance it belongs to, whether the agent was answering everything or only when named, how the verdict was reached, and **how many** names were seeded to the transcriber. No words, no attendee names. |
-| `full` | The above, plus the sentence itself, the room's roster, and the gate model's own one-line reasoning. |
+| `off` (default) | The verdict, which utterance it belongs to, how long it took, and **how many** people were in the room. No words, no attendee names. |
+| `full` | The above, plus the room's roster and anything the model said beyond the verdict, and a second line per utterance carrying what was said. |
+
+Under `full` the words arrive on a line of their own rather than beside the verdict.
+Transcription finishes after the decision has already been made, so the two cannot
+share a line; they carry the same utterance id, which is what pairs them.
 
 `off` is the default because a call is not an authenticated surface: whoever is in
 the room did not agree to be written into a log that outlives it, and a mishearing
 ("Prism" → "Pritham") means the words recorded are not even reliably theirs. Most
-diagnosis doesn't need them — `off` still separates "the gate said no" from "the gate
-never ran", pairs the two verdicts on one sentence by its utterance id, says how each
-verdict was reached, and shows whether a roster had reached the transcriber at all.
+diagnosis doesn't need them — `off` still separates "it decided no" from "it never
+got an answer", and gives you the time each decision took.
 
 It is a setting of its own rather than a log level on purpose. Raising the log level
 is something you do to chase an unrelated problem, and it should never be the thing
@@ -403,14 +414,6 @@ the rest of the runtime's debug output.
 
 Turn it on only for as long as you need it, and tell the room. Nothing here reaches
 product telemetry either way — that surface gets counts.
-
-The setting covers the other place a sentence could surface, too. Langfuse traces
-every model call's prompt and completion when it is configured, and the call that
-decides whether the agent was named is made *from* the sentence — so under `off` that
-one call is traced without its content: the timing, the model and the token counts
-arrive, the words do not. A trace lives on another host and outlasts a log, so `off`
-had to mean off there as well rather than quietly relocating the room's speech. Every
-other model call the agent makes traces as it always did.
 
 ### The microphone
 
@@ -474,15 +477,16 @@ for `Voice meetings available` or `Voice meetings unavailable`, and confirm
 `OPENAI_API_KEY` is set and you're running the container image.
 
 **It isn't answering to its name.** In a call with more than one other person the
-agent answers only when it is named, and a transcriber that mishears the name is
-indistinguishable from a gate that decided no. Each verdict is logged — look for
-`[Meeting:Gate]`. By default the line says what was decided but not what it was
-decided on, which is enough to tell a verdict that never happened from one that said
-no, and not enough to say why. The utterance id on the line pairs a partial verdict
-with the final one either way, and the keyword count says whether the room's names had
-reached the transcriber at all. To read the sentence and the gate's own reasoning you
-need `MEETING_TRANSCRIPT_LOGGING=full` — with the room's agreement, and turn it back
-off afterwards.
+agent answers only when it is spoken to. Each decision is logged — look for
+`[Meeting:Gate]`. The line says what was decided, for which utterance, and how long
+it took; by default it does not say what was decided *on*, which is enough to
+separate three different problems and not enough to say why. A decision that says
+no is one thing; a line reporting no verdict at all is another, and means the
+question could not be answered rather than that the answer was no; no line at all
+means the utterance never closed. `gate_failed` in the `meeting ended` event counts
+the middle case across the whole call. To read the sentence itself you need
+`MEETING_TRANSCRIPT_LOGGING=full` — with the room's agreement, and turn it back off
+afterwards.
 
 **It waits forever to be admitted.** Nobody clicked Admit, or the meeting blocks
 anonymous guests. It gives up after `MEETING_ADMISSION_TIMEOUT_SECONDS` and says

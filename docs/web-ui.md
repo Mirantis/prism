@@ -175,14 +175,17 @@ The agent's identity and runtime controls.
   long-term memory against its own tools — Soul, User, Memory, Vision, Heartbeat
   and Bootstrap become read-only to it, and it can no longer add or delete
   long-term memories, while settings, renames and memory search keep working. The
-  agent cannot turn this off itself. It is a guardrail against drift, not a
-  security boundary; the known ways around it are listed under
+  **Agent** guide is not in that list: no tool writes it, so it is read-only to
+  the agent either way, and your own editor keeps working while the lock is on. The agent cannot turn this off itself. It is a guardrail against drift,
+  not a security boundary; the known ways around it are listed under
   **[Configuration → Locked-in mode](configuration.md#locked-in-mode)**.
 - **Identity documents.** Seven tabs show the agent's markdown documents —
   **Agent** (guide), **Soul**, **User**, **Heartbeat**, **Memory**, **Vision**,
-  and **Bootstrap**. These are **read-only viewers** in the Web UI: the agent
-  edits them itself during conversation (e.g. you ask it to update its soul or
-  it records something to memory). See **[The agent's identity](agent-identity.md)**.
+  and **Bootstrap**. The **Agent** tab is an editor: change the text and press
+  **Save**, and the agent picks it up on its next turn. The rest are read-only
+  viewers, because the agent maintains them during conversation (you ask it to
+  update its soul, or it records something to memory). See
+  **[The agent's identity](agent-identity.md)**.
 - **Heartbeat controls.** A status panel shows whether the heartbeat is Active
   or Stopped, its interval, the last run time, and a consecutive-error count.
   Buttons let you **Start**, **Stop**, or **Trigger now**, and you can edit the

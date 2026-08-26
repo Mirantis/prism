@@ -42,8 +42,9 @@ The agent can edit its own identity from inside a conversation — this is how
 "be more concise" or "remember our staging region" actually take effect. See
 **[The agent's identity](agent-identity.md)**.
 
-- Rewrite its **Soul**, **User** profile, **Memory**, **Vision**, **Heartbeat**
-  config, or **Agent Guide**.
+- Rewrite its **Soul**, **User** profile, **Memory**, **Vision**, or
+  **Heartbeat** config. Not the **Agent Guide** — that one is yours to edit, and
+  no tool reaches it.
 - **Rename** itself.
 - Adjust **settings** — heartbeat interval, timezone, verbose (chat delivery
   mode: `true` streams every step, `false` delivers only the final message).

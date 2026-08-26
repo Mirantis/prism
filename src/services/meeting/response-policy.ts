@@ -12,14 +12,14 @@
  * and this object decides instead. Two modes, chosen from the participant count:
  *
  * - **open** — one human in the room, so everything said is said to the agent.
- *   It answers on end-of-utterance, before any transcript exists. That matters:
- *   it is the same instant the server would have created the response itself, so
- *   a one-to-one call is no slower than it was with the API driving.
- * - **addressed** — more than one human, so the agent has to be called by name,
- *   every time. Whether it was is decided by `addressed-classifier.ts`, not by
- *   matching the string: transcription mangles names ("Prism" came back as
- *   "Pritham"), an agent can be called anything, and a name can be mentioned
- *   without being addressed ("I asked Prism about that yesterday").
+ *   It answers on end-of-utterance, which is the same instant the server would
+ *   have created the response itself, so a one-to-one call is no slower than it
+ *   was with the API driving.
+ * - **addressed** — more than one human, so most of what is said is not for the
+ *   agent. Which utterances are is decided by `addressed-audio-gate.ts`, which asks
+ *   the meeting model about the one it just heard. Not by matching a string: an
+ *   agent can be called anything, and a name can be mentioned without being
+ *   addressed ("I asked Prism about that yesterday").
  *
  * Deliberately *not* judged: whether a sentence merely sounds like a request for
  * an assistant. The room is one mixed channel with no speaker labels, so "can you
@@ -27,13 +27,13 @@
  * person in the next chair. Guessing there is how a meeting bot ends up in the
  * middle of other people's conversations.
  *
- * **No grace period after the agent speaks.** An earlier version kept a 15-second
- * window in which any utterance counted as addressed, so a follow-up needn't
- * repeat the name. Testing on real calls killed it: fifteen seconds after the
- * agent stops talking is mostly other people starting to talk to *each other*,
- * which is the exact failure this file exists to prevent. Being named every time
- * is slightly more effort to talk to and much harder to get wrong, and it leaves
- * one rule to explain instead of three interacting ones.
+ * **No clock decides a follow-up.** An earlier version kept a 15-second window in
+ * which any utterance counted as addressed, so a follow-up needn't repeat the name.
+ * Real calls killed it: fifteen seconds after the agent stops talking is mostly
+ * other people starting to talk to *each other*, and a window cannot tell those
+ * apart from a genuine follow-up. Nothing here replaced it — an unnamed follow-up
+ * is answered, but because the gate can *see* the exchange it belongs to, which is
+ * a judgement rather than a grace period. This object holds no timers.
  *
  * Every "yes" from this object *will* be spoken: unlike prompt-level gating there
  * is no path for the model to decline once `response.create` goes out. That makes
@@ -49,21 +49,13 @@ export type ResponseMode = 'auto' | 'open' | 'addressed';
 export type EffectiveMode = 'open' | 'addressed';
 
 /**
- * What to do with an utterance once its words are known.
+ * What to do with an utterance the turn detector has just closed.
  *
- * `classify` means this object declines to decide: whether the agent was named is
- * a judgement, and judgements live outside a class the rest of the code calls
- * synchronously.
+ * `gate` means this object declines to decide: whether the agent was addressed is
+ * a judgement made from the audio by a model, and judgements cannot live in a
+ * class the rest of the code calls synchronously.
  */
-export type TranscriptDecision = 'respond' | 'ignore' | 'classify';
-
-/**
- * Which transcript a verdict was judged from.
- *
- * `partial` is a guess made while the speaker is still talking; `final` is the
- * finished sentence, and the authoritative one.
- */
-export type TranscriptStage = 'partial' | 'final';
+export type TurnDecision = 'respond' | 'gate' | 'ignore';
 
 /** Item ids remembered for the duplicate check. Bounded; turns are short-lived. */
 const HANDLED_ITEM_LIMIT = 32;
@@ -113,9 +105,16 @@ export class ResponsePolicy {
    * even when the confirmation does not.
    */
   private audible = true;
-  /** An id-less utterance was answered at the boundary; see `onTranscript`. */
-  private answeredIdlessInOpenMode = false;
-  private readonly handledItems: string[] = [];
+  /**
+   * Utterances a decision has been taken on, verdict or not.
+   *
+   * Two lists rather than one because the states are different questions: a claimed
+   * utterance must not be judged again, while a *decided* one must not be answered
+   * again. Collapsing them would either let a duplicate commit spend a second probe
+   * or stop the first verdict from ever being applied.
+   */
+  private readonly claimedItems: string[] = [];
+  private readonly decidedItems: string[] = [];
   private readonly stats: ResponsePolicyStats = {
     utterances: 0,
     answered: 0,
@@ -136,13 +135,6 @@ export class ResponsePolicy {
     return { ...this.stats };
   }
 
-  /**
-   * Take a participant-count reading (including the agent itself).
-   *
-   * `null` means the UI could not be read, which is never a reason to change
-   * behaviour — the last known mode stands. Ignored entirely unless the caller
-   * asked for `auto`.
-   */
   /**
    * Say whether the room can hear the agent.
    *
@@ -172,6 +164,13 @@ export class ResponsePolicy {
     }
   }
 
+  /**
+   * Take a participant-count reading (including the agent itself).
+   *
+   * `null` means the UI could not be read, which is never a reason to change
+   * behaviour — the last known mode stands. Ignored entirely unless the caller
+   * asked for `auto`.
+   */
   setParticipantCount(count: number | null): void {
     if (count === null || this.options.mode !== 'auto') return;
     // Nothing the agent says is arriving, so `open` would answer a room that hears
@@ -193,123 +192,79 @@ export class ResponsePolicy {
   }
 
   /**
-   * Count an utterance the caller is answering without asking this object first.
+   * The turn detector closed an utterance — the one moment a turn is decided.
    *
-   * The held-answer path decides at the transcript and speaks at the boundary, so
-   * it never routes through `onUtteranceCommitted` — and without this the same
-   * utterance was counted as answered but never as spoken, letting `answered`
-   * climb past `utterances` and corrupting the suppressed/utterances ratio that is
-   * the point of the stats.
+   * `respond` in a one-to-one call, where there is nothing to decide: the answer
+   * starts at the same instant the server would have started it. `gate` otherwise,
+   * meaning "ask the model whether this was aimed at us". `ignore` for an utterance
+   * this has already taken a decision on.
+   *
+   * An utterance is claimed here, before its verdict exists, and that is the point.
+   * Remembering it only once a verdict said *yes* left three holes: a duplicated
+   * commit arriving while the first probe was still in flight launched a second
+   * probe, two no-verdicts on one utterance counted it twice in both `utterances`
+   * and `suppressed`, and a no followed by a yes could answer a sentence the gate
+   * had already declined. Either verdict is terminal now, so each utterance is
+   * decided exactly once.
    */
-  noteUtterance(): void {
+  onUtteranceCommitted(itemId: string): TurnDecision {
+    if (this.isClaimed(itemId)) return 'ignore';
+    this.claim(itemId);
     this.stats.utterances += 1;
+    if (this.mode !== 'open') return 'gate';
+    // Answering here *is* the decision, so record it as one. A verdict can still
+    // arrive for this utterance — the mode may have been `addressed` when the probe
+    // went out and flipped to `open` before the turn closed — and it must not add a
+    // second answer.
+    this.decide(itemId);
+    this.stats.answered += 1;
+    return 'respond';
   }
 
   /**
-   * The turn detector closed an utterance.
+   * Apply the verdict on whether the agent was addressed.
    *
-   * Only `open` mode answers here, and that is the point of it: with one human in
-   * the room there is nothing to decide, so the answer starts at the same instant
-   * the server would have started it, without waiting for any words.
+   * Re-checks that this utterance is still awaiting one rather than trusting the
+   * caller: a verdict arrives a few hundred milliseconds after the utterance
+   * closed, the room does not wait, and a retried or duplicated probe can answer
+   * twice. The first verdict to arrive decides, whichever way it goes.
    */
-  onUtteranceCommitted(itemId: string): boolean {
-    this.stats.utterances += 1;
-    if (this.mode !== 'open') return false;
-    // Remembered rather than re-derived: without an id the transcript path can't
-    // recognise this utterance later, and the mode can flip between the two. See
-    // the guard in `onTranscript`.
-    if (itemId === '') this.answeredIdlessInOpenMode = true;
-    return this.answer(itemId);
-  }
-
-  /**
-   * Words arrived for an utterance — either the finished transcript, or enough of
-   * a partial one to be worth judging early.
-   *
-   * Answering twice for one utterance is the thing to avoid: a second
-   * `response.create` is *queued* by the session's pending-response deferral
-   * rather than dropped, so the room would hear the same reply twice.
-   */
-  onTranscript(itemId: string, stage: TranscriptStage = 'final'): TranscriptDecision {
-    if (this.wasHandled(itemId)) return 'ignore';
-
-    // In `open` mode an early look cannot change anything: the utterance will be
-    // answered at its turn boundary whatever the verdict says, and the verdict does
-    // not arrive before that boundary often enough to matter. Judging it anyway cost
-    // a model call for every sentence spoken in a one-to-one call — measured on a
-    // live call as a gate verdict landing 1.5s *after* the agent had already
-    // started answering the same utterance.
-    //
-    // Only the early look is skipped. A finished transcript still reaches the
-    // classifier when the utterance was not already answered, which is what covers
-    // a mode flip between the boundary and the words arriving.
-    if (stage === 'partial' && this.mode === 'open') return 'ignore';
-
-    // With no id there is nothing to match the two paths on, so an utterance that
-    // `open` mode already answered at the boundary cannot be recognised here, and
-    // classifying it risks a second answer to the same sentence. Tested against
-    // what the mode *was* when the utterance closed, not what it is now: a
-    // participant leaving mid-utterance would otherwise unlatch the guard and let
-    // the same sentence be answered twice.
-    if (itemId === '' && this.answeredIdlessInOpenMode) {
-      this.answeredIdlessInOpenMode = false;
-      return 'ignore';
-    }
-
-    // Deliberately does not otherwise test the *current* mode. Someone leaving can
-    // flip `addressed` → `open` in the second between an utterance closing and its
-    // words arriving, and a person who used the agent's name in that second should
-    // be answered rather than dropped.
-    return 'classify';
-  }
-
-  /**
-   * Apply the verdict on whether the agent was named.
-   *
-   * Re-checks the item rather than trusting the caller: verdicts arrive a few
-   * hundred milliseconds late, and one judged from a partial transcript can land
-   * while the finished transcript is already being judged.
-   *
-   * `stage` exists only for the counter. An utterance is usually judged twice —
-   * once from a partial transcript, once from the finished one — and both verdicts
-   * reach this method, so counting every "no" would report roughly double the
-   * suppressions actually made. `suppressed` against `utterances` is the ratio that
-   * says whether the gate earned its keep, and a metric at 2x is worse than no
-   * metric. The finished transcript is the authoritative judgement, so it is the
-   * one that counts. (The "yes" side needs no such guard: the first one to answer
-   * marks the item, and the second sees it as already handled.)
-   */
-  resolveClassification(
-    itemId: string,
-    addressed: boolean,
-    stage: TranscriptStage = 'final',
-  ): boolean {
-    if (this.wasHandled(itemId)) return false;
+  resolveVerdict(itemId: string, addressed: boolean): boolean {
+    if (this.isDecided(itemId)) return false;
+    this.decide(itemId);
 
     if (!addressed) {
-      if (stage === 'final') this.stats.suppressed += 1;
+      this.stats.suppressed += 1;
       return false;
     }
 
     this.stats.addressedMatches += 1;
-    logger.info('[Meeting] Addressed by name — responding');
-    return this.answer(itemId);
-  }
-
-  /** Record a yes: remember the item so the other path can't answer it twice. */
-  private answer(itemId: string): boolean {
-    this.remember(itemId);
     this.stats.answered += 1;
+    logger.info('[Meeting] Addressed — responding');
     return true;
   }
 
-  private remember(itemId: string): void {
-    if (!itemId) return;
-    this.handledItems.push(itemId);
-    if (this.handledItems.length > HANDLED_ITEM_LIMIT) this.handledItems.shift();
+  /** Claimed: a decision has been taken, whether or not a verdict has landed. */
+  private isClaimed(itemId: string): boolean {
+    return itemId !== '' && this.claimedItems.includes(itemId);
   }
 
-  private wasHandled(itemId: string): boolean {
-    return itemId !== '' && this.handledItems.includes(itemId);
+  /** Decided: a verdict has been applied, so no later one may. */
+  private isDecided(itemId: string): boolean {
+    return itemId !== '' && this.decidedItems.includes(itemId);
+  }
+
+  private claim(itemId: string): void {
+    this.remember(this.claimedItems, itemId);
+  }
+
+  private decide(itemId: string): void {
+    this.remember(this.decidedItems, itemId);
+  }
+
+  private remember(items: string[], itemId: string): void {
+    if (!itemId) return;
+    items.push(itemId);
+    if (items.length > HANDLED_ITEM_LIMIT) items.shift();
   }
 }

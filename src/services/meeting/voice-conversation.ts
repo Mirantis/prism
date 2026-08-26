@@ -6,17 +6,27 @@
  *
  *     capture (48k) → Downsampler → RealtimeSession → Upsampler → AudioPlayback
  *                                        │
- *                                   ResponsePolicy (decides whether to answer)
+ *                                   ResponsePolicy (open room, or gate it?)
+ *                                        │
+ *                                   AddressedAudioGate (was that said to me?)
  *                                        │
  *                                   BargeInPolicy (yields the floor to humans)
  *                                        │
  *                                   ToolBridge (runs the agent's real tools)
  *
  * Every response on this session is one asked for here: the server is configured
- * never to answer on its own, so an utterance becomes speech only if
- * `ResponsePolicy` says it was aimed at the agent.
+ * never to answer on its own, so an utterance becomes speech only if this decides
+ * it was aimed at the agent.
  *
- * The one subtlety is the ordering between a new utterance and a pending pause.
+ * That decision happens in exactly one place — when the turn detector closes an
+ * utterance. It is both the earliest moment the audio can be pointed at and the
+ * earliest the agent should speak, so there is no verdict to hold back for a later
+ * boundary and no second path that could answer the same sentence twice. An earlier
+ * design judged a partial transcript as well, to hide a text classifier's latency
+ * behind the rest of the sentence, and most of the machinery here existed to
+ * reconcile the two verdicts that produced.
+ *
+ * The one subtlety left is the ordering between a new utterance and a pending pause.
  * When the model starts speaking again while a barge-in pause is still undecided,
  * the stale audio has to be dropped *before* the new audio queues, or the two get
  * spliced into one garbled utterance. Hence `commitIfPending()` ahead of the
@@ -30,45 +40,8 @@ import { RealtimeSession, type RealtimeSessionOptions } from './realtime-session
 import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { BargeInPolicy } from './barge-in';
 import { ResponsePolicy, type EffectiveMode, type ResponseMode } from './response-policy';
-import { classifyAddressed, CLASSIFY_DEADLINE_MS } from './addressed-classifier';
-import { isVocativeAddress } from './vocative';
-import { formatKeywords, formatTranscript } from './transcript-log';
-
-/**
- * How much of a partial transcript is worth judging.
- *
- * Long enough that a name isn't cut in half — a verdict on "Pri" is worthless — and
- * short enough to still beat the finished transcript by a useful margin. Twenty
- * characters covers a leading vocative and the start of what follows it ("Emma, can
- * you check the"), which is where a name sits when someone means to be answered.
- */
-const EARLY_VERDICT_MIN_CHARS = 20;
-
-/** How much new text would justify another look. Moot at one look; see below. */
-const EARLY_VERDICT_GROWTH_CHARS = 40;
-
-/**
- * Most early looks at one utterance.
- *
- * **One**, because the early verdict is now an optimisation and nothing more. Since
- * the agent speaks at the turn boundary rather than the moment a verdict lands, the
- * finished transcript is always judged and is always authoritative — so a name the
- * early look misses still gets answered, just without the head start.
- *
- * That changes the arithmetic completely. Re-judging as the sentence grew was worth
- * six model calls when catching a late name *early* was the only way to answer
- * early. Now it buys nothing on the common case and costs plenty: a single long
- * monologue in a live call spent seven gate calls confirming, six times over, that
- * it contained no name — and the room's speech is overwhelmingly not addressed to
- * the agent (152 no to 18 yes across one meeting).
- *
- * One look at the opening of a sentence catches the leading vocative people actually
- * use, and leaves the rest to the transcript.
- */
-const MAX_EARLY_VERDICTS = 1;
-
-/** Utterances tracked for early judging. Insertion-ordered, oldest evicted. */
-const EARLY_JUDGED_LIMIT = 32;
+import { judgeAddressed, ADDRESSED_DEADLINE_MS } from './addressed-audio-gate';
+import { formatTranscript } from './transcript-log';
 
 /**
  * Most names handed to the transcriber at once.
@@ -115,15 +88,34 @@ export interface VoiceConversationStats {
   addressedMatches: number;
   modeSwitches: number;
   /**
-   * How the "was I addressed" question got answered.
+   * How the "was I addressed" question went.
    *
-   * `gateLocalYes` is the number of times the local tagger recognised a vocative and
-   * no model call was made; `gateModelCalls` the number of times one was. Their ratio
-   * shows how often the fast path removes the gate's per-utterance latency, measured
-   * on real speech rather than on a corpus.
+   * `gateCalls` is how many utterances were put to the model, `gateFailed` how many
+   * of those came back with no verdict at all. The second number is the one that
+   * matters most in production: the gate fails closed, so a failing gate and a
+   * quiet room look identical from outside, and only this distinguishes an agent
+   * that was deaf from one that was simply not spoken to. `gateLatencyMs` is the
+   * total across all calls, so a mean can be taken without this holding a list.
    */
-  gateLocalYes: number;
-  gateModelCalls: number;
+  gateCalls: number;
+  gateFailed: number;
+  gateLatencyMs: number;
+  /**
+   * Verdicts thrown away because a newer utterance had closed first.
+   *
+   * The conservative half of a deliberate trade: the agent never answers a turn
+   * nothing judged, at the price of occasionally missing one it was asked. A high
+   * count means the room is busy enough that the price is being paid often.
+   */
+  gateSuperseded: number;
+  /**
+   * Answers the agent decided to give that the room never heard.
+   *
+   * A response can end without producing audio — a rate limit, a server error. The
+   * gate said yes, the request went out, and the room got silence, which is
+   * indistinguishable from never having been addressed unless it is counted here.
+   */
+  responsesFailed: number;
 }
 
 export class VoiceConversation {
@@ -136,53 +128,22 @@ export class VoiceConversation {
   private responses = 0;
   private toolCalls = 0;
   private interruptions = 0;
-  private gateLocalYes = 0;
-  private gateModelCalls = 0;
+  private gateCalls = 0;
+  private gateFailed = 0;
+  private gateLatencyMs = 0;
+  private gateSuperseded = 0;
+  private responsesFailed = 0;
+  /**
+   * The newest utterance the turn detector has closed.
+   *
+   * A verdict names the utterance it judged, but the response that follows does
+   * not: `requestResponse()` asks the model to answer the conversation as it now
+   * stands. So a yes for one utterance, arriving after a later one has closed,
+   * would make the agent answer the later one — which nothing judged. Compared
+   * before speaking so that cannot happen.
+   */
+  private newestItemId: string | null = null;
   private currentItemId: string | null = null;
-  /**
-   * Utterances already judged from a partial transcript, so it happens once.
-   *
-   * Holds how long the text was when last judged and how many looks it has had.
-   * Bounded rather than cleared purely on the `transcript` event: a transcription
-   * that fails, or one that trims to empty, never emits that event, so its entry
-   * would otherwise sit here for the rest of the call. A stale entry can only ever
-   * suppress further early looks at that same utterance, so evicting the oldest is
-   * safe.
-   */
-  private readonly earlyJudged = new Map<string, { chars: number; looks: number }>();
-  /**
-   * Utterances whose speaker has stopped — the turn detector has closed them.
-   *
-   * An early verdict can land on either side of that boundary, and which side
-   * decides whether the agent may speak yet. See `answerAtTurnBoundary`.
-   */
-  private readonly committedItems = new Set<string>();
-  /**
-   * Utterances whose finished transcript has already arrived.
-   *
-   * Held answers wait for the turn boundary, and the boundary event is what
-   * releases them. If that event never came — an id-less commit, a dropped frame —
-   * a verdict landing afterwards would wait for something that already happened,
-   * and the policy has by then marked the item answered, so nothing else would
-   * speak for it. Seeing the finished transcript is proof there is no boundary
-   * left to wait for.
-   */
-  private readonly finalizedItems = new Set<string>();
-  /**
-   * Early *yes* verdicts held until their speaker stops talking.
-   *
-   * A partial verdict is made while the sentence is still being said, and acting
-   * on it at once made the agent answer a request it had only half heard — a live
-   * call produced "it didn't hear the full sentence before it started to answer",
-   * with the reply aimed at the opening clause rather than the question.
-   *
-   * Judging early is still worth keeping: the ~1.3s classification then runs
-   * concurrently with the rest of the sentence rather than after it, which is the
-   * latency that actually cost anything. Only the speaking waits. What is given up
-   * is answering *before* the speaker finishes, which was never something a person
-   * in a meeting does.
-   */
-  private readonly answerAtTurnBoundary = new Set<string>();
   /**
    * When the room last fell silent, and why the agent is about to break it.
    *
@@ -197,13 +158,15 @@ export class VoiceConversation {
   /** Last keyword list sent, so the poll doesn't resend an unchanged roster. */
   private keywordSignature: string | null = null;
   /**
-   * The keyword list currently in force, for the diagnostic line below.
+   * Everyone else the room currently holds, agent excluded.
    *
-   * Starts as the session's connect-time list — the agent's name alone — so a
-   * verdict logged before the first roster poll names what was actually seeded
-   * rather than nothing.
+   * Handed to the gate on every judgement, because "Prism, ask Emma about the
+   * cluster" and "Emma, ask Prism about the cluster" are the same words in a
+   * different order and only one of them is the agent's to answer. Empty until the
+   * first successful roster read, which the gate is told about rather than left to
+   * infer from an empty list.
    */
-  private keywords: string[] = [];
+  private roster: string[] = [];
   private stopped = false;
 
   constructor(private readonly options: VoiceConversationOptions) {
@@ -215,9 +178,6 @@ export class VoiceConversation {
       agentName: options.agentName,
       endpointOverride: options.endpointOverride,
     });
-
-    // Mirrors what `RealtimeSession` seeds at connect time.
-    this.keywords = [options.agentName];
 
     this.responsePolicy = new ResponsePolicy({ mode: options.responseMode });
 
@@ -295,72 +255,45 @@ export class VoiceConversation {
       this.pendingAnswer = null;
     });
 
+    this.session.on('responseFailed', () => {
+      this.responsesFailed += 1;
+    });
+
     this.session.on('functionCall', (call) => {
       this.toolCalls += 1;
       void this.runTool(call.callId, call.name, call.argumentsJson);
     });
 
-    // The model never answers on its own, so every utterance passes the policy.
-    // Two chances to say yes, and the policy makes sure only one of them fires
-    // per utterance: at the turn boundary, which needs no words and so costs
-    // nothing in a one-to-one call, and again once the transcript lands, which is
-    // the only way to tell whether a crowded room meant the agent.
+    // The model never answers on its own, so every utterance passes the policy —
+    // and there is now exactly one place that happens. The turn detector closing an
+    // utterance is both the earliest moment the audio can be pointed at and the
+    // earliest the agent should speak, so deciding here needs no transcript, holds
+    // nothing back for a later boundary, and cannot produce two verdicts for one
+    // sentence.
     this.session.on('utteranceCommitted', (itemId) => {
-      this.remember(this.committedItems, itemId);
-      // An early verdict that already said yes has been waiting for exactly this:
-      // the speaker has stopped, so the request is whole and the agent may answer.
-      if (this.answerAtTurnBoundary.delete(itemId)) {
-        // Counted here rather than by the policy: this path answers without asking
-        // it, and an uncounted utterance skews the ratio the stats exist to report.
-        this.responsePolicy.noteUtterance();
-        this.answer('early-verdict');
-        return;
-      }
-      if (this.responsePolicy.onUtteranceCommitted(itemId)) this.answer('open-mode');
-    });
-
-    // Judged while the speaker is still talking, and again when they stop.
-    // Transcription streams well ahead of the utterance closing — seconds of lead,
-    // sometimes tens of them — so a name can be recognised and answered before the
-    // sentence even ends: a live call answered "Actually, prism, can you help with
-    // that?" off the first fifteen characters, while the rest was still being said.
-    // An early *yes* therefore answers immediately; an early *no* is never trusted,
-    // because the rest of the sentence is still coming. The policy's per-item dedupe
-    // makes the overlapping verdicts safe.
-    this.session.on('transcriptPartial', (itemId, textSoFar) => {
-      const chars = textSoFar.trim().length;
-      if (chars < EARLY_VERDICT_MIN_CHARS) return;
-
-      const seen = this.earlyJudged.get(itemId);
-      if (seen && (seen.looks >= MAX_EARLY_VERDICTS || chars - seen.chars < EARLY_VERDICT_GROWTH_CHARS)) {
-        return;
-      }
-      if (this.responsePolicy.onTranscript(itemId, 'partial') !== 'classify') return;
-      this.earlyJudged.set(itemId, { chars, looks: (seen?.looks ?? 0) + 1 });
-      if (this.earlyJudged.size > EARLY_JUDGED_LIMIT) {
-        this.earlyJudged.delete(this.earlyJudged.keys().next().value as string);
-      }
-      void this.classifyThenMaybeRespond(itemId, textSoFar, 'partial');
-    });
-
-    this.session.on('transcript', (itemId, text) => {
-      this.earlyJudged.delete(itemId);
-      this.remember(this.finalizedItems, itemId);
-      // The finished transcript is proof the utterance is over, so an answer still
-      // waiting on a boundary event has nothing left to wait for. `committed`
-      // normally lands first and this never fires; it exists so a missed event
-      // costs a late answer rather than a silent one — the policy has already
-      // marked the item answered, so nothing else would ever speak for it.
-      if (this.answerAtTurnBoundary.delete(itemId)) {
-        this.answer('early-verdict-late-commit');
-        return;
-      }
-      const decision = this.responsePolicy.onTranscript(itemId);
+      const decision = this.responsePolicy.onUtteranceCommitted(itemId);
+      // Only a turn the policy actually accepted moves this. A duplicated commit
+      // for an earlier utterance is answered `ignore`, and letting it set the marker
+      // anyway would rewind the guard below — that earlier utterance's late yes
+      // would then pass, and the bare response would answer whatever came after it.
+      if (decision !== 'ignore') this.newestItemId = itemId;
       if (decision === 'respond') {
-        this.answer('transcript');
+        this.answer('open-mode');
         return;
       }
-      if (decision === 'classify') void this.classifyThenMaybeRespond(itemId, text, 'final');
+      if (decision === 'gate') void this.judgeThenMaybeAnswer(itemId);
+    });
+
+    // Nothing decides anything from these words any more — the gate hears the
+    // audio. What a transcript is still worth is being able to read back what a
+    // call actually said next to how it was judged, which is how every wrong
+    // verdict so far has been diagnosed. It lags the decision by however long
+    // transcription takes, so it is written as its own line and paired with the
+    // verdict by `item=` rather than folded into one.
+    this.session.on('transcript', (itemId, text) => {
+      const sentence = formatTranscript(text);
+      if (sentence === '') return;
+      logger.info(`[Meeting:Heard] item=${itemId || 'none'} ${sentence}`);
     });
 
     this.session.on('apiError', (message) => {
@@ -378,127 +311,73 @@ export class VoiceConversation {
   }
 
   /**
-   * Ask the model whether an unnamed utterance was aimed at the agent.
+   * Ask the model whether an utterance was aimed at the agent, then act on it.
    *
-   * Deferred rather than awaited inline because the whole point of the lexical
-   * test is that the common cases never get this far. A verdict that arrives too
-   * late is dropped: the room has moved on, and answering a question everyone has
-   * stopped caring about is worse in a meeting than having missed it.
+   * Not awaited by the caller: the room keeps talking while this is in flight, and
+   * a later utterance must be free to be judged before an earlier verdict lands.
+   * Each probe ends its context on the utterance it is judging, so verdicts arriving
+   * out of order still land on the right sentence.
    */
-  private async classifyThenMaybeRespond(
-    itemId: string,
-    transcript: string,
-    stage: 'partial' | 'final',
-  ): Promise<void> {
+  private async judgeThenMaybeAnswer(itemId: string): Promise<void> {
     const asked = Date.now();
-    // Read before the await: the roster poll runs on its own timer, and a refresh
-    // landing during the ~1s gate call would otherwise make the line report the
-    // list that replaced the one the utterance was actually transcribed under.
-    const keywords = this.keywords;
+    this.gateCalls += 1;
 
-    // The local read first. It can only ever say *yes* — see `vocative.ts` — so a
-    // sentence it recognises as a vocative skips the model entirely and the room
-    // waits 0ms instead of the gate's measured 0.9–1.5s, while everything else goes
-    // to the model exactly as before. The asymmetry is deliberate: a bug here adds
-    // latency; it does not produce a wrong answer.
-    const local = await isVocativeAddress(transcript, this.options.agentName);
-    if (local.addressed) this.gateLocalYes += 1;
-    else this.gateModelCalls += 1;
-    const addressed =
-      local.addressed ||
-      (await classifyAddressed({
-        transcript,
-        agentName: this.options.agentName,
-        stage,
-      }));
+    const verdict = await judgeAddressed(this.session, {
+      itemId,
+      agentName: this.options.agentName,
+      roster: this.roster,
+    });
+    this.gateLatencyMs += verdict.elapsedMs;
 
-    // Every verdict is recorded; whether the sentence goes with it is a setting, and
-    // `transcript-log.ts` is where that decision and its reasoning live.
-    //
-    // `info`, deliberately: production runs at `info`, and this line exists to be
-    // read back from a deployed container. Which is exactly why the words are not on
-    // it by default — the room is unauthenticated and did not agree to be written
-    // down.
-    //
-    // What is always written is most of the diagnostic: the verdict, the item it
-    // belongs to (which is what pairs a partial verdict with the final one), the mode
-    // in force, and the *number* of names seeded to the transcriber. The agent's own
-    // name always leads that list, so `keywords=1` means no participants have been
-    // read yet.
-    //
-    // Tokens rather than one template, because a formatter that has nothing to say
-    // returns `''` and an empty token reads as a field with no value in it.
-    logger.info(
-      [
-        `[Meeting:Gate] ${stage} verdict addressed=${addressed}`,
-        `item=${itemId || 'none'}`,
-        `mode=${this.responsePolicy.effectiveMode}`,
-        // Which path decided, and — when it was the model — what the local read made
-        // of the sentence. `VocativeReason` is a bounded enum, so this token is safe
-        // to write with the transcript switched off.
-        local.addressed ? 'path=local' : `path=model local="${local.why}"`,
-        formatKeywords(keywords),
-        formatTranscript(transcript),
-      ]
-        .filter(Boolean)
-        .join(' '),
-    );
+    // A failure is counted here and nowhere else. It must not reach the policy: a
+    // verdict that never happened is not a suppression, and counting it as one
+    // would put failures into `suppressed` as well as `gate_failed` — leaving no
+    // way to read "the gate earned its keep" off the two numbers.
+    if (verdict.failed) {
+      this.gateFailed += 1;
+      return;
+    }
 
+    // The call ended under the probe. Nothing to answer into.
     if (this.stopped) return;
 
-    if (Date.now() - asked > CLASSIFY_DEADLINE_MS) {
-      logger.info('[Meeting] Dropped a late verdict — the room has moved on');
+    // A verdict this late is worse than a missed one: the room has moved on, and
+    // answering a question everybody has stopped caring about breaks whatever is
+    // being said now. The gate's own deadline should make this unreachable; it is
+    // kept because the cost of being wrong here is paid out loud.
+    if (Date.now() - asked > ADDRESSED_DEADLINE_MS) {
+      logger.info(`[Meeting] Dropped a late verdict for item=${itemId} — the room has moved on`);
       return;
     }
 
-    if (!this.responsePolicy.resolveClassification(itemId, addressed, stage)) return;
-
-    // Decided early, spoken at the boundary. A partial verdict that beats the
-    // speaker to the end of their sentence waits for `utteranceCommitted`; one that
-    // arrives after it (the classification outlived the rest of the sentence, which
-    // is the common case for a short question) has nothing left to wait for.
-    if (
-      stage === 'partial' &&
-      itemId !== '' &&
-      !this.committedItems.has(itemId) &&
-      !this.finalizedItems.has(itemId)
-    ) {
-      this.remember(this.answerAtTurnBoundary, itemId);
+    // Somebody else has spoken since. Answering now would answer *their* utterance,
+    // because the response carries the conversation as it stands rather than the
+    // turn that was judged — so a yes for a question asked of the agent could
+    // interrupt an exchange between two other people. Dropped instead, on the same
+    // principle as the deadline above: speaking out of turn is the failure this gate
+    // exists to prevent, and someone repeating themselves recovers a lost answer.
+    if (this.newestItemId !== null && this.newestItemId !== itemId) {
+      this.gateSuperseded += 1;
+      logger.info(
+        `[Meeting] Dropped a verdict for item=${itemId || 'none'} — ` +
+          `item=${this.newestItemId || 'none'} has closed since, and the answer would land on that`,
+      );
       return;
     }
 
-    this.answer(stage === 'partial' ? 'early-verdict' : 'final-transcript');
+    if (!this.responsePolicy.resolveVerdict(itemId, verdict.addressed)) return;
+    this.answer('gate');
   }
 
-  /**
-   * Add to a bounded set of item ids.
-   *
-   * Turns are short-lived and a call can run for an hour, so these sets are caches
-   * rather than records: the oldest entry goes when the cap is reached.
-   *
-   * Be careful raising or reusing the cap. Evicting a *held answer* is not
-   * recoverable: the policy has already marked that utterance answered, so the
-   * finished transcript sees it as handled and nothing speaks for it — a question
-   * asked directly of the agent gets silence. Reaching that needs the cap's worth
-   * of yes-verdicts held simultaneously, which a real conversation does not
-   * produce, but the failure is silent rather than loud.
-   */
-  private remember(set: Set<string>, itemId: string): void {
-    if (!itemId) return;
-    set.add(itemId);
-    if (set.size > EARLY_JUDGED_LIMIT) {
-      set.delete(set.values().next().value as string);
-    }
-  }
 
   /**
    * Ask for a response, and record how long the room waited to get one.
    *
-   * `via` names the path that decided it, because the paths have very different
-   * costs and the point of measuring is to tell them apart: a verdict reached from a
-   * partial transcript is free (it ran while the speaker was still talking), while
-   * one reached from the finished transcript is a model round trip the room sits
-   * through in silence.
+   * `via` names what decided it — `open-mode` when a one-to-one call answers at the
+   * turn boundary without asking anything, `gate` when a verdict was fetched. The
+   * two cost the room very differently, and the point of measuring is to tell them
+   * apart: the first is free, the second is a model round trip the room sits through
+   * in silence.
    */
   private answer(via: string): void {
     const waited = this.silenceSince === null ? null : Date.now() - this.silenceSince;
@@ -610,7 +489,11 @@ export class VoiceConversation {
     const signature = keywords.join('\u0000');
     if (signature === this.keywordSignature) return;
     this.keywordSignature = signature;
-    this.keywords = keywords;
+    // The gate is given the names uncapped: the cap above exists because every
+    // keyword biases the transcriber toward hearing it, and a prompt has no such
+    // cost. Telling the gate about somebody the transcriber was not told about is
+    // fine — it judges the audio, not the text.
+    this.roster = others;
 
     this.session.setTranscriptionKeywords(keywords);
     logger.info(`[Meeting] Transcriber now expects ${keywords.length} name(s) in the room`);
@@ -644,8 +527,11 @@ export class VoiceConversation {
       suppressed: policy.suppressed,
       addressedMatches: policy.addressedMatches,
       modeSwitches: policy.modeSwitches,
-      gateLocalYes: this.gateLocalYes,
-      gateModelCalls: this.gateModelCalls,
+      gateCalls: this.gateCalls,
+      gateFailed: this.gateFailed,
+      gateLatencyMs: this.gateLatencyMs,
+      gateSuperseded: this.gateSuperseded,
+      responsesFailed: this.responsesFailed,
     };
   }
 

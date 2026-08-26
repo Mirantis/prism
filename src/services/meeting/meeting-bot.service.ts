@@ -123,17 +123,18 @@ export interface JoinMeetingInput {
 }
 
 /**
- * Share of "was I addressed" decisions the local vocative read answered by itself,
- * as a whole percentage.
+ * Mean time a verdict took, in whole milliseconds.
  *
- * Zero when nothing was judged, rather than absent: a call where nobody spoke to the
- * agent is a common outcome, and a missing property looks the same as a build that
- * never emitted it.
+ * This is the number that says whether the gate is keeping the room waiting: it
+ * sits between somebody finishing a sentence and the agent starting to answer.
+ * Zero when nothing was judged, rather than absent — a call where nobody spoke to
+ * the agent is a common outcome, and a missing property looks the same as a build
+ * that never emitted it.
  */
-function localGateShare(stats: VoiceConversationStats | undefined): number {
-  const total = (stats?.gateLocalYes ?? 0) + (stats?.gateModelCalls ?? 0);
-  if (total === 0) return 0;
-  return Math.round(((stats?.gateLocalYes ?? 0) / total) * 100);
+function meanGateLatencyMs(stats: VoiceConversationStats | undefined): number {
+  const calls = stats?.gateCalls ?? 0;
+  if (calls === 0) return 0;
+  return Math.round((stats?.gateLatencyMs ?? 0) / calls);
 }
 
 export class MeetingBotService {
@@ -985,13 +986,22 @@ export class MeetingBotService {
         suppressed: String(stats?.suppressed ?? 0),
         addressed_matches: String(stats?.addressedMatches ?? 0),
         mode_switches: String(stats?.modeSwitches ?? 0),
-        // What the local vocative read saved. `gate_local_share` is a whole
-        // percentage of the utterances that skipped the classification model
-        // entirely. It is emitted rather than derived so a dashboard needs no
-        // arithmetic to show it.
-        gate_local_yes: String(stats?.gateLocalYes ?? 0),
-        gate_model_calls: String(stats?.gateModelCalls ?? 0),
-        gate_local_share: String(localGateShare(stats)),
+        // How the gate itself fared. `gate_failed` is the one number that says the
+        // agent was *deaf* rather than merely quiet: the gate fails closed, so a
+        // failing gate and a room nobody addressed produce identical silence, and
+        // nothing else distinguishes them. The mean is emitted rather than derived
+        // so a dashboard needs no arithmetic to show it.
+        gate_calls: String(stats?.gateCalls ?? 0),
+        gate_failed: String(stats?.gateFailed ?? 0),
+        gate_latency_ms: String(meanGateLatencyMs(stats)),
+        // Verdicts thrown away because a later utterance had closed first. The
+        // agent never answers a turn nothing judged; this is what that costs, and a
+        // high count means a busy room is paying it often.
+        gate_superseded: String(stats?.gateSuperseded ?? 0),
+        // Answers the agent gave that the room never heard. Distinct from
+        // `gate_failed`: there the decision never arrived, here it did and the
+        // response produced nothing.
+        responses_failed: String(stats?.responsesFailed ?? 0),
         // Whether Meet muted the agent after admission, whether or not the click cleared
         // it. How often a call that started audible goes silent is the failure the poll
         // watches for — and the one that hid behind a healthy-looking call before.
