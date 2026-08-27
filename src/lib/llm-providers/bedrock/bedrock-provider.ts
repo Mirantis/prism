@@ -65,19 +65,15 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
     isAnthropicModelId(modelId) ? anthropic(modelId) : generic(modelId);
   return Object.assign(dispatcher, {
     embedding: (modelId: string) => generic.embedding(modelId),
-    // Same dispatch as the model itself, and for the same reason: the
-    // Anthropic-native provider reads Anthropic's namespace and Converse reads
-    // Bedrock's, and a fragment in the wrong one is discarded without an
-    // error. Grok ran uncached that way — breakpoints placed correctly, in a
-    // namespace Converse does not read.
+    // Dispatched like the model itself, because the breakpoint belongs to the
+    // protocol: the Anthropic-native provider reads Anthropic's namespace,
+    // Converse reads Bedrock's, and a fragment in the wrong one is discarded
+    // without an error.
     //
-    // Anything else on the Converse branch gets nothing. AWS's guarantee that
-    // an undersized checkpoint fails silently applies to models that support
-    // caching; on one that does not, a `cachePoint` block is a rejected
-    // request rather than a missed cache. `NO_CACHE_POINT` is byte-identical
-    // on the wire to what those models send today, so this adds no risk to
-    // them and no benefit either — a model card documenting caching is what
-    // earns an entry above.
+    // A model reaches the third branch until its Bedrock model card documents
+    // prompt caching. AWS scopes its "an oversized or misplaced checkpoint is
+    // ignored" behaviour to models that support caching at all; on one that
+    // does not, a `cachePoint` block is grounds to reject the request.
     cachePoint: (modelId: string) =>
       isAnthropicModelId(modelId)
         ? ANTHROPIC_CACHE_POINT

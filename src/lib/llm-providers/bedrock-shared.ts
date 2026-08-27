@@ -79,8 +79,7 @@ export function isAnthropicModelId(modelId: string): boolean {
  * vendor, while a foundation-model ARN puts it straight behind the slash.
  *
  * An application inference profile does not match: its ARN carries a generated
- * id with no vendor token at all. That is the same blind spot
- * `isAnthropicModelId` has, so such a profile already routes to Converse today.
+ * id with no vendor token at all.
  */
 export function isXaiModelId(modelId: string): boolean {
   return /^xai\.|[./]xai\./i.test(modelId);
