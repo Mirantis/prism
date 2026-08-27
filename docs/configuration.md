@@ -160,30 +160,37 @@ policy for the deployment. Two kinds of rule work:
 - **Allow more.** "Force-pushing to any branch is fine here." The check now
   allows a call it would otherwise have refused.
 
-Your guide wins on any point it covers, and the built-in rules apply everywhere
-else. So a rule you write can switch off any part of the check, including the
-refusal of broad deletion, secret exposure and permission changes. Write it as
-narrowly as the work needs.
+A rule you write takes precedence on any point it covers, and the built-in rules
+apply everywhere else. So a rule you write can switch off any part of the check,
+including the refusal of broad deletion, secret exposure and permission changes.
+Write it as narrowly as the work needs.
+
+Treat the guide as part of your security configuration, because the check trusts
+it. The agent holds a shell and the Management API needs no credential from
+inside the container, so the agent can edit the guide even though it has no tool
+for it. A rule that grants permission is therefore a rule the agent could grant
+itself, which is why this is a guardrail rather than a security boundary — see
+[Agent identity](agent-identity.md). `gate.policy_hash` in telemetry is a digest
+of the guide in force: if it changes without you editing the guide, something
+else changed it.
 
 The guide is an operating manual, so most of it is advice on how to work rather
 than a rule about what is allowed. The check reads it for the rules and takes
 the rest as background.
 
-Read your guide before you switch from `observe` to `enforce`. The guide a new
-agent starts with says "read-only by default" under `## Safety`, and as policy
-that refuses the file edits, builds and dependency installs the agent needs to
-work. Any rule you already wrote for the agent to read now decides what it may
-do. Run `observe` mode first: it shows every rule that would block work, before
-any work is blocked.
+A guide you have never edited is not used as policy, so a new agent runs on the
+built-in rules alone. The stock guide says "read-only by default" under
+`## Safety`, which as policy would refuse the file edits and builds the agent
+needs to work. Edit any part of the guide and the whole document becomes your
+policy, stock sentences included — so read it through before you switch from
+`observe` to `enforce`. Run `observe` first either way: it shows every rule that
+would block work, before any work is blocked.
 
-The guide is read as one block up to about 8,000 characters. Past that the check
-sees the start and the end of it, so keep a rule out of the middle of a very long
-guide. The runtime logs a warning when your guide is over the limit.
-
-The guide is a guardrail rather than a security boundary, for the reason
-[Agent identity](agent-identity.md) gives. The agent holds a shell, and the
-Management API needs no credential from inside the container. So the agent can
-still edit the document even though it has no tool for it.
+The guide is read as one block up to about 8,000 characters, cut on whole lines.
+Past that the check reads the start and the end, so keep a rule out of the middle
+of a very long guide. The runtime logs a warning when your guide is over the
+limit. Your guide is sent with every checked tool call and is not cached, so a
+long guide adds to the cost of each one.
 
 ### Rollout and failures
 
