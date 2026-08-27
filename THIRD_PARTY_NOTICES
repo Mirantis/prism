@@ -493,11 +493,6 @@ Files in this repository:
                                          providers.
   src/scripts/generate-model-limits.ts   The generator that produces it.
 
-Provenance of this license text: a project maintainer read it from the upstream
-repository and quoted it in AGENT-147, Jira comment 1511221. models.dev is not
-reachable from this project's CI or development sandbox, so the upstream license
-file was not read here.
-
 License text, verbatim:
 
 MIT License
