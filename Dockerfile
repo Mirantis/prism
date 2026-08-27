@@ -251,6 +251,10 @@ COPY --from=builder /app/cli/dist ./cli/dist
 RUN chmod +x /app/cli/dist/index.js \
  && ln -s /app/cli/dist/index.js /usr/local/bin/prism
 
+# License, attribution and third-party notices, at the application working
+# directory so `docker run <image> cat /app/LICENSE` finds them.
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES ./
+
 # Startup orchestrator. The pending-import preflight is compiled into
 # `dist/scripts/apply-pending-import.js` by the builder stage above —
 # same code path the `dev:single` npm script runs via tsx.

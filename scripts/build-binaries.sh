@@ -12,8 +12,9 @@
 #
 # Output:
 #   dist-sea/<plat>-<arch>/                prism, prism-server, node_modules/,
-#                                          web/, install.sh (macOS/Linux) or
-#                                          install.ps1 (Windows)
+#                                          web/, LICENSE, NOTICE,
+#                                          THIRD_PARTY_NOTICES, install.sh
+#                                          (macOS/Linux) or install.ps1 (Windows)
 #   prism-<version>-<plat>-<arch>.tar.gz   (macOS/Linux)
 #   prism-<version>-<plat>-<arch>.zip      (Windows, via 7z)
 #
@@ -25,10 +26,18 @@ cd "$ROOT"
 
 VERSION="${VERSION:-dev}"
 
+OS_ARCH=$(node -e 'process.stdout.write(`${process.platform}-${process.arch}`)')
+PLATFORM=$(node -e 'process.stdout.write(process.platform)')
+
 npm run build:web
 node scripts/build-sea.mjs prism
 node scripts/build-sea.mjs prism-server
 node scripts/collect-natives.mjs
+
+# License, attribution and third-party notices ship inside the archive, and
+# install.sh / install.ps1 copy them into $PRISM_HOME. This runs before the smoke
+# test, which checks all three are in dist-sea/.
+cp LICENSE NOTICE THIRD_PARTY_NOTICES "dist-sea/$OS_ARCH/"
 
 if [ -z "${SKIP_SMOKE:-}" ]; then
   node scripts/smoke-sea.mjs
@@ -37,9 +46,6 @@ fi
 if [ -n "${SKIP_ARCHIVE:-}" ]; then
   exit 0
 fi
-
-OS_ARCH=$(node -e 'process.stdout.write(`${process.platform}-${process.arch}`)')
-PLATFORM=$(node -e 'process.stdout.write(process.platform)')
 
 # Ship the platform-appropriate installer inside the archive so users can run
 # it directly: install.ps1 on Windows, install.sh on macOS/Linux.

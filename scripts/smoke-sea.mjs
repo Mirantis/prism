@@ -5,12 +5,13 @@
  *   prism         --version prints a semver and exits 0
  *   prism-server  --version prints a semver; boots, serves /health 200 and
  *                 the SPA at /, then shuts down cleanly
+ *   LICENSE, NOTICE, THIRD_PARTY_NOTICES are present
  *
  * Runs in CI (all OSes) and locally. Expects dist-sea/<os-arch>/ populated by
- * build-sea.mjs + collect-natives.mjs.
+ * scripts/build-binaries.sh.
  */
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -34,7 +35,12 @@ const v = execFileSync(prism, ['--version'], { encoding: 'utf8' }).trim();
 const sv = execFileSync(server, ['--version'], { encoding: 'utf8' }).trim();
 /\d+\.\d+\.\d+/.test(sv) ? ok(`prism-server --version (${sv})`) : fail('prism-server --version');
 
-// 2. prism-server boots against an isolated home, serves /health + the SPA.
+// 2. The archive carries the license, attribution and third-party notices.
+for (const name of ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES']) {
+  existsSync(path.join(dir, name)) ? ok(`${name} present`) : fail(`${name} present`);
+}
+
+// 3. prism-server boots against an isolated home, serves /health + the SPA.
 const home = mkdtempSync(path.join(os.tmpdir(), 'prism-smoke-'));
 const child = spawn(server, [], {
   env: {
