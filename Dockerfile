@@ -23,9 +23,7 @@ ENV CHECKPOINT_DISABLE=1
 # openssl is needed by Prisma's query engine on Debian slim (not shipped by default).
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 
-# .npmrc mounted as secret so token never persists in image layers.
-RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
-    npm ci --ignore-scripts
+RUN npm ci --ignore-scripts
 
 # Copy source for the runtime
 COPY src ./src
@@ -133,13 +131,11 @@ RUN awk '/BEGIN CERTIFICATE/{c=1;b="";next} /END CERTIFICATE/{c=0;print b;next} 
 # Install only production dependencies. Scope to root + cli — the web
 # workspace's node_modules isn't needed at runtime (we only ship its
 # built dist/), so skip it to keep the image smaller.
-# .npmrc mounted as secret so token never persists in image layers.
 COPY package.json package-lock.json ./
 COPY web/package.json ./web/
 COPY cli/package.json ./cli/
 
-RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
-    npm ci --workspace=prism-cli --include-workspace-root --omit=dev --ignore-scripts
+RUN npm ci --workspace=prism-cli --include-workspace-root --omit=dev --ignore-scripts
 
 # `npm ci --ignore-scripts` skipped better-sqlite3's prebuild-install step
 # (which downloads the platform-specific native binding). Rebuild just that

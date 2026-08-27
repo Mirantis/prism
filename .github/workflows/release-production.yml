@@ -74,7 +74,6 @@ jobs:
           OTEL_EXPORTER_OTLP_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_API_KEY }}
         run: |
           set -euo pipefail
-          printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.npmrc-secret"
           # Authenticate mise/aqua's GitHub API calls (avoids the 403 rate limit).
           printf '%s' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.gh-token-secret"
           printf '%s' "$OTEL_EXPORTER_OTLP_API_KEY" > "$RUNNER_TEMP/.otel-api-key-secret"
@@ -88,7 +87,6 @@ jobs:
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=ghcr.io/lensapp/prism-agent,push-by-digest=true,name-canonical=true,push=true
           secret-files: |
-            npmrc=${{ runner.temp }}/.npmrc-secret
             github_token=${{ runner.temp }}/.gh-token-secret
             otel_api_key=${{ runner.temp }}/.otel-api-key-secret
           build-args: |
@@ -99,7 +97,7 @@ jobs:
           cache-to: type=gha,scope=release-prism-${{ matrix.platform }},mode=max
 
       - if: always()
-        run: rm -f "$RUNNER_TEMP/.npmrc-secret" "$RUNNER_TEMP/.gh-token-secret" "$RUNNER_TEMP/.otel-api-key-secret"
+        run: rm -f "$RUNNER_TEMP/.gh-token-secret" "$RUNNER_TEMP/.otel-api-key-secret"
 
       - name: Export digest
         run: |

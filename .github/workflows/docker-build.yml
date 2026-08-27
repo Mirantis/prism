@@ -101,7 +101,6 @@ jobs:
 
       - name: Prepare build secrets
         run: |
-          printf '@lensapp:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=%s\n' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.npmrc-secret"
           # Authenticate mise/aqua's GitHub API calls so tool installs don't
           # hit the unauthenticated 403 rate limit (see Dockerfile mise step).
           printf '%s' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.gh-token-secret"
@@ -120,7 +119,6 @@ jobs:
           # telemetry off, and an operator sets the OTel env at `docker run`.
           outputs: ${{ needs.tag.outputs.push == 'true' && 'type=image,name=ghcr.io/lensapp/prism-agent,push-by-digest=true,name-canonical=true,push=true' || 'type=cacheonly' }}
           secret-files: |
-            npmrc=${{ runner.temp }}/.npmrc-secret
             github_token=${{ runner.temp }}/.gh-token-secret
           build-args: |
             SERVICE_VERSION=${{ needs.tag.outputs.image_tag }}
@@ -133,7 +131,7 @@ jobs:
           cache-to: type=gha,scope=pr-prism-${{ matrix.platform }},mode=max
 
       - if: always()
-        run: rm -f "$RUNNER_TEMP/.npmrc-secret" "$RUNNER_TEMP/.gh-token-secret"
+        run: rm -f "$RUNNER_TEMP/.gh-token-secret"
 
       - name: Export digest
         if: needs.tag.outputs.push == 'true'
