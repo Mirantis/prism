@@ -10,12 +10,17 @@
  *      /               — Prism Agent Web UI (static SPA bundle from web/dist)
  *
  * Auth is handled by Lens Agents inbound routing in front of the runtime;
- * the container itself trusts every incoming connection.
+ * the container itself trusts every incoming connection. `originGuard` is the
+ * one exception: it answers 403 to a browser request that comes from another
+ * site (see `lib/origin-guard.ts`).
  */
 
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import type { Server } from 'http';
+import { config } from './config';
+import { logger } from './logger';
 import { managementRouter } from './routes/management';
 import { threadsRouter } from './routes/threads';
 import { messagesRouter } from './routes/messages';
@@ -23,9 +28,13 @@ import { webhookRouter } from './routes/webhook';
 import { lockedInRouter } from './routes/locked-in';
 import { agentGuideRouter } from './routes/agent-guide';
 import { updateRouter } from './routes/update';
+import { originGuard } from './lib/origin-guard';
 
 export function createApp() {
   const app = express();
+
+  // Ahead of the body parser: a refused request costs nothing to read.
+  app.use(originGuard);
 
   app.use(express.json({ limit: '5mb' }));
 
@@ -70,4 +79,20 @@ export function createApp() {
   }
 
   return app;
+}
+
+/**
+ * Bind the server to `config.host`, which `PRISM_HOST` sets and which defaults
+ * to loopback.
+ */
+export function listenOn(server: Pick<Server, 'listen'>): void {
+  server.listen(config.port, config.host, () => {
+    // A wildcard bind is not an address a browser can open, so name the
+    // interface separately from the URL. An IPv6 literal needs brackets.
+    const wildcard = ['0.0.0.0', '::', '::0', '0:0:0:0:0:0:0:0'].includes(config.host);
+    const address = config.host.includes(':') ? `[${config.host}]` : config.host;
+    const url = `http://${wildcard ? 'localhost' : address}:${config.port}`;
+    logger.info(`Running on ${url} (interface ${config.host})`);
+    logger.info(`Health: ${url}/health`);
+  });
 }

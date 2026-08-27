@@ -48,7 +48,11 @@ This starts the runtime in the background and attaches your terminal to the
 - `-v prism-data:/data` persists the agent's database in the `prism-data` named
   volume across container restarts.
 - `-p 3003:3003` exposes the runtime so you can also reach the
-  **[Web UI](web-ui.md)** at <http://localhost:3003>.
+  **[Web UI](web-ui.md)** at <http://localhost:3003>. That publishes the port on
+  every interface of the host, so the network can connect to it. Publish it to
+  this machine only with `-p 127.0.0.1:3003:3003`, or put an authenticating
+  proxy in front of it (see
+  [Who can reach the runtime](configuration.md#who-can-reach-the-runtime)).
 
 ## Run the runtime only (server)
 

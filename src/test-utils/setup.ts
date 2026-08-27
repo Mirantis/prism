@@ -39,6 +39,7 @@ beforeEach(() => {
 vi.mock('../config', () => ({
   config: {
     port: 3003,
+    host: '127.0.0.1',
     agentId: 'test-agent-id',
     ownerUserId: 'test-owner-id',
     agentDefaults: {},

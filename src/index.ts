@@ -23,7 +23,7 @@ if (dotenvLoadInfo.error) {
 } else {
   logger.info('[dotenv] injected %d env var(s) from %s', dotenvLoadInfo.loadedCount, dotenvLoadInfo.path);
 }
-import { createApp } from './server';
+import { createApp, listenOn } from './server';
 import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
 import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
 import { trackAgentStarted } from './lib/startup-telemetry';
@@ -256,10 +256,8 @@ const initialize = async () => {
 const getServer = async () => {
  await initialize();
 
- return httpServer.listen(config.port, async () => {
-    logger.info(`Running on http://localhost:${config.port}`);
-    logger.info(`Health: http://localhost:${config.port}/health`);
-  });
+ listenOn(httpServer);
+ return httpServer;
 };
 
 // Graceful shutdown

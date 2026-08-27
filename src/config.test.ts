@@ -36,6 +36,21 @@ describe('config', () => {
     expect(cfg.port).toBe(3003);
   });
 
+  it('defaults the bind to loopback', async () => {
+    delete process.env.PRISM_HOST;
+    expect((await loadConfig()).host).toBe('127.0.0.1');
+  });
+
+  it('reads PRISM_HOST from env', async () => {
+    process.env.PRISM_HOST = '0.0.0.0';
+    expect((await loadConfig()).host).toBe('0.0.0.0');
+  });
+
+  it('falls back to loopback for a whitespace-only PRISM_HOST', async () => {
+    process.env.PRISM_HOST = '   ';
+    expect((await loadConfig()).host).toBe('127.0.0.1');
+  });
+
   it('reads PORT from env', async () => {
     process.env.PORT = '4000';
     const cfg = await loadConfig();

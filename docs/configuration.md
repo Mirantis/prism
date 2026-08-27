@@ -117,6 +117,7 @@ See **[Slack](slack.md)** for how the tokens are used.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `PORT` | HTTP port the runtime listens on | `3003` |
+| `PRISM_HOST` | Network interface the runtime listens on. The default accepts connections from this machine only. Set it to `0.0.0.0` to accept them from the network — the Docker image does, so a published port works. The name is prefixed because a bare `HOST` is the machine's own hostname in some environments. | `127.0.0.1` (`0.0.0.0` in Docker) |
 | `DATABASE_URL` | SQLite URL for the agent database. The Docker image's `start.sh` sets this to `file:/data/agent.db`; locally it resolves next to the Prisma schema. | `file:/data/agent.db` (Docker) |
 | `AGENT_ID` | Pin the agent's UUID. Unset → a fresh UUID is generated on first boot and reused thereafter. | generated |
 | `AGENT_NAME` | Display name on first boot | `Prism` |
@@ -132,6 +133,27 @@ See **[Slack](slack.md)** for how the tokens are used.
 
 `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID` only matter on the **first** boot
 with an empty database; later boots reuse the stored workspace.
+
+### Who can reach the runtime
+
+By default the runtime is reachable from this machine only.
+
+- It listens on `127.0.0.1`. `PRISM_HOST` widens that to the network — put an
+  authenticating proxy in front of the port before you do.
+- While it listens on `127.0.0.1`, a browser request that comes from another
+  site is answered with 403.
+- In Docker the runtime listens on `0.0.0.0` — a published port needs that — so
+  the container answers requests for any host name. `-p 127.0.0.1:3003:3003`
+  keeps the port reachable from the host machine only; an authenticating proxy
+  in front is what closes it to browsers on other sites.
+- A proxy in front that rewrites the `Host` header must forward
+  `X-Forwarded-Host` — most proxies do — or the Web UI's chat connection is
+  answered with 403.
+- A proxy forwarding to the default loopback listen must forward
+  `X-Forwarded-Host` (Caddy's default; on nginx add
+  `proxy_set_header X-Forwarded-Host $host`) or rewrite `Host` to a loopback
+  name (`ngrok --host-header=rewrite`) — otherwise its requests, webhook
+  deliveries included, are answered with 403.
 
 [Webhooks](webhooks.md) need no environment variables — the receiver toggle and
 subscriptions live in the database, managed from the Web UI. Note that the
