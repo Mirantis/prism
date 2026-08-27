@@ -29,7 +29,13 @@ import { VoiceConversation, type VoiceConversationStats } from './voice-conversa
 import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet';
-import type { JoinStep, MeetingProvider, SpeakerDetails } from './meeting-provider.interface';
+import { formatChatBody } from './transcript-log';
+import type {
+  ChatSendStep,
+  JoinStep,
+  MeetingProvider,
+  SpeakerDetails,
+} from './meeting-provider.interface';
 import type { Page } from 'playwright-core';
 
 /**
@@ -103,6 +109,17 @@ const EMPTY_READINGS_BEFORE_LEAVING = Math.ceil(
   EMPTY_DURATION_BEFORE_LEAVING_MS / PARTICIPANT_POLL_MS,
 );
 
+/**
+ * Longest message the agent may post into a call's chat.
+ *
+ * Ours, not the platform's. A chat message here exists to hand over the one thing
+ * speech is bad at — a link, an id, a command — so a cap this size takes those and
+ * refuses an essay, which the agent should be saying out loud instead. Refusing before
+ * the page sees it also means one clear answer the model can act on, rather than a
+ * silent truncation nobody in the room can tell from a message that arrived whole.
+ */
+export const MEETING_CHAT_MAX_CHARS = 500;
+
 export type MeetingState =
   | 'idle'
   | 'launching'
@@ -163,6 +180,30 @@ export interface SpeakerReport {
   attribution: 'available' | 'unavailable';
   /** One line the agent can act on, since a bare null does not say why. */
   note: string;
+}
+
+/**
+ * How a chat send ended, in one word.
+ *
+ * This is the telemetry property, so it is an enum: `rejected` is the agent asking for
+ * something this runtime will not send (empty, or over the cap), `busy` is a second send
+ * arriving while the first is still typing, and `failed` is a page that would not take a
+ * message it should have taken. The step a `failed` send got to rides alongside it.
+ */
+type ChatSendStatus = 'sent' | 'not_in_call' | 'unsupported' | 'rejected' | 'busy' | 'failed';
+
+/** What the caller is told: whether the room has it, and one sentence saying so. */
+export interface ChatSendOutcome {
+  sent: boolean;
+  message: string;
+}
+
+/** The outcome plus what telemetry and the log line need. Never the body. */
+interface ChatSendReport extends ChatSendOutcome {
+  status: ChatSendStatus;
+  step?: ChatSendStep;
+  /** Characters offered to the page, after the whitespace was collapsed. */
+  length: number;
 }
 
 export interface JoinMeetingInput {
@@ -244,6 +285,15 @@ export class MeetingBotService {
    * take away, and a first successful read is no evidence it is still there.
    */
   private speakerSeen = false;
+  /**
+   * Whether a chat send is typing into the composer right now.
+   *
+   * Two jobs. It refuses a second send, which would otherwise fill the same draft box
+   * from two places and post one message made of both. And it holds off the unmute
+   * retry, which drives the same page: that one sweeps dialogs and clicks a toggle, so
+   * it is the half that can move the control bar out from under a send in progress.
+   */
+  private chatSendInFlight = false;
   /** Step a failed join reached, carried to the `meeting ended` event. */
   private failStep: JoinStep | null = null;
   /**
@@ -914,8 +964,11 @@ export class MeetingBotService {
   /** One poll: get the microphone live if it isn't, then read the room. */
   private async pollOnce(): Promise<void> {
     // The microphone first, because it is the more urgent of the two: an agent nobody
-    // can hear is not really taking part.
-    if (!this.micConfirmed) await this.retryUnmute(this.epoch);
+    // can hear is not really taking part. Skipped while a chat send is typing, since the
+    // retry sweeps dialogs and clicks the control bar on the same page — see
+    // `chatSendInFlight`. A skipped retry costs one poll interval; a swept-away composer
+    // costs the message.
+    if (!this.micConfirmed && !this.chatSendInFlight) await this.retryUnmute(this.epoch);
     if (this.state !== 'in_call' || !this.page || !this.provider) return;
 
     // Then the participants panel. Same shape as the unmute retry and for the same reason:
@@ -995,6 +1048,139 @@ export class MeetingBotService {
     const platform = this.provider?.displayName ?? 'meeting';
     await this.finish('completed', null);
     return { message: `Left the ${platform} call.` };
+  }
+
+  /**
+   * Post one short message into the call's own chat.
+   *
+   * The only way out of a call other than speech, and it goes one way: nothing reads
+   * the chat back, so this hands over what a spoken sentence mangles — a link, an id,
+   * a command to paste — and nothing else.
+   *
+   * **In-call only, and nothing is kept.** The message is not a conversation message:
+   * it is never stored, never delivered to a thread, and never reaches a channel
+   * adapter. It exists in the room and in this process, and when the call ends the only
+   * trace is a count and a duration in telemetry. That is why the tool behind it runs in
+   * meeting mode alone — a chat turn would persist its arguments as history.
+   *
+   * The one emitter for `meeting chat sent`, at every outcome including the refusals, so
+   * a send that never reached the page is still visible as something the agent tried.
+   */
+  async sendChatMessage(text: string, userId: string): Promise<ChatSendOutcome> {
+    const startedAt = Date.now();
+    // Collapsed before anything measures or sends it. A model dictating a message hands
+    // over newlines, and the composer submits on Enter — so a newline in the draft is
+    // half a message in the room, and the half nobody sees is the half that mattered.
+    const message = text.trim().replace(/\s+/g, ' ');
+    const report = await this.attemptChatSend(message);
+
+    // Built by hand rather than spread from the report: the report holds the length, and
+    // the body must not be one field name away from a telemetry property.
+    trackEvent('meeting chat sent', userId, {
+      provider: this.provider?.name ?? 'none',
+      status: report.status,
+      length: String(report.length),
+      duration_ms: String(Date.now() - startedAt),
+      ...(report.step ? { fail_step: report.step } : {}),
+    });
+
+    // One line either way, and it names the step it stopped at. A send that failed is
+    // silence in a room with no other symptom, so it is logged at every setting; only
+    // `full` adds the words, which is what `MEETING_CHAT_LOGGING` decides.
+    const line =
+      `[Meeting:Chat] ${report.status} chars=${report.length} ${Date.now() - startedAt}ms` +
+      (report.step ? ` step=${report.step}` : '');
+    const body = formatChatBody(message);
+    const full = body ? `${line} ${body}` : line;
+    if (report.sent) logger.info(full);
+    else logger.warn(full);
+
+    return { sent: report.sent, message: report.message };
+  }
+
+  /**
+   * Decide whether this send can go out, and drive it if it can.
+   *
+   * Split from `sendChatMessage` so that every path — the refusals included — leaves by
+   * one route that reports it.
+   */
+  private async attemptChatSend(message: string): Promise<ChatSendReport> {
+    const provider = this.provider;
+    const page = this.page;
+    const length = message.length;
+
+    if (this.state !== 'in_call' || !page || !provider) {
+      return {
+        sent: false,
+        status: 'not_in_call',
+        length,
+        message: `I'm not in a call, so there's no meeting chat to post into.`,
+      };
+    }
+    if (!provider.sendChatMessage) {
+      return {
+        sent: false,
+        status: 'unsupported',
+        length,
+        message: `I can't post into the chat of a ${provider.displayName} call. Say it instead.`,
+      };
+    }
+    if (length === 0) {
+      return { sent: false, status: 'rejected', length, message: `There was no message to post.` };
+    }
+    if (length > MEETING_CHAT_MAX_CHARS) {
+      return {
+        sent: false,
+        status: 'rejected',
+        length,
+        message:
+          `That's ${length} characters and I post at most ${MEETING_CHAT_MAX_CHARS}. ` +
+          `Send the link or the id on its own and say the rest out loud.`,
+      };
+    }
+    if (this.chatSendInFlight) {
+      return {
+        sent: false,
+        status: 'busy',
+        length,
+        message: `I'm still posting the previous message. Ask me again in a moment.`,
+      };
+    }
+
+    this.chatSendInFlight = true;
+    try {
+      const result = await provider.sendChatMessage(page, message);
+      if (result.sent) {
+        return { sent: true, status: 'sent', length, message: `Posted it in the call's chat.` };
+      }
+      // The reason is page prose, so it goes to the model and to the log line's `step=`,
+      // never to telemetry.
+      return {
+        sent: false,
+        status: 'failed',
+        step: result.step,
+        length,
+        message:
+          `I couldn't post that in the call's chat (${result.reason}). ` +
+          `Say it out loud instead — don't try again.`,
+      };
+    } catch (err) {
+      // A page that closed under the send: a `leave()` or a teardown mid-type. Reported
+      // rather than thrown, because the caller is a tool and the room is still waiting.
+      //
+      // No `step`: a throw can land at any of them, and naming one would be a guess in a
+      // telemetry property. `failed` with no step is exactly "it threw".
+      return {
+        sent: false,
+        status: 'failed',
+        length,
+        message:
+          `I couldn't post that in the call's chat: ${err instanceof Error ? err.message : String(err)}. ` +
+          `Say it out loud instead.`,
+      };
+    } finally {
+      this.chatSendInFlight = false;
+    }
   }
 
   /**
@@ -1176,6 +1362,9 @@ export class MeetingBotService {
     // Meet opens every call with its participants panel shut, so the next call starts out
     // unattributed and has to open it again.
     this.speakerSeen = false;
+    // Same reasoning: a send left mid-flight here would refuse every send in the next
+    // call, and it cannot post anything into it — the page it was typing into is gone.
+    this.chatSendInFlight = false;
     this.failStep = null;
     // Free only when nothing is still being built. A startup abandoned mid-sign-in
     // still holds the shared browser profile, and the next `join()` would clear its

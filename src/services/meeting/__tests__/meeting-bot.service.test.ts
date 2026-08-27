@@ -179,6 +179,14 @@ const providerEnsureUnmuted = vi.fn();
 const providerEnableAttribution = vi.fn();
 const providerParticipantNames = vi.fn();
 const providerCurrentSpeaker = vi.fn();
+const providerSendChatMessage = vi.fn();
+/**
+ * Whether this platform offers a chat the runtime can post into.
+ *
+ * A getter rather than a field, so one test can take the method away: the seam is
+ * optional, and "no chat panel" has to be answerable without a second mocked module.
+ */
+let chatSupported = true;
 vi.mock('../providers/google-meet', () => ({
   googleMeetProvider: {
     name: 'google-meet',
@@ -193,6 +201,9 @@ vi.mock('../providers/google-meet', () => ({
     participantNames: (...a: unknown[]) => providerParticipantNames(...a),
     enableSpeakerAttribution: (...a: unknown[]) => providerEnableAttribution(...a),
     currentSpeaker: (...a: unknown[]) => providerCurrentSpeaker(...a),
+    get sendChatMessage() {
+      return chatSupported ? (...a: unknown[]) => providerSendChatMessage(...a) : undefined;
+    },
   },
 }));
 
@@ -204,10 +215,13 @@ vi.mock('../../../config', () => ({
     meetingTimeoutMinutes: 60,
     meetingAdmissionTimeoutMs: 5_000,
     openaiRealtimeVoice: undefined,
+    // The default, and the setting the chat assertions below run under: a message the
+    // agent posts may not reach a log line unless an operator asked for it.
+    meetingChatLogging: 'off',
   },
 }));
 
-const { MeetingBotService } = await import('../meeting-bot.service');
+const { MeetingBotService, MEETING_CHAT_MAX_CHARS } = await import('../meeting-bot.service');
 
 const URL = 'https://meet.google.com/abc-defg-hij';
 const input = { url: URL, userId: 'u1', agentId: 'a1', threadId: 't1' };
@@ -243,6 +257,8 @@ beforeEach(() => {
   providerCurrentSpeaker.mockResolvedValue(null);
   providerParticipantCount.mockResolvedValue(3);
   providerEnsureUnmuted.mockResolvedValue(false);
+  providerSendChatMessage.mockResolvedValue({ sent: true });
+  chatSupported = true;
   conversationOptions = {};
   service = new MeetingBotService();
 });
@@ -1438,4 +1454,227 @@ describe('reading the room', () => {
     expect(conversationOptions).toMatchObject({ agentName: 'Atlas', responseMode: 'auto' });
   });
 
+});
+
+describe('posting into the call chat', () => {
+  /** Get to a live call, which is the only place a send is allowed from. */
+  const enterCall = async () => {
+    await service.join(input);
+    await settle();
+  };
+
+  it('posts the message and says the room has it', async () => {
+    await enterCall();
+
+    const result = await service.sendChatMessage('https://example.test/run/42', 'u1');
+
+    expect(result).toEqual({ sent: true, message: `Posted it in the call's chat.` });
+    expect(providerSendChatMessage).toHaveBeenCalledWith(
+      { mockPage: true },
+      'https://example.test/run/42',
+    );
+  });
+
+  it('collapses the whitespace before the composer sees it', async () => {
+    // The composer submits on Enter, so a newline in the draft posts half a message —
+    // and the half nobody sees is the link.
+    await enterCall();
+
+    await service.sendChatMessage('  see\n\nhttps://example.test/run/42   ', 'u1');
+
+    expect(providerSendChatMessage).toHaveBeenCalledWith(
+      { mockPage: true },
+      'see https://example.test/run/42',
+    );
+  });
+
+  it('refuses when there is no call to post into', async () => {
+    const result = await service.sendChatMessage('anyone there?', 'u1');
+
+    expect(result.sent).toBe(false);
+    expect(result.message).toMatch(/not in a call/i);
+    expect(providerSendChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('refuses once the call has ended', async () => {
+    // The window that matters: a Realtime session can still be draining a tool call
+    // after the room is gone, and the page it would type into has been closed.
+    await enterCall();
+    await service.leave();
+
+    const result = await service.sendChatMessage('one more thing', 'u1');
+
+    expect(result.sent).toBe(false);
+    expect(providerSendChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('says so when the platform has no chat it can drive', async () => {
+    chatSupported = false;
+    await enterCall();
+
+    const result = await service.sendChatMessage('the link is in the doc', 'u1');
+
+    expect(result.sent).toBe(false);
+    expect(result.message).toMatch(/can't post into the chat of a Google Meet call/i);
+  });
+
+  it('refuses a message with nothing in it', async () => {
+    await enterCall();
+
+    const result = await service.sendChatMessage('   \n  ', 'u1');
+
+    expect(result.sent).toBe(false);
+    expect(providerSendChatMessage).not.toHaveBeenCalled();
+    expect(trackEvent).toHaveBeenCalledWith(
+      'meeting chat sent',
+      'u1',
+      expect.objectContaining({ status: 'rejected', length: '0' }),
+    );
+  });
+
+  it('refuses an over-long message instead of posting part of it', async () => {
+    // Refused here rather than truncated, because a truncated message reads in the room
+    // exactly like one that arrived whole — and the model can shorten it if it is told.
+    await enterCall();
+    const tooLong = 'x'.repeat(MEETING_CHAT_MAX_CHARS + 1);
+
+    const result = await service.sendChatMessage(tooLong, 'u1');
+
+    expect(result.sent).toBe(false);
+    expect(result.message).toContain(String(MEETING_CHAT_MAX_CHARS));
+    expect(providerSendChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('takes a message exactly at the cap', async () => {
+    await enterCall();
+
+    const result = await service.sendChatMessage('x'.repeat(MEETING_CHAT_MAX_CHARS), 'u1');
+
+    expect(result.sent).toBe(true);
+  });
+
+  it('refuses a second send while the first is still typing', async () => {
+    // Both would fill the same draft box, and the room would get one message made of
+    // both halves.
+    await enterCall();
+    let finish: (v: unknown) => void = () => {};
+    providerSendChatMessage.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+
+    const first = service.sendChatMessage('first', 'u1');
+    const second = await service.sendChatMessage('second', 'u1');
+
+    expect(second.sent).toBe(false);
+    expect(second.message).toMatch(/still posting/i);
+    expect(providerSendChatMessage).toHaveBeenCalledTimes(1);
+
+    finish({ sent: true });
+    expect((await first).sent).toBe(true);
+
+    // And the next one is accepted again.
+    expect((await service.sendChatMessage('third', 'u1')).sent).toBe(true);
+  });
+
+  it('reports a page that would not take the message, and tells the model to speak', async () => {
+    providerSendChatMessage.mockResolvedValue({
+      sent: false,
+      step: 'composer',
+      reason: 'the chat panel opened but painted no input',
+    });
+    await enterCall();
+
+    const result = await service.sendChatMessage('https://example.test/run/42', 'u1');
+
+    expect(result.sent).toBe(false);
+    expect(result.message).toMatch(/painted no input/);
+    expect(result.message).toMatch(/out loud/);
+    expect(trackEvent).toHaveBeenCalledWith(
+      'meeting chat sent',
+      'u1',
+      expect.objectContaining({ status: 'failed', fail_step: 'composer' }),
+    );
+  });
+
+  it('survives a page that closed under the send', async () => {
+    providerSendChatMessage.mockRejectedValue(new Error('Target page closed'));
+    await enterCall();
+
+    const result = await service.sendChatMessage('https://example.test/run/42', 'u1');
+
+    expect(result.sent).toBe(false);
+    expect(result.message).toMatch(/Target page closed/);
+    // No step: a throw can land at any of them, and naming one would be a guess.
+    const props = trackEvent.mock.calls.find((c) => c[0] === 'meeting chat sent')?.[2] as Record<
+      string,
+      string
+    >;
+    expect(props.status).toBe('failed');
+    expect(props).not.toHaveProperty('fail_step');
+
+    // And the next send is accepted, so a throw does not wedge the call.
+    providerSendChatMessage.mockResolvedValue({ sent: true });
+    expect((await service.sendChatMessage('again', 'u1')).sent).toBe(true);
+  });
+
+  it('emits one event, and never the message itself', async () => {
+    await enterCall();
+    const secret = 'https://example.test/deploy?token=abcd1234';
+
+    await service.sendChatMessage(secret, 'u1');
+
+    const sends = trackEvent.mock.calls.filter((c) => c[0] === 'meeting chat sent');
+    expect(sends).toHaveLength(1);
+    const props = sends[0][2] as Record<string, string>;
+    expect(props).toMatchObject({
+      provider: 'google-meet',
+      status: 'sent',
+      length: String(secret.length),
+    });
+    expect(props.duration_ms).toMatch(/^\d+$/);
+    // The whole point of the length property: no property may carry the body, and no
+    // property may carry a piece of it either.
+    expect(JSON.stringify(props)).not.toContain('abcd1234');
+    expect(JSON.stringify(props)).not.toContain('example.test');
+  });
+
+  it('stores nothing and tells no thread', async () => {
+    // A chat message lives in the room and in this process, and nowhere else: it is not
+    // conversation history, and it is not a status note.
+    await enterCall();
+    publish.mockClear();
+    publishToLatestThread.mockClear();
+
+    await service.sendChatMessage('https://example.test/run/42', 'u1');
+
+    expect(publish).not.toHaveBeenCalled();
+    expect(publishToLatestThread).not.toHaveBeenCalled();
+  });
+
+  it('holds off the unmute retry while a send is typing', async () => {
+    // Both drive the same page, and the retry is the destructive half: it sweeps dialogs
+    // and clicks the control bar, which is how a composer goes away mid-message.
+    providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+    let finish: (v: unknown) => void = () => {};
+    providerSendChatMessage.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      providerEnsureUnmuted.mockClear();
+
+      const sending = service.sendChatMessage('https://example.test/run/42', 'u1');
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(providerEnsureUnmuted).not.toHaveBeenCalled();
+
+      finish({ sent: true });
+      await sending;
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      // And it resumes: a skipped retry costs a poll interval, not the microphone.
+      expect(providerEnsureUnmuted).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
