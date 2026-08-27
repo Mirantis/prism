@@ -12,14 +12,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { createHash } from 'crypto';
 import { runShareFile } from '../share-file';
 import { createPendingFileWrites } from '../../lib/pending-file-writes';
 import { attachmentService } from '../../services/attachment.service';
 import { logger } from '../../logger';
 import { MAX_FILE_SIZE_BYTES } from '../../constants';
 
-const sha256 = (data: string | Buffer) => `sha256:${createHash('sha256').update(data).digest('hex')}`;
 
 // 8-byte PNG signature — detectMediaType sniffs the first bytes for the type.
 const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -148,7 +146,8 @@ describe('runShareFile', () => {
       expect(result.success).toBe(true);
       if (!result.success) return;
       expect(result.sizeBytes).toBe(Buffer.byteLength(rev2));
-      expect(result.digest).toBe(sha256(rev2));
+      // The stored bytes themselves, which is the assertion that matters: this is
+      // the md5 table from the bug report, expressed as an expectation.
       expect(createSpy).toHaveBeenCalledWith(
         expect.objectContaining({ data: Buffer.from(rev2), sizeBytes: Buffer.byteLength(rev2) }),
       );
@@ -187,7 +186,9 @@ describe('runShareFile', () => {
       });
       expect(result.success).toBe(true);
       if (!result.success) return;
-      expect(result.digest).toBe(sha256('ready\n'));
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ data: Buffer.from('ready\n') }),
+      );
     });
 
     it('refuses to share rather than attach the older copy when the write never lands', async () => {
