@@ -4,9 +4,11 @@
  * This is what makes the voice in the meeting the agent rather than a narrator:
  * the tools an ordinary chat turn gets — memory, cron, goals, shell, skills, plus
  * everything the Lens Agents MCP endpoint serves — are offered to the Realtime session as
- * function tools and executed in this process when called. `share_file` is the one
- * exception, dropped by `filterToolsByMode` because a meeting runs neither the
- * invoke loop nor the conversation engine that deliver what it stores.
+ * function tools and executed in this process when called. `filterToolsByMode` makes two
+ * changes for `meeting`: it drops `share_file`, because a meeting runs neither the invoke
+ * loop nor the conversation engine that deliver what it stores, and it adds
+ * `send_meeting_chat`, which posts one short line into the call's own chat and which chat
+ * mode does not get.
  *
  * Executing them here (rather than via OpenAI's remote-MCP feature) is not a
  * choice: the tools are in-process closures over service singletons and a
@@ -46,15 +48,16 @@ import type { RealtimeFunctionTool } from './realtime-session';
 export const MEETING_MAX_RESULT_CHARS = 12_000;
 
 /**
- * The one part of the truncation notice that belongs to this channel: nothing here
- * can hand the rest over in text, so the model must speak a useful subset.
+ * The one part of the truncation notice that belongs to this channel: the call's chat
+ * takes one short line, not a result of this size, so the model must speak a useful
+ * subset instead of handing the rest over.
  */
 const VOICE_TRUNCATION_GUIDANCE =
-  'You cannot send the rest anywhere — this call is your only channel, so say the part ' +
-  'that answers the question and offer to go into more of it out loud. If the answer ' +
-  'needs something from the omitted middle, search the saved output with a ' +
-  'pattern — never read it through, because everything you pull back stays in this ' +
-  "call's context for the rest of it, and this session's context is small.";
+  'You cannot send the rest anywhere — the call chat takes one short line, not a result ' +
+  'this size, so say the part that answers the question and offer to go into more of it ' +
+  'out loud. If the answer needs something from the omitted middle, search the saved ' +
+  'output with a pattern — never read it through, because everything you pull back stays ' +
+  "in this call's context for the rest of it, and this session's context is small.";
 
 export interface MeetingToolBridgeInput {
   userId: string;
