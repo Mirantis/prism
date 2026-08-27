@@ -33,7 +33,6 @@ class WebSocketAdapterService implements ChannelAdapter {
           triggeredBy: message.triggeredBy,
           toolCalls: message.toolCalls,
           blocks: message.blocks,
-          tokenCount: message.tokenCount,
           isCompacted: message.isCompacted,
           createdAt,
           // Shared-file metadata (no bytes); the SPA renders download chips and

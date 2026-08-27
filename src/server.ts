@@ -5,6 +5,7 @@
  *      /agents/*       — management routes (heartbeat, chat, cron lifecycle)
  *                        + inbound webhook ingestion (/agents/webhooks/:name)
  *                        + self-update (/agents/update, /agents/update/status)
+ *                        + activity reads (/agents/activity/*)
  *      /threads, /latest-thread — thread resolve/list/open
  *      /messages       — thread history replay
  *      /               — Prism Agent Web UI (static SPA bundle from web/dist)
@@ -29,6 +30,7 @@ import { lockedInRouter } from './routes/locked-in';
 import { agentGuideRouter } from './routes/agent-guide';
 import { updateRouter } from './routes/update';
 import { originGuard } from './lib/origin-guard';
+import { activityRouter } from './routes/activity';
 
 export function createApp() {
   const app = express();
@@ -57,6 +59,9 @@ export function createApp() {
 
   // Self-update (GET /agents/update/status, POST /agents/update)
   app.use('/agents', updateRouter);
+
+  // GET /agents/activity/*
+  app.use('/agents', activityRouter);
 
   // Thread and message routes: /threads, /latest-thread and /messages.
   // Mounted at the root and registered before the SPA fallback so these

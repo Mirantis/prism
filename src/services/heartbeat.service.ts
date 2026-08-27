@@ -180,6 +180,7 @@ class HeartbeatService {
       } else {
         // Ask the classification gate
         shouldDeliver = await this.shouldDeliverAlert(
+          state.agentId,
           userId,
           responseText,
           state.lastAlertText ?? null,
@@ -328,6 +329,7 @@ class HeartbeatService {
         shouldDeliver = false;
       } else {
         shouldDeliver = await this.shouldDeliverAlert(
+          state.agentId,
           state.userId,
           responseText,
           state.lastAlertText ?? null,
@@ -421,6 +423,7 @@ class HeartbeatService {
   }
 
   private async shouldDeliverAlert(
+    agentId: string,
     userId: string,
     heartbeatResponse: string,
     lastAlertText: string | null,
@@ -452,6 +455,7 @@ Respond with exactly one word: DELIVER or SUPPRESS`;
       user: `${lastAlertContext}\n\n## New Heartbeat Report\n${heartbeatResponse}`,
       functionId: 'heartbeat-gate',
       userId,
+      agentId,
       logLabel: 'Heartbeat:Gate',
     });
   }

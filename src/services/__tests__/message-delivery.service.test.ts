@@ -70,7 +70,6 @@ const sampleMessage: ConversationMessage = {
   triggeredBy: 'USER_INPUT',
   toolCalls: null,
   blocks: null,
-  tokenCount: null,
   senderExternalId: null,
   senderName: null,
   isCompacted: false,

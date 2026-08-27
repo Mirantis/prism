@@ -389,7 +389,6 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         triggeredBy: 'USER_INPUT' as const,
         toolCalls: (isOurAgent && toolCallsByTs.get(msg.ts)) || null,
         blocks: null,
-        tokenCount: null,
         senderExternalId: msg.user || null,
         senderName: isOurAgent ? null : senderName,
         externalMessageId: msg.ts,

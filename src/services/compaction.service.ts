@@ -45,7 +45,8 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { generateText, type LanguageModel, type ModelMessage, type SystemModelMessage, type Tool } from 'ai';
+import { type LanguageModel, type ModelMessage, type SystemModelMessage, type Tool } from 'ai';
+import { callModel } from '../lib/model-call';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { logger } from '../logger';
@@ -315,7 +316,7 @@ class CompactionService {
           { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: cachePoint },
         ];
 
-        const result = await generateText({
+        const result = await callModel({ purpose: 'compaction', threadId }, {
           model,
           system,
           messages,
@@ -398,7 +399,7 @@ class CompactionService {
         { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: fork.cachePoint },
       ];
 
-      const result = await generateText({
+      const result = await callModel({ purpose: 'compaction', threadId }, {
         model: fork.model,
         system: fork.system,
         messages,
@@ -466,7 +467,7 @@ class CompactionService {
       const MAX_ATTEMPTS = 10;
       for (let attempt = 0; ; attempt++) {
         try {
-          const result = await generateText({
+          const result = await callModel({ purpose: 'compaction', threadId }, {
             model: fork.model,
             system: fork.system,
             messages: [

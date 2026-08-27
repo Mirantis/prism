@@ -6,7 +6,7 @@
  * responses via the local MessageDeliveryService.
  */
 
-import { generateText } from 'ai';
+import { callModel } from '../lib/model-call';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
 import { conversationService } from './conversation.service';
 import { threadTurnService, type PendingMessage } from './thread-turn.service';
@@ -152,7 +152,14 @@ class ConversationEngineService {
       return false;
     }
 
-    return this.isResponseWorthyOfFeedback(userMessage, terminalText, userId, agentId, abortSignal);
+    return this.isResponseWorthyOfFeedback(
+      threadId,
+      userMessage,
+      terminalText,
+      userId,
+      agentId,
+      abortSignal,
+    );
   }
 
   /**
@@ -164,6 +171,7 @@ class ConversationEngineService {
    * every reply.
    */
   private async isResponseWorthyOfFeedback(
+    threadId: string,
     userMessage: string,
     agentResponse: string,
     userId: string,
@@ -187,7 +195,7 @@ Respond with exactly one word: WORTHY or SKIP`;
 
     try {
       const { model, providerOptions, samplingParams } = getGateRequest();
-      const result = await generateText({
+      const result = await callModel({ purpose: 'feedback-gate', threadId }, {
         model,
         providerOptions,
         system: systemPrompt,

@@ -18,6 +18,8 @@ import type {
   Goal,
   WebhookSubscription,
   UpdateStatus,
+  LlmUsageSummary,
+  ToolCallHistoryPage,
 } from '@/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -335,6 +337,17 @@ export const runtimeApi = {
   },
   deleteAttachment: (id: string) =>
     request<{ success: true }>(`/agents/attachments/${id}`, { method: 'DELETE' }),
+
+  // Activity
+  llmUsage: (hours: number) =>
+    request<LlmUsageSummary>(`/agents/activity/llm-usage?hours=${hours}`),
+  listToolCalls: (opts?: { limit?: number; cursor?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.cursor) params.set('cursor', opts.cursor);
+    const query = params.toString();
+    return request<ToolCallHistoryPage>(`/agents/activity/tool-calls${query ? `?${query}` : ''}`);
+  },
 };
 
 /** URL to download/preview a stored attachment by id. */

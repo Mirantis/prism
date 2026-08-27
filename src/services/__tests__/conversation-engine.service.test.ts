@@ -46,7 +46,9 @@ const {
  * invokeStream returns. Tests can call streamFromSteps([...]) and pass the
  * result to mockInvokeStream.mockReturnValue().
  */
-function streamFromSteps(steps: Array<{ text: string; toolCalls: unknown[]; blocks?: unknown[] }>): AsyncIterable<unknown> {
+function streamFromSteps(
+  steps: Array<{ text: string; toolCalls: unknown[]; blocks?: unknown[] }>,
+): AsyncIterable<unknown> {
   return {
     async *[Symbol.asyncIterator]() {
       for (const s of steps) yield s;

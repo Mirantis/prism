@@ -47,6 +47,9 @@ to clear.
   var has to show that no existing product behavior, no provider selection and
   no better default can cover the case. Each one is a fork in the code and a
   line in the docs from then on.
+- **A service is named for what it owns, not for the screen that reads it.**
+  Two questions one page asks side by side are two services: `llmUsageService`
+  and `toolCallHistoryService`. A route module may group by URL.
 - **One canonical path.** A refactor replaces the old path and deletes it. Keep
   a second path only when the user asks for it, or when the old one is an
   explicit contract with the outside: a public HTTP endpoint, a documented
@@ -119,12 +122,21 @@ it showed.
 Every PR needs a real body, in four parts:
 
 - **What problem this solves** — the defect, or the behavior that was missing.
-- **Why this change was made** — why this design and not the alternatives.
+- **Why this change was made** — the value to the user. Name what they can do
+  now that they could not before, in their terms. Not the design, not the
+  alternatives, and not how any of it works.
 - **User impact** — what a user sees differently, including "nothing".
 - **Evidence** — how you know it works.
 
 Name what a reader can go and look at: the endpoint, the flag, the screen, the
 command you ran and what it printed.
+
+**Be concise.** A reviewer reads the description to know what to look at, then
+reads the diff. Cover each part in a few sentences and stop. Cut anything the
+diff already says, anything a heading already announced, and every sentence that
+introduces the next one — write the point, not a preamble to it. A long
+description is not a thorough one; it buries the two or three things that
+actually need a second pair of eyes.
 
 A change a user can see — the web SPA, the TUI, or chat and session behavior —
 needs before-and-after screenshots or a short video from a real running
@@ -349,6 +361,15 @@ code and docs (`src/prompts/meeting-prompt.ts`, `docs/voice-meetings.md`).
 - **Explain the behavior, not the mechanism, to a user.** A user does not need
   to know which browser API a feature calls or which flag enables it. Name the
   API only where a reader has to configure it or debug it.
+- **State the rule, not the examples.** "Every LLM call is counted" is the
+  whole fact; a list of kinds dates the moment a new one appears.
+- **Write for a peer.** The reader knows SQL, HTTP and this codebase. Skip the
+  obvious consequence, the restated identifier and the definition.
+- **Never argue with an implementation nobody wrote.** A comment defending a
+  choice against an imagined alternative is arguing with a reader who has not
+  spoken. Give the reason the code is the way it is, and stop.
+- **A comment's ceiling is one paragraph**, and one line is the usual length. A
+  design that needs three belongs in the PR description or an ADR.
 - **Simplified Technical English (STE), the parts to use.** The rules above
   follow [ASD-STE100](https://www.asd-ste100.org/). Take these parts from it:
   - One instruction or one idea per sentence.
@@ -702,6 +723,9 @@ src/
 │   ├── websocket-adapter.service.ts # ChannelAdapter for WebSocket, calls local gateway
 │   ├── channel-adapter.interface.ts # Channel adapter contract (ChannelAdapter interface)
 │   ├── context.service.ts      # Builds agent context (agent data from backend + conversation from DB)
+│   ├── llm-usage.service.ts    # Token spend: aggregates `llm_calls` over a window
+│   ├── tool-call-history.service.ts # Pages stored tool calls out of the toolCalls column
+│   ├── llm-call.service.ts     # Writes one `llm_calls` row per model call (fire-and-forget)
 │   ├── conversation.service.ts # Thread/message CRUD via Prisma, pluggable thread providers
 │   ├── attachment.service.ts   # All MessageAttachment DB access + media-type detection; content as files (lib/media-store.ts), metadata stubs to the model
 │   ├── heartbeat.service.ts    # Heartbeat timer management, execution, and Slack-triggered heartbeats
@@ -751,7 +775,8 @@ src/
 │   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, claude_code
 │   └── skills/                 # The `skill` tool (loads a SKILL.md body on demand)
 ├── routes/
-│   └── management.ts           # Management API for backend to push heartbeat/cron/slack-heartbeat-trigger events
+│   ├── management.ts           # Management API for backend to push heartbeat/cron/slack-heartbeat-trigger events
+│   └── activity.ts             # Activity page reads: token totals, paged tool calls
 ├── utils/
 │   ├── async-channel.ts        # Bridges SDK push-based onStepFinish into async iteration (used by invokeStream)
 │   └── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
@@ -788,6 +813,8 @@ src/
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
+│   ├── model-call.ts           # The only module calling `generateText`/`generateObject`; records every call's usage
+│   ├── step-usage.ts           # Token usage: SDK usage → the recorded shape, and folding a turn's steps for the invocation total
 │   ├── media-store.ts          # Attachment bytes as files under `<data dir>/media`: write/read/remove, filename sanitizing, stray-file reaper
 │   ├── tool-output-store.ts    # The saved whole copy of an oversized tool result under `<data dir>/tool-outputs`: write/read/remove, TTL reaper. The notice hands the agent the path and it reads the file with the shell. No DB row, so mtime is the whole lifecycle
 │   ├── prisma.ts               # Prisma client singleton (runtime database)

@@ -14,7 +14,7 @@
 
 import { App, LogLevel, SayFn } from '@slack/bolt';
 import { logger } from '../logger';
-import { generateObject } from 'ai';
+import { callModelForObject } from '../lib/model-call';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { ChannelAdapter, DeliverableMessage } from './channel-adapter.interface';
@@ -1634,7 +1634,7 @@ class SlackAdapterService implements ChannelAdapter {
       // message instead of ever reacting or ignoring.
       const { model, providerOptions, samplingParams } = getClassificationRequest();
 
-      const { object } = await generateObject({
+      const { object } = await callModelForObject({ purpose: 'slack-thread-gate' }, {
         model,
         schema: threadClassificationSchema,
         // temperature: 0 on the vendors that accept it, omitted elsewhere.

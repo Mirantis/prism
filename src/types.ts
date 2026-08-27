@@ -198,21 +198,31 @@ export interface InvokeError {
   detail?: string | null;
 }
 
+/**
+ * Provider-reported token usage for one model call, or for several summed
+ * together. `inputTokens` is the full prompt and already includes cache reads
+ * and writes, so a cache hit rate divides `cacheReadTokens` by the sum of the
+ * three details; a zero sum means the provider reported no breakdown. Summed
+ * across steps this is spend, counting the prompt once per step as the provider
+ * bills it; `services/context-usage.service.ts` measures context size instead.
+ */
+export interface StepUsage {
+  model: string;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  noCacheTokens: number;
+}
+
 export interface InvokeStep {
   text: string;
   toolCalls: ToolCallRecord[];
-  // What the provider reported for this step, when it reports usage at all.
-  //
-  // `totalTokens` is aggregated by invoke() into InvokeResponse.usage so callers
-  // (e.g. the goal loop's per-goal token budget) can meter spend. Summing it
-  // across steps is cumulative BILLED spend, not context size — each agentic
-  // step resends the whole conversation.
-  //
-  // `inputTokens` is this step's full prompt size, already inclusive of cache
-  // reads and writes (the Anthropic provider sets it to
-  // input + cache_creation + cache_read). It is therefore the context-occupancy
-  // measurement — do not add cache token details on top of it.
-  usage?: { totalTokens: number; inputTokens?: number; outputTokens?: number };
+  // What the provider reported for this step, absent when it reports nothing.
+  // `invoke.ts` records each step against `llm_calls`; nothing writes usage onto
+  // a message row.
+  usage?: StepUsage;
   blocks?: UIBlock[];
   // Ids of MessageAttachment rows the agent shared during this step (via the
   // share_file tool). The delivery layer links these to the published message
@@ -230,9 +240,10 @@ export interface InvokeResponse {
   blocks?: UIBlock[];
   // Aggregated across all steps — files the agent shared this invocation.
   attachmentIds?: string[];
-  // Sum of per-step totalTokens across the invocation (0 when the provider
-  // reported no usage). Used by the goal loop to meter per-goal token budgets.
-  usage?: { totalTokens: number };
+  // Every step's usage summed, absent when no step reported any. The goal loop
+  // meters its budget against `totalTokens`. Nothing persists this: each step
+  // was already recorded against `llm_calls` as it finished.
+  usage?: StepUsage;
   steps: InvokeStep[];
   error?: InvokeError;
 }

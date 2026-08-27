@@ -11,8 +11,9 @@ to the runtime.)
 
 ![Prism Agent Web UI](images/web-ui.png)
 
-The UI is organized around a left sidebar with six sections: **Overview**,
-**Chat**, **Channels**, **Scheduled Tasks**, **Webhooks**, and **Profile**.
+The UI is organized around a left sidebar with seven sections: **Overview**,
+**Chat**, **Channels**, **Scheduled Tasks**, **Webhooks**, **Profile**, and
+**Activity**.
 
 ## Overview
 
@@ -202,6 +203,35 @@ The agent's identity and runtime controls.
   agent — chat history, memory, scheduled tasks, settings, and Slack mappings.
   **Restore** replaces the agent from a `.prism` file (a destructive operation;
   the runtime restarts and the page reconnects when it's back).
+
+## Activity
+
+What the agent has spent, and what it has done.
+
+- **LLM usage.** Four figures for the last 24 hours: total tokens, the input and
+  output split, and the share of the prompt served from the cache. Input counts
+  the whole prompt, cache included. Each card shows the rounded figure large and
+  the exact count beneath it.
+
+  Counts every text-generation call, including the ones that produce no
+  message. Voice meetings and memory embeddings each run on their own surface,
+  billed separately from these figures.
+
+  **Cache hit rate** reads `—` when the provider reports no cache breakdown, and
+  `0%` when it reports one and nothing was served from cache. See
+  **[Configuration → Provider selection](configuration.md#provider-selection)**.
+
+- **Tool calls.** The tool calls the agent has stored, newest turn first, across
+  every conversation, running back through the whole history.
+
+  Each row names the tool and previews its most telling argument, with a green
+  dot for a call that succeeded and a red one for a call that failed. Expand a
+  row to see the call's parameters and its output; a long output has a **Show
+  full output** link. A call from an autonomous turn is badged with what started
+  it.
+
+  Long values are cut: 2,000 characters of parameters and 10,000 of output, with
+  a note in place of the rest.
 
 ## Behind the scenes
 

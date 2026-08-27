@@ -14,7 +14,7 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { generateText } from 'ai';
+import { callModel } from '../lib/model-call';
 import { getGateRequest } from '../lib/classification';
 import { langfuseTelemetry } from '../lib/telemetry';
 import { conversationService } from './conversation.service';
@@ -45,12 +45,12 @@ function clampTitle(raw: string): string | null {
  * Ask the cheap model for a short title for `message`. Returns the clamped
  * title, or null when the message is empty or the call fails.
  */
-async function generateThreadTitle(message: string): Promise<string | null> {
+async function generateThreadTitle(threadId: string, message: string): Promise<string | null> {
   const text = message.trim();
   if (!text) return null;
   try {
     const { model, providerOptions, samplingParams } = getGateRequest();
-    const result = await generateText({
+    const result = await callModel({ purpose: 'thread-title', threadId }, {
       model,
       providerOptions,
       system: SYSTEM_PROMPT,
@@ -112,7 +112,7 @@ class ThreadTitleService {
     threadId: string,
     message: string,
   ): Promise<string | null> {
-    const title = await generateThreadTitle(message);
+    const title = await generateThreadTitle(threadId, message);
     if (!title) return null;
     await conversationService.updateThreadTitle(agentId, userId, threadId, title);
     logger.info('[ThreadTitle] Set thread %s title to "%s"', threadId, title);

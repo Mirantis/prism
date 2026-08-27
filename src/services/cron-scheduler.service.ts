@@ -341,6 +341,7 @@ class CronSchedulerService {
           }),
           functionId: 'cron-gate',
           userId: task.userId,
+          agentId: task.agentId,
           logLabel: 'CronScheduler:Gate',
         });
       }
