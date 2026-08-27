@@ -1119,22 +1119,43 @@ Locked-in mode does not cover it — that lock withholds the agent's own writers
 and there is none here — so the editors keep working while the lock is on.
 
 **It is also the tool risk gate's policy.** `lib/tool-risk-gate.ts` puts the
-guide in the classifier's **system** prompt, not in the evidence JSON — the
-evidence is declared untrusted a few lines above, so guide text there would be
-correctly ignored. It can sit in the system prompt for the reason above: the
-agent has no tool that writes it, so a policy the operator wrote is not one the
-agent rewrites while working. On any point the guide addresses it **outranks the
+guide in the classifier's **system** prompt, not in the evidence JSON — the rules
+at the top of that prompt declare the evidence untrusted, so guide text there
+would be correctly ignored. On any point the guide addresses it **outranks the
 built-in rules, the BLOCK list included**: it can permit what those rules refuse,
 and refuse what they permit. That authority is the operator's, since they run the
-container and hold the credentials. The prompt also says the guide is an
-operating manual, so ordinary working advice in it does not read as a verdict.
-Bounded at 8,000 characters (head and tail kept, and a longer guide logs a
-warning once per invocation, since a rule stranded in the middle silently stops
-deciding calls), paid per gated call since the gate runs no prompt cache.
-`gate.policy` on both gate telemetry events says which policy the classifier
-read — `none`, `default` (the stock `DEFAULT_AGENT_MD`) or `custom` — because
-every agent is created holding the default, so "non-blank" would be true
-fleet-wide. The guide text itself never leaves the prompt.
+container and hold the credentials.
+
+**The trust root is weaker than "no tool writes it" suggests, and the prompt no
+longer claims otherwise.** `routes/agent-guide.ts` takes no credential from
+inside the container and `tools/shell/workspace.ts` is explicit that its check is
+not a security boundary, so `shell_exec` reaches both `PATCH
+localhost:3003/agents/agent-guide` and `/data/agent.db`, and a `claude_code`
+sub-agent's own commands never reach this gate at all. Withholding the ordinary
+path — a tool the model reaches for while working — is what this buys, and with
+allow-authority on a writable document that makes the control a one-way ratchet:
+one landed guide write removes a refusal for every later turn on every channel.
+`gate.policy_hash` is the detection signal, since a shell write emits no `agent
+config updated` event. Keep the docs and this paragraph honest about it; the
+alternative design (narrowing from the guide, widening from a boot-time root) was
+weighed and declined.
+
+`resolvePolicy` is the one owner of what the classifier reads. `gate.policy` on
+both gate telemetry events reports its verdict — `none`, `default` or `custom` —
+and `default` **sends no policy at all**: every agent is created holding
+`DEFAULT_AGENT_MD`, whose `## Safety` section reads "read-only by default", which
+as a rule outranking the ALLOW EXCEPTIONS refuses the file edits and builds the
+agent needs. The template is unchanged for the agent's own reading. Editing any
+part of it makes the whole document policy.
+
+One precedence paragraph, selected rather than duplicated: `classifierRules()`
+takes `PRECEDENCE_WITHOUT_POLICY` or `PRECEDENCE_WITH_POLICY`. Two opposed
+declarations in one prompt resolve by recency, differently per vendor. The
+section's end marker carries the policy digest, so a guide cannot close its own
+section early. Bounded at 8,000 characters cut on whole lines — a character cut
+can invert a rule ("Force-pushing is fine, except on main") — and a longer guide
+warns once per digest per process. Billed on every gated call, since the gate runs
+no prompt cache. The guide text itself never leaves the prompt.
 
 ## Agent Skills
 
