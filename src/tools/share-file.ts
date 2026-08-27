@@ -28,7 +28,6 @@
  * the inbound upload limit.
  */
 
-import { createHash } from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { Tool, tool } from 'ai';
@@ -37,7 +36,6 @@ import { resolvePath, isInsideWorkspace } from './shell/workspace';
 import { resolveWorkspace, resolveWorkspaceRoot } from './shell/config';
 import type { PendingFileWrites } from '../lib/pending-file-writes';
 import { logger } from '../logger';
-import { trackEvent } from '../lib/telemetry';
 import {
   attachmentService,
   detectMediaType,
@@ -66,12 +64,6 @@ export interface ShareFileSuccess {
   sizeBytes: number;
   mediaType: string;
   category: string;
-  /**
-   * `sha256:<hex>` of the bytes actually captured. The one value that lets a
-   * reader (a test, an incident review) prove the attachment holds the revision
-   * the reply describes, rather than proving only that the tool was called.
-   */
-  digest: string;
 }
 
 export interface ShareFileFailure {
@@ -88,6 +80,19 @@ export interface ShareFileDeps {
   abortSignal?: AbortSignal;
   /** Overridable for tests. */
   pendingWriteTimeoutMs?: number;
+}
+
+/**
+ * Whether the file changed across a read: either it no longer matches the bytes
+ * just read, or its mtime has moved on from the stat taken before that read.
+ * Both halves matter — an edit that keeps the length is still a different file.
+ */
+function moved(
+  before: Awaited<ReturnType<typeof fs.stat>>,
+  after: Awaited<ReturnType<typeof fs.stat>>,
+  data: Buffer,
+): boolean {
+  return after.size !== data.length || after.mtimeMs !== before.mtimeMs;
 }
 
 /**
@@ -146,15 +151,17 @@ export async function runShareFile(
   // the reply describes is exactly the mistake being fixed.
   let data: Buffer;
   try {
+    let before = stat;
     data = await fs.readFile(fullPath);
     let after = await fs.stat(fullPath);
-    if (after.size !== data.length || after.mtimeMs !== stat.mtimeMs) {
+    if (moved(before, after, data)) {
+      before = after;
       data = await fs.readFile(fullPath);
       after = await fs.stat(fullPath);
-      if (after.size !== data.length) {
-        // Zero pending writes by definition: this detector exists for the writers
-        // the registry cannot see.
-        trackShareRace('changed_during_read', 0, 0);
+      // Compare against the stat taken just before the retry, and on mtime as
+      // well as size — a same-size edit is still a different revision, and size
+      // alone would let one through.
+      if (moved(before, after, data)) {
         return {
           success: false,
           error:
@@ -203,26 +210,7 @@ export async function runShareFile(
     sizeBytes: data.length,
     mediaType,
     category,
-    digest: `sha256:${createHash('sha256').update(data).digest('hex')}`,
   };
-}
-
-/**
- * Product telemetry for the sequencing problem only — never on the happy path, so
- * this stays near-zero volume and a non-zero count means something real. No path
- * or filename in the props (the no-PII rule); `attachment uploaded` still owns the
- * create event, so this does not duplicate a count.
- */
-function trackShareRace(
-  outcome: 'settled' | 'timeout' | 'aborted' | 'cleared' | 'changed_during_read' | 'hook_missing',
-  waitMs: number,
-  pendingWrites: number,
-): void {
-  trackEvent('share file write race', null, {
-    'share.outcome': outcome,
-    'share.wait_ms': String(waitMs),
-    'share.pending_writes': String(pendingWrites),
-  });
 }
 
 /**
@@ -247,7 +235,6 @@ async function awaitPendingWrites(
       { toolCallId },
       'share_file was not announced before executing — not sequencing it against this step\'s writes',
     );
-    trackShareRace('hook_missing', 0, 0);
     return null;
   }
 
@@ -257,7 +244,6 @@ async function awaitPendingWrites(
   });
   if (outcome.status === 'none') return null;
 
-  trackShareRace(outcome.status, outcome.elapsedMs, outcome.toolNames.length);
   if (outcome.status === 'settled') {
     logger.info(
       { toolNames: outcome.toolNames, elapsedMs: outcome.elapsedMs },

@@ -267,24 +267,25 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('Phrase an intention as an intention');
     expect(prompt).toContain('Name what you read');
     expect(prompt).toContain('are not artifacts');
-    expect(prompt).toContain('then call `share_file`');
+    expect(prompt).toContain('have not shared yet');
   });
 
-  // A reply is the only record the user sees in every one of these modes: a
-  // heartbeat or cron result lands as a bare message, a webhook reply reports a
-  // remediation, a goal turn's prose is read by a checker deciding completion,
-  // and a subagent's report is acted on by its parent.
-  it('carries the claims-and-evidence rule in every mode that reports to a human', async () => {
-    for (const mode of ['chat', 'heartbeat', 'cron', 'webhook', 'goal', 'subagent'] as const) {
+  // A reply is what the user acts on in every one of these modes: a heartbeat or
+  // cron result lands as a bare message, a webhook reply reports a remediation, a
+  // goal turn's prose is read by a checker deciding completion, a subagent's
+  // report is acted on by its parent, and a meeting says it out loud.
+  it('carries the claims-and-evidence rule in every mode', async () => {
+    for (const mode of ['chat', 'heartbeat', 'cron', 'webhook', 'goal', 'subagent', 'meeting'] as const) {
       const prompt = await buildSystemPrompt(createTestAgentContext(), mode);
       expect(prompt, `mode ${mode}`).toContain('# Claims and Evidence');
     }
   });
 
-  it('leaves the claims-and-evidence rule to the meeting prompt in meeting mode', async () => {
+  it('states the claims-and-evidence rule in a meeting too', async () => {
     const prompt = await buildSystemPrompt(createTestAgentContext(), 'meeting');
-    expect(prompt).not.toContain('# Claims and Evidence');
-    // The omission must not leave a dangling section separator behind.
+    expect(prompt).toContain('# Claims and Evidence');
+    // Meeting mode pushes no chat section, so the separators around this one are
+    // the case most likely to leave a dangling gap.
     expect(prompt).not.toMatch(/\n{3}/);
   });
 

@@ -13,7 +13,6 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHash } from 'crypto';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -56,7 +55,6 @@ const { runShareFile } = await import('../share-file');
 const { attachmentService } = await import('../../services/attachment.service');
 const { MAX_FILE_SIZE_BYTES } = await import('../../constants');
 
-const sha256 = (data: string) => `sha256:${createHash('sha256').update(data).digest('hex')}`;
 
 describe('runShareFile staleness', () => {
   let workspace: string;
@@ -90,9 +88,8 @@ describe('runShareFile staleness', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.sizeBytes).toBe(Buffer.byteLength(body));
-    expect(result.digest).toBe(sha256(body));
     expect(createSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ sizeBytes: Buffer.byteLength(body) }),
+      expect.objectContaining({ data: Buffer.from(body), sizeBytes: Buffer.byteLength(body) }),
     );
   });
 
@@ -110,8 +107,10 @@ describe('runShareFile staleness', () => {
 
     expect(result.success).toBe(true);
     if (!result.success) return;
-    expect(result.digest).toBe(sha256(settled));
     expect(result.sizeBytes).toBe(Buffer.byteLength(settled));
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ data: Buffer.from(settled) }),
+    );
   });
 
   // The size and empty guards run on the stat taken before the read, and `data` is
@@ -146,6 +145,29 @@ describe('runShareFile staleness', () => {
     expect(result.success).toBe(false);
     if (result.success) return;
     expect(result.error).toMatch(/empty/i);
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  // Size alone cannot see this: an edit that keeps the length is still a different
+  // revision, so the confirming check has to compare mtime as well.
+  it('refuses when the retry sees a same-size edit', async () => {
+    const file = path.join(workspace, 'draft.md');
+    await fs.writeFile(file, 'aaaaa\n');
+    let bump = 0;
+    hooks.afterRead = async () => {
+      // Same length, different bytes, and an explicitly advanced mtime so the
+      // assertion does not depend on the filesystem's timestamp granularity.
+      await fs.writeFile(file, String.fromCharCode(98 + bump).repeat(5) + '\n');
+      bump += 1;
+      const when = new Date(Date.now() + bump * 1000);
+      await fs.utimes(file, when, when);
+    };
+
+    const result = await runShareFile({ path: 'draft.md' }, workspace);
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toMatch(/changing while it is read/i);
     expect(createSpy).not.toHaveBeenCalled();
   });
 

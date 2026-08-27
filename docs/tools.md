@@ -138,11 +138,6 @@ attachment** (up to 10 MB). That's how files it produces — a report, an export
 a generated artifact — reach you in the Web UI, Terminal UI, or Slack. In the
 TUI, save them to disk with [`/save`](terminal-ui.md#attaching-and-saving-files).
 
-What you download is the file as it stands when the agent shares it. If the agent
-is still writing that file, sharing waits for the write to finish rather than
-attaching the older copy; if the write does not finish, the agent tells you so and
-shares the file in its next message instead.
-
 ## Attachments
 
 When you send the agent a file, its content is stored as a plain file under
