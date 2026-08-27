@@ -59,18 +59,32 @@ describe('getMeetingInstructions', () => {
     expect(text).toMatch(/including the destructive parts/i);
   });
 
-  it('tells the model speech is its only channel', () => {
-    // There is no tool for reaching a chat from a call: a meeting runs neither the
-    // invoke loop nor the conversation engine, and `share_file` is filtered out of
-    // `meeting` mode. Saying so is the whole guard against a promise it can't keep.
-    // The one thing that does leave a call is a scheduled follow-up, pinned below.
+  it('tells the model it can hand one line to the call chat, and what for', () => {
+    // The one channel out of a call other than speech. It has to be named with its
+    // purpose, or the model uses it as a second conversation: nothing reads the chat
+    // back, so an answer posted there is an answer nobody hears.
     const text = getMeetingInstructions(base);
-    expect(text).toMatch(/only way you can reach anyone from here/i);
-    expect(text).toMatch(/never offer to/i);
-    expect(text).toMatch(/not to this meeting's own chat panel/i);
+    expect(text).toMatch(/`send_meeting_chat`/);
+    expect(text).toMatch(/a link, an identifier, a command to paste/i);
+    expect(text).toMatch(/nobody reads the chat back to you/i);
+    // And what to do when a send fails, since speech always works.
+    expect(text).toMatch(/say the content out loud instead/i);
   });
 
-  it('never offers to hand anything over to a chat', () => {
+  it('tells the model nothing else leaves the call', () => {
+    // Everything past that one line: a meeting runs neither the invoke loop nor the
+    // conversation engine, and `share_file` is filtered out of `meeting` mode. Saying so
+    // is the whole guard against a promise it can't keep.
+    const text = getMeetingInstructions(base);
+    expect(text).toMatch(/nothing else reaches anyone from here/i);
+    expect(text).toMatch(/never offer to/i);
+    expect(text).toMatch(/not to Slack, not to a chat session/i);
+    // Including that the chat line itself is not kept, so it is never offered as a
+    // record of anything.
+    expect(text).toMatch(/neither is a line you post in its chat/i);
+  });
+
+  it('never offers to hand anything over to a chat elsewhere', () => {
     // Each of these was an instruction in this prompt with no tool behind it. A
     // near-identical phrase still appears as something the model is told never to
     // say, so the check is that they survive only inside the prohibition. The list is
@@ -85,8 +99,9 @@ describe('getMeetingInstructions', () => {
     for (const responseMode of ['open', 'addressed'] as const) {
       const text = getMeetingInstructions({ ...base, responseMode });
       for (const promise of promises) expect(text).not.toMatch(promise);
-      // ...and the prohibition itself is present, in the model's own words.
-      expect(text).toMatch(/No "I'll drop that in the chat"/i);
+      // ...and the prohibition itself is present, in the model's own words. `afterwards`
+      // is doing real work now: the call's own chat is reachable, and a later one is not.
+      expect(text).toMatch(/No "I'll drop that in the chat afterwards"/i);
       expect(text).toMatch(/a promise you cannot keep/i);
     }
   });
@@ -123,11 +138,11 @@ describe('getMeetingInstructions', () => {
     // The request for the work is the consent to schedule it. The work itself is not
     // covered by that: nobody is in the room when the run happens, so a destructive
     // job is agreed before it goes on the calendar. Rule 16 carries the same carve-out,
-    // because a model resolves two opposed rules by recency and 16 is read last.
+    // because a model resolves two opposed rules by recency and 17 is read last.
     const text = flat(getMeetingInstructions(base));
     expect(text).toMatch(/separate "yes" for that: the request is the agreement/i);
     expect(text).toMatch(/If the work itself is destructive/i);
-    expect(text).toMatch(/Scheduling a follow-up \(14\) is outside this list/i);
+    expect(text).toMatch(/Scheduling a follow-up \(15\) is outside this list/i);
     expect(text).toMatch(/before you schedule anything on that list/i);
   });
 
@@ -142,12 +157,14 @@ describe('getMeetingInstructions', () => {
     expect(text).not.toMatch(/continueInThread/i);
   });
 
-  it('keeps the two rule numbers its own cross-references cite', () => {
-    // Rule 3 points at 13 for "don't offer to send it" and 13 points at 14 for the
-    // schedule. A renumber that misses one leaves the model chasing the wrong rule.
+  it('keeps the three rule numbers its own cross-references cite', () => {
+    // Rule 3 points at 13 for the chat line, 14 points at 15 for the schedule, and the
+    // confirmation rule points back at 15. A renumber that misses one leaves the model
+    // chasing the wrong rule.
     const text = getMeetingInstructions(base);
-    expect(text).toMatch(/^13\. \*\*Speaking is the only way/m);
-    expect(text).toMatch(/^14\. \*\*Schedule work you were asked for/m);
+    expect(text).toMatch(/^13\. \*\*Speech is how you talk to the room/m);
+    expect(text).toMatch(/^14\. \*\*Nothing else reaches anyone from here/m);
+    expect(text).toMatch(/^15\. \*\*Schedule work you were asked for/m);
   });
 
   it('requires explicit in-room consent before anything irreversible', () => {
