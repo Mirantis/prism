@@ -1084,16 +1084,17 @@ export class MeetingBotService {
       ...(report.step ? { fail_step: report.step } : {}),
     });
 
-    // One line either way, and it names the step it stopped at. A send that failed is
-    // silence in a room with no other symptom, so it is logged at every setting; only
-    // `full` adds the words, which is what `MEETING_CHAT_LOGGING` decides.
+    // A send that failed is silence in a room with no other symptom, so it writes a line
+    // at every setting, naming the step it stopped at. A send that worked writes one only
+    // from `redacted` up, since nothing is wrong and the line is pure diagnostics. Only
+    // `full` adds the words, which `formatChatBody` decides.
     const line =
       `[Meeting:Chat] ${report.status} chars=${report.length} ${Date.now() - startedAt}ms` +
       (report.step ? ` step=${report.step}` : '');
     const body = formatChatBody(message);
     const full = body ? `${line} ${body}` : line;
-    if (report.sent) logger.info(full);
-    else logger.warn(full);
+    if (!report.sent) logger.warn(full);
+    else if (config.meetingChatLogging !== 'off') logger.info(full);
 
     return { sent: report.sent, message: report.message };
   }

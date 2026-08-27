@@ -158,14 +158,18 @@ vi.mock('../../message-delivery.service', () => ({
 const loggerInfo = vi.fn();
 const loggerWarn = vi.fn();
 const loggerError = vi.fn();
+const loggerDebug = vi.fn();
 vi.mock('../../../logger', () => ({
   logger: {
     info: (...a: unknown[]) => loggerInfo(...a),
     warn: (...a: unknown[]) => loggerWarn(...a),
     error: (...a: unknown[]) => loggerError(...a),
-    debug: vi.fn(),
+    debug: (...a: unknown[]) => loggerDebug(...a),
   },
 }));
+
+/** The same four spies keyed by level, for the assertions that read one level at a time. */
+const logged = { info: loggerInfo, warn: loggerWarn, error: loggerError, debug: loggerDebug };
 
 const trackEvent = vi.fn();
 vi.mock('../../../lib/telemetry', () => ({ trackEvent: (...a: unknown[]) => trackEvent(...a) }));
@@ -207,6 +211,13 @@ vi.mock('../providers/google-meet', () => ({
   },
 }));
 
+/**
+ * `MEETING_CHAT_LOGGING`, as a value a test can move.
+ *
+ * Hoisted and read through a getter because the service reads it at log time, and the
+ * three settings are only distinguishable by what does and does not reach the log.
+ */
+const chatLogging = vi.hoisted(() => ({ value: 'off' as string }));
 vi.mock('../../../config', () => ({
   config: {
     agentName: 'Prism',
@@ -215,9 +226,11 @@ vi.mock('../../../config', () => ({
     meetingTimeoutMinutes: 60,
     meetingAdmissionTimeoutMs: 5_000,
     openaiRealtimeVoice: undefined,
-    // The default, and the setting the chat assertions below run under: a message the
-    // agent posts may not reach a log line unless an operator asked for it.
-    meetingChatLogging: 'off',
+    // Defaults to `off`, which is what the chat assertions below run under: a message
+    // the agent posts may not reach a log line unless an operator asked for it.
+    get meetingChatLogging() {
+      return chatLogging.value;
+    },
   },
 }));
 
@@ -259,6 +272,7 @@ beforeEach(() => {
   providerEnsureUnmuted.mockResolvedValue(false);
   providerSendChatMessage.mockResolvedValue({ sent: true });
   chatSupported = true;
+  chatLogging.value = 'off';
   conversationOptions = {};
   service = new MeetingBotService();
 });
@@ -1634,6 +1648,46 @@ describe('posting into the call chat', () => {
     // property may carry a piece of it either.
     expect(JSON.stringify(props)).not.toContain('abcd1234');
     expect(JSON.stringify(props)).not.toContain('example.test');
+  });
+
+  it('logs nothing for a send that worked, and one bodyless line for one that did not', async () => {
+    // `off` is a diagnostics switch turned down, not a way of hiding a failure: a send
+    // that quietly did nothing is the thing an operator has to be able to see.
+    await enterCall();
+    logged.info.mockClear();
+    logged.warn.mockClear();
+
+    await service.sendChatMessage('https://example.test/run/42', 'u1');
+    expect(logged.info.mock.calls.flat().join(' ')).not.toContain('[Meeting:Chat]');
+
+    providerSendChatMessage.mockResolvedValue({ sent: false, step: 'composer', reason: 'gone' });
+    await service.sendChatMessage('https://example.test/run/42', 'u1');
+
+    const warned = logged.warn.mock.calls.flat().filter((l) => String(l).includes('[Meeting:Chat]'));
+    expect(warned).toHaveLength(1);
+    expect(String(warned[0])).toContain('step=composer');
+    expect(String(warned[0])).not.toContain('example.test');
+  });
+
+  it('logs the send from `redacted` up, and the message itself only at `full`', async () => {
+    chatLogging.value = 'redacted';
+    await enterCall();
+    logged.info.mockClear();
+
+    await service.sendChatMessage('https://example.test/run/42', 'u1');
+
+    const redacted = logged.info.mock.calls.flat().filter((l) => String(l).includes('[Meeting:Chat]'));
+    expect(redacted).toHaveLength(1);
+    expect(String(redacted[0])).toContain('sent chars=27');
+    expect(String(redacted[0])).not.toContain('example.test');
+
+    chatLogging.value = 'full';
+    logged.info.mockClear();
+    await service.sendChatMessage('https://example.test/run/42', 'u1');
+
+    const full = logged.info.mock.calls.flat().filter((l) => String(l).includes('[Meeting:Chat]'));
+    expect(full).toHaveLength(1);
+    expect(String(full[0])).toContain('https://example.test/run/42');
   });
 
   it('stores nothing and tells no thread', async () => {
