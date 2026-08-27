@@ -26,7 +26,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   build:
@@ -62,7 +61,6 @@ jobs:
           # refactor of how externals get into the bundle.
           node-version: '22'
           cache: 'npm'
-          registry-url: 'https://npm.pkg.github.com'
 
       # Node 22 ships npm 10, but the committed lockfile is npm-11 shape
       # (regenerated locally with npm 11+) — npm 10's `ci` rejects it with
@@ -71,8 +69,6 @@ jobs:
       # match the lockfile-generating npm.
       - run: npm install -g npm@11
       - run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Single source of truth for the build pipeline (bundle, SEA inject,
       # collect-natives, smoke, archive) — same script the developer runs

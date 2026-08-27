@@ -25,7 +25,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 # Keyed on the PR number rather than just `github.ref`: a `pull_request` run's
 # ref is the merge ref, so ref-only keying groups and ungroups surprisingly
@@ -58,15 +57,12 @@ jobs:
         with:
           node-version: '26'
           cache: 'npm'
-          registry-url: 'https://npm.pkg.github.com'
 
       - name: Install npm 11.12.1
         run: npm install -g npm@11.12.1
 
       - name: Install dependencies
         run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate Prisma client
         run: npx prisma generate --schema prisma/sqlite/schema.prisma
@@ -134,15 +130,12 @@ jobs:
         with:
           node-version: '26'
           cache: 'npm'
-          registry-url: 'https://npm.pkg.github.com'
 
       - name: Install npm 11.12.1
         run: npm install -g npm@11.12.1
 
       - name: Install dependencies
         run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate Prisma client
         run: npx prisma generate --schema prisma/sqlite/schema.prisma

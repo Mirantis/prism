@@ -27,10 +27,6 @@ coverage
 # MCP client config (contains auth tokens)
 .mcp.json
 
-# Docker BuildKit secret for the @lensapp npm registry. Generated on-the-fly
-# in CI from secrets.GITHUB_TOKEN; created manually for local docker builds.
-.npmrc-secret
-
 # mcporter temp files
 tmp/
 
