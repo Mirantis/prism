@@ -251,11 +251,12 @@ tools during the call, so it can look something up and say the answer without le
 Interrupt it and it yields the floor; a short "mm-hm" won't cut it off. Needs the
 container image (which ships Chromium, Xvfb and PulseAudio) plus `OPENAI_API_KEY` —
 the in-meeting voice is OpenAI's Realtime API, connected directly to
-`api.openai.com` whatever the configured provider. Speaking is its only channel while
-the call is on: it can't post to a chat and nothing about the meeting is recorded. Work
-it can't finish in the call it schedules as a one-off task, and that result lands in
-your chat afterwards. It has its full toolset otherwise
-(everything but `share_file`), including the tools that change its own configuration.
+`api.openai.com` whatever the configured provider. Speaking is how it answers, and it can
+put one short line — a link, an id, a command to paste — into the call's own chat panel.
+Work it can't finish in the call it schedules as a one-off task, and that result lands in
+your chat afterwards. Nothing else leaves a call, and nothing about the meeting is
+recorded. It has its full toolset otherwise (everything but `share_file`), including the
+tools that change its own configuration.
 A meeting isn't an authenticated channel and the guardrail is prompt-level — it
 announces and confirms before anything destructive — so a meeting link effectively
 grants the agent's authority, over itself included. See
