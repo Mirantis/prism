@@ -17,7 +17,10 @@
 
 import { Tool, tool } from 'ai';
 import { z } from 'zod';
-import { meetingBotService } from '../services/meeting/meeting-bot.service';
+import {
+  MEETING_CHAT_MAX_CHARS,
+  meetingBotService,
+} from '../services/meeting/meeting-bot.service';
 import { AUDIO_STACK_BINARIES } from '../services/meeting/audio-stack';
 import { isBrowserAvailable } from '../services/meeting/browser-stack';
 import { isRealtimeConfigured } from '../services/meeting/openai-endpoint';
@@ -27,15 +30,29 @@ import { logger } from '../logger';
  * Tool names, exported so every autonomous mode can drop them in one place.
  *
  * A live call keeps them: `join_meeting` inside a meeting harmlessly reports
- * that it is already in one, and the other three are how the agent ends the call it is
- * in, inspects it, and finds out who it is talking to.
+ * that it is already in one, and the rest are how the agent ends the call it is in,
+ * inspects it, finds out who it is talking to, and hands the room one written line.
  */
 export const MEETING_TOOL_NAMES = [
   'join_meeting',
   'leave_meeting',
   'meeting_speaker',
+  'send_meeting_chat',
   'meeting_status',
 ] as const;
+
+/**
+ * The ones that exist only inside a call, so chat mode does not get them.
+ *
+ * `send_meeting_chat` is here for a reason that is not about usefulness: a chat turn
+ * stores its tool calls as conversation history, arguments included, and a chat message
+ * posted into a call must not be written down anywhere. The meeting path executes tools
+ * in the Realtime session's own memory, so there the argument is never persisted.
+ *
+ * The rest stay available everywhere. Asking "am I in a call?" from chat is a reasonable
+ * question, and joining one from chat is the normal way a call starts.
+ */
+export const MEETING_ONLY_TOOL_NAMES = ['send_meeting_chat'] as const;
 
 export interface MeetingToolsInput {
   userId: string;
@@ -151,6 +168,28 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
         'when the voice was a group of people sharing one microphone rather than one person.',
       inputSchema: z.object({}),
       execute: async () => ({ success: true, ...meetingBotService.speakerReport() }),
+    }),
+
+    send_meeting_chat: tool({
+      description:
+        'Post one short plain-text message into the chat of the call you are in. Use it for ' +
+        'what speech mangles: a link, an id, a command to paste. Say the rest out loud — ' +
+        `speech is how you talk to the room. At most ${MEETING_CHAT_MAX_CHARS} characters, no ` +
+        'formatting, no line breaks, and nobody reads the chat back to you. The message is ' +
+        'not kept anywhere after the call. If it fails, say the content out loud instead of ' +
+        'trying again.',
+      inputSchema: z.object({
+        text: z
+          .string()
+          .describe(
+            'The message, as plain text on one line — usually a link or an identifier with a ' +
+            'few words of context.',
+          ),
+      }),
+      execute: async ({ text }) => {
+        const { sent, message } = await meetingBotService.sendChatMessage(text, input.userId);
+        return { success: sent, message };
+      },
     }),
 
     meeting_status: tool({

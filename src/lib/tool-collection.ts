@@ -23,7 +23,12 @@ import { getShellTools } from '../tools/shell/index';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from '../tools/share-file';
 import { getAttachmentTools } from '../tools/attachments';
 import { getSkillTools } from '../tools/skills/index';
-import { getMeetingTools, MEETING_TOOL_NAMES, isMeetingSupported } from '../tools/meeting';
+import {
+  getMeetingTools,
+  MEETING_ONLY_TOOL_NAMES,
+  MEETING_TOOL_NAMES,
+  isMeetingSupported,
+} from '../tools/meeting';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { pluginMcpService } from '../services/plugin-mcp.service';
 import type { PendingFileWrites } from './pending-file-writes';
@@ -278,7 +283,7 @@ function omitLockedTools(tools: Record<string, Tool>): Record<string, Tool> {
  * tools, because an autonomous run (a heartbeat, a cron tick, a subagent) dialling
  * into a live call with people in it is never what the operator asked for.
  *
- * - chat: All tools
+ * - chat: every tool except the in-call ones (see the note in the function body)
  * - heartbeat: minus cron-management AND goal tools (no schedule/goal reshaping)
  * - cron: minus list/delete-task AND goal tools, but KEEPS schedule_task so a
  *   thread-bound "continue in this conversation" run can re-`wait` (poll in-thread)
@@ -286,7 +291,7 @@ function omitLockedTools(tools: Record<string, Tool>): Record<string, Tool> {
  *   "check again later" follow-ups
  * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
  * - goal: minus create_goal (no nested goals) and cron-management; get_goal stays
- * - meeting: chat's full set minus share_file (see the note in the function body)
+ * - meeting: chat's set minus share_file, plus the in-call ones (same note)
  */
 export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<string, Tool> {
   // Goal-management tools are chat-only entry points; a goal turn keeps only
@@ -302,11 +307,16 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
     return result;
   };
 
+  // Everything except the tools that only work inside a call. `send_meeting_chat` is
+  // the one, and it is withheld here for a persistence reason rather than a useless-
+  // outside-a-call one: a chat turn stores its tool calls as conversation history,
+  // arguments and all, and a message posted into a call must not be written down.
   if (mode === 'chat') {
-    return tools;
+    return omit(new Set<string>(MEETING_ONLY_TOOL_NAMES));
   }
 
-  // A live voice meeting gets chat's full surface except `share_file`.
+  // A live voice meeting gets chat's surface except `share_file`, plus the in-call
+  // tools nothing else gets.
   //
   // `share_file` is dropped for the same reason `subagent` drops it: the tool only
   // stores the file and hands back an id, and it is the *invoke loop* that carries
