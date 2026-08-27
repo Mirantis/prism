@@ -14,6 +14,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { IncomingMessage } from 'http';
 import { logger } from '../logger';
 import { config } from '../config';
+import { isAllowedOrigin } from '../lib/origin-guard';
 import { conversationEngineService } from './conversation-engine.service';
 import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
@@ -114,9 +115,36 @@ class WebSocketGatewayService {
    * Initialize WebSocket server
    */
   initialize(server: HttpServer): void {
-    this.wss = new WebSocketServer({
-      server,
-      path: '/api/ws',
+    this.wss = new WebSocketServer({ noServer: true });
+
+    // The handshake is checked here, ahead of `handleUpgrade` — the shape ws
+    // supports, rather than `verifyClient`.
+    server.on('upgrade', (req, socket, head) => {
+      const { pathname } = new URL(req.url ?? '', 'http://localhost');
+      if (pathname !== '/api/ws') {
+        socket.destroy();
+        return;
+      }
+
+      // A WebSocket handshake is exempt from the same-origin policy, so the
+      // same rules the HTTP routes get are applied to it here.
+      if (
+        !isAllowedOrigin(req.headers.origin, req.headers.host, req.headers['x-forwarded-host'])
+      ) {
+        logger.warn(
+          '[OriginGuard] refused a WebSocket handshake (origin %s, host %s, x-forwarded-host %s)',
+          req.headers.origin,
+          req.headers.host,
+          req.headers['x-forwarded-host'],
+        );
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
+      this.wss?.handleUpgrade(req, socket, head, (ws) => {
+        this.wss?.emit('connection', ws, req);
+      });
     });
 
     this.wss.on('connection', (ws: AuthenticatedWebSocket, req: IncomingMessage) => {

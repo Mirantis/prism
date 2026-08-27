@@ -155,7 +155,8 @@ platform directory.
 
 ## Verifying
 
-Once installed, the runtime listens on port 3003:
+Once installed, the runtime listens on port 3003, on this machine only
+(see [Who can reach the runtime](configuration.md#who-can-reach-the-runtime)):
 
 ```bash
 curl http://localhost:3003/health

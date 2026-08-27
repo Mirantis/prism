@@ -335,10 +335,14 @@ code and docs (`src/prompts/meeting-prompt.ts`, `docs/voice-meetings.md`).
   comprehensive, robust, careful, thorough or battle-tested. Do not narrate the
   process ("Let me...", "I'll now..."). Do not praise a finding. State what
   changed and what it does.
+- **Never document what is not done.** No sentence about what the code does not
+  do, what it does not guarantee, what nobody checks, or what is missing. Write
+  what happens. A guarantee is stated by naming the rule that holds it, never by
+  naming its absence.
 - **Describe the present, not the road there.** A comment or doc says what the
-  code does now and why. Do not document what it does *not* do, an approach that
-  was rejected, or a bug that used to exist; that belongs in the commit message,
-  the PR description or an ADR. Prefer one or two lines to a paragraph.
+  code does now and why. Do not document an approach that was rejected or a bug
+  that used to exist; that belongs in the commit message, the PR description or
+  an ADR. Prefer one or two lines to a paragraph.
 - **No hypotheticals.** Do not tell the reader what would have happened under a
   design that was never built. State what the code does. A PR description says
   what was missing in one sentence, then what the change adds.
@@ -818,6 +822,7 @@ What the operator sets on `docker run`:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `PORT` | Agent runtime server port | `3003` |
+| `PRISM_HOST` | Interface the HTTP server binds. Loopback by default, and `lib/origin-guard.ts` then requires a loopback `Host` plus a loopback or absent `Origin` on every request — the guard is app-wide, `/health` included, and covers the `/api/ws` handshake — which is what closes DNS rebinding. A request stating `X-Forwarded-Host` is exempt from the loopback-`Host` rule (that is a proxy in front, a header no browser can state) and is held to the origin rules alone. A non-loopback bind relaxes that to an `Origin` matching the request's own `Host` or its first `X-Forwarded-Host` value, since the exposed address is the operator's to choose. The image sets `0.0.0.0`, which a published port needs | `127.0.0.1` (`0.0.0.0` in the image) |
 | `AGENT_ID` | UUID of the one `AgentWorkspace` this container owns | bootstrapped on first boot |
 | `DATABASE_URL` | SQLite URL for the runtime DB | `file:/data/agent.db` |
 | `NEXUS_API_URL` | Lens Agents server URL (LLM proxy + MCP tools) | — |

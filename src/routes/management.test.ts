@@ -274,6 +274,36 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
+  // Origin guard (mounted app-wide, ahead of every route)
+  // ==========================================================================
+
+  describe('origin guard', () => {
+    it('refuses a request from a foreign origin before it reaches the handler', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/heartbeat/trigger')
+        .set('Origin', 'https://evil.example')
+        .send({ agentId: 'agent-1' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('Forbidden origin');
+      expect(mockTriggerHeartbeat).not.toHaveBeenCalled();
+    });
+
+    it('serves a request from the origin it is hosted on', async () => {
+      mockTriggerHeartbeat.mockResolvedValue({ action: 'ok', message: 'All clear' });
+
+      const res = await request(app)
+        .post('/agents/heartbeat/trigger')
+        .set('Host', 'localhost:3003')
+        .set('Origin', 'http://localhost:3003')
+        .send({ agentId: 'agent-1' });
+
+      expect(res.status).toBe(200);
+      expect(mockTriggerHeartbeat).toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
   // POST /heartbeat/start
   // ==========================================================================
 

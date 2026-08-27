@@ -557,6 +557,9 @@ function resolveToolOutputTtlHours(): number {
 
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
+  // Loopback by default, so only this machine connects. The container image
+  // sets `PRISM_HOST=0.0.0.0`, which is what a published port needs.
+  host: process.env.PRISM_HOST?.trim() || '127.0.0.1',
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
   // via start.sh so the container's mounted /data volume is used.
   databaseUrl: process.env.DATABASE_URL ?? 'file:./agent.db',

@@ -264,6 +264,9 @@ RUN chmod +x ./start.sh
 # Set environment
 ENV NODE_ENV=production
 ENV PORT=3003
+# A published port requires the runtime to listen on every interface. The
+# default is loopback, which is what a local install wants.
+ENV PRISM_HOST=0.0.0.0
 
 # OTEL product telemetry — baked at publish time by release-canary.yml /
 # release-production.yml. Empty defaults keep PR-validation and local builds
