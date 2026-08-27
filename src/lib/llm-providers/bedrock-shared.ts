@@ -70,21 +70,6 @@ export function createSharedBedrockOptions() {
 export function isAnthropicModelId(modelId: string): boolean {
   return /^anthropic\.|\.anthropic\./i.test(modelId);
 }
-
-/**
- * Returns true when `modelId` is an xAI Grok model on Bedrock — bare
- * (`xai.grok-…`), cross-region inference profile (`us.xai.…`, `global.xai.…`),
- * or either ARN form. The separator alternation is what covers both: an
- * inference-profile ARN carries a region token, putting a dot before the
- * vendor, while a foundation-model ARN puts it straight behind the slash.
- *
- * An application inference profile does not match: its ARN carries a generated
- * id with no vendor token at all.
- */
-export function isXaiModelId(modelId: string): boolean {
-  return /^xai\.|[./]xai\./i.test(modelId);
-}
-
 /**
  * The generic (Converse + embeddings) bedrock-runtime provider on its own.
  *

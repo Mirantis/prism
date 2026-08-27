@@ -32,13 +32,8 @@ import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
-import { createSharedBedrockOptions, isAnthropicModelId, isXaiModelId } from '../bedrock-shared';
-import {
-  ANTHROPIC_CACHE_POINT,
-  BEDROCK_CACHE_POINT,
-  NO_CACHE_POINT,
-  type LlmProvider,
-} from '../llm-provider';
+import { createSharedBedrockOptions, isAnthropicModelId } from '../bedrock-shared';
+import { ANTHROPIC_CACHE_POINT, BEDROCK_CACHE_POINT, type LlmProvider } from '../llm-provider';
 
 /**
  * Create an Amazon Bedrock provider that dispatches on model family.
@@ -66,20 +61,17 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
   return Object.assign(dispatcher, {
     embedding: (modelId: string) => generic.embedding(modelId),
     // Dispatched like the model itself, because the breakpoint belongs to the
-    // protocol: the Anthropic-native provider reads Anthropic's namespace,
-    // Converse reads Bedrock's, and a fragment in the wrong one is discarded
-    // without an error.
+    // protocol rather than to the vendor: the Anthropic-native provider reads
+    // Anthropic's namespace, Converse reads Bedrock's, and a fragment in the
+    // wrong one is discarded without an error.
     //
-    // A model reaches the third branch until its Bedrock model card documents
-    // prompt caching. AWS scopes its "an oversized or misplaced checkpoint is
-    // ignored" behaviour to models that support caching at all; on one that
-    // does not, a `cachePoint` block is grounds to reject the request.
+    // Every Converse model gets the breakpoint, cache-capable or not. AWS
+    // ignores a checkpoint a model cannot use, and the alternative — a list of
+    // vendors known to support caching — leaves each new one uncached until
+    // someone remembers to extend it, which is the failure this dispatch was
+    // written to end.
     cachePoint: (modelId: string) =>
-      isAnthropicModelId(modelId)
-        ? ANTHROPIC_CACHE_POINT
-        : isXaiModelId(modelId)
-          ? BEDROCK_CACHE_POINT
-          : NO_CACHE_POINT,
+      isAnthropicModelId(modelId) ? ANTHROPIC_CACHE_POINT : BEDROCK_CACHE_POINT,
   });
 }
 
