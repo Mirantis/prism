@@ -243,15 +243,19 @@ and it picks up from what you actually heard rather than pretending it finished.
 aloud. If the real answer is a command or a long list, it says what the thing does
 and offers to walk through it out loud, or spells the part that matters slowly.
 
-**In the room it can only talk.** There is no way for it to send anything out of a call
-— not a message, not a file, not a link, and not to the meeting's own chat panel. It is
-instructed never to offer, so if you want something as text, ask it again in a chat
-session afterwards. The call itself is not kept either: no transcript, no summary, and
-nothing in your conversation history about what was said. Ask it "what did we decide
-in the meeting?" afterwards and it won't know. Its own log says no more than that by
-default — see [Settings](#settings) if you need to turn the words on to diagnose
-something. The one thing that outlives a call is work you asked for and it could not
-finish in the call: it schedules that, and the result appears in your chat — see
+**It talks, and it can put one line in the call's chat.** Speech is how it answers. For
+the things speech mangles — a link, an identifier, a command to paste — it can post one
+short plain-text message into the meeting's own chat panel instead. That is a hand-over,
+not a second conversation: nothing reads the chat back to it, so a question typed there
+never reaches it, and it is told never to post an answer it should be speaking. Nothing
+else leaves a call — no message anywhere else and no file — and it is instructed never to
+offer. If you want more than that one line as text, ask it again in a chat session. The
+call itself is not kept: no transcript, no summary, not the messages it posts in the chat,
+and no record in your conversation history at all. Ask it "what did we decide in the
+meeting?" afterwards and it won't know. Its own log says no more than that by default —
+see [Settings](#settings) if you need to turn the words on to diagnose something. The one
+thing that outlives a call is work you asked for and it could not finish in the call: it
+schedules that, and the result appears in your chat — see
 [Tools](#tools-and-what-it-wont-do-on-a-spoken-request).
 
 **It can't hear who is speaking, but it can look.** The meeting audio arrives as one
@@ -297,7 +301,15 @@ file back whole, and the reason is sharper in a call than in chat: everything it
 reads stays in the session's context for the rest of the meeting, and that context is
 both small and re-billed on every reply.
 
-The one exception is **file sharing**. `share_file` is unavailable in a call: it only
+A call adds one tool it has nowhere else: posting a short message into the meeting's own
+chat. It is meant for the thing speech gets wrong — a link, a cluster name, a command to
+paste — and the agent is told to say everything else out loud. A message is limited to
+**500 characters**, on one line, as plain text with no formatting. That limit is ours, not
+Google Meet's, and it has not yet been measured against a live call; if a send comes back
+refused, the agent is told to say the content out loud instead of trying again. The message
+is typed into the call's chat panel and nowhere else, so it does not survive the call.
+
+The one tool a call takes away is **file sharing**. `share_file` is unavailable in a call: it only
 stores a file and hands back a reference for the chat machinery to deliver, and a
 meeting doesn't run that machinery — so it would store a file that reached nobody. If
 the agent writes a file during a call, ask it for the file in chat afterwards, where
@@ -415,6 +427,7 @@ is the same thing to tell them about as the agent's presence.
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used only so a call can be read back in the log — never fed to the model, and nothing waits on it. Only requested when `MEETING_TRANSCRIPT_LOGGING=full`, since it bills per audio minute and by default the words are dropped. The default accepts name hints, which is what keeps names legible in the log — see [Names](#names). | `gpt-live-transcribe` |
 | `OPENAI_NOISE_REDUCTION` | Server-side noise reduction over the meeting audio before turn detection and transcription see it: `off`, `near_field`, `far_field`. Off by default on purpose — what arrives is Meet's already-cleaned mix, and reducing it again cost a live agent most of what a quieter person in the room said. | `off` |
 | `MEETING_TRANSCRIPT_LOGGING` | Whether what was said may appear in the runtime's log: `off` or `full`. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |
+| `MEETING_CHAT_LOGGING` | Whether a message the agent posts into the call's chat may appear in the runtime's log: `off`, `redacted` or `full`. A switch of its own, not covered by the transcript one. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |
 
@@ -448,6 +461,25 @@ the rest of the runtime's debug output.
 
 Turn it on only for as long as you need it, and tell the room. Nothing here reaches
 product telemetry either way — that surface gets counts.
+
+**What the agent posts in the chat is a separate switch.** `MEETING_CHAT_LOGGING` covers
+it, and `MEETING_TRANSCRIPT_LOGGING` does not. The two are different texts: the transcript
+is what other people said, which nobody in the room agreed to have written down, while
+this is what the agent itself sent. Answering "did that message actually go out" should not
+mean recording the room to find out.
+
+| Value | What a line carries |
+|-------|---------------------|
+| `off` (default) | Nothing for a message that went out. |
+| `redacted` | One line per message: whether it went out, how long it was, and how long it took. No words. |
+| `full` | The above, plus the message itself. |
+
+A message that **failed** always writes one line, at every setting including `off`. It
+names the step the send stopped at and never the message body. Meet publishes no chat API,
+so this runs by driving the chat panel the way a person would, and the failure worth
+catching is a send that quietly did nothing — a diagnostic switch that could hide it would
+defeat its own purpose. The same line covers a message the agent was refused: too long, or
+sent while it wasn't in a call.
 
 ### The microphone
 

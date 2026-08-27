@@ -197,11 +197,16 @@ follow-ups. That switches as people come and go, so there is nothing to set — 
 Inside the call it keeps **every tool above except `share_file`**, so it can look
 something up and say the answer. `share_file` is out because it only stores a file for
 the chat machinery to deliver, and a meeting doesn't run that machinery — in a call it
-could only store a file that reached nobody. While the call is on, speaking is the
-agent's only channel: there is no tool for posting to Slack, to your chat session, or
-to the meeting's own chat panel. Work the call has no time for is the one thing that
-goes on afterwards — the agent schedules it as a one-off task and the result lands in
-your chat, not in the room.
+could only store a file that reached nobody.
+
+A call adds one tool it has nowhere else: posting a short plain-text message, up to 500
+characters, into the meeting's own chat panel. It is for the things speech mangles — a
+link, an identifier, a command to paste — and the agent is told to say everything else out
+loud. Nothing reads the chat back to it, so a question typed there never reaches it. That
+one line aside, speaking is its only channel from a meeting: there is no tool for posting
+to Slack or to your chat session, and the chat message itself is not stored anywhere. Work
+the call has no time for is the one thing that goes on afterwards — the agent schedules it
+as a one-off task and the result lands in your chat, not in the room.
 
 Nothing else is withheld, so the guardrail is its prompt rather than the tool list:
 announce and get an explicit "yes" in the room before anything destructive — including
