@@ -106,6 +106,28 @@ export interface SpeakerReading {
   who: SpeakerDetails;
 }
 
+/**
+ * Where a chat send got to before it stopped.
+ *
+ * Bounded, for the same reason as `JoinStep`: it is emitted as telemetry, and the
+ * message body must never be. `panel` is no chat control on the page, `composer` is
+ * a panel that painted no input, `send` is an input nothing will submit, and
+ * `confirm` is a submit the page never showed as sent.
+ */
+export type ChatSendStep = 'panel' | 'composer' | 'send' | 'confirm';
+
+/**
+ * Outcome of posting one message into the call's own chat.
+ *
+ * `sent: true` is a positive reading, never the absence of an error. A provider that
+ * cannot tell whether the message left says `sent: false` — the room hearing nothing
+ * while the agent reports success is the failure this shape exists to prevent.
+ */
+export type ChatSendResult =
+  | { sent: true }
+  /** `step` is what telemetry gets; `reason` is what a human reads in a log. */
+  | { sent: false; step: ChatSendStep; reason: string };
+
 export interface JoinOptions {
   url: string;
   /**
@@ -195,6 +217,26 @@ export interface MeetingProvider {
    * Optional: a platform that never mutes a joiner needs none of this.
    */
   ensureUnmuted?(page: Page): Promise<boolean>;
+
+  /**
+   * Post one short plain-text message into the call's own chat.
+   *
+   * Speech stays the only way anything reaches the agent; this is one channel out,
+   * for what does not survive being spoken — a URL, an identifier, a command.
+   *
+   * **Must confirm, not assume.** Resolve `sent: true` only on a positive reading
+   * that the page took the message: the composer emptied *and* the text appeared in
+   * the panel. A selector that has rotted looks exactly like a message that went
+   * through, so every path that cannot read the outcome resolves `sent: false` with
+   * the step it stopped at. The caller reports a failure to the model, which then
+   * says so out loud — recoverable. A false success is not.
+   *
+   * The caller normalizes and length-checks the text first, so this receives a
+   * single-line string it can submit as-is.
+   *
+   * Optional: a platform with no chat panel, or none a browser can drive, omits it.
+   */
+  sendChatMessage?(page: Page, text: string): Promise<ChatSendResult>;
 
   /**
    * Names of the people in the call, best effort, empty when unavailable.

@@ -14,7 +14,14 @@ import type { Page } from 'playwright-core';
 // provider cannot drift apart. Unit tests can't prove a selector matches real Meet
 // markup — nothing without a browser can — so pinning a copy here would only buy a
 // test that passes against a string production stopped using.
-import { BLOCKING_DIALOG_SELECTOR, GoogleMeetProvider, MIC_TOGGLE_SELECTOR } from '../index';
+import {
+  BLOCKING_DIALOG_SELECTOR,
+  CHAT_COMPOSER_SELECTOR,
+  CHAT_SEND_SELECTOR,
+  CHAT_TOGGLE_SELECTOR,
+  GoogleMeetProvider,
+  MIC_TOGGLE_SELECTOR,
+} from '../index';
 import { isAuthenticated, signInFailureReason } from '../sign-in';
 
 // The provider reads its own sign-in state rather than being handed it, so the two
@@ -69,6 +76,36 @@ interface FakePageOptions {
    * of the static state can express.
    */
   onMicRead?: (reads: number, state: FakeState) => void;
+  /**
+   * State of the call's chat panel.
+   *
+   * `closed` — a chat control on the page, panel shut, which is how a call starts.
+   * `open` — the panel already showing, which is how Meet leaves it after one send.
+   * `absent` — no chat control at all, i.e. the selector has rotted.
+   */
+  chat?: 'closed' | 'open' | 'absent';
+  /**
+   * What the open panel paints.
+   *
+   * `contenteditable` is a composer whose value cannot be read with `inputValue`, so
+   * the provider has to fall back to `innerText`. The stub still matches it with the
+   * textarea selector — one fake locator stands in for the whole `or` chain — because
+   * what is under test is the read fallback, not which selector found the box.
+   */
+  composer?: 'present' | 'absent' | 'contenteditable';
+  /** Whether the panel offers a send button beside the composer. */
+  sendButton?: boolean;
+  /**
+   * What submitting does.
+   *
+   * `sends` — clears the composer and puts the text in the room, i.e. it worked.
+   * `clears-only` — empties the composer and posts nothing, which is what a send the
+   * server dropped looks like from the DOM.
+   * `ignores` — leaves the draft where it is, which is a handler that has moved.
+   */
+  submit?: 'sends' | 'clears-only' | 'ignores';
+  /** Whether Enter submits at all. */
+  enterSends?: boolean;
 }
 
 interface FakeState {
@@ -78,6 +115,12 @@ interface FakeState {
   attributes: Record<string, string | null>;
   mic: 'on' | 'off' | 'absent';
   dialog: boolean;
+  chatOpen: boolean;
+  composer: 'present' | 'absent' | 'contenteditable';
+  /** The text currently sitting in the composer, unsent. */
+  draft: string;
+  /** Messages the room received, in order. */
+  sent: string[];
 }
 
 /**
@@ -85,6 +128,7 @@ interface FakeState {
  * types are enormous, hence the cast at the end.
  */
 function fakePage(options: FakePageOptions) {
+  const chat = options.chat ?? 'closed';
   const state: FakeState = {
     bodyText: options.bodyText ?? '',
     visibleButtons: new Set(options.visibleButtons ?? []),
@@ -92,11 +136,32 @@ function fakePage(options: FakePageOptions) {
     attributes: options.attributes ?? {},
     mic: options.mic ?? 'on',
     dialog: options.dialog ?? false,
+    chatOpen: chat === 'open',
+    composer: options.composer ?? 'present',
+    draft: '',
+    sent: [],
   };
+  // The chat control is a real button on the page, so it belongs in the same set the
+  // provider's `getByRole` reads — a test says `chat: 'closed'` instead of knowing that.
+  if (chat !== 'absent') state.visibleButtons.add('Chat with everyone');
+  if (options.sendButton) state.visibleSelectors.add(CHAT_SEND_SELECTOR);
   const clicks: string[] = [];
   const fills: string[] = [];
+  const presses: string[] = [];
   let ticks = 0;
   let micReads = 0;
+
+  /** What Meet does when the composer is submitted, per `options.submit`. */
+  const submit = () => {
+    const mode = options.submit ?? 'sends';
+    if (mode === 'ignores') return;
+    const text = state.draft;
+    state.draft = '';
+    if (mode !== 'sends' || !text) return;
+    state.sent.push(text);
+    // The sent message joins the page text, which is where the provider looks for it.
+    state.bodyText = `${state.bodyText}\n${text}`;
+  };
 
   type FakeLocator = ReturnType<typeof locator>;
   /** `key` is a thunk so an `or` chain resolves it when used, not when composed. */
@@ -130,12 +195,30 @@ function fakePage(options: FakePageOptions) {
       // Recorded before `onClick` runs, so a click the scrim swallowed still shows
       // as attempted — which is the thing a retry test needs to see.
       clicks.push(k);
+      // The chat panel's two buttons behave structurally rather than by arrangement,
+      // for the same reason the microphone does: a test should say what the panel is,
+      // not wire up what each click does to it.
+      if (k === CHAT_SEND_SELECTOR) submit();
+      if (k === CHAT_TOGGLE_SELECTOR || /^chat/i.test(k)) state.chatOpen = !state.chatOpen;
       options.onClick?.(k, state);
     },
     fill: async (value: string) => {
       fills.push(value);
+      if (key() === CHAT_COMPOSER_SELECTOR) state.draft = value;
     },
-    innerText: async () => state.bodyText,
+    press: async (keyName: string) => {
+      presses.push(`${key() ?? 'unknown'}:${keyName}`);
+      if (keyName === 'Enter' && options.enterSends !== false) submit();
+    },
+    inputValue: async () => {
+      // Playwright throws on anything that is not an input, which is what makes the
+      // provider's `innerText` fallback reachable.
+      if (key() !== CHAT_COMPOSER_SELECTOR || state.composer === 'contenteditable') {
+        throw new Error('inputValue: Node is not an <input>, <textarea> or <select> element');
+      }
+      return state.draft;
+    },
+    innerText: async () => (key() === CHAT_COMPOSER_SELECTOR ? state.draft : state.bodyText),
     getAttribute: async (attr: string) => {
       const k = key();
       // Derived rather than stored, so `state.mic` is the single place a test (or
@@ -171,6 +254,9 @@ function fakePage(options: FakePageOptions) {
       if (selector === BLOCKING_DIALOG_SELECTOR) {
         return locator(() => state.dialog, () => selector);
       }
+      if (selector === CHAT_COMPOSER_SELECTOR) {
+        return locator(() => state.chatOpen && state.composer !== 'absent', () => selector);
+      }
       return locator(() => state.visibleSelectors.has(selector), () => selector);
     },
     // Yields to a real timer rather than resolving in a microtask. The provider's
@@ -186,7 +272,7 @@ function fakePage(options: FakePageOptions) {
     on: () => {},
   };
 
-  return { page: page as unknown as Page, state, clicks, fills, ticks: () => ticks };
+  return { page: page as unknown as Page, state, clicks, fills, presses, ticks: () => ticks };
 }
 
 const provider = new GoogleMeetProvider();
@@ -895,4 +981,146 @@ describe('the microphone', () => {
     expect(harness.clicks).not.toContain('Continue without microphone');
   });
 
+});
+
+/**
+ * The chat panel.
+ *
+ * Meet publishes no chat API, so posting a message is selector-matching against the
+ * in-call panel — and none of those selectors has been verified against a live call.
+ * Which makes the direction of a failure the thing worth testing: every case below
+ * that cannot read the outcome has to report the step it stopped at, and none of them
+ * may report a success. A room that got nothing while the agent says it sent something
+ * is the failure this block exists to prevent.
+ *
+ * The panel's own hazard is that its control is a *toggle*, the same shape as the
+ * microphone: pressing it while the panel is open closes the panel.
+ */
+describe('the chat panel', () => {
+  /** In a call, with a chat control on screen and the panel shut. */
+  const inCall = (extra: Partial<FakePageOptions> = {}) =>
+    fakePage({
+      visibleSelectors: ['button[aria-label*="Leave call" i]'],
+      ...extra,
+    });
+
+  it('sends a message, confirms it landed, and puts the panel back', async () => {
+    const harness = inCall();
+
+    const result = await provider.sendChatMessage(harness.page, 'https://example.test/run/42');
+
+    expect(result).toEqual({ sent: true });
+    expect(harness.state.sent).toEqual(['https://example.test/run/42']);
+    // Opened, then closed again: an open panel shares the side rail with People and
+    // can push the participant count down, which is what makes the runtime leave.
+    expect(harness.clicks.filter((c) => /^chat/i.test(c))).toHaveLength(2);
+    expect(harness.state.chatOpen).toBe(false);
+  });
+
+  it('does not press the toggle when the panel is already open', async () => {
+    const harness = inCall({ chat: 'open' });
+
+    const result = await provider.sendChatMessage(harness.page, 'ready when you are');
+
+    expect(result).toEqual({ sent: true });
+    expect(harness.state.sent).toEqual(['ready when you are']);
+    // One click, the close. Pressing it to "open" an open panel would have shut it.
+    expect(harness.clicks.filter((c) => /^chat/i.test(c))).toHaveLength(1);
+  });
+
+  it('reports the panel step, not a success, when there is no chat control', async () => {
+    const harness = inCall({ chat: 'absent' });
+
+    const result = await provider.sendChatMessage(harness.page, 'anyone there');
+
+    expect(result).toEqual({ sent: false, step: 'panel', reason: expect.any(String) });
+    expect(harness.fills).toEqual([]);
+    expect(harness.state.sent).toEqual([]);
+  });
+
+  it('reports the composer step when the panel opens but paints no input', async () => {
+    const harness = inCall({ composer: 'absent' });
+
+    const result = await provider.sendChatMessage(harness.page, 'anyone there');
+
+    expect(result).toEqual({ sent: false, step: 'composer', reason: expect.any(String) });
+    expect(harness.state.sent).toEqual([]);
+  });
+
+  it('reports the send step when Enter does nothing and there is no send button', async () => {
+    const harness = inCall({ enterSends: false });
+
+    const result = await provider.sendChatMessage(harness.page, 'anyone there');
+
+    expect(result).toEqual({ sent: false, step: 'send', reason: expect.any(String) });
+    expect(harness.state.draft).toBe('anyone there');
+    expect(harness.state.sent).toEqual([]);
+  });
+
+  it('does not report success when the draft is still sitting in the composer', async () => {
+    // Enter is accepted and a send button exists, so both paths are tried — and the
+    // text never leaves the box. This is the silent-success case: the message is
+    // visible on the page the whole time, in the composer, so a containment check on
+    // its own would have called this sent.
+    const harness = inCall({ submit: 'ignores', sendButton: true, bodyText: 'anyone there' });
+
+    const result = await provider.sendChatMessage(harness.page, 'anyone there');
+
+    expect(result).toEqual({ sent: false, step: 'confirm', reason: expect.any(String) });
+    expect(harness.state.sent).toEqual([]);
+  });
+
+  it('does not report success when the composer clears but the message never appears', async () => {
+    const harness = inCall({ submit: 'clears-only', sendButton: true });
+
+    const result = await provider.sendChatMessage(harness.page, 'anyone there');
+
+    expect(result).toEqual({ sent: false, step: 'confirm', reason: expect.any(String) });
+    expect(harness.state.sent).toEqual([]);
+  });
+
+  it('falls back to the send button when Enter will not send', async () => {
+    const harness = inCall({ enterSends: false, sendButton: true });
+
+    const result = await provider.sendChatMessage(harness.page, 'the build is green');
+
+    expect(result).toEqual({ sent: true });
+    expect(harness.state.sent).toEqual(['the build is green']);
+    expect(harness.clicks).toContain(CHAT_SEND_SELECTOR);
+  });
+
+  it('reads a composer whose value cannot be read as an input', async () => {
+    const harness = inCall({ composer: 'contenteditable' });
+
+    const result = await provider.sendChatMessage(harness.page, 'the build is green');
+
+    expect(result).toEqual({ sent: true });
+    expect(harness.state.sent).toEqual(['the build is green']);
+  });
+
+  it('clears a dialog scrim before pressing the chat control', async () => {
+    // The same scrim that swallows the unmute click swallows this one, and reports
+    // success on the scrim rather than on the button underneath.
+    const harness = inCall({
+      dialog: true,
+      visibleButtons: ['Got it'],
+      onClick: (key, state) => {
+        if (key === 'Got it') state.dialog = false;
+      },
+    });
+
+    const result = await provider.sendChatMessage(harness.page, 'the build is green');
+
+    expect(result).toEqual({ sent: true });
+    expect(harness.clicks[0]).toBe('Got it');
+  });
+
+  it('closes the panel after a failed send, without turning it into a success', async () => {
+    const harness = inCall({ submit: 'clears-only', sendButton: true });
+
+    const result = await provider.sendChatMessage(harness.page, 'anyone there');
+
+    expect(result.sent).toBe(false);
+    expect(harness.state.chatOpen).toBe(false);
+  });
 });

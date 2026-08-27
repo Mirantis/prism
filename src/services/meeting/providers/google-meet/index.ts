@@ -27,6 +27,7 @@ import { isAuthenticated, signInFailureReason, signInToGoogle } from './sign-in'
 import { judgeSpeaker, namesFrom, openParticipants, readRoom } from './participants';
 import { withTimeout } from '../../../../utils/with-timeout';
 import type {
+  ChatSendResult,
   JoinOptions,
   JoinOutcome,
   MeetingProvider,
@@ -213,6 +214,61 @@ const MIC_SETTLE_MS = 750;
  * there).
  */
 const MIC_PHASE_TIMEOUT_MS = 15_000;
+
+/**
+ * The chat panel's controls, in one place, ordered narrowest match first.
+ *
+ * **None of these has been verified against a live call.** They are extrapolated from
+ * how the rest of this file reads Meet — accessible names and `aria-label` substrings —
+ * so treat at least one as wrong until somebody has run a real send. That is why they
+ * are constants and why `sendChatMessage` tries several phrasings per step: correcting
+ * a selector should be one edit here, not a hunt through a method.
+ *
+ * The design answer to an unverified selector is not more selectors, it is which way a
+ * miss falls: every read in `sendChatMessage` reports the step it stopped at, and none
+ * of them can produce a success. See that method.
+ *
+ * Exported for the tests, which drive the stub through these exact strings.
+ */
+export const CHAT_TOGGLE_SELECTOR = 'button[aria-label*="chat" i]';
+export const CHAT_COMPOSER_SELECTOR = 'textarea[aria-label*="Send a message" i]';
+export const CHAT_SEND_SELECTOR = 'button[aria-label*="Send a message" i]';
+
+/** How long to wait for the chat control, and then the composer, to paint. */
+const CHAT_PANEL_TIMEOUT_MS = 5_000;
+
+/**
+ * How long to look for a composer that is already there.
+ *
+ * Short, and paid before every send: the chat toggle is a *toggle*, so pressing it
+ * while the panel is open closes the panel. Meet keeps it open between messages, so
+ * the second send of a call is the one this protects.
+ */
+const CHAT_ALREADY_OPEN_PROBE_MS = 300;
+
+/**
+ * How many times to look for the message on the page, and how long between looks.
+ *
+ * Counted rather than clocked, like `REJECTION_CONFIRM_READS`: a wall-clock deadline
+ * around a loop this cheap spins thousands of times in a test and hundreds against a
+ * busy page, all of them asking the same question. Eight reads is two seconds of
+ * patience for something that either lands in one render or is not going to.
+ */
+const CHAT_CONFIRM_READS = 8;
+const CHAT_CONFIRM_INTERVAL_MS = 250;
+
+/**
+ * How much of the message has to appear on the page for it to count as sent.
+ *
+ * A prefix rather than the whole string: Meet may wrap, collapse or decorate a long
+ * message, and a containment test on all 500 characters would fail on a message that
+ * did go through. Enough to be unmistakable, short enough to survive rendering.
+ */
+const CONFIRM_NEEDLE_CHARS = 60;
+
+/** Cap on one click or one read inside the chat flow. */
+const CHAT_CLICK_TIMEOUT_MS = 3_000;
+const CHAT_READ_TIMEOUT_MS = 2_000;
 
 /**
  * What happened to the microphone on the way in.
@@ -734,6 +790,218 @@ export class GoogleMeetProvider implements MeetingProvider {
     // — that is the reading a rotted selector gives, and it would silence the retry and
     // the warning together.
     return (await this.micMuted(page, MIC_RECHECK_MS)) === false;
+  }
+
+  /**
+   * Post one message into the call's chat, and confirm the page took it.
+   *
+   * Meet publishes no chat API, so this is selector-matching against the in-call
+   * panel — see `CHAT_TOGGLE_SELECTOR` and friends for the standing warning that none
+   * of it is verified against a live call.
+   *
+   * Which makes the failure direction the whole design. A `sent: true` here needs
+   * three independent positives: the composer painted, the draft left it, and the text
+   * turned up on the page. Every other path names the step it stopped at and reports
+   * `sent: false`, so a rotted selector produces a failure the agent then says out
+   * loud — recoverable — rather than a room that got nothing while the agent believes
+   * otherwise. Nothing in this method turns a caught error into a success.
+   *
+   * The panel is closed again afterwards, best effort. Not cosmetic: it shares the
+   * side rail with People, and `participantCount` reads participant tiles, so an open
+   * panel can push that reading down — and a reading of one for a minute is what makes
+   * the runtime leave the call.
+   */
+  async sendChatMessage(page: Page, text: string): Promise<ChatSendResult> {
+    const composer = this.chatComposer(page);
+    const toggle = this.chatToggle(page);
+
+    const opened = await this.openChatPanel(page, composer, toggle);
+    if (opened) return opened;
+
+    try {
+      await composer.fill(text, { timeout: CHAT_CLICK_TIMEOUT_MS });
+    } catch (err) {
+      return {
+        sent: false,
+        step: 'composer',
+        reason: `could not type into the chat box: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Enter is how Meet sends, and `fill` above put the text in as one operation, so
+    // there is no keystroke to trip it early. The caller has already collapsed every
+    // run of whitespace, so no newline can submit a fragment or split the message.
+    try {
+      await composer.press('Enter', { timeout: CHAT_CLICK_TIMEOUT_MS });
+    } catch {
+      // Fall through: the send button below is the other way in.
+    }
+
+    if (await this.confirmSent(page, composer, text)) {
+      await this.closeChatPanel(toggle);
+      return { sent: true };
+    }
+
+    // One fallback, not a retry loop: a panel whose Enter handler moved still has a
+    // send button, and pressing it is a different path rather than the same one again.
+    const send = page
+      .locator(CHAT_SEND_SELECTOR)
+      .or(page.getByRole('button', { name: /^send/i }))
+      .first();
+    if (!(await appears(send, 1_000))) {
+      await this.closeChatPanel(toggle);
+      return { sent: false, step: 'send', reason: 'Enter did not send and there is no send button' };
+    }
+
+    try {
+      await send.click({ timeout: CHAT_CLICK_TIMEOUT_MS });
+    } catch (err) {
+      await this.closeChatPanel(toggle);
+      return {
+        sent: false,
+        step: 'send',
+        reason: `the send button would not take a click: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    const confirmed = await this.confirmSent(page, composer, text);
+    await this.closeChatPanel(toggle);
+    return confirmed
+      ? { sent: true }
+      : {
+          sent: false,
+          step: 'confirm',
+          reason: 'the page never showed the message as sent',
+        };
+  }
+
+  /** The chat composer, several phrasings deep — the last one covers a contenteditable. */
+  private chatComposer(page: Page): Locator {
+    return page
+      .locator(CHAT_COMPOSER_SELECTOR)
+      .or(page.locator('textarea[placeholder*="Send a message" i]'))
+      .or(page.locator('[role="textbox"][aria-label*="message" i]'))
+      .first();
+  }
+
+  /**
+   * The button that opens the chat panel.
+   *
+   * `getByRole` first because the raw `aria-label*="chat"` substring is broad enough to
+   * match something else in the control bar; it is last for exactly that reason.
+   */
+  private chatToggle(page: Page): Locator {
+    return page
+      .getByRole('button', { name: /chat with everyone/i })
+      .or(page.getByRole('button', { name: /^chat$/i }))
+      .or(page.locator(CHAT_TOGGLE_SELECTOR))
+      .first();
+  }
+
+  /**
+   * Get the panel open with a composer in it. Resolves a failure, or null on success.
+   *
+   * Returning the failure rather than a boolean keeps the two reasons apart: no chat
+   * control at all is `panel`, a panel that painted no input is `composer`, and those
+   * are different problems for whoever reads the telemetry.
+   */
+  private async openChatPanel(
+    page: Page,
+    composer: Locator,
+    toggle: Locator,
+  ): Promise<ChatSendResult | null> {
+    if (!(await appears(composer, CHAT_ALREADY_OPEN_PROBE_MS))) {
+      // Same reason the unmute does this: a modal's scrim eats the click, and the
+      // click reports success on the scrim rather than on the button underneath.
+      await this.dismissBlockingDialogs(page);
+
+      if (!(await appears(toggle, CHAT_PANEL_TIMEOUT_MS))) {
+        return { sent: false, step: 'panel', reason: 'no chat control on the call page' };
+      }
+      try {
+        await toggle.click({ timeout: CHAT_CLICK_TIMEOUT_MS });
+      } catch (err) {
+        return {
+          sent: false,
+          step: 'panel',
+          reason: `the chat control would not open: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+
+    // The ticket's "confirmed painted", and the first of the three positives a send
+    // needs. `appears` waits; `isVisible` would not — see its docblock.
+    if (!(await appears(composer, CHAT_PANEL_TIMEOUT_MS))) {
+      return { sent: false, step: 'composer', reason: 'the chat panel did not paint an input' };
+    }
+    return null;
+  }
+
+  /** Put the panel back the way it was found. Never changes the reported outcome. */
+  private async closeChatPanel(toggle: Locator): Promise<void> {
+    try {
+      await toggle.click({ timeout: CHAT_CLICK_TIMEOUT_MS });
+    } catch {
+      // Best effort. The next send opens it again, and the count poll tolerates a
+      // reading it cannot take — it is a low reading that costs us.
+    }
+  }
+
+  /**
+   * Did the page take the message? Two readings, both required.
+   *
+   * Neither alone is worth anything. An empty composer on its own is what Meet shows
+   * for a send the server then dropped. The text being somewhere on the page on its own
+   * is *worse*: an unsent draft is still sitting in the composer, inside the panel, so a
+   * containment test would match the exact failure it is meant to catch. Together they
+   * mean the draft went somewhere and the text is in the room's message list — which is
+   * read without a selector for that list, the most volatile node in the panel and the
+   * one there is least evidence about.
+   *
+   * The page-wide read is what `readRejection` already does, so its cost is known.
+   *
+   * Known false negative, unverified: a long message Meet renders collapsed behind a
+   * "show more" could fail the containment test having actually been sent. 60 characters
+   * of a message capped at 500 makes that unlikely, and it fails in the safe direction.
+   */
+  private async confirmSent(page: Page, composer: Locator, text: string): Promise<boolean> {
+    const needle = text.slice(0, CONFIRM_NEEDLE_CHARS);
+
+    for (let read = 1; read <= CHAT_CONFIRM_READS; read += 1) {
+      // The first look is immediate: a send that landed should not be made to wait an
+      // interval before the agent may speak about it.
+      if (read > 1) await page.waitForTimeout(CHAT_CONFIRM_INTERVAL_MS);
+
+      if ((await this.readDraft(composer)) !== '') continue;
+      try {
+        const pageText = await page.locator('body').innerText({ timeout: CHAT_READ_TIMEOUT_MS });
+        if (pageText.includes(needle)) return true;
+      } catch {
+        // Page busy or navigating. There are more reads, then a reported failure.
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * What is still in the composer, or `'unknown'` when it cannot be read.
+   *
+   * `inputValue()` throws on a contenteditable, which is one of the shapes the composer
+   * locator accepts, so `innerText` is the fallback. An unreadable box answers
+   * `'unknown'` rather than `''`: only a box confirmed empty may contribute to a
+   * success, and "I could not look" is not that.
+   */
+  private async readDraft(composer: Locator): Promise<string> {
+    try {
+      return (await composer.inputValue({ timeout: CHAT_READ_TIMEOUT_MS })).trim();
+    } catch {
+      try {
+        return (await composer.innerText({ timeout: CHAT_READ_TIMEOUT_MS })).trim();
+      } catch {
+        return 'unknown';
+      }
+    }
   }
 
   /**
