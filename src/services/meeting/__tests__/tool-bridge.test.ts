@@ -217,8 +217,10 @@ describe('prepareMeetingTools', () => {
     // can see as the whole of it — the bug this replaced.
     expect(output).toContain('INCOMPLETE OUTPUT');
     expect(output).toContain('Do not state a count');
-    // …plus the one instruction that belongs to a live call.
-    expect(output).toContain('this call is your only channel');
+    // …plus the one instruction that belongs to a live call. The call chat exists now,
+    // so the notice names why it is no use here rather than claiming speech is the only
+    // channel out.
+    expect(output).toContain('the call chat takes one short line');
   });
 
   it('tells a call where its cut result was saved', async () => {
