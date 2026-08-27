@@ -470,6 +470,31 @@ const meetingTranscriptLogging = ((): 'off' | 'full' => {
   return raw === 'full' ? 'full' : 'off';
 })();
 
+// Whether a message the agent posts into a call's chat reaches the logs: `off`,
+// `redacted` or `full`.
+//
+// A separate switch from MEETING_TRANSCRIPT_LOGGING on purpose, even though both decide
+// whether a call's text is written down. They are different texts with different owners:
+// the transcript is what other people said, which nobody in the room agreed to record,
+// while this is what the agent itself posted. An operator diagnosing "did that message
+// actually go out" should not have to start recording the room to find out.
+//
+// `off` writes nothing for a send that worked. `redacted` adds a line with the status,
+// the length and how long it took. `full` adds the message itself.
+//
+// A *failed* send always writes one line, at every setting, naming the step it stopped
+// at and never the body. Meet publishes no chat API, so this runs on selectors that can
+// rot, and a send that quietly did nothing is the failure worth catching — a diagnostic
+// switch that can hide it defeats its own purpose.
+//
+// Unrecognized, including `''`, is `off`: a typo should cost a diagnostic, not the
+// container.
+const meetingChatLogging = ((): 'off' | 'redacted' | 'full' => {
+  const raw = (process.env.MEETING_CHAT_LOGGING || 'off').trim().toLowerCase();
+  if (raw === 'full') return 'full';
+  return raw === 'redacted' ? 'redacted' : 'off';
+})();
+
 // Google account the meeting bot signs in as.
 //
 // Not optional in practice for Google Meet: Google auto-denies automated
@@ -785,6 +810,10 @@ export const config = {
   // MEETING_TRANSCRIPT_LOGGING, default 'off': whether a meeting's speech may appear
   // in the runtime's logs ('off' | 'full').
   meetingTranscriptLogging,
+  // MEETING_CHAT_LOGGING, default 'off': whether a message the agent posts into a
+  // call's chat may appear in the logs ('off' | 'redacted' | 'full'). A failed send
+  // always logs one line, bodyless, at every setting.
+  meetingChatLogging,
   googleBotEmail,
   googleBotPassword,
   meetingTimeoutMinutes,
