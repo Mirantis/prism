@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
-import '@lensapp/lds/style.css';
+import '@k8slens/lds/style.css';
 import './styles/globals.css';
 
 const rootEl = document.getElementById('root');
