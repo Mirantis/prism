@@ -100,6 +100,10 @@ The image bundles the tools the agent's shell can reach (`git`, `gh`, `kubectl`,
 `tesseract`, plus Claude Code) so the agent can do real work out of the box. It
 runs as a non-root `node` user and drops privileges after setup.
 
+`LICENSE`, `NOTICE` and `THIRD_PARTY_NOTICES` sit in `/app`, the image's working
+directory. Read one with
+`docker run --rm ghcr.io/lensapp/prism-agent cat /app/LICENSE`.
+
 The `python`/`pandoc`/`poppler`/`tesseract` set — plus the Python libraries the
 Anthropic `pdf`/`docx`/`xlsx`/`pptx` skills import (`openpyxl`, `python-pptx`,
 `pypdf`, `pdfplumber`, `Pillow`, and more; see `requirements.txt`) — is the

@@ -91,6 +91,16 @@ try {
     Copy-Item -Path (Join-Path $dist $sub) -Destination $target -Recurse -Force
   }
 
+  # License, attribution and third-party notices. Guarded like install.sh -- a dist
+  # built by build-sea.mjs + collect-natives.mjs alone has none, and
+  # $ErrorActionPreference = 'Stop' makes an unguarded copy of a missing file throw.
+  # A release archive always has them: the cp in scripts/build-binaries.sh runs
+  # under `set -e`, and scripts/smoke-sea.mjs checks all three on four platforms.
+  foreach ($f in 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES') {
+    $src = Join-Path $dist $f
+    if (Test-Path $src) { Copy-Item -Path $src -Destination (Join-Path $PrismHome $f) -Force }
+  }
+
   # Config template -- never clobber an existing one. Bake
   # AWS_BEARER_TOKEN_BEDROCK from the installer's environment when set; the
   # scheduled task runs with an isolated env, so a shell export otherwise

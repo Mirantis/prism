@@ -74,6 +74,14 @@ rm -rf "$PRISM_HOME/node_modules" "$PRISM_HOME/web"
 cp -R "$DIST/node_modules" "$PRISM_HOME/node_modules"
 cp -R "$DIST/web" "$PRISM_HOME/web"
 
+# License, attribution and third-party notices. Guarded because a dist-sea/
+# built by build-sea.mjs + collect-natives.mjs alone (see the header) has none.
+# A release archive always has them: the cp in scripts/build-binaries.sh runs
+# under `set -e`, and scripts/smoke-sea.mjs checks all three on four platforms.
+for f in LICENSE NOTICE THIRD_PARTY_NOTICES; do
+  if [ -f "$DIST/$f" ]; then cp "$DIST/$f" "$PRISM_HOME/$f"; fi
+done
+
 # Config template — never clobber an existing one.
 if [ ! -f "$PRISM_HOME/.env" ]; then
   # Bake AWS_BEARER_TOKEN_BEDROCK from the installer's environment when set —

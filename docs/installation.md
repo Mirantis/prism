@@ -57,6 +57,7 @@ build, which runs under emulation.)
 | Config file | `~/.prism/.env` | `%USERPROFILE%\.prism\.env` |
 | Agent database | `~/.prism/…/agent.db` | under `%USERPROFILE%\.prism` |
 | Shell workspace | `~/.prism/workspace` | `%USERPROFILE%\.prism\workspace` |
+| License and notices | `~/.prism/LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES` | the same names under `%USERPROFILE%\.prism` |
 | `prism` on PATH via | symlink in `/usr/local/bin` or `~/.local/bin` | `.prism` added to user `PATH` |
 
 The `workspace` directory is the working directory the agent's
