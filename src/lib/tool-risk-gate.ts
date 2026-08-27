@@ -14,7 +14,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { generateObject, type ModelMessage, type Tool } from 'ai';
+import { type ModelMessage, type Tool } from 'ai';
+import { callModelForObject } from './model-call';
 import { z } from 'zod';
 import type { ToolRiskGateMode } from '../config';
 import { logger } from '../logger';
@@ -523,7 +524,7 @@ export async function evaluateToolRisk(
     },
   };
 
-  const { object } = await generateObject({
+  const { object } = await callModelForObject({ purpose: 'risk-gate', agentId: input.agentId }, {
     model,
     schema: toolRiskDecisionSchema,
     schemaName: 'tool_risk_decision',

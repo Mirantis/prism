@@ -113,6 +113,7 @@ model AgentWorkspace {
   cronTasks              CronTask[]
   goals                  Goal[]
   memoryEntries          MemoryEntry[]
+  llmCalls               LlmCall[]
   slackMappings          SlackMapping[]
   slackVerificationCodes SlackVerificationCode[]
   slackHeartbeatTriggers SlackHeartbeatTrigger[]
@@ -192,7 +193,6 @@ model ConversationMessage {
   triggeredBy MessageTrigger
   toolCalls   Json?
   blocks      Json?
-  tokenCount  Int?
 
   senderExternalId  String?
   senderName        String?
@@ -210,6 +210,7 @@ model ConversationMessage {
   thread      ConversationThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
   attachments MessageAttachment[]
 
+  @@index([role, createdAt])
   @@map("conversation_messages")
 }
 
@@ -349,6 +350,46 @@ model Goal {
   @@index([agentId, status])
   @@index([threadId])
   @@map("goals")
+}
+
+// ============================================================================
+// LLM calls
+// ============================================================================
+//
+// One row per model call, written when the call returns rather than when its
+// output is delivered, so a suppressed heartbeat and a compaction count too.
+// `inputTokens` already includes cache reads and writes, so a cache hit rate
+// divides `cacheReadTokens` by the sum of the three details. The table is
+// append-only and never pruned; a row is ~100 bytes.
+
+model LlmCall {
+  id String @id @default(uuid())
+
+  /// Who paid: always the agent this runtime owns, and what reads filter on.
+  agentId String
+
+  /// Which subagent the call ran for; a plain id, so a deletion keeps the row.
+  subagentId String?
+
+  /// What the call was for; `LLM_CALL_PURPOSES` is the list.
+  purpose String
+  model   String
+
+  threadId String?
+
+  totalTokens      Int @default(0)
+  inputTokens      Int @default(0)
+  outputTokens     Int @default(0)
+  cacheReadTokens  Int @default(0)
+  cacheWriteTokens Int @default(0)
+  noCacheTokens    Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, createdAt])
+  @@map("llm_calls")
 }
 
 // ============================================================================

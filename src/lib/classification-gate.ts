@@ -7,7 +7,7 @@
  * failure must never drop a message).
  */
 
-import { generateText } from 'ai';
+import { callModel } from './model-call';
 import { getGateRequest } from './classification';
 import { langfuseTelemetry } from './telemetry';
 import { logger } from '../logger';
@@ -24,6 +24,7 @@ export interface ClassificationGateInput {
   functionId: string;
   /** Added to Langfuse metadata when set. */
   userId?: string;
+  agentId?: string;
   /** Log prefix, e.g. 'Heartbeat:Gate' or 'CronScheduler:Gate'. */
   logLabel: string;
 }
@@ -31,7 +32,7 @@ export interface ClassificationGateInput {
 export async function runClassificationGate(input: ClassificationGateInput): Promise<boolean> {
   try {
     const { model, providerOptions, samplingParams } = getGateRequest();
-    const result = await generateText({
+    const result = await callModel({ purpose: 'delivery-gate', agentId: input.agentId }, {
       model,
       providerOptions,
       system: input.system,

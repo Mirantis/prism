@@ -86,7 +86,6 @@ function msg(id: string, threadId: string): ConversationMessage {
     triggeredBy: 'USER_INPUT',
     toolCalls: null,
     blocks: null,
-    tokenCount: null,
     isCompacted: false,
     createdAt: new Date().toISOString(),
   };

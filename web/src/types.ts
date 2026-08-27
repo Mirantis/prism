@@ -45,7 +45,6 @@ export interface ConversationMessage {
   triggeredBy: MessageTrigger;
   toolCalls: ToolCallRecord[] | null;
   blocks: unknown[] | null;
-  tokenCount: number | null;
   isCompacted: boolean;
   createdAt: string;
   attachments?: Attachment[] | null;
@@ -299,4 +298,38 @@ export interface Goal {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+}
+
+// ============================================================================
+// Activity page
+// ============================================================================
+
+/** Token totals (GET /agents/activity/llm-usage). */
+export interface LlmUsageSummary {
+  windowHours: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  noCacheTokens: number;
+  /** null when no provider in the window reported a cache breakdown. */
+  cacheHitPercent: number | null;
+  /** Model calls in the window — not a turn count. */
+  calls: number;
+}
+
+/** One tool call in the Activity feed (GET /agents/activity/tool-calls). */
+export interface ToolCallHistoryEntry extends ToolCallRecord {
+  id: string;
+  timestamp: string;
+  messageId: string;
+  threadId: string;
+  threadTitle: string | null;
+  triggeredBy: MessageTrigger;
+}
+
+export interface ToolCallHistoryPage {
+  items: ToolCallHistoryEntry[];
+  nextCursor: string | null;
 }

@@ -6,7 +6,8 @@
  * generateText(), and returns the response.
  */
 
-import { generateText, ModelMessage, SystemModelMessage, stepCountIs } from 'ai';
+import { ModelMessage, SystemModelMessage, stepCountIs } from 'ai';
+import { callModel } from './lib/model-call';
 import { config } from './config';
 import { logger } from './logger';
 import { createProvider, isProviderConfigured } from './lib/llm-providers/create-provider';
@@ -46,6 +47,7 @@ import {
   withToolRiskGate,
 } from './lib/tool-risk-gate';
 import { InvokeError, InvokeRequest, InvokeResponse, InvokeStep, ToolCallRecord, UIBlock } from './types';
+import { foldStepUsage, toStepUsage } from './lib/step-usage';
 import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from './constants';
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
 import { buildErrorStep, buildRefusalStep, isContextOverflowError } from './lib/llm-errors';
@@ -334,7 +336,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     });
 
 
-    generateText({
+    callModel({ purpose: request.mode, threadId: request.threadId, agentId: request.agentId }, {
       model,
       system: cachedSystem,
       messages,
@@ -401,14 +403,6 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         return { messages: merged };
       },
       onStepFinish: (step) => {
-        const details = step.usage?.inputTokenDetails;
-
-        if (details) {
-          logger.debug(
-            `Token cache: read=${details.cacheReadTokens ?? 0}, write=${details.cacheWriteTokens ?? 0}, no-cache=${details.noCacheTokens ?? 0}`
-          );
-        }
-
         // Convert SDK step to InvokeStep and push to channel.
         //
         // What is stored is the *model-facing* view, not the raw execute() return:
@@ -465,7 +459,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
         const blocks = extractBlocks(step.text);
         const attachmentIds = extractAttachmentIds(step.toolCalls, step.toolResults);
-        const totalTokens = step.usage?.totalTokens;
+        const usage = toStepUsage(modelId, step.usage);
         const inputTokens = step.usage?.inputTokens;
         const outputTokens = step.usage?.outputTokens;
 
@@ -486,15 +480,6 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
             lastMeasuredTokens = inputTokens + (outputTokens ?? 0);
           }
         }
-
-        const usage =
-          typeof totalTokens === 'number'
-            ? {
-                totalTokens,
-                ...(typeof inputTokens === 'number' ? { inputTokens } : {}),
-                ...(typeof outputTokens === 'number' ? { outputTokens } : {}),
-              }
-            : undefined;
 
         channel.push({
           text: step.text,
@@ -542,22 +527,25 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         ];
         warnOnTrailingAssistant(summaryMessages, { ...guardContext, stage: 'early-stopping' });
 
-        const summaryResult = await generateText({
+        const summaryResult = await callModel(
+          { purpose: 'early-stopping', threadId: request.threadId, agentId: request.agentId },
+          {
           model,
           system: cachedSystem,
           messages: summaryMessages,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           abortSignal: request.abortSignal,
           ...turnTelemetry('invoke-early-stopping'),
-        });
+          },
+        );
 
         const earlyStoppingBlocks = extractBlocks(summaryResult.text);
-        const summaryTokens = summaryResult.usage?.totalTokens;
+        const summaryUsage = toStepUsage(modelId, summaryResult.usage);
         earlyStoppingText = summaryResult.text;
         channel.push({
           text: summaryResult.text,
           toolCalls: [],
-          ...(typeof summaryTokens === 'number' ? { usage: { totalTokens: summaryTokens } } : {}),
+          ...(summaryUsage ? { usage: summaryUsage } : {}),
           blocks: earlyStoppingBlocks,
         });
       }
@@ -696,7 +684,8 @@ export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
   const response = joinStepTexts(steps) || '';
   const allBlocks = steps.flatMap((s) => s.blocks ?? []);
   const allAttachmentIds = steps.flatMap((s) => s.attachmentIds ?? []);
-  const totalTokens = steps.reduce((sum, s) => sum + (s.usage?.totalTokens ?? 0), 0);
+  const usage = foldStepUsage(steps.flatMap((s) => (s.usage ? [s.usage] : [])));
+  const totalTokens = usage?.totalTokens ?? 0;
 
   logger.info(
     `${agentName} responded: ${response.length} chars, ${allToolCalls.length} tool call(s), ${totalTokens} token(s)`
@@ -707,7 +696,7 @@ export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
     toolCalls: allToolCalls,
     ...(allBlocks.length > 0 ? { blocks: allBlocks } : {}),
     ...(allAttachmentIds.length > 0 ? { attachmentIds: allAttachmentIds } : {}),
-    usage: { totalTokens },
+    ...(usage ? { usage } : {}),
     steps,
     ...(errorMeta ? { error: errorMeta } : {}),
   };

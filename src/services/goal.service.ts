@@ -18,7 +18,7 @@
  *   the abort handle + running flag, so a restart cleanly resumes from the DB.
  */
 
-import { generateText } from 'ai';
+import { callModel } from '../lib/model-call';
 import { Goal } from '@prisma/client';
 import { invoke } from '../invoke';
 import { prisma } from '../lib/prisma';
@@ -495,7 +495,7 @@ class GoalService {
 
     try {
       const { model, providerOptions, samplingParams } = getGateRequest();
-      const result = await generateText({
+      const result = await callModel({ purpose: 'goal-gate' }, {
         model,
         providerOptions,
         system: GOAL_COMPLETION_GATE_PROMPT,

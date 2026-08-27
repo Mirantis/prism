@@ -36,7 +36,6 @@ export interface MessageInput {
   triggeredBy: MessageTrigger;
   toolCalls?: unknown[];
   blocks?: unknown[];
-  tokenCount?: number;
   // Multi-user context (for channel messages)
   senderExternalId?: string; // External user ID (Slack: U..., Discord: snowflake, etc.)
   senderName?: string; // Human-readable display name
@@ -416,7 +415,6 @@ class ConversationService {
         triggeredBy: input.triggeredBy,
         toolCalls: input.toolCalls as Prisma.InputJsonValue | undefined,
         blocks: input.blocks as Prisma.InputJsonValue | undefined,
-        tokenCount: input.tokenCount,
         senderExternalId: input.senderExternalId,
         senderName: input.senderName,
         internalStep: input.internalStep,

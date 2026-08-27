@@ -204,6 +204,11 @@ vi.mock('./services/context-usage.service', () => ({
   },
 }));
 
+const { mockRecordLlmCall } = vi.hoisted(() => ({ mockRecordLlmCall: vi.fn() }));
+vi.mock('./services/llm-call.service', () => ({
+  llmCallService: { record: mockRecordLlmCall },
+}));
+
 const { mockMaybeAutoCompact, mockMaybeCompactAfterOverflow } = vi.hoisted(() => ({
   mockMaybeAutoCompact: vi.fn(),
   mockMaybeCompactAfterOverflow: vi.fn(),
@@ -1588,16 +1593,84 @@ describe('invoke', () => {
       expect(mockContextUsageFinalize).toHaveBeenCalledWith({ threadId: 'thread-xyz' });
     });
 
-    it('surfaces inputTokens and outputTokens on the step', async () => {
+    it('records every model step against the call, not the message', async () => {
+      // The row is written as the call returns, so a turn whose output is
+      // suppressed or never published is still counted.
+      twoStepsWithUsage();
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-xyz' }));
+
+      expect(mockRecordLlmCall).toHaveBeenCalledTimes(2);
+      expect(mockRecordLlmCall).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          purpose: 'chat',
+          threadId: 'thread-xyz',
+          usage: expect.objectContaining({ inputTokens: 100_000 }),
+        }),
+      );
+      expect(mockRecordLlmCall).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ usage: expect.objectContaining({ inputTokens: 140_000 }) }),
+      );
+    });
+
+    it('records a heartbeat turn, which may publish nothing at all', async () => {
+      // A heartbeat has no thread and its result may be suppressed downstream.
+      // Neither changes what it cost.
+      twoStepsWithUsage();
+
+      await invoke(createTestInvokeRequest({ mode: 'heartbeat' }));
+
+      expect(mockRecordLlmCall).toHaveBeenCalledTimes(2);
+      expect(mockRecordLlmCall).toHaveBeenLastCalledWith(
+        expect.objectContaining({ purpose: 'heartbeat', threadId: undefined }),
+      );
+    });
+
+    it('surfaces the whole breakdown on the step', async () => {
       twoStepsWithUsage();
 
       const result = await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-xyz' }));
 
+      // The cache details are 0 because this fixture's provider reports none.
       expect(result.steps[1]?.usage).toEqual({
+        model: 'anthropic.claude-3-sonnet-20240229-v1:0',
         totalTokens: 140_800,
         inputTokens: 140_000,
         outputTokens: 800,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        noCacheTokens: 0,
       });
+    });
+
+    it('sums every step into the invocation total', async () => {
+      twoStepsWithUsage();
+
+      const result = await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-xyz' }));
+
+      // Each step resends the prompt, so billed input is both prompts.
+      expect(result.usage).toEqual(
+        expect.objectContaining({
+          totalTokens: 241_300,
+          inputTokens: 240_000,
+          outputTokens: 1_300,
+        }),
+      );
+    });
+
+    it('reports no usage when the provider reported none', async () => {
+      mockGenerateText.mockResolvedValue({
+        text: 'done',
+        steps: [{ text: 'done', toolCalls: [], toolResults: [] }],
+      });
+
+      const result = await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-xyz' }));
+
+      // Absent, not a row of zeros — zeros would claim a turn that cost nothing.
+      expect(result.usage).toBeUndefined();
+      expect(result.steps[0]?.usage).toBeUndefined();
     });
 
     it('does not track a heartbeat turn — it has no thread to measure', async () => {

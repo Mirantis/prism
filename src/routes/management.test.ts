@@ -1785,7 +1785,6 @@ describe('Management Routes', () => {
         triggeredBy: 'USER_INPUT',
         toolCalls: undefined,
         blocks: undefined,
-        tokenCount: undefined,
         senderExternalId: undefined,
         senderName: undefined,
       });

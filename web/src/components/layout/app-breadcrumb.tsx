@@ -16,6 +16,7 @@ const ROUTE_TITLES: Record<string, string> = {
   '/cron': 'Scheduled Tasks',
   '/webhooks': 'Webhooks',
   '/profile': 'Profile',
+  '/activity': 'Activity',
 };
 
 function titleFor(pathname: string): string {

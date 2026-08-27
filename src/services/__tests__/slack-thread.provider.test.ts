@@ -779,7 +779,6 @@ describe('Requirement: Slack Thread Provider', () => {
         triggeredBy: 'USER_INPUT',
         toolCalls: [{ tool: 'shell', input: '{}', output: 'ok', success: true, timestamp: '2024-03-09T16:00:02Z' }],
         blocks: null,
-        tokenCount: null,
         senderExternalId: null,
         senderName: null,
         externalMessageId: null,

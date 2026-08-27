@@ -14,3 +14,9 @@ Feature: Application Navigation
     When I navigate to the profile page
     Then I should see the agent name
     And I should see the heartbeat status
+
+  Scenario: Activity page shows the two sections
+    When I navigate to the activity page
+    Then the Activity nav item comes after Profile
+    And I should see the LLM usage section
+    And I should see the tool calls section

@@ -1485,12 +1485,12 @@ router.get('/threads/:threadId', async (req: Request<{ threadId: string }>, res:
 /**
  * POST /agents/threads/:threadId/messages
  * Add a message to a thread.
- * Body: { content, role, triggeredBy, toolCalls?, blocks?, tokenCount?, senderExternalId?, senderName? }
+ * Body: { content, role, triggeredBy, toolCalls?, blocks?, senderExternalId?, senderName? }
  */
 router.post('/threads/:threadId/messages', async (req: Request<{ threadId: string }, unknown, MessageInput>, res: Response) => {
   try {
     const { threadId } = req.params;
-    const { content, role, triggeredBy, toolCalls, blocks, tokenCount, senderExternalId, senderName } = req.body;
+    const { content, role, triggeredBy, toolCalls, blocks, senderExternalId, senderName } = req.body;
     const missingFields = [
       ...(!content ? ['content'] : []),
       ...(!role ? ['role'] : []),
@@ -1514,7 +1514,7 @@ router.post('/threads/:threadId/messages', async (req: Request<{ threadId: strin
     }
 
     const { message } = await conversationService.addMessage(threadId, {
-      content, role, triggeredBy, toolCalls, blocks, tokenCount, senderExternalId, senderName,
+      content, role, triggeredBy, toolCalls, blocks, senderExternalId, senderName,
     });
 
     res.status(201).json(message);
