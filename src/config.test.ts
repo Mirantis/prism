@@ -836,51 +836,14 @@ describe('config', () => {
       }
     });
 
-    it('keeps a posted chat message out of the logs unless asked', async () => {
-      delete process.env.MEETING_CHAT_LOGGING;
-      const cfg = await loadConfig();
-      expect(cfg.meetingChatLogging).toBe('off');
-    });
-
-    it('reads both chat-logging modes', async () => {
-      // `redacted` is a real setting here, unlike for the transcript: the status, the
-      // length and the duration are worth a line without the message itself.
-      for (const mode of ['redacted', 'full'] as const) {
-        process.env.MEETING_CHAT_LOGGING = mode;
-        vi.resetModules();
-        const cfg = await loadConfig();
-        expect(cfg.meetingChatLogging).toBe(mode);
-      }
-    });
-
-    it('tolerates case and stray whitespace around a chat-logging mode', async () => {
-      for (const messy of ['FULL ', ' Redacted']) {
-        process.env.MEETING_CHAT_LOGGING = messy;
-        vi.resetModules();
-        const cfg = await loadConfig();
-        expect(cfg.meetingChatLogging).toBe(messy.trim().toLowerCase());
-      }
-    });
-
-    it('falls back to off on a chat-logging value it does not recognize', async () => {
-      for (const bad of ['on', 'true', '1', 'verbose', '', '   ']) {
-        process.env.MEETING_CHAT_LOGGING = bad;
-        vi.resetModules();
-        const cfg = await loadConfig();
-        expect(cfg.meetingChatLogging).toBe('off');
-      }
-    });
-
-    it('keeps the two logging switches apart', async () => {
-      // Different texts with different owners: the transcript is what other people
-      // said, the chat body is what the agent posted. Recording one must not start
-      // recording the other.
+    it('has no switch for a posted chat message', async () => {
+      // There is nothing to switch: a message the agent posts into a call's chat never
+      // reaches a log line, so the setting that used to allow it is gone rather than
+      // defaulted to off.
       process.env.MEETING_CHAT_LOGGING = 'full';
-      process.env.MEETING_TRANSCRIPT_LOGGING = 'off';
       vi.resetModules();
       const cfg = await loadConfig();
-      expect(cfg.meetingChatLogging).toBe('full');
-      expect(cfg.meetingTranscriptLogging).toBe('off');
+      expect(cfg).not.toHaveProperty('meetingChatLogging');
     });
 
     it('has no display-name setting', async () => {

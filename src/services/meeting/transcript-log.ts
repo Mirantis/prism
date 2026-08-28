@@ -4,11 +4,9 @@
  * A call's utterances used to be logged verbatim, at `info`, next to the roster of
  * everyone in the room — a diagnostic that was genuinely useful and quietly turned the
  * deployment's log into a transcript of a conversation nobody in the room consented to.
- * These formatters are the only place that decides whether any of it is written. Two
- * switches choose, one per kind of text: `MEETING_TRANSCRIPT_LOGGING` for what the room
- * said, and `MEETING_CHAT_LOGGING` for what the agent posted into the call's chat (see
- * config.ts for why the default is `off` for both, why they are variables of their own
- * rather than a log level, and why they are two rather than one).
+ * These formatters are the only place that decides whether any of it is written, and
+ * `MEETING_TRANSCRIPT_LOGGING` is the one switch that chooses (see config.ts for why the
+ * default is `off` and why it is a variable of its own rather than a log level).
  *
  *     off   [Meeting:Gate] verdict addressed=false item=item-4 641ms roster=2
  *     full  … roster=[Emma, Lee, Mario Sarcher] said="NO"
@@ -50,20 +48,6 @@ export function formatTranscript(transcript: string): string {
   return config.meetingTranscriptLogging === 'full'
     ? `transcript=${JSON.stringify(transcript)}`
     : '';
-}
-
-/**
- * A message the agent posted into the call's chat, or nothing at all.
- *
- * `full` only. `redacted` deliberately writes no stand-in — the length and the outcome
- * are on the line already, and a digest or a prefix of the body is the body.
- *
- * Behind its own switch rather than the transcript's: this is the agent's own text, so
- * an operator checking whether a send went out should not have to start recording what
- * everybody else in the room said.
- */
-export function formatChatBody(text: string): string {
-  return config.meetingChatLogging === 'full' ? `text=${JSON.stringify(text)}` : '';
 }
 
 /**
