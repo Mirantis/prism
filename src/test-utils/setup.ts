@@ -17,9 +17,12 @@ import path from 'path';
 //
 // One fixed path rather than a fresh mkdtemp: this file runs once per test file,
 // so a unique dir per run would leak hundreds of them into the OS temp dir. It
-// can safely be shared because nothing writes here — any test that needs to put
-// something on disk pins its own PRISM_DATA_DIR (or PRISM_SKILLS_DIR /
-// PRISM_PLUGINS_DIR), and this default exists only so the rest read an empty one.
+// can safely be shared because nothing reads across tests from here — any test
+// that needs to put something on disk and read it back pins its own
+// PRISM_DATA_DIR (or PRISM_SKILLS_DIR / PRISM_PLUGINS_DIR), and this default
+// exists only so the rest read an empty one. A test that runs an oversized tool
+// result through the output capture will drop a saved copy under
+// `<scratch>/tool-outputs`; it is inert, but pin your own dir if you assert on it.
 const scratchDataDir = path.join(os.tmpdir(), 'prism-test-data');
 fs.mkdirSync(scratchDataDir, { recursive: true });
 process.env.PRISM_DATA_DIR = scratchDataDir;
@@ -52,6 +55,10 @@ vi.mock('../config', () => ({
     langfuseSecretKey: undefined,
     langfusePublicKey: undefined,
     langfuseBaseUrl: 'http://localhost:3100',
+    // Read back when a saved tool output has expired, to say how long copies are
+    // kept. Undefined here would render "about NaN days" and still pass a loose
+    // assertion.
+    toolOutputTtlMs: 7 * 24 * 60 * 60 * 1000,
     // Voice meetings. The transcriber is named here because the Realtime session
     // sends it in `session.update`, so an undefined value would be asserted on.
     openaiTranscriptionModel: 'gpt-realtime-whisper',

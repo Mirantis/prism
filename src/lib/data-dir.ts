@@ -72,6 +72,16 @@ export function resolveMediaDir(): string {
 }
 
 /**
+ * Where an oversized tool result is saved so the omitted middle stays reachable
+ * (`/data/tool-outputs` in the container). Files only — no DB row points at one,
+ * so a spill's whole lifecycle is its mtime against the TTL. See
+ * `lib/tool-output-store.ts`, the sole reader/writer.
+ */
+export function resolveToolOutputDir(): string {
+  return path.join(resolveDataDir(), 'tool-outputs');
+}
+
+/**
  * The config dir we point Claude Code at via `CLAUDE_CONFIG_DIR`. Lives inside
  * our data dir so Claude Code's own state (sessions, `.claude.json`) is isolated
  * there rather than polluting the data-dir root next to `agent.db` — and so we
@@ -86,6 +96,7 @@ export interface DataDirsSetup {
   skillsDir: string;
   pluginsDir: string;
   mediaDir: string;
+  toolOutputDir: string;
   claudeConfigDir: string;
   /** The intended data dir we couldn't create (so the caller can warn), else null. */
   fellBackFrom: string | null;
@@ -123,7 +134,8 @@ function ensureSymlink(target: string, linkPath: string): boolean {
 }
 
 /**
- * Ensure the data dir, the canonical skills, plugins and media dirs, and the
+ * Ensure the data dir, the canonical skills, plugins, media and tool-output dirs,
+ * and the
  * Claude Code config dir exist; (re)create the `<claudeConfigDir>/skills` →
  * `<skillsDir>` symlink; and
  * default `CLAUDE_CONFIG_DIR` so the spawned `claude_code` CLI discovers the
@@ -151,10 +163,12 @@ export function ensureDataDirs(): DataDirsSetup {
   const skillsDir = resolveSkillsDir();
   const pluginsDir = resolvePluginsDir();
   const mediaDir = resolveMediaDir();
+  const toolOutputDir = resolveToolOutputDir();
   const claudeConfigDir = resolveClaudeConfigDir();
   fs.mkdirSync(skillsDir, { recursive: true });
   fs.mkdirSync(pluginsDir, { recursive: true });
   fs.mkdirSync(mediaDir, { recursive: true });
+  fs.mkdirSync(toolOutputDir, { recursive: true });
   fs.mkdirSync(claudeConfigDir, { recursive: true });
 
   // Only the skills dir is symlinked into the Claude Code config. Claude Code's
@@ -167,5 +181,14 @@ export function ensureDataDirs(): DataDirsSetup {
   // — which inherits process.env — reads skills from our shared dir.
   process.env.CLAUDE_CONFIG_DIR ??= claudeConfigDir;
 
-  return { dataDir, skillsDir, pluginsDir, mediaDir, claudeConfigDir, fellBackFrom, symlinkOk };
+  return {
+    dataDir,
+    skillsDir,
+    pluginsDir,
+    mediaDir,
+    toolOutputDir,
+    claudeConfigDir,
+    fellBackFrom,
+    symlinkOk,
+  };
 }

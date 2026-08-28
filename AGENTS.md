@@ -714,6 +714,7 @@ src/
 │   ├── cron.ts                 # Cron task tools (schedule, list, delete)
 │   ├── goals.ts                # Goal tools (create, get)
 │   ├── attachments.ts          # hydrate_attachment (stored bytes → workspace file) + view_attachment (image/PDF into the turn) + `reapScratchDirs`
+│   ├── read-tool-output.ts     # Search (or, reluctantly, page) the saved copy of a tool result that was too big to show whole
 │   ├── share-file.ts           # Deliver a workspace file to the user as an attachment
 │   ├── meeting.ts              # Voice meetings (join_meeting, leave_meeting, meeting_status)
 │   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, claude_code
@@ -757,6 +758,7 @@ src/
 │   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
 │   ├── media-store.ts          # Attachment bytes as files under `<data dir>/media`: write/read/remove, filename sanitizing, stray-file reaper
+│   ├── tool-output-store.ts    # The saved whole copy of an oversized tool result under `<data dir>/tool-outputs`: write/read/remove, TTL reaper. No DB row, so mtime is the whole lifecycle
 │   ├── prisma.ts               # Prisma client singleton (runtime database)
 │   └── tool-names.ts           # Single owner of what a tool may be *called* for a model: charset, no leading digit, 64-char cap (`toModelToolName`, `capToolNames`)
 ├── prisma/
@@ -825,6 +827,7 @@ What the operator sets on `docker run`:
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
 | `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction (sent verbatim) | `6` |
 | `ATTACHMENT_TTL_HOURS` | How long attachment content (the media file under `<data dir>/media`) is kept before the hourly sweep deletes it; the metadata stub survives, so history keeps showing the file as *content expired*. A non-positive or unparseable value falls back to the default | `168` (7 days) |
+| `TOOL_OUTPUT_TTL_HOURS` | How long the saved whole copy of an oversized tool result is kept under `<data dir>/tool-outputs`. Same defensive parse. Compaction also reclaims eagerly: a compacted message never re-enters the context, so the ids it carried are unreachable | `168` (7 days) |
 | `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md), and drives chat when `LLM_PROVIDER=openai` (required direct; not needed through the gateway). The Realtime WebSocket is **never routed through the gateway** — the openai mount routes POST only, so the socket goes direct to `api.openai.com`; may be a `__nexus_cred:…__` sentinel since it only ever rides a header | — (meeting tools unregistered) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot rather than the moving `gpt-realtime` alias, so a new snapshot cannot change turn-taking under a live deployment | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name | `marin` |

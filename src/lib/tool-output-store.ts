@@ -1,0 +1,146 @@
+/**
+ * Tool Output Store
+ *
+ * The saved copy of a tool result that was too big to show the model whole. The
+ * model is shown the head and the tail with a notice naming an id; the whole text
+ * lives here as a file, and `tools/read-tool-output.ts` is how the agent gets at
+ * the part it could not see.
+ *
+ * A sibling of `lib/media-store.ts` rather than a client of it. The two look alike
+ * — atomic write, containment guard, ENOENT means "gone, not broken" — but their
+ * lifecycles differ in the way that matters: an attachment is referenced by a DB
+ * row, so its reaper works from a live set and needs boot reconciliation, while
+ * nothing points at a spill. A spill's entire lifecycle is its mtime against the
+ * TTL, plus a best-effort delete when the message that named it goes away. That is
+ * simpler, and folding it into a live-set reaper would only make it look
+ * complicated.
+ *
+ * The model never sees a path. Ids are opaque and this module resolves them, so a
+ * stub stored in a conversation keeps working when the data dir moves — between a
+ * container and local dev, say — and so nothing hands a model a path into the
+ * directory that also holds `agent.db`.
+ */
+
+import fs from 'fs/promises';
+import path from 'path';
+import { randomUUID } from 'crypto';
+import { resolveToolOutputDir } from './data-dir';
+import { logger } from '../logger';
+
+/**
+ * Ceiling on one saved copy. Paired with `MAX_EXEC_OUTPUT_BYTES` in
+ * `tools/shell/config.ts` — keep them equal. Past it the copy holds the first
+ * 10 MiB and says so, because a pathological result must fill neither the row nor
+ * the volume.
+ */
+export const MAX_SPILL_BYTES = 10 * 1024 * 1024;
+
+export interface SpillResult {
+  /** Opaque id. The only handle anything outside this module gets. */
+  id: string;
+  /** Bytes actually written. */
+  bytes: number;
+  /** True when the saved copy is itself only the first `MAX_SPILL_BYTES`. */
+  capped: boolean;
+}
+
+/**
+ * An id is ours and never user-supplied, so this is stricter than a path check:
+ * only the exact uuid shape passes, which leaves no room for a separator or a
+ * traversal to be argued about.
+ */
+export function isToolOutputId(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
+}
+
+/**
+ * Save a tool result whole and return its id. Atomic: writes a `.tmp` sibling,
+ * then renames, so a reader never sees a half-written copy.
+ */
+export async function writeToolOutput(text: string): Promise<SpillResult> {
+  const dir = resolveToolOutputDir();
+  // Defensive: ensureDataDirs() creates this at boot, but its temp-dir fallback
+  // can repin PRISM_DATA_DIR afterwards.
+  await fs.mkdir(dir, { recursive: true });
+
+  const buf = Buffer.from(text, 'utf8');
+  const capped = buf.length > MAX_SPILL_BYTES;
+  const data = capped ? buf.subarray(0, MAX_SPILL_BYTES) : buf;
+
+  const id = randomUUID();
+  const finalPath = path.join(dir, id);
+  const tmpPath = `${finalPath}.tmp`;
+  await fs.writeFile(tmpPath, data);
+  await fs.rename(tmpPath, finalPath);
+
+  return { id, bytes: data.length, capped };
+}
+
+/**
+ * Read a saved output back. `null` when the id is unknown or the copy has expired
+ * — a stub outlives its file by design, so callers report that as "no longer
+ * stored" rather than as a failure.
+ */
+export async function readToolOutput(id: string): Promise<string | null> {
+  if (!isToolOutputId(id)) return null;
+  try {
+    return await fs.readFile(path.join(resolveToolOutputDir(), id), 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+/**
+ * Delete saved outputs by id. Best effort: called when a thread or a message that
+ * named them is deleted, so a spill does not sit for the rest of its TTL
+ * referenced by nothing. The TTL sweep is the backstop for whatever this misses.
+ */
+export async function removeToolOutputs(ids: readonly string[]): Promise<number> {
+  const dir = resolveToolOutputDir();
+  let removed = 0;
+  for (const id of ids) {
+    if (!isToolOutputId(id)) continue;
+    try {
+      await fs.unlink(path.join(dir, id));
+      removed++;
+    } catch (err) {
+      // Already gone is the expected case, not a problem.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.warn({ err }, `[ToolOutputStore] could not delete saved output ${id}`);
+      }
+    }
+  }
+  return removed;
+}
+
+/**
+ * Delete saved outputs older than `ttlMs`, by mtime. This is the whole retention
+ * story — no live set to reconcile against, because nothing holds a reference.
+ * Also sweeps `.tmp` files a crash left between write and rename.
+ */
+export async function reapExpiredToolOutputs(ttlMs: number): Promise<number> {
+  const dir = resolveToolOutputDir();
+  let entries: string[];
+  try {
+    entries = await fs.readdir(dir);
+  } catch {
+    return 0; // never created, or the data dir moved — nothing to sweep
+  }
+
+  const cutoff = Date.now() - ttlMs;
+  let removed = 0;
+  for (const entry of entries) {
+    const full = path.join(dir, entry);
+    try {
+      const st = await fs.lstat(full);
+      if (!st.isFile() || st.mtimeMs >= cutoff) continue;
+      await fs.unlink(full);
+      removed++;
+    } catch {
+      // A file that vanished under us, or one we can't stat — either way, skip it
+      // rather than abandon the rest of the sweep.
+    }
+  }
+  return removed;
+}

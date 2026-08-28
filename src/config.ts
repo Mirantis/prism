@@ -3,6 +3,7 @@ import sea from 'node:sea';
 import dotenv from 'dotenv';
 import {
   ATTACHMENT_CONTENT_TTL_HOURS,
+  TOOL_OUTPUT_TTL_HOURS,
   COMPACTION_TAIL_MESSAGES,
   COMPACTION_THRESHOLD_PERCENT,
   GOAL_MAX_TURNS,
@@ -548,6 +549,12 @@ const toolRiskGateMode = isValidToolRiskGateMode
   : 'off';
 const invalidToolRiskGateMode = isValidToolRiskGateMode ? null : rawToolRiskGateMode;
 
+/** Same shape, for the saved copies of oversized tool results. */
+function resolveToolOutputTtlHours(): number {
+  const raw = Number.parseFloat(process.env.TOOL_OUTPUT_TTL_HOURS ?? '');
+  return Number.isFinite(raw) && raw > 0 ? raw : TOOL_OUTPUT_TTL_HOURS;
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
@@ -717,6 +724,7 @@ export const config = {
   // non-positive or unparseable value falls back to the default rather than
   // expiring everything (negative) or throwing hourly (NaN → Invalid Date).
   attachmentContentTtlMs: resolveAttachmentTtlHours() * 60 * 60 * 1000,
+  toolOutputTtlMs: resolveToolOutputTtlHours() * 60 * 60 * 1000,
 
   // Provider-neutral model IDs (see the `modelIds` lookup above). The runtime
   // (invoke, classification gate, embeddings, per-agent model fallback) reads

@@ -203,6 +203,7 @@ vi.mock('./services/compaction.service', () => ({
 
 
 import { invoke, invokeStream, extractAttachmentIds } from './invoke';
+import { withToolOutputCapture } from './lib/tool-output-limiter';
 import { withToolsCacheControl } from './lib/tool-collection';
 import { config } from './config';
 import { Tool } from 'ai';
@@ -654,9 +655,10 @@ describe('invoke', () => {
 
       const callArgs = mockGenerateText.mock.calls[0][0];
       // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file + 2 goal + 1 skill
-      // + 2 attachment (hydrate_attachment, view_attachment)
-      expect(Object.keys(callArgs.tools)).toHaveLength(14);
+      // + 2 attachment (hydrate_attachment, view_attachment) + 1 read_tool_output
+      expect(Object.keys(callArgs.tools)).toHaveLength(15);
       expect(Object.keys(callArgs.tools)).toContain('share_file');
+      expect(Object.keys(callArgs.tools)).toContain('read_tool_output');
       expect(Object.keys(callArgs.tools)).toContain('create_goal');
       expect(Object.keys(callArgs.tools)).toContain('get_goal');
       expect(Object.keys(callArgs.tools)).toContain('skill');
@@ -1163,6 +1165,56 @@ describe('invoke', () => {
         keptChars: 30_000,
         omittedChars: 470_000,
       });
+    });
+
+    it('records the view and the id minted when the tool ran, not a fresh render', async () => {
+      // One mint: the id in the text the model reads must be the id on the record.
+      // The wrapper produces the envelope at execute time; this pins that
+      // `onStepFinish` reuses it rather than rendering (and saving) a second copy.
+      const wrapped = withToolOutputCapture(
+        { t: { description: 'd', inputSchema: { type: 'object' as const }, execute: () => 'y'.repeat(500_000) } },
+        { maxChars: 30_000, spill: false }
+      );
+      const envelope = await (
+        wrapped.t as { execute: (a: unknown, o: unknown) => Promise<unknown> }
+      ).execute({}, {});
+
+      mockGenerateText.mockResolvedValue(stepWith(envelope));
+      const stored = (await invoke(createTestInvokeRequest())).toolCalls[0];
+
+      expect(stored.output).toBe((envelope as { preview: string }).preview);
+      expect(stored.truncated).toEqual((envelope as { truncation: unknown }).truncation);
+      expect(stored.output).toContain('[INCOMPLETE OUTPUT');
+    });
+
+    it('keeps an oversized result out of the early-stopping prompt', async () => {
+      // summarizeSteps() feeds a prompt. Stringifying a wrapped result there would
+      // serialize the untouched original inside the envelope — the whole payload
+      // the cut just removed, straight back into a model.
+      const wrapped = withToolOutputCapture(
+        { t: { description: 'd', inputSchema: { type: 'object' as const }, execute: () => 'SECRET'.repeat(100_000) } },
+        { maxChars: 30_000, spill: false }
+      );
+      const envelope = await (
+        wrapped.t as { execute: (a: unknown, o: unknown) => Promise<unknown> }
+      ).execute({}, {});
+
+      // 100 steps trips the step limit, which is what triggers the summary call.
+      mockGenerateText.mockResolvedValue({
+        text: '',
+        steps: Array.from({ length: 100 }, () => ({
+          text: '',
+          toolCalls: [{ toolCallId: 'tc-1', toolName: 't', input: {} }],
+          toolResults: [{ toolCallId: 'tc-1', output: envelope }],
+        })),
+      });
+
+      await invoke(createTestInvokeRequest());
+
+      const prompts = mockGenerateText.mock.calls.map((c) => JSON.stringify(c[0]));
+      const summaryPrompt = prompts[prompts.length - 1];
+      expect(summaryPrompt).not.toContain('__prismToolOutputSpill');
+      expect(summaryPrompt.length).toBeLessThan(600_000 * 6);
     });
 
     it('still delivers a share_file attachment while storing the rendered view', async () => {
