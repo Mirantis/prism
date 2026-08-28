@@ -29,7 +29,6 @@ import { VoiceConversation, type VoiceConversationStats } from './voice-conversa
 import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet';
-import { formatChatBody } from './transcript-log';
 import { withTimeout } from '../../utils/with-timeout';
 import type {
   ChatSendStep,
@@ -1116,20 +1115,20 @@ export class MeetingBotService {
       ...(report.step ? { fail_step: report.step } : {}),
     });
 
-    // A send that failed is silence in a room with no other symptom, so it writes a line
-    // at every setting, naming the step it stopped at. A send that worked writes one only
-    // from `redacted` up, since nothing is wrong and the line is pure diagnostics. Only
-    // `full` adds the words, which `formatChatBody` decides.
+    // Every send writes one line, and the message itself is in none of them. The body is
+    // the agent's half of an unauthenticated conversation, and the log outlives the call,
+    // so there is no setting that puts it there: the status, the length, the duration and
+    // the step it stopped at answer "did that message go out" on their own. A send that
+    // failed is silence in a room with no other symptom, so it warns; a send that worked
+    // is pure diagnostics, so it debugs.
     //
     // One `elapsed`, shared with the telemetry above: two readings of the clock would put
     // a different duration in the log than in the metric, for the same send.
     const line =
       `[Meeting:Chat] ${report.status} chars=${report.length} ${elapsed}ms` +
       (report.step ? ` step=${report.step}` : '');
-    const body = formatChatBody(message);
-    const full = body ? `${line} ${body}` : line;
-    if (!report.sent) logger.warn(full);
-    else if (config.meetingChatLogging !== 'off') logger.info(full);
+    if (report.sent) logger.debug(line);
+    else logger.warn(line);
 
     return { sent: report.sent, message: report.message };
   }

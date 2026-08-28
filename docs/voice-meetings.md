@@ -428,7 +428,6 @@ is the same thing to tell them about as the agent's presence.
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used only so a call can be read back in the log — never fed to the model, and nothing waits on it. Only requested when `MEETING_TRANSCRIPT_LOGGING=full`, since it bills per audio minute and by default the words are dropped. The default accepts name hints, which is what keeps names legible in the log — see [Names](#names). | `gpt-live-transcribe` |
 | `OPENAI_NOISE_REDUCTION` | Server-side noise reduction over the meeting audio before turn detection and transcription see it: `off`, `near_field`, `far_field`. Off by default on purpose — what arrives is Meet's already-cleaned mix, and reducing it again cost a live agent most of what a quieter person in the room said. | `off` |
 | `MEETING_TRANSCRIPT_LOGGING` | Whether what was said may appear in the runtime's log: `off` or `full`. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |
-| `MEETING_CHAT_LOGGING` | Whether a message the agent posts into the call's chat may appear in the runtime's log: `off`, `redacted` or `full`. A switch of its own, not covered by the transcript one. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room, counted from when the join request goes in. | `300` |
 
@@ -463,23 +462,15 @@ the rest of the runtime's debug output.
 Turn it on only for as long as you need it, and tell the room. Nothing here reaches
 product telemetry either way — that surface gets counts.
 
-**What the agent posts in the chat is a separate switch.** `MEETING_CHAT_LOGGING` covers
-it, and `MEETING_TRANSCRIPT_LOGGING` does not. The two are different texts: the transcript
-is what other people said, which nobody in the room agreed to have written down, while
-this is what the agent itself sent. Answering "did that message actually go out" should not
-mean recording the room to find out.
+**A message the agent posts in the chat is never written to the log.** There is no setting
+for it. Every send still writes one line, and that line carries whether the message went
+out, how long it was, how long it took, and — when it failed — the step the send stopped
+at. The text itself appears nowhere, at any log level, and in no telemetry property.
 
-| Value | What a line carries |
-|-------|---------------------|
-| `off` (default) | Nothing for a message that went out. |
-| `redacted` | One line per message: whether it went out, how long it was, and how long it took. No words. |
-| `full` | The above, plus the message itself. |
-
-A message that **failed** always writes one line, at every setting including `off`. It
-names the step the send stopped at and never the message body. Meet publishes no chat API,
-so this runs by driving the chat panel the way a person would, and the failure worth
-catching is a send that quietly did nothing — a diagnostic switch that could hide it would
-defeat its own purpose. The same line covers a message the agent was refused: too long, or
+A send that failed or was refused writes its line as a warning, because it is silence in
+the room with no other symptom: Meet publishes no chat API, so this runs by driving the
+chat panel the way a person would, and a send that quietly did nothing is the failure
+worth catching. The same line covers a message the agent refused to send: too long, or
 sent while it wasn't in a call.
 
 ### The microphone
