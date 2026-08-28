@@ -146,12 +146,45 @@ export interface UIBlock {
   [key: string]: unknown;
 }
 
+/**
+ * What a cut did to a tool result. Structured on purpose: the
+ * `[INCOMPLETE OUTPUT …]` notice inside `output` is written for the model, and a
+ * consumer that needs to *know* a result was cut should not have to parse prose
+ * that the notice's wording is free to change.
+ */
+export interface ToolOutputTruncation {
+  /** Chars in the full rendering, before the cut. */
+  totalChars: number;
+  /** Head + tail chars kept, excluding the notice. */
+  keptChars: number;
+  /** Chars dropped, accumulated across every pass (see `tool-output-limiter`). */
+  omittedChars: number;
+}
+
 export interface ToolCallRecord {
   tool: string;
   input: string;
+  /**
+   * The model-facing text for this result — the cut view when it was cut, not the
+   * raw `execute()` return. `buildConversationMessages` replays it verbatim.
+   */
   output: string;
   success: boolean;
   timestamp: string;
+  /**
+   * Marks `output` as the rendered model-facing view. Stamped on EVERY new record,
+   * cut or not, because it is the replay discriminator: a row without it predates
+   * this contract and holds `JSON.stringify(raw)`, which replay has to parse and
+   * render instead.
+   *
+   * "Has truncation metadata" cannot serve as the discriminator. An untruncated new
+   * row would fall through to the legacy path, and a rendered text that happens to
+   * be valid JSON — an MCP tool whose text block *is* JSON — would be parsed and
+   * re-stringified into different bytes.
+   */
+  rendered?: true;
+  /** Present only when the model-facing view was cut. */
+  truncated?: ToolOutputTruncation;
 }
 
 export interface InvokeError {

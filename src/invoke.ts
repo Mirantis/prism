@@ -29,7 +29,7 @@ import {
 } from './prompts/context-builder';
 import { getChannelBehaviorInstructions } from './prompts/channel-prompt';
 import { getTaskToolInstructions } from './prompts/task-tool-prompt';
-import { withOutputLimits } from './lib/tool-output-limiter';
+import { withOutputLimits, renderToolResultDetailed } from './lib/tool-output-limiter';
 import { withToolLifecycleEvents } from './lib/tool-lifecycle';
 import {
   isToolRiskGateError,
@@ -355,7 +355,14 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           );
         }
 
-        // Convert SDK step to InvokeStep and push to channel
+        // Convert SDK step to InvokeStep and push to channel.
+        //
+        // What is stored is the *model-facing* view, not the raw execute() return:
+        // the same rendering and the same cut the model saw this turn, so replaying
+        // it costs what the live turn cost. Storing raw made the cap a one-turn
+        // measure — the whole payload came back uncapped on every later turn — and
+        // made replay a different rendering besides, since JSON.stringify keeps an
+        // MCP envelope and its escaping while the model was shown the joined text.
         const stepToolCalls: ToolCallRecord[] = [];
         for (const tc of step.toolCalls) {
           const tr = step.toolResults.find((r) => r.toolCallId === tc.toolCallId);
@@ -369,11 +376,16 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
             riskErrorPart?.type === 'tool-error' && isToolRiskGateError(riskErrorPart.error)
               ? riskErrorPart.error
               : undefined;
+          const rendered = tr
+            ? renderToolResultDetailed(tr.output, { toolName: tc.toolName })
+            : undefined;
           stepToolCalls.push({
             tool: tc.toolName,
             input: JSON.stringify(tc.input),
-            output: tr
-              ? JSON.stringify(tr.output)
+            // A gate refusal has no tool result to render — the summary of *why*
+            // is what the record carries, and it is already small.
+            output: rendered
+              ? rendered.text
               : riskError
                 ? JSON.stringify({
                     error: riskError.message,
@@ -384,6 +396,8 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
                 : '',
             success: Boolean(tr),
             timestamp: new Date().toISOString(),
+            rendered: true,
+            ...(rendered?.truncation ? { truncated: rendered.truncation } : {}),
           });
         }
 

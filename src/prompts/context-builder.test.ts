@@ -667,6 +667,130 @@ describe('buildConversationMessages', () => {
     expect(shortened.length).toBe(64);
   });
 
+  it('replays a rendered tool result verbatim, notice and all', () => {
+    // A `rendered` row already holds what the model saw. Re-rendering it here would
+    // make the bytes depend on today's budget rather than the turn's.
+    const stored = 'head\n\n[INCOMPLETE OUTPUT — 470000 chars omitted from the middle; 500000 chars total.]\n\ntail';
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-1',
+          role: 'AGENT',
+          content: '',
+          toolCalls: [
+            {
+              tool: 'kubectl',
+              input: '{}',
+              output: stored,
+              success: true,
+              timestamp: '2026-01-01T00:00:00Z',
+              rendered: true,
+              truncated: { totalChars: 500000, keptChars: 30000, omittedChars: 470000 },
+            },
+          ],
+        },
+      ],
+    });
+
+    const messages = buildConversationMessages(context);
+    const toolContent = messages[1].content as unknown[];
+    expect(toolContent[0]).toEqual({
+      type: 'tool-result',
+      toolCallId: 'msg-1-tc-0',
+      toolName: 'kubectl',
+      output: { type: 'text', value: stored },
+    });
+    // `truncated` is internal bookkeeping and must not leak into the prompt.
+    expect(JSON.stringify(messages)).not.toContain('totalChars');
+  });
+
+  it('caps a legacy tool result that was stored uncapped', () => {
+    // Rows written before results were persisted as the model-facing view hold the
+    // raw output. Without this they replay at full size on every later turn.
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-1',
+          role: 'AGENT',
+          content: '',
+          toolCalls: [
+            {
+              tool: 'kubectl',
+              input: '{}',
+              output: JSON.stringify('y'.repeat(200_000)),
+              success: true,
+              timestamp: '2026-01-01T00:00:00Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    const toolContent = buildConversationMessages(context)[1].content as Array<{
+      output: { value: string };
+    }>;
+    expect(toolContent[0].output.value.length).toBeLessThan(31_000);
+    expect(toolContent[0].output.value).toContain('[INCOMPLETE OUTPUT');
+  });
+
+  it('tells a rendered row from a legacy one by the flag, not by the metadata', () => {
+    // The discriminator cannot be "has truncation metadata": an untruncated new row
+    // would take the legacy path, and a rendered text that happens to be valid JSON
+    // would be parsed and re-stringified into different bytes.
+    const build = (rendered?: true) =>
+      (
+        buildConversationMessages(
+          createTestAgentContext({
+            recentMessages: [
+              {
+                id: 'msg-1',
+                role: 'AGENT',
+                content: '',
+                toolCalls: [
+                  {
+                    tool: 'get_status',
+                    input: '{}',
+                    output: '"ok"',
+                    success: true,
+                    timestamp: '2026-01-01T00:00:00Z',
+                    ...(rendered ? { rendered } : {}),
+                  },
+                ],
+              },
+            ],
+          })
+        )[1].content as Array<{ output: { value: string } }>
+      )[0].output.value;
+
+    expect(build(true)).toBe('"ok"');
+    expect(build()).toBe('ok');
+  });
+
+  it('builds byte-identical messages from the same context twice', () => {
+    // The provider's prompt-cache prefix depends on this.
+    const context = createTestAgentContext({
+      recentMessages: [
+        { id: 'm1', role: 'USER', content: 'list pods' },
+        {
+          id: 'msg-1',
+          role: 'AGENT',
+          content: 'checking',
+          toolCalls: [
+            {
+              tool: 'kubectl',
+              input: '{"ns":"default"}',
+              output: JSON.stringify('y'.repeat(200_000)),
+              success: true,
+              timestamp: '2026-01-01T00:00:00Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(buildConversationMessages(context)).toEqual(buildConversationMessages(context));
+  });
+
   it('emits tool-call without text when AGENT content is empty', () => {
     const context = createTestAgentContext({
       recentMessages: [

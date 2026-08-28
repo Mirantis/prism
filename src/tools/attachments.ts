@@ -173,9 +173,9 @@ export interface ViewAttachmentSuccess {
   category: 'image' | 'pdf';
   /**
    * What actually happened, for the model. Bytes deliberately stay out of the
-   * tool's `execute` result — `onStepFinish` JSON.stringifies it into the
-   * persisted ToolCallRecord, so a base64 payload here would write megabytes
-   * into the message row. Images ride `toModelOutput` (which loads bytes at
+   * tool's `execute` result — `onStepFinish` renders it into the persisted
+   * ToolCallRecord (see `lib/tool-output-limiter`), so a base64 payload here
+   * would write megabytes into the message row. Images ride `toModelOutput` (which loads bytes at
    * prompt-conversion time); PDFs ride a registered user-message injection.
    */
   note: string;

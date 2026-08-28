@@ -15,6 +15,7 @@ import { skillCatalogService, type SkillSource } from '../services/skill-catalog
 import { pluginCatalogService } from '../services/plugin-catalog.service';
 import { resolveSkillsDir, resolvePluginsDir } from '../lib/data-dir';
 import { toModelToolName } from '../lib/tool-names';
+import { renderLegacyStoredOutput } from '../lib/tool-output-limiter';
 
 // Minimal type for conversation messages (matches Prisma's shape).
 // toolCalls uses Prisma's Json? type (any JSON value); parseToolCalls() validates at runtime.
@@ -464,7 +465,14 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
         }
         messages.push({ role: 'assistant', content: assistantParts } satisfies AssistantModelMessage);
 
-        // Build tool message with tool-result content blocks
+        // Build tool message with tool-result content blocks.
+        //
+        // `tc.output` is replayed verbatim on purpose — it is the exact text the
+        // model saw when the call ran, rendered and cut at execute time by
+        // `lib/tool-output-limiter`. Do not "helpfully" render it again here: the
+        // bytes would then depend on today's budget rather than the turn's, so a
+        // constant change would silently rewrite history and break the provider's
+        // prompt-cache prefix on every thread.
         const toolResultParts = toolCalls.map((tc) => ({
           type: 'tool-result' as const,
           toolCallId: tc.id,
@@ -587,11 +595,19 @@ function parseToolCalls(msg: ConversationMessage): Array<{
       parsedInput = {};
     }
 
+    const stored = typeof tc.output === 'string' ? tc.output : '';
+
     results.push({
       id: `${msg.id}-tc-${i}`,
       tool: toModelToolName(tc.tool),
       parsedInput,
-      output: typeof tc.output === 'string' ? tc.output : '',
+      // `rendered` marks a row written under the render-at-execute contract: its
+      // `output` already *is* what the model saw, cut and all, so it replays
+      // verbatim. A row without the flag predates that contract and holds
+      // `JSON.stringify(rawOutput)` — uncapped, and escaped differently from what
+      // the model was shown — so it has to be parsed and rendered here instead.
+      output:
+        tc.rendered === true ? stored : renderLegacyStoredOutput(stored, { toolName: tc.tool }),
     });
   }
 

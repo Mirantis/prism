@@ -1119,6 +1119,84 @@ describe('invoke', () => {
     ]);
   });
 
+  describe('tool-result persistence', () => {
+    // What is stored is the model-facing view, not the raw execute() return. Storing
+    // raw made the cap a one-turn measure and made replay a different rendering.
+    const stepWith = (output: unknown) => ({
+      text: 'Done.',
+      steps: [
+        {
+          text: '',
+          toolCalls: [{ toolCallId: 'tc-1', toolName: 'atlassian__getJiraIssue', input: {} }],
+          toolResults: [{ toolCallId: 'tc-1', output }],
+        },
+      ],
+    });
+
+    it('stores an MCP result as its joined text, not the envelope', async () => {
+      mockGenerateText.mockResolvedValue(
+        stepWith({ content: [{ type: 'text', text: 'the comment body' }] })
+      );
+
+      const result = await invoke(createTestInvokeRequest());
+
+      expect(result.toolCalls[0].output).toBe('the comment body');
+      expect(result.toolCalls[0].rendered).toBe(true);
+      expect(result.toolCalls[0].truncated).toBeUndefined();
+    });
+
+    it('stores a plain-string result unquoted and unescaped', async () => {
+      mockGenerateText.mockResolvedValue(stepWith('hello\nworld'));
+
+      expect((await invoke(createTestInvokeRequest())).toolCalls[0].output).toBe('hello\nworld');
+    });
+
+    it('stores the cut view and the sizes when a result is oversized', async () => {
+      mockGenerateText.mockResolvedValue(stepWith('y'.repeat(500_000)));
+
+      const stored = (await invoke(createTestInvokeRequest())).toolCalls[0];
+
+      expect(stored.output.length).toBeLessThan(31_000);
+      expect(stored.output).toContain('[INCOMPLETE OUTPUT');
+      expect(stored.truncated).toEqual({
+        totalChars: 500_000,
+        keptChars: 30_000,
+        omittedChars: 470_000,
+      });
+    });
+
+    it('still delivers a share_file attachment while storing the rendered view', async () => {
+      // `extractAttachmentIds` reads the structured execute() return off toolResults.
+      // Rendering for persistence must not disturb it — and the wrapper PR2 adds
+      // around execute() must return an under-cap value by identity.
+      mockGenerateText.mockResolvedValue({
+        text: 'Sent.',
+        steps: [
+          {
+            text: '',
+            toolCalls: [{ toolCallId: 'tc-1', toolName: 'share_file', input: {} }],
+            toolResults: [
+              { toolCallId: 'tc-1', output: { success: true, attachmentId: 'att-9' } },
+            ],
+          },
+        ],
+      });
+
+      const result = await invoke(createTestInvokeRequest());
+
+      expect(result.attachmentIds).toEqual(['att-9']);
+      expect(result.toolCalls[0].output).toBe('{"success":true,"attachmentId":"att-9"}');
+    });
+
+    it('marks an untruncated result as rendered too', async () => {
+      // The replay discriminator is the flag, not the presence of truncation
+      // metadata — an unflagged row is parsed and re-rendered as a legacy row.
+      mockGenerateText.mockResolvedValue(stepWith('small'));
+
+      expect((await invoke(createTestInvokeRequest())).toolCalls[0].rendered).toBe(true);
+    });
+  });
+
   it('extracts blocks from JSON in response', async () => {
     const text = 'Here:\n```json\n{"blocks": [{"type": "chart"}]}\n```';
     mockGenerateText.mockResolvedValue({

@@ -6,12 +6,22 @@ import { formatFileSize } from '../attachments.js';
 
 export type ChatEntry = { kind: 'message'; message: TuiMessage };
 
+/** Mirrors `ToolOutputTruncation` in the runtime's src/types.ts. */
+interface ToolOutputTruncation {
+  totalChars: number;
+  keptChars: number;
+  omittedChars: number;
+}
+
 interface ToolCall {
   tool: string;
   input: string;
+  /** The model-facing view of the result, which is what was stored. */
   output: string;
   success: boolean;
   timestamp: string;
+  /** Present only when that view was cut. */
+  truncated?: ToolOutputTruncation;
 }
 
 function isToolCallArray(x: unknown): x is ToolCall[] {
@@ -100,7 +110,12 @@ const MessageRow: React.FC<MessageRowProps> = ({ agentName, message, expanded })
                 </Text>
                 <Text dimColor>input</Text>
                 <Text>{truncate(c.input, 1200)}</Text>
-                <Text dimColor>output</Text>
+                <Text dimColor>
+                  output
+                  {c.truncated
+                    ? ` (cut — ${c.truncated.keptChars} of ${c.truncated.totalChars} chars)`
+                    : ''}
+                </Text>
                 <Text>{truncate(c.output, 1600)}</Text>
               </Box>
             ))}
