@@ -304,10 +304,11 @@ both small and re-billed on every reply.
 A call adds one tool it has nowhere else: posting a short message into the meeting's own
 chat. It is meant for the thing speech gets wrong — a link, a cluster name, a command to
 paste — and the agent is told to say everything else out loud. A message is limited to
-**500 characters**, on one line, as plain text with no formatting. That limit is ours, not
-Google Meet's, and it has not yet been measured against a live call; if a send comes back
-refused, the agent is told to say the content out loud instead of trying again. The message
-is typed into the call's chat panel and nowhere else, so it does not survive the call.
+**500 characters**, on one line, as plain text with no formatting. That limit is ours: Google
+Meet takes a longer message, and cuts anything over its own limit off without saying so. If a
+send comes back refused, the agent is told to say the content out loud instead of trying again. The message
+is typed into the call's chat panel and nowhere else, so it is not stored in your
+conversation history and does not survive the call.
 
 The one tool a call takes away is **file sharing**. `share_file` is unavailable in a call: it only
 stores a file and hands back a reference for the chat machinery to deliver, and a

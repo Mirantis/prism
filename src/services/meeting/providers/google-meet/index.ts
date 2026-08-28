@@ -218,11 +218,16 @@ const MIC_PHASE_TIMEOUT_MS = 15_000;
 /**
  * The chat panel's controls, in one place, ordered narrowest match first.
  *
- * **None of these has been verified against a live call.** They are extrapolated from
- * how the rest of this file reads Meet — accessible names and `aria-label` substrings —
- * so treat at least one as wrong until somebody has run a real send. That is why they
- * are constants and why `sendChatMessage` tries several phrasings per step: correcting
- * a selector should be one edit here, not a hunt through a method.
+ * All three match what a live call showed once: the toggle is
+ * `aria-label="Chat with everyone"` with `aria-expanded` as its only state, the composer
+ * is a `textarea[aria-label="Send a message"]`, and the send button carries **the same
+ * accessible name as the composer** — which is why this one pins the tag, since a bare
+ * `[aria-label="Send a message"]` matches both nodes.
+ *
+ * One reading of one Meet build is not a guarantee, and the panel a non-host sees, or a
+ * tenant with chat turned off, was never measured. That is why they are constants and
+ * why `sendChatMessage` tries several phrasings per step: correcting a selector should
+ * be one edit here, not a hunt through a method.
  *
  * The design answer to an unverified selector is not more selectors, it is which way a
  * miss falls: every read in `sendChatMessage` reports the step it stopped at, and none
@@ -796,8 +801,8 @@ export class GoogleMeetProvider implements MeetingProvider {
    * Post one message into the call's chat, and confirm the page took it.
    *
    * Meet publishes no chat API, so this is selector-matching against the in-call
-   * panel — see `CHAT_TOGGLE_SELECTOR` and friends for the standing warning that none
-   * of it is verified against a live call.
+   * panel — see `CHAT_TOGGLE_SELECTOR` and friends for how much of it one live call
+   * measured, and what it did not.
    *
    * Which makes the failure direction the whole design. A `sent: true` here needs
    * three independent positives: the composer painted, the draft left it, and the text
