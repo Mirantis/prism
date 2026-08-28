@@ -292,6 +292,7 @@ function omitLockedTools(tools: Record<string, Tool>): Record<string, Tool> {
  * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
  * - goal: minus create_goal (no nested goals) and cron-management; get_goal stays
  * - meeting: chat's set minus share_file, plus the in-call ones (same note)
+ * - any other mode: everything except the meeting tools
  */
 export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<string, Tool> {
   // Goal-management tools are chat-only entry points; a goal turn keeps only
@@ -386,5 +387,12 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
     return omit(new Set(['create_goal', ...cronToolNames, ...meetingToolNames]));
   }
 
-  return tools;
+  // A mode nothing above enumerates keeps every other tool, and none of the meeting
+  // ones. The permissive fallback is deliberate for the rest — a caller passing a mode
+  // this function has not heard of should not silently lose the shell — but the meeting
+  // tools are the exception, because two of them are unsafe to inherit by accident:
+  // `join_meeting` dials into a live call with people in it, and `send_meeting_chat`
+  // would have the calling turn persist a posted message as history. That is the same
+  // reason every enumerated mode above drops them.
+  return omit(meetingToolNames);
 }

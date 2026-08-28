@@ -64,7 +64,7 @@ describe('getMeetingTools', () => {
       'send_meeting_chat',
       'meeting_status',
     ]);
-    expect([...MEETING_TOOL_NAMES].sort()).toEqual(Object.keys(getMeetingTools(input)).sort());
+    expect([...MEETING_TOOL_NAMES]).toEqual(Object.keys(getMeetingTools(input)));
 
     // The name no longer says "Google Meet", so the description has to.
     const { description } = getMeetingTools(input).join_meeting as { description: string };
@@ -341,6 +341,29 @@ describe('meeting tool mode', () => {
       );
       expect(Object.keys(filtered)).toEqual(['memory_search']);
     }
+  });
+
+  it('keeps them out of a mode nobody enumerated either', async () => {
+    // The fallback hands an unknown mode every other tool, which is the right default
+    // for a caller this function has not heard of. It is the wrong default for these
+    // two: `join_meeting` dials into a live call, and `send_meeting_chat` would have
+    // the calling turn persist a posted message as history.
+    const { filterToolsByMode } = await import('../../lib/tool-collection');
+
+    const filtered = filterToolsByMode(
+      {
+        join_meeting: stub(),
+        leave_meeting: stub(),
+        meeting_speaker: stub(),
+        meeting_status: stub(),
+        send_meeting_chat: stub(),
+        memory_search: stub(),
+        shell_exec: stub(),
+      },
+      'a-mode-that-does-not-exist',
+    );
+
+    expect(Object.keys(filtered)).toEqual(['memory_search', 'shell_exec']);
   });
 });
 
