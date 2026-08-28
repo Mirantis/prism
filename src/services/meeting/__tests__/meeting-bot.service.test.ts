@@ -1731,4 +1731,33 @@ describe('posting into the call chat', () => {
       vi.useRealTimers();
     }
   });
+
+  it('holds off the attribution refresh while a send is typing', async () => {
+    // Meet's side rail shows one panel at a time, so an open chat panel is exactly the
+    // state that makes the refresh click People — and that click takes the composer away
+    // mid-message. A skipped refresh costs one poll of attribution.
+    providerCurrentSpeaker.mockResolvedValue(null);
+    let finish: (v: unknown) => void = () => {};
+    providerSendChatMessage.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      providerEnableAttribution.mockClear();
+
+      const sending = service.sendChatMessage('https://example.test/run/42', 'u1');
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(providerEnableAttribution).not.toHaveBeenCalled();
+
+      finish({ sent: true });
+      await sending;
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(providerEnableAttribution).toHaveBeenCalledWith({ mockPage: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

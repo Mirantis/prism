@@ -982,7 +982,13 @@ export class MeetingBotService {
     // a speaker" is no evidence it is still open — and gating on that, attribution would be
     // gone for the rest of the call with nothing left to notice. The cost of asking is one
     // DOM query while the panel is up, and the provider bounds its own fruitless clicking.
-    if (this.provider.enableSpeakerAttribution) {
+    //
+    // Skipped while a chat send is typing, like the unmute retry above. Meet's side rail
+    // shows one panel at a time, so an open chat panel is exactly the state that makes
+    // this one click People — and that click closes the chat panel out from under the
+    // composer. A skipped refresh costs at most one poll of attribution; the click costs
+    // the message.
+    if (this.provider.enableSpeakerAttribution && !this.chatSendInFlight) {
       try {
         await this.provider.enableSpeakerAttribution(this.page);
       } catch {
