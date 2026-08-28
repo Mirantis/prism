@@ -324,6 +324,16 @@ const CHAT_CONFIRM_READS = 8;
 const CHAT_CONFIRM_INTERVAL_MS = 250;
 
 /**
+ * How many reads may go into the baseline count, and how long between them.
+ *
+ * Two agreeing reads end it, so a still panel pays one extra read and a panel painting its
+ * history waits it out. Bounded at three reads because the wait is in front of the typing,
+ * and everything before the message goes out is silence in the room.
+ */
+const BASELINE_SETTLE_READS = 3;
+const BASELINE_SETTLE_INTERVAL_MS = 200;
+
+/**
  * How much of the message has to appear on the page for it to count as sent.
  *
  * A prefix rather than the whole string: Meet may wrap, collapse or decorate a long
@@ -896,7 +906,7 @@ export class GoogleMeetProvider implements MeetingProvider {
     // twice in one call would otherwise confirm the second send off the first one's
     // message, still sitting in the panel above it.
     const needle = text.slice(0, CONFIRM_NEEDLE_CHARS);
-    const before = await this.countOnPage(page, needle);
+    const before = await this.settledCount(page, needle);
     if (before === null) {
       await this.closeChatPanel(toggle);
       return {
@@ -1086,6 +1096,32 @@ export class GoogleMeetProvider implements MeetingProvider {
     }
 
     return false;
+  }
+
+  /**
+   * The baseline count, once it stops moving. Null if any read of it fails.
+   *
+   * The panel paints its history when it opens, and the composer can be there a moment
+   * before the messages are. A baseline read in that moment is too low, and a message that
+   * paints later — during the confirmation reads — then counts as this send: a success the
+   * room never got. So the count has to agree with itself twice before anything is typed.
+   *
+   * Costs one extra read on a still panel, since the second read agrees with the first.
+   */
+  private async settledCount(page: Page, needle: string): Promise<number | null> {
+    let last: number | null = null;
+    for (let read = 1; read <= BASELINE_SETTLE_READS; read += 1) {
+      if (read > 1) await page.waitForTimeout(BASELINE_SETTLE_INTERVAL_MS);
+      const now = await this.countOnPage(page, needle);
+      // Unreadable is fatal here rather than something to retry past: a baseline nobody
+      // could take is what makes an unconfirmable send look confirmed.
+      if (now === null) return null;
+      if (now === last) return now;
+      last = now;
+    }
+    // Still moving after that many reads. The newest reading is the best there is, and the
+    // other two positives a send needs still have to hold on top of it.
+    return last;
   }
 
   /**
