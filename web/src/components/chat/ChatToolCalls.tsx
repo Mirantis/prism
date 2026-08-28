@@ -60,6 +60,13 @@ function getInputPreview(rawInput: string): string {
 const OUTPUT_MAX_LINES = 5;
 const OUTPUT_MAX_CHARS = 200;
 
+/**
+ * Pretty-print JSON when the stored output happens to be JSON.
+ *
+ * It usually isn't any more: what is stored is the text the model saw, so an MCP
+ * result arrives as its joined text rather than as an envelope. That is the point —
+ * this panel shows what the agent actually read.
+ */
 function getOutputPreview(output: string): { preview: string; isTruncated: boolean; fullLength: number } {
   if (!output) return { preview: '', isTruncated: false, fullLength: 0 };
   let text = output;
@@ -124,7 +131,15 @@ function ToolCallCard({ tc }: { tc: ToolCallRecord }) {
           {!tc.success && !tc.output && <div className="text-xs text-destructive">Tool execution failed</div>}
           {tc.output && (
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Output</div>
+              <div className="mb-1 flex items-center gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Output</span>
+                {tc.truncated && (
+                  <Badge variant="outline" className="h-4 px-1.5 text-[10px] font-normal text-muted-foreground">
+                    cut — {formatCharCount(tc.truncated.keptChars)} of{' '}
+                    {formatCharCount(tc.truncated.totalChars)} chars
+                  </Badge>
+                )}
+              </div>
               <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-muted/50 p-2 font-mono text-xs text-foreground">
                 {showFullOutput ? tc.output : outputInfo.preview}
               </pre>

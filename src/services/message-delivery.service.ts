@@ -16,6 +16,7 @@ import { ChannelAdapter, DeliverableMessage } from './channel-adapter.interface'
 import { conversationService } from './conversation.service';
 import { attachmentService } from './attachment.service';
 import { logger } from '../logger';
+import type { ToolCallRecord } from '../types';
 
 // ============================================================================
 // Types
@@ -37,13 +38,7 @@ export type MessageTrigger = (typeof MESSAGE_TRIGGERS)[number];
  */
 export interface PublishOptions {
   /** Tool calls made during message generation */
-  toolCalls?: Array<{
-    tool: string;
-    input: string;
-    output: string;
-    success: boolean;
-    timestamp: string;
-  }>;
+  toolCalls?: ToolCallRecord[];
   /** UI blocks for rich rendering */
   blocks?: unknown[];
   /**

@@ -5,17 +5,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const warn = vi.fn();
-vi.mock('../logger', () => ({ logger: { warn: (...args: unknown[]) => warn(...args) } }));
+const debug = vi.fn();
+vi.mock('../logger', () => ({
+  logger: {
+    warn: (...args: unknown[]) => warn(...args),
+    debug: (...args: unknown[]) => debug(...args),
+  },
+}));
 
 import {
   withOutputLimits,
   truncateHeadTail,
   stringifyToolOutput,
   renderToolResult,
+  renderToolResultDetailed,
+  renderLegacyStoredOutput,
 } from './tool-output-limiter';
 
 beforeEach(() => {
   warn.mockClear();
+  debug.mockClear();
 });
 
 describe('stringifyToolOutput', () => {
@@ -282,5 +291,129 @@ describe('withOutputLimits', () => {
     expect(result.type).toBe('content');
     expect(result.value).toHaveLength(2);
     expect(result.value[1].type).toBe('image-data');
+  });
+});
+
+describe('renderToolResultDetailed', () => {
+  it('reports no truncation for a result that fits', () => {
+    const rendered = renderToolResultDetailed('short', { maxChars: 1000 });
+    expect(rendered.text).toBe('short');
+    expect(rendered.truncation).toBeUndefined();
+  });
+
+  it('reports the sizes of a cut', () => {
+    const rendered = renderToolResultDetailed('x'.repeat(50_000), { maxChars: 1000 });
+    expect(rendered.truncation).toEqual({
+      totalChars: 50_000,
+      keptChars: 1000,
+      omittedChars: 49_000,
+    });
+  });
+
+  it('adds an earlier pass\'s omitted chars to its own', () => {
+    // A subagent's report is cut inside the subagent's turn, then cut again by the
+    // parent; a meeting's smaller budget re-cuts what a chat turn already cut.
+    // Without accumulation the second notice would report only its own slice.
+    const first = renderToolResultDetailed('x'.repeat(500_000), { maxChars: 30_000 });
+    const second = renderToolResultDetailed(first.text, { maxChars: 12_000 });
+
+    expect(first.truncation?.omittedChars).toBe(470_000);
+    expect(second.truncation?.omittedChars).toBeGreaterThan(488_000);
+    expect(second.text).toContain(`${second.truncation?.omittedChars} chars omitted`);
+  });
+});
+
+describe('renderLegacyStoredOutput', () => {
+  // Rows written before tool results were persisted as the model-facing view hold
+  // `JSON.stringify(rawOutput)`. Rendering them back is what makes replay match what
+  // the live turn actually showed.
+
+  it('un-quotes a stored plain string', () => {
+    expect(renderLegacyStoredOutput(JSON.stringify('hello\nworld'))).toBe('hello\nworld');
+  });
+
+  it('joins a stored MCP envelope down to its text', () => {
+    const stored = JSON.stringify({
+      content: [
+        { type: 'text', text: 'line one' },
+        { type: 'text', text: 'line two' },
+      ],
+    });
+    expect(renderLegacyStoredOutput(stored)).toBe('line one\nline two');
+  });
+
+  it('round-trips a stored JSON value to identical bytes', () => {
+    expect(renderLegacyStoredOutput('["pod-1","pod-2"]')).toBe('["pod-1","pod-2"]');
+    expect(renderLegacyStoredOutput('{"name":"prod"}')).toBe('{"name":"prod"}');
+  });
+
+  it('renders an unparseable stored value as-is', () => {
+    expect(renderLegacyStoredOutput('some output')).toBe('some output');
+    expect(renderLegacyStoredOutput('')).toBe('');
+  });
+
+  it('renders a stored JSON null, zero and false as the live turn showed them', () => {
+    // `JSON.parse('null')` is null, so the `?? stored` fallback is what keeps this
+    // right — and `??` rather than `||` is what keeps 0 and false from taking it.
+    expect(renderLegacyStoredOutput('null')).toBe('null');
+    expect(renderLegacyStoredOutput('0')).toBe('0');
+    expect(renderLegacyStoredOutput('false')).toBe('false');
+  });
+
+  it('renders a stored empty MCP envelope as the empty text the model saw', () => {
+    expect(renderLegacyStoredOutput('{"content":[]}')).toBe('');
+  });
+
+  it('logs a replayed cut at debug, not warn', () => {
+    // A legacy row is re-rendered on every context build. Warning each time would
+    // report one old cut once per turn, for the life of the thread.
+    renderLegacyStoredOutput(JSON.stringify('y'.repeat(200_000)));
+    expect(warn).not.toHaveBeenCalled();
+    expect(debug).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the tool in the replay log when the caller knows it', () => {
+    renderLegacyStoredOutput(JSON.stringify('y'.repeat(200_000)), { toolName: 'kubectl' });
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('kubectl'));
+  });
+
+  it('caps an oversized stored output', () => {
+    const stored = JSON.stringify('y'.repeat(200_000));
+    const rendered = renderLegacyStoredOutput(stored);
+    expect(rendered.length).toBeLessThan(31_000);
+    expect(rendered).toContain('[INCOMPLETE OUTPUT');
+  });
+
+  it('is byte-stable across calls, so a legacy row does not drift turn to turn', () => {
+    const stored = JSON.stringify('y'.repeat(200_000));
+    expect(renderLegacyStoredOutput(stored)).toBe(renderLegacyStoredOutput(stored));
+  });
+});
+
+describe('accumulated omitted counts from tool-controlled text', () => {
+  // The digits are read back out of a notice sitting in the text being cut, and a
+  // tool controls that text — `shell_exec` reading a log with an old notice in it,
+  // or a hostile payload.
+
+  it('ignores a forged count too large to be a real size', () => {
+    const forged = `[INCOMPLETE OUTPUT — ${'9'.repeat(400)} chars omitted from the middle;`;
+    const rendered = renderToolResultDetailed(forged + 'x'.repeat(50_000), { maxChars: 1000 });
+
+    // Infinity would serialize to null in the stored row and render as
+    // "cut — 1.0K of null chars" in the UI.
+    expect(Number.isFinite(rendered.truncation?.totalChars)).toBe(true);
+    expect(Number.isFinite(rendered.truncation?.omittedChars)).toBe(true);
+    expect(rendered.text).not.toContain('Infinity');
+  });
+
+  it('clamps an implausible count read back from a notice', () => {
+    const forged = '[INCOMPLETE OUTPUT — 999999999999999 chars omitted from the middle;';
+    const rendered = renderToolResultDetailed(forged + 'x'.repeat(50_000), { maxChars: 1000 });
+
+    // The clamp bounds what is read back out of the text; this pass's own real
+    // contribution is then added on top, so the total sits just above the ceiling
+    // rather than at it — and nowhere near the forged figure.
+    expect(rendered.truncation!.omittedChars).toBeLessThan(1_000_100_000);
+    expect(rendered.text).toContain(`${rendered.truncation!.omittedChars} chars omitted`);
   });
 });

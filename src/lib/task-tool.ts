@@ -73,7 +73,16 @@ export function createTaskTool(
 
       return {
         response: result.response,
-        toolCalls: result.toolCalls,
+        // What the subagent did, as the parent model needs to see it. The stored
+        // record also carries `rendered`/`truncated` — bookkeeping for replay and
+        // for the UI, meaningless to a model and pure noise in its prompt.
+        toolCalls: result.toolCalls.map(({ tool, input, output, success, timestamp }) => ({
+          tool,
+          input,
+          output,
+          success,
+          timestamp,
+        })),
       };
     },
   };

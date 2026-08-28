@@ -1,11 +1,21 @@
 export type MessageRole = 'USER' | 'AGENT' | 'SYSTEM';
 export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK';
 
+/** Mirrors `ToolOutputTruncation` in src/types.ts. */
+export interface ToolOutputTruncation {
+  totalChars: number;
+  keptChars: number;
+  omittedChars: number;
+}
+
 export interface ToolCallRecord {
   tool: string;
   input: string;
+  /** The model-facing view of the result, which is what was stored. */
   output: string;
   success: boolean;
+  /** Present only when that view was cut. */
+  truncated?: ToolOutputTruncation;
 }
 
 export type AttachmentCategory = 'image' | 'pdf' | 'text' | 'unreadable';
