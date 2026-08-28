@@ -85,6 +85,11 @@ interface FakePageOptions {
    */
   chat?: 'closed' | 'open' | 'absent';
   /**
+   * Whether the chat toggle publishes `aria-expanded`, which is where the provider reads
+   * the panel's state. `missing` is the toggle refusing to say, i.e. a rotted attribute.
+   */
+  chatExpanded?: 'reported' | 'missing';
+  /**
    * What the open panel paints.
    *
    * `contenteditable` is a composer whose value cannot be read with `inputValue`, so
@@ -93,6 +98,14 @@ interface FakePageOptions {
    * what is under test is the read fallback, not which selector found the box.
    */
   composer?: 'present' | 'absent' | 'contenteditable';
+  /**
+   * How many reads report no composer before it appears — Meet painting the panel a
+   * render ahead of its input, which the provider has to wait out rather than read as a
+   * shut panel.
+   */
+  composerPaintsLate?: number;
+  /** What `fill` throws, i.e. the box went away between the probe and the typing. */
+  fillError?: string;
   /** Whether the panel offers a send button beside the composer. */
   sendButton?: boolean;
   /**
@@ -145,6 +158,9 @@ function fakePage(options: FakePageOptions) {
   // provider's `getByRole` reads — a test says `chat: 'closed'` instead of knowing that.
   if (chat !== 'absent') state.visibleButtons.add('Chat with everyone');
   if (options.sendButton) state.visibleSelectors.add(CHAT_SEND_SELECTOR);
+  /** Every phrasing the provider's toggle locator can be credited with. */
+  const isChatToggle = (k: string | undefined) =>
+    k === CHAT_TOGGLE_SELECTOR || /^chat/i.test(k ?? '');
   const clicks: string[] = [];
   const fills: string[] = [];
   const presses: string[] = [];
@@ -164,23 +180,37 @@ function fakePage(options: FakePageOptions) {
   };
 
   type FakeLocator = ReturnType<typeof locator>;
-  /** `key` is a thunk so an `or` chain resolves it when used, not when composed. */
-  const locator = (matches: () => boolean, key: () => string | undefined = () => undefined) => ({
+  /**
+   * `key` is a thunk so an `or` chain resolves it when used, not when composed.
+   *
+   * `rereads` is how many extra times `waitFor` asks — zero for everything except a
+   * locator a test asked to paint late, so no test pays a real wait for it.
+   */
+  const locator = (
+    matches: () => boolean,
+    key: () => string | undefined = () => undefined,
+    rereads = 0,
+  ) => ({
     /** Exposed so `.or()` can compose, as Playwright's real locator does. */
     _matches: matches,
     _key: key,
-    first: () => locator(matches, key),
+    first: () => locator(matches, key, rereads),
     or: (other: FakeLocator) =>
       locator(
         () => matches() || other._matches(),
         // Attribution follows whichever side matches at the moment of use, so a
         // click through the chain is still credited to the right element.
         () => (matches() ? key() : other._key()),
+        rereads,
       ),
     // Playwright's real `waitFor` polls until the element is visible and throws on
     // timeout. Resolving/throwing immediately here keeps the tests fast; the
     // provider's own retry loops still drive state changes via waitForTimeout.
     waitFor: async () => {
+      for (let read = 0; read < rereads; read += 1) {
+        if (matches()) return;
+        await new Promise((r) => setTimeout(r, 1));
+      }
       if (!matches()) throw new Error('locator.waitFor: timeout exceeded');
     },
     // The bug this file exists to prevent: `isVisible()` answers "right now" and
@@ -199,11 +229,12 @@ function fakePage(options: FakePageOptions) {
       // for the same reason the microphone does: a test should say what the panel is,
       // not wire up what each click does to it.
       if (k === CHAT_SEND_SELECTOR) submit();
-      if (k === CHAT_TOGGLE_SELECTOR || /^chat/i.test(k)) state.chatOpen = !state.chatOpen;
+      if (isChatToggle(k)) state.chatOpen = !state.chatOpen;
       options.onClick?.(k, state);
     },
     fill: async (value: string) => {
       fills.push(value);
+      if (options.fillError) throw new Error(options.fillError);
       if (key() === CHAT_COMPOSER_SELECTOR) state.draft = value;
     },
     press: async (keyName: string) => {
@@ -225,6 +256,16 @@ function fakePage(options: FakePageOptions) {
       // an `onClick`) has to change to move the microphone.
       if (k === MIC_TOGGLE_SELECTOR && attr === 'data-is-muted' && state.mic !== 'absent') {
         return state.mic === 'off' ? 'true' : 'false';
+      }
+      // Same reason: the panel's state is `state.chatOpen`, and the toggle reports it —
+      // when there is a toggle at all, and when the test did not take the attribute away.
+      if (
+        isChatToggle(k) &&
+        attr === 'aria-expanded' &&
+        chat !== 'absent' &&
+        options.chatExpanded !== 'missing'
+      ) {
+        return state.chatOpen ? 'true' : 'false';
       }
       return state.attributes[`${k}|${attr}`] ?? null;
     },
@@ -255,7 +296,18 @@ function fakePage(options: FakePageOptions) {
         return locator(() => state.dialog, () => selector);
       }
       if (selector === CHAT_COMPOSER_SELECTOR) {
-        return locator(() => state.chatOpen && state.composer !== 'absent', () => selector);
+        let late = options.composerPaintsLate ?? 0;
+        return locator(
+          () => {
+            if (late > 0) {
+              late -= 1;
+              return false;
+            }
+            return state.chatOpen && state.composer !== 'absent';
+          },
+          () => selector,
+          late,
+        );
       }
       return locator(() => state.visibleSelectors.has(selector), () => selector);
     },
@@ -1045,6 +1097,42 @@ describe('the chat panel', () => {
 
     expect(result).toEqual({ sent: false, step: 'composer', reason: expect.any(String) });
     expect(harness.state.sent).toEqual([]);
+    // The panel was clicked open before the input was found missing, so this failure is
+    // the one that would leave it standing over the participant tiles.
+    expect(harness.state.chatOpen).toBe(false);
+  });
+
+  it('closes the panel when the composer goes away between the probe and the typing', async () => {
+    const harness = inCall({ fillError: 'element is not attached to the DOM' });
+
+    const result = await provider.sendChatMessage(harness.page, 'anyone there');
+
+    expect(result).toEqual({ sent: false, step: 'composer', reason: expect.any(String) });
+    expect(harness.state.chatOpen).toBe(false);
+  });
+
+  it('leaves an open panel open when its input paints a render late', async () => {
+    // The panel's state is `aria-expanded` on the toggle, not whether the box is there
+    // yet: a composer one render behind reads as a shut panel, and a click to "open" it
+    // shuts the panel over the send.
+    const harness = inCall({ chat: 'open', composerPaintsLate: 1 });
+
+    const result = await provider.sendChatMessage(harness.page, 'ready when you are');
+
+    expect(result).toEqual({ sent: true });
+    // One click, the close at the end.
+    expect(harness.clicks.filter((c) => /^chat/i.test(c))).toHaveLength(1);
+  });
+
+  it('sends anyway when the toggle will not say whether the panel is open', async () => {
+    const harness = inCall({ chatExpanded: 'missing' });
+
+    const result = await provider.sendChatMessage(harness.page, 'the build is green');
+
+    expect(result).toEqual({ sent: true });
+    // Unreadable is treated as "click it": a panel left open reads the participant count
+    // down, and a panel clicked open by mistake is undone by the next send.
+    expect(harness.state.chatOpen).toBe(false);
   });
 
   it('reports the send step when Enter does nothing and there is no send button', async () => {
