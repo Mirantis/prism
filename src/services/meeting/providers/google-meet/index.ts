@@ -216,7 +216,7 @@ const MIC_SETTLE_MS = 750;
 const MIC_PHASE_TIMEOUT_MS = 15_000;
 
 /**
- * The chat panel's controls, in one place, ordered narrowest match first.
+ * The chat panel's controls, in one place: the toggle, the composer, the send button.
  *
  * All three match what a live call showed once: the toggle is
  * `aria-label="Chat with everyone"` with `aria-expanded` as its only state, the composer
@@ -243,21 +243,14 @@ export const CHAT_SEND_SELECTOR = 'button[aria-label*="Send a message" i]';
 const CHAT_PANEL_TIMEOUT_MS = 5_000;
 
 /**
- * How long to look for a composer that is already there.
- *
- * Short, and paid before every send: the chat toggle is a *toggle*, so pressing it
- * while the panel is open closes the panel. Meet keeps it open between messages, so
- * the second send of a call is the one this protects.
- */
-const CHAT_ALREADY_OPEN_PROBE_MS = 300;
-
-/**
  * How many times to look for the message on the page, and how long between looks.
  *
  * Counted rather than clocked, like `REJECTION_CONFIRM_READS`: a wall-clock deadline
  * around a loop this cheap spins thousands of times in a test and hundreds against a
- * busy page, all of them asking the same question. Eight reads is two seconds of
- * patience for something that either lands in one render or is not going to.
+ * busy page, all of them asking the same question. Eight reads is about two seconds of
+ * patience on a page that answers, for something that either lands in one render or is not
+ * going to. A page that does not answer makes each read wait out its own timeout instead,
+ * which is why the whole send has a deadline over it in the service.
  */
 const CHAT_CONFIRM_READS = 8;
 const CHAT_CONFIRM_INTERVAL_MS = 250;
@@ -812,17 +805,20 @@ export class GoogleMeetProvider implements MeetingProvider {
    * nothing while the agent believes otherwise. Nothing in this method turns a caught
    * error into a success.
    *
-   * The panel is closed again afterwards, best effort. Not cosmetic: it shares the
-   * side rail with People, and `participantCount` reads participant tiles, so an open
-   * panel can push that reading down — and a reading of one for a minute is what makes
-   * the runtime leave the call.
+   * Every exit closes the panel again, best effort — see `closeChatPanel` for why a
+   * failed send has to do that as carefully as a successful one.
    */
   async sendChatMessage(page: Page, text: string): Promise<ChatSendResult> {
     const composer = this.chatComposer(page);
     const toggle = this.chatToggle(page);
 
     const opened = await this.openChatPanel(page, composer, toggle);
-    if (opened) return opened;
+    if (opened) {
+      // Closed on this path too: `openChatPanel` reports `composer` after clicking the
+      // panel open, so this is the failure that leaves a panel over the participant tiles.
+      await this.closeChatPanel(toggle);
+      return opened;
+    }
 
     // Read before anything is typed. The confirmation is that this number went up, so
     // the baseline has to predate both the draft and the message: the same link posted
@@ -842,6 +838,7 @@ export class GoogleMeetProvider implements MeetingProvider {
     try {
       await composer.fill(text, { timeout: CHAT_CLICK_TIMEOUT_MS });
     } catch (err) {
+      await this.closeChatPanel(toggle);
       return {
         sent: false,
         step: 'composer',
@@ -931,14 +928,14 @@ export class GoogleMeetProvider implements MeetingProvider {
     composer: Locator,
     toggle: Locator,
   ): Promise<ChatSendResult | null> {
-    if (!(await appears(composer, CHAT_ALREADY_OPEN_PROBE_MS))) {
+    if (!(await appears(toggle, CHAT_PANEL_TIMEOUT_MS))) {
+      return { sent: false, step: 'panel', reason: 'no chat control on the call page' };
+    }
+
+    if ((await this.panelIsOpen(toggle)) !== true) {
       // Same reason the unmute does this: a modal's scrim eats the click, and the
       // click reports success on the scrim rather than on the button underneath.
       await this.dismissBlockingDialogs(page);
-
-      if (!(await appears(toggle, CHAT_PANEL_TIMEOUT_MS))) {
-        return { sent: false, step: 'panel', reason: 'no chat control on the call page' };
-      }
       try {
         await toggle.click({ timeout: CHAT_CLICK_TIMEOUT_MS });
       } catch (err) {
@@ -958,8 +955,42 @@ export class GoogleMeetProvider implements MeetingProvider {
     return null;
   }
 
-  /** Put the panel back the way it was found. Never changes the reported outcome. */
+  /**
+   * Is the chat panel open? `true`, `false`, or null when the toggle will not say.
+   *
+   * `aria-expanded` on the toggle is the one piece of panel state Meet publishes, and it
+   * answers immediately. The alternative is probing for the composer, which asks a
+   * different question: a panel that is open but a render behind reads as closed, and the
+   * probe then either clicks the panel shut or has to be short enough to race.
+   */
+  private async panelIsOpen(toggle: Locator): Promise<boolean | null> {
+    try {
+      const expanded = await toggle.getAttribute('aria-expanded', {
+        timeout: CHAT_READ_TIMEOUT_MS,
+      });
+      if (expanded === null) return null;
+      return expanded.trim().toLowerCase() === 'true';
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Close the panel again. Never changes the reported outcome.
+   *
+   * Not cosmetic, and not conditional on the send having worked: the panel shares the side
+   * rail with People, `participantCount` reads participant tiles, and a count of one for a
+   * minute is what makes the runtime leave the call. So every exit from a send comes
+   * through here.
+   *
+   * Reads the state first, because the control is a toggle and something else can have
+   * closed the panel already — the participants poll shares that rail, so a click landing
+   * after it would *open* chat instead. A toggle that will not say gets the click: a panel
+   * left open is the reading that costs the call, and clicking a closed panel open is what
+   * the next poll undoes.
+   */
   private async closeChatPanel(toggle: Locator): Promise<void> {
+    if ((await this.panelIsOpen(toggle)) === false) return;
     try {
       await toggle.click({ timeout: CHAT_CLICK_TIMEOUT_MS });
     } catch {
