@@ -200,13 +200,11 @@ the chat machinery to deliver, and a meeting doesn't run that machinery — in a
 could only store a file that reached nobody.
 
 A call adds one tool it has nowhere else: posting a short plain-text message, up to 500
-characters, into the meeting's own chat panel. It is for the things speech mangles — a
-link, an identifier, a command to paste — and the agent is told to say everything else out
-loud. Nothing reads the chat back to it, so a question typed there never reaches it. That
-one line aside, speaking is its only channel from a meeting: there is no tool for posting
-to Slack or to your chat session, and the chat message itself is not stored anywhere. Work
-the call has no time for is the one thing that goes on afterwards — the agent schedules it
-as a one-off task and the result lands in your chat, not in the room.
+characters, into the meeting's own chat panel. Nothing reads the chat back, so a message
+typed there never reaches the agent.
+
+Work the call has no time for is the one thing that goes on afterwards — the agent
+schedules it as a one-off task and the result lands in your chat, not in the room.
 
 Nothing else is withheld, so the guardrail is its prompt rather than the tool list:
 announce and get an explicit "yes" in the room before anything destructive — including
