@@ -30,6 +30,7 @@ import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet';
 import { formatChatBody } from './transcript-log';
+import { withTimeout } from '../../utils/with-timeout';
 import type {
   ChatSendStep,
   JoinStep,
@@ -121,6 +122,23 @@ const EMPTY_READINGS_BEFORE_LEAVING = Math.ceil(
  * acknowledged, and nobody in the room can tell it from one that arrived whole.
  */
 export const MEETING_CHAT_MAX_CHARS = 500;
+
+/**
+ * Wall clock for one whole send, panel and confirmation included.
+ *
+ * The provider bounds every read it takes, but a dozen of them timing out in series adds
+ * up, and this is a tool call inside a live call: what the room hears while it runs is
+ * silence. Whatever a page this slow is doing, the agent is better off saying the line out
+ * loud, which is what a failed send tells it to do.
+ *
+ * Ten seconds is measured from both ends. A live two-participant call sent in 1277ms and
+ * 1288ms, and the slowest send in that session took 5745ms with a dialog stuck over the
+ * call controls behind it — so this clears the observed worst case with room to spare. The
+ * ceiling is `EMPTY_DURATION_BEFORE_LEAVING_MS`: the panel is open while a send runs, an
+ * open panel can read the participant count down, and a send that outlasted that would take
+ * the agent out of the call it was posting into.
+ */
+const CHAT_SEND_TIMEOUT_MS = 10_000;
 
 export type MeetingState =
   | 'idle'
@@ -990,6 +1008,11 @@ export class MeetingBotService {
     // this one click People — and that click closes the chat panel out from under the
     // composer. A skipped refresh costs at most one poll of attribution; the click costs
     // the message.
+    //
+    // Both gates read the flag one way only: they hold a *new* poll off, and neither stops
+    // a retry or a panel click already in flight when the send begins. That case fails in
+    // the safe direction — the send reports `confirm` and the agent says the line out loud
+    // — so a lock across both is not worth what it would cost to hold.
     if (this.provider.enableSpeakerAttribution && !this.chatSendInFlight) {
       try {
         await this.provider.enableSpeakerAttribution(this.page);
@@ -1081,6 +1104,7 @@ export class MeetingBotService {
     // half a message in the room, and the half nobody sees is the half that mattered.
     const message = text.trim().replace(/\s+/g, ' ');
     const report = await this.attemptChatSend(message);
+    const elapsed = Date.now() - startedAt;
 
     // Built by hand rather than spread from the report: the report holds the length, and
     // the body must not be one field name away from a telemetry property.
@@ -1088,7 +1112,7 @@ export class MeetingBotService {
       provider: this.provider?.name ?? 'none',
       status: report.status,
       length: String(report.length),
-      duration_ms: String(Date.now() - startedAt),
+      duration_ms: String(elapsed),
       ...(report.step ? { fail_step: report.step } : {}),
     });
 
@@ -1096,8 +1120,11 @@ export class MeetingBotService {
     // at every setting, naming the step it stopped at. A send that worked writes one only
     // from `redacted` up, since nothing is wrong and the line is pure diagnostics. Only
     // `full` adds the words, which `formatChatBody` decides.
+    //
+    // One `elapsed`, shared with the telemetry above: two readings of the clock would put
+    // a different duration in the log than in the metric, for the same send.
     const line =
-      `[Meeting:Chat] ${report.status} chars=${report.length} ${Date.now() - startedAt}ms` +
+      `[Meeting:Chat] ${report.status} chars=${report.length} ${elapsed}ms` +
       (report.step ? ` step=${report.step}` : '');
     const body = formatChatBody(message);
     const full = body ? `${line} ${body}` : line;
@@ -1156,9 +1183,17 @@ export class MeetingBotService {
       };
     }
 
+    // Read before the flag goes up, and re-checked in the `finally`: the send can outlive
+    // the call it belongs to. A `leave()` while it is typing resets the flag, a `join()`
+    // takes the service back, and this send's `finally` would then clear the *new* call's
+    // flag — which is the one thing the flag exists to hold.
+    const epoch = this.epoch;
     this.chatSendInFlight = true;
     try {
-      const result = await provider.sendChatMessage(page, message);
+      const result = await withTimeout(
+        provider.sendChatMessage(page, message),
+        CHAT_SEND_TIMEOUT_MS,
+      );
       if (result.sent) {
         return { sent: true, status: 'sent', length, message: `Posted it in the call's chat.` };
       }
@@ -1174,8 +1209,8 @@ export class MeetingBotService {
           `Say it out loud instead — don't try again.`,
       };
     } catch (err) {
-      // A page that closed under the send: a `leave()` or a teardown mid-type. Reported
-      // rather than thrown, because the caller is a tool and the room is still waiting.
+      // A page that closed under the send, or the deadline above. Reported rather than
+      // thrown, because the caller is a tool and the room is still waiting.
       //
       // No `step`: a throw can land at any of them, and naming one would be a guess in a
       // telemetry property. `failed` with no step is exactly "it threw".
@@ -1188,7 +1223,7 @@ export class MeetingBotService {
           `Say it out loud instead.`,
       };
     } finally {
-      this.chatSendInFlight = false;
+      if (this.epoch === epoch) this.chatSendInFlight = false;
     }
   }
 

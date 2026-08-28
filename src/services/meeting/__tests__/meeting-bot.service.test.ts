@@ -1717,7 +1717,10 @@ describe('posting into the call chat', () => {
       providerEnsureUnmuted.mockClear();
 
       const sending = service.sendChatMessage('https://example.test/run/42', 'u1');
-      await vi.advanceTimersByTimeAsync(30_000);
+      // The gate lasts as long as the send does, and a send lasts at most its deadline
+      // (10s), so the window holding one poll is the last 10ms of it: the poll timer
+      // started at join and fires at 10_000, the deadline started 10ms later.
+      await vi.advanceTimersByTimeAsync(9_990);
 
       expect(providerEnsureUnmuted).not.toHaveBeenCalled();
 
@@ -1747,7 +1750,8 @@ describe('posting into the call chat', () => {
       providerEnableAttribution.mockClear();
 
       const sending = service.sendChatMessage('https://example.test/run/42', 'u1');
-      await vi.advanceTimersByTimeAsync(30_000);
+      // One poll inside the send deadline — see the unmute test above for the arithmetic.
+      await vi.advanceTimersByTimeAsync(9_990);
 
       expect(providerEnableAttribution).not.toHaveBeenCalled();
 
