@@ -115,8 +115,10 @@ const EMPTY_READINGS_BEFORE_LEAVING = Math.ceil(
  * Ours, not the platform's. A chat message here exists to hand over the one thing
  * speech is bad at — a link, an id, a command — so a cap this size takes those and
  * refuses an essay, which the agent should be saying out loud instead. Refusing before
- * the page sees it also means one clear answer the model can act on, rather than a
- * silent truncation nobody in the room can tell from a message that arrived whole.
+ * the page sees it also means one clear answer the model can act on: Meet's own composer
+ * carries `maxlength="4000"` and cuts a longer message there silently — no counter, no
+ * error, and the send button stays enabled — so a truncated message posts and is
+ * acknowledged, and nobody in the room can tell it from one that arrived whole.
  */
 export const MEETING_CHAT_MAX_CHARS = 500;
 
