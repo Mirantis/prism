@@ -159,6 +159,12 @@ export interface ToolOutputTruncation {
   keptChars: number;
   /** Chars dropped, accumulated across every pass (see `tool-output-limiter`). */
   omittedChars: number;
+  /**
+   * Id of the saved copy holding the whole output, when one was written. Absent
+   * when saving was off or failed — a cut still happened, there is just nothing to
+   * read back.
+   */
+  spillId?: string;
 }
 
 export interface ToolCallRecord {

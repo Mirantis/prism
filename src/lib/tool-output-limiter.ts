@@ -5,7 +5,7 @@
  * big". Both paths that hand a tool result to a model use it:
  *
  * - the invoke loop (chat, heartbeat, cron, goals, subagents) via
- *   `withOutputLimits`, which installs a `toModelOutput` hook per tool;
+ *   `withToolOutputCapture`, which wraps each tool's `execute`;
  * - a live voice meeting via `renderToolResult` in
  *   `services/meeting/tool-bridge.ts`, which has no AI SDK loop to hook into.
  *
@@ -27,6 +27,7 @@
 import type { Tool } from 'ai';
 import { logger } from '../logger';
 import type { ToolOutputTruncation } from '../types';
+import { writeToolOutput, type SpillResult } from './tool-output-store';
 
 type ToolResultOutput = { type: 'text'; value: string };
 
@@ -176,35 +177,6 @@ function sumPriorOmitted(text: string): number {
 const MAX_ACCUMULATED_OMITTED = 1_000_000_000;
 
 /**
- * Wrap each tool with a `toModelOutput` hook that truncates large outputs
- * using the head+tail strategy. The raw output from execute() is preserved
- * for logging — only the model-facing view is truncated.
- *
- * Tools that already define their own `toModelOutput` (e.g. multimodal
- * tools returning image-data) are passed through untouched.
- */
-export function withOutputLimits(
-  tools: Record<string, Tool>,
-  maxChars = DEFAULT_MAX_CHARS
-): Record<string, Tool> {
-  const wrapped: Record<string, Tool> = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    if ((tool as { toModelOutput?: unknown }).toModelOutput) {
-      wrapped[name] = tool;
-      continue;
-    }
-    wrapped[name] = {
-      ...tool,
-      toModelOutput: async ({ output }: { output: unknown }): Promise<ToolResultOutput> => ({
-        type: 'text',
-        value: renderToolResult(output, { maxChars, toolName: name }),
-      }),
-    };
-  }
-  return wrapped;
-}
-
-/**
  * Truncate text keeping the head and tail portions.
  * SRE tool outputs typically have column headers/structure at the top
  * and summary/status at the bottom.
@@ -225,7 +197,8 @@ function cutHeadTail(
   text: string,
   maxChars: number,
   extraGuidance: string | undefined,
-  priorOmitted: number
+  priorOmitted: number,
+  spill?: SpillResult
 ): string {
   const headSize = Math.floor(maxChars * HEAD_RATIO);
   const tailSize = maxChars - headSize;
@@ -234,14 +207,25 @@ function cutHeadTail(
   const head = text.slice(0, headSize);
   const tail = text.slice(-tailSize);
   const extra = extraGuidance ? ` ${extraGuidance}` : '';
+  // Search-first, and said in those words. A pointer invites the model to page the
+  // whole thing back in, which rebuilds in history exactly the bulk the cut removed
+  // — and every page is itself a tool result, stored and replayed.
+  const saved = spill
+    ? `The full output is saved as ${spill.id}. SEARCH it, do not read it through: ` +
+      `call read_tool_output with a \`pattern\` for what you actually need, because ` +
+      `paging it back refills the context this cut protected.` +
+      (spill.capped ? ` Only the first ${spill.bytes} bytes of it were saved.` : '') +
+      ' '
+    : '';
   return (
     head +
     `\n\n[INCOMPLETE OUTPUT — ${omitted} chars omitted from the middle; ` +
     `${total} chars total. What follows this marker is the END of the output, so ` +
     `whatever was in the omitted middle — further entries, fields, statuses — is not ` +
-    `visible to you. Do not state a count, a total, or that this is all of them. To see ` +
-    `the rest, call again with narrower arguments: a filter, fewer fields, or the next ` +
-    `page.${extra}]\n\n` +
+    `visible to you. Do not state a count, a total, or that this is all of them. ` +
+    saved +
+    `To see the rest, call again with narrower arguments: a filter, fewer fields, or ` +
+    `the next page.${extra}]\n\n` +
     tail
   );
 }
@@ -277,4 +261,277 @@ function isMCPCallToolResult(
     'content' in o &&
     Array.isArray((o as Record<string, unknown>).content)
   );
+}
+
+// ============================================================================
+// Saving the omitted middle
+// ============================================================================
+
+/**
+ * Marks a tool return that was cut. A tool's own return value is whatever the tool
+ * says it is, so the wrapper below has to be able to tell "the tool returned an
+ * object" from "we replaced the tool's return with a cut of it" — this key is that
+ * signal, and nothing else in the codebase uses it.
+ */
+const SPILL_ENVELOPE = '__prismToolOutputSpill';
+
+export interface SpilledToolOutput {
+  readonly [SPILL_ENVELOPE]: true;
+  /** Head + notice + tail: what the model is shown, minted once. */
+  preview: string;
+  truncation: ToolOutputTruncation;
+  /** The tool's untouched return, so no structured consumer loses anything. */
+  raw: unknown;
+}
+
+export function isSpilledToolOutput(output: unknown): output is SpilledToolOutput {
+  if (typeof output !== 'object' || output === null) return false;
+  const candidate = output as Record<string, unknown>;
+  // The marker alone is not enough. A tool returns whatever it likes, and a plugin
+  // or MCP server that happened to emit this key would otherwise have its result
+  // read as an envelope — storing an empty output and handing the model an
+  // `undefined` value that fails the SDK's validation and kills the turn with an
+  // error traceable to nothing.
+  return (
+    candidate[SPILL_ENVELOPE] === true &&
+    typeof candidate.preview === 'string' &&
+    typeof candidate.truncation === 'object' &&
+    candidate.truncation !== null
+  );
+}
+
+/** The tool's own return, whether or not it was cut. */
+export function unwrapToolOutput(output: unknown): unknown {
+  return isSpilledToolOutput(output) ? output.raw : output;
+}
+
+/** Reported once per cut, for telemetry. Carries no tool arguments and no content. */
+export interface ToolOutputSpillEvent {
+  toolName: string;
+  truncation: ToolOutputTruncation;
+  budgetChars: number;
+  /** Bytes written, 0 when nothing was saved. */
+  spillBytes: number;
+  /** True when the saved copy is itself only the first `MAX_SPILL_BYTES`. */
+  spillCapped: boolean;
+}
+
+/**
+ * Marks a tool whose results are never saved, only cut.
+ *
+ * For `read_tool_output`, which reads a saved copy: saving *its* result would mint
+ * a fresh id inside a page of an existing saved output, and a model following that
+ * id would spiral — each page saved, each save producing another page to read. It
+ * needs no copy of its own, because the copy it is reading from is still there.
+ */
+export const NEVER_SPILL = '__prismNeverSpill';
+
+export interface ToolOutputCaptureOptions {
+  /** Character budget for the model-facing text. Defaults to 30,000. */
+  maxChars?: number;
+  /** Appended to the notice — for channel-specific advice. */
+  extraGuidance?: string;
+  /**
+   * Save the whole output so it can be read back. Off for a call that only needs
+   * the tools block built the same way, and never executes anything.
+   */
+  spill?: boolean;
+  /** Called once per cut. The single place a spill is reported. */
+  onSpill?: (event: ToolOutputSpillEvent) => void;
+}
+
+/**
+ * Render a tool result for a model, and save the whole thing when it does not fit.
+ *
+ * The one place a saved-copy id is minted. It has to be minted here rather than
+ * where the result is persisted, because the id has to appear in the text the model
+ * reads *and* in the record stored for later — mint it twice and the model is told
+ * one id while another is on disk; mint it at replay and every turn writes a new
+ * copy and breaks the prompt-cache prefix.
+ *
+ * A failed save is logged and swallowed. A broken data dir should cost the agent
+ * the ability to read the middle back, never the turn.
+ */
+export async function renderAndSpill(
+  result: unknown,
+  options: ToolOutputCaptureOptions & { toolName?: string } = {}
+): Promise<RenderedToolResult> {
+  const maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
+  const text = stringifyToolOutput(result);
+  if (text.length <= maxChars + PASSTHROUGH_SLACK) return { text };
+
+  logger.warn(
+    `[ToolOutput] ${options.toolName ?? 'tool'} result truncated: kept ${maxChars} content ` +
+      `chars of ${text.length}`
+  );
+
+  let spill: SpillResult | undefined;
+  if (options.spill !== false) {
+    try {
+      spill = await writeToolOutput(text);
+    } catch (err) {
+      logger.warn(
+        { err },
+        `[ToolOutput] could not save the full ${options.toolName ?? 'tool'} result; ` +
+          'the omitted middle is unrecoverable for this call'
+      );
+    }
+  }
+
+  const priorOmitted = sumPriorOmitted(text);
+  const truncation: ToolOutputTruncation = {
+    totalChars: priorOmitted + text.length,
+    keptChars: maxChars,
+    omittedChars: priorOmitted + (text.length - maxChars),
+    ...(spill ? { spillId: spill.id } : {}),
+  };
+
+  options.onSpill?.({
+    toolName: options.toolName ?? 'tool',
+    truncation,
+    budgetChars: maxChars,
+    spillBytes: spill?.bytes ?? 0,
+    spillCapped: spill?.capped ?? false,
+  });
+
+  return { text: cutHeadTail(text, maxChars, options.extraGuidance, priorOmitted, spill), truncation };
+}
+
+/**
+ * Cap every tool's result and save what does not fit.
+ *
+ * Replaces `withOutputLimits`, which installed only a `toModelOutput` hook and so
+ * skipped any tool that already had one — which is *every* MCP tool, since the SDK
+ * attaches `mcpToModelOutput` to all of them. The cap therefore never applied to a
+ * single Nexus or plugin tool, which is where the oversized payloads actually come
+ * from.
+ *
+ * The cut moves into an `execute` wrapper for two reasons. It reaches every tool,
+ * hook or no hook. And `toModelOutput` runs at prompt-conversion time for the
+ * *next* step — after the current step has already been recorded — so a saved-copy
+ * id minted there could never reach the stored record.
+ *
+ * A result that fits comes back **by identity**: `extractAttachmentIds` reads
+ * `share_file`'s structured return off the step, and `view_attachment` loads bytes
+ * out of its own return inside its own hook. Only an oversized result is replaced,
+ * and even then the original travels along in the envelope.
+ */
+export function withToolOutputCapture(
+  tools: Record<string, Tool>,
+  options: ToolOutputCaptureOptions = {}
+): Record<string, Tool> {
+  const maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
+  const wrapped: Record<string, Tool> = {};
+
+  for (const [name, tool] of Object.entries(tools)) {
+    const original = tool as Tool & {
+      execute?: (...args: unknown[]) => unknown;
+      toModelOutput?: (opts: { output: unknown }) => unknown;
+    };
+    const ownToModelOutput = original.toModelOutput?.bind(original);
+
+    wrapped[name] = {
+      ...original,
+      ...(original.execute
+        ? {
+            execute: async (...args: unknown[]) => {
+              const raw = await original.execute!(...args);
+              const rendered = await renderAndSpill(raw, {
+                ...options,
+                maxChars,
+                toolName: name,
+                ...((original as Record<string, unknown>)[NEVER_SPILL] === true
+                  ? { spill: false }
+                  : {}),
+              });
+              if (!rendered.truncation) return raw;
+              return {
+                [SPILL_ENVELOPE]: true,
+                preview: rendered.text,
+                truncation: rendered.truncation,
+                raw,
+              } satisfies SpilledToolOutput;
+            },
+          }
+        : {}),
+      toModelOutput: ownToModelOutput
+        ? async (opts: { output: unknown }) => {
+            // The tool's own hook must see exactly what it would have seen — an
+            // image tool loads bytes out of its return here, and a truncated
+            // envelope would be meaningless to it.
+            const inner = (await ownToModelOutput({
+              ...opts,
+              output: unwrapToolOutput(opts.output),
+            })) as ToolModelOutput;
+            return capModelOutput(
+              inner,
+              isSpilledToolOutput(opts.output) ? opts.output.preview : null
+            );
+          }
+        : async ({ output }: { output: unknown }): Promise<ToolResultOutput> => ({
+            type: 'text',
+            value: isSpilledToolOutput(output)
+              ? output.preview
+              : renderToolResult(output, { maxChars, toolName: name }),
+          }),
+    } as Tool;
+  }
+
+  return wrapped;
+}
+
+/** Any shape a tool's own `toModelOutput` may return. */
+type ToolModelOutput =
+  | { type: 'text' | 'error-text'; value: string }
+  | { type: 'json' | 'error-json'; value: unknown }
+  | { type: 'content'; value: Array<{ type: string; text?: string; [k: string]: unknown }> };
+
+/**
+ * Put the cut view into whatever shape a tool's own hook returned.
+ *
+ * `preview` is null when nothing was cut, and then the hook's output is passed
+ * through untouched — the common case, and the one that keeps images and structured
+ * returns working exactly as before.
+ *
+ * Non-text parts are never cut. Slicing base64 in half produces a corrupt image
+ * rather than a smaller one, and image size is already bounded where images are
+ * made.
+ */
+export function capModelOutput(inner: ToolModelOutput, preview: string | null): ToolModelOutput {
+  if (preview === null) return inner;
+
+  switch (inner.type) {
+    case 'text':
+    case 'json':
+      return { type: 'text', value: preview };
+    case 'error-text':
+    case 'error-json':
+      return { type: 'error-text', value: preview };
+    case 'content': {
+      const nonText = inner.value.filter((part) => part.type !== 'text');
+      return { type: 'content', value: [{ type: 'text', text: preview }, ...nonText] };
+    }
+    default:
+      return inner;
+  }
+}
+
+/** The props both spill emitters send. One shape, so the two cannot drift apart. */
+export function spillEventProps(
+  agentId: string,
+  mode: string,
+  event: ToolOutputSpillEvent
+): Record<string, string> {
+  return {
+    'agent.id': agentId,
+    'invoke.mode': mode,
+    'tool.name': event.toolName,
+    'tool_output.total_chars': String(event.truncation.totalChars),
+    'tool_output.kept_chars': String(event.truncation.keptChars),
+    'tool_output.omitted_chars': String(event.truncation.omittedChars),
+    'tool_output.budget_chars': String(event.budgetChars),
+    'tool_output.spill_bytes': String(event.spillBytes),
+    'tool_output.saved': event.truncation.spillId ? 'true' : 'false',
+    'tool_output.save_capped': event.spillCapped ? 'true' : 'false',
+  };
 }

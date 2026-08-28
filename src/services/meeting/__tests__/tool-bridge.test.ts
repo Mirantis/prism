@@ -1,4 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { tool, jsonSchema } from 'ai';
 import { z } from 'zod';
 
@@ -11,6 +15,17 @@ const { prepareMeetingTools } = await import('../tool-bridge');
 
 beforeEach(() => {
   mockCollectTools.mockReset();
+});
+
+// The bridge now saves an oversized result, so give this file its own data dir
+// rather than dropping copies into the shared scratch one.
+const spillDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-meeting-'));
+const previousDataDir = process.env.PRISM_DATA_DIR;
+process.env.PRISM_DATA_DIR = spillDataDir;
+afterAll(() => {
+  if (previousDataDir === undefined) delete process.env.PRISM_DATA_DIR;
+  else process.env.PRISM_DATA_DIR = previousDataDir;
+  fs.rmSync(spillDataDir, { recursive: true, force: true });
 });
 
 describe('prepareMeetingTools', () => {

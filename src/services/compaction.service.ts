@@ -55,7 +55,8 @@ import { createProvider } from '../lib/llm-providers/create-provider';
 import type { CachePointFragment } from '../lib/llm-providers/llm-provider';
 
 import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
-import { withOutputLimits } from '../lib/tool-output-limiter';
+import { withToolOutputCapture } from '../lib/tool-output-limiter';
+import { removeToolOutputs } from '../lib/tool-output-store';
 import type { Invoker } from '../lib/task-tool';
 import { buildSystemPromptParts, buildConversationMessages } from '../prompts/context-builder';
 import { getTaskToolInstructions } from '../prompts/task-tool-prompt';
@@ -275,7 +276,13 @@ class CompactionService {
           taskInvoker: neverInvoke,
           lockedIn: context.lockedIn,
         });
-        const cachedTools = withToolsCacheControl(withOutputLimits(tools), cachePoint);
+        // Nothing executes here (`toolChoice: 'none'`), so saving is off — the
+        // wrap exists only so this request's tools block is built exactly like a
+        // chat turn's, which is what the provider's cache prefix is keyed on.
+        const cachedTools = withToolsCacheControl(
+          withToolOutputCapture(tools, { spill: false }),
+          cachePoint,
+        );
 
         const systemParts = await buildSystemPromptParts(
           context,
@@ -533,6 +540,10 @@ class CompactionService {
       select: { threadSource: true },
     });
 
+    // The rows this pass retires. A compacted message never re-enters the context,
+    // so any tool output it saved is now unreachable and can be reclaimed.
+    let markedIds: string[] = [];
+
     if (thread?.threadSource !== 'DATABASE') {
       const externalMessageIds = compactable
         .map((r) => r.externalMessageId)
@@ -541,6 +552,7 @@ class CompactionService {
         ? externalMessageIds.reduce((max, ts) => (parseFloat(ts) > parseFloat(max) ? ts : max))
         : null;
       const internalIds = compactable.filter((r) => r.internalStep).map((r) => r.id);
+      markedIds = internalIds;
       await prisma.$transaction([
         prisma.conversationMessage.updateMany({
           where: { id: { in: internalIds } },
@@ -557,6 +569,7 @@ class CompactionService {
       ]);
     } else {
       const ids = compactable.map((r) => r.id);
+      markedIds = ids;
       const newest = await prisma.conversationMessage.findFirst({
         where: { id: { in: ids } },
         orderBy: { createdAt: 'desc' },
@@ -578,10 +591,45 @@ class CompactionService {
       ]);
     }
 
+    await this.reclaimSavedToolOutputs(markedIds);
+
     logger.info(
       `[Compaction] compacted ${compactable.length} message(s) in thread ${threadId} (${summary.length} chars of summary)`,
     );
     return { messagesCompacted: compactable.length };
+  }
+
+  /**
+   * Delete the saved copies of tool outputs belonging to messages this pass just
+   * retired. Their ids only ever reached the model through a notice in a message
+   * that is now out of the context, so nothing can ask for them again.
+   *
+   * Best effort, and never allowed to fail a compaction that has already been
+   * committed: the TTL sweep in the janitor is the backstop, so the cost of a miss
+   * is disk held a few days longer, while the cost of throwing here would be a
+   * compaction reported as failed after it succeeded.
+   */
+  private async reclaimSavedToolOutputs(messageIds: string[]): Promise<void> {
+    if (messageIds.length === 0) return;
+    try {
+      const rows = await prisma.conversationMessage.findMany({
+        where: { id: { in: messageIds } },
+        select: { toolCalls: true },
+      });
+      const ids = rows.flatMap((row) =>
+        (Array.isArray(row.toolCalls) ? row.toolCalls : [])
+          .map((tc) => (tc as { truncated?: { spillId?: string } } | null)?.truncated?.spillId)
+          .filter((id): id is string => typeof id === 'string'),
+      );
+      if (ids.length === 0) return;
+
+      const removed = await removeToolOutputs(ids);
+      if (removed > 0) {
+        logger.info(`[Compaction] reclaimed ${removed} saved tool output(s) for compacted messages`);
+      }
+    } catch (err) {
+      logger.warn({ err }, '[Compaction] could not reclaim saved tool outputs');
+    }
   }
 
   /** Shared completion: meter estimate, completed event, finished telemetry. */

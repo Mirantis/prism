@@ -102,7 +102,7 @@ vi.mock('../lib/tool-collection', () => ({
   withToolsCacheControl: (tools: Record<string, unknown>) => tools,
 }));
 vi.mock('../lib/tool-output-limiter', () => ({
-  withOutputLimits: (tools: Record<string, unknown>) => tools,
+  withToolOutputCapture: (tools: Record<string, unknown>) => tools,
 }));
 vi.mock('./agent-workspace.service', () => ({
   resolveEffectiveModel: (stored: string | null | undefined) => stored ?? 'default-model',

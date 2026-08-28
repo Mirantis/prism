@@ -224,25 +224,33 @@ built-in ones and it can use them the same way.
 
 ## Large tool outputs
 
-A tool result the agent carries forward in a conversation is capped, so one
-oversized payload can't crowd out everything else. In chat — web, terminal,
-Slack — the cap is **30,000 characters**. In a [voice meeting](voice-meetings.md)
-it is **12,000**, because a call keeps every result in a much smaller live session
-and the agent has to *say* its answer.
+Every tool result the agent reads is capped, built-in and MCP alike, so one
+oversized payload can't crowd out the rest of the conversation. In chat — web,
+terminal, Slack — the cap is **30,000 characters**. In a [voice
+meeting](voice-meetings.md) it is **12,000**, because a call keeps every result in
+a much smaller live session and the agent has to *say* its answer.
 
 Past the cap, the agent sees the start and the end of the output with the middle
 replaced by a notice that the result is incomplete. The notice tells it not to
-quote a count or a total from what it can see, and to ask again more narrowly — a
-filter, fewer fields, the next page. So if you ask "how many are open?" about a
-long list, expect the agent to either narrow the query itself or tell you the
-listing was cut, rather than answer with a number it can't stand behind. The
-runtime logs a warning naming the tool and the sizes whenever this happens.
+quote a count or a total from what it can see. So if you ask "how many are open?"
+about a long list, expect the agent to either narrow the query itself or tell you
+the listing was cut, rather than answer with a number it can't stand behind.
+
+**The middle is saved, not lost.** The whole output is written to a file the agent
+can search with the `read_tool_output` tool, so the part it wasn't shown is still
+reachable — including in a voice call. Saved copies are kept for **7 days**
+(configurable via `TOOL_OUTPUT_TTL_HOURS`) and are deleted sooner once the
+conversation they belong to has been compacted away.
+
+Searching is the intended way to use a saved copy, and the agent is told so in as
+many words. Reading one back page by page would put the omitted bulk straight back
+into the context the cap protects — and each page read is itself a tool result the
+conversation then carries. So expect the agent to grep a saved output for what it
+needs, or to re-run the original tool with narrower arguments, rather than to page
+through the whole thing.
 
 The conversation stores the capped view — what the agent actually read — rather
 than the raw payload, so a large result costs the same on the turn that fetched it
 and on every turn after. The tool-call inspector in the web UI and the terminal
-shows that same view, labelled with how much was cut.
-
-One gap worth knowing: on the turn it runs, a tool from an **external MCP server**
-can still hand the agent a result larger than the cap. Only what is carried
-forward is bounded for those. Built-in tools are capped on the live turn too.
+shows that same view, labelled with how much was cut. The runtime logs a warning
+naming the tool and the sizes whenever a result is cut.

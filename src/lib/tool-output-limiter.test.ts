@@ -14,7 +14,10 @@ vi.mock('../logger', () => ({
 }));
 
 import {
-  withOutputLimits,
+  withToolOutputCapture,
+  NEVER_SPILL,
+  isSpilledToolOutput,
+  unwrapToolOutput,
   truncateHeadTail,
   stringifyToolOutput,
   renderToolResult,
@@ -149,148 +152,229 @@ describe('renderToolResult', () => {
   });
 });
 
-describe('withOutputLimits', () => {
-  it('passes through output under the limit', async () => {
-    const tools = {
-      myTool: {
-        description: 'test tool',
-        inputSchema: { type: 'object' as const },
-      },
-    };
-
-    const wrapped = withOutputLimits(tools, 1000);
-    const toModelOutput = (wrapped.myTool as Record<string, unknown>).toModelOutput as (opts: {
-      output: unknown;
-    }) => Promise<{ type: string; value: string }>;
-
-    const result = await toModelOutput({ output: 'short output' });
-    expect(result).toEqual({ type: 'text', value: 'short output' });
+describe('withToolOutputCapture', () => {
+  const toolWith = (
+    execute: (...args: unknown[]) => unknown,
+    extra: Record<string, unknown> = {}
+  ) => ({
+    myTool: { description: 'test tool', inputSchema: { type: 'object' as const }, execute, ...extra },
   });
 
-  it('truncates output exceeding the limit', async () => {
-    const tools = {
-      myTool: {
-        description: 'test tool',
-        inputSchema: { type: 'object' as const },
-      },
-    };
+  const runTool = async (wrapped: Record<string, unknown>, name = 'myTool') => {
+    const tool = wrapped[name] as { execute: (...a: unknown[]) => Promise<unknown> };
+    return tool.execute({}, {});
+  };
 
-    const wrapped = withOutputLimits(tools, 100);
-    const toModelOutput = (wrapped.myTool as Record<string, unknown>).toModelOutput as (opts: {
+  const modelView = async (wrapped: Record<string, unknown>, output: unknown, name = 'myTool') => {
+    const hook = (wrapped[name] as Record<string, unknown>).toModelOutput as (opts: {
       output: unknown;
-    }) => Promise<{ type: string; value: string }>;
+    }) => Promise<{ type: string; value: unknown }>;
+    return hook({ output });
+  };
 
-    const largeOutput = 'Z'.repeat(1000);
-    const result = await toModelOutput({ output: largeOutput });
+  it('returns a result that fits by identity', async () => {
+    // `extractAttachmentIds` reads share_file's structured return off the step, and
+    // `view_attachment` loads bytes out of its own return — neither survives a copy.
+    const raw = { success: true, attachmentId: 'att-1' };
+    const wrapped = withToolOutputCapture(toolWith(() => raw), { maxChars: 1000 });
 
-    expect(result.type).toBe('text');
-    expect(result.value).toContain('[INCOMPLETE OUTPUT');
-    expect(result.value).toContain('chars omitted');
-    // Should be much shorter than original
-    expect(result.value.length).toBeLessThan(1000);
+    expect(await runTool(wrapped)).toBe(raw);
   });
 
-  it('handles MCP CallToolResult format with truncation', async () => {
-    const tools = {
-      kubectl: {
-        description: 'run kubectl',
-        inputSchema: { type: 'object' as const },
-      },
+  it('shows a result that fits unchanged to the model', async () => {
+    const wrapped = withToolOutputCapture(toolWith(() => 'short output'), { maxChars: 1000 });
+
+    expect(await modelView(wrapped, 'short output')).toEqual({ type: 'text', value: 'short output' });
+  });
+
+  it('replaces an oversized result with a cut view that keeps the original', async () => {
+    const raw = 'Z'.repeat(50_000);
+    const wrapped = withToolOutputCapture(toolWith(() => raw), { maxChars: 1000, spill: false });
+
+    const out = (await runTool(wrapped)) as { preview: string; raw: unknown; truncation: unknown };
+    expect(isSpilledToolOutput(out)).toBe(true);
+    expect(out.raw).toBe(raw);
+    expect(out.preview).toContain('[INCOMPLETE OUTPUT');
+    expect(out.preview.length).toBeLessThan(raw.length);
+    expect(unwrapToolOutput(out)).toBe(raw);
+  });
+
+  it('shows the model the same cut view that was minted at execute time', async () => {
+    // One render, one id: the model must not be told one id while another is stored.
+    const wrapped = withToolOutputCapture(toolWith(() => 'Z'.repeat(50_000)), { maxChars: 1000 });
+
+    const out = (await runTool(wrapped)) as { preview: string };
+    expect(await modelView(wrapped, out)).toEqual({ type: 'text', value: out.preview });
+  });
+
+  it('cuts an MCP CallToolResult down to its text', async () => {
+    const mcp = { content: [{ type: 'text', text: 'POD'.repeat(500) }] };
+    const wrapped = withToolOutputCapture(toolWith(() => mcp), { maxChars: 50, spill: false });
+
+    const out = (await runTool(wrapped)) as { preview: string };
+    expect(out.preview).toContain('[INCOMPLETE OUTPUT');
+  });
+
+  it('caps a tool that brings its own toModelOutput', async () => {
+    // Every MCP tool does — the SDK attaches `mcpToModelOutput` to all of them — so
+    // the old hook-only wrapper skipped every one of them and the cap never applied.
+    const raw = { content: [{ type: 'text', text: 'POD'.repeat(500) }] };
+    const own = vi.fn(async ({ output }: { output: unknown }) => ({
+      type: 'content' as const,
+      value: (output as { content: Array<{ type: string; text: string }> }).content,
+    }));
+    const wrapped = withToolOutputCapture(toolWith(() => raw, { toModelOutput: own }), {
+      maxChars: 50,
+      spill: false,
+    });
+
+    const out = await runTool(wrapped);
+    const view = (await modelView(wrapped, out)) as {
+      type: string;
+      value: Array<{ type: string; text: string }>;
     };
 
-    const wrapped = withOutputLimits(tools, 50);
-    const toModelOutput = (wrapped.kubectl as Record<string, unknown>).toModelOutput as (opts: {
-      output: unknown;
-    }) => Promise<{ type: string; value: string }>;
+    // The tool's own hook still saw its own return, not our envelope.
+    expect(own).toHaveBeenCalledWith(expect.objectContaining({ output: raw }));
+    expect(view.type).toBe('content');
+    expect(view.value[0].text).toContain('[INCOMPLETE OUTPUT');
+    expect(view.value[0].text.length).toBeLessThan(1500);
+  });
 
-    const mcpResult = {
-      content: [{ type: 'text', text: 'POD'.repeat(500) }],
+  it('never cuts a non-text part', async () => {
+    // Slicing base64 in half yields a corrupt image, not a smaller one.
+    const raw = { content: [{ type: 'text', text: 'POD'.repeat(500) }] };
+    const own = async () => ({
+      type: 'content' as const,
+      value: [
+        { type: 'text', text: 'POD'.repeat(500) },
+        { type: 'image-data', data: 'abc123', mediaType: 'image/png' },
+      ],
+    });
+    const wrapped = withToolOutputCapture(toolWith(() => raw, { toModelOutput: own }), {
+      maxChars: 50,
+      spill: false,
+    });
+
+    const view = (await modelView(wrapped, await runTool(wrapped))) as {
+      value: Array<Record<string, unknown>>;
     };
 
-    const result = await toModelOutput({ output: mcpResult });
-    expect(result.type).toBe('text');
-    expect(result.value).toContain('[INCOMPLETE OUTPUT');
+    expect(view.value).toHaveLength(2);
+    expect(view.value[1]).toEqual({ type: 'image-data', data: 'abc123', mediaType: 'image/png' });
+  });
+
+  it('leaves an image-only result alone, because its text is what is measured', async () => {
+    const raw = { content: [{ type: 'image', data: 'x'.repeat(60_000), mimeType: 'image/png' }] };
+    const wrapped = withToolOutputCapture(toolWith(() => raw), { maxChars: 50 });
+
+    expect(await runTool(wrapped)).toBe(raw);
   });
 
   it('names the tool in the truncation log, so a wrong count can be traced to it', async () => {
-    const tools = {
-      kubectl_get: { description: 'run kubectl', inputSchema: { type: 'object' as const } },
-    };
+    const wrapped = withToolOutputCapture(
+      { kubectl: { description: 'k', inputSchema: { type: 'object' as const }, execute: () => 'Z'.repeat(50_000) } },
+      { maxChars: 100, spill: false }
+    );
+    await runTool(wrapped, 'kubectl');
 
-    const wrapped = withOutputLimits(tools, 100);
-    const toModelOutput = (wrapped.kubectl_get as Record<string, unknown>).toModelOutput as (opts: {
-      output: unknown;
-    }) => Promise<{ type: string; value: string }>;
-
-    await toModelOutput({ output: 'Z'.repeat(1000) });
-
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('kubectl_get'));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('kept 100 content chars of 1000'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('kubectl'));
   });
 
   it('logs nothing when a result fits', async () => {
-    const tools = { small: { description: 'small', inputSchema: { type: 'object' as const } } };
-    const wrapped = withOutputLimits(tools, 100);
-    const toModelOutput = (wrapped.small as Record<string, unknown>).toModelOutput as (opts: {
-      output: unknown;
-    }) => Promise<{ type: string; value: string }>;
-
-    await toModelOutput({ output: 'fine' });
+    const wrapped = withToolOutputCapture(toolWith(() => 'tiny'), { maxChars: 1000 });
+    await runTool(wrapped);
 
     expect(warn).not.toHaveBeenCalled();
   });
 
   it('preserves all original tool properties', () => {
-    const tools = {
-      myTool: {
-        description: 'test tool',
-        inputSchema: { type: 'object' as const },
-        execute: async () => 'result',
+    const wrapped = withToolOutputCapture(
+      {
+        myTool: {
+          description: 'my description',
+          inputSchema: { type: 'object' as const, properties: { foo: { type: 'string' } } },
+          execute: () => 'x',
+        },
       },
-    };
-
-    const wrapped = withOutputLimits(tools, 1000);
-    expect((wrapped.myTool as Record<string, unknown>).description).toBe('test tool');
-    expect((wrapped.myTool as Record<string, unknown>).execute).toBe(
-      (tools.myTool as Record<string, unknown>).execute
+      { maxChars: 1000 }
     );
+
+    const tool = wrapped.myTool as Record<string, unknown>;
+    expect(tool.description).toBe('my description');
+    expect(tool.inputSchema).toEqual({ type: 'object', properties: { foo: { type: 'string' } } });
   });
 
-  it('passes through tools that already define their own toModelOutput', async () => {
-    const customToModelOutput = async ({ output }: { output: unknown }) => ({
-      type: 'content' as const,
-      value: [
-        { type: 'text' as const, text: 'custom' },
-        { type: 'image-data' as const, data: 'abc123', mediaType: 'image/png' },
-      ],
+  it('leaves a tool with no execute alone but still caps its model view', async () => {
+    const wrapped = withToolOutputCapture(
+      { provided: { description: 'provider-defined', inputSchema: { type: 'object' as const } } },
+      { maxChars: 100 }
+    );
+
+    expect((wrapped.provided as Record<string, unknown>).execute).toBeUndefined();
+    const view = (await modelView(wrapped, 'Z'.repeat(50_000), 'provided')) as { value: string };
+    expect(view.value).toContain('[INCOMPLETE OUTPUT');
+  });
+
+  it('never saves a result from a tool that opted out', async () => {
+    // read_tool_output is the case: saving its result would mint a fresh id inside
+    // a page of an existing saved output, and a model following that id spirals.
+    // The old page clamp was sized against chat's budget only, so under a meeting's
+    // smaller one this chain was not hypothetical — it was deterministic.
+    const optedOut = withToolOutputCapture(
+      {
+        reader: Object.assign(
+          {
+            description: 'reads a saved output',
+            inputSchema: { type: 'object' as const },
+            execute: () => 'Z'.repeat(50_000),
+          },
+          { [NEVER_SPILL]: true }
+        ),
+      },
+      { maxChars: 1000 }
+    );
+
+    const out = (await runTool(optedOut, 'reader')) as { preview: string; truncation: { spillId?: string } };
+
+    // Still cut — just never given a copy of its own to point at.
+    expect(out.preview).toContain('[INCOMPLETE OUTPUT');
+    expect(out.truncation.spillId).toBeUndefined();
+    expect(out.preview).not.toContain('read_tool_output with a');
+  });
+
+  it('does not mistake a tool result that merely carries the marker for a cut one', async () => {
+    // A plugin or MCP server returning this key would otherwise have its result
+    // read as an envelope: an empty stored output, and an `undefined` handed to the
+    // model that fails the SDK's validation and kills the turn.
+    const impostor = { __prismToolOutputSpill: true, somethingElse: 1 };
+
+    expect(isSpilledToolOutput(impostor)).toBe(false);
+
+    const wrapped = withToolOutputCapture(toolWith(() => impostor), { maxChars: 1000 });
+    const view = (await modelView(wrapped, await runTool(wrapped))) as { value: string };
+    expect(typeof view.value).toBe('string');
+    expect(view.value).toContain('somethingElse');
+  });
+
+  it('reports a cut once, with sizes and no content', async () => {
+    const onSpill = vi.fn();
+    const wrapped = withToolOutputCapture(toolWith(() => 'Z'.repeat(50_000)), {
+      maxChars: 1000,
+      spill: false,
+      onSpill,
     });
+    await runTool(wrapped);
 
-    const tools = {
-      plainTool: {
-        description: 'plain tool',
-        inputSchema: { type: 'object' as const },
-      },
-      multimodalTool: {
-        description: 'multimodal tool',
-        inputSchema: { type: 'object' as const },
-        toModelOutput: customToModelOutput,
-      },
-    };
-
-    const wrapped = withOutputLimits(tools, 1000);
-
-    // multimodalTool should be passed through completely untouched
-    expect((wrapped.multimodalTool as Record<string, unknown>).toModelOutput).toBe(customToModelOutput);
-
-    // plainTool should get the limiter's toModelOutput
-    expect((wrapped.plainTool as Record<string, unknown>).toModelOutput).not.toBeUndefined();
-    expect((wrapped.plainTool as Record<string, unknown>).toModelOutput).not.toBe(customToModelOutput);
-
-    // Verify the passthrough toModelOutput still works
-    const result = await customToModelOutput({ output: {} });
-    expect(result.type).toBe('content');
-    expect(result.value).toHaveLength(2);
-    expect(result.value[1].type).toBe('image-data');
+    expect(onSpill).toHaveBeenCalledTimes(1);
+    expect(onSpill).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'myTool',
+        budgetChars: 1000,
+        spillBytes: 0,
+        truncation: expect.objectContaining({ totalChars: 50_000, keptChars: 1000 }),
+      })
+    );
   });
 });
 

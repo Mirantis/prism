@@ -128,6 +128,7 @@ See **[Slack](slack.md)** for how the tokens are used.
 | `PRISM_PLUGINS_DIR` | Override the [plugins](plugins.md) directory specifically. | `<data dir>/plugins` |
 | `ATTACHMENT_TTL_HOURS` | How long shared-file content is kept before the hourly sweep deletes it. The conversation keeps a *content expired* stub. See [Tools](tools.md#attachments). | `168` (7 days) |
 | `TOOL_RISK_GATE_MODE` | Fast-model pre-execution evaluation for sensitive [tool calls](tools.md#risk-gate): `off`, `observe`, or `enforce`. | `off` |
+| `TOOL_OUTPUT_TTL_HOURS` | How long the saved copy of an oversized tool result is kept before the hourly sweep deletes it, so the agent can search the part it wasn't shown. Copies are also deleted once the conversation they belong to has been compacted away. See [Tools](tools.md#large-tool-outputs). | `168` (7 days) |
 
 `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID` only matter on the **first** boot
 with an empty database; later boots reuse the stored workspace.

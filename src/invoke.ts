@@ -29,7 +29,14 @@ import {
 } from './prompts/context-builder';
 import { getChannelBehaviorInstructions } from './prompts/channel-prompt';
 import { getTaskToolInstructions } from './prompts/task-tool-prompt';
-import { withOutputLimits, renderToolResultDetailed } from './lib/tool-output-limiter';
+import {
+  withToolOutputCapture,
+  renderToolResult,
+  renderToolResultDetailed,
+  isSpilledToolOutput,
+  unwrapToolOutput,
+  spillEventProps,
+} from './lib/tool-output-limiter';
 import { withToolLifecycleEvents } from './lib/tool-lifecycle';
 import {
   isToolRiskGateError,
@@ -157,13 +164,27 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       lockedIn: context.lockedIn,
     });
 
-    // 5. Wrap tools with output limits, lifecycle events, the optional
-    // pre-execution risk gate, and cache control. The gate is outside the
-    // lifecycle wrapper: a rejected call never claims the underlying tool
-    // started running.
-    const limitedTools = withOutputLimits(tools);
-    const observedTools = withToolLifecycleEvents(limitedTools, request.onToolEvent);
-    const gatedTools = withToolRiskGate(observedTools, {
+    // 5. Wrap tools with lifecycle events, output capture, the optional
+    // pre-execution risk gate, and cache control. The order carries two
+    // invariants that have to hold together:
+    //
+    //  - lifecycle innermost, so the "is running <tool>…" indicator clears when
+    //    the tool itself finishes rather than after the saved copy is written;
+    //  - the gate outside lifecycle, so a rejected call never claims the
+    //    underlying tool started running.
+    //
+    // The gate sits outside the capture too, which needs no argument: a rejected
+    // call produces no result, so there is nothing to cut or save.
+    const observedTools = withToolLifecycleEvents(tools, request.onToolEvent);
+    const limitedTools = withToolOutputCapture(observedTools, {
+      onSpill: (event) =>
+        trackEvent(
+          'tool output spilled',
+          request.userId,
+          spillEventProps(agentId, request.mode, event),
+        ),
+    });
+    const gatedTools = withToolRiskGate(limitedTools, {
       mode: config.toolRiskGateMode,
       invocationMode: request.mode,
       initialPrompt: request.prompt,
@@ -376,9 +397,13 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
             riskErrorPart?.type === 'tool-error' && isToolRiskGateError(riskErrorPart.error)
               ? riskErrorPart.error
               : undefined;
-          const rendered = tr
-            ? renderToolResultDetailed(tr.output, { toolName: tc.toolName })
-            : undefined;
+          // An oversized result was already rendered and saved at execute time —
+          // reuse that, so the id the model was given is the id on the record.
+          const rendered = !tr
+            ? undefined
+            : isSpilledToolOutput(tr.output)
+              ? { text: tr.output.preview, truncation: tr.output.truncation }
+              : renderToolResultDetailed(tr.output, { toolName: tc.toolName });
           stepToolCalls.push({
             tool: tc.toolName,
             input: JSON.stringify(tc.input),
@@ -717,6 +742,12 @@ function joinStepTexts(steps: Array<{ text: string }>): string {
 
 /**
  * Summarize steps including tool calls and their results for context.
+ *
+ * Every result goes through the limiter, because this text is interpolated into a
+ * prompt — the early-stopping summary. `JSON.stringify` on a raw result was already
+ * the one path into a model that the cap did not cover, and once an oversized result
+ * arrives wrapped, stringifying it would serialize the envelope *and the untouched
+ * original inside it*: the whole payload the cut just removed, in a prompt.
  */
 function summarizeSteps(
   steps: Array<{
@@ -732,7 +763,9 @@ function summarizeSteps(
       parts.push(`[Tool: ${tc.toolName}] Input: ${inputStr}`);
     }
     for (const tr of step.toolResults) {
-      const outputStr = typeof tr.output === 'string' ? tr.output : JSON.stringify(tr.output);
+      const outputStr = isSpilledToolOutput(tr.output)
+        ? tr.output.preview
+        : renderToolResult(tr.output);
       parts.push(`[Result] ${outputStr}`);
     }
     if (step.text) {
@@ -755,7 +788,9 @@ export function extractAttachmentIds(
   toolResults: Array<{ toolCallId: string; output: unknown }>,
 ): string[] {
   // Index results once (O(n)) rather than scanning per share_file call.
-  const outputById = new Map(toolResults.map((r) => [r.toolCallId, r.output]));
+  // `unwrapToolOutput` because an oversized result arrives wrapped — the tool's own
+  // return travels inside it, which is the whole reason the wrapper keeps it.
+  const outputById = new Map(toolResults.map((r) => [r.toolCallId, unwrapToolOutput(r.output)]));
   const ids: string[] = [];
   for (const tc of toolCalls) {
     if (tc.toolName !== SHARE_FILE_TOOL_NAME) continue;

@@ -1,7 +1,15 @@
 /**
- * Hourly attachment janitor: reaps abandoned pre-send uploads (chip added but
- * never sent), stale hydrate scratch dirs, content past its TTL, and stray
- * media files no row references (cascade-deleted messages, imports).
+ * Hourly janitor for the two durable stores that hold content a conversation
+ * refers to but does not itself contain.
+ *
+ * Attachments: abandoned pre-send uploads (chip added but never sent), stale
+ * hydrate scratch dirs, content past its TTL, and stray media files no row
+ * references (cascade-deleted messages, imports).
+ *
+ * Saved tool outputs: everything past its TTL. Nothing references one, so there is
+ * no live set to reconcile and no orphan case — mtime against the TTL is the whole
+ * of it. Deleting a thread removes its saved outputs eagerly; this is the backstop
+ * for what that misses.
  *
  * Every sweep step catches its own failure — one broken step must not stop the
  * others, and the next hour retries it.
@@ -12,6 +20,7 @@ import { logger } from '../logger';
 import { attachmentService } from '../services/attachment.service';
 import { reapScratchDirs } from '../tools/attachments';
 import { reapStrayMediaFiles } from './media-store';
+import { reapExpiredToolOutputs } from './tool-output-store';
 import { prisma } from './prisma';
 
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -57,6 +66,12 @@ export async function reapOrphanAttachments(): Promise<void> {
     if (strays > 0) logger.info(`[Attachments] reaped ${strays} stray media file(s)`);
   } catch (err) {
     logger.error({ err }, '[Attachments] stray media cleanup failed');
+  }
+  try {
+    const expired = await reapExpiredToolOutputs(config.toolOutputTtlMs);
+    if (expired > 0) logger.info(`[ToolOutput] reaped ${expired} expired saved output(s)`);
+  } catch (err) {
+    logger.error({ err }, '[ToolOutput] saved output cleanup failed');
   }
 }
 

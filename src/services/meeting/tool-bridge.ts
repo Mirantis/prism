@@ -25,7 +25,8 @@
 import { asSchema, type Tool } from 'ai';
 import { logger } from '../../logger';
 import { collectTools } from '../../lib/tool-collection';
-import { renderToolResult } from '../../lib/tool-output-limiter';
+import { renderAndSpill, spillEventProps } from '../../lib/tool-output-limiter';
+import { trackEvent } from '../../lib/telemetry';
 import type { RealtimeFunctionTool } from './realtime-session';
 
 /**
@@ -51,7 +52,10 @@ export const MEETING_MAX_RESULT_CHARS = 12_000;
  */
 const VOICE_TRUNCATION_GUIDANCE =
   'You cannot send the rest anywhere — this call is your only channel, so say the part ' +
-  'that answers the question and offer to go into more of it out loud.';
+  'that answers the question and offer to go into more of it out loud. If the answer ' +
+  'genuinely needs something from the omitted middle, search the saved output with a ' +
+  'pattern — never read it through, because everything you pull back stays in this ' +
+  "call's context for the rest of it, and this session's context is small.";
 
 export interface MeetingToolBridgeInput {
   userId: string;
@@ -131,7 +135,8 @@ export async function prepareMeetingTools(
   return {
     declarations,
     count: declarations.length,
-    execute: (name, argumentsJson) => executeTool(usable, name, argumentsJson),
+    execute: (name, argumentsJson) =>
+      executeTool(usable, name, argumentsJson, { userId: input.userId, agentId: input.agentId }),
   };
 }
 
@@ -160,6 +165,7 @@ async function executeTool(
   tools: Record<string, Tool>,
   name: string,
   argumentsJson: string,
+  ctx: { userId: string; agentId: string },
 ): Promise<string> {
   const tool = tools[name];
   if (!tool || typeof tool.execute !== 'function') {
@@ -186,11 +192,20 @@ async function executeTool(
       abortSignal: new AbortController().signal,
       context: undefined,
     });
-    return renderToolResult(result, {
+    // The same store chat uses, so a call's saved outputs are read back the same
+    // way and swept by the same janitor.
+    const rendered = await renderAndSpill(result, {
       maxChars: MEETING_MAX_RESULT_CHARS,
       extraGuidance: VOICE_TRUNCATION_GUIDANCE,
       toolName: name,
+      onSpill: (event) =>
+        trackEvent(
+          'tool output spilled',
+          ctx.userId,
+          spillEventProps(ctx.agentId, 'meeting', event),
+        ),
     });
+    return rendered.text;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn(`[Meeting] Tool ${name} failed: ${message}`);

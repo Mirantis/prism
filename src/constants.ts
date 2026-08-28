@@ -29,6 +29,15 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = 100;
  */
 export const ATTACHMENT_CONTENT_TTL_HOURS = 168;
 
+/**
+ * How long a saved tool output is kept before the janitor deletes it.
+ *
+ * Paired with `ATTACHMENT_CONTENT_TTL_HOURS` on purpose: both are durable copies
+ * of content the conversation refers to but does not hold, so one sentence in the
+ * docs covers the retention of both.
+ */
+export const TOOL_OUTPUT_TTL_HOURS = 168;
+
 // ============================================================================
 // Goals
 // ============================================================================

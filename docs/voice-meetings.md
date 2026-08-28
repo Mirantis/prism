@@ -278,11 +278,22 @@ to speak its answer. Past that it sees the start and the end of the output with 
 notice that the middle is missing, and it will say the listing was cut rather than
 quote a count it can't stand behind. See [Large tool outputs](tools.md#large-tool-outputs).
 
+The omitted middle is saved, and the agent can search it during the call — so asking
+"what did it say about the database?" about a result that was cut still works. It is
+told to search rather than read through, and the reason is sharper in a call than in
+chat: everything it pulls back stays in the session's context for the rest of the
+meeting, and that context is both small and re-billed on every reply.
+
 The one exception is **file sharing**. `share_file` is unavailable in a call: it only
 stores a file and hands back a reference for the chat machinery to deliver, and a
 meeting doesn't run that machinery — so it would store a file that reached nobody. If
 the agent writes a file during a call, ask it for the file in chat afterwards, where
 it can send it.
+
+That exclusion is about *delivering* something to the room, which a call cannot do —
+it is not a rule that the agent may only look at what it has already been shown.
+Reading a saved tool output back is the second kind, so it works in a call: the
+answer comes back to the agent, which then speaks it.
 
 **A meeting is not an authenticated channel — and that matters here.** Anyone with
 the link can speak, the agent cannot verify who anyone is, and `share_file` above is
