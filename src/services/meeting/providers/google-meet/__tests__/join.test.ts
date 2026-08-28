@@ -44,6 +44,13 @@ interface FakePageOptions {
   attributes?: Record<string, string | null>;
   /** Fail the initial navigation. */
   gotoError?: string;
+  /**
+   * Called before each read of the page's text, with the running count.
+   *
+   * Lets a test paint something *late* — a chat history that arrives a read after the
+   * composer, which no arrangement of the static state can express.
+   */
+  onBodyRead?: (reads: number, state: FakeState) => void;
   /** Called after each `waitForTimeout`, to let a test change the page mid-flow. */
   onTick?: (tick: number) => void;
   /**
@@ -166,6 +173,7 @@ function fakePage(options: FakePageOptions) {
   const presses: string[] = [];
   let ticks = 0;
   let micReads = 0;
+  let bodyReads = 0;
 
   /** What Meet does when the composer is submitted, per `options.submit`. */
   const submit = () => {
@@ -249,7 +257,12 @@ function fakePage(options: FakePageOptions) {
       }
       return state.draft;
     },
-    innerText: async () => (key() === CHAT_COMPOSER_SELECTOR ? state.draft : state.bodyText),
+    innerText: async () => {
+      if (key() === CHAT_COMPOSER_SELECTOR) return state.draft;
+      bodyReads += 1;
+      options.onBodyRead?.(bodyReads, state);
+      return state.bodyText;
+    },
     getAttribute: async (attr: string) => {
       const k = key();
       // Derived rather than stored, so `state.mic` is the single place a test (or
@@ -1244,6 +1257,25 @@ describe('the chat panel', () => {
 
     expect(result).toEqual({ sent: true });
     expect(harness.state.sent).toEqual(['https://example.test/run/42']);
+  });
+
+  it('does not count a history that paints after the first read as this send', async () => {
+    // The composer can be there a moment before the messages are, and the message the
+    // history brings is the agent's own from earlier in the call. A baseline taken in that
+    // moment is too low, so the late paint reads as this send having landed — while the
+    // send in fact cleared the box and posted nothing.
+    const harness = inCall({
+      submit: 'clears-only',
+      sendButton: true,
+      onBodyRead: (reads, state) => {
+        if (reads === 2) state.bodyText = 'Prism: https://example.test/run/42';
+      },
+    });
+
+    const result = await provider.sendChatMessage(harness.page, 'https://example.test/run/42');
+
+    expect(result).toEqual({ sent: false, step: 'confirm', reason: expect.any(String) });
+    expect(harness.state.sent).toEqual([]);
   });
 
   it('closes the panel after a failed send, without turning it into a success', async () => {
