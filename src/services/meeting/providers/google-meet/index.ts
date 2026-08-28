@@ -243,6 +243,74 @@ export const CHAT_SEND_SELECTOR = 'button[aria-label*="Send a message" i]';
 const CHAT_PANEL_TIMEOUT_MS = 5_000;
 
 /**
+ * How long each later phrasing gets, once the expected one has not appeared.
+ *
+ * Short, because a rotted first selector pays this per candidate, and by then the page has
+ * already had the full budget above to paint. Long enough not to be an instant check on a
+ * busy page.
+ */
+const CHAT_FALLBACK_PROBE_MS = 500;
+
+/**
+ * How long to look for a send button, after Enter did not send.
+ *
+ * Short: the panel is open and painted by this point, so a button that is not there now is
+ * not about to appear, and the wait is silence in the room.
+ */
+const CHAT_SEND_PROBE_MS = 1_000;
+
+/**
+ * The chat controls, each as an ordered list of phrasings.
+ *
+ * Ordered, and probed one at a time by `firstThatAppears` — `Locator.or()` cannot express
+ * this. An `or` chain matches the union and `.first()` takes the first match **in the
+ * document**, so the order written means nothing: whichever candidate's element sits
+ * earlier in the DOM wins. That is wrong twice here. The send button carries the same
+ * accessible name as the composer, so a union of the two resolves to whichever Meet renders
+ * first. And the toggle's broadest phrasing, `aria-label*="chat"`, is a substring match that
+ * can pick up another control in the bar — it is last so that it is used last.
+ */
+function chatToggleCandidates(page: Page): Locator[] {
+  return [
+    page.getByRole('button', { name: /chat with everyone/i }).first(),
+    page.getByRole('button', { name: /^chat$/i }).first(),
+    page.locator(CHAT_TOGGLE_SELECTOR).first(),
+  ];
+}
+
+/** The composer. The last phrasing covers a contenteditable rather than a textarea. */
+function chatComposerCandidates(page: Page): Locator[] {
+  return [
+    page.locator(CHAT_COMPOSER_SELECTOR).first(),
+    page.locator('textarea[placeholder*="Send a message" i]').first(),
+    page.locator('[role="textbox"][aria-label*="message" i]').first(),
+  ];
+}
+
+/** The send button, tag pinned first so it is not confused with the composer. */
+function chatSendCandidates(page: Page): Locator[] {
+  return [
+    page.locator(CHAT_SEND_SELECTOR).first(),
+    page.getByRole('button', { name: /^send/i }).first(),
+  ];
+}
+
+/**
+ * The first candidate to appear, probed in the order written.
+ *
+ * The first gets the full budget, since it is the one a live call measured; the rest get one
+ * short probe each, so a rotted first selector costs the fallbacks rather than a multiple of
+ * the whole timeout.
+ */
+async function firstThatAppears(candidates: Locator[], timeoutMs: number): Promise<Locator | null> {
+  for (const [index, candidate] of candidates.entries()) {
+    const budget = index === 0 ? timeoutMs : CHAT_FALLBACK_PROBE_MS;
+    if (await appears(candidate, budget)) return candidate;
+  }
+  return null;
+}
+
+/**
  * How many times to look for the message on the page, and how long between looks.
  *
  * Counted rather than clocked, like `REJECTION_CONFIRM_READS`: a wall-clock deadline
@@ -809,16 +877,19 @@ export class GoogleMeetProvider implements MeetingProvider {
    * failed send has to do that as carefully as a successful one.
    */
   async sendChatMessage(page: Page, text: string): Promise<ChatSendResult> {
-    const composer = this.chatComposer(page);
-    const toggle = this.chatToggle(page);
+    const toggle = await firstThatAppears(chatToggleCandidates(page), CHAT_PANEL_TIMEOUT_MS);
+    if (!toggle) {
+      return { sent: false, step: 'panel', reason: 'no chat control on the call page' };
+    }
 
-    const opened = await this.openChatPanel(page, composer, toggle);
-    if (opened) {
+    const opened = await this.openChatPanel(page, toggle);
+    if ('failure' in opened) {
       // Closed on this path too: `openChatPanel` reports `composer` after clicking the
       // panel open, so this is the failure that leaves a panel over the participant tiles.
       await this.closeChatPanel(toggle);
-      return opened;
+      return opened.failure;
     }
+    const { composer } = opened;
 
     // Read before anything is typed. The confirmation is that this number went up, so
     // the baseline has to predate both the draft and the message: the same link posted
@@ -862,11 +933,8 @@ export class GoogleMeetProvider implements MeetingProvider {
 
     // One fallback, not a retry loop: a panel whose Enter handler moved still has a
     // send button, and pressing it is a different path rather than the same one again.
-    const send = page
-      .locator(CHAT_SEND_SELECTOR)
-      .or(page.getByRole('button', { name: /^send/i }))
-      .first();
-    if (!(await appears(send, 1_000))) {
+    const send = await firstThatAppears(chatSendCandidates(page), CHAT_SEND_PROBE_MS);
+    if (!send) {
       await this.closeChatPanel(toggle);
       return { sent: false, step: 'send', reason: 'Enter did not send and there is no send button' };
     }
@@ -893,45 +961,17 @@ export class GoogleMeetProvider implements MeetingProvider {
         };
   }
 
-  /** The chat composer, several phrasings deep — the last one covers a contenteditable. */
-  private chatComposer(page: Page): Locator {
-    return page
-      .locator(CHAT_COMPOSER_SELECTOR)
-      .or(page.locator('textarea[placeholder*="Send a message" i]'))
-      .or(page.locator('[role="textbox"][aria-label*="message" i]'))
-      .first();
-  }
-
   /**
-   * The button that opens the chat panel.
+   * Get the panel open, and hand back the composer in it.
    *
-   * `getByRole` first because the raw `aria-label*="chat"` substring is broad enough to
-   * match something else in the control bar; it is last for exactly that reason.
-   */
-  private chatToggle(page: Page): Locator {
-    return page
-      .getByRole('button', { name: /chat with everyone/i })
-      .or(page.getByRole('button', { name: /^chat$/i }))
-      .or(page.locator(CHAT_TOGGLE_SELECTOR))
-      .first();
-  }
-
-  /**
-   * Get the panel open with a composer in it. Resolves a failure, or null on success.
-   *
-   * Returning the failure rather than a boolean keeps the two reasons apart: no chat
-   * control at all is `panel`, a panel that painted no input is `composer`, and those
-   * are different problems for whoever reads the telemetry.
+   * Resolves the failure rather than a boolean, so the two reasons stay apart: a panel that
+   * would not open is `panel`, a panel that painted no input is `composer`, and those are
+   * different problems for whoever reads the telemetry.
    */
   private async openChatPanel(
     page: Page,
-    composer: Locator,
     toggle: Locator,
-  ): Promise<ChatSendResult | null> {
-    if (!(await appears(toggle, CHAT_PANEL_TIMEOUT_MS))) {
-      return { sent: false, step: 'panel', reason: 'no chat control on the call page' };
-    }
-
+  ): Promise<{ composer: Locator } | { failure: ChatSendResult }> {
     if ((await this.panelIsOpen(toggle)) !== true) {
       // Same reason the unmute does this: a modal's scrim eats the click, and the
       // click reports success on the scrim rather than on the button underneath.
@@ -940,19 +980,24 @@ export class GoogleMeetProvider implements MeetingProvider {
         await toggle.click({ timeout: CHAT_CLICK_TIMEOUT_MS });
       } catch (err) {
         return {
-          sent: false,
-          step: 'panel',
-          reason: `the chat control would not open: ${err instanceof Error ? err.message : String(err)}`,
+          failure: {
+            sent: false,
+            step: 'panel',
+            reason: `the chat control would not open: ${err instanceof Error ? err.message : String(err)}`,
+          },
         };
       }
     }
 
-    // The ticket's "confirmed painted", and the first of the three positives a send
-    // needs. `appears` waits; `isVisible` would not — see its docblock.
-    if (!(await appears(composer, CHAT_PANEL_TIMEOUT_MS))) {
-      return { sent: false, step: 'composer', reason: 'the chat panel did not paint an input' };
+    // The first of the three positives a send needs: the composer painted. `appears`
+    // waits; `isVisible` would not — see its docblock.
+    const composer = await firstThatAppears(chatComposerCandidates(page), CHAT_PANEL_TIMEOUT_MS);
+    if (!composer) {
+      return {
+        failure: { sent: false, step: 'composer', reason: 'the chat panel did not paint an input' },
+      };
     }
-    return null;
+    return { composer };
   }
 
   /**

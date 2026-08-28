@@ -1177,6 +1177,23 @@ describe('the chat panel', () => {
     expect(harness.clicks).toContain(CHAT_SEND_SELECTOR);
   });
 
+  it('prefers the tag-pinned send button over anything else named send', async () => {
+    // The composer carries the same accessible name as the send button, so the phrasings
+    // are probed in order rather than unioned — a union resolves by DOM order, which is
+    // not something this code gets to choose.
+    const harness = inCall({
+      enterSends: false,
+      sendButton: true,
+      visibleButtons: ['Send a message'],
+    });
+
+    const result = await provider.sendChatMessage(harness.page, 'the build is green');
+
+    expect(result).toEqual({ sent: true });
+    expect(harness.clicks).toContain(CHAT_SEND_SELECTOR);
+    expect(harness.clicks).not.toContain('Send a message');
+  });
+
   it('reads a composer whose value cannot be read as an input', async () => {
     const harness = inCall({ composer: 'contenteditable' });
 
