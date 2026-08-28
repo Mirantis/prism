@@ -801,10 +801,11 @@ export class GoogleMeetProvider implements MeetingProvider {
    *
    * Which makes the failure direction the whole design. A `sent: true` here needs
    * three independent positives: the composer painted, the draft left it, and the text
-   * turned up on the page. Every other path names the step it stopped at and reports
-   * `sent: false`, so a rotted selector produces a failure the agent then says out
-   * loud — recoverable — rather than a room that got nothing while the agent believes
-   * otherwise. Nothing in this method turns a caught error into a success.
+   * turned up on the page *more times than before this send*. Every other path names
+   * the step it stopped at and reports `sent: false`, so a rotted selector produces a
+   * failure the agent then says out loud — recoverable — rather than a room that got
+   * nothing while the agent believes otherwise. Nothing in this method turns a caught
+   * error into a success.
    *
    * The panel is closed again afterwards, best effort. Not cosmetic: it shares the
    * side rail with People, and `participantCount` reads participant tiles, so an open
@@ -817,6 +818,21 @@ export class GoogleMeetProvider implements MeetingProvider {
 
     const opened = await this.openChatPanel(page, composer, toggle);
     if (opened) return opened;
+
+    // Read before anything is typed. The confirmation is that this number went up, so
+    // the baseline has to predate both the draft and the message: the same link posted
+    // twice in one call would otherwise confirm the second send off the first one's
+    // message, still sitting in the panel above it.
+    const needle = text.slice(0, CONFIRM_NEEDLE_CHARS);
+    const before = await this.countOnPage(page, needle);
+    if (before === null) {
+      await this.closeChatPanel(toggle);
+      return {
+        sent: false,
+        step: 'confirm',
+        reason: 'the page could not be read before sending, so no send could be confirmed',
+      };
+    }
 
     try {
       await composer.fill(text, { timeout: CHAT_CLICK_TIMEOUT_MS });
@@ -837,7 +853,7 @@ export class GoogleMeetProvider implements MeetingProvider {
       // Fall through: the send button below is the other way in.
     }
 
-    if (await this.confirmSent(page, composer, text)) {
+    if (await this.confirmSent(page, composer, needle, before)) {
       await this.closeChatPanel(toggle);
       return { sent: true };
     }
@@ -864,7 +880,7 @@ export class GoogleMeetProvider implements MeetingProvider {
       };
     }
 
-    const confirmed = await this.confirmSent(page, composer, text);
+    const confirmed = await this.confirmSent(page, composer, needle, before);
     await this.closeChatPanel(toggle);
     return confirmed
       ? { sent: true }
@@ -951,37 +967,59 @@ export class GoogleMeetProvider implements MeetingProvider {
    * Did the page take the message? Two readings, both required.
    *
    * Neither alone is worth anything. An empty composer on its own is what Meet shows
-   * for a send the server then dropped. The text being somewhere on the page on its own
-   * is *worse*: an unsent draft is still sitting in the composer, inside the panel, so a
+   * for a send the server then dropped. The text being on the page on its own is
+   * *worse*: an unsent draft is still sitting in the composer, inside the panel, so a
    * containment test would match the exact failure it is meant to catch. Together they
    * mean the draft went somewhere and the text is in the room's message list — which is
    * read without a selector for that list, the most volatile node in the panel and the
    * one there is least evidence about.
    *
+   * `before` is why this counts rather than contains. A containment test answers "is
+   * this text on the page", which is already true of anything the agent posted earlier
+   * in the call, so a second send of the same link would read as confirmed by the first
+   * one's message. Counting answers "is there one more of it than there was", which
+   * only the send can make true.
+   *
    * The page-wide read is what `readRejection` already does, so its cost is known.
    *
    * Known false negative, unverified: a long message Meet renders collapsed behind a
-   * "show more" could fail the containment test having actually been sent. 60 characters
-   * of a message capped at 500 makes that unlikely, and it fails in the safe direction.
+   * "show more" could fail the count having actually been sent. 60 characters of a
+   * message capped at 500 makes that unlikely, and it fails in the safe direction.
    */
-  private async confirmSent(page: Page, composer: Locator, text: string): Promise<boolean> {
-    const needle = text.slice(0, CONFIRM_NEEDLE_CHARS);
-
+  private async confirmSent(
+    page: Page,
+    composer: Locator,
+    needle: string,
+    before: number,
+  ): Promise<boolean> {
     for (let read = 1; read <= CHAT_CONFIRM_READS; read += 1) {
       // The first look is immediate: a send that landed should not be made to wait an
       // interval before the agent may speak about it.
       if (read > 1) await page.waitForTimeout(CHAT_CONFIRM_INTERVAL_MS);
 
       if ((await this.readDraft(composer)) !== '') continue;
-      try {
-        const pageText = await page.locator('body').innerText({ timeout: CHAT_READ_TIMEOUT_MS });
-        if (pageText.includes(needle)) return true;
-      } catch {
-        // Page busy or navigating. There are more reads, then a reported failure.
-      }
+      const now = await this.countOnPage(page, needle);
+      // A read that failed is not a reading of zero. There are more reads after it, and
+      // then a reported failure.
+      if (now !== null && now > before) return true;
     }
 
     return false;
+  }
+
+  /**
+   * How many times `needle` appears in the page's text, or null when it cannot be read.
+   *
+   * Null rather than 0 for an unreadable page: 0 is a number the caller compares, and a
+   * busy page must not be able to make a count look like it went up.
+   */
+  private async countOnPage(page: Page, needle: string): Promise<number | null> {
+    try {
+      const pageText = await page.locator('body').innerText({ timeout: CHAT_READ_TIMEOUT_MS });
+      return pageText.split(needle).length - 1;
+    } catch {
+      return null;
+    }
   }
 
   /**

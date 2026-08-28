@@ -1115,6 +1115,32 @@ describe('the chat panel', () => {
     expect(harness.clicks[0]).toBe('Got it');
   });
 
+  it('does not confirm a send off an identical message already in the panel', async () => {
+    // The agent posts the same link twice in one call — a plausible thing to do, since
+    // nothing reads the chat back and it cannot see whether anyone acted on the first
+    // one. The second send clears the box and posts nothing. The first message is still
+    // on the page, so "is this text present" was true before this send even started.
+    const harness = inCall({
+      submit: 'clears-only',
+      sendButton: true,
+      bodyText: 'Alice: thanks\nPrism: https://example.test/run/42',
+    });
+
+    const result = await provider.sendChatMessage(harness.page, 'https://example.test/run/42');
+
+    expect(result).toEqual({ sent: false, step: 'confirm', reason: expect.any(String) });
+    expect(harness.state.sent).toEqual([]);
+  });
+
+  it('confirms the second of two identical messages when it does land', async () => {
+    const harness = inCall({ bodyText: 'Prism: https://example.test/run/42' });
+
+    const result = await provider.sendChatMessage(harness.page, 'https://example.test/run/42');
+
+    expect(result).toEqual({ sent: true });
+    expect(harness.state.sent).toEqual(['https://example.test/run/42']);
+  });
+
   it('closes the panel after a failed send, without turning it into a success', async () => {
     const harness = inCall({ submit: 'clears-only', sendButton: true });
 
