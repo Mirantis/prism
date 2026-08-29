@@ -6,7 +6,7 @@ interface Props {
   agentName: string;
 }
 
-// Block-element rendition of the Lens Prism mark with the wordmark baked in.
+// Block-element rendition of the Prism Agent mark with the "Prism" wordmark baked in.
 // Gradient sweeps the Lens brand stops (#e97500 → #bf00ba) diagonally across
 // the glyph.
 const LOGO_ROWS = [

@@ -9,7 +9,7 @@ http://localhost:3003
 (In local development with Vite it's at <http://localhost:5173>, which proxies
 to the runtime.)
 
-![Prism Web UI](images/web-ui.png)
+![Prism Agent Web UI](images/web-ui.png)
 
 The UI is organized around a left sidebar with six sections: **Overview**,
 **Chat**, **Channels**, **Scheduled Tasks**, **Webhooks**, and **Profile**.

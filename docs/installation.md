@@ -2,7 +2,7 @@
 
 The one-line installer puts two native binaries on your machine and runs the
 runtime as an always-on background service. This is the recommended way to use
-Prism day to day on your own workstation.
+Prism Agent day to day on your own workstation.
 
 - `prism` — the terminal UI (TUI). Put on your `PATH`; run it from any shell.
 - `prism-server` — the agent runtime. Registered as a background service that

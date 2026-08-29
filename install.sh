@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Prism installer (macOS + Linux).
+# Prism Agent installer (macOS + Linux).
 #
 # Installs the `prism` (terminal UI) and `prism-server` (agent runtime)
 # binaries plus the server's sidecar (node_modules/, web/) into ~/.prism,
@@ -61,7 +61,7 @@ if [ ! -x "$DIST/prism-server" ] || [ ! -x "$DIST/prism" ]; then
   fi
 fi
 
-echo "Installing Prism into $PRISM_HOME (from $DIST)"
+echo "Installing Prism Agent into $PRISM_HOME (from $DIST)"
 mkdir -p "$PRISM_HOME"
 # Workspace root for the shell / claude_code tools. The runtime's built-in
 # default (/home/node) is the Docker sandbox path and doesn't exist here; a
@@ -89,7 +89,7 @@ if [ ! -f "$PRISM_HOME/.env" ]; then
   # exports otherwise wouldn't reach it. Heredoc isn't single-quoted so the
   # var expands; `\$(id -u)` keeps the macOS restart hint literal.
   cat > "$PRISM_HOME/.env" <<EOF
-# Prism server configuration. Restart the service after editing:
+# Prism Agent server configuration. Restart the service after editing:
 #   macOS: launchctl kickstart -k "gui/\$(id -u)/com.prism.server"
 #   Linux: systemctl --user restart prism-server
 #
@@ -170,7 +170,7 @@ else
   mkdir -p "$(dirname "$UNIT")"
   cat > "$UNIT" <<EOF
 [Unit]
-Description=Prism agent runtime
+Description=Prism Agent runtime
 After=network.target
 
 [Service]

@@ -1,6 +1,6 @@
-# Prism Documentation
+# Prism Agent Documentation
 
-Prism is a self-contained AI agent. One container, one embedded database, no
+Prism Agent is self-contained. One container, one embedded database, no
 external services. It persists between conversations, keeps its own memory,
 runs heartbeat checks on a schedule, can put work on its own calendar, and can
 act over a shell — all running in a single process. The only hard dependency is
@@ -8,14 +8,14 @@ an LLM provider.
 
 These docs walk you from a first install through every feature the agent has.
 
-![Prism Web UI](images/web-ui.png)
+![Prism Agent Web UI](images/web-ui.png)
 
 ## Getting started
 
 - **[Getting Started](getting-started.md)** — prerequisites, the fastest path
   to a running agent, and your first conversation.
 
-## Running Prism
+## Running Prism Agent
 
 Three ways to run the same agent. Pick one.
 

@@ -1,4 +1,4 @@
-# Prism
+# Prism Agent
 
 [![Test](https://github.com/lensapp/prism-agent/actions/workflows/test.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/test.yml)
 [![Lint](https://github.com/lensapp/prism-agent/actions/workflows/lint.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/lint.yml)
@@ -12,9 +12,9 @@
 > scheduled work, heartbeat checks, and Slack/WebSocket chat — running
 > in a single container.
 
-## What Prism is
+## What Prism Agent is
 
-Prism is a self-contained AI agent. One container, one embedded database, no
+Prism Agent is self-contained. One container, one embedded database, no
 external services. State, conversation flow, scheduled work, channel adapters,
 and tool execution all run in-process. The only hard runtime dependency is an
 LLM provider.
@@ -34,11 +34,11 @@ feature: [identity](docs/agent-identity.md), [memory](docs/memory.md),
 
 ## Web UI
 
-![Prism Web UI](docs/images/web-ui.png)
+![Prism Agent Web UI](docs/images/web-ui.png)
 
 ## Terminal UI
 
-![Prism Terminal UI](docs/images/terminal-ui.png)
+![Prism Agent Terminal UI](docs/images/terminal-ui.png)
 
 ## Quick Start
 
@@ -308,7 +308,7 @@ The runtime listens on port `3003`. Health check:
 curl http://localhost:3003/health
 ```
 
-On first boot with an empty database, Prism auto-creates the agent workspace
+On first boot with an empty database, Prism Agent auto-creates the workspace
 using `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID`. Subsequent boots find
 the existing workspace and reuse it.
 
@@ -367,7 +367,7 @@ restarts.
 
 ## Interfaces
 
-Prism exposes the following surfaces:
+Prism Agent exposes the following surfaces:
 
 - **WebUI** — a built-in browser UI served by the runtime. Chat with the
   agent, browse threads, view and edit the agent's workspace files
@@ -375,7 +375,7 @@ Prism exposes the following surfaces:
   and watch heartbeat history. Available on the same port as the runtime.
 - **TUI** — a terminal UI for chatting with the agent and managing its
   state from the shell. Useful for headless servers and SSH sessions, and
-  the natural fit when running Prism alongside jahe-CLI.
+  the natural fit when running Prism Agent alongside jahe-CLI.
 - **WebSocket** — real-time chat for a UI or CLI. Streamed responses,
   status updates, and tool-call events.
 - **Slack** — runs in Socket Mode. Once the agent's Slack workspace is wired
@@ -384,7 +384,7 @@ Prism exposes the following surfaces:
   agent's user.
 - **Management API** — REST endpoints for agent lifecycle, scheduling,
   thread management, and Slack mappings. Useful for building a UI or driving
-  Prism from a control plane.
+  Prism Agent from a control plane.
 - **Health endpoint** — `GET /health` for orchestrators.
 
 ## Development

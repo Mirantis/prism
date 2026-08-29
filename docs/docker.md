@@ -1,6 +1,6 @@
 # Run with Docker
 
-Prism is published as a multi-arch container image. One container runs one
+Prism Agent is published as a multi-arch container image. One container runs one
 agent, with its database persisted in a mounted volume.
 
 - **Image:** `ghcr.io/lensapp/prism-agent:latest`

@@ -24,7 +24,7 @@ if (args.includes('--version') || args.includes('-v')) {
 }
 if (args.includes('--help') || args.includes('-h')) {
   console.log(
-    'prism-server — Prism agent runtime (HTTP + WebSocket on :3003, serves the bundled web UI).',
+    'prism-server — Prism Agent runtime (HTTP + WebSocket on :3003, serves the bundled web UI).',
   );
   process.exit(0);
 }

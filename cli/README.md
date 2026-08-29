@@ -1,6 +1,6 @@
 # prism-cli
 
-Standalone Ink-based terminal UI for Prism. Talks to an `agent-runtime`
+Standalone Ink-based terminal UI for Prism Agent. Talks to an `agent-runtime`
 over WebSocket and REST. There is no auth — the CLI is intended for
 local-dev only.
 

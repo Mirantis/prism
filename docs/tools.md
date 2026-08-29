@@ -1,6 +1,6 @@
 # Tools
 
-Prism is an *agent*, not a chatbot: it has tools, and it decides when to use
+Prism Agent is an *agent*, not a chatbot: it has tools, and it decides when to use
 them. You don't call tools directly — you talk to the agent, and it reaches for
 the right tool to get the job done. This page is a tour of what it can reach
 for, so you know what to ask for.
@@ -89,7 +89,7 @@ paths resolve from there.
 > runtime's OS user is permitted to, including reading paths elsewhere on the
 > machine. The workspace is a default working directory, not a security sandbox;
 > the real boundary is OS filesystem permissions. For a hard boundary around
-> what the agent can reach, run Prism under **[Lens Sandbox](lens-sandbox.md)**.
+> what the agent can reach, run Prism Agent under **[Lens Sandbox](lens-sandbox.md)**.
 
 In the published container image, the shell comes with common tooling
 preinstalled — `git`, `gh` (GitHub CLI), `kubectl`, `aws`, `jq`, `yq`, and
@@ -134,7 +134,7 @@ than doing everything in its own turn-by-turn loop.
 When the [risk gate](#risk-gate) is in `enforce` mode, edit sub-agents run with
 Claude Code's `auto` permission mode and without the permissions-bypass flag.
 Plan sub-agents stay in `plan` mode without bypass. This gives nested shell and
-file actions their own Claude Code policy check after Prism approves the initial
+file actions their own Claude Code policy check after Prism Agent approves the initial
 delegation.
 
 ## Sharing files

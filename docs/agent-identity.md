@@ -1,6 +1,6 @@
 # The agent's identity
 
-A Prism agent isn't a stateless chat session — it has a persistent identity made
+Prism Agent isn't a stateless chat session — it has a persistent identity made
 of a small set of markdown documents. These documents are always present in the
 agent's system prompt, so changing them changes how the agent thinks, talks, and
 acts. Together they're the difference between "a model" and "your agent."

@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 #
-# Prism installer (Windows).
+# Prism Agent installer (Windows).
 #
 # The PowerShell counterpart of install.sh. Installs the `prism` (terminal UI)
 # and `prism-server` (agent runtime) binaries plus the server's sidecar
@@ -74,7 +74,7 @@ try {
     }
   }
 
-  Write-Host "Installing Prism into $PrismHome (from $dist)"
+  Write-Host "Installing Prism Agent into $PrismHome (from $dist)"
   New-Item -ItemType Directory -Path $PrismHome -Force | Out-Null
 
   # Stop a running instance first so its exe isn't locked while we overwrite it
@@ -110,7 +110,7 @@ try {
   if (-not (Test-Path $envPath)) {
     $bearer = if ($env:AWS_BEARER_TOKEN_BEDROCK) { $env:AWS_BEARER_TOKEN_BEDROCK } else { '' }
     $envContent = @"
-# Prism server configuration. Restart the service after editing:
+# Prism Agent server configuration. Restart the service after editing:
 #   Restart-ScheduledTask -TaskName PrismServer
 #
 # The prism-server binary sets its own database path before this file is read,
@@ -169,7 +169,7 @@ AWS_BEARER_TOKEN_BEDROCK=$bearer
     Trigger     = $trigger
     Principal   = $principal
     Settings    = $settings
-    Description = 'Prism agent runtime'
+    Description = 'Prism Agent runtime'
     Force       = $true
   }
   Register-ScheduledTask @registerArgs | Out-Null

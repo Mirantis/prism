@@ -1,6 +1,6 @@
 # Slack
 
-Prism can run in Slack — responding to direct messages and channel mentions,
+Prism Agent can run in Slack — responding to direct messages and channel mentions,
 holding threaded conversations, and waking on activity in designated channels.
 Slack runs over **Socket Mode**, so no public webhook or inbound URL is needed.
 
@@ -100,8 +100,9 @@ switching to a DM link, and vice-versa.
   quiet — so it doesn't talk over the channel. The agent knows **which channel**
   it's replying in (the channel name is part of its context), so it can behave
   differently across linked channels.
-- **Threads.** Each Slack thread maps to a Prism conversation thread; the agent
-  can read the thread's history, including messages from before it joined.
+- **Threads.** Each Slack thread maps to a conversation thread in
+  Prism Agent; the agent can read the thread's history, including messages
+  from before it joined.
 - **Working cue.** While the agent works on your message it shows a live
   status in the reply thread: "is thinking…" while the model reasons, and the
   running tools while any are in flight — "is running kubectl…", or "is

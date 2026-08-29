@@ -5,7 +5,7 @@ full details of each install method, follow the links to the dedicated guides.
 
 ## Prerequisites
 
-- **An LLM credential.** Prism uses AWS Bedrock by default. The only required
+- **An LLM credential.** Prism Agent uses AWS Bedrock by default. The only required
   credential for chat is a **Bedrock API key** exported as
   `AWS_BEARER_TOKEN_BEDROCK`. (SigV4 credentials — `AWS_ACCESS_KEY_ID` /
   `AWS_SECRET_ACCESS_KEY` — also work; the SDK auto-selects the bearer token
@@ -56,7 +56,7 @@ Once the service is up, the runtime listens on port **3003**. Check it:
 curl http://localhost:3003/health
 ```
 
-On its very first boot with an empty database, Prism auto-creates its agent
+On its very first boot with an empty database, Prism Agent auto-creates its
 workspace (using `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID` if you set
 them, otherwise sensible defaults). Every subsequent boot finds and reuses that
 workspace.
