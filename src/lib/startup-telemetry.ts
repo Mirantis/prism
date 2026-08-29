@@ -5,8 +5,8 @@
  * emitted from `index.ts` once the agent row is resolved and cron tasks are
  * registered. It answers fleet-level product questions the Pino startup logs
  * can't: which LLM vendor/models deployments actually run, whether they route
- * through the gateway, which integrations are wired up, what host Prism runs on, and
- * how much of the feature surface is configured.
+ * through the gateway, which integrations are wired up, what host Prism Agent runs
+ * on, and how much of the feature surface is configured.
  *
  * Only ids, flags, counts and model identifiers — never tokens, URLs, paths or
  * user content. `deployment.environment.name` / `service.version` are already

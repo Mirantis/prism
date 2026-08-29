@@ -6,7 +6,7 @@
  *                        + inbound webhook ingestion (/agents/webhooks/:name)
  *      /threads, /latest-thread — thread resolve/list/open
  *      /messages       — thread history replay
- *      /               — Prism Web UI (static SPA bundle from web/dist)
+ *      /               — Prism Agent Web UI (static SPA bundle from web/dist)
  *
  * Auth is handled by Lens Agents inbound routing in front of the runtime;
  * the container itself trusts every incoming connection.
@@ -50,7 +50,7 @@ export function createApp() {
   app.use(threadsRouter);
   app.use(messagesRouter);
 
-  // Prism Web UI. Skip the SPA mount silently when web/dist isn't
+  // Prism Agent Web UI. Skip the SPA mount silently when web/dist isn't
   // present (dev runs Vite separately on :5173). `PRISM_WEB_DIR` lets the
   // packaged binary point at its sidecar copy (the bundled `__dirname`
   // doesn't resolve to a real path inside a SEA).

@@ -1,7 +1,7 @@
 /**
  * Agent Archive Service
  *
- * Save-game / restore for a Prism container. A `.prism` file is a
+ * Save-game / restore for a Prism Agent container. A `.prism` file is a
  * gzipped copy of `/data/agent.db`. Export takes a consistent VACUUM
  * INTO snapshot (so live writes from heartbeat/cron don't tear the
  * file). Import gunzips to a private scratch file next to the live DB,

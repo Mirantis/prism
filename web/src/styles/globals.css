@@ -6,7 +6,7 @@
 
 /* LDS token bridge — shadcn reads these, LDS provides the values.
  * Mirrors the Lens Agents platform UI's globals.css so primitives look
- * identical across it and the per-agent Prism Web UI. */
+ * identical across it and the Prism Agent Web UI. */
 :root {
   --background: #1b1a1c;
   --foreground: var(--lds-color-text-primary);
