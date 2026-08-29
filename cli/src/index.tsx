@@ -18,7 +18,7 @@ if (args.includes('--version') || args.includes('-v')) {
 }
 if (args.includes('--help') || args.includes('-h')) {
   console.log(
-    'Prism terminal UI — connects to prism-server ($PRISM_HTTP_URL, default http://127.0.0.1:3003).\n' +
+    'prism — Prism Agent terminal UI (connects to prism-server at $PRISM_HTTP_URL, default http://127.0.0.1:3003).\n' +
       '  --resume   Pick a previous conversation to resume instead of starting fresh.',
   );
   process.exit(0);

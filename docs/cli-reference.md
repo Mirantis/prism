@@ -1,7 +1,7 @@
 # CLI reference
 
-Reference for the `prism` terminal UI — flags, slash commands, keyboard
-shortcuts, and the settings file. For a guided tour, see
+Reference for `prism`, the Prism Agent terminal UI — flags, slash commands,
+keyboard shortcuts, and the settings file. For a guided tour, see
 **[Terminal UI](terminal-ui.md)**.
 
 ```

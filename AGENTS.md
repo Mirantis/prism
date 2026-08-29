@@ -1,6 +1,7 @@
 # Agent Runtime
 
-Self-sufficient LLM invocation service that owns the full agent execution lifecycle.
+Prism Agent is a self-sufficient LLM invocation service that owns the full agent
+execution lifecycle.
 Builds agent context locally (agent data and conversation history from
 its own database), connects to MCP servers for tools, runs heartbeat and cron
 scheduling in-process, manages Slack connections via Bolt SDK with Socket Mode,
