@@ -1,7 +1,7 @@
 # Run with Lens Sandbox
 
 [Lens Sandbox](https://github.com/lensapp/lens-sandbox) runs the same published
-Prism image inside a local microVM, with every inbound and outbound connection
+Prism Agent image inside a local microVM, with every inbound and outbound connection
 checked against a policy you control. It's a good fit when you want the agent to
 act over a shell but want a hard boundary around what it can reach on the
 network.
@@ -12,7 +12,7 @@ network.
 curl -fsSL https://get.lns.run | bash   # macOS on Apple Silicon
 ```
 
-## Run Prism in the sandbox
+## Run Prism Agent in the sandbox
 
 ```bash
 lns run --cpus 2 --mem 2048 \
@@ -51,7 +51,7 @@ and approval model.
 
 ## After it's running
 
-Everything else behaves like any other Prism deployment — open the
+Everything else behaves like any other Prism Agent deployment — open the
 **[Web UI](web-ui.md)** at <http://localhost:3003>, chat in the
 **[Terminal UI](terminal-ui.md)**, and configure
 **[Slack](slack.md)**, **[heartbeat](heartbeat.md)**, and

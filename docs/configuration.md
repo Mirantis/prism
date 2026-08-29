@@ -201,7 +201,7 @@ product telemetry.
 
 The outer gate can evaluate the initial `claude_code` delegation, but not every
 shell command or file edit the resulting Claude Code process proposes. In
-`enforce` mode, Prism therefore removes `--dangerously-skip-permissions` from
+`enforce` mode, Prism Agent therefore removes `--dangerously-skip-permissions` from
 Claude Code and launches edit tasks with its
 [auto permission mode](https://code.claude.com/docs/en/permission-modes).
 Plan tasks remain in `plan` mode without bypass permissions. Auto mode has its

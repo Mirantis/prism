@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Uninstall a local Prism install created by install.sh:
+# Uninstall a local Prism Agent install created by install.sh:
 #   - stop + remove the background service (launchd on macOS, systemd on Linux)
 #   - remove the `prism` PATH symlink(s) we created
 #   - remove ~/.prism — INCLUDING the agent database and config
@@ -62,4 +62,4 @@ rm -rf "$PRISM_HOME"
 echo "Removed $PRISM_HOME"
 
 echo
-echo "Prism uninstalled."
+echo "Prism Agent uninstalled."

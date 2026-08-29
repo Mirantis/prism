@@ -33,11 +33,11 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" render={<Link to="/" />}>
               <div className="flex aspect-square size-8 items-center justify-center">
-                <img src="/prism-logo.svg" alt="Prism" width={28} height={28} />
+                <img src="/prism-logo.svg" alt="Prism Agent" width={28} height={28} />
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-semibold">Prism</span>
-                <span className="truncate text-xs text-muted-foreground">Agent runtime</span>
+                <span className="truncate font-semibold">Prism Agent</span>
+                <span className="truncate text-xs text-muted-foreground">Self-contained runtime</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>

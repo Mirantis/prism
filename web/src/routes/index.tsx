@@ -87,7 +87,7 @@ function WelcomeCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Welcome to Prism</CardTitle>
+        <CardTitle>Welcome to Prism Agent</CardTitle>
         <CardDescription>
           Your autonomous agent — it learns, remembers, and operates on its own. Defined by you, not by us.
         </CardDescription>

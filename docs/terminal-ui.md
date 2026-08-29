@@ -4,7 +4,7 @@
 without leaving the shell — useful on headless servers, over SSH, or just as a
 fast keyboard-driven alternative to the browser.
 
-![Prism Terminal UI](images/terminal-ui.png)
+![Prism Agent Terminal UI](images/terminal-ui.png)
 
 ```bash
 prism
