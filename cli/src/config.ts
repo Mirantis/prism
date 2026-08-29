@@ -1,5 +1,5 @@
 /**
- * Prism CLI configuration loader.
+ * Prism Agent CLI configuration loader.
  *
  * Reads settings from `~/.prism/settings.json`. Every field is optional;
  * missing or malformed config falls back to the bundled defaults.

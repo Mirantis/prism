@@ -10,7 +10,7 @@
  *
  * The model carries the agent's real system prompt as session `instructions` and
  * the agent's real tools as Realtime function tools, so the participant in the
- * call *is* the Prism agent rather than a separate voice persona relaying to it.
+ * call *is* the agent itself rather than a separate voice persona relaying to it.
  *
  * Wire protocol notes that shaped this file:
  * - WebSocket is the right transport for a server-side media pipeline (WebRTC is
