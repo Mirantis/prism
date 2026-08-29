@@ -1,6 +1,6 @@
 # Voice meetings
 
-The agent can join a Google Meet call and take part by voice — it listens, speaks,
+Prism Agent can join a Google Meet call and take part by voice — it listens, speaks,
 and uses its tools while the call is happening. Ask it in chat:
 
 > Join `https://meet.google.com/abc-defg-hij`
