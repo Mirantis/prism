@@ -179,7 +179,7 @@ const providerConfigurationError = vi.fn(() => null as string | null);
 const providerSignIn = vi.fn(async () => {});
 const providerLeave = vi.fn();
 const providerParticipantCount = vi.fn();
-const providerEnsureUnmuted = vi.fn();
+const providerSetMicrophone = vi.fn();
 const providerEnableAttribution = vi.fn();
 const providerParticipantNames = vi.fn();
 const providerCurrentSpeaker = vi.fn();
@@ -201,7 +201,7 @@ vi.mock('../providers/google-meet', () => ({
     join: (...a: unknown[]) => providerJoin(...a),
     leave: (...a: unknown[]) => providerLeave(...a),
     participantCount: (...a: unknown[]) => providerParticipantCount(...a),
-    ensureUnmuted: (...a: unknown[]) => providerEnsureUnmuted(...a),
+    setMicrophone: (...a: unknown[]) => providerSetMicrophone(...a),
     participantNames: (...a: unknown[]) => providerParticipantNames(...a),
     enableSpeakerAttribution: (...a: unknown[]) => providerEnableAttribution(...a),
     currentSpeaker: (...a: unknown[]) => providerCurrentSpeaker(...a),
@@ -257,7 +257,7 @@ beforeEach(() => {
   providerParticipantNames.mockResolvedValue([]);
   providerCurrentSpeaker.mockResolvedValue(null);
   providerParticipantCount.mockResolvedValue(3);
-  providerEnsureUnmuted.mockResolvedValue(false);
+  providerSetMicrophone.mockResolvedValue(false);
   providerSendChatMessage.mockResolvedValue({ sent: true });
   chatSupported = true;
   conversationOptions = {};
@@ -510,7 +510,7 @@ describe('a call the room cannot hear the agent in', () => {
 
       expect(conversationSpeak).not.toHaveBeenCalled();
 
-      providerEnsureUnmuted.mockResolvedValue(true);
+      providerSetMicrophone.mockResolvedValue(true);
       await vi.advanceTimersByTimeAsync(10_000);
 
       expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
@@ -538,7 +538,7 @@ describe('a call the room cannot hear the agent in', () => {
     providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     audioWaitForMicCapture.mockResolvedValue(false);
     audioIsMicCaptured.mockResolvedValue(false);
-    providerEnsureUnmuted.mockResolvedValue(true);
+    providerSetMicrophone.mockResolvedValue(true);
     vi.useFakeTimers();
     try {
       await service.join(input);
@@ -550,7 +550,7 @@ describe('a call the room cannot hear the agent in', () => {
       // Nothing claimed a recovery, in the log or anywhere else.
       expect(loggedLines(loggerInfo).some((l) => /Microphone is live/.test(l))).toBe(false);
       // And it kept asking, rather than settling into a call it cannot be heard in.
-      expect(providerEnsureUnmuted.mock.calls.length).toBeGreaterThan(1);
+      expect(providerSetMicrophone.mock.calls.length).toBeGreaterThan(1);
     } finally {
       vi.useRealTimers();
     }
@@ -561,7 +561,7 @@ describe('a call the room cannot hear the agent in', () => {
     providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     audioWaitForMicCapture.mockResolvedValue(false);
     audioIsMicCaptured.mockResolvedValue(false);
-    providerEnsureUnmuted.mockResolvedValue(true);
+    providerSetMicrophone.mockResolvedValue(true);
     vi.useFakeTimers();
     try {
       await service.join(input);
@@ -584,7 +584,7 @@ describe('a call the room cannot hear the agent in', () => {
     providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
     let inFlight = 0;
     let overlapped = false;
-    providerEnsureUnmuted.mockImplementation(async () => {
+    providerSetMicrophone.mockImplementation(async () => {
       inFlight += 1;
       if (inFlight > 1) overlapped = true;
       // Longer than the 10s poll interval, which is the condition that produces the race
@@ -609,16 +609,16 @@ describe('a call the room cannot hear the agent in', () => {
     // A toggle toggles, so a retry that keeps firing after it has succeeded is not
     // harmless persistence — the next click would mute what the last one fixed.
     audioWaitForMicCapture.mockResolvedValue(false);
-    providerEnsureUnmuted.mockResolvedValue(true);
+    providerSetMicrophone.mockResolvedValue(true);
     vi.useFakeTimers();
     try {
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10);
       await vi.advanceTimersByTimeAsync(10_000);
-      expect(providerEnsureUnmuted).toHaveBeenCalledTimes(1);
+      expect(providerSetMicrophone).toHaveBeenCalledTimes(1);
 
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(providerEnsureUnmuted).toHaveBeenCalledTimes(1);
+      expect(providerSetMicrophone).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
@@ -633,7 +633,7 @@ describe('a call the room cannot hear the agent in', () => {
       await vi.advanceTimersByTimeAsync(10);
       await vi.advanceTimersByTimeAsync(30_000);
 
-      expect(providerEnsureUnmuted).not.toHaveBeenCalled();
+      expect(providerSetMicrophone).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -1712,7 +1712,7 @@ describe('posting into the call chat', () => {
     try {
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10);
-      providerEnsureUnmuted.mockClear();
+      providerSetMicrophone.mockClear();
 
       const sending = service.sendChatMessage('https://example.test/run/42', 'u1');
       // The gate lasts as long as the send does, and a send lasts at most its deadline
@@ -1720,14 +1720,14 @@ describe('posting into the call chat', () => {
       // started at join and fires at 10_000, the deadline started 10ms later.
       await vi.advanceTimersByTimeAsync(9_990);
 
-      expect(providerEnsureUnmuted).not.toHaveBeenCalled();
+      expect(providerSetMicrophone).not.toHaveBeenCalled();
 
       finish({ sent: true });
       await sending;
       await vi.advanceTimersByTimeAsync(30_000);
 
       // And it resumes: a skipped retry costs a poll interval, not the microphone.
-      expect(providerEnsureUnmuted).toHaveBeenCalled();
+      expect(providerSetMicrophone).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

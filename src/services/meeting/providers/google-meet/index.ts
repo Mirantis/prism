@@ -839,33 +839,48 @@ export class GoogleMeetProvider implements MeetingProvider {
   }
 
   /**
-   * Mid-call retry, for a microphone the join could not get live.
+   * Read the microphone without touching it. `null` when the control cannot be read.
    *
-   * Deliberately thinner than `ensureMicOn`: one reading, and a click only if that
-   * reading says muted in as many words. A `null` — the control not found — returns
-   * false without touching anything, because this runs every ten seconds against a live
-   * call, and a selector that has rotted would otherwise become a clicker loose on
-   * Meet's control bar. The one-shot patience is short for the same reason: the call is
-   * already up, so a control that isn't there now isn't about to paint.
+   * The short patience rather than `MIC_TOGGLE_TIMEOUT_MS`: this reads a call that is
+   * already up, so a control that is not there now is not about to paint, and a
+   * ten-second wait would hold a poll open for a reading it will take again anyway.
    */
-  async ensureUnmuted(page: Page): Promise<boolean> {
+  async microphoneLive(page: Page): Promise<boolean | null> {
     const muted = await this.micMuted(page, MIC_RECHECK_MS);
-    if (muted === null) return false;
-    if (!muted) return true;
+    return muted === null ? null : !muted;
+  }
+
+  /**
+   * Put the microphone in the requested state, mid-call, and report what it reads.
+   *
+   * Thinner than `ensureMicOn`: one reading, and a click only if that reading disagrees
+   * with the request. A `null` — the control not found — returns `null` without touching
+   * anything, because this runs against a live call and a selector that has rotted would
+   * otherwise become a clicker loose on Meet's control bar. The one-shot patience is
+   * short for the same reason.
+   *
+   * Only a confirmed read is reported. An unreadable one must not come back as the
+   * requested state — that is the reading a rotted selector gives, and it would silence
+   * the retry and the warning together.
+   */
+  async setMicrophone(page: Page, on: boolean): Promise<boolean | null> {
+    const muted = await this.micMuted(page, MIC_RECHECK_MS);
+    if (muted === null) return null;
+    const live = !muted;
+    if (live === on) return live;
 
     await this.dismissBlockingDialogs(page);
     try {
       await page.locator(MIC_TOGGLE_SELECTOR).first().click({ timeout: MIC_CLICK_TIMEOUT_MS });
     } catch {
-      // Still covered, or gone. Either way there is another poll along shortly.
-      return false;
+      // Still covered, or gone. Report the state read before the click, which disagrees
+      // with the request, so the caller reads a failure. Safe even if the click did land:
+      // the next call reads the new state and returns without clicking again.
+      return live;
     }
 
     await page.waitForTimeout(MIC_SETTLE_MS);
-    // Only a confirmed read counts. An unreadable one must not be reported as success
-    // — that is the reading a rotted selector gives, and it would silence the retry and
-    // the warning together.
-    return (await this.micMuted(page, MIC_RECHECK_MS)) === false;
+    return this.microphoneLive(page);
   }
 
   /**
