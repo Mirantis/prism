@@ -157,6 +157,18 @@ export interface MeetingStatus {
    */
   effectiveResponseMode: EffectiveMode | null;
   joinedAt: string | null;
+  /**
+   * Whether the room can hear the agent right now.
+   *
+   * `true` audible. `false` not audible — the platform's toggle is muted, or the browser
+   * never opened the capture device, which are two failures with one consequence. `null`
+   * when nothing could be read: that stays `null`, because an agent told its microphone is
+   * live on the strength of a reading nobody took spends the call talking to a room that
+   * hears nothing, which is the failure this field exists to report.
+   *
+   * Read on the participant poll and kept, so this answers from memory.
+   */
+  micLive: boolean | null;
   /** Present once the call is under way. */
   stats?: VoiceConversationStats;
 }
@@ -288,6 +300,36 @@ export class MeetingBotService {
    * because it decides whether the agent bothers speaking at all.
    */
   private micConfirmed = false;
+  /**
+   * The last microphone reading, reported as `MeetingStatus.micLive`.
+   *
+   * Separate from `micConfirmed`, which records what the join achieved and decides
+   * whether the poll re-asserts. This one tracks the control from tick to tick, so a mute
+   * that arrives mid-call shows up here without rewriting the history of the join.
+   */
+  private micLive: boolean | null = null;
+  /**
+   * Whether the agent wants to be heard.
+   *
+   * The poll needs to tell a mute the agent chose from one the call imposed, and only this
+   * says which: the reading is the same either way. It decides whether a muted reading is
+   * worth a notice.
+   */
+  private micDesired = true;
+  /**
+   * Whether the current mute has already been reported.
+   *
+   * One notice per transition, not one per poll. Held separately from `micLive` because an
+   * unreadable reading between two muted ones must not count as the mute ending.
+   */
+  private micMuteReported = false;
+  /**
+   * The microphone click currently in flight, if any; see `withMicClick`.
+   *
+   * Two callers can want the control at once — the poll's retry and the agent's own tool —
+   * and on a toggle two overlapping clicks undo each other.
+   */
+  private micClick: Promise<void> = Promise.resolve();
   /** Whether a participant poll is still running; see `checkParticipants`. */
   private pollInFlight = false;
   private speakerPollInFlight = false;
@@ -364,6 +406,7 @@ export class MeetingBotService {
       responseMode: this.responseMode,
       effectiveResponseMode: this.conversation?.responseMode ?? null,
       joinedAt: this.joinedAt ? new Date(this.joinedAt).toISOString() : null,
+      micLive: this.micLive,
       ...(this.conversation ? { stats: this.conversation.statistics } : {}),
     };
   }
@@ -715,6 +758,15 @@ export class MeetingBotService {
       this.micConfirmed = audible;
       this.conversation?.setAudible(audible);
 
+      // The first `micLive` reading, taken from the join rather than waited for. Both
+      // halves, exactly as `audible` above: a live toggle over a capture device Chromium
+      // never opened is a room that hears nothing, and reporting that as a live microphone
+      // is the failure this field is here to catch. `null` only where nothing was read at
+      // all — an unconfirmed join with no auto-mute is the provider failing to read the
+      // control. Reading the page again here would answer the same question ten seconds
+      // sooner than the poll and report `null` for the first tick of a healthy call.
+      this.micLive = audible ? true : outcome.micConfirmed || outcome.mutedOnEntry ? false : null;
+
       this.state = 'in_call';
       this.joinedAt = Date.now();
 
@@ -879,6 +931,80 @@ export class MeetingBotService {
   }
 
   /**
+   * Check the microphone on the poll: a click while the call is not audible, a read once
+   * it is.
+   *
+   * One or the other, never both. While the join's unmute has not succeeded and the agent
+   * still wants to be heard, the poll does what a human does when they see the mute icon and
+   * keeps clicking. Otherwise it only reads — so `meeting_status` answers from memory, a
+   * mute arriving mid-call is reported rather than fought, and a mute the agent chose is
+   * left alone. Undoing a mute is the agent's own call, through `set_microphone`.
+   */
+  private async checkMicrophone(epoch: number): Promise<void> {
+    if (this.micDesired && !this.micConfirmed) {
+      // Not while a chat send is typing: the retry sweeps dialogs and clicks the control bar
+      // on the same page — see `chatSendInFlight`. A skipped retry costs one poll interval; a
+      // swept-away composer costs the message.
+      if (!this.chatSendInFlight) await this.retryUnmute(epoch);
+      return;
+    }
+
+    const page = this.page;
+    const provider = this.provider;
+    if (!page || !provider?.microphoneLive) return;
+
+    let live: boolean | null;
+    try {
+      // Under the click lock as well, and for the write rather than the read: a read that
+      // starts before a click and lands after it would put the replaced state back.
+      live = await this.withMicClick(() => provider.microphoneLive!(page));
+    } catch (err) {
+      // A teardown can close the page mid-read. The next poll asks again if there is one.
+      logger.debug(`[Meeting] Could not read the microphone: ${String(err)}`);
+      return;
+    }
+    if (this.epoch !== epoch || this.state !== 'in_call') return;
+
+    this.applyMicReading(live);
+  }
+
+  /**
+   * Record a microphone reading, and say something when it stops matching what was asked
+   * for.
+   *
+   * Both directions, once each. The model is told in band because it is the party that
+   * cannot tell: it hears the room perfectly while the room hears nothing back, so without
+   * this it keeps answering into a dead microphone. Each transition also writes one log
+   * line, which is where an engineer reads why the agent went quiet.
+   *
+   * An unreadable control changes the reading and says nothing. It is not a mute — the
+   * evidence for one is missing, not present — and announcing it as a mute on every
+   * flicker of a scraped attribute would spend a notice on nothing. It still reaches the
+   * agent as `micLive: null` on `meeting_status`.
+   */
+  private applyMicReading(next: boolean | null): void {
+    this.micLive = next;
+
+    if (next === false && this.micDesired && !this.micMuteReported) {
+      this.micMuteReported = true;
+      logger.warn('[Meeting] The microphone was muted mid-call and nobody here asked for it');
+      this.conversation?.notify(
+        `Your microphone has just been muted — something in the call did that, not you, so ` +
+          `the participants cannot hear you now. Say nothing until it is back. If somebody ` +
+          `asked you to be quiet, stay muted. Otherwise call set_microphone with on: true, ` +
+          `and carry on if that works.`,
+      );
+      return;
+    }
+
+    if (next === true && this.micMuteReported) {
+      this.micMuteReported = false;
+      logger.info('[Meeting] The microphone is live again');
+      this.conversation?.notify('Your microphone is on again — the participants can hear you.');
+    }
+  }
+
+  /**
    * Try again to get the microphone live, on the poll that is already running.
    *
    * The analogue of a human noticing the mute icon and clicking it. Without this, one
@@ -895,14 +1021,24 @@ export class MeetingBotService {
 
     let live: boolean | null;
     try {
-      live = await provider.setMicrophone(page, true);
+      live = await this.withMicClick(() => provider.setMicrophone!(page, true));
     } catch (err) {
       // The page can go out from under this — a teardown closes it mid-click. Never a
       // reason to disturb a call, and the next poll will ask again if there is one.
       logger.debug(`[Meeting] Unmute retry failed: ${String(err)}`);
       return;
     }
-    if (!live || this.epoch !== epoch || this.state !== 'in_call') return;
+    if (this.epoch !== epoch || this.state !== 'in_call') return;
+    // The agent asked to be muted while this click was queued behind the lock. Its request
+    // is the newer one, so nothing below it applies: no recovery, and no greeting spoken
+    // into a microphone it has just closed.
+    if (!this.micDesired) return;
+    // The toggle is only half of it: the capture device below is still unproven, so the
+    // room cannot yet be said to hear us. `null` stays `null` — nobody read the control.
+    // The notices on this path are its own, so it does not go through `applyMicReading`:
+    // the admission note has already said the room cannot hear us.
+    this.micLive = live === null ? null : false;
+    if (!live) return;
 
     // Both halves, every time — not just the one the provider can see. The join decides
     // audibility from the meeting's toggle *and* the capture device, and those fail
@@ -923,6 +1059,7 @@ export class MeetingBotService {
         `${provider.displayName} call now`,
     );
     this.micConfirmed = true;
+    this.micLive = true;
     this.conversation?.setAudible(true);
     this.greetTheRoom(provider.displayName);
   }
@@ -980,14 +1117,11 @@ export class MeetingBotService {
     }
   }
 
-  /** One poll: get the microphone live if it isn't, then read the room. */
+  /** One poll: check the microphone, then read the room. */
   private async pollOnce(): Promise<void> {
     // The microphone first, because it is the more urgent of the two: an agent nobody
-    // can hear is not really taking part. Skipped while a chat send is typing, since the
-    // retry sweeps dialogs and clicks the control bar on the same page — see
-    // `chatSendInFlight`. A skipped retry costs one poll interval; a swept-away composer
-    // costs the message.
-    if (!this.micConfirmed && !this.chatSendInFlight) await this.retryUnmute(this.epoch);
+    // can hear is not really taking part.
+    await this.checkMicrophone(this.epoch);
     if (this.state !== 'in_call' || !this.page || !this.provider) return;
 
     // Then the participants panel. Same shape as the unmute retry and for the same reason:
@@ -1067,6 +1201,120 @@ export class MeetingBotService {
       return;
     }
     this.emptyReadings = 0;
+  }
+
+  /**
+   * Mute or unmute on request. Safe when nothing is running.
+   *
+   * The agent's own control over whether it can be heard. Every outcome is reported, never
+   * thrown. Not in a call, no such control on this platform, and a control nobody could read
+   * are all answers the model can act on mid-turn in a live room.
+   *
+   * `micDesired` is set before the first await, so the poll can tell a mute the agent chose
+   * from one the call imposed even while the click is still going out.
+   */
+  async setMicrophone(on: boolean): Promise<{ success: boolean; message: string }> {
+    if (this.state !== 'in_call') {
+      return {
+        success: false,
+        message:
+          this.state === 'idle'
+            ? 'You are not in a call, so there is no microphone to turn on or off.'
+            : `You are ${this.state === 'leaving' ? 'leaving' : 'still joining'} the call, so ` +
+              'the microphone is not yours to set yet.',
+      };
+    }
+
+    const page = this.page;
+    const provider = this.provider;
+    if (!page || !provider?.setMicrophone) {
+      return {
+        success: false,
+        message: `I cannot control the microphone on ${provider?.displayName ?? 'this platform'}.`,
+      };
+    }
+
+    // Before the await, so a poll that fires during the click already knows this mute was
+    // asked for and does not report it as one the call imposed.
+    this.micDesired = on;
+    // A mute the agent chose is not news to tell it about, and an earlier involuntary mute
+    // it is now choosing to keep is not either.
+    this.micMuteReported = false;
+
+    const epoch = this.epoch;
+    let live: boolean | null;
+    try {
+      live = await this.withMicClick(() => provider.setMicrophone!(page, on));
+    } catch (err) {
+      logger.debug(`[Meeting] Could not set the microphone: ${String(err)}`);
+      return { success: false, message: 'I could not reach the microphone control.' };
+    }
+    if (this.epoch !== epoch || this.state !== 'in_call') {
+      return { success: false, message: 'The call ended before that took effect.' };
+    }
+
+    if (live === null) {
+      this.micLive = null;
+      return {
+        success: false,
+        message:
+          'I could not read the microphone control back, so I cannot say what state it is ' +
+          'in. Check meeting_status before you speak.',
+      };
+    }
+
+    // Muting settles audibility on its own: a covered toggle means the room hears nothing
+    // whatever the capture device is doing. Unmuting is half the answer, so a call whose
+    // device never opened stays inaudible here and waits for the poll's retry to prove it.
+    this.micLive = live && this.micConfirmed;
+    if (live !== on) {
+      return {
+        success: false,
+        message: on
+          ? 'I clicked unmute and the microphone still reads muted.'
+          : 'I clicked mute and the microphone still reads live.',
+      };
+    }
+
+    if (on && !this.micConfirmed) {
+      // The toggle is open over an audio device nothing has read on this call. Saying the
+      // room can hear you is the one claim the runtime cannot make here, so it reports what
+      // it did instead. The poll's retry reads the device and says so when it works.
+      return {
+        success: true,
+        message:
+          'Your microphone is uncovered at the platform, but nothing has yet carried your ' +
+          'voice on this call. I keep checking, and I tell you when the room can hear you.',
+      };
+    }
+
+    return {
+      success: true,
+      message: on
+        ? 'Your microphone is on — the participants can hear you.'
+        : 'Your microphone is off — the participants cannot hear you until you turn it on.',
+    };
+  }
+
+  /**
+   * Run a microphone click with no other click in flight.
+   *
+   * The control is a toggle, so one overlapping click switches on what the other switches
+   * off. A second caller waits, then reads for itself, so the provider sees the state the
+   * first click left and "the state already matches, so click nothing" holds.
+   */
+  private async withMicClick<T>(work: () => Promise<T>): Promise<T> {
+    const previous = this.micClick;
+    let release = () => {};
+    this.micClick = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
+    }
   }
 
   /** Leave on request. Safe when nothing is running. */
@@ -1402,6 +1650,12 @@ export class MeetingBotService {
     // "the room can hear me" the same way this one did, and inheriting a `true` would
     // skip the retry for a meeting that needed it.
     this.micConfirmed = false;
+    // Nothing has been read yet, nobody has been told anything, and the next call wants to
+    // be heard — a mute one agent chose is not a standing instruction for the next call.
+    this.micLive = null;
+    this.micDesired = true;
+    this.micMuteReported = false;
+    this.micClick = Promise.resolve();
     // A poll still in flight belongs to the call being torn down; its own epoch check
     // stops it acting, but leaving this set would deadlock the next call's polling.
     this.pollInFlight = false;
