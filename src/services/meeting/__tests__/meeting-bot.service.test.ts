@@ -928,6 +928,29 @@ describe('the microphone the agent can set', () => {
     expect(service.status().micLive).toBe(false);
   });
 
+  it('does not let the poll call a call audible on the toggle alone either', async () => {
+    // The poll reads the toggle rather than clicking it once the agent has asked to be muted,
+    // and a mute click that did not take leaves that toggle reading live. Recording the
+    // reading as it comes would report a room that hears nothing as one that can hear.
+    vi.useFakeTimers();
+    try {
+      audioWaitForMicCapture.mockResolvedValue(false);
+      providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+
+      providerSetMicrophone.mockResolvedValue(true);
+      await service.setMicrophone(false);
+      providerMicrophoneLive.mockResolvedValue(true);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(providerMicrophoneLive).toHaveBeenCalled();
+      expect(service.status().micLive).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('stops the unmute retry once the agent has asked to be muted', async () => {
     // The retry exists for a mute nobody asked for. A call the agent muted on purpose is
     // not that, and clicking it open again would be the runtime overruling the agent every

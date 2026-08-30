@@ -983,9 +983,13 @@ export class MeetingBotService {
    * evidence for one is missing, not present — and announcing it as a mute on every
    * flicker of a scraped attribute would spend a notice on nothing. It still reaches the
    * agent as `micLive: null` on `meeting_status`.
+   *
+   * The reading is the platform's toggle, and `micLive` is audibility, so a live toggle over
+   * a capture device nothing has proved on this call is recorded as `false`. The notices below
+   * stay on the toggle reading: they are about a mute somebody in the call made or undid.
    */
   private applyMicReading(next: boolean | null): void {
-    this.micLive = next;
+    this.micLive = next === true ? this.micConfirmed : next;
 
     if (next === false && this.micDesired && !this.micMuteReported) {
       this.micMuteReported = true;
