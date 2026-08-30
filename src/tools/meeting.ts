@@ -1,7 +1,8 @@
 /**
- * Tools for joining and leaving live voice meetings.
+ * Tools for a live voice meeting: joining it, leaving it, the agent's own microphone, and
+ * what is happening in the room.
  *
- * All three are platform-agnostic. The join tool was `join_meeting` first, on the
+ * All of them are platform-agnostic. The join tool was `join_meeting` first, on the
  * reasoning that the name is the model's only signal of which platforms work — but
  * the platform is already decided by the URL (`findProvider` matches on the host),
  * and the alternative scales badly: a per-platform *leave* would mean
@@ -34,9 +35,10 @@ import { logger } from '../logger';
  * heartbeat, a cron tick or a subagent dialling into a live call with people in it — or
  * hanging up on one — is never what the operator asked for.
  *
- * The other three read the call or post one line into it, so every mode keeps them.
- * Asking "am I in a call?" costs nothing, and a scheduled run that reports back into the
- * room is why the send is reachable outside a call in the first place.
+ * The other four read the call, set the agent's own microphone, or post one line into it,
+ * so every mode keeps them. Asking "am I in a call?" costs nothing, a microphone with no
+ * call answers that it has none, and a scheduled run that reports back into the room is
+ * why the send is reachable outside a call in the first place.
  */
 export const MEETING_MEMBERSHIP_TOOL_NAMES = ['join_meeting', 'leave_meeting'] as const;
 
@@ -144,6 +146,22 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
       },
     }),
 
+    set_microphone: tool({
+      description:
+        'Turn your own microphone on or off in the call you are in. Off means the ' +
+        'participants cannot hear you at all; on uncovers it at the platform, and the reply ' +
+        'says whether the room can actually hear you. Use it when somebody asks you to mute, ' +
+        'and to turn yourself back on afterwards — you stay muted until you do. It reports ' +
+        'the state it read back, so a reply saying the microphone still reads muted means the ' +
+        'click did not take and nobody is hearing you.',
+      inputSchema: z.object({
+        on: z
+          .boolean()
+          .describe('true turns the microphone on, false turns it off.'),
+      }),
+      execute: async ({ on }) => meetingBotService.setMicrophone(on),
+    }),
+
     meeting_speaker: tool({
       description:
         'Find out who is speaking in the call, and who said the thing you are answering. ' +
@@ -181,8 +199,11 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
     meeting_status: tool({
       description:
         'Check whether you are in a call and how it is going, whichever platform it is on: ' +
-        'state, which platform, how long, how many times you have spoken or used a tool, and ' +
-        'whether you are currently answering everything or only when addressed.',
+        'state, which platform, how long, how many times you have spoken or used a tool, ' +
+        'whether you are currently answering everything or only when addressed, and whether ' +
+        'the room can hear you. `micLive` is true when it can, false when it cannot, and ' +
+        'null when the runtime could not read your microphone at all — worth checking ' +
+        'before you take silence from the room to mean nobody is there.',
       inputSchema: z.object({}),
       execute: async () => {
         const status = meetingBotService.status();

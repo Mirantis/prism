@@ -61,6 +61,7 @@ describe('getMeetingTools', () => {
     expect(Object.keys(getMeetingTools(input))).toEqual([
       'join_meeting',
       'leave_meeting',
+      'set_microphone',
       'meeting_speaker',
       'send_meeting_chat',
       'meeting_status',
@@ -278,7 +279,7 @@ describe('meeting tool mode', () => {
     'shell_exec', 'shell_write_file', 'claude_code', 'shell_spawn',
     'schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task',
     'create_goal', 'get_goal', 'share_file', 'skill',
-    'leave_meeting', 'join_meeting', 'meeting_status', 'meeting_speaker',
+    'leave_meeting', 'join_meeting', 'set_microphone', 'meeting_status', 'meeting_speaker',
     'send_meeting_chat',
     'rename_self', 'update_soul', 'update_memory', 'update_user_profile',
     'update_heartbeat_config', 'update_settings', 'update_vision', 'clear_bootstrap',
@@ -335,6 +336,7 @@ describe('meeting tool mode', () => {
           join_meeting: stub(),
           leave_meeting: stub(),
           meeting_speaker: stub(),
+          set_microphone: stub(),
           meeting_status: stub(),
           send_meeting_chat: stub(),
           memory_search: stub(),
@@ -342,7 +344,13 @@ describe('meeting tool mode', () => {
         mode,
       );
       expect(Object.keys(filtered).sort()).toEqual(
-        ['meeting_speaker', 'meeting_status', 'memory_search', 'send_meeting_chat'].sort(),
+        [
+          'meeting_speaker',
+          'meeting_status',
+          'memory_search',
+          'send_meeting_chat',
+          'set_microphone',
+        ].sort(),
       );
     }
   });
