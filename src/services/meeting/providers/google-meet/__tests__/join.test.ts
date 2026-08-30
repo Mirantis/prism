@@ -1287,3 +1287,100 @@ describe('the chat panel', () => {
     expect(harness.state.chatOpen).toBe(false);
   });
 });
+
+/**
+ * Reading and setting the microphone mid-call, which is a different job from the join.
+ *
+ * The join gets the microphone live once, with two attempts and a long deadline. These
+ * two run on a call that is already up: one reading, one click at most, and an answer
+ * that says "I could not read it" rather than guessing.
+ */
+describe('mid-call microphone control', () => {
+  it('reads the toggle without touching it', async () => {
+    const live = fakePage({ mic: 'on' });
+    expect(await provider.microphoneLive(live.page)).toBe(true);
+    expect(live.clicks).toEqual([]);
+
+    const muted = fakePage({ mic: 'off' });
+    expect(await provider.microphoneLive(muted.page)).toBe(false);
+    expect(muted.clicks).toEqual([]);
+  });
+
+  it('answers null for a toggle it cannot find, rather than the convenient value', async () => {
+    // The reading a rotted selector gives. Reported as live it would look like a healthy
+    // call; reported as muted it would arm a clicker on a control bar nobody can see.
+    const harness = fakePage({ mic: 'absent' });
+
+    expect(await provider.microphoneLive(harness.page)).toBeNull();
+    expect(await provider.setMicrophone(harness.page, true)).toBeNull();
+    expect(harness.clicks).toEqual([]);
+  });
+
+  it('mutes a live microphone with one click', async () => {
+    const harness = fakePage({
+      mic: 'on',
+      onClick: (key, state) => {
+        if (key === MIC_TOGGLE_SELECTOR) state.mic = 'off';
+      },
+    });
+
+    expect(await provider.setMicrophone(harness.page, false)).toBe(false);
+    expect(harness.clicks).toEqual([MIC_TOGGLE_SELECTOR]);
+  });
+
+  it('unmutes a muted microphone with one click', async () => {
+    const harness = fakePage({
+      mic: 'off',
+      onClick: (key, state) => {
+        if (key === MIC_TOGGLE_SELECTOR) state.mic = 'on';
+      },
+    });
+
+    expect(await provider.setMicrophone(harness.page, true)).toBe(true);
+    expect(harness.clicks).toEqual([MIC_TOGGLE_SELECTOR]);
+  });
+
+  it('clicks nothing when the microphone already reads what was asked for', async () => {
+    // A toggle toggles, so an unconditional click is how "turn it on" turns it off.
+    const live = fakePage({ mic: 'on' });
+    expect(await provider.setMicrophone(live.page, true)).toBe(true);
+    expect(live.clicks).toEqual([]);
+
+    const muted = fakePage({ mic: 'off' });
+    expect(await provider.setMicrophone(muted.page, false)).toBe(false);
+    expect(muted.clicks).toEqual([]);
+  });
+
+  it('dismisses a dialog covering the controls before it clicks', async () => {
+    const harness = fakePage({
+      mic: 'off',
+      dialog: true,
+      visibleButtons: ['Got it'],
+      onClick: (key, state) => {
+        if (key === MIC_TOGGLE_SELECTOR) {
+          if (state.dialog) throw new Error('element intercepts pointer events');
+          state.mic = 'on';
+        }
+        if (key === 'Got it') state.dialog = false;
+      },
+    });
+
+    expect(await provider.setMicrophone(harness.page, true)).toBe(true);
+    expect(harness.clicks).toEqual(['Got it', MIC_TOGGLE_SELECTOR]);
+  });
+
+  it('reports the state it last read when the click is swallowed', async () => {
+    // One click and no more: this is not the join, and a second click on a control the
+    // scrim is eating is how the next poll mutes what this one unmuted.
+    const harness = fakePage({
+      mic: 'off',
+      dialog: true,
+      onClick: () => {
+        throw new Error('element intercepts pointer events');
+      },
+    });
+
+    expect(await provider.setMicrophone(harness.page, true)).toBe(false);
+    expect(harness.clicks).toEqual([MIC_TOGGLE_SELECTOR]);
+  });
+});

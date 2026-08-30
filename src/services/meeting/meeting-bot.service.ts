@@ -891,11 +891,11 @@ export class MeetingBotService {
     const page = this.page;
     const provider = this.provider;
     const audio = this.audio;
-    if (!page || !provider?.ensureUnmuted) return;
+    if (!page || !provider?.setMicrophone) return;
 
-    let live: boolean;
+    let live: boolean | null;
     try {
-      live = await provider.ensureUnmuted(page);
+      live = await provider.setMicrophone(page, true);
     } catch (err) {
       // The page can go out from under this — a teardown closes it mid-click. Never a
       // reason to disturb a call, and the next poll will ask again if there is one.

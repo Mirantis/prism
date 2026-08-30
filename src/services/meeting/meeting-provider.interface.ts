@@ -201,22 +201,35 @@ export interface MeetingProvider {
   join(page: Page, options: JoinOptions): Promise<JoinOutcome>;
 
   /**
-   * Try again to get the microphone live, mid-call. `true` when it is confirmed.
+   * Is the microphone live? `true` live, `false` muted, `null` unreadable.
    *
-   * The runtime calls this on its existing participant poll while `micConfirmed` is
-   * false, which is what a human does when they notice they are muted: click it, and
-   * click it again later. Without it, one unlucky moment during admission — a dialog
-   * that outlived the sweep, a control bar still painting — would cost the whole
-   * meeting, and the note the user got would be true for an hour rather than for a
-   * few seconds.
+   * A read, and only a read — this must never click anything. The runtime asks on its
+   * participant poll and keeps the answer, so `meeting_status` reports a call nobody can
+   * hear without reading the page mid-turn.
+   *
+   * `null` must not collapse into either answer. "Couldn't read it" is what a rotted
+   * selector produces, and reporting it as live is indistinguishable from a healthy
+   * call right up to the point where nobody can hear the agent.
+   *
+   * Optional: a platform whose microphone state cannot be read offers none of this.
+   */
+  microphoneLive?(page: Page): Promise<boolean | null>;
+
+  /**
+   * Turn the microphone on or off, and report the state that was last read.
+   *
+   * Same three values as `microphoneLive`, and for the same reason: the caller decides
+   * whether the request was met by comparing the reading with what it asked for, rather
+   * than trusting a boolean that cannot tell "it is off now" from "I could not tell".
    *
    * Must not click a control it cannot read. The toggle is a *toggle*, so acting on an
-   * uncertain reading is how a retry mutes a microphone that had just come on; "I
-   * don't know" has to mean "leave it alone and answer false".
+   * uncertain reading is how a retry mutes a microphone that had just come on; "I don't
+   * know" has to mean "leave it alone and answer `null`". A state that already matches
+   * the request is reported, not clicked.
    *
    * Optional: a platform that never mutes a joiner needs none of this.
    */
-  ensureUnmuted?(page: Page): Promise<boolean>;
+  setMicrophone?(page: Page, on: boolean): Promise<boolean | null>;
 
   /**
    * Post one short plain-text message into the call's own chat.
@@ -253,7 +266,7 @@ export interface MeetingProvider {
    * **Must not reject**, and must be safe to call repeatedly. The runtime calls it once
    * immediately after a successful join — before the agent has a voice, so before anything
    * could be attributed — and then keeps calling it on the participant poll for as long as
-   * no speaker has ever been read. That is the same shape as `ensureUnmuted`, and for the
+   * no speaker has ever been read. That is the same shape as `setMicrophone`, and for the
    * same reason: one unlucky moment while the control bar is still painting would otherwise
    * cost attribution for the whole meeting, silently.
    *
