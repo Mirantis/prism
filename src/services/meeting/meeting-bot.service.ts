@@ -818,18 +818,20 @@ export class MeetingBotService {
             `listening, and retrying the unmute`,
         );
         // Hedged deliberately, in both directions. It is stated as *unconfirmed* rather
-        // than muted because the readings behind it are a scraped attribute and a
-        // `pactl` line, either of which can be wrong — and the model is told not to fix
-        // it because it holds the shell tools, and PulseAudio is one plausible train of
-        // thought away: killing the daemon it would be "repairing" is the one action
-        // here that could actually end the call.
+        // than muted because the readings behind it are a scraped attribute and a `pactl`
+        // line, either of which can be wrong. The microphone control is named because the
+        // model has it, and the audio stack below the call is ruled out because it holds
+        // the shell tools too: PulseAudio is one plausible train of thought away, and
+        // killing the daemon it would be "repairing" is the one action here that could
+        // actually end the call.
         this.conversation?.notify(
           `You are in the ${provider.displayName} call, but I could not confirm your ` +
-            `microphone is on, so the participants may not hear you. Don't greet anyone ` +
-            `and don't try to repair this — it is not something your tools can reach, and ` +
-            `it is being retried for you. Keep listening, and act on what you hear. If ` +
-            `somebody responds to something you said, you are audible after all and can ` +
-            `carry on normally.`,
+            `microphone is on, so the participants may not hear you. Don't greet anyone. ` +
+            `I am retrying the unmute for you, and set_microphone with on: true is yours ` +
+            `to try as well. Go no further than that control — the audio devices under ` +
+            `the call are not something to repair from in here. Keep listening, and act ` +
+            `on what you hear. If somebody responds to something you said, you are ` +
+            `audible after all and can carry on normally.`,
         );
       }
 

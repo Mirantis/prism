@@ -495,10 +495,15 @@ describe('a call the room cannot hear the agent in', () => {
     expect(conversationSpeak).not.toHaveBeenCalled();
     expect(conversationNotify).not.toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
     expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/may not hear you/i));
-    // Told not to repair it, and that matters more than it looks: the meeting toolset
-    // includes the shell, PulseAudio is running in this container, and a model that
-    // decides to fix its own microphone can kill the daemon carrying the call.
-    expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/don't try to repair/i));
+    // Pointed at the one control it should touch, and stopped at the audio stack below it:
+    // the meeting toolset includes the shell, PulseAudio is running in this container, and a
+    // model that decides to fix its own microphone can kill the daemon carrying the call.
+    expect(conversationNotify).toHaveBeenCalledWith(
+      expect.stringMatching(/set_microphone with on: true is yours/i),
+    );
+    expect(conversationNotify).toHaveBeenCalledWith(
+      expect.stringMatching(/not something to repair from in here/i),
+    );
   });
 
   it('keeps trying the unmute, and greets the room once it lands', async () => {
