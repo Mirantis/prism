@@ -317,6 +317,10 @@ describe('App', () => {
     // between) mirrors real typing and ensures onSubmit sees the full value.
     stdin.write('/schedules');
     await flush();
+    // The popup is open, so the first Enter accepts "/schedules " into the
+    // composer (as Tab does) and the second one runs it.
+    stdin.write('\r');
+    await flush();
     stdin.write('\r');
     // Let the command's async run() resolve and React flush, then let the
     // panel's mount fetch (listCronTasks) settle into the ready frame.
@@ -327,6 +331,31 @@ describe('App', () => {
     // Panel header replaces the chat surface.
     expect(frame).toContain('Schedules');
     expect(apiStub.listCronTasks).toHaveBeenCalled();
+    unmount();
+  });
+
+  it('Enter accepts the highlighted command instead of sending or running it', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    /**
+     * Let Ink settle. Two sequential state updates (the resolved session thread,
+     * then a context frame) need more than one macrotask to reach a frame, so
+     * settle a few times rather than guessing one is enough.
+     */
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
+    stdin.write('/');
+    await flush();
+    stdin.write('\x1B[B'); // Down → second row, /schedules
+    await flush();
+    stdin.write('\r');
+    await flush();
+
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('/schedules '); // accepted into the composer
+    expect(frame).not.toContain('/copy'); // popup closed (it listed /copy)
+    expect(adapterStub.submitUserMessage).not.toHaveBeenCalled(); // nothing sent
+    expect(apiStub.listCronTasks).not.toHaveBeenCalled(); // nothing run
     unmount();
   });
 
@@ -366,6 +395,10 @@ describe('App', () => {
     flush: () => Promise<unknown>,
   ) => {
     stdin.write('/copy');
+    await flush();
+    // The popup is open, so the first Enter accepts "/copy " into the composer
+    // (as Tab does) and the second one runs it.
+    stdin.write('\r');
     await flush();
     stdin.write('\r');
     await flush();
