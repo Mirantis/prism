@@ -1,7 +1,8 @@
 /**
- * Slash-command UI: popup visibility on '/', and direct dispatch via typing
- * the full command name + Enter. None of these scenarios call the LLM — slash
- * commands run locally inside prism-cli.
+ * Slash-command UI: popup visibility on '/', and dispatch via typing the full
+ * command name and pressing Enter twice — the first Enter completes the
+ * highlighted row and closes the popup, the second runs the command. None of
+ * these scenarios call the LLM — slash commands run locally inside prism-cli.
  *
  * Tab autocomplete and arrow-key navigation are exercised manually via
  * `npm run dev --workspace=prism-cli` — under the test PTY they run into Ink
@@ -53,13 +54,15 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
   });
 
-  Scenario('Typing a command name and Enter dispatches it', ({ When, Then }) => {
-    When('I submit the /copy command', async () => {
-      // Direct dispatch — bypasses Tab. /copy with no prior message returns
-      // the "No message to copy yet." SYSTEM line.
+  Scenario('Enter completes the highlighted command and a second Enter dispatches it', ({ When, Then }) => {
+    When('I type /copy and press Enter twice', async () => {
+      // First Enter accepts "/copy" into the composer as "/copy " (the same as
+      // Tab), which closes the popup; only the second dispatches. Typing a full
+      // command name and pressing Enter once no longer runs it.
       session.send('/copy');
       await session.waitForFrame(/▸\s*\/copy/, 5_000);
       session.send(KEYS.ENTER);
+      await session.sendUntilFrame(KEYS.ENTER, /No message to copy yet/, { timeoutMs: 5_000 });
     });
     Then('I see the "no message to copy" notice', async () => {
       await session.waitForFrame(/No message to copy yet/, 5_000);

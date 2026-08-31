@@ -30,9 +30,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Type a command line and submit it (the popup hides on the first space). */
+/**
+ * Type a command line and submit it. The trailing space closes the slash popup,
+ * so one Enter runs the command — the Enter-completes path is covered by
+ * slash-commands.test.ts.
+ */
 async function dispatch(line: string): Promise<void> {
-  session.send(line);
+  session.send(line + ' ');
   await sleep(300);
   session.send(KEYS.ENTER);
 }
