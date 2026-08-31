@@ -22,9 +22,15 @@ import { logger } from '../logger';
 // ============================================================================
 
 /**
- * What triggered this message
+ * What triggered this message.
+ *
+ * Exported as a value as well as a type, so an incoming trigger can be validated
+ * against it. The Prisma enum cannot serve that: it still declares SYSTEM, which
+ * nothing produces.
  */
-export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK' | 'SYSTEM';
+export const MESSAGE_TRIGGERS = ['USER_INPUT', 'HEARTBEAT', 'CRON_TASK', 'GOAL', 'WEBHOOK'] as const;
+
+export type MessageTrigger = (typeof MESSAGE_TRIGGERS)[number];
 
 /**
  * Options for publishing a message
@@ -144,8 +150,7 @@ export class MessageDeliveryService {
     userId: string,
     content: string,
     // Autonomous triggers only — a user message always has a thread of its own.
-    // SYSTEM covers runtime status notes (e.g. a meeting the agent just joined).
-    triggeredBy: 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK' | 'SYSTEM',
+    triggeredBy: 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK',
     options?: PublishOptions
   ): Promise<ConversationMessage> {
     // Resolve (or create) the latest thread for this user

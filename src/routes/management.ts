@@ -102,7 +102,7 @@ import { Router, Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import fs from 'fs';
 import multer from 'multer';
-import { AgentType, MessageRole, MessageTrigger, Prisma, ThreadSource } from '@prisma/client';
+import { AgentType, MessageRole, Prisma, ThreadSource } from '@prisma/client';
 import { logger } from '../logger';
 import { config } from '../config';
 import { trackEvent } from '../lib/telemetry';
@@ -112,6 +112,7 @@ import { cronSchedulerService } from '../services/cron-scheduler.service';
 import { slackHeartbeatTriggerService } from '../services/slack-heartbeat-trigger.service';
 import { slackMappingService } from '../services/slack-mapping.service';
 import { conversationService, type MessageInput } from '../services/conversation.service';
+import { MESSAGE_TRIGGERS } from '../services/message-delivery.service';
 import { conversationEngineService, type ChatInput } from '../services/conversation-engine.service';
 import { skillCatalogService } from '../services/skill-catalog.service';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
@@ -1505,8 +1506,10 @@ router.post('/threads/:threadId/messages', async (req: Request<{ threadId: strin
       return;
     }
 
-    if (!Object.values(MessageTrigger).includes(triggeredBy)) {
-      res.status(400).json({ error: `Invalid triggeredBy: ${triggeredBy}. Must be one of: ${Object.values(MessageTrigger).join(', ')}` });
+    // Validated against the runtime's own list, not the Prisma enum: that enum keeps
+    // SYSTEM so history stays readable, and nothing produces a SYSTEM message any more.
+    if (!(MESSAGE_TRIGGERS as readonly string[]).includes(triggeredBy)) {
+      res.status(400).json({ error: `Invalid triggeredBy: ${triggeredBy}. Must be one of: ${MESSAGE_TRIGGERS.join(', ')}` });
       return;
     }
 
