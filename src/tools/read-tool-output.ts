@@ -191,7 +191,10 @@ function searchToolOutput(
 ): string | { success: false; error: string } {
   let re: RegExp;
   try {
-    re = new RegExp(pattern, 'g');
+    // `m` so `^` and `$` anchor per line, which is what a caller writing a grep
+    // pattern means by them. Without it an anchored pattern silently matches
+    // nothing and reads as "the data is not there".
+    re = new RegExp(pattern, 'gm');
   } catch {
     return { success: false, error: `"${pattern}" is not a valid regular expression.` };
   }
@@ -246,9 +249,8 @@ function findMatchOffsets(text: string, re: RegExp): number[] | null {
   const seen = new Set<number>();
   const started = Date.now();
 
-  for (let base = 0; base < text.length; base += MATCH_CHUNK_CHARS) {
+  for (const [base, chunk] of chunksOf(text)) {
     if (Date.now() - started > MATCH_DEADLINE_MS) return null;
-    const chunk = text.slice(base, base + MATCH_CHUNK_CHARS + MATCH_CHUNK_OVERLAP);
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(chunk)) !== null) {
@@ -263,6 +265,29 @@ function findMatchOffsets(text: string, re: RegExp): number[] | null {
     }
   }
   return offsets.sort((a, b) => a - b);
+}
+
+/**
+ * Windows to match against, as `[absoluteOffset, text]`.
+ *
+ * Cut at a newline whenever one falls inside the window, so `^` and `$` mean what
+ * they say: a window that began mid-line would let `^` match there, reporting a
+ * line start that is not one. A line longer than the window is split anyway — the
+ * bound on how much one match attempt sees is what keeps a backtracking pattern
+ * from taking the event loop down, and a payload stored as one long JSON line is
+ * the common case rather than the exception.
+ */
+function* chunksOf(text: string): Generator<[number, string]> {
+  let base = 0;
+  while (base < text.length) {
+    let end = Math.min(base + MATCH_CHUNK_CHARS, text.length);
+    if (end < text.length) {
+      const nl = text.lastIndexOf('\n', end);
+      if (nl > base) end = nl + 1;
+    }
+    yield [base, text.slice(base, Math.min(end + MATCH_CHUNK_OVERLAP, text.length))];
+    base = end;
+  }
 }
 
 /** 1-indexed line holding `offset`. 1 for a saved copy that has no newlines. */

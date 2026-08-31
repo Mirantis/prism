@@ -106,6 +106,38 @@ describe('read_tool_output', () => {
     expect(result.output).toContain('(1 match)');
   });
 
+  it('anchors ^ and $ to lines, the way a grep pattern means them', async () => {
+    // A production trace showed the agent searching a saved Jira payload with
+    // `^\\s+"id": "1[0-9]{6}",` and being told nothing matched, because the
+    // pattern was compiled without `m` and `^` only met the start of a scan
+    // window. A false "not there" is the worst answer this tool can give.
+    const { id } = await writeToolOutput('{\n  "id": "1499043",\n  "body": "x"\n}');
+
+    const result = await run({ id, pattern: '^\\s+"id": "1[0-9]{6}",' });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('1499043');
+    expect(result.output).toContain('(1 match)');
+  });
+
+  it('does not report a line start where a scan window merely began', async () => {
+    // Windows are cut at newlines so `^` cannot match mid-line at a boundary.
+    const line = 'z'.repeat(30_000);
+    const { id } = await writeToolOutput(`${line}\nSTART-HERE tail`);
+
+    const result = await run({ id, pattern: '^START-HERE' });
+
+    expect(result.output).toContain('(1 match)');
+  });
+
+  it('finds a match anchored to the end of a line', async () => {
+    const { id } = await writeToolOutput('alpha\nbeta ENDS\ngamma');
+
+    const result = await run({ id, pattern: 'ENDS$' });
+
+    expect(result.output).toContain('(1 match)');
+  });
+
   it('says so plainly when nothing matches, instead of dumping the output', async () => {
     const { id } = await writeToolOutput(lines(500));
 
