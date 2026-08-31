@@ -403,13 +403,13 @@ const openaiRealtimeReasoningEffort: RealtimeReasoningEffort | null =
     : REALTIME_REASONING_EFFORTS.includes(rawRealtimeReasoningEffort as RealtimeReasoningEffort)
       ? (rawRealtimeReasoningEffort as RealtimeReasoningEffort)
       : 'high';
-// Transcriber feeding the addressed gate (billed per audio minute, on for every
-// call). `gpt-live-transcribe` streams as the sentence unfolds *and* accepts
-// `keywords`, which is what lets the agent's own name be seeded into the decoder
-// — the one word the transcript exists to find, and the one a speech model is
-// most likely to drop. Only it and `gpt-transcribe` take keywords at all, and
-// only it streams. Override at your own risk: a model without `keywords`
-// silently ignores the name and the gate goes deaf to whoever it garbles.
+// Transcriber that exists only so a call can be read back in the log. Nothing
+// decides anything from these words — the addressed gate judges the audio — so it
+// is requested only when `MEETING_TRANSCRIPT_LOGGING` is `full`, and it bills per
+// audio minute. `gpt-live-transcribe` is the one model that both streams and takes
+// `keywords`, which seeds the agent's own name and the room's roster into the
+// decoder — names are the words a speech model drops most. A model without keywords
+// still works, but it garbles the names in the log.
 const openaiTranscriptionModel =
   process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-live-transcribe';
 
