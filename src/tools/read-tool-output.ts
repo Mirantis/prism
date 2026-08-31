@@ -35,14 +35,20 @@ export const READ_TOOL_OUTPUT_NAME = 'read_tool_output';
 const SEQUENTIAL_READ_LIMIT = 200;
 
 /**
- * How much of one line is matched against. See the note at the match loop: this
- * bounds the worst case of a backtracking pattern, it is not a display limit.
+ * How much text one match attempt sees, and how much the next window re-reads.
+ * See `findMatchOffsets`: this bounds a backtracking pattern's worst case, it is
+ * not a display limit.
  */
-const MAX_MATCH_LINE_CHARS = 10_000;
+const MATCH_CHUNK_CHARS = 20_000;
+const MATCH_CHUNK_OVERLAP = 1_000;
+/** Whole-scan budget, for a pattern that is slow on every window rather than one. */
+const MATCH_DEADLINE_MS = 2_000;
 
-/** Matches shown per search, and lines of context around each. */
+/** Matches shown per search, and how much surrounds each. */
 const MAX_MATCHES = 50;
 const DEFAULT_CONTEXT_LINES = 2;
+/** One "line" of context, for a saved copy that has no lines. */
+const CONTEXT_CHARS_PER_LINE = 120;
 
 /**
  * A page is clamped to this before it is returned.
@@ -168,7 +174,16 @@ function countRead(
   });
 }
 
-/** Grep-shaped: true line numbers, `--` between blocks, one footer. */
+/**
+ * Find matches and show each one in context.
+ *
+ * Character windows rather than whole lines, because a saved copy often has no
+ * lines at all: any tool that returns an object — which is most of them, and every
+ * one that drove this feature — is stored as one JSON string with its newlines
+ * escaped, so a 500,000-char result is a single line. Line-based grep finds nothing
+ * useful there. A window works on both shapes, and the line number is still
+ * reported when the text genuinely has lines.
+ */
 function searchToolOutput(
   text: string,
   pattern: string,
@@ -176,45 +191,85 @@ function searchToolOutput(
 ): string | { success: false; error: string } {
   let re: RegExp;
   try {
-    re = new RegExp(pattern);
+    re = new RegExp(pattern, 'g');
   } catch {
     return { success: false, error: `"${pattern}" is not a valid regular expression.` };
   }
 
-  const lines = text.split('\n');
-  const hits: number[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    // Matched against a bounded slice. The pattern comes from the model and the
-    // text from a third party, and a saved output can be 10 MiB on a single line —
-    // a pattern that backtracks catastrophically would then block the event loop,
-    // which in a call is silence and everywhere else a hung turn. Node has no
-    // regex timeout, so bounding the input is the available guard.
-    const candidate =
-      lines[i].length > MAX_MATCH_LINE_CHARS ? lines[i].slice(0, MAX_MATCH_LINE_CHARS) : lines[i];
-    if (re.test(candidate)) hits.push(i);
+  const offsets = findMatchOffsets(text, re);
+  if (offsets === null) {
+    return {
+      success: false,
+      error: `Searching for "${pattern}" took too long — narrow it (avoid nested quantifiers like (a+)+).`,
+    };
   }
-  if (hits.length === 0) {
-    return `No line matches /${pattern}/ in this saved output (${lines.length} lines).`;
+  if (offsets.length === 0) {
+    return `Nothing matches /${pattern}/ in this saved output (${text.length} chars).`;
   }
 
-  const shown = hits.slice(0, MAX_MATCHES);
+  // `context` is in lines when the text has them, and scaled to a character window
+  // when it does not, so the same argument means roughly the same amount of
+  // surrounding material either way.
+  const window = Math.max(contextLines, 1) * CONTEXT_CHARS_PER_LINE;
+  const shown = offsets.slice(0, MAX_MATCHES);
   const blocks: string[] = [];
   let lastEnd = -1;
-  for (const hit of shown) {
-    const from = Math.max(0, hit - contextLines);
-    const to = Math.min(lines.length - 1, hit + contextLines);
-    if (from > lastEnd + 1 && lastEnd !== -1) blocks.push('--');
-    for (let i = Math.max(from, lastEnd + 1); i <= to; i++) {
-      blocks.push(`${i + 1}: ${lines[i]}`);
+  for (const at of shown) {
+    const from = Math.max(0, at - window);
+    const to = Math.min(text.length, at + window);
+    if (from <= lastEnd) {
+      // Overlapping windows: extend the previous block rather than repeat material.
+      blocks[blocks.length - 1] += text.slice(Math.max(lastEnd, from), to);
+    } else {
+      blocks.push(`[char ${at}, line ${lineAt(text, at)}]\n${text.slice(from, to)}`);
     }
-    lastEnd = Math.max(lastEnd, to);
+    lastEnd = to;
   }
 
   const footer =
-    hits.length > shown.length
-      ? `\n(${hits.length} matching lines, showing the first ${shown.length}; refine the pattern to narrow)`
-      : `\n(${hits.length} matching line${hits.length === 1 ? '' : 's'} of ${lines.length})`;
-  return blocks.join('\n') + footer;
+    offsets.length > shown.length
+      ? `\n\n(${offsets.length} matches, showing the first ${shown.length}; refine the pattern to narrow)`
+      : `\n\n(${offsets.length} match${offsets.length === 1 ? '' : 'es'})`;
+  return blocks.join('\n--\n') + footer;
+}
+
+/**
+ * Character offsets of every match, or `null` when the scan was abandoned.
+ *
+ * Scanned in overlapping windows. The pattern comes from the model and the text
+ * from a third party, and Node cannot interrupt a regex — so the guard has to be
+ * on how much text any single match attempt sees. The overlap is what keeps a match
+ * that straddles a window boundary from being missed.
+ */
+function findMatchOffsets(text: string, re: RegExp): number[] | null {
+  const offsets: number[] = [];
+  const seen = new Set<number>();
+  const started = Date.now();
+
+  for (let base = 0; base < text.length; base += MATCH_CHUNK_CHARS) {
+    if (Date.now() - started > MATCH_DEADLINE_MS) return null;
+    const chunk = text.slice(base, base + MATCH_CHUNK_CHARS + MATCH_CHUNK_OVERLAP);
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(chunk)) !== null) {
+      const at = base + m.index;
+      if (!seen.has(at)) {
+        seen.add(at);
+        offsets.push(at);
+      }
+      // A zero-width match would spin forever on the same index.
+      if (m.index === re.lastIndex) re.lastIndex++;
+      if (offsets.length >= MAX_MATCHES * 4) return offsets.sort((a, b) => a - b);
+    }
+  }
+  return offsets.sort((a, b) => a - b);
+}
+
+/** 1-indexed line holding `offset`. 1 for a saved copy that has no newlines. */
+function lineAt(text: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset; i++) if (text.charCodeAt(i) === 10) line++;
+  return line;
 }
 
 /**

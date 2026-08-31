@@ -5,14 +5,12 @@ Feature: A tool result too large to show whole is saved and searchable
 
   Scenario: The agent searches the part of a result it was never shown
     Given the agent's workspace holds a file too large to return whole
-    When I ask the agent to read that file with the shell
+    When I ask the agent to read that file
     Then the stored tool result is the capped view, not the raw payload
     And the whole output is saved on disk
     And the part it was not shown is absent from what it read
     When I ask the agent what the marker line says
-    Then it searches the saved output rather than re-reading it whole
+    Then it searches the saved output rather than reading it through
     And it answers with the marker text
-
-  Scenario: A saved result is not re-sent on every later turn
-    When I ask the agent an unrelated question
+    When I ask an unrelated question in the same conversation
     Then the conversation's context stays far below the size of the raw result

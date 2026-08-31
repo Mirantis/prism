@@ -243,7 +243,9 @@ reachable — including in a voice call. Saved copies are kept for **7 days**
 conversation they belong to has been compacted away.
 
 Searching is the intended way to use a saved copy, and the agent is told so in as
-many words. Reading one back page by page would put the omitted bulk straight back
+many words. It searches by text rather than by line, because most tool results are
+stored as one JSON string — so a search works the same whether the output was a log
+with lines or a single large payload without any. Reading one back page by page would put the omitted bulk straight back
 into the context the cap protects — and each page read is itself a tool result the
 conversation then carries. So expect the agent to grep a saved output for what it
 needs, or to re-run the original tool with narrower arguments, rather than to page

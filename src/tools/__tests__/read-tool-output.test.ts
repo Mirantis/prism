@@ -50,24 +50,60 @@ afterEach(async () => {
 describe('read_tool_output', () => {
   const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n');
 
-  it('finds a match and reports it with its true line number', async () => {
+  it('finds a match and reports where it is', async () => {
     const { id } = await writeToolOutput(`${lines(50)}\nneedle here\n${lines(50)}`);
 
     const result = await run({ id, pattern: 'needle' });
 
     expect(result.success).toBe(true);
-    expect(result.output).toContain('51: needle here');
-    expect(result.output).toContain('1 matching line of 101');
+    expect(result.output).toContain('needle here');
+    expect(result.output).toMatch(/\[char \d+, line 51\]/);
+    expect(result.output).toContain('(1 match)');
   });
 
-  it('gives context around each match', async () => {
-    const { id } = await writeToolOutput('a\nb\nneedle\nd\ne');
+  it('gives surrounding context with each match', async () => {
+    const { id } = await writeToolOutput('aaa\nbbb\nneedle\nddd\neee');
 
     const result = await run({ id, pattern: 'needle', context: 1 });
 
-    expect(result.output).toContain('2: b');
-    expect(result.output).toContain('4: d');
-    expect(result.output).not.toContain('1: a');
+    expect(result.output).toContain('bbb');
+    expect(result.output).toContain('ddd');
+  });
+
+  it('searches a saved copy that has no lines at all', async () => {
+    // The shape that matters: a tool returning an object is stored as one JSON
+    // string with its newlines escaped, so the whole result is a single line.
+    // Line-based grep finds nothing useful in that.
+    const oneLine = JSON.stringify({
+      content: `${'x'.repeat(200_000)}NEEDLE-IN-JSON${'y'.repeat(200_000)}`,
+    });
+    const { id } = await writeToolOutput(oneLine);
+    expect(oneLine).not.toContain('\n');
+
+    const result = await run({ id, pattern: 'NEEDLE-IN-JSON' });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('NEEDLE-IN-JSON');
+    expect(result.output).toContain('(1 match)');
+  });
+
+  it('finds a match that straddles a scan-window boundary', async () => {
+    // The windows overlap for exactly this reason.
+    const at = 20_000 - 5;
+    const { id } = await writeToolOutput('z'.repeat(at) + 'BOUNDARY-NEEDLE' + 'z'.repeat(1000));
+
+    const result = await run({ id, pattern: 'BOUNDARY-NEEDLE' });
+
+    expect(result.output).toContain('BOUNDARY-NEEDLE');
+    expect(result.output).toContain('(1 match)');
+  });
+
+  it('reports each match once, even where windows overlap', async () => {
+    const { id } = await writeToolOutput('q'.repeat(19_500) + 'ONCE' + 'q'.repeat(2_000));
+
+    const result = await run({ id, pattern: 'ONCE' });
+
+    expect(result.output).toContain('(1 match)');
   });
 
   it('says so plainly when nothing matches, instead of dumping the output', async () => {
@@ -76,7 +112,7 @@ describe('read_tool_output', () => {
     const result = await run({ id, pattern: 'nothing-like-this' });
 
     expect(result.success).toBe(true);
-    expect(result.output).toContain('No line matches');
+    expect(result.output).toContain('Nothing matches');
     expect(result.output!.length).toBeLessThan(200);
   });
 
@@ -85,7 +121,7 @@ describe('read_tool_output', () => {
 
     const result = await run({ id, pattern: 'match', context: 0 });
 
-    expect(result.output).toContain('400 matching lines, showing the first 50');
+    expect(result.output).toContain('showing the first 50');
     expect(result.output).toContain('refine the pattern');
   });
 
