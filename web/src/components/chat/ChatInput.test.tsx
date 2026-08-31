@@ -189,12 +189,31 @@ describe('ChatInput slash-command popup', () => {
     expect(screen.queryByTestId('command-popup')).toBeInTheDocument();
   });
 
-  it('Enter submits (dispatch lives in the parent) even with the popup open', () => {
+  it('Enter accepts the highlighted command instead of sending it', () => {
+    // A fully typed command name plus one Enter no longer sends: while the popup
+    // is open Enter completes the highlighted row, as Tab does. A second Enter
+    // (popup closed by the trailing space) sends the line.
     const onSend = vi.fn();
     render(<Harness onSend={onSend} />);
     const ta = getTextarea();
-    fireEvent.change(ta, { target: { value: '/skills' } });
+    fireEvent.change(ta, { target: { value: '/' } });
+    fireEvent.keyDown(ta, { key: 'ArrowDown' }); // second row, /plugins
+    fireEvent.keyDown(ta, { key: 'Enter' });
+    expect(ta.value).toBe('/plugins ');
+    expect(screen.queryByTestId('command-popup')).toBeNull();
+    expect(onSend).not.toHaveBeenCalled();
+
     fireEvent.keyDown(ta, { key: 'Enter' });
     expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('Shift+Enter with the popup open inserts a newline instead of completing', () => {
+    const onSend = vi.fn();
+    render(<Harness onSend={onSend} />);
+    const ta = getTextarea();
+    fireEvent.change(ta, { target: { value: '/sk' } });
+    fireEvent.keyDown(ta, { key: 'Enter', shiftKey: true });
+    expect(ta.value).toBe('/sk');
+    expect(onSend).not.toHaveBeenCalled();
   });
 });

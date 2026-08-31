@@ -122,8 +122,9 @@ export default function ChatInput({
     onChange(next);
   };
 
-  // Tab / click completes the highlighted command to "<name> " — the trailing
-  // space ends slash mode so the popup closes and the user types arguments.
+  // Tab, Enter or a click completes the highlighted command to "<name> " — the
+  // trailing space ends slash mode so the popup closes and the user types
+  // arguments.
   const completeCommand = (cmd: SlashCommand) => {
     onChange(cmd.name + ' ');
     setDismissed(false);
@@ -143,7 +144,11 @@ export default function ChatInput({
         setCommandIndex((i) => (i + 1) % n);
         return;
       }
-      if (e.key === 'Tab') {
+      // Enter accepts the highlighted row, the same as Tab, and sends nothing. A
+      // second Enter — the popup now closed by the trailing space — sends the
+      // command line for the registry to resolve. Shift+Enter still inserts a
+      // newline.
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
         e.preventDefault();
         const chosen = filteredCommands[commandIndex];
         if (chosen) completeCommand(chosen);
@@ -154,8 +159,6 @@ export default function ChatInput({
         setDismissed(true);
         return;
       }
-      // Enter falls through to submit — like the TUI, Enter dispatches the typed
-      // command line (the registry resolves it) rather than the highlighted row.
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
