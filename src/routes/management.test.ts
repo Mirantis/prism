@@ -1761,6 +1761,19 @@ describe('Management Routes', () => {
       });
     });
 
+    it('refuses SYSTEM, which the database still declares but nothing produces', async () => {
+      // The Prisma enum keeps SYSTEM so a historical row stays readable. Validating
+      // against it would let a caller write a new one, which is why this route
+      // validates against the runtime's own list instead.
+      const res = await authedRequest(app)
+        .post('/agents/threads/thread-1/messages')
+        .send({ content: 'Hello', role: 'AGENT', triggeredBy: 'SYSTEM' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Invalid triggeredBy: SYSTEM');
+      expect(mockAddMessage).not.toHaveBeenCalled();
+    });
+
     it('returns 500 when addMessage throws', async () => {
       mockAddMessage.mockRejectedValue(new Error('DB error'));
 

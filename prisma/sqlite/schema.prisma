@@ -40,6 +40,9 @@ enum MessageTrigger {
   CRON_TASK
   GOAL
   WEBHOOK
+  // Retained for historical rows; no code produces it. Prisma throws
+  // "Value 'SYSTEM' not found in enum 'MessageTrigger'" when it reads a row whose
+  // value the schema does not declare, and live databases hold such rows.
   SYSTEM
 }
 

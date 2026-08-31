@@ -1,5 +1,5 @@
 export type MessageRole = 'USER' | 'AGENT' | 'SYSTEM';
-export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK' | 'SYSTEM';
+export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK';
 
 export interface ToolCallRecord {
   tool: string;
