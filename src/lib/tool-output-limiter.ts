@@ -282,6 +282,17 @@ export interface SpilledToolOutput {
   truncation: ToolOutputTruncation;
   /** The tool's untouched return, so no structured consumer loses anything. */
   raw: unknown;
+  /**
+   * What a serializer sees: the cut view and its sizes, without the original.
+   *
+   * The AI SDK records a tool's return into its telemetry span with
+   * `JSON.stringify`, so without this a trace shows this wrapper instead of a
+   * result — the reader looks for the truncation notice and finds an object
+   * whose keys mean nothing to them — and carries a second full copy of the
+   * payload beside the cut one. Every in-process consumer reads `.raw` as a
+   * property and is unaffected.
+   */
+  toJSON(): { preview: string; truncation: ToolOutputTruncation };
 }
 
 export function isSpilledToolOutput(output: unknown): output is SpilledToolOutput {
@@ -445,11 +456,13 @@ export function withToolOutputCapture(
                   : {}),
               });
               if (!rendered.truncation) return raw;
+              const truncation = rendered.truncation;
               return {
                 [SPILL_ENVELOPE]: true,
                 preview: rendered.text,
-                truncation: rendered.truncation,
+                truncation,
                 raw,
+                toJSON: () => ({ preview: rendered.text, truncation }),
               } satisfies SpilledToolOutput;
             },
           }
