@@ -357,6 +357,28 @@ describe('withToolOutputCapture', () => {
     expect(view.value).toContain('somethingElse');
   });
 
+  it('serializes as the cut view, without a second copy of the payload', async () => {
+    // The AI SDK records a tool's return into its telemetry span with
+    // JSON.stringify. Without a toJSON a trace shows this wrapper rather than a
+    // result — a reader looking for the truncation notice finds keys that mean
+    // nothing — and carries the whole original again beside the cut one.
+    const middle = 'ONLY-IN-THE-OMITTED-MIDDLE';
+    const raw = 'x'.repeat(20_000) + middle + 'y'.repeat(20_000);
+    const wrapped = withToolOutputCapture(toolWith(() => raw), { maxChars: 1000, spill: false });
+
+    const envelope = (await runTool(wrapped)) as { preview: string; raw: unknown };
+    const serialized = JSON.stringify(envelope);
+
+    // The cut removed the middle, so its reappearing means the original rode along.
+    expect(envelope.preview).not.toContain(middle);
+    expect(serialized).not.toContain(middle);
+    expect(Object.keys(JSON.parse(serialized)).sort()).toEqual(['preview', 'truncation']);
+    expect(serialized.length).toBeLessThan(envelope.preview.length * 1.5);
+    // …while the original is still there for the code that needs it.
+    expect(envelope.raw).toBe(raw);
+    expect(unwrapToolOutput(envelope)).toBe(raw);
+  });
+
   it('reports a cut once, with sizes and no content', async () => {
     const onSpill = vi.fn();
     const wrapped = withToolOutputCapture(toolWith(() => 'Z'.repeat(50_000)), {
