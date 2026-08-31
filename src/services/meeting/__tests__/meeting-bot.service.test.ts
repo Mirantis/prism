@@ -136,12 +136,34 @@ vi.mock('../../../prompts/context-builder', () => ({
   buildSystemPromptParts: (...a: unknown[]) => buildSystemPromptParts(...a),
 }));
 
+/**
+ * Kept mocked although the service no longer imports it.
+ *
+ * Nothing about a call is published to a conversation thread. These spies are how
+ * that is asserted: without them, a status note coming back would go unnoticed.
+ */
 const publish = vi.fn();
 const publishToLatestThread = vi.fn();
 vi.mock('../../message-delivery.service', () => ({
   messageDeliveryService: {
     publish: (...a: unknown[]) => publish(...a),
     publishToLatestThread: (...a: unknown[]) => publishToLatestThread(...a),
+  },
+}));
+
+/**
+ * The log is where a meeting outcome lands, so for several branches it is the whole
+ * observable behaviour and has to be asserted on directly.
+ */
+const loggerInfo = vi.fn();
+const loggerWarn = vi.fn();
+const loggerError = vi.fn();
+vi.mock('../../../logger', () => ({
+  logger: {
+    info: (...a: unknown[]) => loggerInfo(...a),
+    warn: (...a: unknown[]) => loggerWarn(...a),
+    error: (...a: unknown[]) => loggerError(...a),
+    debug: vi.fn(),
   },
 }));
 
@@ -232,6 +254,21 @@ afterEach(() => {
 /** Let the fire-and-forget join flow settle. */
 const settle = () => new Promise((r) => setTimeout(r, 10));
 
+/** Every line a logger mock was handed, as one searchable list. */
+const loggedLines = (...mocks: Array<ReturnType<typeof vi.fn>>): string[] =>
+  mocks.flatMap((mock) => mock.mock.calls.map((call) => call.map(String).join(' ')));
+
+/** Assert one of the logger mocks was handed a line matching `pattern`. */
+const expectLogged = (mock: ReturnType<typeof vi.fn>, pattern: RegExp): void => {
+  expect(loggedLines(mock).some((line) => pattern.test(line))).toBe(true);
+};
+
+/** Assert no thread anywhere was given a message about the call. */
+const expectNothingPublished = (): void => {
+  expect(publish).not.toHaveBeenCalled();
+  expect(publishToLatestThread).not.toHaveBeenCalled();
+};
+
 describe('a platform that will not take an unauthenticated bot', () => {
   it('says so instead of building a call to be refused', async () => {
     // Meet denies an automated anonymous guest before a host is prompted, so this
@@ -265,7 +302,10 @@ describe('joining', () => {
     await settle();
 
     expect(service.status().state).toBe('in_call');
-    expect(publish).toHaveBeenCalledWith('u1', 't1', expect.stringMatching(/I'm in the/), 'SYSTEM');
+    // Logged for an engineer, and told to nobody: the room hears the greeting, and the
+    // person who asked reads `status()` if they want to know.
+    expectLogged(loggerInfo, /Admitted to the Google Meet call, and audible to the room/);
+    expectNothingPublished();
   });
 
   it('introduces itself once admitted so the room is not joined in silence', async () => {
@@ -344,12 +384,10 @@ describe('a session the platform will not accept', () => {
 
     expect(providerJoin).toHaveBeenCalledTimes(2);
     expect(service.status().state).toBe('idle');
-    expect(publish).toHaveBeenCalledWith(
-      'u1',
-      't1',
-      expect.stringMatching(/signing in again didn't help/i),
-      'SYSTEM',
-    );
+    // The log names the session as the cause, which is what tells an engineer to look
+    // at the account rather than at the meeting link.
+    expectLogged(loggerWarn, /signing in again did not help.*treats this browser as a guest/s);
+    expectNothingPublished();
   });
 });
 
@@ -390,37 +428,28 @@ describe('a call the room cannot hear the agent in', () => {
     expect(service.status().state).toBe('in_call');
   });
 
-  it('tells the user, and says which half failed', async () => {
-    // The whole point of not leaving is that somebody still finds out. A note that just
-    // said "I'm in the call" would put this back where it started.
+  it('warns, and says which half failed', async () => {
+    // The whole point of not leaving is that the failure is still on the record. A line
+    // that just said "in the call" would put this back where it started.
     audioWaitForMicCapture.mockResolvedValue(false);
 
     await service.join(input);
     await settle();
 
-    // "Couldn't confirm", never "am muted". The readings behind this are a scraped DOM
-    // attribute and a `pactl` line, so a confident claim is one the user would act on
-    // and one that can be wrong.
-    expect(publish).toHaveBeenCalledWith(
-      'u1',
-      't1',
-      expect.stringMatching(/couldn't confirm my microphone/i),
-      'SYSTEM',
+    // Both readings, because the two send an engineer to different places: the
+    // platform's own control, or the container's audio devices. Here the platform
+    // reported the unmute and the capture device never opened.
+    expectLogged(
+      loggerWarn,
+      /not audibly \(mic control confirmed: true, capture device open: false\)/,
     );
-    // And which half, because the two send you to different places: the platform's UI, or
-    // the container's audio devices.
-    expect(publish).toHaveBeenCalledWith(
-      'u1',
-      't1',
-      expect.stringMatching(/never opened its capture device/i),
-      'SYSTEM',
-    );
+    expectNothingPublished();
   });
 
   it('names the platform through the provider rather than hard-coding it', async () => {
     // This service has no idea which platform it is on — that is the whole point of
-    // `MeetingProvider`. A Teams call explaining itself in terms of Meet's controls would
-    // be a small lie in the one message somebody reads when something is wrong.
+    // `MeetingProvider`. A Teams call logged in terms of Meet would be a small lie in
+    // the one line somebody reads when something is wrong.
     providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
 
     await service.join(input);
@@ -428,9 +457,8 @@ describe('a call the room cannot hear the agent in', () => {
 
     // "Google Meet" is what the mocked provider declares as its `displayName`, and the
     // service has no other source for it — so finding the full name here is what shows
-    // the sentence was built from the provider rather than typed in.
-    const notes = publish.mock.calls.map((c) => String(c[2]));
-    expect(notes.some((n) => n.includes("Google Meet's own microphone control"))).toBe(true);
+    // the line was built from the provider rather than typed in.
+    expectLogged(loggerWarn, /Admitted to the Google Meet call but not audibly/);
   });
 
   it('does not greet a room that cannot hear it, and tells the model why', async () => {
@@ -471,12 +499,13 @@ describe('a call the room cannot hear the agent in', () => {
       expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
       expect(conversationSpeak).toHaveBeenCalled();
       expect(conversationSetAudible).toHaveBeenCalledWith(true);
-      expect(publish).toHaveBeenCalledWith(
-        'u1',
-        't1',
-        expect.stringMatching(/microphone is working now/i),
-        'SYSTEM',
+      // The recovery is on the record too, and named through the provider like the
+      // failure that preceded it.
+      expectLogged(
+        loggerInfo,
+        /Microphone is live after a mid-call retry — audible in the Google Meet call now/,
       );
+      expectNothingPublished();
     } finally {
       vi.useRealTimers();
     }
@@ -501,12 +530,8 @@ describe('a call the room cannot hear the agent in', () => {
 
       expect(conversationSpeak).not.toHaveBeenCalled();
       expect(conversationSetAudible).not.toHaveBeenCalledWith(true);
-      expect(publish).not.toHaveBeenCalledWith(
-        'u1',
-        't1',
-        expect.stringMatching(/microphone is working now/i),
-        'SYSTEM',
-      );
+      // Nothing claimed a recovery, in the log or anywhere else.
+      expect(loggedLines(loggerInfo).some((l) => /Microphone is live/.test(l))).toBe(false);
       // And it kept asking, rather than settling into a call it cannot be heard in.
       expect(providerEnsureUnmuted.mock.calls.length).toBeGreaterThan(1);
     } finally {
@@ -652,10 +677,32 @@ describe('release of resources', () => {
     await service.join(input);
     await settle();
 
-    expect(publish).toHaveBeenCalledWith('u1', 't1', expect.stringMatching(/A host denied/), 'SYSTEM');
+    // The platform's own reason, and the step it got to, so the log says which half of
+    // the join to look at.
+    expectLogged(loggerWarn, /Denied entry to the Google Meet call.*A host denied/s);
+    expectNothingPublished();
     expect(browserStop).toHaveBeenCalled();
     expect(audioStop).toHaveBeenCalled();
     expect(conversationStop).toHaveBeenCalled();
+    expect(service.status().state).toBe('idle');
+  });
+
+  it('logs a join that broke as an error, not as a refusal', async () => {
+    // A denial is the platform working as designed; a failure is something for an
+    // engineer to fix. They land at different log levels so the second one is findable.
+    providerJoin.mockResolvedValue({
+      status: 'failed',
+      step: 'lobby',
+      reason: 'the join button never appeared',
+    });
+
+    await service.join(input);
+    await settle();
+
+    expectLogged(loggerError, /Joining the Google Meet call failed.*lobby.*join button/s);
+    expect(loggedLines(loggerWarn).some((l) => /Denied entry/.test(l))).toBe(false);
+    expectNothingPublished();
+    expect(browserStop).toHaveBeenCalled();
     expect(service.status().state).toBe('idle');
   });
 
@@ -715,7 +762,7 @@ describe('a lost Realtime session', () => {
     await settle();
   };
 
-  it('leaves the call and says why', async () => {
+  it('leaves the call and logs why', async () => {
     await service.join(input);
     await settle();
     expect(service.status().state).toBe('in_call');
@@ -724,12 +771,8 @@ describe('a lost Realtime session', () => {
 
     // Everything a participant needs is gone, so staying would leave a mute tile
     // in someone's meeting until the empty-room poll or the duration cap noticed.
-    expect(publish).toHaveBeenCalledWith(
-      'u1',
-      't1',
-      expect.stringMatching(/lost my voice connection.*connection reset/is),
-      'SYSTEM',
-    );
+    expectLogged(loggerWarn, /Lost the Realtime session mid-call.*connection reset/s);
+    expectNothingPublished();
     expect(providerLeave).toHaveBeenCalled();
     expect(browserStop).toHaveBeenCalled();
     expect(audioStop).toHaveBeenCalled();
@@ -752,14 +795,16 @@ describe('a lost Realtime session', () => {
     await service.join(input);
     await settle();
     await service.leave();
-    publish.mockClear();
+    loggerWarn.mockClear();
+    trackEvent.mockClear();
 
     // The real conversation sets `stopped` before closing the socket, so this
     // callback never fires for our own teardown. Belt and braces: even if it did,
-    // the epoch has moved on and the ended call must not be announced twice.
+    // the epoch has moved on and the ended call must not be reported twice.
     await dropSession();
 
-    expect(publish).not.toHaveBeenCalled();
+    expect(loggedLines(loggerWarn).some((l) => /Lost the Realtime session/.test(l))).toBe(false);
+    expect(trackEvent.mock.calls.filter((c) => c[0] === 'meeting ended')).toHaveLength(0);
   });
 
   it('does not tear down a later call', async () => {
@@ -770,45 +815,15 @@ describe('a lost Realtime session', () => {
 
     await service.join(input);
     await settle();
-    publish.mockClear();
+    loggerWarn.mockClear();
 
     firstCallSessionLost?.('code 1011');
     await settle();
 
     expect(service.status().state).toBe('in_call');
-    expect(publish).not.toHaveBeenCalled();
+    expect(loggedLines(loggerWarn).some((l) => /Lost the Realtime session/.test(l))).toBe(false);
   });
 
-  it('does not tear down a later call when the note it posts is slow', async () => {
-    // The dangerous version of the case above: the drop happens while the old call
-    // is still live, so the guard passes — and then posting the note takes long
-    // enough for the user to leave and rejoin underneath it. Teardown's own guard
-    // does not catch this (it only rejects a re-entry mid-teardown, and by then the
-    // service is back to idle), so the epoch has to be re-checked after the await.
-    await service.join(input);
-    await settle();
-
-    // Mocked only now: the admission note is published first and would otherwise
-    // consume this, leaving the race untested.
-    let releaseNote: () => void = () => {};
-    publish.mockImplementationOnce(
-      () => new Promise<void>((resolve) => { releaseNote = () => resolve(); }),
-    );
-
-    conversationOptions.onSessionLost?.('code 1011');
-    await settle();
-
-    // The note is still in flight. Meanwhile the call ends and another one starts.
-    await service.leave();
-    await service.join(input);
-    await settle();
-    expect(service.status().state).toBe('in_call');
-
-    releaseNote();
-    await settle();
-
-    expect(service.status().state).toBe('in_call');
-  });
 });
 
 describe('a lost audio pipeline', () => {
@@ -823,12 +838,8 @@ describe('a lost audio pipeline', () => {
     audioLostHandler?.('the capture process exited (code 1)');
     await settle();
 
-    expect(publish).toHaveBeenCalledWith(
-      'u1',
-      't1',
-      expect.stringMatching(/lost my audio.*capture process exited/is),
-      'SYSTEM',
-    );
+    expectLogged(loggerWarn, /Lost the audio pipeline in the Google Meet call.*capture process exited/s);
+    expectNothingPublished();
     expect(providerLeave).toHaveBeenCalled();
     expect(browserStop).toHaveBeenCalled();
     expect(service.status().state).toBe('idle');
@@ -964,13 +975,13 @@ describe('a late admission cannot resurrect a torn-down call', () => {
 
     await service.join(input);
     await service.leave();
-    publish.mockClear();
+    loggerError.mockClear();
 
     // Tearing down closes the page underneath the provider; the throw is expected.
     fail(new Error('Target page closed'));
     await settle();
 
-    expect(publish).not.toHaveBeenCalled();
+    expect(loggedLines(loggerError).some((l) => /Join flow threw/.test(l))).toBe(false);
     expect(service.status().state).toBe('idle');
   });
 });
@@ -1111,7 +1122,8 @@ describe('auto-leaving an empty meeting', () => {
 
     await vi.advanceTimersByTimeAsync(30_000);
     expect(service.status().state).toBe('idle');
-    expect(publish).toHaveBeenCalledWith('u1', 't1', expect.stringMatching(/everyone else left/i), 'SYSTEM');
+    expectLogged(loggerInfo, /Everyone else left the call/i);
+    expectNothingPublished();
   });
 
   it('stays in a call whose participant count cannot be read', async () => {
@@ -1149,7 +1161,8 @@ describe('auto-leaving an empty meeting', () => {
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 1000);
 
     expect(service.status().state).toBe('idle');
-    expect(publish).toHaveBeenCalledWith('u1', 't1', expect.stringMatching(/60-minute limit/), 'SYSTEM');
+    expectLogged(loggerInfo, /60-minute limit/);
+    expectNothingPublished();
   });
 });
 
@@ -1324,22 +1337,16 @@ describe('telemetry', () => {
   });
 });
 
-describe('status notes', () => {
-  it('falls back to the latest thread when the caller has none', async () => {
+describe('a caller with no thread', () => {
+  it('joins the call and logs the outcome like any other', async () => {
+    // `threadId` is optional — an autonomous run has none. It only reaches the
+    // meeting tool set, so the call itself must not depend on it.
     await service.join({ ...input, threadId: undefined });
     await settle();
 
-    expect(publishToLatestThread).toHaveBeenCalledWith('a1', 'u1', expect.any(String), 'SYSTEM');
-  });
-
-  it('keeps the call alive when a status note cannot be delivered', async () => {
-    publish.mockRejectedValue(new Error('thread gone'));
-
-    await service.join(input);
-    await settle();
-
-    // A note nobody could deliver must not end a working meeting.
     expect(service.status().state).toBe('in_call');
+    expectLogged(loggerInfo, /Admitted to the Google Meet call/);
+    expectNothingPublished();
   });
 });
 

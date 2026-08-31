@@ -40,7 +40,7 @@ export const MEETING_TOOL_NAMES = [
 export interface MeetingToolsInput {
   userId: string;
   agentId: string;
-  /** Where join progress is reported; the calling turn's thread. */
+  /** The calling turn's thread. */
   threadId?: string;
 }
 
@@ -83,8 +83,8 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
       description:
         'Join a video call as a live voice participant — you will speak and listen in real ' +
         'time. Google Meet links are supported today; the platform is taken from the URL. ' +
-        'Returns as soon as the request to join is in; a host must admit you, and progress ' +
-        'is reported in this conversation. Only one call at a time.',
+        'Returns as soon as the request to join is in; a host must admit you, so call ' +
+        'meeting_status to find out whether you got in. Only one call at a time.',
       inputSchema: z.object({
         url: z
           .string()
