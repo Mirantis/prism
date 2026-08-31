@@ -153,6 +153,10 @@ The agent joins as its own signed-in participant. That means:
 - **A host has to admit it.** The join tool returns as soon as the request is in —
   it does not wait, because a host might take minutes. You'll get "Requested to
   join… a host needs to admit me", and then a second note when it's actually in.
+  These notes, and the later ones (mic recovered, the call left because everyone
+  else did, the time cap), go back to the channel and thread you asked from. Ask
+  from Slack and they post in that Slack thread; ask from the web UI or the
+  terminal and they land in that conversation.
 - **Some meetings won't let it in at all.** A tenant can restrict a meeting to
   members of its own organization. The agent reports what Meet told it rather than
   retrying.

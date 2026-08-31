@@ -168,8 +168,10 @@ export function formatSlackMessage(
 ): { text: string; blocks: SlackBlock[] } {
   const blocks: SlackBlock[] = [];
 
-  // Add context block for triggered by info
-  if (triggeredBy && triggeredBy !== 'USER_INPUT') {
+  // Add context block for triggered by info. SYSTEM is excluded with USER_INPUT:
+  // a meeting-bot status note reads as the agent speaking to the user, so a
+  // "📬 SYSTEM" banner would label the agent's own words with false provenance.
+  if (triggeredBy && triggeredBy !== 'USER_INPUT' && triggeredBy !== 'SYSTEM') {
     const contextText = triggeredBy === 'HEARTBEAT'
       ? '💓 Heartbeat Alert'
       : triggeredBy === 'CRON_TASK'

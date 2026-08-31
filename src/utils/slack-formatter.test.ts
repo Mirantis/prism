@@ -84,6 +84,16 @@ describe('formatSlackMessage', () => {
       expect(result.blocks).toHaveLength(1);
       expect(result.blocks[0].type).toBe('markdown');
     });
+
+    it('does not add context block for SYSTEM', () => {
+      // A meeting-bot status note is the agent speaking to the user; a
+      // "📬 SYSTEM" banner would label the agent's own words with false
+      // provenance.
+      const result = formatSlackMessage('I am in the call now.', 'SYSTEM');
+      expect(result.blocks.some((b) => b.type === 'context')).toBe(false);
+      expect(result.blocks).toHaveLength(1);
+      expect(result.blocks[0].type).toBe('markdown');
+    });
   });
 
   // ---------------------------------------------------------------------------
