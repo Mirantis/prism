@@ -152,10 +152,11 @@ The agent joins as its own signed-in participant. That means:
 
 - **A host has to admit it.** The join tool returns as soon as the request is in —
   it does not wait, because a host might take minutes. You'll get "Requested to
-  join… a host needs to admit me", and then a second note when it's actually in.
+  join… a host needs to admit me". Ask the agent for its meeting status to find out
+  whether it got in.
 - **Some meetings won't let it in at all.** A tenant can restrict a meeting to
-  members of its own organization. The agent reports what Meet told it rather than
-  retrying.
+  members of its own organization. The agent gives up rather than retrying, and the
+  reason Meet gave is in the runtime log.
 - **A dead link looks like a guest prompt.** Meet offers a guest name field for a
   meeting that has ended, even to a signed-in visitor, and then refuses the join.
   If a join fails, check the meeting is still running with a host in it — that is
@@ -244,10 +245,9 @@ and offers to walk through it out loud, or spells the part that matters slowly.
 message, not a file, not a link, and not to the meeting's own chat panel. It is
 instructed never to offer, so if you want something as text, ask it again in a chat
 session afterwards. Nothing about the call is kept either: no transcript, no summary,
-and no record in your conversation history beyond a note that it joined and left. Ask
-it "what did we decide in the meeting?" afterwards and it won't know. Its own log says
-no more than that by default — see [Settings](#settings) if you need to turn the words
-on to diagnose something.
+and no record in your conversation history at all. Ask it "what did we decide in the
+meeting?" afterwards and it won't know. Its own log says no more than that by default —
+see [Settings](#settings) if you need to turn the words on to diagnose something.
 
 **It can't hear who is speaking, but it can look.** The meeting audio arrives as one
 mixed channel with no speaker labels, so nothing in what the agent hears says who said
@@ -430,11 +430,10 @@ The agent unmutes itself on the way in — the same click you would make — and
 checks two things: that Meet's own microphone control reads live, and that the browser
 really opened the virtual capture device.
 
-If it cannot confirm both, **it stays in the call and tells you.** You get a message in
-the conversation saying it may not be audible and which half failed, and it keeps
-trying to unmute itself, once every ten seconds, for as long as the call lasts. When
-that works it says so, and introduces itself to the room then — a greeting nobody could
-hear was never a greeting.
+If it cannot confirm both, **it stays in the call.** The runtime log records which half
+failed, the agent itself is told it may be inaudible, and it keeps trying to unmute
+itself, once every ten seconds, for as long as the call lasts. When that works it
+introduces itself to the room then — a greeting nobody could hear was never a greeting.
 
 It stays rather than leaving because the microphone is only half of what it is doing
 there. It hears the room through a different device entirely, so an agent that cannot
@@ -549,8 +548,8 @@ at all, which nothing later could undo.
 check that the meeting is actually sending audio to the browser (Meet occasionally
 needs the tab focused; the virtual display keeps it focused by default).
 
-**It left mid-call saying it lost its voice connection.** The Realtime socket dropped
-— a network blip, a revoked key, or OpenAI ending the session. It leaves rather than
+**It left mid-call and the log says it lost its voice connection.** The Realtime socket
+dropped — a network blip, a revoked key, or OpenAI ending the session. It leaves rather than
 sitting in the room unable to hear or speak, and it doesn't reconnect, because a fresh
 session would rejoin the conversation with none of its context. Ask it to join again.
 Recurring drops are worth checking against egress filtering on `api.openai.com`.
