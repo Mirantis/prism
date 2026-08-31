@@ -8,9 +8,9 @@
  *
  * The lifecycle is deliberately asymmetric. Joining is asynchronous — `join()`
  * returns as soon as the request is in, because a guest waits for a host to click
- * "Admit" and that can take minutes; the caller gets a state and the rest arrives
- * as notes in the conversation thread. Leaving is immediate and always safe to
- * call.
+ * "Admit" and that can take minutes; the caller gets a state, the model is told in
+ * band once the call starts, and every outcome goes to the log. Leaving is
+ * immediate and always safe to call.
  *
  * Everything that can leak — an X server, an audio daemon, a browser, a WebSocket —
  * is released through one `teardown()` path, used by the happy ending, every
@@ -21,7 +21,6 @@ import { logger } from '../../logger';
 import { config } from '../../config';
 import { trackEvent } from '../../lib/telemetry';
 import { contextService } from '../context.service';
-import { messageDeliveryService } from '../message-delivery.service';
 import { buildSystemPromptParts } from '../../prompts/context-builder';
 import { getMeetingInstructions } from '../../prompts/meeting-prompt';
 import { AudioStack } from './audio-stack';
@@ -170,7 +169,7 @@ export interface JoinMeetingInput {
   url: string;
   userId: string;
   agentId: string;
-  /** Where progress notes go. Falls back to the agent's latest thread. */
+  /** The thread the call was asked for from, passed on to the meeting tool set. */
   threadId?: string;
   /** How much the agent speaks up; `auto` follows the participant count. */
   responseMode?: ResponseMode;
@@ -368,10 +367,10 @@ export class MeetingBotService {
   /**
    * Bring up the stack and request to join.
    *
-   * Returns once the request is submitted (or has failed outright). Admission,
-   * denial and the end of the call are reported to the thread as they happen,
-   * because a guest can wait indefinitely for a host and the calling chat turn
-   * must not block on that.
+   * Returns once the request is submitted (or has failed outright), because a guest
+   * can wait indefinitely for a host and the calling chat turn must not block on
+   * that. Admission, denial and the end of the call are logged as they happen, and
+   * `status()` answers for them on request.
    */
   async join(input: JoinMeetingInput): Promise<{ state: MeetingState; message: string }> {
     if (this.state === 'leaving') {
@@ -514,7 +513,7 @@ export class MeetingBotService {
         state: this.state,
         message:
           `Requested to join the ${provider.displayName} call. ` +
-          `A host needs to admit me — I'll report back when I'm in.`,
+          `A host needs to admit me — ask me for my meeting status to find out whether I'm in.`,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -591,9 +590,10 @@ export class MeetingBotService {
         // rather than looping, and name the session as the cause.
         if (outcome.status === 'reauth_required') {
           this.failStep = 'lobby';
-          await this.notifyThread(
-            `I couldn't join the ${provider.displayName} call: signing in again didn't help — ` +
-              `the meeting is still treating me as a guest, and it refuses those automatically.`,
+          logger.warn(
+            `[Meeting] Could not join the ${provider.displayName} call: signing in again did not ` +
+              `help, and the meeting still treats this browser as a guest, which it refuses ` +
+              `automatically`,
           );
           await this.teardown('denied');
           return;
@@ -605,11 +605,17 @@ export class MeetingBotService {
         // the failing step rides the existing `meeting ended` event instead of adding
         // a second one that would have to be kept in step with it.
         this.failStep = outcome.step;
-        await this.notifyThread(
-          outcome.status === 'denied'
-            ? `I couldn't join the ${provider.displayName} call: ${outcome.reason}`
-            : `Joining the ${provider.displayName} call failed: ${outcome.reason}`,
-        );
+        if (outcome.status === 'denied') {
+          logger.warn(
+            `[Meeting] Denied entry to the ${provider.displayName} call at the ` +
+              `"${outcome.step}" step: ${outcome.reason}`,
+          );
+        } else {
+          logger.error(
+            `[Meeting] Joining the ${provider.displayName} call failed at the ` +
+              `"${outcome.step}" step: ${outcome.reason}`,
+          );
+        }
         await this.teardown(outcome.status === 'denied' ? 'denied' : 'error');
         return;
       }
@@ -675,15 +681,20 @@ export class MeetingBotService {
       });
 
       if (audible) {
+        logger.info(`[Meeting] Admitted to the ${provider.displayName} call, and audible to the room`);
         this.greetTheRoom(provider.displayName);
       } else {
         // No greeting, and the model is told why. Speaking here is worse than useless:
         // it spends Realtime tokens on audio nobody receives and leaves the model
         // believing it introduced itself. Said as a standing condition rather than a
         // one-off so it doesn't answer the next question into the void either.
+        //
+        // The warning names both readings, because they send an engineer to different
+        // places: the platform's own control, or the container's audio devices.
         logger.warn(
-          `[Meeting] In the call but not audibly (mic control confirmed: ${outcome.micConfirmed}, ` +
-            `capture device open: ${capturing}) — listening, and retrying the unmute`,
+          `[Meeting] Admitted to the ${provider.displayName} call but not audibly (mic ` +
+            `control confirmed: ${outcome.micConfirmed}, capture device open: ${capturing}) — ` +
+            `listening, and retrying the unmute`,
         );
         // Hedged deliberately, in both directions. It is stated as *unconfirmed* rather
         // than muted because the readings behind it are a scraped attribute and a
@@ -697,31 +708,17 @@ export class MeetingBotService {
             `and don't try to repair this — it is not something your tools can reach, and ` +
             `it is being retried for you. Keep listening, and act on what you hear. If ` +
             `somebody responds to something you said, you are audible after all and can ` +
-            `carry on normally. The person who sent you has been told.`,
+            `carry on normally.`,
         );
       }
 
-      await this.notifyThread(
-        audible
-          ? `I'm in the ${provider.displayName} call now.`
-          : `I'm in the ${provider.displayName} call, but I couldn't confirm my microphone is ` +
-              `on, so the room may not be hearing me. I can hear the meeting, so I'll stay, ` +
-              `follow it, and keep trying to unmute — tell me if you'd rather I left. ` +
-              // Named through the provider, not hard-coded: this service does not know
-              // which platform it is on, and a Teams call explaining itself in terms of
-              // Meet's controls would be a small lie in the one message somebody reads
-              // when something is wrong.
-              (outcome.micConfirmed
-                ? `(${provider.displayName} says I'm unmuted, but my browser never opened its capture device.)`
-                : `(${provider.displayName}'s own microphone control never read as live.)`),
-      );
       // Failing to read the room is not a reason to abandon a call already
       // joined, so this cannot be allowed to reach the catch below.
       await this.seedParticipantCount(epoch).catch((err) => {
         logger.warn({ err }, '[Meeting] Could not read the room on admission');
       });
 
-      // Both awaits above can outlive the call: a `leave()` or a shutdown in that
+      // The await above can outlive the call: a `leave()` or a shutdown in that
       // gap runs the whole teardown, timers included. Arming new ones now would
       // leave an interval nobody clears and — worse — a duration cap that fires an
       // hour later and hangs up on whatever call is running by then.
@@ -731,11 +728,7 @@ export class MeetingBotService {
       // A teardown mid-wait closes the page underneath the provider, so the throw
       // is expected there and belongs to a call that is already gone.
       if (this.epoch !== epoch) return;
-      logger.error({ err }, '[Meeting] Join flow threw');
-      await this.notifyThread(
-        `Something went wrong while joining the ${provider.displayName} call: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      );
+      logger.error({ err }, `[Meeting] Join flow threw for the ${provider.displayName} call`);
       await this.teardown('error');
     }
   }
@@ -748,7 +741,7 @@ export class MeetingBotService {
     }
     this.maxDurationTimer = setTimeout(
       () => {
-        void this.finish('timeout', `I've left the call — it hit the ${config.meetingTimeoutMinutes}-minute limit.`);
+        void this.finish('timeout', `Left the call: it hit the ${config.meetingTimeoutMinutes}-minute limit`);
       },
       config.meetingTimeoutMinutes * 60 * 1000,
     );
@@ -851,16 +844,17 @@ export class MeetingBotService {
     // `open` mode and greet the room, for a call that still cannot be heard.
     if (!(await audio?.isMicCaptured())) return;
 
-    // Re-checked after the note as well as before it: posting is a database write and a
-    // channel fan-out, and a call that ends inside it leaves the greeting below aimed at
-    // whatever call owns the conversation by then.
+    // Re-checked after the capture reading above: that is a real await, and a call that
+    // ends inside it leaves the greeting below aimed at whatever call owns the
+    // conversation by then.
     if (this.epoch !== epoch || this.state !== 'in_call') return;
 
-    logger.info('[Meeting] Microphone is live after a mid-call retry — the room can hear me now');
+    logger.info(
+      `[Meeting] Microphone is live after a mid-call retry — audible in the ` +
+        `${provider.displayName} call now`,
+    );
     this.micConfirmed = true;
     this.conversation?.setAudible(true);
-    await this.notifyThread(`My microphone is working now — the ${provider.displayName} call can hear me.`);
-    if (this.epoch !== epoch || this.state !== 'in_call') return;
     this.greetTheRoom(provider.displayName);
   }
 
@@ -985,7 +979,7 @@ export class MeetingBotService {
     if (count <= 1) {
       this.emptyReadings += 1;
       if (this.emptyReadings >= EMPTY_READINGS_BEFORE_LEAVING) {
-        await this.finish('completed', `Everyone else left the call, so I've left too.`);
+        await this.finish('completed', 'Everyone else left the call, so left it too');
       }
       return;
     }
@@ -1003,19 +997,21 @@ export class MeetingBotService {
     return { message: `Left the ${platform} call.` };
   }
 
-  /** End the call, optionally telling the thread why. */
-  private async finish(
-    status: 'completed' | 'timeout',
-    note: string | null,
-  ): Promise<void> {
+  /**
+   * End the call, logging why when the ending was not asked for.
+   *
+   * `reason` is null for a user's own `leave()`, which needs no explanation — they
+   * know why. The polls and the duration cap pass one, since an ending nobody asked
+   * for is the kind an engineer reads the log to understand.
+   */
+  private async finish(status: 'completed' | 'timeout', reason: string | null): Promise<void> {
     if (!this.isActive) return;
-    // Claim the ending before the note goes out. Posting one is a database write and
-    // a fan-out to the channel adapters, and the session can close during it —
-    // teardown always closes it — so without this the room would be told both
-    // "everyone else left" and "I lost my voice connection". Teardown bumps the
-    // epoch again; doing it twice costs nothing.
+    if (reason) logger.info(`[Meeting] ${reason}`);
+    // Claim the ending before teardown reaches its own await. Closing the session is
+    // part of teardown, and the close fires `onSessionLost`, so without this the log
+    // would carry both "everyone else left" and "lost the Realtime session" for one
+    // ending. Teardown bumps the epoch again; doing it twice costs nothing.
     this.epoch += 1;
-    if (note) await this.notifyThread(note);
     await this.teardown(status);
   }
 
@@ -1025,19 +1021,18 @@ export class MeetingBotService {
    * Nothing about the bot is a participant any more: no audio reaches the room and
    * nothing the room says reaches a model. Staying would leave a mute, deaf tile in
    * someone's meeting until the empty-room poll or the duration cap fired, so this
-   * leaves and says why. Deliberately no reconnect: a fresh session would come back
-   * with none of the call's context, so rejoining the conversation mid-sentence is
-   * worse than an honest exit the room can see.
+   * leaves. Deliberately no reconnect: a fresh session would come back with none of
+   * the call's context, so rejoining the conversation mid-sentence is worse than an
+   * honest exit the room can see.
    *
    * Epoch-guarded like the join flow — a close belonging to a call that has already
    * ended must not tear down whatever is running now.
    */
   private onSessionLost(epoch: number, reason: string): void {
+    const platform = this.provider?.displayName ?? 'meeting';
     this.endOnLoss(
       epoch,
-      `Lost the Realtime session mid-call: ${reason}`,
-      `I lost my voice connection to the ${this.provider?.displayName ?? 'meeting'} call, ` +
-        `so I've left it: ${reason}`,
+      `Lost the Realtime session mid-call, so left the ${platform} call: ${reason}`,
     );
   }
 
@@ -1052,32 +1047,23 @@ export class MeetingBotService {
    */
   private onAudioLost(epoch: number, reason: string): void {
     const platform = this.provider?.displayName ?? 'meeting';
-    // A process can die while the call is still in the lobby, where "I've left"
+    // A process can die while the call is still in the lobby, where "left the call"
     // would describe a room the agent was never in.
-    const note =
+    this.endOnLoss(
+      epoch,
       this.state === 'in_call'
-        ? `I lost my audio in the ${platform} call (${reason}), so I've left rather ` +
-          `than sit there unable to hear or speak.`
-        : `I gave up on joining the ${platform} call: my audio died on the way in ` +
-          `(${reason}), so I'd have arrived unable to hear or speak.`;
-    this.endOnLoss(epoch, `Lost the meeting's audio pipeline: ${reason}`, note);
+        ? `Lost the audio pipeline in the ${platform} call, so left it rather than sit ` +
+            `there unable to hear or speak: ${reason}`
+        : `Lost the audio pipeline on the way into the ${platform} call, so gave up on ` +
+            `joining rather than arrive unable to hear or speak: ${reason}`,
+    );
   }
 
-  /** End a call whose voice or audio path has gone, and say so where it was asked for. */
-  private endOnLoss(epoch: number, logLine: string, note: string): void {
+  /** End a call whose voice or audio path has gone, and log why. */
+  private endOnLoss(epoch: number, logLine: string): void {
     if (this.epoch !== epoch || !this.isActive) return;
     logger.warn(`[Meeting] ${logLine}`);
-    void (async () => {
-      await this.notifyThread(note);
-      // Re-checked after the note, not just before it: posting one is a database
-      // write and a fan-out to every channel adapter, and a `leave()` landing in
-      // that window can finish its own teardown and let the user rejoin. Without
-      // this, the stale teardown below would cancel or end *that* call. Teardown's
-      // own guard doesn't cover it — it only rejects a re-entry mid-teardown, and
-      // by then the service is back to `idle`.
-      if (this.epoch !== epoch) return;
-      await this.teardown('error');
-    })();
+    void this.teardown('error');
   }
 
   /**
@@ -1090,9 +1076,9 @@ export class MeetingBotService {
    * **Do not add an await before the fields are nulled.** A teardown that runs while
    * a startup is still building finds every field already null, so it reaches the
    * end without yielding to anything but microtasks — which is what stops a `join()`
-   * landing in the middle of it. Introduce a real await up there (posting a note,
-   * say) and a new call could start in the gap, publish its fields, and have this
-   * teardown null them underneath it and pin the service in `leaving`.
+   * landing in the middle of it. Introduce a real await up there and a new call could
+   * start in the gap, publish its fields, and have this teardown null them underneath
+   * it and pin the service in `leaving`.
    */
   private async teardown(status: 'completed' | 'denied' | 'timeout' | 'error'): Promise<void> {
     // Re-entrancy guard. Two endings can race — a user's `leave()` and the
@@ -1229,22 +1215,6 @@ export class MeetingBotService {
     // people will actually say. `lockedIn` rides along from this same context so
     // the tool set matches the prompt built beside it.
     return { instructions, agentName: context.agentName, lockedIn: context.lockedIn };
-  }
-
-  /** Post a progress note where the user asked from, or the latest thread. */
-  private async notifyThread(content: string): Promise<void> {
-    const input = this.current;
-    if (!input) return;
-    try {
-      if (input.threadId) {
-        await messageDeliveryService.publish(input.userId, input.threadId, content, 'SYSTEM');
-      } else {
-        await messageDeliveryService.publishToLatestThread(input.agentId, input.userId, content, 'SYSTEM');
-      }
-    } catch (err) {
-      // A note nobody could deliver must not end the call.
-      logger.warn(`[Meeting] Could not post a status note: ${String(err)}`);
-    }
   }
 
   /** Called from the process shutdown path so a container exit leaves the call. */
