@@ -67,9 +67,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   const [shuttingDown, setShuttingDown] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [commandIndex, setCommandIndex] = useState(0);
-  // Bumped on Tab autocomplete to force <Input> to remount, which is the only
-  // way to move ink-text-input's internal cursor to the end of the new value
-  // — the library otherwise keeps the previous offset.
+  // Bumped when Tab or Enter accepts a completion, to force <Input> to remount,
+  // which is the only way to move ink-text-input's internal cursor to the end of
+  // the new value — the library otherwise keeps the previous offset.
   const [inputResetKey, setInputResetKey] = useState(0);
   // Tracks which agent message currently has its tool-call details expanded
   // inline. Only one message can be expanded at a time; Ctrl+O toggles the
@@ -147,8 +147,8 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   }, []);
 
   // Slash-command popup: visible while the input starts with '/' and no space
-  // has been typed yet. After Tab autocompletes (which appends a space), the
-  // popup hides and the user is free to type arguments.
+  // has been typed yet. After Tab or Enter accepts a row (which appends a
+  // space), the popup hides and the user is free to type arguments.
   const slashMode = inputValue.startsWith('/') && !inputValue.includes(' ');
   const filteredCommands = useMemo<SlashCommand[]>(
     () => (slashMode ? filterByPrefix(inputValue.length === 1 ? '/' : inputValue) : []),
@@ -186,6 +186,16 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   const safeIndex = popupItems.length === 0
     ? 0
     : Math.min(commandIndex, popupItems.length - 1);
+
+  // Accept the highlighted slash command into the composer as "<name> ". The
+  // trailing space ends slash mode, so the popup closes and arguments can be
+  // typed. Shared by Tab and Enter.
+  const acceptHighlightedCommand = useCallback(() => {
+    const chosen = filteredCommands[safeIndex];
+    if (!chosen) return;
+    setInputValue(chosen.name + ' ');
+    setInputResetKey((k) => k + 1);
+  }, [filteredCommands, safeIndex]);
 
   const appendSystemMessage = useCallback((text: string) => {
     setEntries((prev) => [
@@ -388,11 +398,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       }
       if (key.tab) {
         if (slashMode) {
-          const chosen = filteredCommands[safeIndex];
-          if (chosen) {
-            setInputValue(chosen.name + ' ');
-            setInputResetKey((k) => k + 1);
-          }
+          acceptHighlightedCommand();
         } else {
           const s = pathSuggestions[safeIndex];
           if (s) {
@@ -440,6 +446,17 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
 
   const onSubmit = useCallback(
     async (text: string) => {
+      // The slash popup is open: Enter accepts the highlighted row, the same as
+      // Tab, and sends nothing. A second Enter — the popup now closed by the
+      // trailing space — runs the command. This has to sit here rather than in a
+      // `key.return` case: Ink dispatches child handlers first, so the
+      // composer's Enter reaches `onSubmit` before App's `useInput` runs (see
+      // components/TextInput.tsx).
+      if (slashMode && filteredCommands.length > 0) {
+        acceptHighlightedCommand();
+        return;
+      }
+
       const trimmed = text.trim();
       // Empty text is still a valid send when files are staged — the runtime
       // accepts file-only messages (gateway allows empty content + ids).
@@ -499,7 +516,16 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         attachmentIds: toSend.map((a) => a.id),
       });
     },
-    [agent.id, userId, runCommand, staged, activeThreadId],
+    [
+      agent.id,
+      userId,
+      runCommand,
+      staged,
+      activeThreadId,
+      slashMode,
+      filteredCommands,
+      acceptHighlightedCommand,
+    ],
   );
 
   const handleInputChange = useCallback((newValue: string) => {
