@@ -44,10 +44,11 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
 
   Scenario('The /exit command shuts down cleanly', ({ When, Then }) => {
     When('I submit the /exit command', async () => {
-      // Type the command, wait for the popup to settle, then send Enter so
-      // Ink processes the keystrokes as separate events.
-      session.send('/exit');
-      await session.waitForFrame(/▸\s*\/exit/, 5_000);
+      // The trailing space closes the slash popup, so one Enter runs the command
+      // — the Enter-completes path is covered by slash-commands.test.ts. Wait
+      // for the line to reach a frame, then send Enter as a separate event.
+      session.send('/exit ');
+      await session.waitForFrame(/\/exit/, 5_000);
       session.send(KEYS.ENTER);
     });
     Then('the CLI shuts down with exit code 0', async () => {

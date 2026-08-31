@@ -67,9 +67,10 @@ async function runAgentGuideWith(script: string): Promise<void> {
     runtime: env.runtime,
   });
   await session.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
-  session.send('/agent-guide');
-  // The slash popup hides on the next keystroke; give Ink a beat to commit the
-  // line before Enter, as the other command specs do.
+  // The trailing space closes the slash popup, so one Enter runs the command —
+  // the Enter-completes path is covered by slash-commands.test.ts. Give Ink a
+  // beat to commit the line before Enter, as the other command specs do.
+  session.send('/agent-guide ');
   await sleep(300);
   session.send(KEYS.ENTER);
 }

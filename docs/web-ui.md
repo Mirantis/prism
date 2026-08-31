@@ -30,8 +30,9 @@ The main conversation surface.
   Responses **stream** in as the agent works — you see intermediate text from
   multi-step responses in real time rather than one block at the end.
 - **Slash commands.** Type `/` to open a command popup, the same as the
-  **[Terminal UI](terminal-ui.md#slash-commands)**: filter by typing, **Tab** to
-  complete, arrow keys to move the selection, **Enter** to run. The web supports
+  **[Terminal UI](terminal-ui.md#slash-commands)**: filter by typing, arrow keys
+  to move the selection, **Tab** or **Enter** to complete it, then **Enter** to
+  run. The web supports
   `/help`, **`/skills`** (list installed [skills](skills.md), or `/skills run
   <name>`), **`/plugins`** (list installed [plugins](plugins.md) and what each
   contributes), **`/goal`** (set or manage a background goal — `/goal

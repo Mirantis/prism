@@ -30,7 +30,7 @@ to it directly on localhost.
 ## Slash commands
 
 Type `/` in the chat input to open the command popup; filter by typing, **Tab**
-to complete, **Enter** to run.
+or **Enter** to complete the selection, then **Enter** to run.
 
 | Command | Arguments | Description |
 |---------|-----------|-------------|
@@ -59,7 +59,7 @@ to complete, **Enter** to run.
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Send the message (or run the slash command). Works while the agent is responding — the message is handed to the running turn. |
+| `Enter` | Send the message (or run the slash command). While the command popup is open, Enter completes the selection instead of sending. Works while the agent is responding — the message is handed to the running turn. |
 | `Esc` | Cancel the in-flight response while the agent is thinking. Leaves what you have typed alone. |
 | `Ctrl+O` | Expand / collapse tool calls in the latest agent message. |
 | `Up` / `Down` | Walk back/forward through your message history (from an empty input). |
@@ -71,6 +71,7 @@ to complete, **Enter** to run.
 |-----|--------|
 | `Up` / `Down` | Move the selection. |
 | `Tab` | Complete the selected command or path. |
+| `Enter` | Complete the selected command, the same as `Tab`. Press Enter again to run it. In the `/attach` path popup Enter sends instead — complete a path with `Tab`. |
 
 ### Resume picker (`--resume`)
 

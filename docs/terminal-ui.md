@@ -48,8 +48,8 @@ Press **Ctrl+C** (or run `/exit`) to quit.
 
 ## Slash commands
 
-Type `/` to open a command popup; keep typing to filter, **Tab** to complete,
-**Enter** to run. The available commands:
+Type `/` to open a command popup; keep typing to filter, **Tab** or **Enter** to
+complete the selection, then **Enter** to run. The available commands:
 
 | Command | What it does |
 |---------|--------------|
