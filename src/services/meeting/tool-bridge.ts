@@ -58,6 +58,14 @@ export interface MeetingToolBridgeInput {
   agentId: string;
   threadId?: string;
   /**
+   * The channel the call was requested from. Forwarded to `collectTools` so a
+   * cron task or goal the agent creates mid-call routes its follow-up back to
+   * that channel rather than broadcasting.
+   */
+  originChannel?: 'slack' | 'websocket';
+  /** The Slack channel id of that request, when the origin is Slack. */
+  originChannelId?: string;
+  /**
    * Locked-in mode, read from the same context the instructions were built
    * from. Declarations go out once in `session.update`, so the set is fixed for
    * the call. A lock turned on mid-call is still enforced by the refusal in the
@@ -93,6 +101,8 @@ export async function prepareMeetingTools(
     agentId: input.agentId,
     threadId: input.threadId,
     mode: 'meeting',
+    originChannel: input.originChannel,
+    originChannelId: input.originChannelId,
     // A meeting has no workspace: it is not launched from a repo checkout, so
     // only global skills apply — the same position autonomous runs are in.
     workspaceRoot: undefined,

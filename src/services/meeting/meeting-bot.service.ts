@@ -457,6 +457,8 @@ export class MeetingBotService {
         userId: input.userId,
         agentId: input.agentId,
         threadId: input.threadId,
+        originChannel: input.originChannel,
+        originChannelId: input.originChannelId,
         lockedIn,
       });
 

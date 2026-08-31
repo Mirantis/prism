@@ -14,13 +14,30 @@ beforeEach(() => {
 });
 
 describe('prepareMeetingTools', () => {
-  it('collects tools in meeting mode with no workspace', async () => {
+  it('collects tools in meeting mode with no workspace, forwarding the origin channel', async () => {
     mockCollectTools.mockResolvedValue({ tools: {}, subagents: [] });
 
-    await prepareMeetingTools({ userId: 'u1', agentId: 'a1', threadId: 't1', lockedIn: false });
+    await prepareMeetingTools({
+      userId: 'u1',
+      agentId: 'a1',
+      threadId: 't1',
+      originChannel: 'slack',
+      originChannelId: 'C123',
+      lockedIn: false,
+    });
 
+    // The origin rides through to collectTools so a cron task or goal created
+    // mid-call routes its follow-up to the requesting channel, not a broadcast.
     expect(mockCollectTools).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 'u1', agentId: 'a1', threadId: 't1', mode: 'meeting', workspaceRoot: undefined }),
+      expect.objectContaining({
+        userId: 'u1',
+        agentId: 'a1',
+        threadId: 't1',
+        mode: 'meeting',
+        workspaceRoot: undefined,
+        originChannel: 'slack',
+        originChannelId: 'C123',
+      }),
     );
   });
 
