@@ -171,9 +171,11 @@ describe('read_tool_output', () => {
     const { id } = await writeToolOutput(Array.from({ length: 2000 }, () => 'x'.repeat(400)).join('\n'));
     const before = await fs.readdir(path.join(dataDir, 'tool-outputs'));
 
+    // Below the page clamp, so the result reaches the cut path and the opt-out is
+    // what stops a second copy. At a meeting's 12,000 the clamp alone would.
     const wrapped = withToolOutputCapture(
       getReadToolOutputTool({ userId: 'u1', agentId: 'a1', mode: 'meeting' }),
-      { maxChars: 12_000 },
+      { maxChars: 4_000 },
     );
     const out = await (
       wrapped[READ_TOOL_OUTPUT_NAME] as unknown as {
@@ -181,8 +183,9 @@ describe('read_tool_output', () => {
       }
     ).execute({ id, offset: 1, limit: 2000 }, {});
 
-    // Delivered whole, and no second copy on disk.
-    expect(isSpilledToolOutput(out)).toBe(false);
+    // Cut, since the page is over this budget — but never given a copy of its own,
+    // so there is no fresh id inside a page of an existing saved output to follow.
+    expect((out as { truncation?: { spillId?: string } }).truncation?.spillId).toBeUndefined();
     expect(await fs.readdir(path.join(dataDir, 'tool-outputs'))).toEqual(before);
   });
 

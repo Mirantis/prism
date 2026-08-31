@@ -103,6 +103,60 @@ describe('MessageList', () => {
     expect(frame).toContain('ctrl+o to expand');
   });
 
+  it('says how much of a tool result was cut when the message is expanded', () => {
+    const entries = [
+      entry(
+        makeMsg({
+          id: 'a4',
+          role: 'AGENT',
+          content: 'I read the issue',
+          toolCalls: [
+            {
+              tool: 'atlassian__getJiraIssue',
+              input: '{}',
+              output: 'head … [INCOMPLETE OUTPUT] … tail',
+              success: true,
+              timestamp: new Date(0).toISOString(),
+              truncated: { totalChars: 500000, keptChars: 30000, omittedChars: 470000 },
+            },
+          ],
+        }),
+      ),
+    ];
+    const { lastFrame } = render(
+      <MessageList agentName="Prism" entries={entries} expandedMessageId="a4" />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('cut');
+    expect(frame).toContain('30000');
+    expect(frame).toContain('500000');
+  });
+
+  it('says nothing about a cut when the result was delivered whole', () => {
+    const entries = [
+      entry(
+        makeMsg({
+          id: 'a5',
+          role: 'AGENT',
+          content: 'I ran a command',
+          toolCalls: [
+            {
+              tool: 'shell_exec',
+              input: 'echo hi',
+              output: 'hi',
+              success: true,
+              timestamp: new Date(0).toISOString(),
+            },
+          ],
+        }),
+      ),
+    ];
+    const { lastFrame } = render(
+      <MessageList agentName="Prism" entries={entries} expandedMessageId="a5" />,
+    );
+    expect(lastFrame() ?? '').not.toContain('cut');
+  });
+
   it('renders tool-call input/output blocks when the message is expanded', () => {
     const entries = [
       entry(

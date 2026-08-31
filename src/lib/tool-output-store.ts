@@ -65,7 +65,10 @@ export async function writeToolOutput(text: string): Promise<SpillResult> {
 
   const buf = Buffer.from(text, 'utf8');
   const capped = buf.length > MAX_SPILL_BYTES;
-  const data = capped ? buf.subarray(0, MAX_SPILL_BYTES) : buf;
+  // Back off the cut to a character boundary. Slicing mid-character leaves a
+  // replacement char at the end of the copy, which a search near the cap would
+  // then fail to match.
+  const data = capped ? buf.subarray(0, charBoundaryAtOrBefore(buf, MAX_SPILL_BYTES)) : buf;
 
   const id = randomUUID();
   const finalPath = path.join(dir, id);
@@ -74,6 +77,20 @@ export async function writeToolOutput(text: string): Promise<SpillResult> {
   await fs.rename(tmpPath, finalPath);
 
   return { id, bytes: data.length, capped };
+}
+
+/**
+ * The largest cut at or before `limit` that does not split a UTF-8 character.
+ * A continuation byte is `10xxxxxx`; a character starts at anything else, and no
+ * character is longer than four bytes.
+ */
+function charBoundaryAtOrBefore(buf: Buffer, limit: number): number {
+  let end = limit;
+  for (let back = 0; back < 4 && end > 0; back++) {
+    if ((buf[end] & 0xc0) !== 0x80) return end;
+    end--;
+  }
+  return end;
 }
 
 /**

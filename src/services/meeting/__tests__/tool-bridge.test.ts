@@ -221,6 +221,37 @@ describe('prepareMeetingTools', () => {
     expect(output).toContain('this call is your only channel');
   });
 
+  it('never saves a copy of a read-back, so a call cannot start a chain', async () => {
+    // A call executes tools itself rather than through the chat path's capture
+    // wrapper, so the opt-out has to be read here too. This is the one channel
+    // whose budget makes the chain reachable.
+    const before = fs.readdirSync(path.join(spillDataDir, 'tool-outputs'), { withFileTypes: true })
+      .length;
+    mockCollectTools.mockResolvedValue({
+      tools: {
+        read_tool_output: Object.assign(
+          tool({
+            description: 'reads a saved output',
+            inputSchema: z.object({}),
+            execute: async () => 'p'.repeat(40_000),
+          }),
+          { __prismNeverSpill: true },
+        ),
+      },
+      subagents: [],
+    });
+
+    const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1' });
+    const output = await prepared.execute('read_tool_output', '{}');
+
+    // Cut, because it is over the call's budget — but with no id to follow.
+    expect(output).toContain('INCOMPLETE OUTPUT');
+    expect(output).not.toContain('The full output is saved as');
+    expect(
+      fs.readdirSync(path.join(spillDataDir, 'tool-outputs'), { withFileTypes: true }).length,
+    ).toBe(before);
+  });
+
   it('hands over a result that fits the meeting budget whole', async () => {
     // 8,000 chars is a realistic Jira issue with its description, or a listing of a
     // few dozen PRs. The old 4,000-char cap beheaded both.

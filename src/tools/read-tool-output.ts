@@ -12,8 +12,8 @@
  * **Search-first, deliberately.** `pattern` leads the schema and the description
  * because reading a saved output through, page by page, rebuilds in history exactly
  * the bulk the cut removed — and each page is itself a tool result, stored and
- * replayed like any other. The sequential path exists for when search genuinely
- * won't do, and its page is an order of magnitude smaller than `shell_read_file`'s
+ * replayed like any other. The sequential path exists for when search will not
+ * do, and its page is an order of magnitude smaller than `shell_read_file`'s
  * so that walking a saved output is visibly the wrong way round.
  */
 
@@ -182,7 +182,7 @@ function countRead(
  * one that drove this feature — is stored as one JSON string with its newlines
  * escaped, so a 500,000-char result is a single line. Line-based grep finds nothing
  * useful there. A window works on both shapes, and the line number is still
- * reported when the text genuinely has lines.
+ * reported when the text has lines.
  */
 function searchToolOutput(
   text: string,
