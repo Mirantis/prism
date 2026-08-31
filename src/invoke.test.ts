@@ -655,10 +655,9 @@ describe('invoke', () => {
 
       const callArgs = mockGenerateText.mock.calls[0][0];
       // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file + 2 goal + 1 skill
-      // + 2 attachment (hydrate_attachment, view_attachment) + 1 read_tool_output
-      expect(Object.keys(callArgs.tools)).toHaveLength(15);
+      // + 2 attachment (hydrate_attachment, view_attachment)
+      expect(Object.keys(callArgs.tools)).toHaveLength(14);
       expect(Object.keys(callArgs.tools)).toContain('share_file');
-      expect(Object.keys(callArgs.tools)).toContain('read_tool_output');
       expect(Object.keys(callArgs.tools)).toContain('create_goal');
       expect(Object.keys(callArgs.tools)).toContain('get_goal');
       expect(Object.keys(callArgs.tools)).toContain('skill');
@@ -1182,7 +1181,7 @@ describe('invoke', () => {
       mockGenerateText.mockResolvedValue(stepWith(envelope));
       const stored = (await invoke(createTestInvokeRequest())).toolCalls[0];
 
-      expect(stored.output).toBe((envelope as { preview: string }).preview);
+      expect(stored.output).toBe((envelope as { text: string }).text);
       expect(stored.truncated).toEqual((envelope as { truncation: unknown }).truncation);
       expect(stored.output).toContain('[INCOMPLETE OUTPUT');
     });

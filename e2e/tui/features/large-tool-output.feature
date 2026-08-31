@@ -10,7 +10,7 @@ Feature: A tool result too large to show whole is saved and searchable
     And the whole output is saved on disk
     And the part it was not shown is absent from what it read
     When I ask the agent what the marker line says
-    Then it searches the saved output rather than reading it through
+    Then it reads the saved file with the shell rather than fetching again
     And it answers with the marker text
     When I ask an unrelated question in the same conversation
     Then the conversation's context stays far below the size of the raw result

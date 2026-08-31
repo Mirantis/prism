@@ -194,8 +194,8 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
 
     When('I ask the agent what the marker line says', async () => {
       session!.send(
-        'That output was cut. Find the line containing MIDDLE-MARKER-4T7X in the saved ' +
-          'output and tell me the whole line.',
+        'That output was cut. The notice gives the path of the saved copy — grep it ' +
+          'for MIDDLE-MARKER-4T7X with the shell and tell me the whole line.',
       );
       await sleep(200);
       session!.send(KEYS.ENTER);

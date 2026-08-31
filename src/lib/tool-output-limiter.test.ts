@@ -15,7 +15,6 @@ vi.mock('../logger', () => ({
 
 import {
   withToolOutputCapture,
-  NEVER_SPILL,
   isSpilledToolOutput,
   unwrapToolOutput,
   truncateHeadTail,
@@ -191,11 +190,11 @@ describe('withToolOutputCapture', () => {
     const raw = 'Z'.repeat(50_000);
     const wrapped = withToolOutputCapture(toolWith(() => raw), { maxChars: 1000, spill: false });
 
-    const out = (await runTool(wrapped)) as { preview: string; raw: unknown; truncation: unknown };
+    const out = (await runTool(wrapped)) as { text: string; raw: unknown; truncation: unknown };
     expect(isSpilledToolOutput(out)).toBe(true);
     expect(out.raw).toBe(raw);
-    expect(out.preview).toContain('[INCOMPLETE OUTPUT');
-    expect(out.preview.length).toBeLessThan(raw.length);
+    expect(out.text).toContain('[INCOMPLETE OUTPUT');
+    expect(out.text.length).toBeLessThan(raw.length);
     expect(unwrapToolOutput(out)).toBe(raw);
   });
 
@@ -203,16 +202,16 @@ describe('withToolOutputCapture', () => {
     // One render, one id: the model must not be told one id while another is stored.
     const wrapped = withToolOutputCapture(toolWith(() => 'Z'.repeat(50_000)), { maxChars: 1000 });
 
-    const out = (await runTool(wrapped)) as { preview: string };
-    expect(await modelView(wrapped, out)).toEqual({ type: 'text', value: out.preview });
+    const out = (await runTool(wrapped)) as { text: string };
+    expect(await modelView(wrapped, out)).toEqual({ type: 'text', value: out.text });
   });
 
   it('cuts an MCP CallToolResult down to its text', async () => {
     const mcp = { content: [{ type: 'text', text: 'POD'.repeat(500) }] };
     const wrapped = withToolOutputCapture(toolWith(() => mcp), { maxChars: 50, spill: false });
 
-    const out = (await runTool(wrapped)) as { preview: string };
-    expect(out.preview).toContain('[INCOMPLETE OUTPUT');
+    const out = (await runTool(wrapped)) as { text: string };
+    expect(out.text).toContain('[INCOMPLETE OUTPUT');
   });
 
   it('caps a tool that brings its own toModelOutput', async () => {
@@ -316,33 +315,6 @@ describe('withToolOutputCapture', () => {
     expect(view.value).toContain('[INCOMPLETE OUTPUT');
   });
 
-  it('never saves a result from a tool that opted out', async () => {
-    // read_tool_output is the case: saving its result would mint a fresh id inside
-    // a page of an existing saved output, and a model following that id spirals.
-    // The old page clamp was sized against chat's budget only, so under a meeting's
-    // smaller one this chain was not hypothetical — it was deterministic.
-    const optedOut = withToolOutputCapture(
-      {
-        reader: Object.assign(
-          {
-            description: 'reads a saved output',
-            inputSchema: { type: 'object' as const },
-            execute: () => 'Z'.repeat(50_000),
-          },
-          { [NEVER_SPILL]: true }
-        ),
-      },
-      { maxChars: 1000 }
-    );
-
-    const out = (await runTool(optedOut, 'reader')) as { preview: string; truncation: { spillId?: string } };
-
-    // Still cut — just never given a copy of its own to point at.
-    expect(out.preview).toContain('[INCOMPLETE OUTPUT');
-    expect(out.truncation.spillId).toBeUndefined();
-    expect(out.preview).not.toContain('read_tool_output with a');
-  });
-
   it('does not mistake a tool result that merely carries the marker for a cut one', async () => {
     // A plugin or MCP server returning this key would otherwise have its result
     // read as an envelope: an empty stored output, and an `undefined` handed to the
@@ -366,14 +338,14 @@ describe('withToolOutputCapture', () => {
     const raw = 'x'.repeat(20_000) + middle + 'y'.repeat(20_000);
     const wrapped = withToolOutputCapture(toolWith(() => raw), { maxChars: 1000, spill: false });
 
-    const envelope = (await runTool(wrapped)) as { preview: string; raw: unknown };
+    const envelope = (await runTool(wrapped)) as { text: string; raw: unknown };
     const serialized = JSON.stringify(envelope);
 
     // The cut removed the middle, so its reappearing means the original rode along.
-    expect(envelope.preview).not.toContain(middle);
+    expect(envelope.text).not.toContain(middle);
     expect(serialized).not.toContain(middle);
-    expect(Object.keys(JSON.parse(serialized)).sort()).toEqual(['preview', 'truncation']);
-    expect(serialized.length).toBeLessThan(envelope.preview.length * 1.5);
+    expect(Object.keys(JSON.parse(serialized)).sort()).toEqual(['text', 'truncation']);
+    expect(serialized.length).toBeLessThan(envelope.text.length * 1.5);
     // …while the original is still there for the code that needs it.
     expect(envelope.raw).toBe(raw);
     expect(unwrapToolOutput(envelope)).toBe(raw);

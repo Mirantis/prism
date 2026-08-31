@@ -15,10 +15,11 @@
  * simpler, and folding it into a live-set reaper would only make it look
  * complicated.
  *
- * The model never sees a path. Ids are opaque and this module resolves them, so a
- * stub stored in a conversation keeps working when the data dir moves — between a
- * container and local dev, say — and so nothing hands a model a path into the
- * directory that also holds `agent.db`.
+ * The agent reads a saved copy with `shell_exec`, so the notice carries the file's
+ * path and the agent brings its own tool — `jq` for the JSON these payloads
+ * usually are, `grep` or `sed` otherwise. A path in stored history goes stale if
+ * the data dir moves between a container and local dev; the read then fails the
+ * same way an expired copy does, which is the behaviour either way.
  */
 
 import fs from 'fs/promises';
@@ -36,8 +37,10 @@ import { logger } from '../logger';
 export const MAX_SPILL_BYTES = 10 * 1024 * 1024;
 
 export interface SpillResult {
-  /** Opaque id. The only handle anything outside this module gets. */
+  /** Identifies the copy: the file's name, and what the record stores. */
   id: string;
+  /** Absolute path, for the notice that sends the agent to it. */
+  path: string;
   /** Bytes actually written. */
   bytes: number;
   /** True when the saved copy is itself only the first `MAX_SPILL_BYTES`. */
@@ -76,7 +79,7 @@ export async function writeToolOutput(text: string): Promise<SpillResult> {
   await fs.writeFile(tmpPath, data);
   await fs.rename(tmpPath, finalPath);
 
-  return { id, bytes: data.length, capped };
+  return { id, path: finalPath, bytes: data.length, capped };
 }
 
 /**
@@ -91,6 +94,16 @@ function charBoundaryAtOrBefore(buf: Buffer, limit: number): number {
     end--;
   }
   return end;
+}
+
+/**
+ * Where a saved output lives, for the notice that points the agent at it.
+ *
+ * Absolute, because the agent reads it with `shell_exec`, whose commands are not
+ * resolved against the shell workspace.
+ */
+export function toolOutputPath(id: string): string {
+  return path.join(resolveToolOutputDir(), id);
 }
 
 /**

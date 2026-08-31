@@ -236,20 +236,18 @@ quote a count or a total from what it can see. So if you ask "how many are open?
 about a long list, expect the agent to either narrow the query itself or tell you
 the listing was cut, rather than answer with a number it can't stand behind.
 
-**The middle is saved, not lost.** The whole output is written to a file the agent
-can search with the `read_tool_output` tool, so the part it wasn't shown is still
-reachable — including in a voice call. Saved copies are kept for **7 days**
+**The middle is saved, not lost.** The whole output is written to a file under the
+agent's data directory, and the truncation notice gives the agent the path. It reads
+what it needs with the shell — `jq` when the payload is JSON, which most tool
+results are, otherwise `grep` or `sed`. So the part it wasn't shown is still
+reachable, in a call as well as in chat. Saved copies are kept for **7 days**
 (configurable via `TOOL_OUTPUT_TTL_HOURS`) and are deleted sooner once the
 conversation they belong to has been compacted away.
 
-Searching is the intended way to use a saved copy, and the agent is told so in as
-many words. It searches by text rather than by line, because most tool results are
-stored as one JSON string — so a search works the same whether the output was a log
-with lines or a single large payload without any. Reading one back page by page would put the omitted bulk straight back
-into the context the cap protects — and each page read is itself a tool result the
-conversation then carries. So expect the agent to grep a saved output for what it
-needs, or to re-run the original tool with narrower arguments, rather than to page
-through the whole thing.
+The agent is told to pull only what it needs rather than read the file back whole:
+everything it reads returns to the context the cap just protected. So expect it to
+query the saved copy for the specific thing, or re-run the original tool with
+narrower arguments, rather than page through it.
 
 The conversation stores the capped view — what the agent actually read — rather
 than the raw payload, so a large result costs the same on the turn that fetched it
