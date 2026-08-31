@@ -37,8 +37,13 @@ function writeSkill(skillsDir: string, name: string, description: string, body: 
   writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`);
 }
 
+/**
+ * Type a command line and submit it. The trailing space closes the slash popup,
+ * so one Enter runs the command — the Enter-completes path is covered by
+ * slash-commands.test.ts.
+ */
 async function dispatch(line: string): Promise<void> {
-  session.send(line);
+  session.send(line + ' ');
   await new Promise((r) => setTimeout(r, 300));
   session.send(KEYS.ENTER);
 }
