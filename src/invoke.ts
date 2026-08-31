@@ -421,7 +421,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
                 : '',
             success: Boolean(tr),
             timestamp: new Date().toISOString(),
-            rendered: true,
+            // Only where a render produced the string. On a gate refusal the output
+            // is a hand-built summary and on a failed call it is empty, and neither
+            // is a model-facing view — flagging them would have `parseToolCalls`
+            // skip the cap on replay if either shape ever grew.
+            ...(rendered ? { rendered: true as const } : {}),
             ...(rendered?.truncation ? { truncated: rendered.truncation } : {}),
           });
         }

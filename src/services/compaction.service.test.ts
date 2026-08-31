@@ -25,6 +25,7 @@ const { mockPrisma } = vi.hoisted(() => ({
     conversationMessage: {
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       findFirst: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
       count: vi.fn(),
     },
     $transaction: vi.fn(async (ops: unknown[]) => ops),
@@ -103,6 +104,12 @@ vi.mock('../lib/tool-collection', () => ({
 }));
 vi.mock('../lib/tool-output-limiter', () => ({
   withToolOutputCapture: (tools: Record<string, unknown>) => tools,
+}));
+const { mockRemoveToolOutputs } = vi.hoisted(() => ({
+  mockRemoveToolOutputs: vi.fn().mockResolvedValue(0),
+}));
+vi.mock('../lib/tool-output-store', () => ({
+  removeToolOutputs: (...args: unknown[]) => mockRemoveToolOutputs(...args),
 }));
 vi.mock('./agent-workspace.service', () => ({
   resolveEffectiveModel: (stored: string | null | undefined) => stored ?? 'default-model',
@@ -202,6 +209,8 @@ beforeEach(() => {
   mockPrisma.conversationMessage.findFirst.mockResolvedValue({
     createdAt: new Date('2026-08-04T10:00:00.000Z'),
   });
+  mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+  mockRemoveToolOutputs.mockResolvedValue(0);
   mockApplyEstimate.mockImplementation((input: { usedTokens: number }) => ({
     threadId: THREAD,
     modelId: 'model-x',
@@ -725,5 +734,117 @@ describe('hasCompactableHistory', () => {
     mockPrisma.conversationThread.findUnique.mockResolvedValue({ threadSource: 'SLACK' });
     await expect(compactionService.hasCompactableHistory(THREAD)).resolves.toBe(true);
     expect(mockPrisma.conversationMessage.count).not.toHaveBeenCalled();
+  });
+});
+
+describe('reclaiming saved tool outputs at compaction', () => {
+  // A compacted message never re-enters the context, so the saved copies its tool
+  // calls named can no longer be reached and the files can go. Without a test the
+  // TTL hides a regression here for a week.
+  const bigCall = (spillId: string) => ({
+    tool: 'kubectl',
+    input: '{}',
+    output: 'cut view',
+    success: true,
+    timestamp: '2026-01-01T00:00:00Z',
+    rendered: true,
+    truncated: { totalChars: 500_000, keptChars: 30_000, omittedChars: 470_000, spillId },
+  });
+
+  function contextOf(rowCount: number, overrides: Record<string, unknown> = {}) {
+    return {
+      model: 'stored-model',
+      lockedIn: false,
+      recentMessages: Array.from({ length: rowCount }, (_, i) => ({
+        id: `m${i}`,
+        role: 'USER',
+        content: 'x'.repeat(100),
+        externalMessageId: null,
+        internalStep: false,
+      })),
+      ...overrides,
+    };
+  }
+
+  it('deletes the copies the compacted messages named', async () => {
+    mockGetAgentContext.mockResolvedValue(contextOf(10));
+    mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      { toolCalls: [bigCall('aaaaaaaa-0000-4000-8000-000000000001')] },
+      { toolCalls: [bigCall('aaaaaaaa-0000-4000-8000-000000000002')] },
+    ]);
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
+
+    expect(mockRemoveToolOutputs).toHaveBeenCalledWith([
+      'aaaaaaaa-0000-4000-8000-000000000001',
+      'aaaaaaaa-0000-4000-8000-000000000002',
+    ]);
+  });
+
+  it('asks for the copies only of the messages it just retired', async () => {
+    mockGetAgentContext.mockResolvedValue(contextOf(10));
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
+
+    const where = mockPrisma.conversationMessage.findMany.mock.calls[0]?.[0]?.where;
+    expect(where.id.in.length).toBeGreaterThan(0);
+    // The tail is kept verbatim, so its rows must not be reclaimed.
+    expect(where.id.in).not.toContain('m9');
+  });
+
+  it('skips rows whose tool calls were never cut', async () => {
+    mockGetAgentContext.mockResolvedValue(contextOf(10));
+    mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      { toolCalls: [{ tool: 'memory_search', input: '{}', output: 'small', success: true, timestamp: 't', rendered: true }] },
+      { toolCalls: null },
+    ]);
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
+
+    expect(mockRemoveToolOutputs).not.toHaveBeenCalled();
+  });
+
+  it('reports the compaction as done even when the copies cannot be deleted', async () => {
+    // The rows are already committed. A failed reclaim costs disk until the TTL
+    // sweep, and must not turn a finished compaction into a reported failure.
+    mockGetAgentContext.mockResolvedValue(contextOf(10));
+    mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      { toolCalls: [bigCall('aaaaaaaa-0000-4000-8000-000000000003')] },
+    ]);
+    mockRemoveToolOutputs.mockRejectedValue(new Error('disk gone'));
+    const events = captureEvents();
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
+
+    expect(events.map((e) => e.status)).toEqual(['started', 'completed']);
+  });
+
+  it('reclaims the internal rows it marked on a Slack thread', async () => {
+    // Only internal rows are marked there; the rest move behind a watermark.
+    mockPrisma.conversationThread.findUnique.mockResolvedValue({
+      threadSource: 'SLACK',
+      contextTokens: 12_345,
+      workspaceRoot: null,
+    });
+    mockGetAgentContext.mockResolvedValue(
+      contextOf(10, {
+        recentMessages: Array.from({ length: 10 }, (_, i) => ({
+          id: `m${i}`,
+          role: i % 2 === 0 ? 'USER' : 'AGENT',
+          content: 'x'.repeat(100),
+          externalMessageId: `1700.000${i}`,
+          internalStep: i % 2 === 1,
+        })),
+      }),
+    );
+    mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      { toolCalls: [bigCall('aaaaaaaa-0000-4000-8000-000000000004')] },
+    ]);
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
+
+    const where = mockPrisma.conversationMessage.findMany.mock.calls[0]?.[0]?.where;
+    expect(where.id.in.every((id: string) => ['m1', 'm3', 'm5', 'm7', 'm9'].includes(id))).toBe(true);
+    expect(mockRemoveToolOutputs).toHaveBeenCalledWith(['aaaaaaaa-0000-4000-8000-000000000004']);
   });
 });
