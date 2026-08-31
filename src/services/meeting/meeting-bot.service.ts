@@ -21,6 +21,7 @@ import { logger } from '../../logger';
 import { config } from '../../config';
 import { trackEvent } from '../../lib/telemetry';
 import { contextService } from '../context.service';
+import { conversationService } from '../conversation.service';
 import { messageDeliveryService } from '../message-delivery.service';
 import { buildSystemPromptParts } from '../../prompts/context-builder';
 import { getMeetingInstructions } from '../../prompts/meeting-prompt';
@@ -172,6 +173,14 @@ export interface JoinMeetingInput {
   agentId: string;
   /** Where progress notes go. Falls back to the agent's latest thread. */
   threadId?: string;
+  /**
+   * The channel the join was requested from. Held on `this.current` so a note
+   * fired long after the requesting turn returned (the duration cap, the
+   * empty-room auto-leave) still routes to the right place.
+   */
+  originChannel?: 'slack' | 'websocket';
+  /** The Slack channel id of that request, when the origin is Slack. */
+  originChannelId?: string;
   /** How much the agent speaks up; `auto` follows the participant count. */
   responseMode?: ResponseMode;
 }
@@ -1237,7 +1246,18 @@ export class MeetingBotService {
     if (!input) return;
     try {
       if (input.threadId) {
-        await messageDeliveryService.publish(input.userId, input.threadId, content, 'SYSTEM');
+        // Route the note to the channel and thread the join was requested from.
+        // getChannelContext owns the DM fallback (a Slack DM thread carries no
+        // channel id), so it is the one source of routing rather than a
+        // hand-built context. A websocket origin scopes the note to the web/CLI.
+        const channelContext = await conversationService.getChannelContext(
+          input.threadId,
+          input.originChannel,
+          input.originChannelId,
+        );
+        await messageDeliveryService.publish(input.userId, input.threadId, content, 'SYSTEM', {
+          channelContext,
+        });
       } else {
         await messageDeliveryService.publishToLatestThread(input.agentId, input.userId, content, 'SYSTEM');
       }

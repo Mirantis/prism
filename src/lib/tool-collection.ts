@@ -129,7 +129,13 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     // Live voice meetings. Empty unless the host has the browser/audio
     // toolchain and an OpenAI key — see `meetingToolsAvailable`.
     ...(meetingToolsAvailable
-      ? getMeetingTools({ userId: input.userId, agentId: input.agentId, threadId: input.threadId })
+      ? getMeetingTools({
+          userId: input.userId,
+          agentId: input.agentId,
+          threadId: input.threadId,
+          originChannel,
+          originChannelId: input.originChannelId,
+        })
       : {}),
   };
 

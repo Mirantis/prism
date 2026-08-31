@@ -145,6 +145,11 @@ vi.mock('../../message-delivery.service', () => ({
   },
 }));
 
+const getChannelContext = vi.fn();
+vi.mock('../../conversation.service', () => ({
+  conversationService: { getChannelContext: (...a: unknown[]) => getChannelContext(...a) },
+}));
+
 const trackEvent = vi.fn();
 vi.mock('../../../lib/telemetry', () => ({ trackEvent: (...a: unknown[]) => trackEvent(...a) }));
 
@@ -214,6 +219,8 @@ beforeEach(() => {
   buildSystemPromptParts.mockResolvedValue([{ text: '# Identity', cacheable: true }]);
   publish.mockResolvedValue(undefined);
   publishToLatestThread.mockResolvedValue(undefined);
+  // Default: the caller's thread has no Slack origin, so notes scope to web/CLI.
+  getChannelContext.mockResolvedValue({ channel: 'websocket', threadId: 't1' });
   providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   providerLeave.mockResolvedValue(undefined);
   providerEnableAttribution.mockResolvedValue(undefined);
@@ -265,7 +272,13 @@ describe('joining', () => {
     await settle();
 
     expect(service.status().state).toBe('in_call');
-    expect(publish).toHaveBeenCalledWith('u1', 't1', expect.stringMatching(/I'm in the/), 'SYSTEM');
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/I'm in the/),
+      'SYSTEM',
+      expect.objectContaining({ channelContext: expect.anything() }),
+    );
   });
 
   it('introduces itself once admitted so the room is not joined in silence', async () => {
@@ -349,6 +362,7 @@ describe('a session the platform will not accept', () => {
       't1',
       expect.stringMatching(/signing in again didn't help/i),
       'SYSTEM',
+      expect.objectContaining({ channelContext: expect.anything() }),
     );
   });
 });
@@ -406,6 +420,7 @@ describe('a call the room cannot hear the agent in', () => {
       't1',
       expect.stringMatching(/couldn't confirm my microphone/i),
       'SYSTEM',
+      expect.objectContaining({ channelContext: expect.anything() }),
     );
     // And which half, because the two send you to different places: the platform's UI, or
     // the container's audio devices.
@@ -414,6 +429,7 @@ describe('a call the room cannot hear the agent in', () => {
       't1',
       expect.stringMatching(/never opened its capture device/i),
       'SYSTEM',
+      expect.objectContaining({ channelContext: expect.anything() }),
     );
   });
 
@@ -476,6 +492,7 @@ describe('a call the room cannot hear the agent in', () => {
         't1',
         expect.stringMatching(/microphone is working now/i),
         'SYSTEM',
+        expect.objectContaining({ channelContext: expect.anything() }),
       );
     } finally {
       vi.useRealTimers();
@@ -506,6 +523,7 @@ describe('a call the room cannot hear the agent in', () => {
         't1',
         expect.stringMatching(/microphone is working now/i),
         'SYSTEM',
+        expect.objectContaining({ channelContext: expect.anything() }),
       );
       // And it kept asking, rather than settling into a call it cannot be heard in.
       expect(providerEnsureUnmuted.mock.calls.length).toBeGreaterThan(1);
@@ -652,7 +670,13 @@ describe('release of resources', () => {
     await service.join(input);
     await settle();
 
-    expect(publish).toHaveBeenCalledWith('u1', 't1', expect.stringMatching(/A host denied/), 'SYSTEM');
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/A host denied/),
+      'SYSTEM',
+      expect.objectContaining({ channelContext: expect.anything() }),
+    );
     expect(browserStop).toHaveBeenCalled();
     expect(audioStop).toHaveBeenCalled();
     expect(conversationStop).toHaveBeenCalled();
@@ -729,6 +753,7 @@ describe('a lost Realtime session', () => {
       't1',
       expect.stringMatching(/lost my voice connection.*connection reset/is),
       'SYSTEM',
+      expect.objectContaining({ channelContext: expect.anything() }),
     );
     expect(providerLeave).toHaveBeenCalled();
     expect(browserStop).toHaveBeenCalled();
@@ -828,6 +853,7 @@ describe('a lost audio pipeline', () => {
       't1',
       expect.stringMatching(/lost my audio.*capture process exited/is),
       'SYSTEM',
+      expect.objectContaining({ channelContext: expect.anything() }),
     );
     expect(providerLeave).toHaveBeenCalled();
     expect(browserStop).toHaveBeenCalled();
@@ -1111,7 +1137,13 @@ describe('auto-leaving an empty meeting', () => {
 
     await vi.advanceTimersByTimeAsync(30_000);
     expect(service.status().state).toBe('idle');
-    expect(publish).toHaveBeenCalledWith('u1', 't1', expect.stringMatching(/everyone else left/i), 'SYSTEM');
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/everyone else left/i),
+      'SYSTEM',
+      expect.objectContaining({ channelContext: expect.anything() }),
+    );
   });
 
   it('stays in a call whose participant count cannot be read', async () => {
@@ -1149,7 +1181,52 @@ describe('auto-leaving an empty meeting', () => {
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 1000);
 
     expect(service.status().state).toBe('idle');
-    expect(publish).toHaveBeenCalledWith('u1', 't1', expect.stringMatching(/60-minute limit/), 'SYSTEM');
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/60-minute limit/),
+      'SYSTEM',
+      expect.objectContaining({ channelContext: expect.anything() }),
+    );
+  });
+
+  it('scopes the empty-room note to the Slack origin, though the turn has ended', async () => {
+    const slackContext = { channel: 'slack', channelId: 'C123', threadTs: '169.1', threadId: 't1' };
+    getChannelContext.mockResolvedValue(slackContext);
+    vi.useFakeTimers();
+    await service.join({ ...input, originChannel: 'slack', originChannelId: 'C123' });
+    await vi.advanceTimersByTimeAsync(10);
+
+    providerParticipantCount.mockResolvedValue(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    // The note fires long after join() returned; this.current still carries the origin.
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/everyone else left/i),
+      'SYSTEM',
+      { channelContext: slackContext },
+    );
+  });
+
+  it('scopes the duration-cap note to the Slack origin, though the turn has ended', async () => {
+    const slackContext = { channel: 'slack', channelId: 'C123', threadTs: '169.1', threadId: 't1' };
+    getChannelContext.mockResolvedValue(slackContext);
+    vi.useFakeTimers();
+    await service.join({ ...input, originChannel: 'slack', originChannelId: 'C123' });
+    await vi.advanceTimersByTimeAsync(10);
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 1000);
+
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/60-minute limit/),
+      'SYSTEM',
+      { channelContext: slackContext },
+    );
   });
 });
 
@@ -1340,6 +1417,41 @@ describe('status notes', () => {
 
     // A note nobody could deliver must not end a working meeting.
     expect(service.status().state).toBe('in_call');
+  });
+
+  it('routes a Slack-origin note to the requesting channel and thread', async () => {
+    const slackContext = { channel: 'slack', channelId: 'C123', threadTs: '169.1', threadId: 't1' };
+    getChannelContext.mockResolvedValue(slackContext);
+
+    await service.join({ ...input, originChannel: 'slack', originChannelId: 'C123' });
+    await settle();
+
+    // The origin fields reach getChannelContext, which owns the DM fallback.
+    expect(getChannelContext).toHaveBeenCalledWith('t1', 'slack', 'C123');
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/I'm in the/),
+      'SYSTEM',
+      { channelContext: slackContext },
+    );
+  });
+
+  it('scopes a web-origin note to web/CLI, not Slack', async () => {
+    const webContext = { channel: 'websocket', threadId: 't1' };
+    getChannelContext.mockResolvedValue(webContext);
+
+    await service.join({ ...input, originChannel: 'websocket' });
+    await settle();
+
+    expect(getChannelContext).toHaveBeenCalledWith('t1', 'websocket', undefined);
+    expect(publish).toHaveBeenCalledWith(
+      'u1',
+      't1',
+      expect.stringMatching(/I'm in the/),
+      'SYSTEM',
+      { channelContext: webContext },
+    );
   });
 });
 

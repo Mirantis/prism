@@ -42,6 +42,10 @@ export interface MeetingToolsInput {
   agentId: string;
   /** Where join progress is reported; the calling turn's thread. */
   threadId?: string;
+  /** The channel the join was requested from, so status notes route back there. */
+  originChannel?: 'slack' | 'websocket';
+  /** The Slack channel id of that request, when the origin is Slack. */
+  originChannelId?: string;
 }
 
 /**
@@ -115,6 +119,8 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
           userId: input.userId,
           agentId: input.agentId,
           threadId: input.threadId,
+          originChannel: input.originChannel,
+          originChannelId: input.originChannelId,
           responseMode,
         });
 

@@ -82,6 +82,20 @@ describe('getMeetingTools', () => {
     );
   });
 
+  it('forwards the origin channel so status notes route back to the request', async () => {
+    mockJoin.mockResolvedValue({ state: 'waiting_admission', message: 'Requested to join.' });
+    const tools = getMeetingTools({ ...input, originChannel: 'slack', originChannelId: 'C123' });
+
+    await tools.join_meeting.execute!(
+      { url: 'https://meet.google.com/abc-defg-hij' },
+      { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
+    );
+
+    expect(mockJoin).toHaveBeenCalledWith(
+      expect.objectContaining({ originChannel: 'slack', originChannelId: 'C123' }),
+    );
+  });
+
   it('rejects a non-Meet link with an example instead of trying to join', async () => {
     mockFindProvider.mockReturnValue(null);
     const tools = getMeetingTools(input);
