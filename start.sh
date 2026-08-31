@@ -14,15 +14,14 @@
 #   3. Apply Prisma migrations.
 #   4. Apply any pending `.prism` import via
 #      `dist/scripts/apply-pending-import.js` BEFORE prisma migrate
-#      deploy / backfill / server open the SQLite file. Shared with the
+#      deploy / server open the SQLite file. Shared with the
 #      `dev:single` npm script (which runs the same code via tsx) —
-#      single source of truth for the swap, no race with the backfill
-#      subprocess step 5 forks, no race with `prisma migrate deploy`
-#      opening the stale DB.
-#   5. Kick off the embedding backfill in the background — best-effort,
-#      never blocks startup.
-#   6. Exec the Node server as PID 1 (after the migrate step so signal
-#      handling + crash semantics match a clean process tree).
+#      single source of truth for the swap, no race with
+#      `prisma migrate deploy` opening the stale DB.
+#   5. Exec the Node server as PID 1 (after the migrate step so signal
+#      handling + crash semantics match a clean process tree). The server
+#      runs the embedding backfill itself, so this script forks nothing
+#      that outlives it.
 #
 # Direct path to the workspace-hoisted prisma binary — avoids `npx`'s
 # startup registry round-trip.
@@ -116,8 +115,5 @@ fi
 
 node dist/scripts/apply-pending-import.js
 "$PRISMA" migrate deploy --schema=prisma/sqlite/schema.prisma
-
-(node dist/scripts/backfill-embeddings.js || \
-  echo 'backfill-embeddings failed; continuing startup' >&2) &
 
 exec node dist/index.js
