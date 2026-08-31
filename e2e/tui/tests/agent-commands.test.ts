@@ -26,12 +26,12 @@ let session: TuiSession;
 let defaultModel = '';
 
 /**
- * Type a full command line (including any arguments) and submit it. We avoid
- * waiting on the slash popup — it hides as soon as a space is typed — and give
- * Ink a beat to commit the value into App state before Enter.
+ * Type a command line and submit it. The trailing space closes the slash popup,
+ * so one Enter runs the command — the Enter-completes path is covered by
+ * slash-commands.test.ts.
  */
 async function dispatch(line: string): Promise<void> {
-  session.send(line);
+  session.send(line + ' ');
   await new Promise((r) => setTimeout(r, 300));
   session.send(KEYS.ENTER);
 }
