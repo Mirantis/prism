@@ -31,7 +31,7 @@ const feature = loadFeatureFromText(
  * removes — so finding it proves the saved copy was read, not the preview.
  */
 const MARKER = 'MIDDLE-MARKER-4T7X the answer is chartreuse';
-const FILLER_LINES = 12_000;
+const FILLER_LINES = 1_800;
 const BIG_FILE = 'huge-output.txt';
 
 let env: RuntimeTestEnv;
@@ -90,6 +90,17 @@ async function waitForToolCall(
   throw new Error(`no ${name} tool call was persisted within ${timeoutMs}ms`);
 }
 
+/** The snapshot lands in `finalize()`, just after the turn's last step. */
+async function waitForContextTokens(dbPath: string, timeoutMs = 60_000): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const tokens = latestContextTokens(dbPath);
+    if (tokens !== null) return tokens;
+    await sleep(1000);
+  }
+  throw new Error('no context snapshot was written');
+}
+
 describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachScenario, AfterEachScenario, Scenario }) => {
   BeforeAllScenarios(async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tui-spill-'));
@@ -122,10 +133,12 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     Given("the agent's workspace holds a file too large to return whole", () => {
       resetThread(env.dbPath);
 
-      // ~40 chars a line, marker at the exact middle, so the payload is well past
-      // the 30,000-char chat budget and the marker is deep inside the omitted part.
+      // ~293 chars a line under `shell_read_file`'s 2000-char-per-line ceiling, and
+      // 1,800 lines under its 2,000-line default — so the whole file comes back in
+      // one call, well past the 30,000-char budget, with the marker at the exact
+      // middle where a head+tail cut removes it.
       const half = Array.from({ length: FILLER_LINES / 2 }, (_, i) =>
-        `line ${String(i).padStart(6, '0')}: ${'filler '.repeat(4)}`,
+        `line ${String(i).padStart(6, '0')}: ${'filler '.repeat(40)}`,
       );
       fs.writeFileSync(
         path.join(workspaceDir, BIG_FILE),
@@ -134,18 +147,22 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       );
     });
 
-    When('I ask the agent to read that file with the shell', async () => {
+    When('I ask the agent to read that file', async () => {
+      // `shell_read_file` rather than `shell_exec`: it returns up to 2000 lines by
+      // default, so the result is over the cap without the model having to choose a
+      // size argument. Depending on it passing `limit` made this test's whole
+      // premise a coin flip, and the coin came up tails.
       session!.send(
-        `You MUST call the shell_exec tool exactly once, with command "cat ${BIG_FILE}" ` +
-          'and limit 5000000 so nothing is dropped by the shell. Then reply with one short ' +
-          'sentence. Do not call any other tool.',
+        `You MUST call the shell_read_file tool exactly once, on the path ${BIG_FILE}, ` +
+          'with no offset and no limit. Then reply with one short sentence. Do not call ' +
+          'any other tool.',
       );
       await sleep(200);
       session!.send(KEYS.ENTER);
     });
 
     Then('the stored tool result is the capped view, not the raw payload', async () => {
-      const call = await waitForToolCall(env.dbPath, 'shell_exec');
+      const call = await waitForToolCall(env.dbPath, 'shell_read_file');
 
       expect(call.rendered).toBe(true);
       expect(call.truncated).toBeDefined();
@@ -156,7 +173,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
 
     And('the whole output is saved on disk', async () => {
-      const call = await waitForToolCall(env.dbPath, 'shell_exec');
+      const call = await waitForToolCall(env.dbPath, 'shell_read_file');
       const spillId = call.truncated!.spillId!;
       expect(spillId).toBeTruthy();
 
@@ -171,7 +188,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
 
     And('the part it was not shown is absent from what it read', async () => {
-      const call = await waitForToolCall(env.dbPath, 'shell_exec');
+      const call = await waitForToolCall(env.dbPath, 'shell_read_file');
       expect(call.output).not.toContain(MARKER);
     });
 
@@ -184,7 +201,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       session!.send(KEYS.ENTER);
     });
 
-    Then('it searches the saved output rather than re-reading it whole', async () => {
+    Then('it searches the saved output rather than reading it through', async () => {
       const call = await waitForToolCall(env.dbPath, 'read_tool_output');
       expect(call.tool).toBe('read_tool_output');
       // A search, not a walk: nothing it read back was itself big enough to cut.
@@ -194,24 +211,23 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     And('it answers with the marker text', async () => {
       await session!.waitForFrame(/chartreuse/, 180_000);
     });
-  });
 
-  Scenario('A saved result is not re-sent on every later turn', ({ When, Then }) => {
-    When('I ask the agent an unrelated question', async () => {
+    When('I ask an unrelated question in the same conversation', async () => {
+      // Same session, so the same thread — which is the point. A fresh CLI would
+      // start a new thread and this assertion would pass without proving anything.
       session!.send('In one short sentence, what is the capital of France?');
       await sleep(200);
       session!.send(KEYS.ENTER);
-      // Wait for the answer, not just for the send.
       await session!.waitForFrame(/Paris/i, 180_000);
     });
 
-    Then("the conversation's context stays far below the size of the raw result", () => {
-      const tokens = latestContextTokens(env.dbPath);
-      expect(tokens).not.toBeNull();
-      // The raw file is ~500,000 chars, roughly 120,000 tokens. If the stored
-      // result were replayed raw — the defect this whole change exists to fix —
-      // this turn alone would blow past this ceiling.
-      expect(tokens!).toBeLessThan(60_000);
+    Then("the conversation's context stays far below the size of the raw result", async () => {
+      const tokens = await waitForContextTokens(env.dbPath);
+
+      // The result is ~540,000 chars, roughly 130,000 tokens. If the stored result
+      // were replayed raw — the defect this whole change exists to fix — this turn
+      // alone would blow past the ceiling.
+      expect(tokens).toBeLessThan(60_000);
     });
   });
 });
