@@ -713,7 +713,6 @@ src/
 │   ├── cron.ts                 # Cron task tools (schedule, list, delete)
 │   ├── goals.ts                # Goal tools (create, get)
 │   ├── attachments.ts          # hydrate_attachment (stored bytes → workspace file) + view_attachment (image/PDF into the turn) + `reapScratchDirs`
-│   ├── read-tool-output.ts     # Search (or, reluctantly, page) the saved copy of a tool result that was too big to show whole
 │   ├── share-file.ts           # Deliver a workspace file to the user as an attachment
 │   ├── meeting.ts              # Voice meetings (join_meeting, leave_meeting, meeting_status)
 │   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, claude_code
@@ -757,7 +756,7 @@ src/
 │   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
 │   ├── media-store.ts          # Attachment bytes as files under `<data dir>/media`: write/read/remove, filename sanitizing, stray-file reaper
-│   ├── tool-output-store.ts    # The saved whole copy of an oversized tool result under `<data dir>/tool-outputs`: write/read/remove, TTL reaper. No DB row, so mtime is the whole lifecycle
+│   ├── tool-output-store.ts    # The saved whole copy of an oversized tool result under `<data dir>/tool-outputs`: write/read/remove, TTL reaper. The notice hands the agent the path and it reads the file with the shell. No DB row, so mtime is the whole lifecycle
 │   ├── prisma.ts               # Prisma client singleton (runtime database)
 │   └── tool-names.ts           # Single owner of what a tool may be *called* for a model: charset, no leading digit, 64-char cap (`toModelToolName`, `capToolNames`)
 ├── prisma/

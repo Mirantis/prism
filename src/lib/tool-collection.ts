@@ -22,7 +22,6 @@ import { getAgentConfigTools } from '../tools/agent-config';
 import { getShellTools } from '../tools/shell/index';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from '../tools/share-file';
 import { getAttachmentTools } from '../tools/attachments';
-import { getReadToolOutputTool } from '../tools/read-tool-output';
 import { getSkillTools } from '../tools/skills/index';
 import { getMeetingTools, MEETING_TOOL_NAMES, isMeetingSupported } from '../tools/meeting';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
@@ -116,14 +115,6 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     // Same workspaceRoot as the shell tools: write-then-share has to agree on what
     // a relative path means, and the write/read sequencing compares resolved paths.
     ...getShareFileTools(input.workspaceRoot, input.pendingFileWrites),
-    // Reads back a result that was too big to show whole. Registered in every
-    // mode and omitted from none: a cut can happen on any turn, so every turn has
-    // to be able to reach what it left behind.
-    ...getReadToolOutputTool({
-      userId: input.userId,
-      agentId: input.agentId,
-      mode: input.mode,
-    }),
     ...getAttachmentTools(
       input.userId,
       input.agentId,

@@ -211,10 +211,11 @@ function cutHeadTail(
   // whole thing back in, which rebuilds in history exactly the bulk the cut removed
   // — and every page is itself a tool result, stored and replayed.
   const saved = spill
-    ? `The full output is saved as ${spill.id}. SEARCH it, do not read it through: ` +
-      `call read_tool_output with a \`pattern\` for what you actually need, because ` +
-      `paging it back refills the context this cut protected.` +
-      (spill.capped ? ` Only the first ${spill.bytes} bytes of it were saved.` : '') +
+    ? `The full output is saved at ${spill.path}. Read only what you need from it ` +
+      `with shell_exec — \`jq\` when it is JSON, otherwise grep or sed. Do not cat the ` +
+      `whole file: everything you read comes back into your context, which is what ` +
+      `this cut just spared you.` +
+      (spill.capped ? ` Only the first ${spill.bytes} bytes were saved.` : '') +
       ' '
     : '';
   return (
@@ -277,8 +278,12 @@ const SPILL_ENVELOPE = '__prismToolOutputSpill';
 
 export interface SpilledToolOutput {
   readonly [SPILL_ENVELOPE]: true;
-  /** Head + notice + tail: what the model is shown, minted once. */
-  preview: string;
+  /**
+   * The model-facing result: head + notice + tail. Not a sample of the real
+   * thing — this *is* what the model reads and what history stores. `raw` is the
+   * secondary copy, kept only for consumers that need the tool's own shape.
+   */
+  text: string;
   truncation: ToolOutputTruncation;
   /** The tool's untouched return, so no structured consumer loses anything. */
   raw: unknown;
@@ -292,7 +297,7 @@ export interface SpilledToolOutput {
    * payload beside the cut one. Every in-process consumer reads `.raw` as a
    * property and is unaffected.
    */
-  toJSON(): { preview: string; truncation: ToolOutputTruncation };
+  toJSON(): { text: string; truncation: ToolOutputTruncation };
 }
 
 export function isSpilledToolOutput(output: unknown): output is SpilledToolOutput {
@@ -305,7 +310,7 @@ export function isSpilledToolOutput(output: unknown): output is SpilledToolOutpu
   // error traceable to nothing.
   return (
     candidate[SPILL_ENVELOPE] === true &&
-    typeof candidate.preview === 'string' &&
+    typeof candidate.text === 'string' &&
     typeof candidate.truncation === 'object' &&
     candidate.truncation !== null
   );
@@ -326,16 +331,6 @@ export interface ToolOutputSpillEvent {
   /** True when the saved copy is itself only the first `MAX_SPILL_BYTES`. */
   spillCapped: boolean;
 }
-
-/**
- * Marks a tool whose results are never saved, only cut.
- *
- * For `read_tool_output`, which reads a saved copy: saving *its* result would mint
- * a fresh id inside a page of an existing saved output, and a model following that
- * id would spiral — each page saved, each save producing another page to read. It
- * needs no copy of its own, because the copy it is reading from is still there.
- */
-export const NEVER_SPILL = '__prismNeverSpill';
 
 export interface ToolOutputCaptureOptions {
   /** Character budget for the model-facing text. Defaults to 30,000. */
@@ -451,18 +446,15 @@ export function withToolOutputCapture(
                 ...options,
                 maxChars,
                 toolName: name,
-                ...((original as Record<string, unknown>)[NEVER_SPILL] === true
-                  ? { spill: false }
-                  : {}),
               });
               if (!rendered.truncation) return raw;
               const truncation = rendered.truncation;
               return {
                 [SPILL_ENVELOPE]: true,
-                preview: rendered.text,
+                text: rendered.text,
                 truncation,
                 raw,
-                toJSON: () => ({ preview: rendered.text, truncation }),
+                toJSON: () => ({ text: rendered.text, truncation }),
               } satisfies SpilledToolOutput;
             },
           }
@@ -478,13 +470,13 @@ export function withToolOutputCapture(
             })) as ToolModelOutput;
             return capModelOutput(
               inner,
-              isSpilledToolOutput(opts.output) ? opts.output.preview : null
+              isSpilledToolOutput(opts.output) ? opts.output.text : null
             );
           }
         : async ({ output }: { output: unknown }): Promise<ToolResultOutput> => ({
             type: 'text',
             value: isSpilledToolOutput(output)
-              ? output.preview
+              ? output.text
               : renderToolResult(output, { maxChars, toolName: name }),
           }),
     } as Tool;
@@ -502,7 +494,7 @@ type ToolModelOutput =
 /**
  * Put the cut view into whatever shape a tool's own hook returned.
  *
- * `preview` is null when nothing was cut, and then the hook's output is passed
+ * `cutText` is null when nothing was cut, and then the hook's output is passed
  * through untouched — the common case, and the one that keeps images and structured
  * returns working exactly as before.
  *
@@ -510,19 +502,19 @@ type ToolModelOutput =
  * rather than a smaller one, and image size is already bounded where images are
  * made.
  */
-export function capModelOutput(inner: ToolModelOutput, preview: string | null): ToolModelOutput {
-  if (preview === null) return inner;
+export function capModelOutput(inner: ToolModelOutput, cutText: string | null): ToolModelOutput {
+  if (cutText === null) return inner;
 
   switch (inner.type) {
     case 'text':
     case 'json':
-      return { type: 'text', value: preview };
+      return { type: 'text', value: cutText };
     case 'error-text':
     case 'error-json':
-      return { type: 'error-text', value: preview };
+      return { type: 'error-text', value: cutText };
     case 'content': {
       const nonText = inner.value.filter((part) => part.type !== 'text');
-      return { type: 'content', value: [{ type: 'text', text: preview }, ...nonText] };
+      return { type: 'content', value: [{ type: 'text', text: cutText }, ...nonText] };
     }
     default:
       return inner;

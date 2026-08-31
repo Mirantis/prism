@@ -402,7 +402,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           const rendered = !tr
             ? undefined
             : isSpilledToolOutput(tr.output)
-              ? { text: tr.output.preview, truncation: tr.output.truncation }
+              ? { text: tr.output.text, truncation: tr.output.truncation }
               : renderToolResultDetailed(tr.output, { toolName: tc.toolName });
           stepToolCalls.push({
             tool: tc.toolName,
@@ -768,7 +768,7 @@ function summarizeSteps(
     }
     for (const tr of step.toolResults) {
       const outputStr = isSpilledToolOutput(tr.output)
-        ? tr.output.preview
+        ? tr.output.text
         : renderToolResult(tr.output);
       parts.push(`[Result] ${outputStr}`);
     }

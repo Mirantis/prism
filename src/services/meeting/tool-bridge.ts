@@ -25,7 +25,7 @@
 import { asSchema, type Tool } from 'ai';
 import { logger } from '../../logger';
 import { collectTools } from '../../lib/tool-collection';
-import { renderAndSpill, spillEventProps, NEVER_SPILL } from '../../lib/tool-output-limiter';
+import { renderAndSpill, spillEventProps } from '../../lib/tool-output-limiter';
 import { trackEvent } from '../../lib/telemetry';
 import type { RealtimeFunctionTool } from './realtime-session';
 
@@ -161,11 +161,6 @@ function describeTool(tool: Tool): string | undefined {
  * ("I couldn't check that because…"), which is far better in a live call than a
  * silent session or a dropped turn.
  */
-/** Whether a tool has opted out of having its own results saved. */
-function neverSpill(tool: Tool): boolean {
-  return (tool as unknown as Record<string, unknown>)[NEVER_SPILL] === true;
-}
-
 async function executeTool(
   tools: Record<string, Tool>,
   name: string,
@@ -201,12 +196,6 @@ async function executeTool(
     // way and swept by the same janitor.
     const rendered = await renderAndSpill(result, {
       maxChars: MEETING_MAX_RESULT_CHARS,
-      // A tool that reads a saved output back is never given a copy of its own.
-      // The chat path reads this marker inside `withToolOutputCapture`; a call
-      // executes tools itself, so it has to read it here. This is the one channel
-      // whose budget makes the chain reachable: a page is clamped to 8,000
-      // characters, and escaping can carry that past 12,500.
-      ...(neverSpill(tool) ? { spill: false } : {}),
       extraGuidance: VOICE_TRUNCATION_GUIDANCE,
       toolName: name,
       onSpill: (event) =>
