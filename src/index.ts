@@ -47,6 +47,10 @@ import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
 import { ensureWorkspaceRoot } from './tools/shell/config';
 import { ensureDataDirs } from './lib/data-dir';
 import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
+import { runBackfill } from './scripts/backfill-embeddings';
+
+// What `ps` and `top` show for this process.
+process.title = 'prism-agent';
 
 // Initialize Langfuse tracing before any LLM calls
 initLangfuse();
@@ -217,6 +221,12 @@ const initialize = async () => {
         ? 'Voice meetings available (browser + audio toolchain and OpenAI key present)'
         : 'Voice meetings unavailable — meeting tools not registered',
     );
+
+    // Embed the memory entries that have no vector yet. In-process and
+    // best-effort: it never blocks startup, and a failure costs a log line.
+    void runBackfill().catch((err) => {
+      logger.warn({ err }, '[Startup] embedding backfill failed');
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`Failed to initialize services: ${msg}`);

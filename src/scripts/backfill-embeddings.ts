@@ -123,7 +123,11 @@ export async function runBackfill(): Promise<BackfillResult> {
   return { processed, failed, scanned };
 }
 
-if (require.main === module) {
+// Manual re-run entry point (`node dist/scripts/backfill-embeddings.js`). The
+// runtime calls `runBackfill()` itself, so this stays quiet when imported. The
+// `typeof` test covers the SEA bundle, an ES module where `module` does not
+// exist and a bare reference to it throws.
+if (typeof module !== 'undefined' && require.main === module) {
   runBackfill()
     .catch(err => {
       console.error('Backfill failed:', serializeError(err));

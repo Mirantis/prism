@@ -60,9 +60,9 @@ docker run -d --name prism \
 ```
 
 The image's default command runs `start.sh`, which applies database migrations,
-applies any pending `.prism` import, kicks off an embedding backfill in the
-background, and then launches the server. The container exposes a health check
-on `GET /health`.
+applies any pending `.prism` import, and then launches the server. The server
+backfills memory embeddings in the background as it starts. The container
+exposes a health check on `GET /health`.
 
 You can still open a TUI against a running server container:
 
