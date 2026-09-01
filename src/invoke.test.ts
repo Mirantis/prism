@@ -15,6 +15,8 @@ const {
   mockGetMCPTools,
   mockGetPluginTools,
   mockBuildSystemPromptParts,
+  mockBuildRecalledMemories,
+  mockAddMessage,
   mockBuildConversationMessages,
   mockGetChannelBehaviorInstructions,
   mockGetTaskToolInstructions,
@@ -37,6 +39,8 @@ const {
   mockGetMCPTools: vi.fn(),
   mockGetPluginTools: vi.fn(),
   mockBuildSystemPromptParts: vi.fn(),
+  mockBuildRecalledMemories: vi.fn(),
+  mockAddMessage: vi.fn(),
   mockBuildConversationMessages: vi.fn(),
   mockGetChannelBehaviorInstructions: vi.fn(),
   mockGetTaskToolInstructions: vi.fn(),
@@ -118,8 +122,19 @@ vi.mock('./tools/skills/index', () => ({
   getSkillTools: mockGetSkillTools,
 }));
 
+vi.mock('./services/conversation.service', () => ({
+  conversationService: { addMessage: mockAddMessage },
+}));
+
 vi.mock('./prompts/context-builder', () => ({
   buildSystemPromptParts: mockBuildSystemPromptParts,
+  buildRecalledMemories: mockBuildRecalledMemories,
+  recalledMemoriesMessage: (recalled: string) => ({
+    role: 'user',
+    content: `Context:\n<recalled-memories>\n${recalled}\n</recalled-memories>`,
+  }),
+  recalledMemoryContent: (recalled: string) =>
+    `Context:\n<recalled-memories>\n${recalled}\n</recalled-memories>`,
   buildConversationMessages: mockBuildConversationMessages,
   // Text-only stand-in for the real shaping (content parts for attachments are
   // covered in context-builder.test.ts); these specs only care that a steering
@@ -269,6 +284,8 @@ describe('invoke', () => {
       { text: 'stable system prompt', cacheable: true },
       { text: 'dynamic system prompt', cacheable: false },
     ]);
+    mockBuildRecalledMemories.mockResolvedValue(null);
+    mockAddMessage.mockResolvedValue({ message: { id: 'recall-row' }, titleSet: null });
     mockBuildConversationMessages.mockReturnValue([]);
     mockGetChannelBehaviorInstructions.mockReturnValue('channel instructions');
     mockGetAgentContext.mockResolvedValue(createTestAgentContext());
@@ -384,8 +401,10 @@ describe('invoke', () => {
           { id: 'm2', externalMessageId: null, internalStep: false, contentChars: 2 },
         ],
       });
-      // The fork carries the live request ingredients — same references the
-      // turn's own generateText call used, so the summarize call hits the cache.
+      // The fork carries the turn's own request ingredients — the same references the
+      // turn's generateText call used — so the summarize call hits the cache. The
+      // recall pair rides along: it is a thread row like any other, so a summary that
+      // folds it in is consistent with what the next turn would replay anyway.
       const turnRequest = mockGenerateText.mock.calls[0][0];
       expect(fork.system).toBe(turnRequest.system);
       expect(fork.messages).toBe(turnRequest.messages);
@@ -1521,7 +1540,10 @@ describe('invoke', () => {
       expect(assistantMessage.content).toContain('[Result] ok');
       expect(assistantMessage.content).toContain('Still working...');
 
-      // Should not pass tools in the summary call
+      // No tools on the summary call: the prompt asks for a final answer, not more
+      // work. Tool blocks already in the history are accepted without a tool
+      // definition — verified on a live Bedrock call, against the documented
+      // requirement, so do not "fix" this by declaring tools.
       expect(secondCall.tools).toBeUndefined();
 
       // Response should be the early stopping summary only (no intermediate step text)
@@ -1816,6 +1838,138 @@ describe('invoke', () => {
         role: 'user',
         content: 'no need to run tests',
       });
+    });
+  });
+
+  // AGENT-202. Recalled memories used to be a section of the system prompt, in
+  // front of the whole conversation in the one cache prefix, so every change to
+  // them re-billed all of it.
+  describe('recalled memories', () => {
+    const RECALL = {
+      role: 'user',
+      content: 'Context:\n<recalled-memories>\n- Mario likes chocolate\n</recalled-memories>',
+    };
+
+    it('closes the request with the recalled block', async () => {
+      mockBuildRecalledMemories.mockResolvedValue('- Mario likes chocolate');
+      mockBuildConversationMessages.mockReturnValue([
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'hello' },
+        { role: 'user', content: 'q' },
+      ]);
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-1', prompt: 'q' }));
+
+      // After the question, not before: that is where the stored row sorts, since the
+      // engine writes the user's message before the turn runs. A run of user messages
+      // merges into one provider turn, so the model sees them together.
+      expect(mockGenerateText.mock.calls[0][0].messages).toEqual([
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'hello' },
+        { role: 'user', content: 'q' },
+        RECALL,
+      ]);
+    });
+
+    // Ephemeral injection is worse than no recall: the next turn replays the user's
+    // message without the block, and the agent retracts the answer it gave from it as
+    // something it "made up" — observed on a live agent. `internalStep` is the
+    // existing mechanism for a row that replays into model context but reaches no
+    // client transcript; concise mode writes its intermediate steps the same way.
+    it('records the block against the thread, hidden from clients', async () => {
+      mockBuildRecalledMemories.mockResolvedValue('- Mario likes chocolate');
+      mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'q' }]);
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-1', prompt: 'q' }));
+
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-1', {
+        content: RECALL.content,
+        role: 'USER',
+        triggeredBy: 'USER_INPUT',
+        internalStep: true,
+      });
+    });
+
+    // What is stored has to be what was sent, or a replayed thread rebuilds a prompt
+    // that never ran.
+    it('records the same bytes it sends', async () => {
+      mockBuildRecalledMemories.mockResolvedValue('- Mario likes chocolate');
+      mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'q' }]);
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-1', prompt: 'q' }));
+
+      expect(mockAddMessage.mock.calls[0][1].content).toBe(
+        mockGenerateText.mock.calls[0][0].messages.at(-1).content,
+      );
+    });
+
+    // Goal and thread-bound cron turns append their prompt at invoke time and never
+    // store it, so a row there would be an orphan block with no question — repeated
+    // once per run, replaying into every later chat turn.
+    it('records nothing for a turn whose prompt is not stored history', async () => {
+      mockBuildRecalledMemories.mockResolvedValue('- Mario likes chocolate');
+      mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'q' }]);
+
+      await invoke(createTestInvokeRequest({ mode: 'cron', threadId: 'thread-1', prompt: 'q' }));
+
+      expect(mockAddMessage).not.toHaveBeenCalled();
+      expect(mockGenerateText.mock.calls[0][0].messages).toContainEqual(RECALL);
+    });
+
+    // A turn must not fail because a recall could not be recorded: the block is in
+    // this request either way, and only the replay is lost.
+    it('still sends the block when recording it fails', async () => {
+      mockBuildRecalledMemories.mockResolvedValue('- Mario likes chocolate');
+      mockAddMessage.mockRejectedValue(new Error('database is locked'));
+      mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'q' }]);
+
+      const result = await invoke(
+        createTestInvokeRequest({ mode: 'chat', threadId: 'thread-1', prompt: 'q' }),
+      );
+
+      expect(result.response).toBe('Here are your pods.');
+      expect(mockGenerateText.mock.calls[0][0].messages).toContainEqual(RECALL);
+    });
+
+    it('records nothing for a threadless turn', async () => {
+      mockBuildRecalledMemories.mockResolvedValue('- Mario likes chocolate');
+      mockBuildConversationMessages.mockReturnValue([]);
+
+      await invoke(createTestInvokeRequest({ mode: 'heartbeat', prompt: 'q' }));
+
+      expect(mockAddMessage).not.toHaveBeenCalled();
+      expect(mockGenerateText.mock.calls[0][0].messages).toEqual([
+        { role: 'user', content: 'q' },
+        RECALL,
+      ]);
+    });
+
+    // A user turn is legal last, so nothing needs guarding — the request cannot end
+    // on an assistant turn or split a tool call from its results.
+    it('does not trip the trailing-assistant tripwire', async () => {
+      mockBuildRecalledMemories.mockResolvedValue('- Mario likes chocolate');
+      mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'q' }]);
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'q' }));
+
+      expect(mockTrackEvent).not.toHaveBeenCalledWith(
+        'invocation trailing assistant',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+
+    it('is searched with the turn, and adds nothing when the recall is empty', async () => {
+      mockBuildRecalledMemories.mockResolvedValue(null);
+      mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'q' }]);
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'q' }));
+
+      const call = mockGenerateText.mock.calls[0][0];
+      expect(mockBuildRecalledMemories).toHaveBeenCalledWith(expect.anything(), 'q');
+      expect(call.messages).toEqual([{ role: 'user', content: 'q' }]);
+      expect(call.system).toHaveLength(2);
     });
   });
 

@@ -38,6 +38,14 @@ export interface MemoryWriteInput {
 // Memory Manager Service
 // ============================================================================
 
+/** At and above this score an entry is pinned: carried every turn, query or not. */
+const PINNED_IMPORTANCE = 9;
+const MAX_PINNED = 15;
+const MAX_RELEVANT = 10;
+const PINNED_CHAR_BUDGET = 4000;
+/** Half the pinned budget: this half is billed per turn, the pinned half is cached. */
+const RELEVANT_CHAR_BUDGET = 2000;
+
 class MemoryManagerService {
   /**
    * Search memory entries using pgvector cosine similarity.
@@ -149,87 +157,86 @@ class MemoryManagerService {
   }
 
   /**
-   * Build memory context for automatic injection into LLM system prompt.
+   * The agent's pinned knowledge: every entry it scored `importance >= 9`.
    *
-   * Returns formatted markdown combining two sources:
-   * 1. High-importance entries (importance >= 9) — "pinned" knowledge, no date cutoff
-   * 2. Query-relevant entries — embedding-matched against the user's message
+   * No query — these are returned whatever the turn is about, which is why they are
+   * a stable system-prompt section rather than part of the per-turn recall. They
+   * change only when the agent pins or drops one, so they cache like the rest of the
+   * prompt; carried per turn they re-billed the whole conversation behind them on
+   * every turn of any thread whose agent had pinned a single entry.
    *
-   * Returns empty string when no memories match (caller skips injection).
+   * Returns an empty string when nothing is pinned (caller drops the section).
    */
-  async buildMemoryContext(userId: string, agentId: string, query?: string): Promise<string> {
-    const MAX_IMPORTANT = 15;
-    const MAX_RELEVANT = 10;
-    const CHAR_BUDGET = 4000;
-
-    // 1. High-importance entries — no date cutoff, these are "pinned" knowledge
-    const importantEntries = await prisma.memoryEntry.findMany({
-      where: {
-        agentId,
-        importance: { gte: 9 },
-      },
+  async buildPinnedMemories(agentId: string): Promise<string> {
+    const entries = await prisma.memoryEntry.findMany({
+      where: { agentId, importance: { gte: PINNED_IMPORTANCE } },
       orderBy: [{ importance: 'desc' }, { createdAt: 'desc' }],
-      take: MAX_IMPORTANT,
+      take: MAX_PINNED,
     });
+    if (entries.length === 0) return '';
 
-    // 2. Query-relevant entries via semantic search
-    let relevantEntries: MemorySearchResult[] = [];
-    if (query) {
-      relevantEntries = await this.search(userId, query, {
-        limit: MAX_RELEVANT,
-        daysBack: 365,
-        agentId,
-      });
-      // Deduplicate — remove entries already in the important set
-      const importantIds = new Set(importantEntries.map(e => e.id));
-      relevantEntries = relevantEntries.filter(e => !importantIds.has(e.id));
+    const byCategory = new Map<string, typeof entries>();
+    for (const entry of entries) {
+      const list = byCategory.get(entry.category) || [];
+      list.push(entry);
+      byCategory.set(entry.category, list);
     }
 
-    // 3. Bail out early if nothing to show
-    if (importantEntries.length === 0 && relevantEntries.length === 0) {
-      return '';
-    }
-
-    // 4. Format with character budget
     const parts: string[] = [];
     let charCount = 0;
-
-    // Group important entries by category
-    if (importantEntries.length > 0) {
-      const byCategory = new Map<string, typeof importantEntries>();
-      for (const entry of importantEntries) {
-        const list = byCategory.get(entry.category) || [];
-        list.push(entry);
-        byCategory.set(entry.category, list);
-      }
-
-      for (const [category, entries] of byCategory) {
-        if (charCount >= CHAR_BUDGET) break;
-        const header = `## ${category.charAt(0).toUpperCase() + category.slice(1)}s`;
-        parts.push(header);
-        charCount += header.length + 1; // +1 for newline separator
-        for (const entry of entries) {
-          if (charCount >= CHAR_BUDGET) break;
-          const line = `- ${entry.content}`;
-          parts.push(line);
-          charCount += line.length + 1; // +1 for newline separator
-        }
-      }
-    }
-
-    // Query-relevant section
-    if (relevantEntries.length > 0 && charCount < CHAR_BUDGET) {
-      const sectionHeader = '\n## Relevant to Current Query';
-      parts.push(sectionHeader);
-      charCount += sectionHeader.length + 1; // +1 for newline separator
-      for (const entry of relevantEntries) {
-        if (charCount >= CHAR_BUDGET) break;
+    for (const [category, group] of byCategory) {
+      if (charCount >= PINNED_CHAR_BUDGET) break;
+      const header = `## ${category.charAt(0).toUpperCase() + category.slice(1)}s`;
+      parts.push(header);
+      charCount += header.length + 1;
+      for (const entry of group) {
+        if (charCount >= PINNED_CHAR_BUDGET) break;
         const line = `- ${entry.content}`;
         parts.push(line);
-        charCount += line.length + 1; // +1 for newline separator
+        charCount += line.length + 1;
       }
     }
+    return parts.join('\n');
+  }
 
+  /**
+   * What this turn's message matches, by meaning.
+   *
+   * Pinned entries are left out: `buildPinnedMemories` already carries them from the
+   * system prompt, where they cost nothing per turn.
+   *
+   * Its budget is smaller than the pinned one because this half is billed on every
+   * turn that matches something, while the pinned half is billed once and then read
+   * from cache.
+   *
+   * Returns an empty string when nothing matches (caller sends no block).
+   */
+  async buildRelevantMemories(userId: string, agentId: string, query?: string): Promise<string> {
+    if (!query) return '';
+
+    // Pinned entries are dropped: `buildPinnedMemories` carries them. Past MAX_PINNED
+    // that leaves an entry in neither surface, reachable only when the agent searches
+    // for it itself — accepted, because pinning more than fifteen things defeats what
+    // pinning is for, and the docs say to pin sparingly.
+    const matches = (
+      await this.search(userId, query, { limit: MAX_RELEVANT, daysBack: 365, agentId })
+    ).filter((entry) => entry.importance < PINNED_IMPORTANCE);
+    if (matches.length === 0) return '';
+
+    // Each line carries when it was recorded and what kind of entry it is. Asked to
+    // stand behind a recall, an agent given the bare text answered that it had "no
+    // source, timestamp, or citation attached — just an assertion that appeared in
+    // the prompt", and declined it. Provenance is what that asks for; an assertion
+    // that the entries are trustworthy is what it refuses.
+    const parts: string[] = [];
+    let charCount = 0;
+    for (const entry of matches) {
+      if (charCount >= RELEVANT_CHAR_BUDGET) break;
+      const recorded = entry.createdAt.toISOString().slice(0, 10);
+      const line = `- ${entry.content} (${entry.category}, recorded ${recorded})`;
+      parts.push(line);
+      charCount += line.length + 1;
+    }
     return parts.join('\n');
   }
 
