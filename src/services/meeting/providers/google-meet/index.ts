@@ -580,14 +580,11 @@ export class GoogleMeetProvider implements MeetingProvider {
   }
 
   private async attemptJoin(page: Page, options: JoinOptions): Promise<JoinOutcome> {
-    const startedAt = Date.now();
-
     try {
       await this.loadMeetingPage(page, options.url);
     } catch (err) {
       return { status: 'failed', step: 'page_load', reason: `Could not load the meeting page: ${err instanceof Error ? err.message : String(err)}` };
     }
-    logger.info(`[Meeting] Meet page loaded in ${Date.now() - startedAt}ms`);
 
     // Everything up to the click shares this; the waiting room gets its own budget
     // below. Capped by the admission timeout as well so a caller asking for a short

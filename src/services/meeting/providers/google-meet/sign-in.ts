@@ -149,7 +149,6 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
     return;
   }
 
-  logger.info(`[Meeting] Signing in as ${email.replace(/^[^@]+/, '***')}`);
   try {
     // `hl=en` pins the interface language. Without it Google localizes from the
     // egress IP — a German page rendered here once — and every selector below is
@@ -171,7 +170,6 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
         .or(page.getByRole('button', { name: /use another account/i }))
         .first();
       if (await appearsVisible(another, 5_000)) {
-        logger.info('[Meeting] Account chooser shown; asking for the sign-in form');
         await another.click({ timeout: 5_000 });
       }
     }
@@ -202,7 +200,6 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
     await settledUrl(page, 45_000);
 
     if (await isSignedIn(page)) {
-      logger.info('[Meeting] Signed in; the profile will be reused on later calls');
       return;
     }
     // Most often a "verify it's you" challenge, which needs a code only a human
@@ -283,7 +280,6 @@ async function isSignedIn(page: Page): Promise<boolean> {
       // Judged only once the redirect chain has stopped moving — see `settledUrl`.
       const url = await settledUrl(page);
       if (url.startsWith('https://myaccount.google.com/')) return true;
-      logger.info(`[Meeting] Profile is not signed in (settled on ${new URL(url).origin})`);
       return false;
     } catch (err) {
       // Loud, and never at debug: this used to be the quietest line in the file and
