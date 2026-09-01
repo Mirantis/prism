@@ -279,9 +279,10 @@ that real quick" before each tool call, so a pause never sounds like it dropped 
 
 If you ask for something the call has no time for — a question that needs digging or a
 change that needs writing — it schedules a **one-off task** rather than leaving the
-work unfinished, picks a time, and says out loud what it set up and when it runs. The result appears in your chat with the agent after the call, not in the room
-and not in the meeting's chat panel. It says it as something arranged, never as
-something already done. See [Scheduled tasks](scheduled-tasks.md).
+work unfinished, picks a time, and says out loud what it set up and when it runs. The
+result appears in your chat with the agent after the call, not in the room and not in
+the meeting's chat panel. It says it as something arranged, never as something already
+done. See [Scheduled tasks](scheduled-tasks.md).
 
 A tool result in a call is capped at **12,000 characters**, lower than chat's 30,000,
 because everything a tool returns stays in the call's live session and the agent has
