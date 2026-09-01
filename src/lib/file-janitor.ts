@@ -30,7 +30,7 @@ const ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
 const STRAY_MEDIA_GRACE_MS = 60 * 60 * 1000;
 
 /** One full sweep. Never rejects. */
-export async function reapOrphanAttachments(): Promise<void> {
+export async function sweepFiles(): Promise<void> {
   try {
     const deleted = await attachmentService.deleteOrphans(ORPHAN_TTL_MS);
     if (deleted > 0) logger.info(`[Attachments] reaped ${deleted} orphaned upload(s)`);
@@ -79,9 +79,9 @@ export async function reapOrphanAttachments(): Promise<void> {
  * Sweep once now, then every hour. Returns the timer so the caller can clear
  * it on shutdown; it is unref'd, so it never holds the process open.
  */
-export async function startAttachmentJanitor(): Promise<NodeJS.Timeout> {
-  await reapOrphanAttachments();
-  const timer = setInterval(reapOrphanAttachments, SWEEP_INTERVAL_MS);
+export async function startFileJanitor(): Promise<NodeJS.Timeout> {
+  await sweepFiles();
+  const timer = setInterval(sweepFiles, SWEEP_INTERVAL_MS);
   timer.unref?.();
   return timer;
 }
