@@ -42,6 +42,10 @@ retrieved only when needed.
   curated document. Everything below that score is retrieved only when a message
   matches it. Pin sparingly: a pinned entry is paid for on every turn of every
   conversation, while the rest cost nothing until they are relevant.
+- The pinned set is **bounded** — the highest-scored entries up to a fixed size. Past
+  that bound an entry is not dropped: it goes back to being retrieved when a message
+  matches it, or when the agent searches for it. So pinning everything pins nothing in
+  particular.
 
 ## How the agent uses it
 

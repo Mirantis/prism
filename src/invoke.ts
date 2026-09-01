@@ -224,6 +224,17 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // After the user's turn rather than before it, because that is where the stored
     // row sorts: the engine writes the user's message before the turn runs. Matching
     // the order is what makes a replayed thread rebuild the prompt that ran.
+    // Tripwire state: report an assistant-terminated request at most once per
+    // invocation so a 100-step turn can't flood the metric.
+    const guard = { reported: false };
+    const guardContext = { agentId, userId: request.userId, mode: request.mode, guard };
+
+    // Before the recall is appended, so it judges the history the thread actually
+    // has. The recall is an unconditional trailing user turn, which makes any
+    // assistant-terminated array provider-valid — running the check after it would be
+    // the silent fix-up this function exists to refuse.
+    warnOnTrailingAssistant(messages, { ...guardContext, stage: 'initial' });
+
     const recalled = await buildRecalledMemories(context, request.prompt);
     if (recalled) {
       messages.push(recalledMemoriesMessage(recalled));
@@ -289,11 +300,6 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     let lastSnapshot: ContextUsageSnapshot | null = null;
     let lastMeasuredTokens: number | null = null;
 
-    // Tripwire state: report an assistant-terminated request at most once per
-    // invocation so a 100-step turn can't flood the metric.
-    const guard = { reported: false };
-    const guardContext = { agentId, userId: request.userId, mode: request.mode, guard };
-
     // Steering messages already folded into this turn, each pinned to the index
     // it was inserted at. Our injections are not part of the SDK's own message
     // list, so they must be re-spliced each step to stay in the conversation at
@@ -322,7 +328,6 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       })),
     });
 
-    warnOnTrailingAssistant(messages, { ...guardContext, stage: 'initial' });
 
     generateText({
       model,

@@ -1841,9 +1841,9 @@ describe('invoke', () => {
     });
   });
 
-  // AGENT-202. Recalled memories used to be a section of the system prompt, in
-  // front of the whole conversation in the one cache prefix, so every change to
-  // them re-billed all of it.
+  // Recalled memories used to be a section of the system prompt, in front of the
+  // whole conversation in the one cache prefix, so every change to them re-billed
+  // all of it.
   describe('recalled memories', () => {
     const RECALL = {
       role: 'user',
@@ -1942,6 +1942,26 @@ describe('invoke', () => {
         { role: 'user', content: 'q' },
         RECALL,
       ]);
+    });
+
+    // The recall is an unconditional trailing user turn, so it makes any
+    // assistant-terminated array provider-valid. If the check ran after the append it
+    // could never fire again — the silent fix-up `warnOnTrailingAssistant` exists to
+    // refuse.
+    it('still reports an assistant-terminated history behind a recall', async () => {
+      mockBuildRecalledMemories.mockResolvedValue('- Mario likes chocolate');
+      mockBuildConversationMessages.mockReturnValue([
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: 'a' },
+      ]);
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'q' }));
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'invocation trailing assistant',
+        expect.anything(),
+        expect.objectContaining({ 'invoke.stage': 'initial' }),
+      );
     });
 
     // A user turn is legal last, so nothing needs guarding — the request cannot end

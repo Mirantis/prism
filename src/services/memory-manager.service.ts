@@ -38,6 +38,20 @@ export interface MemoryWriteInput {
 // Memory Manager Service
 // ============================================================================
 
+/**
+ * An entry rendered as one line.
+ *
+ * Both surfaces are newline-joined lists, so an entry holding a newline and `- ` can
+ * append entries of its own — with a `(category, recorded …)` suffix that looks just
+ * as authored. That suffix exists because the agent would not use a recall until it
+ * could see where each line came from, and provenance the content can forge is not
+ * provenance. What an entry may contain is not ours to trust: the agent writes them,
+ * but out of whatever it has read.
+ */
+function oneLine(content: string): string {
+  return content.replace(/\s*\n\s*/g, ' ').trim();
+}
+
 /** At and above this score an entry is pinned: carried every turn, query or not. */
 const PINNED_IMPORTANCE = 9;
 const MAX_PINNED = 15;
@@ -167,34 +181,65 @@ class MemoryManagerService {
    *
    * Returns an empty string when nothing is pinned (caller drops the section).
    */
-  async buildPinnedMemories(agentId: string): Promise<string> {
+  /**
+   * The pinned entries that actually fit, in the order they will render.
+   *
+   * Budget applied here rather than while rendering, so one function decides what is
+   * pinned and `buildRelevantMemories` can exclude exactly that set. Excluding by the
+   * importance threshold instead left an entry in neither surface whenever the
+   * character budget cut it — four pinned entries of 1,500 characters lose the fourth
+   * with only three pinned — reachable then only by an explicit search.
+   *
+   * `id` breaks the sort. `importance >= 9` collapses to a couple of values in
+   * practice and `memory_write` can create several entries in one turn, so
+   * `createdAt` ties with nothing behind it; a swap there reorders a whole category
+   * inside the one cached prefix this section exists to keep stable.
+   */
+  private async selectPinnedEntries(agentId: string): Promise<MemoryEntry[]> {
     const entries = await prisma.memoryEntry.findMany({
       where: { agentId, importance: { gte: PINNED_IMPORTANCE } },
-      orderBy: [{ importance: 'desc' }, { createdAt: 'desc' }],
+      orderBy: [{ importance: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
       take: MAX_PINNED,
     });
+
+    const fitted: MemoryEntry[] = [];
+    let charCount = 0;
+    for (const entry of entries) {
+      const line = `- ${oneLine(entry.content)}`;
+      if (charCount + line.length + 1 > PINNED_CHAR_BUDGET) break;
+      fitted.push(entry);
+      charCount += line.length + 1;
+    }
+    return fitted;
+  }
+
+  /**
+   * The agent's pinned knowledge: the entries it scored `importance >= 9`.
+   *
+   * No query — these come back whatever the turn is about, which is why they are a
+   * stable system-prompt section rather than part of the per-turn recall. They change
+   * only when the agent pins or drops one, so they cache like the rest of the prompt;
+   * carried per turn they re-billed the whole conversation behind them on every turn
+   * of any thread whose agent had pinned a single entry.
+   *
+   * Returns an empty string when nothing is pinned (caller drops the section).
+   */
+  async buildPinnedMemories(agentId: string): Promise<string> {
+    const entries = await this.selectPinnedEntries(agentId);
     if (entries.length === 0) return '';
 
-    const byCategory = new Map<string, typeof entries>();
+    const byCategory = new Map<string, MemoryEntry[]>();
     for (const entry of entries) {
       const list = byCategory.get(entry.category) || [];
       list.push(entry);
       byCategory.set(entry.category, list);
     }
 
+    // Grouped first, so a header cannot render with nothing under it.
     const parts: string[] = [];
-    let charCount = 0;
     for (const [category, group] of byCategory) {
-      if (charCount >= PINNED_CHAR_BUDGET) break;
-      const header = `## ${category.charAt(0).toUpperCase() + category.slice(1)}s`;
-      parts.push(header);
-      charCount += header.length + 1;
-      for (const entry of group) {
-        if (charCount >= PINNED_CHAR_BUDGET) break;
-        const line = `- ${entry.content}`;
-        parts.push(line);
-        charCount += line.length + 1;
-      }
+      parts.push(`## ${category.charAt(0).toUpperCase() + category.slice(1)}s`);
+      for (const entry of group) parts.push(`- ${oneLine(entry.content)}`);
     }
     return parts.join('\n');
   }
@@ -214,13 +259,13 @@ class MemoryManagerService {
   async buildRelevantMemories(userId: string, agentId: string, query?: string): Promise<string> {
     if (!query) return '';
 
-    // Pinned entries are dropped: `buildPinnedMemories` carries them. Past MAX_PINNED
-    // that leaves an entry in neither surface, reachable only when the agent searches
-    // for it itself — accepted, because pinning more than fifteen things defeats what
-    // pinning is for, and the docs say to pin sparingly.
+    // Dropped by id, not by importance: only the entries the pinned section actually
+    // emits are already in front of the agent. Anything the pinned caps left out is
+    // still reachable here, which is what the threshold check got wrong.
+    const pinnedIds = new Set((await this.selectPinnedEntries(agentId)).map((e) => e.id));
     const matches = (
       await this.search(userId, query, { limit: MAX_RELEVANT, daysBack: 365, agentId })
-    ).filter((entry) => entry.importance < PINNED_IMPORTANCE);
+    ).filter((entry) => !pinnedIds.has(entry.id));
     if (matches.length === 0) return '';
 
     // Each line carries when it was recorded and what kind of entry it is. Asked to
@@ -231,9 +276,11 @@ class MemoryManagerService {
     const parts: string[] = [];
     let charCount = 0;
     for (const entry of matches) {
-      if (charCount >= RELEVANT_CHAR_BUDGET) break;
       const recorded = entry.createdAt.toISOString().slice(0, 10);
-      const line = `- ${entry.content} (${entry.category}, recorded ${recorded})`;
+      const line = `- ${oneLine(entry.content)} (${entry.category}, recorded ${recorded})`;
+      // Tested before the line is added, so the budget is a ceiling. Testing after
+      // let the last entry carry the whole block past it.
+      if (charCount + line.length + 1 > RELEVANT_CHAR_BUDGET) break;
       parts.push(line);
       charCount += line.length + 1;
     }
