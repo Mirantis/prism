@@ -35,7 +35,6 @@ import {
   renderToolResultDetailed,
   isSpilledToolOutput,
   unwrapToolOutput,
-  spillEventProps,
 } from './lib/tool-output-limiter';
 import { withToolLifecycleEvents } from './lib/tool-lifecycle';
 import {
@@ -176,14 +175,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // The gate sits outside the capture too, which needs no argument: a rejected
     // call produces no result, so there is nothing to cut or save.
     const observedTools = withToolLifecycleEvents(tools, request.onToolEvent);
-    const limitedTools = withToolOutputCapture(observedTools, {
-      onSpill: (event) =>
-        trackEvent(
-          'tool output spilled',
-          request.userId,
-          spillEventProps(agentId, request.mode, event),
-        ),
-    });
+    const limitedTools = withToolOutputCapture(observedTools);
     const gatedTools = withToolRiskGate(limitedTools, {
       mode: config.toolRiskGateMode,
       invocationMode: request.mode,
