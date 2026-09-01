@@ -312,6 +312,10 @@ runs, or have a scheduled run report back into the room that way; a line sent fr
 the call is stored with the thread like any other tool argument, and one the agent posts
 from inside the call is not stored at all.
 
+It can also **share its screen** and **use a browser** on request — see
+[The screen](#the-screen) and [The browser](#the-browser) for what the room sees and
+what the agent can do with a page.
+
 The one tool a call takes away is **file sharing**. `share_file` is unavailable in a call: it only
 stores a file and hands back a reference for the chat machinery to deliver, and a
 meeting doesn't run that machinery — so it would store a file that reached nobody. If
@@ -510,22 +514,55 @@ still waiting.
 The one case it will not join at all is a meeting where Meet offers *only* to let it in
 without a microphone — see below.
 
-### The screen — not yet exposed to the agent (developer notes)
+### The screen
 
-**The agent cannot share its screen.** No tool asks it to, and no setting turns one on.
-Ask it to present and it will not be able to. The rest of this section is a note for
-whoever adds that tool, not something you can do today.
+**Ask the agent to share its screen and it will.** It presents the display its browser
+runs on, so the room sees whichever tab that browser has in front — the meeting itself,
+unless the agent has opened a page (see below). Setting the share up takes a few seconds
+of clicking through Meet, and the agent says what it is doing while it does.
 
-Its browser *can* share. Meet's **Share screen** control resolves in it, and what it
-shares is the virtual display the browser runs on — so the room would see the agent's
-own browser windows. Driving that needs the browser's debugging port, which stays
-inside the container.
+Ask it to stop and it stops, staying in the call. One limit stands: the capture is the
+whole screen rather than one window, so what is meant to be seen has to be the tab in
+front.
 
-Two details a share tool will have to handle. The shared display holds the Meet window
-itself, so Meet warns about the self-view and offers **Show my screen anyway**; that
-button keeps the presentation up, and the warning can return later in a call. And the
-capture is the whole screen rather than one window, so whatever the agent means to show
-has to be the window on top.
+Meet warns about presenting a screen that contains the meeting, and the agent answers
+that warning as part of starting the share. The warning can come back later in a call,
+and only the agent's browser sees it — so a presentation can drop mid-call with nobody
+in the room able to do anything about it. Ask the agent to share again and it starts a
+fresh one.
+
+### The browser
+
+In a call the agent can **use a web browser**: open a page, click a link or a button,
+type into a field, scroll. It runs in a tab beside the meeting, and that tab is what a
+screen share shows — so "open the dashboard and share your screen" is one request the
+agent can carry out end to end. Ask it to open the page first: the room does not need to
+watch it find one.
+
+Each step comes back to the agent as the page's address, its text and the names of the
+links, buttons and fields on it, and it works from those names — so tell it what the
+thing is called ("click Sign in") rather than where it is on screen.
+
+**It can keep several tabs open** and move between them: "open that in a new tab", "go
+back to the first tab", "close this one". The tab it is in is the tab a screen share
+shows, so switching tabs changes what the room sees. A link that opens its own tab is
+counted too.
+
+**It can also see the screen.** Ask what it can see and it takes a picture of the tab
+in front — the same thing the room sees while it is sharing — and answers from that. Use
+it to check that the right thing is up before the room is told to look, or to ask about
+something a page describes badly in words. It costs a couple of seconds.
+
+The browser exists only while a call is running, and it is the same browser that is
+signed into the agent's Google account. **Anyone in the call can ask it to browse**, a
+meeting is not authenticated, and the room sees the result if a share is up — so the
+warning in [Tools](#tools-and-what-it-wont-do-on-a-spoken-request) applies here as much
+as to the shell.
+
+It reaches whatever the container can reach, which is more than the public web: the
+runtime's own API on localhost, anything else listening inside the deployment, and a
+cloud metadata service if one is available there. Restrict outbound traffic at the
+network, the way you would for the shell.
 
 ## When it doesn't work
 

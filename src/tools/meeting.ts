@@ -42,11 +42,30 @@ import { logger } from '../logger';
  */
 export const MEETING_MEMBERSHIP_TOOL_NAMES = ['join_meeting', 'leave_meeting'] as const;
 
+/**
+ * The tools that act on the call's screen, dropped by the same modes and for the same
+ * reason: what the room is watching is not for an autonomous run to move.
+ */
+export const MEETING_SCREEN_TOOL_NAMES = [
+  'share_screen',
+  'stop_screen_share',
+  'browse',
+  'see_screen',
+] as const;
+
 export interface MeetingToolsInput {
   userId: string;
   agentId: string;
   /** The calling turn's thread. */
   threadId?: string;
+  /**
+   * Whether these tools are being built for the meeting's own model.
+   *
+   * Only `see_screen` reads it, and only because the picture it takes can be delivered
+   * to the model in the call and to nobody else. A chat turn that calls it during a
+   * live call gets the page in words instead.
+   */
+  inMeetingSession?: boolean;
 }
 
 /**
@@ -160,6 +179,93 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
           .describe('true turns the microphone on, false turns it off.'),
       }),
       execute: async ({ on }) => meetingBotService.setMicrophone(on),
+    }),
+
+    share_screen: tool({
+      description:
+        'Start sharing your screen in the call you are in, so the room can see it. Use ' +
+        'this tool to show something in the browser or demonstrate UI features of an ' +
+        'application. What they see is the whole screen your browser runs on, so open ' +
+        'the page with `browse` first — whatever is in front is what shows. It takes ' +
+        'several seconds. Stop it with `stop_screen_share`.',
+      inputSchema: z.object({}),
+      execute: async () => meetingBotService.startScreenShare(),
+    }),
+
+    stop_screen_share: tool({
+      description:
+        'Stop sharing your screen, staying in the call. Says so plainly when you were ' +
+        'not sharing anything.',
+      inputSchema: z.object({}),
+      execute: async () => meetingBotService.stopScreenShare(),
+    }),
+
+    browse: tool({
+      description:
+        'Use a web browser: open a page, click things, type, scroll, and work in several ' +
+        'tabs. It runs beside the meeting, on the same screen `share_screen` presents — ' +
+        'so this is how you put something in front of the room, and how you look ' +
+        'something up on the web in a call. Every command answers with where the page is, ' +
+        'what it says, the names of the links, buttons and fields on it, and the list of ' +
+        'open tabs. Click and type by those names, and switch tabs by those numbers. ' +
+        'One command per call, and only while you are in a meeting.',
+      inputSchema: z.object({
+        action: z
+          .enum([
+            'navigate',
+            'click',
+            'type',
+            'press',
+            'scroll',
+            'read',
+            'new_tab',
+            'switch_tab',
+            'close_tab',
+          ])
+          .describe(
+            '"navigate" opens a URL in the tab you are in, "click" presses something, ' +
+            '"type" enters text, "press" sends one key (Enter, Escape, PageDown), ' +
+            '"scroll" moves the page, "read" just reports where you are. "new_tab" opens ' +
+            'another tab (pass a url to land on a page), "switch_tab" moves to a tab by ' +
+            'number, "close_tab" closes one. The tab you are in is the tab the room sees.',
+          ),
+        url: z
+          .string()
+          .optional()
+          .describe('For "navigate", and for a "new_tab" that should open a page.'),
+        tab: z
+          .number()
+          .optional()
+          .describe(
+            'For "switch_tab" and "close_tab": the tab number from the last answer. ' +
+            '"close_tab" without one closes the tab you are in.',
+          ),
+        target: z
+          .string()
+          .optional()
+          .describe(
+            'For "click", and optionally for "type": the words on the link, button or ' +
+            'field, as they came back in the last reading. A CSS selector also works.',
+          ),
+        text: z.string().optional().describe('For "type": what to enter.'),
+        key: z.string().optional().describe('For "press": the key name, e.g. Enter.'),
+        amount: z
+          .number()
+          .optional()
+          .describe('For "scroll": pixels to scroll, negative to go up. Defaults to 600.'),
+      }),
+      execute: async (command) => meetingBotService.browse(command),
+    }),
+
+    see_screen: tool({
+      description:
+        'See what your screen is showing right now — a picture of it, plus the text ' +
+        'and controls of the page. This is the same screen the room sees while you are ' +
+        'sharing, so use it to check that what you meant to show is up, to find your way ' +
+        'around a page `browse` reported oddly, or to answer a question about what is on ' +
+        'screen. Takes a couple of seconds.',
+      inputSchema: z.object({}),
+      execute: async () => meetingBotService.lookAtScreen({ toSession: input.inMeetingSession }),
     }),
 
     meeting_speaker: tool({

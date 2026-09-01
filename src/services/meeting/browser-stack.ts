@@ -42,6 +42,7 @@ import path from 'path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { resolveDataDir } from '../../lib/data-dir';
 import { logger } from '../../logger';
+import { TabSet } from './browser-tabs';
 
 /**
  * Browser binaries to try, best first.
@@ -144,6 +145,12 @@ export function buildBrowserArgs(port: number, userDataDir: string): string[] {
     '--auto-select-desktop-capture-source=Entire screen',
     // Meet starts playing before any user gesture exists.
     '--autoplay-policy=no-user-gesture-required',
+    // The meeting tab sits in the background for as long as the agent is browsing in
+    // the other one, and Chromium throttles a background tab's timers and its whole
+    // renderer. The call is the thing that must not slow down, so all three are off.
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
     // Containers give /dev/shm 64 MB by default, which Chrome exhausts and
     // then crashes on; this moves the shared memory to /tmp instead.
     '--disable-dev-shm-usage',
@@ -228,6 +235,16 @@ export class BrowserStack {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private proc: ChildProcess | null = null;
+  /** The meeting's own tab, kept so `front()` can answer before a second one exists. */
+  private mainPage: Page | null = null;
+  /**
+   * The tabs the agent browses in. The meeting's tab is never one of them.
+   *
+   * A tab the site opened itself is in here too — a link with `target="_blank"` makes a
+   * page the agent never asked for, and a list without it would report a click that did
+   * nothing.
+   */
+  private readonly tabs = new TabSet();
   /** Tail of the browser's stderr, for explaining a launch failure. */
   private browserStderr = '';
 
@@ -268,8 +285,76 @@ export class BrowserStack {
 
     const page = await this.context.newPage();
     page.on('crash', () => logger.error('[Meeting] Browser page crashed'));
+    this.mainPage = page;
+    // A page the site opens for itself — a link with `target="_blank"` — arrives here
+    // and nowhere else. Registered after the meeting's own page, so that one is never
+    // adopted as a tab the agent may navigate.
+    this.context.on('page', (opened) => this.tabs.add(opened));
 
     return page;
+  }
+
+  /**
+   * The tab the display is showing, which is the tab a screen share presents.
+   *
+   * Only the methods below bring a tab to the front. So the active tab is in front once
+   * one exists, and before that the meeting tab is the only tab.
+   */
+  front(): Page | null {
+    return this.tabs.current() ?? this.mainPage;
+  }
+
+  /**
+   * The tab the agent is working in, opening the first one on demand.
+   *
+   * A `goto` on the meeting page would end the call, so every address the agent opens
+   * lands here instead. Reading that page is a different matter: the participants
+   * panel, the share controls and a screenshot of the call all come off it.
+   *
+   * Every call brings the tab to the front, because a screen share captures the display
+   * and not one window.
+   *
+   * The meeting tab then runs in the background. The anti-throttling flags in
+   * `buildBrowserArgs()` keep it working there.
+   */
+  async workbench(): Promise<Page> {
+    return (await this.tabs.raise()) ?? this.openTab();
+  }
+
+  /** Open a tab and make it the active one. */
+  async openTab(): Promise<Page> {
+    if (!this.context) throw new Error('The browser is not running.');
+
+    const page = await this.context.newPage();
+    page.on('crash', () => logger.error('[Meeting] Browser tab crashed'));
+    this.tabs.add(page);
+    await page.bringToFront();
+    return page;
+  }
+
+  /** The open tabs, oldest first. The active one is `front()`. */
+  listTabs(): Page[] {
+    return this.tabs.list();
+  }
+
+  /**
+   * Put the active tab back in front, if there is one.
+   *
+   * For a caller that had to work in the meeting tab and now owes the room the tab it
+   * was watching. Opens nothing: a call that never browsed has no tab to raise.
+   */
+  async raiseActiveTab(): Promise<Page | null> {
+    return this.tabs.raise();
+  }
+
+  /** Make tab `index` (zero-based, as `listTabs` orders them) the active one. */
+  async selectTab(index: number): Promise<Page | null> {
+    return this.tabs.select(index);
+  }
+
+  /** Close tab `index`. The tab before it becomes active. */
+  async closeTab(index: number): Promise<boolean> {
+    return this.tabs.close(index);
   }
 
   /** Wait for the debugging endpoint to come up, then connect to it. */
@@ -309,6 +394,8 @@ export class BrowserStack {
     }
     this.context = null;
     this.browser = null;
+    this.mainPage = null;
+    this.tabs.clear();
 
     // We spawned it, so we have to reap it: closing the CDP connection leaves the
     // process running with the profile locked, and the next meeting would fail to

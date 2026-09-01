@@ -52,11 +52,46 @@ vi.mock('../audio-stack', () => ({
 
 const browserStop = vi.fn();
 const browserStart = vi.fn();
+/** The second tab, which everything the agent browses happens in. */
+const browserWorkbench = vi.fn();
+/** Whichever tab is in front — what a screenshot and a screen share both show. */
+const browserFront = vi.fn();
+const browserOpenTab = vi.fn();
+const browserListTabs = vi.fn();
+const browserSelectTab = vi.fn();
+const browserCloseTab = vi.fn();
+/** Called after the share clicks, to give the room back the tab it was watching. */
+const browserRaiseActiveTab = vi.fn();
 class FakeBrowserStack {
   start = browserStart;
   stop = browserStop;
+  workbench = browserWorkbench;
+  front = browserFront;
+  openTab = browserOpenTab;
+  listTabs = browserListTabs;
+  selectTab = browserSelectTab;
+  closeTab = browserCloseTab;
+  raiseActiveTab = browserRaiseActiveTab;
 }
 vi.mock('../browser-stack', () => ({ BrowserStack: FakeBrowserStack }));
+
+/**
+ * What a browser command does to a page is `browser-control.test.ts`'s subject. What
+ * this file cares about is which page it is handed, and when it is refused.
+ */
+const runBrowserCommand = vi.fn();
+const capture = vi.fn();
+const read = vi.fn();
+const summarizeTabs = vi.fn();
+vi.mock('../browser-control', () => ({
+  runBrowserCommand: (...a: unknown[]) => runBrowserCommand(...a),
+  capture: (...a: unknown[]) => capture(...a),
+  read: (...a: unknown[]) => read(...a),
+  summarizeTabs: (...a: unknown[]) => summarizeTabs(...a),
+  // The real rule, in one line: an http(s) address or nothing. `browse` checks it
+  // before it opens a tab, so a stub that answered everything would hide that.
+  normalizeUrl: (raw: string) => (/^https?:\/\//.test(raw) ? raw : null),
+}));
 
 const conversationStop = vi.fn();
 const conversationStart = vi.fn();
@@ -72,6 +107,8 @@ const conversationSetCurrentSpeaker = vi.fn();
  * state honestly and updates it when a retry succeeds.
  */
 const conversationSetAudible = vi.fn();
+/** Whether a screenshot reached the session; false once it has closed. */
+const conversationShowImage = vi.fn();
 /**
  * The options the service last built a conversation with.
  *
@@ -94,6 +131,7 @@ class FakeVoiceConversation {
   setParticipantCount = conversationSetParticipantCount;
   setCurrentSpeaker = conversationSetCurrentSpeaker;
   setAudible = conversationSetAudible;
+  showImage = conversationShowImage;
   pushMeetingAudio = vi.fn();
   get responseMode() {
     return 'addressed';
@@ -192,6 +230,8 @@ const providerSendChatMessage = vi.fn();
  * optional, and "no chat panel" has to be answerable without a second mocked module.
  */
 let chatSupported = true;
+const providerStartScreenShare = vi.fn();
+const providerStopScreenShare = vi.fn();
 vi.mock('../providers/google-meet', () => ({
   googleMeetProvider: {
     name: 'google-meet',
@@ -210,6 +250,8 @@ vi.mock('../providers/google-meet', () => ({
     get sendChatMessage() {
       return chatSupported ? (...a: unknown[]) => providerSendChatMessage(...a) : undefined;
     },
+    startScreenShare: (...a: unknown[]) => providerStartScreenShare(...a),
+    stopScreenShare: (...a: unknown[]) => providerStopScreenShare(...a),
   },
 }));
 
@@ -245,8 +287,30 @@ beforeEach(() => {
   audioStop.mockResolvedValue(undefined);
   audioWaitForMicCapture.mockResolvedValue(true);
   audioIsMicCaptured.mockResolvedValue(true);
-  browserStart.mockResolvedValue({ mockPage: true });
+  // The meeting page. It answers `bringToFront`, because the share clicks put it in
+  // front before they touch Meet's controls.
+  browserStart.mockResolvedValue({ mockPage: true, bringToFront: vi.fn(async () => {}) });
+  browserRaiseActiveTab.mockResolvedValue(null);
   browserStop.mockResolvedValue(undefined);
+  // One object for the one open tab: the service finds the tab it is in by identity,
+  // the way it will against real pages.
+  const tab = { mockTab: true };
+  browserWorkbench.mockResolvedValue(tab);
+  browserFront.mockReturnValue(tab);
+  browserOpenTab.mockResolvedValue({ mockTab: 'second' });
+  browserListTabs.mockReturnValue([tab]);
+  browserSelectTab.mockResolvedValue({ mockTab: 'second' });
+  browserCloseTab.mockResolvedValue(true);
+  runBrowserCommand.mockResolvedValue({ success: true, message: 'Opened https://example.test/' });
+  read.mockResolvedValue({ url: 'https://example.test/', title: 'Example', text: '', controls: [] });
+  summarizeTabs.mockResolvedValue([
+    { number: 1, title: 'Example', url: 'https://example.test/', active: true },
+  ]);
+  capture.mockResolvedValue({
+    imageUrl: 'data:image/jpeg;base64,AAAA',
+    reading: { url: 'https://example.test/', title: 'Example', text: 'Example page', controls: [] },
+  });
+  conversationShowImage.mockReturnValue(true);
   conversationStart.mockResolvedValue(undefined);
   prepareMeetingTools.mockResolvedValue({ declarations: [], count: 0, execute: vi.fn() });
   getAgentContext.mockResolvedValue({ agentName: 'Prism', soulMd: '', userMd: '' });
@@ -265,6 +329,8 @@ beforeEach(() => {
   // Live by default. Any other default would have every existing test that advances the
   // clock read a mute the call never had, and report it.
   providerMicrophoneLive.mockResolvedValue(true);
+  providerStartScreenShare.mockResolvedValue({ status: 'sharing' });
+  providerStopScreenShare.mockResolvedValue({ status: 'stopped' });
   conversationOptions = {};
   service = new MeetingBotService();
 });
@@ -306,6 +372,268 @@ describe('a platform that will not take an unauthenticated bot', () => {
     // Nothing was started, and nothing to tear down.
     expect(providerJoin).not.toHaveBeenCalled();
     expect(service.status().state).toBe('idle');
+  });
+});
+
+describe('sharing the screen', () => {
+  it('presents once the call is up, and says so in the status', async () => {
+    await service.join(input);
+    await settle();
+
+    expect(await service.startScreenShare()).toEqual({
+      success: true,
+      message: expect.stringMatching(/sharing my screen/i),
+    });
+    expect(providerStartScreenShare).toHaveBeenCalledWith(expect.objectContaining({ mockPage: true }));
+    expect(service.status().sharingScreen).toBe(true);
+  });
+
+  it('refuses before the call is up, without touching the page', async () => {
+    // The page is the lobby until admission lands, and Meet renders no share control
+    // there — so this has to be an answer the agent can say out loud, not a click.
+    let admit: (v: unknown) => void = () => {};
+    providerJoin.mockReturnValue(new Promise((r) => { admit = r; }));
+    await service.join(input);
+    await settle();
+
+    const result = await service.startScreenShare();
+
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/still getting into the call/i);
+    expect(providerStartScreenShare).not.toHaveBeenCalled();
+    expect(service.status().sharingScreen).toBe(false);
+
+    admit({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
+    await settle();
+  });
+
+  it('stops on request, and stays in the call', async () => {
+    providerStopScreenShare.mockResolvedValue({ status: 'stopped' });
+    await service.join(input);
+    await settle();
+    await service.startScreenShare();
+
+    const result = await service.stopScreenShare();
+
+    expect(result.success).toBe(true);
+    expect(service.status().sharingScreen).toBe(false);
+    expect(service.status().state).toBe('in_call');
+  });
+
+  it('treats nothing to stop as a success', async () => {
+    // The share may have been stopped from the room's own controls. What was asked for
+    // is a room seeing nothing, and that is where it is.
+    providerStopScreenShare.mockResolvedValue({ status: 'not_sharing' });
+    await service.join(input);
+    await settle();
+
+    const result = await service.stopScreenShare();
+
+    expect(result).toEqual({ success: true, message: 'I was not sharing my screen.' });
+  });
+
+  it("hands the provider's reason back rather than claiming a share", async () => {
+    providerStartScreenShare.mockResolvedValue({
+      status: 'failed',
+      reason: "I could not find Meet's screen-sharing control.",
+    });
+    await service.join(input);
+    await settle();
+
+    const result = await service.startScreenShare();
+
+    expect(result).toEqual({ success: false, message: expect.stringMatching(/could not find/i) });
+    // The room is not being shown anything, so nothing may report that it is.
+    expect(service.status().sharingScreen).toBe(false);
+  });
+});
+
+describe('using the browser', () => {
+  it('runs the command in the second tab, never in the meeting page', async () => {
+    // The meeting page *is* the call, so a `goto` on it would walk out of the meeting.
+    await service.join(input);
+    await settle();
+
+    const result = await service.browse({ action: 'navigate', url: 'https://example.test/' });
+
+    expect(result.success).toBe(true);
+    expect(browserWorkbench).toHaveBeenCalled();
+    expect(runBrowserCommand).toHaveBeenCalledWith(
+      { mockTab: true },
+      { action: 'navigate', url: 'https://example.test/' },
+    );
+  });
+
+  it('refuses before the call is up, when the only page is the lobby', async () => {
+    let admit: (v: unknown) => void = () => {};
+    providerJoin.mockReturnValue(new Promise((r) => { admit = r; }));
+    await service.join(input);
+    await settle();
+
+    const result = await service.browse({ action: 'read' });
+
+    expect(result.success).toBe(false);
+    expect(runBrowserCommand).not.toHaveBeenCalled();
+
+    admit({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
+    await settle();
+  });
+
+  it('says so when there is no call at all', async () => {
+    const result = await service.browse({ action: 'read' });
+
+    expect(result).toEqual({ success: false, message: 'I am not in a meeting right now.' });
+    expect(browserWorkbench).not.toHaveBeenCalled();
+  });
+
+  it('lists the tabs on every answer, so the model can switch by number', async () => {
+    await service.join(input);
+    await settle();
+
+    const result = await service.browse({ action: 'read' });
+
+    expect(result.tabs).toEqual([
+      { number: 1, title: 'Example', url: 'https://example.test/', active: true },
+    ]);
+  });
+
+  it('opens a new tab, and lands it on a url when given one', async () => {
+    await service.join(input);
+    await settle();
+
+    await service.browse({ action: 'new_tab', url: 'https://example.test/docs' });
+
+    expect(browserOpenTab).toHaveBeenCalled();
+    expect(runBrowserCommand).toHaveBeenCalledWith(
+      { mockTab: 'second' },
+      { action: 'navigate', url: 'https://example.test/docs' },
+    );
+  });
+
+  it('runs a browse and a share one after the other, never at once', async () => {
+    // The model can call both in one turn, and both move which tab is in front. Left
+    // unordered, the room watches whichever `bringToFront` resolved last.
+    await service.join(input);
+    await settle();
+
+    const order: string[] = [];
+    let releaseShare: () => void = () => {};
+    providerStartScreenShare.mockImplementation(async () => {
+      order.push('share:start');
+      await new Promise<void>((resolve) => {
+        releaseShare = resolve;
+      });
+      order.push('share:end');
+      return { status: 'sharing' };
+    });
+    runBrowserCommand.mockImplementation(async () => {
+      order.push('browse');
+      return { success: true, message: 'Opened.' };
+    });
+
+    const share = service.startScreenShare();
+    const browse = service.browse({ action: 'read' });
+    await settle();
+    releaseShare();
+    await Promise.all([share, browse]);
+
+    expect(order).toEqual(['share:start', 'share:end', 'browse']);
+  });
+
+  it('checks the address before it opens a tab', async () => {
+    // Opening first would put a blank tab in front of the room, and the answer would
+    // explain the address rather than the empty screen everybody is now looking at.
+    await service.join(input);
+    await settle();
+
+    const result = await service.browse({ action: 'new_tab', url: 'file:///etc/hosts' });
+
+    expect(result.success).toBe(false);
+    expect(browserOpenTab).not.toHaveBeenCalled();
+  });
+
+  it('switches by the number the model was shown, not by the index', async () => {
+    // Tabs are numbered from 1 in the answer, because the agent says them out loud.
+    await service.join(input);
+    await settle();
+
+    const result = await service.browse({ action: 'switch_tab', tab: 2 });
+
+    expect(browserSelectTab).toHaveBeenCalledWith(1);
+    expect(result.success).toBe(true);
+  });
+
+  it('reports a tab number that is not there', async () => {
+    browserSelectTab.mockResolvedValue(null);
+    await service.join(input);
+    await settle();
+
+    const result = await service.browse({ action: 'switch_tab', tab: 9 });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/no tab 9/i);
+  });
+
+  it('closes the tab it is in when no number is given', async () => {
+    await service.join(input);
+    await settle();
+
+    const result = await service.browse({ action: 'close_tab' });
+
+    expect(browserCloseTab).toHaveBeenCalledWith(0);
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('looking at the screen', () => {
+  it('puts the picture in the session and answers with the reading', async () => {
+    // A tool result is a string, so the screenshot cannot ride back inside it. What
+    // the tool returns is the page in words; the picture arrives as its own item.
+    await service.join(input);
+    await settle();
+
+    const result = await service.lookAtScreen({ toSession: true });
+
+    expect(capture).toHaveBeenCalledWith({ mockTab: true });
+    expect(conversationShowImage).toHaveBeenCalledWith(
+      'data:image/jpeg;base64,AAAA',
+      expect.stringMatching(/nobody in the room said this/i),
+    );
+    expect(result).toMatchObject({ success: true, url: 'https://example.test/', title: 'Example' });
+  });
+
+  it('does not send the picture into the call for a caller outside it', async () => {
+    // A chat turn can call this tool while a call is running. The picture can only be
+    // delivered to the model in the call, so the caller gets the page in words and is
+    // told so, rather than being told to look at something it cannot see.
+    await service.join(input);
+    await settle();
+
+    const result = await service.lookAtScreen();
+
+    expect(conversationShowImage).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.message).toMatch(/cannot show you the picture/i);
+  });
+
+  it('does not claim the model saw a picture the session never took', async () => {
+    conversationShowImage.mockReturnValue(false);
+    await service.join(input);
+    await settle();
+
+    const result = await service.lookAtScreen({ toSession: true });
+
+    expect(result.success).toBe(true);
+    expect(result.message).toMatch(/cannot show you the picture/i);
+    // The words are still worth having — they are all the model has now.
+    expect(result.text).toBe('Example page');
+  });
+
+  it('says so when there is no call at all', async () => {
+    const result = await service.lookAtScreen();
+
+    expect(result).toEqual({ success: false, message: 'I am not in a meeting right now.' });
+    expect(capture).not.toHaveBeenCalled();
   });
 });
 
@@ -1717,7 +2045,7 @@ describe('reading who has the floor', () => {
     // observed twice, back when this read captions. Asserted as an ordering, because "it
     // was called at some point" would have passed then too. Owned here rather than inside
     // the provider's join so the interface's contract is true for the next platform.
-    expect(providerEnableAttribution).toHaveBeenCalledWith({ mockPage: true });
+    expect(providerEnableAttribution).toHaveBeenCalledWith(expect.objectContaining({ mockPage: true }));
     expect(providerEnableAttribution.mock.invocationCallOrder[0]).toBeLessThan(
       conversationSpeak.mock.invocationCallOrder[0],
     );
@@ -1744,7 +2072,7 @@ describe('reading who has the floor', () => {
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10_000);
 
-      expect(providerCurrentSpeaker).toHaveBeenCalledWith({ mockPage: true });
+      expect(providerCurrentSpeaker).toHaveBeenCalledWith(expect.objectContaining({ mockPage: true }));
     } finally {
       vi.useRealTimers();
     }
@@ -1808,7 +2136,7 @@ describe('reading who has the floor', () => {
 
       await vi.advanceTimersByTimeAsync(10_000);
 
-      expect(providerEnableAttribution).toHaveBeenCalledWith({ mockPage: true });
+      expect(providerEnableAttribution).toHaveBeenCalledWith(expect.objectContaining({ mockPage: true }));
     } finally {
       vi.useRealTimers();
     }
@@ -2182,7 +2510,7 @@ describe('posting into the call chat', () => {
 
     expect(result).toEqual({ sent: true, message: `Posted it in the call's chat.` });
     expect(providerSendChatMessage).toHaveBeenCalledWith(
-      { mockPage: true },
+      expect.objectContaining({ mockPage: true }),
       'https://example.test/run/42',
     );
   });
@@ -2195,7 +2523,7 @@ describe('posting into the call chat', () => {
     await service.sendChatMessage('  see\n\nhttps://example.test/run/42   ', 'u1');
 
     expect(providerSendChatMessage).toHaveBeenCalledWith(
-      { mockPage: true },
+      expect.objectContaining({ mockPage: true }),
       'see https://example.test/run/42',
     );
   });
@@ -2464,7 +2792,7 @@ describe('posting into the call chat', () => {
       await sending;
       await vi.advanceTimersByTimeAsync(30_000);
 
-      expect(providerEnableAttribution).toHaveBeenCalledWith({ mockPage: true });
+      expect(providerEnableAttribution).toHaveBeenCalledWith(expect.objectContaining({ mockPage: true }));
     } finally {
       vi.useRealTimers();
     }

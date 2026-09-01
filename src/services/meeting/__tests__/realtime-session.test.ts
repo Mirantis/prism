@@ -649,6 +649,28 @@ describe('RealtimeSession outbound frames', () => {
     expect(item.item.content[0].text).toBe('You have just been admitted.');
   });
 
+  it('sends a screenshot as an image item nobody said', async () => {
+    // Two things ride on this frame's shape. The Realtime API takes an image only in a
+    // user message, and the addressed gate's window keeps `input_audio` items — so an
+    // item with no audio part is not counted as a turn in the room.
+    active = await harness();
+    active.session.sendImage('data:image/jpeg;base64,AAAA', 'This is your screen.');
+    await new Promise((r) => setTimeout(r, 20));
+
+    const item = active.sent.find((f) => f.type === 'conversation.item.create') as {
+      item: Record<string, any>;
+    };
+    expect(item.item.type).toBe('message');
+    expect(item.item.role).toBe('user');
+    expect(item.item.content).toEqual([
+      { type: 'input_image', image_url: 'data:image/jpeg;base64,AAAA' },
+      { type: 'input_text', text: 'This is your screen.' },
+    ]);
+    expect(item.item.content.some((part: { type: string }) => part.type === 'input_audio')).toBe(
+      false,
+    );
+  });
+
   it('drops sends after close instead of throwing', async () => {
     active = await harness();
     active.session.close();

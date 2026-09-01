@@ -26,6 +26,7 @@ import { getSkillTools } from '../tools/skills/index';
 import {
   getMeetingTools,
   MEETING_MEMBERSHIP_TOOL_NAMES,
+  MEETING_SCREEN_TOOL_NAMES,
   isMeetingSupported,
 } from '../tools/meeting';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
@@ -133,7 +134,14 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     // Live voice meetings. Empty unless the host has the browser/audio
     // toolchain and an OpenAI key — see `meetingToolsAvailable`.
     ...(meetingToolsAvailable
-      ? getMeetingTools({ userId: input.userId, agentId: input.agentId, threadId: input.threadId })
+      ? getMeetingTools({
+          userId: input.userId,
+          agentId: input.agentId,
+          threadId: input.threadId,
+          // `see_screen` delivers its picture into the meeting's Realtime session, so it
+          // has to know whether the model asking for it is the one in the call.
+          inMeetingSession: input.mode === 'meeting',
+        })
       : {}),
   };
 
@@ -339,7 +347,12 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
   // Only a person in a conversation asks the agent into a call or out of one, so every
   // mode below drops those two tools. Folded in here rather than repeated per mode so a
   // new mode can't accidentally inherit the ability to join a meeting.
-  const membershipToolNames = new Set<string>(MEETING_MEMBERSHIP_TOOL_NAMES);
+  const membershipToolNames = new Set<string>([
+    ...MEETING_MEMBERSHIP_TOOL_NAMES,
+    // The screen tools go with them: an autonomous run must not move what a room is
+    // watching, or open a browser in front of one.
+    ...MEETING_SCREEN_TOOL_NAMES,
+  ]);
 
   // Subagents return their result as text to the parent invocation (via the
   // Task tool) — they have no direct channel to the user, so a file they

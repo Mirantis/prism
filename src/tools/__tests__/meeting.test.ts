@@ -62,6 +62,10 @@ describe('getMeetingTools', () => {
       'join_meeting',
       'leave_meeting',
       'set_microphone',
+      'share_screen',
+      'stop_screen_share',
+      'browse',
+      'see_screen',
       'meeting_speaker',
       'send_meeting_chat',
       'meeting_status',
@@ -75,6 +79,16 @@ describe('getMeetingTools', () => {
     // The name no longer says "Google Meet", so the description has to.
     const { description } = getMeetingTools(input).join_meeting as { description: string };
     expect(description).toMatch(/Google Meet/);
+  });
+
+  it('tells the model what sharing a screen is for, in the operator\'s words', () => {
+    // Sharing has two uses a model will not infer from "share your screen": showing a
+    // page, and walking a room through an application. Pinned verbatim, because it is
+    // the sentence the operator asked for.
+    const { description } = getMeetingTools(input).share_screen as { description: string };
+    expect(description).toContain(
+      'Use this tool to show something in the browser or demonstrate UI features of an application.',
+    );
   });
 
   it('passes the calling thread through so progress lands in the right place', async () => {
