@@ -45,7 +45,7 @@ vi.mock('../prisma', () => ({
   prisma: { conversationThread: { findMany: vi.fn().mockResolvedValue([]) } },
 }));
 
-import { reapOrphanAttachments } from '../attachment-janitor';
+import { sweepFiles } from '../file-janitor';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -57,9 +57,9 @@ beforeEach(() => {
   reapExpiredToolOutputs.mockResolvedValue(0);
 });
 
-describe('reapOrphanAttachments', () => {
+describe('sweepFiles', () => {
   it('sweeps saved tool outputs against their own TTL', async () => {
-    await reapOrphanAttachments();
+    await sweepFiles();
 
     expect(reapExpiredToolOutputs).toHaveBeenCalledWith(2000);
   });
@@ -67,7 +67,7 @@ describe('reapOrphanAttachments', () => {
   it('sweeps the other stores even when the saved-output sweep throws', async () => {
     reapExpiredToolOutputs.mockRejectedValue(new Error('disk gone'));
 
-    await expect(reapOrphanAttachments()).resolves.toBeUndefined();
+    await expect(sweepFiles()).resolves.toBeUndefined();
 
     expect(deleteOrphans).toHaveBeenCalled();
     expect(expireContent).toHaveBeenCalled();
@@ -78,7 +78,7 @@ describe('reapOrphanAttachments', () => {
     deleteOrphans.mockRejectedValue(new Error('db gone'));
     expireContent.mockRejectedValue(new Error('db gone'));
 
-    await expect(reapOrphanAttachments()).resolves.toBeUndefined();
+    await expect(sweepFiles()).resolves.toBeUndefined();
 
     expect(reapExpiredToolOutputs).toHaveBeenCalledWith(2000);
   });

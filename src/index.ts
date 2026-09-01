@@ -40,7 +40,7 @@ import { messageDeliveryService } from './services/message-delivery.service';
 import { pluginMcpService } from './services/plugin-mcp.service';
 import { pluginCatalogService } from './services/plugin-catalog.service';
 import { reconcileAttachmentStorage } from './lib/attachment-boot';
-import { startAttachmentJanitor } from './lib/attachment-janitor';
+import { startFileJanitor } from './lib/file-janitor';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
@@ -62,7 +62,7 @@ void refreshModelCatalog().catch((err) => {
 const app = createApp();
 const httpServer = createServer(app);
 
-let orphanCleanupTimer: NodeJS.Timeout | undefined;
+let fileJanitorTimer: NodeJS.Timeout | undefined;
 
 // Register channel adapters for unified message delivery
 // Note: Must be registered BEFORE server starts accepting connections
@@ -204,9 +204,9 @@ const initialize = async () => {
 
     await getSlackHeartbeatThrottleQueue().start();
 
-    // Sweep abandoned uploads, scratch dirs, expired content and stray media
-    // files now, then hourly (see lib/attachment-janitor.ts).
-    orphanCleanupTimer = await startAttachmentJanitor();
+    // Sweep abandoned uploads, scratch dirs, expired content, stray media files
+    // and expired saved tool outputs now, then hourly (see lib/file-janitor.ts).
+    fileJanitorTimer = await startFileJanitor();
 
     // Probe for the voice-meeting toolchain once, here rather than per turn: the
     // tools block must stay byte-identical across requests for the provider's
@@ -243,7 +243,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   cronSchedulerService.stopAll();
   goalService.stopAll();
   sessionManagerService.stopAll();
-  if (orphanCleanupTimer) clearInterval(orphanCleanupTimer);
+  if (fileJanitorTimer) clearInterval(fileJanitorTimer);
   // A SIGTERM early in boot would otherwise leave the catalog fetch holding a
   // socket, so server.close() waits and the 5s force-exit below fires.
   cancelModelCatalogRefresh();

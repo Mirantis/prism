@@ -724,7 +724,6 @@ src/
 │   └── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
 ├── lib/
 │   ├── attachment-boot.ts      # Boot-time attachment storage reconciliation, in order: missing media files → content expiry → legacy BLOB backfill
-│   ├── attachment-janitor.ts   # Hourly attachment sweep: orphaned uploads, stale hydrate scratch dirs, over-TTL content, stray media files
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
 │   ├── llm-providers/          # One folder per chat vendor, plus the shared contract and the selector
 │   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (Anthropic breakpoint or the empty `NO_CACHE_POINT`) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares
@@ -752,6 +751,7 @@ src/
 │   │   └── openrouter-embedding-provider.ts # OpenAI SDK at openrouter.ai (`vendor/model` ids; off by default)
 │   ├── classification.ts       # Classification-gate request factories (`getGateRequest()` for the generateText gates, `getClassificationRequest()` for generateObject) — model + the active vendor's merged `providerOptions`
 │   ├── classification-gate.ts  # Shared one-word-verdict gate call (`runClassificationGate`) + `isRecentDuplicate`, used by the heartbeat and cron DELIVER/SUPPRESS gates
+│   ├── file-janitor.ts         # Hourly sweep of the durable file stores: orphaned uploads, stale hydrate scratch dirs, over-TTL attachment content, stray media files, over-TTL saved tool outputs
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
