@@ -222,10 +222,32 @@ export async function buildSystemPromptParts(
     }
   }
 
-  // Runtime context — dynamic (timestamp changes every call)
+  // Runtime context — the date, and where to get the time.
+  //
+  // The date and not the clock, because a provider caches a prefix that runs
+  // tools → system → messages and matches it from the start: a value here that
+  // changes every turn costs a re-write of the whole conversation behind it, on
+  // every turn, for the life of a thread. A timestamp with milliseconds changed
+  // with certainty. A date changes once a day, so the prefix survives the day.
+  //
+  // The agent reads the clock with the shell when a task needs it, which is what
+  // Claude Code does for the same reason. A tool call is fast enough for a voice
+  // meeting.
   const now = new Date();
   const weekday = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
-  dynamicSections.push(`# Runtime Context\n\nCurrent UTC date and time (ISO-8601): ${now.toISOString()} (${weekday})`);
+  dynamicSections.push(
+    [
+      `# Runtime Context`,
+      ``,
+      `Today's date (UTC): ${now.toISOString().slice(0, 10)} (${weekday})`,
+      ``,
+      `That is the date only. When a task needs the time of day — someone asks for it,` +
+        ` you are timestamping something, or you are working out how long ago something` +
+        ` happened — read the clock yourself with the shell:`,
+      ``,
+      '`date -u "+%Y-%m-%dT%H:%M:%SZ"`',
+    ].join('\n'),
+  );
 
   const parts: SystemPromptPart[] = [];
   if (stableSections.length > 0) {
