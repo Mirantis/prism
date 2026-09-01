@@ -177,8 +177,15 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     // and (via createdAtByTs) our own delivered replies are ordered by our DB
     // clock, so an internal step sorts before its turn's delivered final; the
     // cross-clock comparison (Slack ts vs DB createdAt) only occurs at user↔agent
-    // boundaries, a full LLM round apart. Concat internal-first so a rare exact
-    // timestamp tie keeps the internal step ahead of its final (stable sort).
+    // boundaries. Concat internal-first so a rare exact timestamp tie keeps the
+    // internal step ahead of its final (stable sort).
+    //
+    // One of those boundaries is now close rather than a full LLM round apart: a
+    // turn's recalled memories are written about a second after the Slack message
+    // that triggered them, the time it takes to read the context and embed the
+    // query. A host clock behind Slack's by more than that sorts the recall ahead of
+    // the question it answers. The replay is then a different shape from the live
+    // send, which costs that thread one re-write; nothing breaks.
     const internal = await this.getInternalStepMessages(threadId);
     if (internal.length === 0) return slackDerived;
     return [...internal, ...slackDerived].sort(
@@ -187,17 +194,21 @@ export class SlackThreadProvider implements ThreadMessageProvider {
   }
 
   /**
-   * Concise-mode internal steps for this thread: AGENT rows persisted for model
-   * replay but never delivered to Slack (`externalMessageId` is null, so they are
-   * disjoint from the ts-enriched set built in {@link getAgentMessageMaps} — never
-   * set a ts on an internal row or it would replay twice). `isCompacted: false`
-   * mirrors the DatabaseThreadProvider filter.
+   * Internal steps for this thread: rows persisted for model replay but never
+   * delivered to Slack (`externalMessageId` is null, so they are disjoint from the
+   * ts-enriched set built in {@link getAgentMessageMaps} — never set a ts on an
+   * internal row or it would replay twice). `isCompacted: false` mirrors the
+   * DatabaseThreadProvider filter.
+   *
+   * Either role. Concise mode writes AGENT rows; a turn's recalled memories are a
+   * USER row. Filtering to AGENT would rebuild a Slack thread's history from Slack
+   * alone and drop every recall, so the same agent would answer differently
+   * depending on which surface the thread ran on.
    */
   private async getInternalStepMessages(threadId: string): Promise<ConversationMessage[]> {
     return prisma.conversationMessage.findMany({
       where: {
         threadId,
-        role: 'AGENT',
         internalStep: true,
         isCompacted: false,
       },

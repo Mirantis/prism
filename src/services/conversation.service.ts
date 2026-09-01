@@ -429,8 +429,12 @@ class ConversationService {
     // `title: null` makes this atomic and one-shot — it fires only for the very
     // first user message with text and is a no-op for every later message.
     // `count > 0` means this call actually set it, so callers can broadcast it.
+    // Never from an internal row: those are written for model context and are not
+    // the user's words. A first message carrying only a file leaves the title unset
+    // (its text is empty), and the turn's recalled memories would otherwise be the
+    // next USER row with text and name the thread after themselves.
     let titleSet: string | null = null;
-    if (input.role === 'USER') {
+    if (input.role === 'USER' && !input.internalStep) {
       const title = deriveThreadTitle(input.content);
       if (title) {
         const res = await prisma.conversationThread.updateMany({
