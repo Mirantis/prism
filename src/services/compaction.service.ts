@@ -540,9 +540,10 @@ class CompactionService {
       select: { threadSource: true },
     });
 
-    // The rows this pass retires. A compacted message never re-enters the context,
-    // so any tool output it saved is now unreachable and can be reclaimed.
-    let markedIds: string[] = [];
+    // The message rows this pass marks compacted. A compacted message never
+    // re-enters the context, so any tool output it saved is now unreachable and can
+    // be reclaimed.
+    let compactedMessageIds: string[] = [];
 
     if (thread?.threadSource !== 'DATABASE') {
       const externalMessageIds = compactable
@@ -552,7 +553,7 @@ class CompactionService {
         ? externalMessageIds.reduce((max, ts) => (parseFloat(ts) > parseFloat(max) ? ts : max))
         : null;
       const internalIds = compactable.filter((r) => r.internalStep).map((r) => r.id);
-      markedIds = internalIds;
+      compactedMessageIds = internalIds;
       await prisma.$transaction([
         prisma.conversationMessage.updateMany({
           where: { id: { in: internalIds } },
@@ -569,7 +570,7 @@ class CompactionService {
       ]);
     } else {
       const ids = compactable.map((r) => r.id);
-      markedIds = ids;
+      compactedMessageIds = ids;
       const newest = await prisma.conversationMessage.findFirst({
         where: { id: { in: ids } },
         orderBy: { createdAt: 'desc' },
@@ -591,7 +592,7 @@ class CompactionService {
       ]);
     }
 
-    await this.reclaimSavedToolOutputs(markedIds);
+    await this.reclaimSavedToolOutputs(compactedMessageIds);
 
     logger.info(
       `[Compaction] compacted ${compactable.length} message(s) in thread ${threadId} (${summary.length} chars of summary)`,

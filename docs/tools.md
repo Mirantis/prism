@@ -250,7 +250,6 @@ query the saved copy for the specific thing, or re-run the original tool with
 narrower arguments, rather than page through it.
 
 The conversation stores the capped view — what the agent actually read — rather
-than the raw payload, so a large result costs the same on the turn that fetched it
-and on every turn after. The tool-call inspector in the web UI and the terminal
-shows that same view, labelled with how much was cut. The runtime logs a warning
-naming the tool and the sizes whenever a result is cut.
+than the raw payload. The tool-call inspector in the web UI and the terminal shows
+that same view, labelled with how much was cut. The runtime logs a warning naming
+the tool and the sizes whenever a result is cut.
