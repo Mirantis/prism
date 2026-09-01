@@ -227,7 +227,9 @@ export interface MeetingProvider {
    * know" has to mean "leave it alone and answer `null`". A state that already matches
    * the request is reported, not clicked.
    *
-   * Optional: a platform that never mutes a joiner needs none of this.
+   * Optional, and paired with `microphoneLive`: the runtime clicks before it settles for
+   * reading, so a platform offering only the read never reports on a call it could not
+   * make audible.
    */
   setMicrophone?(page: Page, on: boolean): Promise<boolean | null>;
 
