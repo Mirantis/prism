@@ -11,9 +11,11 @@ loud and it answers out loud; if the answer needs a lookup, it runs the tool and
 reports back in the same breath. Ask it to leave, or say "join us" and forget about
 it — it leaves on its own once everyone else has gone.
 
-**Speaking is the only thing it can do from a call.** It cannot post to the
+**Speaking is the only thing it can do during a call.** It cannot post to the
 meeting's chat panel, to Slack or to your chat session, and nothing said in the call
-is written down anywhere afterwards. See [In the call](#in-the-call).
+is written down anywhere afterwards. Work it can't finish in the call is the
+exception: it schedules that as a one-off task and the answer reaches your chat
+afterwards. See [In the call](#in-the-call).
 
 Google Meet is the only supported platform today. The runtime's meeting support is
 platform-agnostic underneath, so Teams and Zoom can be added without touching the
@@ -241,13 +243,16 @@ and it picks up from what you actually heard rather than pretending it finished.
 aloud. If the real answer is a command or a long list, it says what the thing does
 and offers to walk through it out loud, or spells the part that matters slowly.
 
-**It can only talk.** There is no way for it to send anything out of a call — not a
-message, not a file, not a link, and not to the meeting's own chat panel. It is
+**In the room it can only talk.** There is no way for it to send anything out of a call
+— not a message, not a file, not a link, and not to the meeting's own chat panel. It is
 instructed never to offer, so if you want something as text, ask it again in a chat
-session afterwards. Nothing about the call is kept either: no transcript, no summary,
-and no record in your conversation history at all. Ask it "what did we decide in the
-meeting?" afterwards and it won't know. Its own log says no more than that by default —
-see [Settings](#settings) if you need to turn the words on to diagnose something.
+session afterwards. The call itself is not kept either: no transcript, no summary, and
+nothing in your conversation history about what was said. Ask it "what did we decide
+in the meeting?" afterwards and it won't know. Its own log says no more than that by
+default — see [Settings](#settings) if you need to turn the words on to diagnose
+something. The one thing that outlives a call is work you asked for and it could not
+finish in the call: it schedules that, and the result appears in your chat — see
+[Tools](#tools-and-what-it-wont-do-on-a-spoken-request).
 
 **It can't hear who is speaking, but it can look.** The meeting audio arrives as one
 mixed channel with no speaker labels, so nothing in what the agent hears says who said
@@ -271,6 +276,12 @@ and integration tools it has in chat, with nothing destructive withheld. It can 
 a cluster, read a file, search its memory or kick off longer work and tell you the
 answer without leaving the meeting. It's asked to say something like "let me check
 that real quick" before each tool call, so a pause never sounds like it dropped off.
+
+If you ask for something the call has no time for — a question that needs digging or a
+change that needs writing — it schedules a **one-off task** rather than leaving the
+work unfinished, picks a time, and says out loud what it set up and when it runs. The result appears in your chat with the agent after the call, not in the room
+and not in the meeting's chat panel. It says it as something arranged, never as
+something already done. See [Scheduled tasks](scheduled-tasks.md).
 
 A tool result in a call is capped at **12,000 characters**, lower than chat's 30,000,
 because everything a tool returns stays in the call's live session and the agent has
@@ -370,7 +381,9 @@ call without consent is also a legal question, not just an etiquette one.
 
 Nothing is recorded: the call's audio goes to the Realtime model and is not stored by
 the runtime, and no transcript or summary is written. Whether OpenAI retains anything
-is between you and your OpenAI account settings.
+is between you and your OpenAI account settings. The exception is a task the agent
+schedules during the call: its name and its instruction are written from what was
+asked, and stay until the task runs.
 
 That includes the runtime's own log, which by default carries no word anyone said and
 no attendee's name — it records that an utterance was judged, not what it was. The one
