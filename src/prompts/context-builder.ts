@@ -73,11 +73,11 @@ export interface SystemPromptPart {
  *
  * There is one cache prefix, and it runs tools → system → messages. A provider
  * matches it from the start, so a part is not billed for its own size — it is
- * billed for everything behind it. System and messages are **not** independent
+ * billed for everything after it. System and messages are **not** independent
  * blocks; this was misread twice, and both times a per-turn value ended up here.
  *
  * The split is therefore about ordering, not about two caches: the large stable text
- * (identity, soul, user, pinned memories, skills, mode instructions) is placed first
+ * (identity, soul, user, important memories, skills, mode instructions) is placed first
  * and carries the one system breakpoint, and the little that legitimately varies (the
  * date, and the bootstrap script during onboarding) follows it, spending none — a
  * change there still finds the breakpoint in front of it.
@@ -119,15 +119,13 @@ export async function buildSystemPromptParts(
   // Memory (curated knowledge)
   stableSections.push(`# Memory\n\n${context.memoryMd}`);
 
-  // Pinned memories: the entries the agent scored `importance >= 9`. Query-independent
-  // — they come back whatever the turn is about — so they belong here, in the cached
-  // prefix, beside the curated document they complement. Carried per turn they cost a
-  // re-write of the whole conversation behind them on every turn. They do change when
-  // the agent pins or drops one, which breaks the prefix once; that is a real change,
-  // and a rare one.
-  const pinnedMemories = await memoryManagerService.buildPinnedMemories(context.agentId);
-  if (pinnedMemories) {
-    stableSections.push(`# Pinned Memories\n\n${pinnedMemories}`);
+  // The entries the agent scored most important. They come back whatever the turn is
+  // about, so they belong in the cached prefix beside the curated document they
+  // complement; carried per turn they cost a re-write of the whole conversation after
+  // them, every turn. They change only when the agent writes or drops one.
+  const importantMemories = await memoryManagerService.buildImportantMemories(context.agentId);
+  if (importantMemories) {
+    stableSections.push(`# Important Memories\n\n${importantMemories}`);
   }
 
   // Vision (user's goals — always included when present)
@@ -225,21 +223,11 @@ export async function buildSystemPromptParts(
     stableSections.push(getLockedInInstructions(context.isBootstrapPhase));
   }
 
-  // Recalled memories were unshifted into the dynamic part here. The pinned half is a
-  // stable section above; the query-driven half is a message — see
-  // `buildRecalledMemories`.
-
   // Runtime context — the date, and where to get the time.
   //
-  // The date and not the clock, because a provider caches a prefix that runs
-  // tools → system → messages and matches it from the start: a value here that
-  // changes every turn costs a re-write of the whole conversation behind it, on
-  // every turn, for the life of a thread. A timestamp with milliseconds changed
-  // with certainty. A date changes once a day, so the prefix survives the day.
-  //
-  // The agent reads the clock with the shell when a task needs it, which is what
-  // Claude Code does for the same reason. A tool call is fast enough for a voice
-  // meeting.
+  // The date rather than the clock: a value here that changes every turn costs a
+  // re-write of the whole conversation after it. A date changes once a day. The agent
+  // reads the clock with the shell when a task needs it.
   const now = new Date();
   const weekday = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
   dynamicSections.push(
@@ -261,11 +249,11 @@ export async function buildSystemPromptParts(
     parts.push({ text: stableSections.join('\n\n---\n\n'), cacheable: true });
   }
   if (dynamicSections.length > 0) {
-    // Never cacheable. It carries the date and, during onboarding, the bootstrap
-    // script — both cheap, and both behind the stable part's breakpoint, which a
-    // change here still hits. The four breakpoints are better spent elsewhere: the
-    // stable prefix, the last persisted message, the last message and the tools
-    // block (see `invokeStream`).
+    // Never cacheable, and worth little either way: this part holds the date and,
+    // during onboarding, the bootstrap script, so it changes when the date rolls over
+    // or onboarding ends — rare, and few tokens. A breakpoint here would buy about
+    // that much. The point is the ordering, not the saving: what varies sits after the
+    // stable part, whose breakpoint a change here still hits.
     parts.push({ text: dynamicSections.join('\n\n---\n\n'), cacheable: false });
   }
   // Per-turn runtime notices (e.g. an attachment that failed to download).
@@ -287,13 +275,13 @@ export async function buildSystemPromptParts(
 
 /**
  * What this turn's message matches in `memory_entries`, by meaning. Pinned entries
- * are not here — `buildPinnedMemories` carries those from the system prompt, where
+ * are not here — `buildImportantMemories` carries those from the system prompt, where
  * they cost nothing per turn. Returns the text, not a placement.
  *
  * It was a `# Recalled Memories` section of the dynamic system part, the last
  * per-turn value sitting in front of the cached prefix. A search
  * over a store the agent keeps writing to returns different text as the thread goes
- * on, and each change re-billed every message behind it: a 2,058-token write where
+ * on, and each change re-billed every message after it: a 2,058-token write where
  * the steady state was 22, on a 13,000-token thread — the cost scaled with the
  * history, not with the memories.
  */
@@ -310,7 +298,7 @@ export async function buildRecalledMemories(
 }
 
 /**
- * The turn's recall, as a message of its own that follows the user's turn.
+ * The turn's recalled memories, as a message of its own that follows the user's turn.
  *
  * The header is bare on purpose. Earlier revisions argued for the block's own
  * credibility and the agent refused it harder each time — a block that has to insist

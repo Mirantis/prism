@@ -4,14 +4,14 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockBuildPinnedMemories, mockBuildRelevantMemories } = vi.hoisted(() => ({
-  mockBuildPinnedMemories: vi.fn(),
+const { mockBuildImportantMemories, mockBuildRelevantMemories } = vi.hoisted(() => ({
+  mockBuildImportantMemories: vi.fn(),
   mockBuildRelevantMemories: vi.fn(),
 }));
 
 vi.mock('../services/memory-manager.service', () => ({
   memoryManagerService: {
-    buildPinnedMemories: mockBuildPinnedMemories,
+    buildImportantMemories: mockBuildImportantMemories,
     buildRelevantMemories: mockBuildRelevantMemories,
   },
 }));
@@ -55,7 +55,7 @@ function makeAttachment(overrides: Partial<AttachmentMeta> = {}): AttachmentMeta
 describe('system prompt text', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockBuildPinnedMemories.mockResolvedValue('');
+    mockBuildImportantMemories.mockResolvedValue('');
     mockBuildRelevantMemories.mockResolvedValue('');
   });
 
@@ -349,7 +349,7 @@ describe('system prompt text', () => {
 describe('buildSystemPromptParts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockBuildPinnedMemories.mockResolvedValue('');
+    mockBuildImportantMemories.mockResolvedValue('');
     mockBuildRelevantMemories.mockResolvedValue('');
   });
 
@@ -570,7 +570,7 @@ describe('buildSystemPromptParts', () => {
 describe('recalled memories', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockBuildPinnedMemories.mockResolvedValue('');
+    mockBuildImportantMemories.mockResolvedValue('');
     mockBuildRelevantMemories.mockResolvedValue('');
   });
 
@@ -587,7 +587,7 @@ describe('recalled memories', () => {
   });
 
   it('returns nothing when the recall is empty', async () => {
-    mockBuildPinnedMemories.mockResolvedValue('');
+    mockBuildImportantMemories.mockResolvedValue('');
     mockBuildRelevantMemories.mockResolvedValue('');
 
     expect(await buildRecalledMemories(createTestAgentContext(), 'anything')).toBeNull();
@@ -647,16 +647,16 @@ describe('recalled memories', () => {
 
   // Query-independent, so they belong in the cached prefix rather than in a per-turn
   // block: carried per turn they re-billed the whole conversation behind them.
-  it('puts pinned memories in the stable part, and drops the section when none', async () => {
-    mockBuildPinnedMemories.mockResolvedValue('## Decisions\n- Deploys are on Fridays');
+  it('puts important memories in the stable part, and drops the section when none', async () => {
+    mockBuildImportantMemories.mockResolvedValue('## Decisions\n- Deploys are on Fridays');
     let parts = await buildSystemPromptParts(createTestAgentContext(), 'chat');
     expect(parts[0].cacheable).toBe(true);
-    expect(parts[0].text).toContain('# Pinned Memories');
+    expect(parts[0].text).toContain('# Important Memories');
     expect(parts[0].text).toContain('Deploys are on Fridays');
 
-    mockBuildPinnedMemories.mockResolvedValue('');
+    mockBuildImportantMemories.mockResolvedValue('');
     parts = await buildSystemPromptParts(createTestAgentContext(), 'chat');
-    expect(parts.some((p) => p.text.includes('# Pinned Memories'))).toBe(false);
+    expect(parts.some((p) => p.text.includes('# Important Memories'))).toBe(false);
   });
 
 });
