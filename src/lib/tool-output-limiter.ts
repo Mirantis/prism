@@ -321,17 +321,6 @@ export function unwrapToolOutput(output: unknown): unknown {
   return isSpilledToolOutput(output) ? output.raw : output;
 }
 
-/** Reported once per cut, for telemetry. Carries no tool arguments and no content. */
-export interface ToolOutputSpillEvent {
-  toolName: string;
-  truncation: ToolOutputTruncation;
-  budgetChars: number;
-  /** Bytes written, 0 when nothing was saved. */
-  spillBytes: number;
-  /** True when the saved copy is itself only the first `MAX_SPILL_BYTES`. */
-  spillCapped: boolean;
-}
-
 export interface ToolOutputCaptureOptions {
   /** Character budget for the model-facing text. Defaults to 30,000. */
   maxChars?: number;
@@ -342,8 +331,6 @@ export interface ToolOutputCaptureOptions {
    * the tools block built the same way, and never executes anything.
    */
   spill?: boolean;
-  /** Called once per cut. The single place a spill is reported. */
-  onSpill?: (event: ToolOutputSpillEvent) => void;
 }
 
 /**
@@ -391,14 +378,6 @@ export async function renderAndSpill(
     omittedChars: priorOmitted + (text.length - maxChars),
     ...(spill ? { spillId: spill.id } : {}),
   };
-
-  options.onSpill?.({
-    toolName: options.toolName ?? 'tool',
-    truncation,
-    budgetChars: maxChars,
-    spillBytes: spill?.bytes ?? 0,
-    spillCapped: spill?.capped ?? false,
-  });
 
   return { text: cutHeadTail(text, maxChars, options.extraGuidance, priorOmitted, spill), truncation };
 }
@@ -519,24 +498,4 @@ export function capModelOutput(inner: ToolModelOutput, cutText: string | null): 
     default:
       return inner;
   }
-}
-
-/** The props both spill emitters send. One shape, so the two cannot drift apart. */
-export function spillEventProps(
-  agentId: string,
-  mode: string,
-  event: ToolOutputSpillEvent
-): Record<string, string> {
-  return {
-    'agent.id': agentId,
-    'invoke.mode': mode,
-    'tool.name': event.toolName,
-    'tool_output.total_chars': String(event.truncation.totalChars),
-    'tool_output.kept_chars': String(event.truncation.keptChars),
-    'tool_output.omitted_chars': String(event.truncation.omittedChars),
-    'tool_output.budget_chars': String(event.budgetChars),
-    'tool_output.spill_bytes': String(event.spillBytes),
-    'tool_output.saved': event.truncation.spillId ? 'true' : 'false',
-    'tool_output.save_capped': event.spillCapped ? 'true' : 'false',
-  };
 }

@@ -350,26 +350,6 @@ describe('withToolOutputCapture', () => {
     expect(envelope.raw).toBe(raw);
     expect(unwrapToolOutput(envelope)).toBe(raw);
   });
-
-  it('reports a cut once, with sizes and no content', async () => {
-    const onSpill = vi.fn();
-    const wrapped = withToolOutputCapture(toolWith(() => 'Z'.repeat(50_000)), {
-      maxChars: 1000,
-      spill: false,
-      onSpill,
-    });
-    await runTool(wrapped);
-
-    expect(onSpill).toHaveBeenCalledTimes(1);
-    expect(onSpill).toHaveBeenCalledWith(
-      expect.objectContaining({
-        toolName: 'myTool',
-        budgetChars: 1000,
-        spillBytes: 0,
-        truncation: expect.objectContaining({ totalChars: 50_000, keptChars: 1000 }),
-      })
-    );
-  });
 });
 
 describe('renderToolResultDetailed', () => {

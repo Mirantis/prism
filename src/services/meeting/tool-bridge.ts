@@ -25,8 +25,7 @@
 import { asSchema, type Tool } from 'ai';
 import { logger } from '../../logger';
 import { collectTools } from '../../lib/tool-collection';
-import { renderAndSpill, spillEventProps } from '../../lib/tool-output-limiter';
-import { trackEvent } from '../../lib/telemetry';
+import { renderAndSpill } from '../../lib/tool-output-limiter';
 import type { RealtimeFunctionTool } from './realtime-session';
 
 /**
@@ -135,8 +134,7 @@ export async function prepareMeetingTools(
   return {
     declarations,
     count: declarations.length,
-    execute: (name, argumentsJson) =>
-      executeTool(usable, name, argumentsJson, { userId: input.userId, agentId: input.agentId }),
+    execute: (name, argumentsJson) => executeTool(usable, name, argumentsJson),
   };
 }
 
@@ -165,7 +163,6 @@ async function executeTool(
   tools: Record<string, Tool>,
   name: string,
   argumentsJson: string,
-  ctx: { userId: string; agentId: string },
 ): Promise<string> {
   const tool = tools[name];
   if (!tool || typeof tool.execute !== 'function') {
@@ -198,12 +195,6 @@ async function executeTool(
       maxChars: MEETING_MAX_RESULT_CHARS,
       extraGuidance: VOICE_TRUNCATION_GUIDANCE,
       toolName: name,
-      onSpill: (event) =>
-        trackEvent(
-          'tool output spilled',
-          ctx.userId,
-          spillEventProps(ctx.agentId, 'meeting', event),
-        ),
     });
     return rendered.text;
   } catch (err) {
