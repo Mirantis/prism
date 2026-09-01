@@ -299,19 +299,14 @@ export async function buildRecalledMemories(
 /**
  * The turn's recalled memories, as a message of its own that follows the user's turn.
  *
- * The header is bare on purpose. Earlier revisions argued for the block's own
- * credibility and the agent refused it harder each time — a block that has to insist
- * invites exactly that reading. Measured on one probe against one stored memory:
- * every framing that asserted its own trustworthiness was rejected, and the bare one
- * was used without comment.
+ * The header is bare on purpose: a block that argues for its own credibility is read
+ * as one that needs to, and an agent asked to use such a block refuses it. What it
+ * accepts is the entries and a recorded date on each.
  *
  * A user turn, so a run of them merges into one provider turn and the model sees the
- * block and the question as one message — the shape that worked. Its own row rather
- * than an edit to the user's message, so what is stored is what was sent: the row is
- * written with `internalStep`, replaying into model context and staying out of every
- * client transcript. Ephemeral was tried and is worse than not recalling at all —
- * the next turn replays the user's message without the block, and the agent, finding
- * no source for what it just said, retracts it as something it "made up".
+ * block and the question as one message. Its own message rather than an edit to the
+ * user's, so what is stored is what was sent — the row is written with `internalStep`,
+ * which replays into model context and reaches no client transcript.
  */
 export function recalledMemoriesMessage(recalled: string): ModelMessage {
   return { role: 'user', content: recalledMemoryContent(recalled) };
