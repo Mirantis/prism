@@ -1066,6 +1066,72 @@ describe('the microphone the agent can set', () => {
     }
   });
 
+  it('does not blame the call for a mute of its own that it failed to undo', async () => {
+    // A mute the agent chose, and an unmute click that Meet swallowed. The reading is a
+    // muted microphone either way, so only the record of who asked for it separates "the
+    // call muted you" from "your own unmute did not take" — and telling the agent the first
+    // is both false and repeatable, once per attempt.
+    vi.useFakeTimers();
+    try {
+      providerSetMicrophone.mockResolvedValue(false);
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      await service.setMicrophone(false);
+
+      // The click goes in and the toggle does not move.
+      const failed = await service.setMicrophone(true);
+      expect(failed.success).toBe(false);
+
+      providerMicrophoneLive.mockResolvedValue(false);
+      await vi.advanceTimersByTimeAsync(40_000);
+
+      expect(conversationNotify).not.toHaveBeenCalledWith(
+        expect.stringMatching(/has just been muted/i),
+      );
+      expect(loggerWarn).not.toHaveBeenCalledWith(
+        expect.stringMatching(/nobody here asked for it/),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops a recovery the agent overrules while the capture device is being read', async () => {
+    // The request can change inside any await on the retry's path, not only inside the
+    // click. Reading it once at the top leaves the greeting below aimed at a microphone the
+    // agent closed while the device was being read.
+    vi.useFakeTimers();
+    try {
+      audioWaitForMicCapture.mockResolvedValue(false);
+      providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+      providerSetMicrophone.mockResolvedValue(true);
+      let releaseCapture = () => {};
+      audioIsMicCaptured.mockImplementation(
+        async () =>
+          new Promise<boolean>((resolve) => {
+            releaseCapture = () => resolve(true);
+          }),
+      );
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      providerSetMicrophone.mockResolvedValue(false);
+      const tool = service.setMicrophone(false);
+      await vi.advanceTimersByTimeAsync(10);
+      releaseCapture();
+      await vi.advanceTimersByTimeAsync(10);
+      await tool;
+
+      expect(service.status().micLive).toBe(false);
+      expect(conversationSetAudible).not.toHaveBeenCalledWith(true);
+      expect(conversationNotify).not.toHaveBeenCalledWith(
+        expect.stringMatching(/greet the participants/i),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports the call ending under the click, and writes nothing after it', async () => {
     // The click outlives the call it was made in. Reported as done, it would tell the agent
     // it is muted in a call that no longer exists.

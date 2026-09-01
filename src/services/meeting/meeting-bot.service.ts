@@ -293,11 +293,14 @@ export class MeetingBotService {
   private responseMode: ResponseMode = 'auto';
   private unreadableCounts = 0;
   /**
-   * Whether the room can hear the agent, as far as anything can tell.
+   * Whether the room has ever been proved able to hear the agent on this call.
    *
    * `false` is a degraded call, not a failed one — the agent still hears the meeting
    * and still acts on it. Kept here because it is retried on the participant poll and
-   * because it decides whether the agent bothers speaking at all.
+   * because it decides whether the agent bothers speaking at all. It does not go back to
+   * `false` when the agent mutes itself: the audio device below the toggle is proved once
+   * and stays proved, which is what keeps the retry disarmed for a mute somebody chose.
+   * `micLive` is the current answer to "can the room hear you".
    */
   private micConfirmed = false;
   /**
@@ -1057,8 +1060,9 @@ export class MeetingBotService {
 
     // Re-checked after the capture reading above: that is a real await, and a call that
     // ends inside it leaves the greeting below aimed at whatever call owns the
-    // conversation by then.
-    if (this.epoch !== epoch || this.state !== 'in_call') return;
+    // conversation by then. `micDesired` is re-read for the same reason — the request can
+    // change inside any await, not only inside the click.
+    if (this.epoch !== epoch || this.state !== 'in_call' || !this.micDesired) return;
 
     logger.info(
       `[Meeting] Microphone is live after a mid-call retry — audible in the ` +
@@ -1243,9 +1247,6 @@ export class MeetingBotService {
     // Before the await, so a poll that fires during the click already knows this mute was
     // asked for and does not report it as one the call imposed.
     this.micDesired = on;
-    // A mute the agent chose is not news to tell it about, and an earlier involuntary mute
-    // it is now choosing to keep is not either.
-    this.micMuteReported = false;
 
     const epoch = this.epoch;
     let live: boolean | null;
@@ -1273,6 +1274,12 @@ export class MeetingBotService {
     // whatever the capture device is doing. Unmuting is half the answer, so a call whose
     // device never opened stays inaudible here and waits for the poll's retry to prove it.
     this.micLive = live && this.micConfirmed;
+    // Accounted for on the outcome rather than on the request. A mute the agent chose is
+    // not news to tell it about, so it counts as reported; an unmute that worked clears the
+    // slate for the next one. A click that did not take leaves the standing mute exactly as
+    // it was, since clearing it here would have the next poll blame the call for a mute the
+    // agent made — once per failed attempt.
+    if (live === on) this.micMuteReported = !on;
     if (live !== on) {
       return {
         success: false,
