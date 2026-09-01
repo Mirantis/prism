@@ -223,42 +223,34 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       messages.push({ role: 'user' as const, content: request.prompt });
     }
 
-    // What this turn's message matched in the memory store, as a user turn following
-    // the question. A run of user messages merges into one provider turn, so the
-    // model sees the block and the question together — the shape it accepts.
-    //
-    // Stored as a `USER` row marked `internalStep`: it replays into model context and
-    // stays out of every client transcript, the mechanism concise mode already uses
-    // for its intermediate steps. Not optional. Ephemeral injection is worse than no
-    // recall at all — the next turn replays the user's message without the block, and
-    // the agent, finding no source for the answer it just gave, retracts it as
-    // something it "made up".
-    //
-    // After the user's turn rather than before it, because that is where the stored
-    // row sorts: the engine writes the user's message before the turn runs. Matching
-    // the order is what makes a replayed thread rebuild the prompt that ran.
-    // Tripwire state: report an assistant-terminated request at most once per
-    // invocation so a 100-step turn can't flood the metric.
+    // `guard` is shared by every `warnOnTrailingAssistant` call in this invocation, and
+    // the function sets it once it has reported. A 100-step turn checks the array at
+    // each step, so without it one bad turn would emit a hundred identical events.
     const guard = { reported: false };
     const guardContext = { agentId, userId: request.userId, mode: request.mode, guard };
 
-    // Before the recall is appended, so it judges the history the thread actually
-    // has. The recall is an unconditional trailing user turn, which makes any
-    // assistant-terminated array provider-valid — running the check after it would be
-    // the silent fix-up this function exists to refuse.
+    // Checked before the recall is appended, so it judges the history the thread
+    // actually has. The recall is an unconditional trailing user turn, which makes any
+    // assistant-terminated array provider-valid — checking after it would be the
+    // silent fix-up this function exists to refuse.
     warnOnTrailingAssistant(messages, { ...guardContext, stage: 'initial' });
 
+    // What this turn's message matched in the memory store, sent as a user turn that
+    // follows the question. A run of user messages merges into one provider turn, so
+    // the model sees the block and the question together.
+    //
+    // It goes after the question rather than before it, because that is where the
+    // stored row sorts: the engine writes the user's message before the turn runs.
+    // Matching that order is what lets a replayed thread rebuild the prompt that ran.
     const recalled = await buildRecalledMemories(context, request.prompt);
     if (recalled) {
       messages.push(recalledMemoriesMessage(recalled));
-      // Recorded on chat turns only. The row exists so a replayed thread rebuilds the
-      // prompt that produced its stored answers — which needs the question stored
-      // too, and only chat stores it. A goal or a thread-bound cron task appends its
-      // prompt at invoke time and never writes it down, so a row there would be an
-      // orphan block with no question, repeated once per run: a goal writes one per
-      // turn and a five-minute cron task around 288 a day, each replaying into every
-      // later chat turn until compaction folds it away. That is the growth this
-      // change exists to stop.
+      // Recorded on chat turns only. The row lets a replayed thread rebuild the prompt
+      // that produced its stored answers, which needs the question stored too — and
+      // only chat stores it. A goal or a thread-bound cron task appends its prompt at
+      // invoke time and never writes it down, so a row there is an orphan block with
+      // no question, once per run: one a goal turn, around 288 a day for a
+      // five-minute cron task, each replaying into every later chat turn.
       if (request.mode === 'chat' && request.threadId) {
         // Best effort: a turn must not fail because a recall could not be recorded.
         // The block is in this request either way; only the replay is lost.
