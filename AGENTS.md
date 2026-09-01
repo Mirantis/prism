@@ -238,18 +238,28 @@ reference. When you add, change, or remove a feature, flag, env var, command,
 slash command, or UI surface, update the relevant doc page (and the root
 `README.md` if it covers the same thing) so the docs never drift from behavior.
 
-The docs in `docs/` are **user-facing**: describe observable behavior,
-configuration and troubleshooting, never implementation details. Keep internal
-module, function and enum names, algorithm descriptions, and benchmark or
-corpus numbers out of them. Name a third-party component only when the user
-installs, configures or sees it. Implementation rationale belongs in a code
-comment, the PR description, or an ADR. A shorter doc page is the right answer
-when a change has nothing a user can observe.
+**Write what the user does and sees, never how the feature decides it.** A page
+in `docs/` answers three questions: what the feature does for me, how I turn it
+on and configure it, and what to do when it goes wrong. A reader who wants the
+mechanism reads the code. Keep out the internal module, function and enum names,
+the algorithm, the order of the steps, where a value comes from, the thresholds,
+and the benchmark or corpus numbers. Name a third-party component only when the
+user installs, configures or sees it. Implementation rationale belongs in a code
+comment, the PR description, or an ADR.
 
-Be brief, and write about the present. A doc page, a code comment and this file
-state how the code behaves now — not what it did before, not what a rewrite
-replaced, and not the order the work happened in. Remove the traces of work in
-progress: "for now", "the new path", "temporary", and a TODO nobody owns.
+**One or two sentences, not a paragraph — and no change at all is the usual
+answer.** Most changes give the user one new thing to do, and one sentence says
+it. Write a paragraph only when the user has a choice to make, and then write
+the choice. Do not repeat a fact the page already gives another way, in the
+command it prints, the table above it, or the screen it describes. Before you
+ask for review, read each sentence you added and delete it unless a user would
+act differently for having read it.
+
+**Write about the present.** A doc page, a code comment and this file state how
+the code behaves now. Never write about a defect that is fixed, the behavior a
+rewrite replaced, or the difference from the last release. Remove the traces of
+work in progress: "for now", "the new path", "temporary", and a TODO nobody
+owns.
 
 Never list a function's call sites or its callers in the comment or the doc for
 that function. The list is one search away, and it is wrong the first time
