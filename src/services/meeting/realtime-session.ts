@@ -1215,6 +1215,29 @@ export class RealtimeSession extends EventEmitter {
   }
 
   /**
+   * Show the model a picture of what the browser is showing.
+   *
+   * A user item rather than a tool result, because a `function_call_output` carries a
+   * string. Create it before that output, since the output asks for the response.
+   *
+   * The item carries no audio, so `isSpokenTurn` is false and the addressed gate's
+   * window skips it. A screenshot is not something anybody said.
+   */
+  sendImage(imageUrl: string, note: string): void {
+    this.send({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [
+          { type: 'input_image', image_url: imageUrl },
+          { type: 'input_text', text: note },
+        ],
+      },
+    });
+  }
+
+  /**
    * Tell the transcriber which names to expect, mid-call.
    *
    * The roster changes while the call runs — people join and leave — and the whole

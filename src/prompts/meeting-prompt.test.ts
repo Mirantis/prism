@@ -71,6 +71,20 @@ describe('getMeetingInstructions', () => {
     expect(text).toMatch(/say the content out loud instead/i);
   });
 
+  it('tells the model what its screen can do, and what drives it', () => {
+    // The screen reaches the room, and the two things about it a room finds out the
+    // hard way are that it shares a whole screen and that a tool stops it.
+    const text = getMeetingInstructions(base);
+    expect(text).toMatch(/share_screen/);
+    expect(text).toMatch(/whole\s+screen your browser is on/i);
+    expect(text).toMatch(/stop_screen_share/);
+    // What goes on that screen: the browser tab, worked by name off the reading each
+    // command answers with, plus the picture that says what is really up there.
+    expect(text).toMatch(/browse/);
+    expect(text).toMatch(/one command at a time/i);
+    expect(text).toMatch(/see_screen/);
+  });
+
   it('tells the model nothing else leaves the call', () => {
     // Everything past that one line: a meeting runs neither the invoke loop nor the
     // conversation engine, and `share_file` is filtered out of `meeting` mode. Saying so
@@ -169,6 +183,8 @@ describe('getMeetingInstructions', () => {
     expect(text).toMatch(/^13\. \*\*Speech is how you talk to the room/m);
     expect(text).toMatch(/^14\. \*\*Nothing else reaches anyone from here/m);
     expect(text).toMatch(/^15\. \*\*Schedule work you were asked for/m);
+    // The screen rules sit after the schedule rule, so main's cross-references hold.
+    expect(text).toMatch(/^16\. \*\*You can show the room your screen/m);
   });
 
   it('requires explicit in-room consent before anything irreversible', () => {

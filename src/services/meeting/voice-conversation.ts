@@ -472,6 +472,18 @@ export class VoiceConversation {
     this.session.sendContext(text);
   }
 
+  /**
+   * Show the model a picture of what the browser is displaying.
+   *
+   * Returns whether it was sent. A closed session takes nothing, and a tool that
+   * reported success would have the agent describe a picture it never saw.
+   */
+  showImage(imageUrl: string, note: string): boolean {
+    if (this.stopped || !this.session.isOpen) return false;
+    this.session.sendImage(imageUrl, note);
+    return true;
+  }
+
   /** Ask the model to speak now (used to greet the room on admission). */
   speakNow(): void {
     if (this.stopped) return;

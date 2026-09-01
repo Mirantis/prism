@@ -25,6 +25,16 @@ import { buildSystemPromptParts } from '../../prompts/context-builder';
 import { getMeetingInstructions } from '../../prompts/meeting-prompt';
 import { AudioStack } from './audio-stack';
 import { BrowserStack } from './browser-stack';
+import {
+  capture,
+  normalizeUrl,
+  read,
+  runBrowserCommand,
+  summarizeTabs,
+  type BrowserCommand,
+  type BrowserReading,
+  type BrowserResult,
+} from './browser-control';
 import { VoiceConversation, type VoiceConversationStats } from './voice-conversation';
 import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
@@ -34,6 +44,7 @@ import type {
   ChatSendStep,
   JoinStep,
   MeetingProvider,
+  ScreenShareOutcome,
   SpeakerDetails,
 } from './meeting-provider.interface';
 import type { Page } from 'playwright-core';
@@ -48,6 +59,16 @@ import type { Page } from 'playwright-core';
  * poll wants to be quick relative to how long that stays tolerable.
  */
 const PARTICIPANT_POLL_MS = 10_000;
+
+/**
+ * The label the screenshot carries into the session.
+ *
+ * A user message is the only item shape that takes an image. So the note says that
+ * nobody in the room said it, and the model does not answer it as a remark.
+ */
+const SCREEN_LOOK_NOTE =
+  'This is a picture of your own screen as it looks right now, in answer to your ' +
+  'see_screen call. Nobody in the room said this.';
 
 /**
  * How often to ask the platform who is speaking.
@@ -169,6 +190,8 @@ export interface MeetingStatus {
    * Read on the participant poll and kept, so this answers from memory.
    */
   isMicLive: boolean | null;
+  /** Whether a screen share was started on this call. */
+  sharingScreen: boolean;
   /** Present once the call is under way. */
   stats?: VoiceConversationStats;
 }
@@ -342,6 +365,35 @@ export class MeetingBotService {
    * and on a toggle two overlapping clicks undo each other.
    */
   private micClick: Promise<void> = Promise.resolve();
+  /**
+   * Whether a share was started on this call.
+   *
+   * Held here so the agent can be told without a CDP round trip, and cleared with the
+   * rest of the call state. It records what this runtime started, not what Meet shows
+   * now: a share that somebody stopped from the room still reads true until the call
+   * ends.
+   */
+  private sharingScreen = false;
+  /**
+   * Whether the agent presented at any point in this call.
+   *
+   * Separate from `sharingScreen`, which a stop clears: the telemetry question is
+   * whether the room was ever shown anything, and a call that shared and then stopped
+   * would answer that with `false`.
+   */
+  private sharedScreen = false;
+  /** Browser commands run on this call, reported once at the end. */
+  private browserCommands = 0;
+  /**
+   * Tail of the queue for everything that moves the front tab.
+   *
+   * The Realtime model issues tool calls in parallel, and a `browse` that lands inside a
+   * share start leaves the front tab decided by whichever `bringToFront` resolves last —
+   * which the room watches happen. Each acquisition chains onto the previous tail, so
+   * these run in arrival order. The tail only ever resolves: a command that throws must
+   * not stop the next one.
+   */
+  private frontTail: Promise<void> = Promise.resolve();
   /** Whether a participant poll is still running; see `checkParticipants`. */
   private pollInFlight = false;
   private speakerPollInFlight = false;
@@ -419,6 +471,7 @@ export class MeetingBotService {
       effectiveResponseMode: this.conversation?.responseMode ?? null,
       joinedAt: this.joinedAt ? new Date(this.joinedAt).toISOString() : null,
       isMicLive: this.isMicLive,
+      sharingScreen: this.sharingScreen,
       ...(this.conversation ? { stats: this.conversation.statistics } : {}),
     };
   }
@@ -1322,6 +1375,31 @@ export class MeetingBotService {
   }
 
   /**
+   * Show the room the agent's screen.
+   *
+   * Only from `in_call`. During a join the page is the lobby, not the meeting. Every
+   * other state answers with what the agent should say instead.
+   *
+   * This touches the browser and takes several seconds, because it clicks through
+   * Meet's controls. The room hears a pause, which the prompt's speak-before-a-tool
+   * rule covers.
+   */
+  async startScreenShare(): Promise<{ success: boolean; message: string }> {
+    const outcome = await this.driveScreenShare('start');
+    if (outcome.status === 'failed') return { success: false, message: outcome.reason };
+
+    this.sharingScreen = true;
+    this.sharedScreen = true;
+    return {
+      success: true,
+      message:
+        outcome.status === 'already_sharing'
+          ? 'I am already sharing my screen.'
+          : 'I am sharing my screen — the room can see it now.',
+    };
+  }
+
+  /**
    * Run a microphone click with no other click in flight.
    *
    * The control is a toggle, so one overlapping click switches on what the other switches
@@ -1339,6 +1417,231 @@ export class MeetingBotService {
       return await work();
     } finally {
       release();
+    }
+  }
+
+  /**
+   * Stop presenting. The call keeps running.
+   *
+   * `not_sharing` is a success: the room sees nothing, which is what was asked for.
+   * Somebody may have stopped the share from the meeting's own controls.
+   */
+  async stopScreenShare(): Promise<{ success: boolean; message: string }> {
+    const outcome = await this.driveScreenShare('stop');
+    if (outcome.status === 'failed') return { success: false, message: outcome.reason };
+
+    this.sharingScreen = false;
+    return {
+      success: true,
+      message:
+        outcome.status === 'not_sharing'
+          ? 'I was not sharing my screen.'
+          : 'I have stopped sharing my screen.',
+    };
+  }
+
+  /**
+   * Run `fn` after everything else that moves the front tab.
+   *
+   * Serialized rather than locked per tab: what has to hold is the order the room sees,
+   * and that is one thing however many tabs are open.
+   */
+  private async onFrontQueue<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.frontTail.then(fn);
+    this.frontTail = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
+  }
+
+  /**
+   * The part both share tools have in common: the state gate, the provider call and the
+   * telemetry event. One place, so the two directions cannot drift apart.
+   */
+  private async driveScreenShare(direction: 'start' | 'stop'): Promise<ScreenShareOutcome> {
+    if (!this.isActive) return { status: 'failed', reason: 'I am not in a meeting right now.' };
+    if (this.state !== 'in_call' || !this.page || !this.provider) {
+      return {
+        status: 'failed',
+        reason:
+          this.state === 'leaving'
+            ? 'I am leaving the call, so there is nothing to share into.'
+            : 'I am still getting into the call — ask me again once I am in.',
+      };
+    }
+
+    const provider = this.provider;
+    const drive = direction === 'start' ? provider.startScreenShare : provider.stopScreenShare;
+    if (!drive) {
+      return {
+        status: 'failed',
+        reason: `I cannot share my screen in a ${provider.displayName} call.`,
+      };
+    }
+
+    // Read before the awaits below: a teardown that lands during them clears `current`,
+    // and an event attributed to "unknown" is an event nobody can find again.
+    const userId = this.current?.userId ?? 'unknown';
+    const page = this.page;
+    const browser = this.browser;
+
+    const outcome = await this.onFrontQueue(async () => {
+      try {
+        // The share controls belong to the meeting page, so that page goes in front for
+        // the clicks. The agent is told to open what it wants to show *before* it shares,
+        // which leaves the meeting tab in the background, and a capture that a background
+        // tab asks for is not reliably granted.
+        await page.bringToFront().catch(() => {});
+        return await drive.call(provider, page);
+      } catch (err) {
+        logger.error({ err }, `[Meeting] Screen share ${direction} failed`);
+        return {
+          status: 'failed',
+          reason: 'Something went wrong using the meeting controls.',
+        } as ScreenShareOutcome;
+      } finally {
+        // Back to the tab the room is meant to watch. Nothing is opened for this: a call
+        // that never browsed has no tab, and the meeting stays in front.
+        await browser?.raiseActiveTab().catch(() => {});
+      }
+    });
+
+    trackEvent('meeting screen share', userId, { provider: provider.name, status: outcome.status });
+    return outcome;
+  }
+
+  /**
+   * Show the model what is on the screen right now.
+   *
+   * A picture, not a description. A page reading cannot say that a chart is empty or
+   * that a dialog covers the button.
+   *
+   * A tool result is a string, so the picture cannot travel in it. The picture goes in
+   * as its own conversation item, and the tool answers with the reading.
+   *
+   * That item reaches the meeting's own model and nothing else, so `toSession` says who
+   * is asking. A chat turn during a live call can call this tool too, and it gets the
+   * page in words: sending the picture into the meeting session would show it to the
+   * model that did not ask, while telling the one that did that it is looking at
+   * something it cannot see.
+   */
+  async lookAtScreen(
+    options: { toSession?: boolean } = {},
+  ): Promise<{ success: boolean; message: string } & Partial<BrowserReading>> {
+    if (!this.isActive) return { success: false, message: 'I am not in a meeting right now.' };
+    if (this.state !== 'in_call' || !this.browser) {
+      return { success: false, message: 'I am still getting into the call — ask me again once I am in.' };
+    }
+
+    const page = this.browser.front();
+    if (!page) return { success: false, message: 'There is no browser window open.' };
+
+    try {
+      const { imageUrl, reading } = await capture(page);
+      const shown =
+        options.toSession === true &&
+        (this.conversation?.showImage(imageUrl, SCREEN_LOOK_NOTE) ?? false);
+      return {
+        success: true,
+        message: shown
+          ? 'This is what my screen is showing.'
+          : 'Here is what the screen says. I cannot show you the picture of it from here.',
+        ...reading,
+      };
+    } catch (err) {
+      logger.error({ err }, '[Meeting] Screen capture failed');
+      return { success: false, message: 'I could not get a picture of the screen.' };
+    }
+  }
+
+  /**
+   * Use the browser's second tab — the one the meeting is not in.
+   *
+   * Same gate as `startScreenShare`. Before the call is up the only page is the lobby,
+   * and browsing there would leave the meeting on the way in.
+   */
+  async browse(command: BrowserCommand): Promise<BrowserResult> {
+    if (!this.isActive) return { success: false, message: 'I am not in a meeting right now.' };
+    if (this.state !== 'in_call' || !this.browser) {
+      return {
+        success: false,
+        message:
+          this.state === 'leaving'
+            ? 'I am leaving the call, so the browser is being closed.'
+            : 'I am still getting into the call — ask me again once I am in.',
+      };
+    }
+
+    this.browserCommands += 1;
+    const browser = this.browser;
+    // Queued with the share flow: both move which tab is in front, and the model can
+    // call them at the same time.
+    return this.onFrontQueue(async () => {
+      try {
+        const result = await this.runBrowseCommand(browser, command);
+        // Every answer lists the tabs, so the model always knows what it can switch to
+        // and which tab the room is seeing.
+        return { ...result, tabs: await summarizeTabs(browser.listTabs(), browser.front()) };
+      } catch (err) {
+        logger.error({ err }, '[Meeting] Browser command failed');
+        return { success: false, message: 'I could not reach the browser.' };
+      }
+    });
+  }
+
+  /**
+   * Pick the tab, then run the command on it.
+   *
+   * The three tab commands are answered here rather than in `browser-control.ts`,
+   * because the set of tabs belongs to the browser and not to any one page.
+   */
+  private async runBrowseCommand(
+    browser: BrowserStack,
+    command: BrowserCommand,
+  ): Promise<BrowserResult> {
+    switch (command.action) {
+      case 'new_tab': {
+        // The address is checked before the tab exists. Opening first would put a blank
+        // tab in front of the room, and the answer would explain the address rather
+        // than the empty screen everybody is now looking at.
+        if (command.url && !normalizeUrl(command.url)) {
+          return { success: false, message: `"${command.url}" is not a web address I can open.` };
+        }
+
+        const page = await browser.openTab();
+        if (command.url) return runBrowserCommand(page, { action: 'navigate', url: command.url });
+        return { success: true, message: 'Opened a new tab.', ...(await read(page)) };
+      }
+
+      case 'switch_tab': {
+        // Compared against `undefined` rather than tested for truth, so that tab 0 —
+        // a number the model can produce and no tab ever has — is refused as the wrong
+        // number instead of acting on the tab it is already in.
+        const page = command.tab === undefined ? null : await browser.selectTab(command.tab - 1);
+        if (!page) {
+          return { success: false, message: `There is no tab ${command.tab ?? 'of that number'}.` };
+        }
+        return { success: true, message: `Switched to tab ${command.tab}.`, ...(await read(page)) };
+      }
+
+      case 'close_tab': {
+        const tabs = browser.listTabs();
+        const index =
+          command.tab === undefined ? tabs.indexOf(browser.front() as Page) : command.tab - 1;
+        if (index < 0 || !(await browser.closeTab(index))) {
+          return { success: false, message: 'There is no such tab to close.' };
+        }
+
+        const page = browser.front();
+        if (!page || page === this.page) {
+          return { success: true, message: 'Closed the last tab. Nothing is open now.' };
+        }
+        return { success: true, message: 'Closed the tab.', ...(await read(page)) };
+      }
+
+      default:
+        return runBrowserCommand(await browser.workbench(), command);
     }
   }
 
@@ -1625,6 +1928,11 @@ export class MeetingBotService {
         // that would put page text into telemetry.
         ...(this.failStep ? { fail_step: this.failStep } : {}),
         duration_ms: String(Date.now() - this.startedAt),
+        // What the agent did with the browser it was given: whether it ever presented,
+        // and how many browser commands it ran. Counted here rather than emitted per
+        // action, because a click is a step and not a lifecycle.
+        screen_shared: String(this.sharedScreen),
+        browser_commands: String(this.browserCommands),
         responses: String(stats?.responses ?? 0),
         tool_calls: String(stats?.toolCalls ?? 0),
         interruptions: String(stats?.interruptions ?? 0),
@@ -1682,6 +1990,13 @@ export class MeetingBotService {
     this.hasMicBeenOn = false;
     this.micMuteReported = false;
     this.micClick = Promise.resolve();
+    // The browser is closed with the call, so the next one starts presenting nothing.
+    this.sharingScreen = false;
+    this.sharedScreen = false;
+    this.browserCommands = 0;
+    // A queue belonging to a browser that is gone. Anything still on it works on a
+    // closed page, fails, and would otherwise hold the next call's commands behind it.
+    this.frontTail = Promise.resolve();
     // A poll still in flight belongs to the call being torn down; its own epoch check
     // stops it acting, but leaving this set would deadlock the next call's polling.
     this.pollInFlight = false;

@@ -31,6 +31,7 @@ import type {
   JoinOptions,
   JoinOutcome,
   MeetingProvider,
+  ScreenShareOutcome,
   SpeakerReading,
 } from '../../meeting-provider.interface';
 
@@ -345,6 +346,52 @@ const CONFIRM_NEEDLE_CHARS = 60;
 /** Cap on one click or one read inside the chat flow. */
 const CHAT_CLICK_TIMEOUT_MS = 3_000;
 const CHAT_READ_TIMEOUT_MS = 2_000;
+
+/**
+ * Labels Meet has given the control that starts a presentation, newest first.
+ *
+ * Anchored to the start of the name so "Share screen" does not also match the chat
+ * panel's "Share a file with everyone".
+ */
+const SHARE_CONTROL_PATTERNS = [/^share screen/i, /^present now/i];
+
+/**
+ * The source Meet offers when it asks what to present.
+ *
+ * Only the whole-screen choice is taken. A tab or a window would need a window to
+ * exist first, and the display holds exactly one — the browser's own.
+ */
+const SHARE_SOURCE_PATTERN = /^(your )?entire screen$/i;
+
+/**
+ * Meet's warning about presenting a display that contains the Meet window itself,
+ * which is always true here: one virtual display, one browser on it.
+ *
+ * Left unanswered the warning covers the presentation, so this is part of starting
+ * one rather than a nicety.
+ */
+const SELF_VIEW_CONFIRM_PATTERN = /^(show my screen anyway|share anyway|present anyway)$/i;
+
+/** The control Meet only renders while a presentation is up — the proof it started. */
+const STOP_SHARING_PATTERN = /^stop (sharing|presenting)/i;
+
+/** How long to look for a share control, a source menu or the self-view warning. */
+const SHARE_PROBE_MS = 2_000;
+
+/** Cap on one click in the share flow. */
+const SHARE_CLICK_TIMEOUT_MS = 3_000;
+
+/**
+ * How long to wait for the room to actually be seeing the screen.
+ *
+ * The capture needs no picker — a launch flag answers `getDisplayMedia` with the
+ * virtual display — but Meet still renegotiates the call before it renders the
+ * presenting state, and the self-view warning lands somewhere in the middle of that.
+ */
+const SHARE_CONFIRM_TIMEOUT_MS = 15_000;
+
+/** Gap between "is it presenting yet?" reads while the share is being set up. */
+const SHARE_CONFIRM_INTERVAL_MS = 1_000;
 
 /**
  * What happened to the microphone on the way in.
@@ -1429,6 +1476,128 @@ export class GoogleMeetProvider implements MeetingProvider {
   async currentSpeaker(page: Page): Promise<SpeakerReading | null> {
     const reading = await readRoom(page);
     return reading === null ? null : judgeSpeaker(reading);
+  }
+
+  /**
+   * Present the virtual display into the call.
+   *
+   * Meet asks for up to three clicks: the share control, a menu that asks which source,
+   * and a warning about presenting a screen that holds the meeting window. It does not
+   * always ask for all three. So this clicks each control that is there, and needs none
+   * of them.
+   *
+   * The result comes from the "Stop sharing" control. Meet shows that control only while
+   * a presentation runs, so it is the one reading that is not cosmetic.
+   *
+   * Chromium answers the capture picker itself — a launch flag selects the virtual
+   * display (see `browser-stack.ts`).
+   */
+  async startScreenShare(page: Page): Promise<ScreenShareOutcome> {
+    if (await this.findControl(page, [STOP_SHARING_PATTERN])) return { status: 'already_sharing' };
+
+    await this.dismissBlockingDialogs(page);
+
+    const control = await this.findControl(page, SHARE_CONTROL_PATTERNS);
+    if (!control) {
+      return { status: 'failed', reason: "I could not find Meet's screen-sharing control." };
+    }
+
+    try {
+      await control.click({ timeout: SHARE_CLICK_TIMEOUT_MS });
+    } catch {
+      return {
+        status: 'failed',
+        reason: "Meet's screen-sharing control would not take a click.",
+      };
+    }
+
+    const source = await this.findControl(page, [SHARE_SOURCE_PATTERN]);
+    if (source) {
+      try {
+        await source.click({ timeout: SHARE_CLICK_TIMEOUT_MS });
+      } catch {
+        // The menu closed itself, or the choice moved. Whether that mattered is
+        // decided below, by the room rather than by this click.
+      }
+    }
+
+    const deadline = Date.now() + SHARE_CONFIRM_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      // Swept on every pass rather than once: the warning lands somewhere inside the
+      // renegotiation, and while it is up it covers the presentation.
+      const anyway = await this.findControl(page, [SELF_VIEW_CONFIRM_PATTERN]);
+      if (anyway) {
+        try {
+          await anyway.click({ timeout: SHARE_CLICK_TIMEOUT_MS });
+          logger.info('[Meeting] Confirmed the self-view warning');
+        } catch {
+          // Somebody's click won the race, or it repainted. Read the state below.
+        }
+      }
+
+      if (await this.findControl(page, [STOP_SHARING_PATTERN])) {
+        logger.info('[Meeting] Sharing the screen');
+        return { status: 'sharing' };
+      }
+
+      await page.waitForTimeout(SHARE_CONFIRM_INTERVAL_MS);
+    }
+
+    logger.warn('[Meeting] Asked Meet to share the screen, but it never started presenting');
+    return {
+      status: 'failed',
+      reason: 'I asked Meet to share the screen and it never started presenting.',
+    };
+  }
+
+  /**
+   * Stop presenting.
+   *
+   * The control that shows a share is running is also the control that ends it. So no
+   * control means there is nothing to stop, and the result comes from that control
+   * disappearing rather than from the click.
+   */
+  async stopScreenShare(page: Page): Promise<ScreenShareOutcome> {
+    const stop = await this.findControl(page, [STOP_SHARING_PATTERN]);
+    if (!stop) return { status: 'not_sharing' };
+
+    try {
+      await stop.click({ timeout: SHARE_CLICK_TIMEOUT_MS });
+    } catch {
+      return { status: 'failed', reason: "Meet's stop-sharing control would not take a click." };
+    }
+
+    const deadline = Date.now() + SHARE_CONFIRM_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (!(await this.findControl(page, [STOP_SHARING_PATTERN]))) {
+        logger.info('[Meeting] Stopped sharing the screen');
+        return { status: 'stopped' };
+      }
+      await page.waitForTimeout(SHARE_CONFIRM_INTERVAL_MS);
+    }
+
+    logger.warn('[Meeting] Asked Meet to stop sharing, and it is still presenting');
+    return { status: 'failed', reason: 'I asked Meet to stop sharing and it is still presenting.' };
+  }
+
+  /**
+   * The first control matching any of these names, or null.
+   *
+   * Buttons and menu items are searched together because Meet renders these choices as
+   * one or the other, and every caller here wants whichever it turns out to be. The
+   * patterns are anchored by their authors for the reason
+   * `DIALOG_DISMISS_PATTERNS` is: this clicks things on a live call, and a loose match
+   * on a control bar full of verbs is how a share tool stops a share.
+   */
+  private async findControl(page: Page, patterns: RegExp[]): Promise<Locator | null> {
+    for (const name of patterns) {
+      const control = page
+        .getByRole('button', { name })
+        .or(page.getByRole('menuitem', { name }))
+        .first();
+      if (await appears(control, SHARE_PROBE_MS)) return control;
+    }
+    return null;
   }
 
   /**

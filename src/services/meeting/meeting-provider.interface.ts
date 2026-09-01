@@ -128,6 +128,18 @@ export type ChatSendResult =
   /** `step` is what telemetry gets; `reason` is what a human reads in a log. */
   | { sent: false; step: ChatSendStep; reason: string };
 
+/**
+ * What became of a request to start or stop presenting.
+ *
+ * One type for both directions. Both answer the same question: what the room sees now.
+ * `already_sharing` and `not_sharing` are separate from `sharing` and `stopped` because
+ * the agent says them differently. One announces a change, the other corrects somebody
+ * about the state.
+ */
+export type ScreenShareOutcome =
+  | { status: 'sharing' | 'already_sharing' | 'stopped' | 'not_sharing' }
+  | { status: 'failed'; reason: string };
+
 export interface JoinOptions {
   url: string;
   /**
@@ -295,6 +307,30 @@ export interface MeetingProvider {
    * beside it is a second structural check.
    */
   currentSpeaker?(page: Page): Promise<SpeakerReading | null>;
+
+  /**
+   * Start presenting into the call, best effort.
+   *
+   * The room sees the whole display the browser runs on, not one window, because the
+   * capture is a screen. So the thing to show has to be the window on top.
+   *
+   * Reports a failure instead of throwing, as `join` does: a control that moved is
+   * something to say in the room, not a stack trace. Optional, so a platform that
+   * cannot present omits it.
+   */
+  startScreenShare?(page: Page): Promise<ScreenShareOutcome>;
+
+  /**
+   * Stop presenting, best effort.
+   *
+   * Answers `not_sharing` when there was no presentation to stop. That is a fact about
+   * the room, not an error: the share may have been stopped from the platform's own
+   * controls, or never have started.
+   *
+   * Any provider that implements `startScreenShare` implements this too. A share that
+   * nothing can end lasts for the whole call.
+   */
+  stopScreenShare?(page: Page): Promise<ScreenShareOutcome>;
 
   /**
    * How many people are in the call, or null when it can't be determined.
