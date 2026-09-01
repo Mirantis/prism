@@ -199,9 +199,9 @@ something up and say the answer. `share_file` is out because it only stores a fi
 the chat machinery to deliver, and a meeting doesn't run that machinery — in a call it
 could only store a file that reached nobody. While the call is on, speaking is the
 agent's only channel: there is no tool for posting to Slack, to your chat session, or
-to the meeting's own chat panel. Work the call has no time for is the one thing that goes on
-afterwards — the agent schedules it as a one-off task and the result lands in your
-chat, not in the room.
+to the meeting's own chat panel. Work the call has no time for is the one thing that
+goes on afterwards — the agent schedules it as a one-off task and the result lands in
+your chat, not in the room.
 
 Nothing else is withheld, so the guardrail is its prompt rather than the tool list:
 announce and get an explicit "yes" in the room before anything destructive — including
