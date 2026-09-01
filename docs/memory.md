@@ -32,9 +32,16 @@ retrieved only when needed.
   entries still persist but vector search returns nothing.
 - **Search** runs as vector similarity over the embedded SQLite database
   (using `sqlite-vec`), filtered to the agent and a recency window, ranked by
-  semantic closeness.
+  semantic closeness. Every message you send is searched automatically, so the
+  agent starts each turn holding whatever that message matched; it can also
+  search again itself when a task needs more.
 - Each entry has a **category** (observation, action, decision, or event) and an
   **importance** score, so recall can be scoped and weighted.
+- **Importance 9 and above pins an entry.** A pinned entry is in front of the agent
+  on every turn, whatever the conversation is about — the same standing as the
+  curated document. Everything below that score is retrieved only when a message
+  matches it. Pin sparingly: a pinned entry is paid for on every turn of every
+  conversation, while the rest cost nothing until they are relevant.
 
 ## How the agent uses it
 

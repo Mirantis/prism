@@ -644,11 +644,12 @@ describe('compactNow (manual)', () => {
         providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
       },
     ]);
+    // Built exactly as a chat turn builds it, so this request reads the prefix
+    // those turns keep warm instead of prefilling one of its own.
     expect(mockBuildSystemPromptParts).toHaveBeenCalledWith(
       expect.anything(),
       'chat',
       undefined,
-      '',
       undefined,
     );
     // tokensBefore comes from the thread's stored snapshot column.

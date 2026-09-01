@@ -16,6 +16,7 @@ import { SHARE_FILE_TOOL_NAME } from './tools/share-file';
 import { contextService } from './services/context.service';
 import { contextUsageService, type ContextUsageSnapshot } from './services/context-usage.service';
 import { compactionService } from './services/compaction.service';
+import { conversationService } from './services/conversation.service';
 import {
   agentWorkspaceService,
   resolveEffectiveModel,
@@ -24,6 +25,9 @@ import {
 
 import {
   buildSystemPromptParts,
+  buildRecalledMemories,
+  recalledMemoriesMessage,
+  recalledMemoryContent,
   buildConversationMessages,
   buildSteeringMessage,
 } from './prompts/context-builder';
@@ -192,7 +196,6 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       context,
       request.mode,
       request.slackMessages,
-      request.prompt,
       request.workspaceRoot,
     );
 
@@ -220,12 +223,53 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       messages.push({ role: 'user' as const, content: request.prompt });
     }
 
+    // What this turn's message matched in the memory store, as a user turn following
+    // the question. A run of user messages merges into one provider turn, so the
+    // model sees the block and the question together — the shape it accepts.
+    //
+    // Stored as a `USER` row marked `internalStep`: it replays into model context and
+    // stays out of every client transcript, the mechanism concise mode already uses
+    // for its intermediate steps. Not optional. Ephemeral injection is worse than no
+    // recall at all — the next turn replays the user's message without the block, and
+    // the agent, finding no source for the answer it just gave, retracts it as
+    // something it "made up".
+    //
+    // After the user's turn rather than before it, because that is where the stored
+    // row sorts: the engine writes the user's message before the turn runs. Matching
+    // the order is what makes a replayed thread rebuild the prompt that ran.
+    const recalled = await buildRecalledMemories(context, request.prompt);
+    if (recalled) {
+      messages.push(recalledMemoriesMessage(recalled));
+      // Recorded on chat turns only. The row exists so a replayed thread rebuilds the
+      // prompt that produced its stored answers — which needs the question stored
+      // too, and only chat stores it. A goal or a thread-bound cron task appends its
+      // prompt at invoke time and never writes it down, so a row there would be an
+      // orphan block with no question, repeated once per run: a goal writes one per
+      // turn and a five-minute cron task around 288 a day, each replaying into every
+      // later chat turn until compaction folds it away. That is the growth this
+      // change exists to stop.
+      if (request.mode === 'chat' && request.threadId) {
+        // Best effort: a turn must not fail because a recall could not be recorded.
+        // The block is in this request either way; only the replay is lost.
+        await conversationService
+          .addMessage(request.threadId, {
+            content: recalledMemoryContent(recalled),
+            role: 'USER',
+            triggeredBy: 'USER_INPUT',
+            internalStep: true,
+          })
+          .catch((err) => logger.warn({ err }, 'Failed to record the turn\'s recalled memories'));
+      }
+    }
+
     // Prompt caching: system prompt parts marked cacheable get cache breakpoints.
-    // [0] stable prefix (identity, soul, memory, instructions) — cached across conversations
-    // [1] recalled memories + timestamp — cached within multi-step invocations
-    // Bedrock allows 4 breakpoints. The Anthropic Messages path uses all four:
-    // 2 system + last message (via prepareStep) + last tool. Converse ignores
-    // the tools one (see withToolsCacheControl), so it receives 3.
+    // [0] stable prefix — identity, soul, pinned memories, instructions. The one
+    // system breakpoint: the dynamic part behind it carries only the date, and a
+    // change there still hits this one.
+    //
+    // Bedrock allows 4. The Anthropic Messages path spends 3: this, the last message
+    // (via prepareStep) and the last tool. Converse ignores the tools one (see
+    // withToolsCacheControl), so it spends 2.
     const cachedSystem: SystemModelMessage[] = systemParts.map((part) => ({
       role: 'system' as const,
       content: part.text,

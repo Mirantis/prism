@@ -17,10 +17,11 @@
  *   tools+system+history prefix, so the fork is mostly a cache read.
  * - `compactNow()` — the manual `/compact` path (REST). Rebuilds the context
  *   from stored rows and attaches the same tool set a chat turn sends (with
- *   toolChoice 'none'), so the request shares the tools+stable-system cache
- *   prefix chat turns keep warm. The history block still re-prefills — the
- *   dynamic system part carries a per-invocation timestamp, so history never
- *   cache-hits across invocations; that matches chat turns' own economics.
+ *   toolChoice 'none'), so the request shares the tools+stable-system cache prefix
+ *   chat turns keep warm — and now the history behind it too: nothing per-turn sits
+ *   in the system prompt any more (the date changes once a day, and a turn's
+ *   recalled memories are a stored row this path replays like any other), so this
+ *   request hits whichever message entry a recent turn left.
  *
  * Both serialize on the per-thread mutex (`threadTurnService.run`) so a
  * compaction never rewrites thread state while a turn is building its context.
@@ -288,7 +289,6 @@ class CompactionService {
           context,
           'chat',
           undefined,
-          '',
           thread?.workspaceRoot ?? undefined,
         );
         // Mirror invoke.ts: task-tool instructions ride the stable part, and
@@ -381,8 +381,8 @@ class CompactionService {
       // appended blocks to the cache entry the turn's own last step wrote
       // (prepareStep marks its last message). Without it the tools+system
       // prefix would hit but the history — the bulk of the prompt — would be
-      // re-prefilled at full price. Budget: 2 system + 1 tools + this = 4,
-      // exactly Bedrock's breakpoint limit.
+      // re-prefilled at full price. Budget: 1 system + 1 tools + this = 3, inside
+      // Bedrock's limit of 4.
       const messages: ModelMessage[] = [
         ...fork.messages,
         ...fork.injections,

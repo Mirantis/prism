@@ -69,21 +69,26 @@ export interface SystemPromptPart {
 }
 
 /**
- * Build system prompt as structured parts for granular cache control.
+ * Build the system prompt as parts, each marked cacheable or not.
  *
- * Returns an array of parts, each marked as cacheable or not:
- * - Stable parts (identity, soul, user, memory, mode instructions, heartbeat context) → cacheable
- * - Dynamic parts (timestamp, recalled memories, bootstrap phase) → cacheable when recalled
- *   memories are present (safe because both are constant within a multi-step generateText() call)
+ * There is one cache prefix, and it runs tools → system → messages. A provider
+ * matches it from the start, so a part is not billed for its own size — it is
+ * billed for everything behind it. System and messages are **not** independent
+ * blocks; this was misread twice, and both times a per-turn value ended up here.
  *
- * This allows the LLM provider to cache the large stable prefix independently
- * of the dynamic suffix, improving cross-conversation cache hit rates.
+ * The split is therefore about ordering, not about two caches: the large stable
+ * text (identity, soul, user, memory, skills, mode instructions) is placed first
+ * and carries the first breakpoint; the little that legitimately varies (the date,
+ * and the bootstrap script during onboarding) follows it and carries the second, so
+ * a change in the second still finds the first.
+ *
+ * Anything that varies turn to turn belongs at the tail of the *messages*, not in
+ * a part here. See `buildRecalledMemories`.
  */
 export async function buildSystemPromptParts(
   context: AgentContext,
   mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' | 'meeting' = 'chat',
   slackMessages?: SlackTriggerMessage[],
-  query?: string,
   workspaceRoot?: string,
 ): Promise<SystemPromptPart[]> {
   const stableSections: string[] = [];
@@ -113,6 +118,17 @@ export async function buildSystemPromptParts(
 
   // Memory (curated knowledge)
   stableSections.push(`# Memory\n\n${context.memoryMd}`);
+
+  // Pinned memories: the entries the agent scored `importance >= 9`. Query-independent
+  // — they come back whatever the turn is about — so they belong here, in the cached
+  // prefix, beside the curated document they complement. Carried per turn they cost a
+  // re-write of the whole conversation behind them on every turn. They do change when
+  // the agent pins or drops one, which breaks the prefix once; that is a real change,
+  // and a rare one.
+  const pinnedMemories = await memoryManagerService.buildPinnedMemories(context.agentId);
+  if (pinnedMemories) {
+    stableSections.push(`# Pinned Memories\n\n${pinnedMemories}`);
+  }
 
   // Vision (user's goals — always included when present)
   if (context.visionMd && context.visionMd.trim()) {
@@ -209,18 +225,9 @@ export async function buildSystemPromptParts(
     stableSections.push(getLockedInInstructions(context.isBootstrapPhase));
   }
 
-  // Recalled memories — auto-retrieved from memory_entries via embedding search.
-  // Merged into the dynamic part to stay within Bedrock's 4 cache breakpoint limit.
-  if (query) {
-    const recalledMemories = await memoryManagerService.buildMemoryContext(
-      context.userId,
-      context.agentId,
-      query,
-    );
-    if (recalledMemories) {
-      dynamicSections.unshift(`# Recalled Memories\n\n${recalledMemories}`);
-    }
-  }
+  // Recalled memories were unshifted into the dynamic part here until AGENT-202.
+  // The pinned half is a stable section above; the query-driven half is a message —
+  // see `buildRecalledMemories`.
 
   // Runtime context — the date, and where to get the time.
   //
@@ -254,10 +261,12 @@ export async function buildSystemPromptParts(
     parts.push({ text: stableSections.join('\n\n---\n\n'), cacheable: true });
   }
   if (dynamicSections.length > 0) {
-    // When recalled memories are present, the dynamic part is safe to cache —
-    // both memories and timestamp are constant within a multi-step generateText() call.
-    const hasRecalledMemories = dynamicSections.some((s) => s.startsWith('# Recalled Memories'));
-    parts.push({ text: dynamicSections.join('\n\n---\n\n'), cacheable: hasRecalledMemories });
+    // Never cacheable. It carries the date and, during onboarding, the bootstrap
+    // script — both cheap, and both behind the stable part's breakpoint, which a
+    // change here still hits. The four breakpoints are better spent elsewhere: the
+    // stable prefix, the last persisted message, the last message and the tools
+    // block (see `invokeStream`).
+    parts.push({ text: dynamicSections.join('\n\n---\n\n'), cacheable: false });
   }
   // Per-turn runtime notices (e.g. an attachment that failed to download).
   // Authoritative system context — the model acts on these far more reliably
@@ -277,16 +286,62 @@ export async function buildSystemPromptParts(
 }
 
 /**
- * Build system prompt from context (backward-compatible string form).
+ * What this turn's message matches in `memory_entries`, by meaning. Pinned entries
+ * are not here — `buildPinnedMemories` carries those from the system prompt, where
+ * they cost nothing per turn. Returns the text, not a placement.
+ *
+ * It was a `# Recalled Memories` section of the dynamic system part until AGENT-202,
+ * and it was the last per-turn value sitting in front of the cached prefix. A search
+ * over a store the agent keeps writing to returns different text as the thread goes
+ * on, and each change re-billed every message behind it: a 2,058-token write where
+ * the steady state was 22, on a 13,000-token thread — the cost scaled with the
+ * history, not with the memories.
  */
-export async function buildSystemPrompt(
+export async function buildRecalledMemories(
   context: AgentContext,
-  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' | 'meeting' = 'chat',
-  slackMessages?: SlackTriggerMessage[],
   query?: string,
-): Promise<string> {
-  const parts = await buildSystemPromptParts(context, mode, slackMessages, query);
-  return parts.map((p) => p.text).join('\n\n---\n\n');
+): Promise<string | null> {
+  const recalled = await memoryManagerService.buildRelevantMemories(
+    context.userId,
+    context.agentId,
+    query,
+  );
+  return recalled || null;
+}
+
+/**
+ * The turn's recall, as a message of its own that follows the user's turn.
+ *
+ * The header is bare on purpose. OpenClaw's entire preamble is the literal string
+ * "Context:", and Hermes appends a fenced block after the user's text; ours argued
+ * for its own credibility across three revisions and the agent refused it harder
+ * each time — a block that has to insist invites exactly that reading. Measured on
+ * the same probe and the same stored memory: every framing that asserted its own
+ * trustworthiness was rejected, and the bare one was used without comment.
+ *
+ * A user turn, so a run of them merges into one provider turn and the model sees the
+ * block and the question as one message — the shape that worked. Its own row rather
+ * than an edit to the user's message, so what is stored is what was sent: the row is
+ * written with `internalStep`, replaying into model context and staying out of every
+ * client transcript. Ephemeral was tried and is worse than not recalling at all —
+ * the next turn replays the user's message without the block, and the agent, finding
+ * no source for what it just said, retracts it as something it "made up".
+ */
+export function recalledMemoriesMessage(recalled: string): ModelMessage {
+  return { role: 'user', content: recalledMemoryContent(recalled) };
+}
+
+/**
+ * The stored and sent form of a recall block — one string, so the two cannot drift.
+ *
+ * A closing tag inside an entry is broken before wrapping. Entries are the agent's
+ * own writing, but what it writes can come from anywhere it read — a Slack channel, a
+ * web page, a tool result — so an entry can be made to carry `</recalled-memories>`
+ * and put the rest of itself outside the block, where it reads as ordinary user text.
+ */
+export function recalledMemoryContent(recalled: string): string {
+  const payload = recalled.replaceAll('</recalled-memories', '<\u200b/recalled-memories');
+  return `Context:\n<recalled-memories>\n${payload}\n</recalled-memories>`;
 }
 
 /** Max skills listed inline before we summarize the overflow (a guardrail —

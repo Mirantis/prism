@@ -289,31 +289,25 @@ describe('Memory Manager Service', () => {
     });
   });
 
-  describe('Scenario: Build memory context', () => {
-    it('should return empty string when no entries exist', async () => {
-      const userId = 'user-123';
-      const agent = createTestAgentWorkspace({ userId });
+  describe('Scenario: Pinned memories', () => {
+    it('should return empty string when nothing is pinned', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
 
       mockPrisma.memoryEntry.findMany.mockResolvedValue([]);
 
-      const result = await memoryManagerService.buildMemoryContext(userId, agent.id);
-
-      expect(result).toBe('');
+      expect(await memoryManagerService.buildPinnedMemories(agent.id)).toBe('');
     });
 
-    it('should include high-importance entries grouped by category', async () => {
-      const userId = 'user-123';
-      const agent = createTestAgentWorkspace({ userId });
+    it('should group pinned entries by category', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
 
-      const entries = [
+      mockPrisma.memoryEntry.findMany.mockResolvedValueOnce([
         createTestMemoryEntry({ agentId: agent.id, category: 'decision', content: 'Use TypeScript', importance: 9 }),
         createTestMemoryEntry({ agentId: agent.id, category: 'observation', content: 'Cluster has 3 nodes', importance: 10 }),
         createTestMemoryEntry({ agentId: agent.id, category: 'decision', content: 'Deploy to us-east-1', importance: 9 }),
-      ];
+      ]);
 
-      mockPrisma.memoryEntry.findMany.mockResolvedValueOnce(entries);
-
-      const result = await memoryManagerService.buildMemoryContext(userId, agent.id);
+      const result = await memoryManagerService.buildPinnedMemories(agent.id);
 
       expect(result).toContain('## Decisions');
       expect(result).toContain('Use TypeScript');
@@ -322,13 +316,12 @@ describe('Memory Manager Service', () => {
       expect(result).toContain('Cluster has 3 nodes');
     });
 
-    it('should fetch important entries with importance >= 9', async () => {
-      const userId = 'user-123';
-      const agent = createTestAgentWorkspace({ userId });
+    it('should fetch entries with importance >= 9, and no query', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
 
       mockPrisma.memoryEntry.findMany.mockResolvedValueOnce([]);
 
-      await memoryManagerService.buildMemoryContext(userId, agent.id);
+      await memoryManagerService.buildPinnedMemories(agent.id);
 
       expect(mockPrisma.memoryEntry.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -337,78 +330,101 @@ describe('Memory Manager Service', () => {
           take: 15,
         })
       );
+      expect(mockEmbeddingService.generateEmbedding).not.toHaveBeenCalled();
     });
 
-    it('should include query-relevant entries when query provided', async () => {
-      const userId = 'user-123';
-      const agent = createTestAgentWorkspace({ userId });
-      const mockVector = [0.1, 0.2];
+    it('should respect its character budget', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
+      const longContent = 'A'.repeat(500);
 
-      // First call: importantEntries (none)
-      mockPrisma.memoryEntry.findMany.mockResolvedValueOnce([]);
-      // search() uses vector search
-      mockEmbeddingService.generateEmbedding.mockResolvedValue(mockVector);
+      mockPrisma.memoryEntry.findMany.mockResolvedValueOnce(
+        Array.from({ length: 20 }, (_, i) =>
+          createTestMemoryEntry({
+            agentId: agent.id,
+            content: `${longContent} entry ${i}`,
+            category: 'observation',
+            importance: 9,
+          })
+        )
+      );
+
+      const result = await memoryManagerService.buildPinnedMemories(agent.id);
+      const lineCount = result.split('\n- ').length - 1;
+
+      expect(lineCount).toBeLessThan(20);
+      expect(lineCount).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Scenario: Query-relevant memories', () => {
+    it('should return what the query matches', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
+
+      mockEmbeddingService.generateEmbedding.mockResolvedValue([0.1, 0.2]);
       mockEmbeddingService.searchByEmbedding.mockResolvedValue([
         { id: 'e1', content: 'OOM killed pod-xyz yesterday', category: 'observation', importance: 5, createdAt: new Date() },
       ]);
 
-      const result = await memoryManagerService.buildMemoryContext(userId, agent.id, 'pod crashes');
+      const result = await memoryManagerService.buildRelevantMemories('user-123', agent.id, 'pod crashes');
 
-      expect(result).toContain('## Relevant to Current Query');
       expect(result).toContain('OOM killed pod-xyz yesterday');
     });
 
-    it('should deduplicate entries appearing in both important and relevant sets', async () => {
-      const userId = 'user-123';
-      const agent = createTestAgentWorkspace({ userId });
-      const sharedId = 'shared-entry-id';
+    it('should return empty string without a query, and not search', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
 
-      const sharedEntry = createTestMemoryEntry({
-        id: sharedId,
-        agentId: agent.id,
-        content: 'Important and relevant',
-        importance: 10,
-      });
-
-      // Important query returns the shared entry
-      mockPrisma.memoryEntry.findMany.mockResolvedValueOnce([sharedEntry]);
-      // Vector search also returns the same entry
-      mockEmbeddingService.generateEmbedding.mockResolvedValue([0.1]);
-      mockEmbeddingService.searchByEmbedding.mockResolvedValue([
-        { id: sharedId, content: 'Important and relevant', category: 'decision', importance: 10, createdAt: new Date() },
-      ]);
-
-      const result = await memoryManagerService.buildMemoryContext(userId, agent.id, 'relevant query');
-
-      // Content should appear once (in important section), NOT in "Relevant to Current Query"
-      const occurrences = result.split('Important and relevant').length - 1;
-      expect(occurrences).toBe(1);
-      expect(result).not.toContain('## Relevant to Current Query');
+      expect(await memoryManagerService.buildRelevantMemories('user-123', agent.id)).toBe('');
+      expect(mockEmbeddingService.generateEmbedding).not.toHaveBeenCalled();
     });
 
-    it('should respect character budget', async () => {
-      const userId = 'user-123';
-      const agent = createTestAgentWorkspace({ userId });
+    it('should return empty string when nothing matches', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
 
-      // Create entries with content that exceeds 4000 chars total
+      mockEmbeddingService.generateEmbedding.mockResolvedValue([0.1]);
+      mockEmbeddingService.searchByEmbedding.mockResolvedValue([]);
+
+      expect(
+        await memoryManagerService.buildRelevantMemories('user-123', agent.id, 'anything')
+      ).toBe('');
+    });
+
+    // The pinned section carries these from the system prompt, where they cost
+    // nothing per turn. Repeating them in the per-turn block would pay twice.
+    it('should leave pinned entries to the pinned section', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
+
+      mockEmbeddingService.generateEmbedding.mockResolvedValue([0.1]);
+      mockEmbeddingService.searchByEmbedding.mockResolvedValue([
+        { id: 'pinned', content: 'Important and relevant', category: 'decision', importance: 10, createdAt: new Date() },
+        { id: 'plain', content: 'Just relevant', category: 'observation', importance: 4, createdAt: new Date() },
+      ]);
+
+      const result = await memoryManagerService.buildRelevantMemories('user-123', agent.id, 'q');
+
+      expect(result).not.toContain('Important and relevant');
+      expect(result).toContain('Just relevant');
+    });
+
+    // Half the pinned budget: this half is billed on every turn that matches.
+    it('should respect its smaller character budget', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
       const longContent = 'A'.repeat(500);
-      const entries = Array.from({ length: 20 }, (_, i) =>
-        createTestMemoryEntry({
-          agentId: agent.id,
+
+      mockEmbeddingService.generateEmbedding.mockResolvedValue([0.1]);
+      mockEmbeddingService.searchByEmbedding.mockResolvedValue(
+        Array.from({ length: 10 }, (_, i) => ({
+          id: `e${i}`,
           content: `${longContent} entry ${i}`,
           category: 'observation',
-          importance: 9,
-        })
+          importance: 4,
+          createdAt: new Date(),
+        }))
       );
 
-      mockPrisma.memoryEntry.findMany.mockResolvedValueOnce(entries);
+      const result = await memoryManagerService.buildRelevantMemories('user-123', agent.id, 'q');
 
-      const result = await memoryManagerService.buildMemoryContext(userId, agent.id);
-
-      // Should not contain all 20 entries — budget should cut it off
-      const lineCount = result.split('\n- ').length - 1;
-      expect(lineCount).toBeLessThan(20);
-      expect(lineCount).toBeGreaterThan(0);
+      expect(result.length).toBeLessThan(3000);
+      expect(result).toContain('entry 0');
     });
   });
 });
