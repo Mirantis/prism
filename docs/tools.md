@@ -199,9 +199,14 @@ something up and say the answer. `share_file` is out because it only stores a fi
 the chat machinery to deliver, and a meeting doesn't run that machinery — in a call it
 could only store a file that reached nobody.
 
-A call adds one tool it has nowhere else: posting a short plain-text message, up to 500
-characters, into the meeting's own chat panel. Nothing reads the chat back, so a message
-typed there never reaches the agent.
+The agent can post a short plain-text message, up to 500 characters, into the chat panel
+of the call it is in. Nothing reads the chat back, so a message typed there never reaches
+the agent. It can post from inside the call, from a chat session, or from a scheduled run
+reporting back on work the call kicked off; with no call live it posts nothing and says
+so.
+
+A line it posts from a chat session or a scheduled run is stored with the thread like any
+other tool argument. Posted from inside the call, nothing is stored.
 
 Work the call has no time for is the one thing that goes on afterwards — the agent
 schedules it as a one-off task and the result lands in your chat, not in the room.
@@ -217,8 +222,8 @@ The meeting tools themselves only exist when the runtime can actually host a cal
 container image's browser/audio toolchain plus `OPENAI_API_KEY` (which a
 direct-mode `LLM_PROVIDER=openai` deployment already carries — one routed
 through the Lens Agents gateway can run keyless, and then has no meeting tools).
-They're also chat-only — a heartbeat or scheduled run can't dial into a meeting
-on its own.
+Joining and leaving are chat-only — a heartbeat or scheduled run can't dial
+into a meeting, or hang up on one, by itself.
 
 ## External tools (MCP)
 

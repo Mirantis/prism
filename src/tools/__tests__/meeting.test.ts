@@ -40,8 +40,9 @@ vi.mock('../../services/meeting/openai-endpoint', () => ({
   isRealtimeConfigured: () => mockIsRealtimeConfigured(),
 }));
 
-const { getMeetingTools, isMeetingSupported, MEETING_TOOL_NAMES, MEETING_ONLY_TOOL_NAMES } =
-  await import('../meeting');
+const { getMeetingTools, isMeetingSupported, MEETING_MEMBERSHIP_TOOL_NAMES } = await import(
+  '../meeting'
+);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -64,7 +65,11 @@ describe('getMeetingTools', () => {
       'send_meeting_chat',
       'meeting_status',
     ]);
-    expect([...MEETING_TOOL_NAMES]).toEqual(Object.keys(getMeetingTools(input)));
+    // The two the mode filter withholds have to be two of the names registered here, or
+    // it withholds nothing.
+    for (const name of MEETING_MEMBERSHIP_TOOL_NAMES) {
+      expect(Object.keys(getMeetingTools(input))).toContain(name);
+    }
 
     // The name no longer says "Google Meet", so the description has to.
     const { description } = getMeetingTools(input).join_meeting as { description: string };
@@ -210,7 +215,10 @@ describe('getMeetingTools', () => {
   it('reports a refused or failed send as unsuccessful', async () => {
     // The model acts on `success`; a refusal reported as a success is a message the
     // agent believes the room can read.
-    mockSendChatMessage.mockResolvedValue({ sent: false, message: `I'm not in a call.` });
+    mockSendChatMessage.mockResolvedValue({
+      sent: false,
+      message: `I'm not in a call, so there's no meeting chat to post into.`,
+    });
     const tools = getMeetingTools(input);
 
     const result = (await tools.send_meeting_chat.execute!(
@@ -294,60 +302,55 @@ describe('meeting tool mode', () => {
   });
 
   it('otherwise tracks chat mode, so the two cannot drift apart', async () => {
-    // Not equality any more, and the difference is the point: chat drops the in-call
-    // tools because a chat turn stores its tool calls as conversation history, and a
-    // message posted into a call must not be written down anywhere.
     const { filterToolsByMode } = await import('../../lib/tool-collection');
     const all = Object.fromEntries(EVERYTHING.map((n) => [n, stub()]));
 
-    const expected = [
-      ...Object.keys(filterToolsByMode(all, 'chat')).filter((n) => n !== 'share_file'),
-      ...MEETING_ONLY_TOOL_NAMES,
-    ].sort();
+    const expected = Object.keys(filterToolsByMode(all, 'chat'))
+      .filter((n) => n !== 'share_file')
+      .sort();
 
     expect(Object.keys(filterToolsByMode(all, 'meeting')).sort()).toEqual(expected);
   });
 
-  it('keeps the in-call tools out of chat, and the rest in', async () => {
-    // Asking "am I in a call?" from chat is reasonable, and joining one from chat is how
-    // a call starts. Only the send is withheld, and only because of what chat persists.
+  it('offers the whole meeting set in chat, the send included', async () => {
+    // A chat turn can post into a call that is already running. It costs the line being
+    // stored with the thread like any other tool argument, which two reviewers weighed
+    // and accepted; `docs/tools.md` says so.
     const { filterToolsByMode } = await import('../../lib/tool-collection');
     const all = Object.fromEntries(EVERYTHING.map((n) => [n, stub()]));
 
-    const chat = Object.keys(filterToolsByMode(all, 'chat'));
-
-    expect(chat).not.toContain('send_meeting_chat');
-    expect(chat).toContain('join_meeting');
-    expect(chat).toContain('leave_meeting');
-    expect(chat).toContain('meeting_status');
-    expect(chat).toContain('share_file');
+    expect(Object.keys(filterToolsByMode(all, 'chat')).sort()).toEqual([...EVERYTHING].sort());
   });
 
-  it('still keeps the meeting tools out of autonomous modes', async () => {
+  it('keeps only joining and leaving out of the autonomous modes', async () => {
     const { filterToolsByMode } = await import('../../lib/tool-collection');
 
-    // An autonomous run dialling into a live call with people in it is never what
-    // the operator asked for — only a person in a conversation invites the agent.
+    // An autonomous run dialling into a live call with people in it, or hanging up on
+    // one, is never what the operator asked for — only a person in a conversation
+    // decides that. Posting one line into a call already running is the reverse: a
+    // scheduled run that the room kicked off reports back into the room that way.
     for (const mode of ['heartbeat', 'cron', 'webhook', 'subagent', 'goal']) {
       const filtered = filterToolsByMode(
         {
           join_meeting: stub(),
           leave_meeting: stub(),
+          meeting_speaker: stub(),
           meeting_status: stub(),
           send_meeting_chat: stub(),
           memory_search: stub(),
         },
         mode,
       );
-      expect(Object.keys(filtered)).toEqual(['memory_search']);
+      expect(Object.keys(filtered).sort()).toEqual(
+        ['meeting_speaker', 'meeting_status', 'memory_search', 'send_meeting_chat'].sort(),
+      );
     }
   });
 
-  it('keeps them out of a mode nobody enumerated either', async () => {
+  it('keeps those two out of a mode nobody enumerated either', async () => {
     // The fallback hands an unknown mode every other tool, which is the right default
-    // for a caller this function has not heard of. It is the wrong default for these
-    // two: `join_meeting` dials into a live call, and `send_meeting_chat` would have
-    // the calling turn persist a posted message as history.
+    // for a caller this function has not heard of. It is the wrong default for the two
+    // that change which call the agent is in.
     const { filterToolsByMode } = await import('../../lib/tool-collection');
 
     const filtered = filterToolsByMode(
@@ -363,7 +366,9 @@ describe('meeting tool mode', () => {
       'a-mode-that-does-not-exist',
     );
 
-    expect(Object.keys(filtered)).toEqual(['memory_search', 'shell_exec']);
+    expect(Object.keys(filtered).sort()).toEqual(
+      ['meeting_speaker', 'meeting_status', 'memory_search', 'send_meeting_chat', 'shell_exec'].sort(),
+    );
   });
 });
 

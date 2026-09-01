@@ -25,8 +25,7 @@ import { getAttachmentTools } from '../tools/attachments';
 import { getSkillTools } from '../tools/skills/index';
 import {
   getMeetingTools,
-  MEETING_ONLY_TOOL_NAMES,
-  MEETING_TOOL_NAMES,
+  MEETING_MEMBERSHIP_TOOL_NAMES,
   isMeetingSupported,
 } from '../tools/meeting';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
@@ -279,11 +278,13 @@ function omitLockedTools(tools: Record<string, Tool>): Record<string, Tool> {
  * tool — including MCP ones — so a remote tool cannot answer to a name the
  * mode has just taken away.
  *
- * Joining a voice meeting is a chat-only act: every other mode drops the meeting
- * tools, because an autonomous run (a heartbeat, a cron tick, a subagent) dialling
- * into a live call with people in it is never what the operator asked for.
+ * Joining a voice meeting and leaving one are chat-only acts: every other mode drops
+ * those two tools, because an autonomous run (a heartbeat, a cron tick, a subagent)
+ * dialling into a live call with people in it — or hanging up on one — is never what the
+ * operator asked for. Reading a call and posting one line into it are available in every
+ * mode, so a scheduled run started during a call can report back into the room.
  *
- * - chat: every tool except the in-call ones (see the note in the function body)
+ * - chat: All tools
  * - heartbeat: minus cron-management AND goal tools (no schedule/goal reshaping)
  * - cron: minus list/delete-task AND goal tools, but KEEPS schedule_task so a
  *   thread-bound "continue in this conversation" run can re-`wait` (poll in-thread)
@@ -291,8 +292,8 @@ function omitLockedTools(tools: Record<string, Tool>): Record<string, Tool> {
  *   "check again later" follow-ups
  * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
  * - goal: minus create_goal (no nested goals) and cron-management; get_goal stays
- * - meeting: chat's set minus share_file, plus the in-call ones (same note)
- * - any other mode: everything except the meeting tools
+ * - meeting: chat's full set minus share_file (see the note in the function body)
+ * - any other mode: everything except the two tools that join or leave a call
  */
 export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<string, Tool> {
   // Goal-management tools are chat-only entry points; a goal turn keeps only
@@ -308,16 +309,11 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
     return result;
   };
 
-  // Everything except the tools that only work inside a call. `send_meeting_chat` is
-  // the one, and it is withheld here for a persistence reason rather than a useless-
-  // outside-a-call one: a chat turn stores its tool calls as conversation history,
-  // arguments and all, and a message posted into a call must not be written down.
   if (mode === 'chat') {
-    return omit(new Set<string>(MEETING_ONLY_TOOL_NAMES));
+    return tools;
   }
 
-  // A live voice meeting gets chat's surface except `share_file`, plus the in-call
-  // tools nothing else gets.
+  // A live voice meeting gets chat's full surface except `share_file`.
   //
   // `share_file` is dropped for the same reason `subagent` drops it: the tool only
   // stores the file and hands back an id, and it is the *invoke loop* that carries
@@ -340,10 +336,10 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
     return omit(new Set([SHARE_FILE_TOOL_NAME]));
   }
 
-  // Only a person in a conversation asks the agent into a call, so every mode
-  // below drops the meeting tools. Folded in here rather than repeated per mode
-  // so a new mode can't accidentally inherit the ability to join a meeting.
-  const meetingToolNames = new Set<string>(MEETING_TOOL_NAMES);
+  // Only a person in a conversation asks the agent into a call or out of one, so every
+  // mode below drops those two tools. Folded in here rather than repeated per mode so a
+  // new mode can't accidentally inherit the ability to join a meeting.
+  const membershipToolNames = new Set<string>(MEETING_MEMBERSHIP_TOOL_NAMES);
 
   // Subagents return their result as text to the parent invocation (via the
   // Task tool) — they have no direct channel to the user, so a file they
@@ -356,7 +352,7 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
         'hydrate_attachment',
         'view_attachment',
         ...goalToolNames,
-        ...meetingToolNames,
+        ...membershipToolNames,
       ]),
     );
   }
@@ -364,7 +360,7 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
   // Heartbeat is an autonomous run: full tool access, minus the cron-management
   // and goal tools so it can't reshape the schedule or spawn goals.
   if (mode === 'heartbeat') {
-    return omit(new Set([...cronToolNames, ...goalToolNames, ...meetingToolNames]));
+    return omit(new Set([...cronToolNames, ...goalToolNames, ...membershipToolNames]));
   }
 
   // Cron keeps `schedule_task` so a thread-bound "continue in this conversation"
@@ -376,7 +372,7 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
         'list_scheduled_tasks',
         'delete_scheduled_task',
         ...goalToolNames,
-        ...meetingToolNames,
+        ...membershipToolNames,
       ]),
     );
   }
@@ -384,15 +380,14 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
   // A goal turn does real work but must not create/nest a goal or reshape the
   // schedule.
   if (mode === 'goal') {
-    return omit(new Set(['create_goal', ...cronToolNames, ...meetingToolNames]));
+    return omit(new Set(['create_goal', ...cronToolNames, ...membershipToolNames]));
   }
 
-  // A mode nothing above enumerates keeps every other tool, and none of the meeting
-  // ones. The permissive fallback is deliberate for the rest — a caller passing a mode
-  // this function has not heard of should not silently lose the shell — but the meeting
-  // tools are the exception, because two of them are unsafe to inherit by accident:
-  // `join_meeting` dials into a live call with people in it, and `send_meeting_chat`
-  // would have the calling turn persist a posted message as history. That is the same
-  // reason every enumerated mode above drops them.
-  return omit(meetingToolNames);
+  // A mode nothing above enumerates keeps every other tool, and neither of the two that
+  // change which call the agent is in. The permissive fallback is deliberate for the
+  // rest — a caller passing a mode this function has not heard of should not silently
+  // lose the shell — but `join_meeting` dials into a live call with people in it and
+  // `leave_meeting` hangs up on one, which is the same reason every enumerated mode
+  // above drops them.
+  return omit(membershipToolNames);
 }
