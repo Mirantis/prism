@@ -423,6 +423,10 @@ class ConversationService {
       'thread.id': threadId,
       'message.role': input.role,
       'message.triggered_by': input.triggeredBy,
+      // Internal rows are written by the runtime, not sent by anyone. Without this a
+      // recalling chat turn adds a second `role=USER` count and every message-volume
+      // metric steps at deploy for a reason that is not user behaviour.
+      'message.internal': String(Boolean(input.internalStep)),
     });
 
     // Name the thread after the user's first message (first 3 words, capped).

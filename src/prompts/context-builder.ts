@@ -76,11 +76,11 @@ export interface SystemPromptPart {
  * billed for everything behind it. System and messages are **not** independent
  * blocks; this was misread twice, and both times a per-turn value ended up here.
  *
- * The split is therefore about ordering, not about two caches: the large stable
- * text (identity, soul, user, memory, skills, mode instructions) is placed first
- * and carries the first breakpoint; the little that legitimately varies (the date,
- * and the bootstrap script during onboarding) follows it and carries the second, so
- * a change in the second still finds the first.
+ * The split is therefore about ordering, not about two caches: the large stable text
+ * (identity, soul, user, pinned memories, skills, mode instructions) is placed first
+ * and carries the one system breakpoint, and the little that legitimately varies (the
+ * date, and the bootstrap script during onboarding) follows it, spending none — a
+ * change there still finds the breakpoint in front of it.
  *
  * Anything that varies turn to turn belongs at the tail of the *messages*, not in
  * a part here. See `buildRecalledMemories`.
@@ -225,9 +225,9 @@ export async function buildSystemPromptParts(
     stableSections.push(getLockedInInstructions(context.isBootstrapPhase));
   }
 
-  // Recalled memories were unshifted into the dynamic part here until AGENT-202.
-  // The pinned half is a stable section above; the query-driven half is a message —
-  // see `buildRecalledMemories`.
+  // Recalled memories were unshifted into the dynamic part here. The pinned half is a
+  // stable section above; the query-driven half is a message — see
+  // `buildRecalledMemories`.
 
   // Runtime context — the date, and where to get the time.
   //
@@ -290,8 +290,8 @@ export async function buildSystemPromptParts(
  * are not here — `buildPinnedMemories` carries those from the system prompt, where
  * they cost nothing per turn. Returns the text, not a placement.
  *
- * It was a `# Recalled Memories` section of the dynamic system part until AGENT-202,
- * and it was the last per-turn value sitting in front of the cached prefix. A search
+ * It was a `# Recalled Memories` section of the dynamic system part, the last
+ * per-turn value sitting in front of the cached prefix. A search
  * over a store the agent keeps writing to returns different text as the thread goes
  * on, and each change re-billed every message behind it: a 2,058-token write where
  * the steady state was 22, on a 13,000-token thread — the cost scaled with the
@@ -312,12 +312,11 @@ export async function buildRecalledMemories(
 /**
  * The turn's recall, as a message of its own that follows the user's turn.
  *
- * The header is bare on purpose. OpenClaw's entire preamble is the literal string
- * "Context:", and Hermes appends a fenced block after the user's text; ours argued
- * for its own credibility across three revisions and the agent refused it harder
- * each time — a block that has to insist invites exactly that reading. Measured on
- * the same probe and the same stored memory: every framing that asserted its own
- * trustworthiness was rejected, and the bare one was used without comment.
+ * The header is bare on purpose. Earlier revisions argued for the block's own
+ * credibility and the agent refused it harder each time — a block that has to insist
+ * invites exactly that reading. Measured on one probe against one stored memory:
+ * every framing that asserted its own trustworthiness was rejected, and the bare one
+ * was used without comment.
  *
  * A user turn, so a run of them merges into one provider turn and the model sees the
  * block and the question as one message — the shape that worked. Its own row rather
@@ -334,13 +333,22 @@ export function recalledMemoriesMessage(recalled: string): ModelMessage {
 /**
  * The stored and sent form of a recall block — one string, so the two cannot drift.
  *
- * A closing tag inside an entry is broken before wrapping. Entries are the agent's
- * own writing, but what it writes can come from anywhere it read — a Slack channel, a
- * web page, a tool result — so an entry can be made to carry `</recalled-memories>`
- * and put the rest of itself outside the block, where it reads as ordinary user text.
+ * A tag inside an entry is broken before wrapping. Entries are the agent's own
+ * writing, but what it writes can come from anywhere it read — a Slack channel, a web
+ * page, a tool result — so an entry can be made to carry `</recalled-memories>` and
+ * put the rest of itself outside the block, where it reads as ordinary user text.
+ *
+ * Case-insensitive, and it takes the opening form and internal whitespace too: a
+ * model reads tag case and spacing loosely, so `</RECALLED-MEMORIES>` and
+ * `</ recalled-memories>` close the block as far as it is concerned, and an opening
+ * tag lets content stage a second one.
+ *
+ * The marker is inserted into the text that is stored as well as sent, so it is
+ * permanent in that thread's replay. That is the point: the two have to be the same
+ * bytes.
  */
 export function recalledMemoryContent(recalled: string): string {
-  const payload = recalled.replaceAll('</recalled-memories', '<\u200b/recalled-memories');
+  const payload = recalled.replace(/<(\s*\/?\s*)recalled-memories/gi, '<\u200b$1recalled-memories');
   return `Context:\n<recalled-memories>\n${payload}\n</recalled-memories>`;
 }
 

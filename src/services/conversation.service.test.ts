@@ -801,7 +801,28 @@ describe('ConversationService', () => {
         'thread.id': 'thread-123',
         'message.role': 'USER',
         'message.triggered_by': 'USER_INPUT',
+        'message.internal': 'false',
       });
+    });
+
+    // A recall row is a USER row the runtime wrote. Counted with the rest it steps
+    // every message-volume metric at deploy for a reason that is not user behaviour.
+    it('marks an internal row so it does not read as a user message', async () => {
+      mockPrisma.conversationMessage.create.mockResolvedValue({ id: 'msg-1' });
+      mockPrisma.conversationThread.update.mockResolvedValue(createTestThread());
+
+      await conversationService.addMessage('thread-123', {
+        content: 'Context:\n<recalled-memories>\n- x\n</recalled-memories>',
+        role: 'USER',
+        triggeredBy: 'USER_INPUT',
+        internalStep: true,
+      });
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'message added',
+        null,
+        expect.objectContaining({ 'message.internal': 'true' }),
+      );
     });
 
     it('emits "thread external id set" on setExternalId', async () => {
