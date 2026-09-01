@@ -365,15 +365,36 @@ describe('buildSystemPromptParts', () => {
     expect(stable).toContain('# Claims and Evidence');
   });
 
-  it('dynamic part contains runtime context timestamp', async () => {
+  it('gives the date and where to get the time, not a clock', async () => {
     const context = createTestAgentContext();
     const parts = await buildSystemPromptParts(context, 'chat');
     const dynamic = parts[1].text;
 
     expect(dynamic).toContain('# Runtime Context');
-    expect(dynamic).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(dynamic).toMatch(/\d{4}-\d{2}-\d{2}/);
     // Includes the weekday name to prevent the model miscalculating the day of week.
     expect(dynamic).toMatch(/\((Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\)/);
+    // …and names the command, so the agent has somewhere to go for the time.
+    expect(dynamic).toContain('date -u');
+  });
+
+  it('carries no time of day, so the prefix survives the day', async () => {
+    // A clock here changes on every turn, and a provider matches its cached
+    // prefix from the start — so it costs a re-write of the whole conversation
+    // behind it, every turn, for the life of a thread.
+    const context = createTestAgentContext();
+    const parts = await buildSystemPromptParts(context, 'chat');
+
+    expect(parts[1].text).not.toMatch(/\d{2}:\d{2}:\d{2}/);
+  });
+
+  it('builds the same prompt twice, so the cached prefix holds', async () => {
+    const context = createTestAgentContext();
+
+    const first = await buildSystemPromptParts(context, 'chat');
+    const second = await buildSystemPromptParts(context, 'chat');
+
+    expect(first.map((p) => p.text)).toEqual(second.map((p) => p.text));
   });
 
   it('stable part does NOT contain runtime context timestamp', async () => {
