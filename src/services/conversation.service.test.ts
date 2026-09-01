@@ -494,6 +494,25 @@ describe('ConversationService', () => {
       expect(mockPrisma.conversationThread.updateMany).not.toHaveBeenCalled();
       expect(result.titleSet).toBeNull();
     });
+
+    // Internal rows are written for model context, not spoken by the user. A first
+    // message carrying only a file leaves the title unset, and a turn's recalled
+    // memories would otherwise be the next USER row with text — naming the thread
+    // "Context: <recalled-memo…".
+    it('does not set a title from an internal-step user row', async () => {
+      mockPrisma.conversationMessage.create.mockResolvedValue({ id: 'm1' });
+      mockPrisma.conversationThread.update.mockResolvedValue(createTestThread());
+
+      const result = await conversationService.addMessage('thread-1', {
+        content: 'Context:\n<recalled-memories>\n- User likes chocolate.\n</recalled-memories>',
+        role: 'USER',
+        triggeredBy: 'USER_INPUT',
+        internalStep: true,
+      });
+
+      expect(mockPrisma.conversationThread.updateMany).not.toHaveBeenCalled();
+      expect(result.titleSet).toBeNull();
+    });
   });
 
   // ==========================================================================

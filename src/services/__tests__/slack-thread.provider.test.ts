@@ -109,10 +109,17 @@ function setupThreadMetadata() {
 // where-clauses: the ts-enrichment read (externalMessageId != null) and the
 // concise internal-steps read (internalStep: true). These helpers make the mock
 // query-aware so each read gets its own rows.
+// The internal branch honours a `role` filter when the query carries one, so a
+// regression that narrows the read back to AGENT rows fails here instead of silently
+// dropping every recall block from Slack threads.
 function mockDbRows(opts: { agent?: unknown[]; internal?: unknown[] }): void {
   mockPrisma.conversationMessage.findMany.mockImplementation(
-    async (args?: { where?: { internalStep?: boolean } }) =>
-      args?.where?.internalStep ? (opts.internal ?? []) : (opts.agent ?? []),
+    async (args?: { where?: { internalStep?: boolean; role?: string } }) => {
+      if (!args?.where?.internalStep) return opts.agent ?? [];
+      const internal = (opts.internal ?? []) as Array<{ role?: string }>;
+      const role = args.where.role;
+      return role ? internal.filter((row) => row.role === role) : internal;
+    },
   );
 }
 // Back-compat shim for the pre-existing enrichment tests (they only seed the
@@ -810,6 +817,26 @@ describe('Requirement: Slack Thread Provider', () => {
       // Delivered final appears exactly once — internal set is disjoint from the
       // ts-enriched set, so no double-counting.
       expect(messages.filter((m) => m.content === 'Done.')).toHaveLength(1);
+    });
+
+    // A turn's recalled memories are a USER internal row, not an AGENT one. Narrowing
+    // this read to AGENT rows would rebuild a Slack thread's history from Slack alone
+    // and lose every recall, so the same agent would answer differently depending on
+    // which surface the thread ran on.
+    it('replays a recalled-memories row, which is a USER internal step', async () => {
+      const recall = internalRow({
+        id: 'recall-1',
+        role: 'USER',
+        content: 'Context:\n<recalled-memories>\n- User likes chocolate.\n</recalled-memories>',
+        toolCalls: null,
+      });
+      mockDbRows({ agent: [], internal: [recall] });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages.map((m) => m.id)).toContain('recall-1');
+      const client = await provider.getMessages(threadId, { view: 'client' });
+      expect(client.map((m) => m.id)).not.toContain('recall-1');
     });
 
     it('omits internal steps in the client view', async () => {
