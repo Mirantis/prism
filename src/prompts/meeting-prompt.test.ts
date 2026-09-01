@@ -208,13 +208,13 @@ describe('getMeetingInstructions', () => {
     const text = getMeetingInstructions(base);
 
     expect(text).toMatch(/`set_microphone`/);
-    expect(text).toMatch(/nothing does that for you/i);
+    expect(text).toMatch(/You can open or close your microphone/i);
     // The half a model cannot observe: a muted turn is answered into nothing, and it will
     // carry on as though the room had heard it.
     expect(text).toMatch(/nothing you say reaches the room/i);
-    // A mute is a request to act, not to answer. Answering "sure, muting now" and staying
-    // audible is the failure this rule exists for.
-    expect(text).toMatch(/not doing it leaves you audible/i);
+    // A mute the room asked for is left alone; one the call imposed is the agent's to undo.
+    expect(text).toMatch(/nobody in the room asked for quiet, turn it back on/i);
+    expect(text).toMatch(/`isMicLive`/);
   });
 
   it('tells it to actually call leave_meeting rather than just announce leaving', () => {

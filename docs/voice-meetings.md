@@ -484,9 +484,8 @@ really opened the virtual capture device.
 
 If it cannot confirm both, **it stays in the call.** The runtime log records which half
 failed, the agent itself is told it may be inaudible, and it keeps trying to unmute
-itself, once every ten seconds, until one attempt works or the agent mutes itself on
-purpose. When an attempt works it says so in the log and introduces itself to the room
-then — a greeting nobody could hear was never a greeting.
+itself, once every ten seconds, until it works. When that works it introduces itself to
+the room then — a greeting nobody could hear was never a greeting.
 
 It stays rather than leaving because the microphone is only half of what it is doing
 there. It hears the room through a different device entirely, so an agent that cannot
@@ -501,19 +500,12 @@ While it cannot confirm it is audible, the agent answers only when somebody says
 name, even in a one-to-one call where it would normally answer everything. Answering
 every sentence into a void costs exactly what answering it aloud costs.
 
-**You can ask it to mute, in the room or in the conversation.** Ask it to mute and it
-mutes — its instructions say so — and then it stays off, because nothing in the runtime
-undoes a mute it was asked for. So ask it to turn the microphone back on when you want it
-heard again. Ask it whether the room can hear it and it will tell you, including the case
-where it could not read the control at all.
+**You can ask it to mute.** It mutes, and it stays muted until you ask it to turn the
+microphone back on. You can also ask it whether the room can hear it.
 
-**If something else mutes it mid-call, the runtime tells it.** A host muting a noisy
-participant does this, and so does a Meet control changed by accident. The agent is told
-once per mute, not once per check, and the runtime log records the same transition — which
-is where you read why it went quiet, since nothing about a call reaches your conversation.
-Its instructions are then to say nothing to the room, to stay muted if somebody there
-asked for quiet, and otherwise to turn the microphone back on itself — instructions rather
-than enforcement, as everywhere else in a call.
+**If a host mutes it mid-call, it knows.** It stops speaking, and it turns the microphone
+back on itself unless somebody in the room asked for quiet — so ask it to unmute if it is
+still waiting.
 
 The one case it will not join at all is a meeting where Meet offers *only* to let it in
 without a microphone — see below.
@@ -611,11 +603,9 @@ constrained container can still starve it. Note that the agent no longer accepts
 "Continue without microphone" offer: taking it joined the call with no capture device
 at all, which nothing later could undo.
 
-**It went quiet mid-call, and the log says its microphone was muted.** Something in the
-call covered it: a host muting a participant, or a Meet control changed by accident. Its
-instructions are to turn the microphone back on unless somebody in the room asked for
-quiet, so ask it to turn the microphone on if it is still waiting. Ask it whether the room
-can hear it if you are not sure which of those applies.
+**It went quiet mid-call, and the log says its microphone was muted.** Somebody in the
+call muted it — a host, or a Meet control changed by accident. Ask it to turn the
+microphone on if it is still waiting.
 
 **It joined but hears nothing.** Confirm the other participants aren't muted, then
 check that the meeting is actually sending audio to the browser (Meet occasionally

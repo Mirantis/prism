@@ -201,7 +201,7 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
         'Check whether you are in a call and how it is going, whichever platform it is on: ' +
         'state, which platform, how long, how many times you have spoken or used a tool, ' +
         'whether you are currently answering everything or only when addressed, and whether ' +
-        'the room can hear you. `micLive` is true when it can, false when it cannot, and ' +
+        'the room can hear you. `isMicLive` is true when it can, false when it cannot, and ' +
         'null when the runtime could not read your microphone at all — worth checking ' +
         'before you take silence from the room to mean nobody is there.',
       inputSchema: z.object({}),
