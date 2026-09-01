@@ -11,11 +11,12 @@ loud and it answers out loud; if the answer needs a lookup, it runs the tool and
 reports back in the same breath. Ask it to leave, or say "join us" and forget about
 it — it leaves on its own once everyone else has gone.
 
-**Speaking is the only thing it can do during a call.** It cannot post to the
-meeting's chat panel, to Slack or to your chat session, and nothing said in the call
-is written down anywhere afterwards. Work it can't finish in the call is the
-exception: it schedules that as a one-off task and the answer reaches your chat
-afterwards. See [In the call](#in-the-call).
+**Speaking is how it takes part.** For the things speech mangles — a link, an
+identifier, a command to paste — it can also put one short line in the meeting's chat
+panel. It cannot send anything anywhere else, and nothing said in the call is written
+down anywhere afterwards. Work it can't finish in the call is the other exception: it
+schedules that as a one-off task and the answer reaches your chat afterwards. See
+[In the call](#in-the-call).
 
 Google Meet is the only supported platform today. The runtime's meeting support is
 platform-agnostic underneath, so Teams and Zoom can be added without touching the
@@ -250,9 +251,10 @@ not a second conversation: nothing reads the chat back to it, so a question type
 never reaches it, and it is told never to post an answer it should be speaking. Nothing
 else leaves a call — no message anywhere else and no file — and it is instructed never to
 offer. If you want more than that one line as text, ask it again in a chat session. The
-call itself is not kept: no transcript, no summary, not the messages it posts in the chat,
-and no record in your conversation history at all. Ask it "what did we decide in the
-meeting?" afterwards and it won't know. Its own log says no more than that by default —
+call itself is not kept: no transcript, no summary, not the lines it posts in the chat from
+inside the call, and nothing in your conversation history about what was said. Ask it "what
+did we decide in the meeting?" afterwards and it won't know. Its own log says no more than
+that by default —
 see [Settings](#settings) if you need to turn the words on to diagnose something. The one
 thing that outlives a call is work you asked for and it could not finish in the call: it
 schedules that, and the result appears in your chat — see
@@ -301,13 +303,14 @@ file back whole, and the reason is sharper in a call than in chat: everything it
 reads stays in the session's context for the rest of the meeting, and that context is
 both small and re-billed on every reply.
 
-A call adds one tool it has nowhere else: posting a short plain-text message into the
-meeting's own chat. A message is limited to **500 characters**, on one line, with no
-formatting. That limit is ours: Google Meet takes a longer message, and cuts anything over
-its own limit off without saying so. If a send comes back refused, the agent is told to say
-the content out loud instead of trying again. The message is typed into the call's chat
-panel and nowhere else, so it is not stored in your conversation history and does not
-survive the call.
+Posting a short plain-text message into the meeting's own chat is a tool like any other. A
+message is limited to **500 characters**, on one line, with no formatting. That limit is
+ours: Google Meet takes a longer message, and cuts anything over its own limit off without
+saying so. If a send comes back refused, the agent is told to say the content out loud
+instead of trying again. You can also ask for a line from a chat session while the call
+runs, or have a scheduled run report back into the room that way; a line sent from outside
+the call is stored with the thread like any other tool argument, and one the agent posts
+from inside the call is not stored at all.
 
 The one tool a call takes away is **file sharing**. `share_file` is unavailable in a call: it only
 stores a file and hands back a reference for the chat machinery to deliver, and a

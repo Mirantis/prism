@@ -27,32 +27,18 @@ import { isRealtimeConfigured } from '../services/meeting/openai-endpoint';
 import { logger } from '../logger';
 
 /**
- * Tool names, exported so every autonomous mode can drop them in one place.
+ * The two that change which call the agent is in, exported so every autonomous mode can
+ * drop them in one place.
  *
- * A live call keeps them: `join_meeting` inside a meeting harmlessly reports
- * that it is already in one, and the rest are how the agent ends the call it is in,
- * inspects it, finds out who it is talking to, and hands the room one written line.
+ * Only a person in a conversation decides that an agent joins a call or leaves one. A
+ * heartbeat, a cron tick or a subagent dialling into a live call with people in it — or
+ * hanging up on one — is never what the operator asked for.
+ *
+ * The other three read the call or post one line into it, so every mode keeps them.
+ * Asking "am I in a call?" costs nothing, and a scheduled run that reports back into the
+ * room is why the send is reachable outside a call in the first place.
  */
-export const MEETING_TOOL_NAMES = [
-  'join_meeting',
-  'leave_meeting',
-  'meeting_speaker',
-  'send_meeting_chat',
-  'meeting_status',
-] as const;
-
-/**
- * The ones that exist only inside a call, so chat mode does not get them.
- *
- * `send_meeting_chat` is here for a reason that is not about usefulness: a chat turn
- * stores its tool calls as conversation history, arguments included, and a chat message
- * posted into a call must not be written down anywhere. The meeting path executes tools
- * in the Realtime session's own memory, so there the argument is never persisted.
- *
- * The rest stay available everywhere. Asking "am I in a call?" from chat is a reasonable
- * question, and joining one from chat is the normal way a call starts.
- */
-export const MEETING_ONLY_TOOL_NAMES = ['send_meeting_chat'] as const;
+export const MEETING_MEMBERSHIP_TOOL_NAMES = ['join_meeting', 'leave_meeting'] as const;
 
 export interface MeetingToolsInput {
   userId: string;
@@ -175,9 +161,9 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
         'Post one short plain-text message into the chat of the call you are in. Use it for ' +
         'what speech mangles: a link, an id, a command to paste. Say the rest out loud — ' +
         `speech is how you talk to the room. At most ${MEETING_CHAT_MAX_CHARS} characters, no ` +
-        'formatting, no line breaks, and nobody reads the chat back to you. The message is ' +
-        'not kept anywhere after the call. If it fails, say the content out loud instead of ' +
-        'trying again.',
+        'formatting, no line breaks, and nobody reads the chat back to you. It needs a live ' +
+        'call: with none there is nothing to post into, and it tells you so instead of ' +
+        'sending. If it fails, say the content out loud instead of trying again.',
       inputSchema: z.object({
         text: z
           .string()

@@ -1496,11 +1496,15 @@ describe('posting into the call chat', () => {
     );
   });
 
-  it('refuses when there is no call to post into', async () => {
+  it('refuses when there is no call to post into, and says what to do', async () => {
+    // The common case now that a chat turn and a scheduled run can both call this: the
+    // usual caller is not in a call at all. It answers rather than throws, and the answer
+    // names what is missing and what fixes it.
     const result = await service.sendChatMessage('anyone there?', 'u1');
 
     expect(result.sent).toBe(false);
     expect(result.message).toMatch(/not in a call/i);
+    expect(result.message).toMatch(/join a call first/i);
     expect(providerSendChatMessage).not.toHaveBeenCalled();
   });
 

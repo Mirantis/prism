@@ -1149,7 +1149,11 @@ export class MeetingBotService {
         sent: false,
         status: 'not_in_call',
         length,
-        message: `I'm not in a call, so there's no meeting chat to post into.`,
+        // Reachable from an ordinary chat turn and from a scheduled run, not only from
+        // inside a call, so it says what is missing and what fixes it.
+        message:
+          `I'm not in a call, so there's no meeting chat to post into. ` +
+          `Nothing was posted — join a call first.`,
       };
     }
     if (!provider.sendChatMessage) {

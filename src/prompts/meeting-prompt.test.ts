@@ -120,7 +120,11 @@ describe('getMeetingInstructions', () => {
     expect(text).toMatch(/the run reports what it found/i);
     expect(text).toMatch(/counts as nothing to report and stays unsent/i);
     expect(text).toMatch(/the answer arrives in their chat/i);
-    expect(text).toMatch(/not in this room or its chat panel/i);
+    // Where the run's own answer lands, which is the user's chat. The room's chat panel
+    // is not named as unreachable: `cron` mode keeps `send_meeting_chat`, so a run that
+    // finds the call still live can post a line into it.
+    expect(text).toMatch(/not in this room/i);
+    expect(text).toMatch(/by the time it runs, the call is usually over/i);
     expect(text).toMatch(/as arranged, never as done/i);
     expect(text).toMatch(/only for work you were asked to do/i);
   });
