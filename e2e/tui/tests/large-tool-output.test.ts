@@ -45,6 +45,7 @@ function sleep(ms: number): Promise<void> {
 
 interface StoredToolCall {
   tool: string;
+  input: string;
   output: string;
   rendered?: boolean;
   truncated?: { totalChars: number; keptChars: number; omittedChars: number; spillId?: string };
@@ -201,11 +202,16 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       session!.send(KEYS.ENTER);
     });
 
-    Then('it searches the saved output rather than reading it through', async () => {
-      const call = await waitForToolCall(env.dbPath, 'read_tool_output');
-      expect(call.tool).toBe('read_tool_output');
-      // A search, not a walk: nothing it read back was itself big enough to cut.
-      expect(call.truncated).toBeUndefined();
+    Then('it reads the saved file with the shell rather than fetching again', async () => {
+      const read = await waitForToolCall(env.dbPath, 'shell_read_file');
+      const spillId = read.truncated!.spillId!;
+
+      const exec = await waitForToolCall(env.dbPath, 'shell_exec');
+      // It went to the saved copy the notice named, not back to the file the cut was
+      // taken from — which is the whole point of saving it.
+      expect(exec.input).toContain(spillId);
+      // A search, not a walk: what came back was small enough that nothing cut it.
+      expect(exec.truncated).toBeUndefined();
     });
 
     And('it answers with the marker text', async () => {
