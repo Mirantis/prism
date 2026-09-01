@@ -261,7 +261,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     }
 
     // Prompt caching: system prompt parts marked cacheable get cache breakpoints.
-    // [0] stable prefix — identity, soul, pinned memories, instructions. The one
+    // [0] stable prefix — identity, soul, important memories, instructions. The one
     // system breakpoint: the dynamic part behind it carries only the date, and a
     // change there still hits this one.
     //

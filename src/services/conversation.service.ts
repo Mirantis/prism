@@ -40,8 +40,19 @@ export interface MessageInput {
   // Multi-user context (for channel messages)
   senderExternalId?: string; // External user ID (Slack: U..., Discord: snowflake, etc.)
   senderName?: string; // Human-readable display name
-  // Concise-mode intermediate step: persisted for model replay but hidden from
-  // client history. Omit (or false) for normal, user-visible messages.
+  /**
+   * Marks a row the runtime wrote for the model, never for the reader.
+   *
+   * **An internal row is never shown to the end user.** Every client history read
+   * asks for `view: 'client'`, and both thread providers answer that with
+   * `internalStep: false` in the WHERE clause — so the web SPA, the TUI and Slack all
+   * omit it, while the model-context read replays it. It also never names a thread,
+   * and it is reported separately in `message added` telemetry so it cannot be
+   * counted as something a user sent.
+   *
+   * Two writers today: concise mode's intermediate steps, and a turn's recalled
+   * memories. Omit (or false) for a normal, user-visible message.
+   */
   internalStep?: boolean;
 }
 

@@ -289,16 +289,16 @@ describe('Memory Manager Service', () => {
     });
   });
 
-  describe('Scenario: Pinned memories', () => {
-    it('should return empty string when nothing is pinned', async () => {
+  describe('Scenario: Important memories', () => {
+    it('should return empty string when there are none', async () => {
       const agent = createTestAgentWorkspace({ userId: 'user-123' });
 
       mockPrisma.memoryEntry.findMany.mockResolvedValue([]);
 
-      expect(await memoryManagerService.buildPinnedMemories(agent.id)).toBe('');
+      expect(await memoryManagerService.buildImportantMemories(agent.id)).toBe('');
     });
 
-    it('should group pinned entries by category', async () => {
+    it('should group important entries by category', async () => {
       const agent = createTestAgentWorkspace({ userId: 'user-123' });
 
       mockPrisma.memoryEntry.findMany.mockResolvedValueOnce([
@@ -307,7 +307,7 @@ describe('Memory Manager Service', () => {
         createTestMemoryEntry({ agentId: agent.id, category: 'decision', content: 'Deploy to us-east-1', importance: 9 }),
       ]);
 
-      const result = await memoryManagerService.buildPinnedMemories(agent.id);
+      const result = await memoryManagerService.buildImportantMemories(agent.id);
 
       expect(result).toContain('## Decisions');
       expect(result).toContain('Use TypeScript');
@@ -321,7 +321,7 @@ describe('Memory Manager Service', () => {
 
       mockPrisma.memoryEntry.findMany.mockResolvedValueOnce([]);
 
-      await memoryManagerService.buildPinnedMemories(agent.id);
+      await memoryManagerService.buildImportantMemories(agent.id);
 
       expect(mockPrisma.memoryEntry.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -348,7 +348,7 @@ describe('Memory Manager Service', () => {
         )
       );
 
-      const result = await memoryManagerService.buildPinnedMemories(agent.id);
+      const result = await memoryManagerService.buildImportantMemories(agent.id);
 
       // 4,000 chars over ~508-char lines is 7 whole lines plus a header, and the
       // budget is a ceiling: `< 20` passed for any budget from roughly 600 to 9,500.
@@ -397,7 +397,7 @@ describe('Memory Manager Service', () => {
 
     // The pinned section carries these from the system prompt, where they cost
     // nothing per turn. Repeating them in the per-turn block would pay twice.
-    it('should leave pinned entries to the pinned section', async () => {
+    it('should leave already-included entries to the important section', async () => {
       const agent = createTestAgentWorkspace({ userId: 'user-123' });
 
       // The pinned read emits this one, so the query half must not repeat it.
@@ -447,7 +447,7 @@ describe('Memory Manager Service', () => {
     });
   });
 
-  describe('Scenario: The pinned section is byte-stable', () => {
+  describe('Scenario: The important section is byte-stable', () => {
     // The whole point of moving pinned entries into the system prompt is that they do
     // not change between turns. Ordering by `importance desc, createdAt desc` alone
     // ties whenever `memory_write` creates entries inside one turn, and the category
@@ -467,8 +467,8 @@ describe('Memory Manager Service', () => {
       );
 
       mockPrisma.memoryEntry.findMany.mockResolvedValue(entries);
-      const first = await memoryManagerService.buildPinnedMemories(agent.id);
-      const second = await memoryManagerService.buildPinnedMemories(agent.id);
+      const first = await memoryManagerService.buildImportantMemories(agent.id);
+      const second = await memoryManagerService.buildImportantMemories(agent.id);
 
       expect(second).toBe(first);
       expect(mockPrisma.memoryEntry.findMany).toHaveBeenCalledWith(
@@ -480,7 +480,7 @@ describe('Memory Manager Service', () => {
 
     // Excluding by the importance threshold lost an entry the character budget had
     // already cut: present in neither surface, reachable only by an explicit search.
-    it('leaves an entry the pinned budget cut available to the query half', async () => {
+    it('leaves an entry the budget cut available to the query half', async () => {
       const agent = createTestAgentWorkspace({ userId: 'user-123' });
       const big = 'A'.repeat(1500);
       const pinned = [1, 2, 3, 4].map((n) =>
@@ -498,7 +498,7 @@ describe('Memory Manager Service', () => {
         { id: 'pinned-4', content: 'the one the budget cut', category: 'observation', importance: 9, createdAt: new Date() },
       ]);
 
-      const section = await memoryManagerService.buildPinnedMemories(agent.id);
+      const section = await memoryManagerService.buildImportantMemories(agent.id);
       const relevant = await memoryManagerService.buildRelevantMemories('user-123', agent.id, 'q');
 
       expect(section).not.toContain(' 4');
