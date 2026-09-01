@@ -3,6 +3,13 @@ import { getMeetingInstructions } from './meeting-prompt';
 
 const base = { agentName: 'Prism', platform: 'Google Meet', responseMode: 'auto' as const };
 
+/**
+ * The prompt is hard-wrapped, so a phrase longer than a few words straddles a line
+ * break. Matching the single-line form keeps an assertion about wording from turning
+ * red when the wording moves to another column.
+ */
+const flat = (text: string): string => text.replace(/\s+/g, ' ');
+
 describe('getMeetingInstructions', () => {
   it('names the agent and the platform it is on', () => {
     const text = getMeetingInstructions(base);
@@ -56,6 +63,7 @@ describe('getMeetingInstructions', () => {
     // There is no tool for reaching a chat from a call: a meeting runs neither the
     // invoke loop nor the conversation engine, and `share_file` is filtered out of
     // `meeting` mode. Saying so is the whole guard against a promise it can't keep.
+    // The one thing that does leave a call is a scheduled follow-up, pinned below.
     const text = getMeetingInstructions(base);
     expect(text).toMatch(/only way you can reach anyone from here/i);
     expect(text).toMatch(/never offer to/i);
@@ -65,7 +73,9 @@ describe('getMeetingInstructions', () => {
   it('never offers to hand anything over to a chat', () => {
     // Each of these was an instruction in this prompt with no tool behind it. A
     // near-identical phrase still appears as something the model is told never to
-    // say, so the check is that they survive only inside the prohibition.
+    // say, so the check is that they survive only inside the prohibition. The list is
+    // the promises with no tool behind them; deferred work has one, and is covered by
+    // its own test.
     const promises = [
       /Say "I'll drop the command in the chat"/i,
       /offer the detail in chat/i,
@@ -79,6 +89,65 @@ describe('getMeetingInstructions', () => {
       expect(text).toMatch(/No "I'll drop that in the chat"/i);
       expect(text).toMatch(/a promise you cannot keep/i);
     }
+  });
+
+  it('tells it to schedule work it was asked for and cannot finish in the call', () => {
+    // `schedule_task` is live in `meeting` mode, so deferring work is the one promise
+    // of follow-through a call can keep. The instruction has to survive the
+    // scheduled-run DELIVER/SUPPRESS gate, which suppresses a run with nothing to
+    // say — so "write the instruction so the run reports back" is pinned, not implied.
+    const text = flat(getMeetingInstructions(base));
+    expect(text).toMatch(/needs more time than the room has/i);
+    expect(text).toMatch(/`schedule_task` to run it once/);
+    // Both kinds of deferred work, named in one clause: a room asks for research and
+    // for changes, and a model reading only "work" defers one and improvises the other.
+    expect(text).toMatch(/a question that needs digging or a change that needs writing/i);
+    expect(text).toMatch(/the run reports what it found/i);
+    expect(text).toMatch(/counts as nothing to report and stays unsent/i);
+    expect(text).toMatch(/the answer arrives in their chat/i);
+    expect(text).toMatch(/not in this room or its chat panel/i);
+    expect(text).toMatch(/as arranged, never as done/i);
+    expect(text).toMatch(/only for work you were asked to do/i);
+  });
+
+  it('asks for the two schedule forms the runtime reads as a single run', () => {
+    // `parseSchedule` treats only "in X <unit>" and "at H[:MM]" as one-shot; anything
+    // else it hands to cron as a repeating expression. A model told "run it once" but
+    // left to invent the wording says "once" out loud and creates a daily job.
+    const text = flat(getMeetingInstructions(base));
+    expect(text).toMatch(/"in twenty minutes" or "at four"/i);
+    expect(text).toMatch(/a cadence like "every morning" reports over and over/i);
+  });
+
+  it('needs no second yes to schedule, but one for destructive deferred work', () => {
+    // The request for the work is the consent to schedule it. The work itself is not
+    // covered by that: nobody is in the room when the run happens, so a destructive
+    // job is agreed before it goes on the calendar. Rule 16 carries the same carve-out,
+    // because a model resolves two opposed rules by recency and 16 is read last.
+    const text = flat(getMeetingInstructions(base));
+    expect(text).toMatch(/separate "yes" for that: the request is the agreement/i);
+    expect(text).toMatch(/If the work itself is destructive/i);
+    expect(text).toMatch(/Scheduling a follow-up \(14\) is outside this list/i);
+    expect(text).toMatch(/before you schedule anything on that list/i);
+  });
+
+  it('names one scheduler, and no thread option', () => {
+    // The prompt is read aloud by a realtime model: every option it names is latency
+    // and a way to get it wrong. `create_goal` is available in a call too and is
+    // deliberately unnamed; `continueInThread` would resume in the caller's thread
+    // but is rejected for a repeating schedule, so the prompt stays on the plain
+    // one-off path.
+    const text = getMeetingInstructions(base);
+    expect(text).not.toMatch(/create_goal/);
+    expect(text).not.toMatch(/continueInThread/i);
+  });
+
+  it('keeps the two rule numbers its own cross-references cite', () => {
+    // Rule 3 points at 13 for "don't offer to send it" and 13 points at 14 for the
+    // schedule. A renumber that misses one leaves the model chasing the wrong rule.
+    const text = getMeetingInstructions(base);
+    expect(text).toMatch(/^13\. \*\*Speaking is the only way/m);
+    expect(text).toMatch(/^14\. \*\*Schedule work you were asked for/m);
   });
 
   it('requires explicit in-room consent before anything irreversible', () => {
