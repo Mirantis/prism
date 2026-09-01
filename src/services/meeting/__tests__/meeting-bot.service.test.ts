@@ -520,8 +520,13 @@ describe('a call the room cannot hear the agent in', () => {
 
       expect(conversationSpeak).not.toHaveBeenCalled();
 
+      // The poll reads the toggle before it clicks, so the mute has to still be there for
+      // the click to happen. It lands, and the reading after it is a live toggle.
+      providerMicrophoneLive.mockResolvedValueOnce(false);
       providerSetMicrophone.mockResolvedValue(true);
       await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(providerSetMicrophone).toHaveBeenCalledWith(expect.anything(), true);
 
       expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
       expect(conversationSpeak).toHaveBeenCalled();
@@ -559,8 +564,10 @@ describe('a call the room cannot hear the agent in', () => {
       expect(conversationSetAudible).not.toHaveBeenCalledWith(true);
       // Nothing claimed a recovery, in the log or anywhere else.
       expect(loggedLines(loggerInfo).some((l) => /Microphone is live/.test(l))).toBe(false);
-      // And it kept asking, rather than settling into a call it cannot be heard in.
-      expect(providerSetMicrophone.mock.calls.length).toBeGreaterThan(1);
+      // And it kept reading the half that was broken, rather than settling into a call it
+      // cannot be heard in. The toggle reads live, so it clicks nothing.
+      expect(audioIsMicCaptured.mock.calls.length).toBeGreaterThan(1);
+      expect(providerSetMicrophone).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -592,6 +599,8 @@ describe('a call the room cannot hear the agent in', () => {
     // retry slower than the interval can overlap the next one. On a *toggle* that is not
     // a wasted call, it is one tick switching on what the next switches off.
     providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+    // The toggle stays muted, which is what keeps the poll clicking at it.
+    providerMicrophoneLive.mockResolvedValue(false);
     let inFlight = 0;
     let overlapped = false;
     providerSetMicrophone.mockImplementation(async () => {
@@ -619,7 +628,10 @@ describe('a call the room cannot hear the agent in', () => {
     // A toggle toggles, so a retry that keeps firing after it has succeeded is not
     // harmless persistence — the next click would mute what the last one fixed. The poll
     // does not go quiet, though: it changes job, from fixing the microphone to watching it.
-    audioWaitForMicCapture.mockResolvedValue(false);
+    providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+    // Muted for the first reading, live from then on: the click lands and the poll's job
+    // changes.
+    providerMicrophoneLive.mockResolvedValueOnce(false);
     providerSetMicrophone.mockResolvedValue(true);
     vi.useFakeTimers();
     try {
@@ -647,7 +659,7 @@ describe('a call the room cannot hear the agent in', () => {
 
       expect(providerSetMicrophone).not.toHaveBeenCalled();
       expect(providerMicrophoneLive.mock.calls.length).toBeGreaterThanOrEqual(3);
-      expect(service.status().micLive).toBe(true);
+      expect(service.status().isMicLive).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -698,7 +710,7 @@ describe('the microphone the agent can see', () => {
       await service.join(input);
       await settle();
 
-      expect(service.status().micLive).toBe(expected);
+      expect(service.status().isMicLive).toBe(expected);
 
       await service.leave();
       await settle();
@@ -712,12 +724,12 @@ describe('the microphone the agent can see', () => {
     try {
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10);
-      expect(service.status().micLive).toBe(true);
+      expect(service.status().isMicLive).toBe(true);
 
       providerMicrophoneLive.mockResolvedValue(false);
       await vi.advanceTimersByTimeAsync(10_000);
 
-      expect(service.status().micLive).toBe(false);
+      expect(service.status().isMicLive).toBe(false);
       // Reported, not fought. Undoing a mute the agent did not ask for is the agent's
       // decision to make, so the poll clicks nothing here.
       expect(providerSetMicrophone).not.toHaveBeenCalled();
@@ -750,7 +762,7 @@ describe('the microphone the agent can see', () => {
       providerMicrophoneLive.mockResolvedValue(true);
       await vi.advanceTimersByTimeAsync(40_000);
 
-      expect(service.status().micLive).toBe(true);
+      expect(service.status().isMicLive).toBe(true);
       const backNotices = conversationNotify.mock.calls.filter(([text]) =>
         /microphone is on again/i.test(String(text)),
       );
@@ -775,7 +787,7 @@ describe('the microphone the agent can see', () => {
       providerMicrophoneLive.mockResolvedValue(null);
       await vi.advanceTimersByTimeAsync(30_000);
 
-      expect(service.status().micLive).toBeNull();
+      expect(service.status().isMicLive).toBeNull();
       expect(conversationNotify).not.toHaveBeenCalledWith(
         expect.stringMatching(/muted|microphone is on again/i),
       );
@@ -785,7 +797,7 @@ describe('the microphone the agent can see', () => {
   });
 
   it('does not count an unreadable moment as the mute ending', async () => {
-    // Muted, unreadable, muted again is one mute. Tracking the transition off `micLive`
+    // Muted, unreadable, muted again is one mute. Tracking the transition off `isMicLive`
     // alone would call the middle reading a recovery and the third a fresh mute.
     vi.useFakeTimers();
     try {
@@ -819,12 +831,12 @@ describe('the microphone the agent can see', () => {
     try {
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10);
-      expect(service.status().micLive).toBe(true);
+      expect(service.status().isMicLive).toBe(true);
 
       providerMicrophoneLive.mockRejectedValue(new Error('Target closed'));
       await vi.advanceTimersByTimeAsync(20_000);
 
-      expect(service.status().micLive).toBe(true);
+      expect(service.status().isMicLive).toBe(true);
       expect(conversationNotify).not.toHaveBeenCalledWith(expect.stringMatching(/muted/i));
     } finally {
       vi.useRealTimers();
@@ -843,7 +855,7 @@ describe('the microphone the agent can see', () => {
       await service.leave();
       await vi.advanceTimersByTimeAsync(10);
 
-      expect(service.status().micLive).toBeNull();
+      expect(service.status().isMicLive).toBeNull();
 
       conversationNotify.mockClear();
       providerMicrophoneLive.mockResolvedValue(true);
@@ -854,6 +866,81 @@ describe('the microphone the agent can see', () => {
 
       expect(conversationNotify).toHaveBeenCalledWith(
         expect.stringMatching(/microphone has just been muted/i),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not say the room can hear it again while nothing has carried its voice', async () => {
+    // The toggle came back on, and the capture device under it never opened. Audibility is
+    // both halves, so the recovery notice goes by that rather than by the reading.
+    vi.useFakeTimers();
+    try {
+      audioWaitForMicCapture.mockResolvedValue(false);
+      audioIsMicCaptured.mockResolvedValue(false);
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(service.status().isMicLive).toBe(false);
+
+      providerMicrophoneLive.mockResolvedValue(false);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(conversationNotify).toHaveBeenCalledWith(
+        expect.stringMatching(/has just been muted/i),
+      );
+
+      conversationNotify.mockClear();
+      providerMicrophoneLive.mockResolvedValue(true);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(service.status().isMicLive).toBe(false);
+      expect(conversationNotify).not.toHaveBeenCalledWith(
+        expect.stringMatching(/microphone is on again/i),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports a mute made in a call it was never audible in, and leaves it alone', async () => {
+    // The toggle read open at the join and the capture device never did, so the agent is
+    // inaudible and still watching. A mute arriving now is the room's, and the news the
+    // agent cannot get any other way.
+    vi.useFakeTimers();
+    try {
+      audioWaitForMicCapture.mockResolvedValue(false);
+      audioIsMicCaptured.mockResolvedValue(false);
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+
+      providerMicrophoneLive.mockResolvedValue(false);
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(conversationNotify).toHaveBeenCalledWith(
+        expect.stringMatching(/has just been muted/i),
+      );
+      expectLogged(loggerWarn, /muted mid-call and nobody here asked for it/);
+      expect(providerSetMicrophone).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not blame the room for the mute the join never cleared', async () => {
+    // Muted since the join is not somebody muting the agent. Until the toggle has read open
+    // once in this call, the poll treats a muted reading as its own unfinished business and
+    // clicks at it.
+    vi.useFakeTimers();
+    try {
+      providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+      providerMicrophoneLive.mockResolvedValue(false);
+      providerSetMicrophone.mockResolvedValue(false);
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(providerSetMicrophone).toHaveBeenCalledWith(expect.anything(), true);
+      expect(conversationNotify).not.toHaveBeenCalledWith(
+        expect.stringMatching(/has just been muted/i),
       );
     } finally {
       vi.useRealTimers();
@@ -877,14 +964,14 @@ describe('the microphone the agent can set', () => {
 
     expect(providerSetMicrophone).toHaveBeenCalledWith(expect.anything(), false);
     expect(off.success).toBe(true);
-    expect(service.status().micLive).toBe(false);
+    expect(service.status().isMicLive).toBe(false);
 
     providerSetMicrophone.mockResolvedValue(true);
     const on = await service.setMicrophone(true);
 
     expect(providerSetMicrophone).toHaveBeenLastCalledWith(expect.anything(), true);
     expect(on.success).toBe(true);
-    expect(service.status().micLive).toBe(true);
+    expect(service.status().isMicLive).toBe(true);
   });
 
   it('says nothing about a mute the agent chose', async () => {
@@ -902,7 +989,7 @@ describe('the microphone the agent can set', () => {
       await vi.advanceTimersByTimeAsync(40_000);
 
       expect(providerSetMicrophone).not.toHaveBeenCalled();
-      expect(service.status().micLive).toBe(false);
+      expect(service.status().isMicLive).toBe(false);
       expect(conversationNotify).not.toHaveBeenCalledWith(
         expect.stringMatching(/has just been muted/i),
       );
@@ -925,7 +1012,7 @@ describe('the microphone the agent can set', () => {
 
     expect(result.success).toBe(true);
     expect(result.message).toMatch(/nothing has yet carried your voice/i);
-    expect(service.status().micLive).toBe(false);
+    expect(service.status().isMicLive).toBe(false);
   });
 
   it('does not let the poll call a call audible on the toggle alone either', async () => {
@@ -935,6 +1022,7 @@ describe('the microphone the agent can set', () => {
     vi.useFakeTimers();
     try {
       audioWaitForMicCapture.mockResolvedValue(false);
+      audioIsMicCaptured.mockResolvedValue(false);
       providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10);
@@ -945,7 +1033,7 @@ describe('the microphone the agent can set', () => {
       await vi.advanceTimersByTimeAsync(10_000);
 
       expect(providerMicrophoneLive).toHaveBeenCalled();
-      expect(service.status().micLive).toBe(false);
+      expect(service.status().isMicLive).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -959,6 +1047,7 @@ describe('the microphone the agent can set', () => {
     try {
       audioWaitForMicCapture.mockResolvedValue(false);
       providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+      providerMicrophoneLive.mockResolvedValue(false);
       providerSetMicrophone.mockResolvedValue(false);
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10_000);
@@ -989,6 +1078,7 @@ describe('the microphone the agent can set', () => {
 
       audioWaitForMicCapture.mockResolvedValue(false);
       providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+      providerMicrophoneLive.mockResolvedValue(false);
       providerSetMicrophone.mockClear();
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10_000);
@@ -1000,7 +1090,7 @@ describe('the microphone the agent can set', () => {
   });
 
   it('does not let a poll read land on top of a click', async () => {
-    // The read and the click both write `micLive`, so the poll takes the same lock. Reading
+    // The read and the click both write `isMicLive`, so the poll takes the same lock. Reading
     // first and writing afterwards would put the state the click replaced back for a whole
     // poll interval, and the agent would speak into a microphone it had just closed.
     vi.useFakeTimers();
@@ -1024,7 +1114,7 @@ describe('the microphone the agent can set', () => {
       await vi.advanceTimersByTimeAsync(10);
       await tool;
 
-      expect(service.status().micLive).toBe(false);
+      expect(service.status().isMicLive).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -1038,6 +1128,7 @@ describe('the microphone the agent can set', () => {
     try {
       audioWaitForMicCapture.mockResolvedValue(false);
       providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+      providerMicrophoneLive.mockResolvedValue(false);
       let releaseRetry = () => {};
       providerSetMicrophone.mockImplementationOnce(
         async () =>
@@ -1055,7 +1146,7 @@ describe('the microphone the agent can set', () => {
       await vi.advanceTimersByTimeAsync(10);
       await tool;
 
-      expect(service.status().micLive).toBe(false);
+      expect(service.status().isMicLive).toBe(false);
       expect(conversationSetAudible).not.toHaveBeenCalledWith(true);
       expect(conversationNotify).not.toHaveBeenCalledWith(
         expect.stringMatching(/greet the participants/i),
@@ -1096,6 +1187,31 @@ describe('the microphone the agent can set', () => {
     }
   });
 
+  it('still reports a mute somebody else made after one of its own that did not take', async () => {
+    // The mute click went in and the toggle did not move, so the agent is still audible and
+    // still expects to be. A request that did not take is put back, and the next mute is
+    // news again.
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(10);
+
+      providerSetMicrophone.mockResolvedValue(true);
+      const failed = await service.setMicrophone(false);
+      expect(failed.success).toBe(false);
+
+      providerMicrophoneLive.mockResolvedValue(false);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(conversationNotify).toHaveBeenCalledWith(
+        expect.stringMatching(/has just been muted/i),
+      );
+      expectLogged(loggerWarn, /muted mid-call and nobody here asked for it/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('drops a recovery the agent overrules while the capture device is being read', async () => {
     // The request can change inside any await on the retry's path, not only inside the
     // click. Reading it once at the top leaves the greeting below aimed at a microphone the
@@ -1122,7 +1238,7 @@ describe('the microphone the agent can set', () => {
       await vi.advanceTimersByTimeAsync(10);
       await tool;
 
-      expect(service.status().micLive).toBe(false);
+      expect(service.status().isMicLive).toBe(false);
       expect(conversationSetAudible).not.toHaveBeenCalledWith(true);
       expect(conversationNotify).not.toHaveBeenCalledWith(
         expect.stringMatching(/greet the participants/i),
@@ -1153,7 +1269,7 @@ describe('the microphone the agent can set', () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/call ended/i);
-    expect(service.status().micLive).toBeNull();
+    expect(service.status().isMicLive).toBeNull();
   });
 
   it('reports a control it could not reach at all', async () => {
@@ -1178,7 +1294,7 @@ describe('the microphone the agent can set', () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/could not read/i);
-    expect(service.status().micLive).toBeNull();
+    expect(service.status().isMicLive).toBeNull();
   });
 
   it('reports a click that did not take', async () => {
@@ -1207,6 +1323,7 @@ describe('the microphone the agent can set', () => {
     try {
       audioWaitForMicCapture.mockResolvedValue(false);
       providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+      providerMicrophoneLive.mockResolvedValue(false);
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10);
 
@@ -2292,6 +2409,9 @@ describe('posting into the call chat', () => {
     // Both drive the same page, and the retry is the destructive half: it sweeps dialogs
     // and clicks the control bar, which is how a composer goes away mid-message.
     providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: true, micConfirmed: false });
+    // The toggle reads muted, which is the join this test set up. The poll clicks only while
+    // it reads that way, so a live toggle would hold the retry off for a reason of its own.
+    providerMicrophoneLive.mockResolvedValue(false);
     let finish: (v: unknown) => void = () => {};
     providerSendChatMessage.mockReturnValueOnce(new Promise((r) => { finish = r; }));
 
