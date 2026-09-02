@@ -52,6 +52,12 @@ to clear.
   explicit contract with the outside: a public HTTP endpoint, a documented
   config key, the plugin or skill format, or data an existing install already
   holds.
+- **A new HTTP route gets its own file.** One area is one router under
+  `src/routes/`, mounted in `src/server.ts`, as `locked-in.ts`,
+  `agent-guide.ts`, `threads.ts` and `messages.ts` each are. Add no new route to
+  `src/routes/management.ts`, which already holds most of the runtime's REST
+  surface: heartbeat and cron control, the Slack heartbeat trigger, agent
+  identity, and the Web UI's CRUD.
 - **SQLite holds runtime state.** Caches, queues, registries, indexes, cursors,
   checkpoints and plugin scratch data live in the embedded database — never in a
   JSON, JSONL, TXT or sidecar file. A file holds a named product artifact only: an
