@@ -19,6 +19,12 @@ Only `OPENAI_API_KEY`. The voice model is OpenAI's Realtime API, connected
 directly to `api.openai.com` — the same key voice meetings use, see
 [Configuration](configuration.md#voice-meetings).
 
+If the runtime's outbound network is filtered, `api.openai.com` has to be
+reachable directly. A proxy that terminates TLS breaks the connection, because
+the voice model is reached over a WebSocket rather than plain requests. A
+runtime that cannot reach it refuses the call with
+`Realtime connection failed: Unexpected server response: 403`.
+
 Nothing else. The audio travels on the WebSocket the client already uses for
 chat, so a voice chat works wherever chat works: a container, a hosted sandbox
 behind a reverse proxy, the installed binary. It needs no relay, no ICE, no
@@ -49,7 +55,7 @@ sent as **binary** frames.
 
 | Type | Payload | Meaning |
 |------|---------|---------|
-| `voice_start` | `threadId` (string, optional) | Start a session. `threadId` is the thread the call belongs to, which the agent's tools use; omit it and the tools that need a thread work without one. |
+| `voice_start` | `threadId` (string, optional), `mode` (string, optional) | Start a session. `threadId` is the thread the call belongs to, which the agent's tools use; omit it and the tools that need a thread work without one. `mode` is `open` or `addressed` — see [Who the agent answers](#who-the-agent-answers). It defaults to `open`, and an unrecognized value is treated as absent. |
 | *binary* | — | One frame of your microphone. See [The audio](#the-audio). |
 | `voice_stop` | none | End the session. Only the socket that started the session can end it; from any other socket this does nothing. Sent before the session opens it still counts: the session ends as soon as it opens. |
 
@@ -66,7 +72,7 @@ sent as **binary** frames.
 ### An example session
 
 ```json
-→ {"type":"voice_start","payload":{"threadId":"3f1c…"}}
+→ {"type":"voice_start","payload":{"threadId":"3f1c…","mode":"addressed"}}
 ← {"type":"voice_state","payload":{"state":"live"}}
 ← {"type":"voice_hello","payload":{"format":{"encoding":"pcm16","sampleRate":24000,"channels":1}}}
 → <binary: 480 bytes of pcm16>
@@ -100,6 +106,37 @@ Two obligations, both load-bearing:
 
 The agent yields the floor when you start talking, so an interruption works the
 way it does in a phone call.
+
+## Who the agent answers
+
+A voice chat is either a conversation or a room, and only the client knows
+which. `mode` on `voice_start` says so.
+
+**`open`** — the default. One person is talking to the agent, so everything the
+microphone hears is meant for it, and the agent answers each utterance as soon
+as you stop speaking. This is a phone held to your ear.
+
+**`addressed`** — several people are talking, most of it to each other. The
+agent listens to all of it and answers only the utterances aimed at it, so
+somebody has to call it by name. This is a phone lying on the table in a
+meeting.
+
+Whether an utterance was aimed at the agent is judged from the audio by the
+voice model itself, not by matching the name as text. So a name that is
+mentioned rather than used — "I asked Prism about that yesterday" — does not
+summon it, and a follow-up in an exchange it is already part of reaches it
+without the name being repeated.
+
+Two things follow from `addressed` that are worth designing a client around:
+
+- **The agent stays quiet for long stretches, and that is it working.** It is
+  told it is being filtered, so it answers the question it was asked instead of
+  explaining the gaps or asking whether you meant it.
+- **Judging each utterance takes about a second**, on top of the answer itself.
+  In `open` mode nothing is judged, so a reply starts as soon as you stop.
+
+Pick the mode when the call starts. Changing it means ending the call and
+starting another.
 
 ## Interrupting
 
