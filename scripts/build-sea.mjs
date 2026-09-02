@@ -61,7 +61,7 @@ const TARGETS = {
   'prism-server': {
     entry: 'src/sea/server-entry.ts',
     // Native addons + sidecar-loaded modules + pino's worker-thread transport.
-    external: ['better-sqlite3', '@prisma/client', 'sqlite-vec', 'pino-pretty', ...UNBUNDLABLE],
+    external: ['better-sqlite3', '@prisma/client', 'sqlite-vec', '@roamhq/wrtc', 'pino-pretty', ...UNBUNDLABLE],
   },
 };
 const cfg = TARGETS[target];

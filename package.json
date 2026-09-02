@@ -53,6 +53,7 @@
     "@opentelemetry/sdk-node": "^0.217.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
     "@prisma/client": "^6.19.2",
+    "@roamhq/wrtc": "^0.10.0",
     "@slack/bolt": "^4.6.0",
     "ai": "^7.0.70",
     "better-sqlite3": "^12.9.0",

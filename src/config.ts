@@ -497,6 +497,46 @@ const rawAdmissionTimeout = parseInt(process.env.MEETING_ADMISSION_TIMEOUT_SECON
 const meetingAdmissionTimeoutMs =
   (Number.isFinite(rawAdmissionTimeout) && rawAdmissionTimeout > 0 ? rawAdmissionTimeout : 300) * 1000;
 
+/** One STUN or TURN server for the voice-chat peer, in the WebRTC wire shape. */
+export interface IceServerConfig {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+// STUN and TURN servers the voice-chat peer offers to ICE.
+//
+// Empty by default, which means host candidates only: the client has to be able to
+// reach the runtime's host directly. A remote deployment sets this, and the JSON shape
+// is the WebRTC one so a TURN entry can carry its credentials.
+//
+// An entry without usable `urls` is dropped and a value that is not a JSON array yields
+// an empty list, both with a startup warning: a voice call on host candidates is a better
+// answer than a container that will not boot.
+const parsedIceServers = ((): { servers: IceServerConfig[]; dropped: boolean } => {
+  const raw = (process.env.VOICE_ICE_SERVERS ?? '').trim();
+  if (!raw) return { servers: [], dropped: false };
+  const usable = (entry: unknown): IceServerConfig | null => {
+    if (typeof entry !== 'object' || entry === null) return null;
+    const { urls, username, credential } = entry as Record<string, unknown>;
+    if (typeof urls === 'string' && urls.trim()) {
+      return { urls: urls.trim(), username, credential } as IceServerConfig;
+    }
+    const list = Array.isArray(urls) ? urls.filter((u): u is string => typeof u === 'string' && u.trim() !== '') : [];
+    return list.length === 0 ? null : ({ urls: list, username, credential } as IceServerConfig);
+  };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return { servers: [], dropped: true };
+    const servers = parsed.map(usable).filter((s): s is IceServerConfig => s !== null);
+    return { servers, dropped: servers.length !== parsed.length };
+  } catch {
+    return { servers: [], dropped: true };
+  }
+})();
+const voiceIceServers = parsedIceServers.servers;
+const invalidVoiceIceServers = parsedIceServers.dropped;
+
 // Parsed defensively: `parseInt` yields NaN for junk, and a zero/negative window
 // would make the context indicator divide by nothing, so both collapse to null
 // (= fall through to the bundled snapshot).
@@ -789,4 +829,7 @@ export const config = {
   googleBotPassword,
   meetingTimeoutMinutes,
   meetingAdmissionTimeoutMs,
+  // VOICE_ICE_SERVERS, default empty: the STUN/TURN servers a voice-chat peer offers.
+  voiceIceServers,
+  invalidVoiceIceServers,
 };
