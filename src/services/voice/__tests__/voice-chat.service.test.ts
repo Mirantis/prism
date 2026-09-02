@@ -1,31 +1,22 @@
 /**
- * The session owner, driven against a stub peer: no ICE, no DTLS, no network, and no
- * Realtime socket.
+ * The session owner, with no network and no Realtime socket.
  *
- * The real transport runs here — it is the thing under test as much as the service is —
+ * The real transport runs here — it is as much the thing under test as the service is —
  * while `VoiceConversation` is a double, so a test can see the audio the service feeds it
  * and can write to the sink the service handed it.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  fakeWrtcModule,
-  lastFakePeer,
-  lastFakeSource,
-  resetFakeWrtc,
-  type FakeAudioSink,
-} from '../../../test-utils/fake-wrtc';
 import type { PlaybackSink } from '../../meeting/audio-playback';
+import { REALTIME_SAMPLE_RATE } from '../../meeting/resampler';
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock('../../../config', () => ({
-  config: { voiceIceServers: [], openaiRealtimeVoice: 'marin' },
+  config: { openaiRealtimeVoice: 'marin' },
 }));
-
-vi.mock('@roamhq/wrtc', () => fakeWrtcModule);
 
 vi.mock('../voice-instructions', () => ({
   buildVoiceInstructions: vi.fn(async () => ({
@@ -50,6 +41,7 @@ class FakeConversation {
   readonly stop = vi.fn();
   readonly start = vi.fn(async () => {});
   readonly sink: PlaybackSink;
+  readonly sampleRate?: number;
   readonly onSessionLost?: (reason: string) => void;
   readonly statistics = {
     responses: 2,
@@ -59,8 +51,13 @@ class FakeConversation {
     responsesFailed: 0,
   };
 
-  constructor(options: { sink: PlaybackSink; onSessionLost?: (reason: string) => void }) {
+  constructor(options: {
+    sink: PlaybackSink;
+    sampleRate?: number;
+    onSessionLost?: (reason: string) => void;
+  }) {
     this.sink = options.sink;
+    this.sampleRate = options.sampleRate;
     this.onSessionLost = options.onSessionLost;
     conversations.push(this);
   }
@@ -71,9 +68,9 @@ vi.mock('../../meeting/voice-conversation', () => ({ VoiceConversation: FakeConv
 const { voiceChatService } = await import('../voice-chat.service');
 const { voiceSessionLock } = await import('../voice-session-lock');
 
-/** A signal that records everything the service says to the client. */
+/** A signal that records everything the service says and sends to the client. */
 function fakeSignal() {
-  return { answer: vi.fn(), iceCandidate: vi.fn(), state: vi.fn(), error: vi.fn() };
+  return { sendAudio: vi.fn(), sendClear: vi.fn(), state: vi.fn(), error: vi.fn() };
 }
 
 type Signal = ReturnType<typeof fakeSignal>;
@@ -85,19 +82,12 @@ async function startSession(): Promise<{ signal: Signal; conversation: FakeConve
     userId: 'user-1',
     agentId: 'agent-1',
     threadId: 'thread-1',
-    offerSdp: 'v=0\r\noffer',
     signal,
   });
   return { signal, conversation: conversations[conversations.length - 1]! };
 }
 
-/** The client's microphone track arrives, and the transport attaches a sink to it. */
-function clientSendsAudio(): FakeAudioSink {
-  return lastFakePeer().addRemoteTrack();
-}
-
 beforeEach(() => {
-  resetFakeWrtc();
   conversations.length = 0;
   trackEvent.mockClear();
 });
@@ -110,36 +100,22 @@ afterEach(async () => {
 });
 
 describe('starting a session', () => {
-  it('answers the offer and reports the session live once the peer connects', async () => {
+  /**
+   * Live at once, and that is the point of the change: the socket that asked is the
+   * socket the audio travels on, so there is no media path still to come up. The WebRTC
+   * path could not say this — it answered an offer and then waited for ICE, which on a
+   * hosted runtime never completed.
+   */
+  it('reports the session live straight away', async () => {
     const { signal } = await startSession();
 
-    expect(signal.answer).toHaveBeenCalledWith('v=0\r\nanswer');
-    expect(signal.state).not.toHaveBeenCalled();
-
-    lastFakePeer().becomes('connected');
     expect(signal.state).toHaveBeenCalledWith('live');
     expect(voiceChatService.isLive).toBe(true);
   });
 
-  it('holds its candidates until the client has the answer', async () => {
-    const signal = fakeSignal();
-    // The peer gathers while the answer is still being built, and a client cannot add a
-    // candidate before it has the answer.
-    signal.answer.mockImplementation(() => {
-      expect(signal.iceCandidate).not.toHaveBeenCalled();
-    });
-
-    await voiceChatService.start({
-      userId: 'user-1',
-      agentId: 'agent-1',
-      offerSdp: 'v=0\r\noffer',
-      signal,
-    });
-
-    expect(signal.answer).toHaveBeenCalled();
-    expect(signal.iceCandidate).toHaveBeenCalledWith(
-      expect.objectContaining({ candidate: expect.stringContaining('typ host') }),
-    );
+  it('tells the core the transport already speaks the model rate', async () => {
+    const { conversation } = await startSession();
+    expect(conversation.sampleRate).toBe(REALTIME_SAMPLE_RATE);
   });
 
   it('refuses a session while a meeting holds the agent voice', async () => {
@@ -148,76 +124,89 @@ describe('starting a session', () => {
     const { signal } = await startSession();
 
     expect(signal.error).toHaveBeenCalledWith(expect.stringContaining('meeting call'));
-    expect(signal.answer).not.toHaveBeenCalled();
+    expect(signal.state).not.toHaveBeenCalled();
     expect(conversations).toHaveLength(0);
   });
 
   it('refuses a second session while one is live', async () => {
     await startSession();
 
-    const { signal } = await startSession();
+    const signal = fakeSignal();
+    await voiceChatService.start({ userId: 'user-1', agentId: 'agent-1', signal });
 
     expect(signal.error).toHaveBeenCalledWith(expect.stringContaining('already a voice chat'));
-    expect(signal.answer).not.toHaveBeenCalled();
+    expect(signal.state).not.toHaveBeenCalled();
   });
 });
 
 describe('the audio path', () => {
-  it("hands the client's audio to the core as pcm16 mono at 48 kHz", async () => {
+  it("hands the client's audio to the core untouched", async () => {
     const { conversation } = await startSession();
-    const sink = clientSendsAudio();
+    const frame = Buffer.from([7, 0, 249, 255, 255, 127]);
 
-    // Every session opens with a couple of 16 kHz silent frames, which the core cannot take.
-    sink.deliver(new Int16Array(160), 16_000);
-    expect(conversation.pushAudio).not.toHaveBeenCalled();
-
-    const samples = new Int16Array([7, -7, 32_767]);
-    sink.deliver(samples);
+    voiceChatService.pushAudio(frame);
 
     expect(conversation.pushAudio).toHaveBeenCalledTimes(1);
-    expect(conversation.pushAudio.mock.calls[0]![0]).toEqual(Buffer.copyBytesFrom(samples));
+    expect(conversation.pushAudio.mock.calls[0]![0]).toEqual(frame);
   });
 
-  it('sends what the core writes out on the outbound track', async () => {
+  /**
+   * pcm16 is two bytes a sample, so a frame with an odd length would shift every sample
+   * after it. The WebRTC transport dropped an off-rate frame for the same reason: better
+   * a gap than noise.
+   */
+  it('drops a frame that is not whole samples', async () => {
     const { conversation } = await startSession();
+    voiceChatService.pushAudio(Buffer.from([1, 2, 3]));
+    expect(conversation.pushAudio).not.toHaveBeenCalled();
+  });
 
-    // 20 ms of speech, written the way the playback pacer writes it.
-    conversation.sink.write(Buffer.alloc(1920, 3));
+  it('sends what the core writes to the client, one frame per write', async () => {
+    const { signal, conversation } = await startSession();
 
-    const frames = lastFakeSource().frames;
-    expect(frames).toHaveLength(2);
-    expect(frames[0]!.samples).toHaveLength(480);
-    expect(frames[0]!.sampleRate).toBe(48_000);
-    expect(frames[0]!.samples[0]).toBe(0x0303);
+    // 20 ms at the model's rate, written the way the playback pacer writes it.
+    const speech = Buffer.alloc(960, 3);
+    conversation.sink.write(speech);
+
+    expect(signal.sendAudio).toHaveBeenCalledTimes(1);
+    expect(signal.sendAudio.mock.calls[0]![0]).toEqual(speech);
+  });
+
+  /**
+   * The barge-in signal. Everything already written is in the client's buffer, so
+   * without this the agent talks over the person who interrupted it.
+   */
+  it('asks the client to drop unplayed audio when the floor is yielded', async () => {
+    const { signal, conversation } = await startSession();
+
+    conversation.sink.clear?.();
+
+    expect(signal.sendClear).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes no audio once the session has ended', async () => {
+    const { signal, conversation } = await startSession();
+    await voiceChatService.stop();
+
+    voiceChatService.pushAudio(Buffer.alloc(320));
+    conversation.sink.write(Buffer.alloc(320));
+
+    expect(conversation.pushAudio).not.toHaveBeenCalled();
+    expect(signal.sendAudio).not.toHaveBeenCalled();
+  });
+
+  it('drops audio arriving when nothing is running', () => {
+    expect(() => voiceChatService.pushAudio(Buffer.alloc(320))).not.toThrow();
   });
 });
 
 describe('ending a session', () => {
-  // A client that walks away leaves the peer `disconnected`; a path that breaks under a
-  // live call leaves it `failed`. Both end the session and give the voice back.
-  it.each(['disconnected', 'failed'])('tears the session down when the peer is %s', async (state) => {
-    const { signal, conversation } = await startSession();
-    clientSendsAudio();
-    const peer = lastFakePeer();
-
-    peer.becomes(state);
-    // The ending awaits the peer's close, so let it run.
-    await vi.waitFor(() => expect(signal.state).toHaveBeenCalledWith('ended'));
-
-    expect(conversation.stop).toHaveBeenCalled();
-    expect(peer.closed).toBe(true);
-    expect(signal.error).toHaveBeenCalledWith(`the media connection is ${state}`);
-    expect(voiceSessionLock.holder).toBeNull();
-    expect(voiceChatService.isLive).toBe(false);
-  });
-
   it('ends on the client asking, and frees the voice', async () => {
     const { signal, conversation } = await startSession();
 
     await voiceChatService.stop();
 
     expect(conversation.stop).toHaveBeenCalled();
-    expect(lastFakePeer().closed).toBe(true);
     expect(signal.state).toHaveBeenCalledWith('ended');
     // Asked for, so nothing failed.
     expect(signal.error).not.toHaveBeenCalled();

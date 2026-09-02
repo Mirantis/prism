@@ -1059,55 +1059,6 @@ describe('config', () => {
       expect(cfg).not.toHaveProperty('meetingChatLogging');
     });
 
-    it('offers no ICE server by default', async () => {
-      // Host candidates only, which is what a client on the runtime's own host needs.
-      delete process.env.VOICE_ICE_SERVERS;
-      const cfg = await loadConfig();
-      expect(cfg.voiceIceServers).toEqual([]);
-      expect(cfg.invalidVoiceIceServers).toBe(false);
-    });
-
-    it('reads a STUN and TURN list, credentials included', async () => {
-      process.env.VOICE_ICE_SERVERS = JSON.stringify([
-        { urls: 'stun:stun.example.org:3478' },
-        { urls: ['turn:turn.example.org:3478', 'turns:turn.example.org:5349'], username: 'u', credential: 'c' },
-      ]);
-      const cfg = await loadConfig();
-      expect(cfg.voiceIceServers).toHaveLength(2);
-      expect(cfg.voiceIceServers[1]).toMatchObject({ username: 'u', credential: 'c' });
-      expect(cfg.invalidVoiceIceServers).toBe(false);
-    });
-
-    it('drops an entry with no usable url and keeps the rest', async () => {
-      process.env.VOICE_ICE_SERVERS = JSON.stringify([
-        { urls: '' },
-        'stun:stun.example.org:3478',
-        { urls: 'stun:stun.example.org:3478' },
-      ]);
-      const cfg = await loadConfig();
-      expect(cfg.voiceIceServers).toEqual([{ urls: 'stun:stun.example.org:3478', username: undefined, credential: undefined }]);
-      expect(cfg.invalidVoiceIceServers).toBe(true);
-    });
-
-    it('takes an explicitly empty list as configured, not as junk', async () => {
-      process.env.VOICE_ICE_SERVERS = '[]';
-      const cfg = await loadConfig();
-      expect(cfg.voiceIceServers).toEqual([]);
-      expect(cfg.invalidVoiceIceServers).toBe(false);
-    });
-
-    it('falls back to no ICE server when the value is not a usable list', async () => {
-      // A voice call on host candidates is a better answer than a container that will
-      // not boot; the startup log says the value was unusable.
-      for (const junk of ['not json', '{"urls":"stun:x"}', '[1, null]']) {
-        process.env.VOICE_ICE_SERVERS = junk;
-        vi.resetModules();
-        const cfg = await loadConfig();
-        expect(cfg.voiceIceServers).toEqual([]);
-        expect(cfg.invalidVoiceIceServers).toBe(true);
-      }
-    });
-
     it('has no display-name setting', async () => {
       // Removed rather than defaulted: participants see the Google account's own
       // name, and the only path the setting applied to is the guest join Meet

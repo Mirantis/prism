@@ -171,13 +171,6 @@ const initialize = async () => {
       );
     }
 
-    if (config.invalidVoiceIceServers) {
-      logger.warn(
-        { usableServers: config.voiceIceServers.length },
-        '[Startup] VOICE_ICE_SERVERS holds an entry with no usable url; that entry is dropped',
-      );
-    }
-
     if (config.invalidToolRiskGateMode) {
       logger.warn(
         { configuredMode: config.invalidToolRiskGateMode, effectiveMode: config.toolRiskGateMode },

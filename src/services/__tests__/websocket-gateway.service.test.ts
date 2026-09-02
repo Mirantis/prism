@@ -16,11 +16,11 @@ const { mockChat, mockConfig, mockTitleEvents, mockVoice } = vi.hoisted(() => {
   const listeners: Array<(payload: unknown) => void> = [];
   return {
     mockChat: vi.fn(),
-    // The voice session owner. The gateway only carries its signalling, so what a
-    // test asserts here is which frames go to which socket.
+    // The voice session owner. The gateway carries its control frames and its
+    // audio, so what a test asserts here is what goes to which socket.
     mockVoice: {
       start: vi.fn(),
-      addIceCandidate: vi.fn(),
+      pushAudio: vi.fn(),
       stop: vi.fn(),
     },
     mockConfig: {
@@ -112,7 +112,7 @@ describe('Requirement: WebSocket Gateway', () => {
     // The session opens, which is the case every voice test but the refusal wants.
     mockVoice.start.mockResolvedValue(true);
     mockVoice.stop.mockResolvedValue(undefined);
-    mockVoice.addIceCandidate.mockResolvedValue(undefined);
+    mockVoice.pushAudio.mockReturnValue(undefined);
   });
 
   describe('Scenario: Connection tracking', () => {
@@ -747,15 +747,20 @@ describe('Requirement: WebSocket Gateway', () => {
     });
   });
 
-  describe('Scenario: Voice signalling', () => {
+  describe('Scenario: Voice over the socket', () => {
     type MockSocket = ReturnType<typeof createMockWebSocket>;
 
-    /** Deliver a frame to the socket's handler the way a client's message does. */
+    /** Deliver a control frame the way a client's message does. */
     async function frame(ws: MockSocket, message: unknown): Promise<void> {
       await service.handleMessage(ws, 'user-123', message);
     }
 
-    /** The signal the gateway handed the voice service for its nth offer. */
+    /** Deliver one binary audio frame, as `ws` reports it. */
+    function audio(ws: MockSocket, pcm: Buffer): void {
+      service.handleBinary(ws, pcm);
+    }
+
+    /** The signal the gateway handed the voice service for its nth request. */
     function signalOf(call = 0) {
       return mockVoice.start.mock.calls[call]![0].signal;
     }
@@ -766,40 +771,36 @@ describe('Requirement: WebSocket Gateway', () => {
       return JSON.parse(calls[calls.length - 1]![0] as string);
     }
 
-    it('opens a session from an offer and answers on the socket that sent it', async () => {
+    it('opens a session and tells the client the audio format', async () => {
       const ws = createMockWebSocket();
 
-      await frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer', threadId: 'thread-1' } });
+      await frame(ws, { type: 'voice_start', payload: { threadId: 'thread-1' } });
 
       expect(mockVoice.start).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: 'user-123',
-          agentId: 'agent-123',
-          threadId: 'thread-1',
-          offerSdp: 'v=0\r\noffer',
-        })
+        expect.objectContaining({ userId: 'user-123', agentId: 'agent-123', threadId: 'thread-1' })
       );
-
-      signalOf().answer('v=0\r\nanswer');
-      expect(lastSent(ws)).toEqual({ type: 'voice_answer', payload: { sdp: 'v=0\r\nanswer' } });
+      expect(lastSent(ws)).toEqual({
+        type: 'voice_hello',
+        payload: { format: { encoding: 'pcm16', sampleRate: 24_000, channels: 1 } },
+      });
     });
 
-    it('carries the runtime candidates, the session state and its errors back', async () => {
+    it('carries the session state, its errors and the clear back', async () => {
       const ws = createMockWebSocket();
-      await frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      await frame(ws, { type: 'voice_start', payload: {} });
       const signal = signalOf();
-
-      signal.iceCandidate({ candidate: 'candidate:1 1 udp', sdpMid: '0' });
-      expect(lastSent(ws)).toEqual({
-        type: 'voice_ice',
-        payload: { candidate: 'candidate:1 1 udp', sdpMid: '0' },
-      });
 
       signal.state('live');
       expect(lastSent(ws)).toEqual({ type: 'voice_state', payload: { state: 'live' } });
 
-      signal.error('the peer went away');
-      expect(lastSent(ws)).toEqual({ type: 'voice_error', payload: { error: 'the peer went away' } });
+      signal.sendClear();
+      expect(lastSent(ws)).toEqual({ type: 'voice_clear' });
+
+      signal.error('the model closed the socket');
+      expect(lastSent(ws)).toEqual({
+        type: 'voice_error',
+        payload: { error: 'the model closed the socket' },
+      });
 
       signal.state('ended');
       expect(lastSent(ws)).toEqual({ type: 'voice_state', payload: { state: 'ended' } });
@@ -807,35 +808,37 @@ describe('Requirement: WebSocket Gateway', () => {
       expect(service.voiceSocket).toBeNull();
     });
 
+    /** The agent's speech is binary, and must not be JSON-encoded on the way out. */
+    it('sends the agent audio as a binary frame', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'voice_start', payload: {} });
+      const speech = Buffer.alloc(960, 5);
+
+      signalOf().sendAudio(speech);
+
+      const [payload, options] = ws.send.mock.calls[ws.send.mock.calls.length - 1]!;
+      expect(payload).toEqual(speech);
+      expect(options).toEqual({ binary: true });
+    });
+
     it('says nothing on a socket the client has closed', async () => {
       const ws = createMockWebSocket();
-      await frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      await frame(ws, { type: 'voice_start', payload: {} });
       const signal = signalOf();
       ws.send.mockClear();
       ws.readyState = 3; // CLOSED
 
       signal.state('live');
+      signal.sendAudio(Buffer.alloc(320));
 
       expect(ws.send).not.toHaveBeenCalled();
     });
 
-    it('refuses an offer with no sdp', async () => {
-      const ws = createMockWebSocket();
-
-      await frame(ws, { type: 'voice_offer', payload: {} });
-
-      expect(mockVoice.start).not.toHaveBeenCalled();
-      expect(lastSent(ws)).toEqual({
-        type: 'voice_error',
-        payload: { error: 'A voice offer needs an sdp' },
-      });
-    });
-
-    it('refuses an offer while the runtime is still starting up', async () => {
+    it('refuses a session while the runtime is still starting up', async () => {
       mockConfig.agentId = undefined;
       const ws = createMockWebSocket();
 
-      await frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      await frame(ws, { type: 'voice_start', payload: {} });
 
       expect(mockVoice.start).not.toHaveBeenCalled();
       expect(lastSent(ws)).toEqual({
@@ -844,64 +847,63 @@ describe('Requirement: WebSocket Gateway', () => {
       });
     });
 
-    it('forwards a candidate the client gathered, and ignores a frame without one', async () => {
+    it("hands the holder's audio to the session", async () => {
       const owner = createMockWebSocket();
-      await frame(owner, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      await frame(owner, { type: 'voice_start', payload: {} });
+      const pcm = Buffer.alloc(480, 1);
 
-      await frame(owner, {
-        type: 'voice_ice',
-        payload: { candidate: 'candidate:2 1 udp', sdpMid: '0', sdpMLineIndex: 0 },
-      });
+      audio(owner, pcm);
 
-      expect(mockVoice.addIceCandidate).toHaveBeenCalledWith({
-        candidate: 'candidate:2 1 udp',
-        sdpMid: '0',
-        sdpMLineIndex: 0,
-      });
-
-      // The end of gathering is the client's business, not the peer's.
-      await frame(owner, { type: 'voice_ice', payload: { candidate: null } });
-      expect(mockVoice.addIceCandidate).toHaveBeenCalledTimes(1);
+      expect(mockVoice.pushAudio).toHaveBeenCalledWith(pcm);
     });
 
-    it('ignores a candidate from a socket that does not hold the session', async () => {
+    /**
+     * A second client refused the session keeps its microphone open, and its frames
+     * are not this call's audio.
+     */
+    it('drops audio from a socket that does not hold the session', async () => {
       const owner = createMockWebSocket();
-      await frame(owner, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      await frame(owner, { type: 'voice_start', payload: {} });
 
-      // A second client was refused the session, and keeps gathering anyway.
       const other = createMockWebSocket();
       mockVoice.start.mockResolvedValue(false);
-      await frame(other, { type: 'voice_offer', payload: { sdp: 'v=0\r\nsecond' } });
-      await frame(other, { type: 'voice_ice', payload: { candidate: 'candidate:9 1 udp' } });
+      await frame(other, { type: 'voice_start', payload: {} });
+      audio(other, Buffer.alloc(480));
 
-      expect(mockVoice.addIceCandidate).not.toHaveBeenCalled();
+      expect(mockVoice.pushAudio).not.toHaveBeenCalled();
     });
 
-    it('ends a session whose client asked to stop before the answer arrived', async () => {
+    it('drops audio when no session is running', () => {
+      const ws = createMockWebSocket();
+      expect(() => audio(ws, Buffer.alloc(480))).not.toThrow();
+      expect(mockVoice.pushAudio).not.toHaveBeenCalled();
+    });
+
+    it('ends a session whose client asked to stop before it opened', async () => {
       const ws = createMockWebSocket();
       let answer: (started: boolean) => void = () => {};
       mockVoice.start.mockReturnValue(new Promise<boolean>((resolve) => (answer = resolve)));
 
-      const offer = frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      const opening = frame(ws, { type: 'voice_start', payload: {} });
       await frame(ws, { type: 'voice_stop' });
       answer(true);
-      await offer;
+      await opening;
 
       expect(mockVoice.stop).toHaveBeenCalledWith('the client left before the call started');
       // Nothing to end later: the session never became this socket's.
       expect(service.voiceSocket).toBeNull();
     });
 
-    it('ends a session whose client went away before the answer arrived', async () => {
+    it('ends a session whose client went away before it opened', async () => {
       const ws = createMockWebSocket();
       service.handleConnection(ws, { url: '/api/ws', headers: { host: 'localhost:3003' } });
       let answer: (started: boolean) => void = () => {};
       mockVoice.start.mockReturnValue(new Promise<boolean>((resolve) => (answer = resolve)));
 
-      const offer = frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      const opening = frame(ws, { type: 'voice_start', payload: {} });
       ws.emit('close', 1001);
       answer(true);
-      await offer;
+      await opening;
 
       expect(mockVoice.stop).toHaveBeenCalledWith('the client left before the call started');
       expect(service.voiceSocket).toBeNull();
@@ -909,12 +911,12 @@ describe('Requirement: WebSocket Gateway', () => {
 
     it('ends the session for the socket that opened it, and for no other', async () => {
       const owner = createMockWebSocket();
-      await frame(owner, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      await frame(owner, { type: 'voice_start', payload: {} });
 
       // A second client is refused the session, so its stop is not the owner's.
       const other = createMockWebSocket();
       mockVoice.start.mockResolvedValue(false);
-      await frame(other, { type: 'voice_offer', payload: { sdp: 'v=0\r\nsecond' } });
+      await frame(other, { type: 'voice_start', payload: {} });
 
       await frame(other, { type: 'voice_stop' });
       expect(mockVoice.stop).not.toHaveBeenCalled();
@@ -926,7 +928,7 @@ describe('Requirement: WebSocket Gateway', () => {
     it('ends the session when the socket that opened it goes away', async () => {
       const ws = createMockWebSocket();
       service.handleConnection(ws, { url: '/api/ws', headers: { host: 'localhost:3003' } });
-      await frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      await frame(ws, { type: 'voice_start', payload: {} });
 
       ws.emit('close', 1000);
 
@@ -936,7 +938,7 @@ describe('Requirement: WebSocket Gateway', () => {
 
     it('leaves the session alone when another socket goes away', async () => {
       const owner = createMockWebSocket();
-      await frame(owner, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      await frame(owner, { type: 'voice_start', payload: {} });
 
       const other = createMockWebSocket();
       service.handleConnection(other, { url: '/api/ws', headers: { host: 'localhost:3003' } });
