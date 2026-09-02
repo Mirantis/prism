@@ -159,7 +159,14 @@ describe('starting a session', () => {
 describe('the listening mode', () => {
   it('answers everything when the client asks for nothing', async () => {
     const { conversation } = await startSession();
+
     expect(conversation.responseMode).toBe('open');
+    // The default is where the two halves come apart most easily: passing
+    // `input.mode` to one and `input.mode ?? 'open'` to the other leaves the prompt
+    // reading the `auto` text while the policy runs `open`.
+    expect(vi.mocked(buildVoiceInstructions)).toHaveBeenCalledWith(
+      expect.objectContaining({ responseMode: 'open' }),
+    );
   });
 
   it('gates on being addressed when the client asks for it', async () => {
@@ -189,7 +196,7 @@ describe('the listening mode', () => {
     expect(trackEvent).toHaveBeenCalledWith(
       'voice chat started',
       'user-1',
-      expect.objectContaining({ mode: 'addressed' }),
+      expect.objectContaining({ response_mode: 'addressed' }),
     );
     expect(trackEvent).toHaveBeenCalledWith(
       'voice chat ended',
@@ -197,11 +204,13 @@ describe('the listening mode', () => {
       // `gate_failed` is the number that separates an agent nobody addressed from one
       // that could not tell, and the two sound identical from the room.
       expect.objectContaining({
-        mode: 'addressed',
+        response_mode: 'addressed',
         suppressed: '3',
         gate_calls: '4',
         gate_failed: '1',
-        gate_latency_ms: '900',
+        // The mean of 900ms over 4 verdicts, which is what `meeting ended` reports
+        // under this key. A sum here would make the two events incomparable.
+        gate_latency_ms: '225',
       }),
     );
   });
@@ -298,7 +307,7 @@ describe('ending a session', () => {
     expect(trackEvent).toHaveBeenCalledWith('voice chat started', 'user-1', {
       tools: '3',
       locked_in: 'false',
-      mode: 'open',
+      response_mode: 'open',
     });
     expect(trackEvent).toHaveBeenCalledWith(
       'voice chat ended',
