@@ -28,16 +28,16 @@ function ScratchpadPage() {
       <h2 className="text-2xl font-bold tracking-tight">Scratchpad</h2>
 
       <div className="flex flex-col items-center gap-4 rounded-xl bg-zinc-900 p-4">
-        {/* The agent's browser, live, with the agent's own tile laid over one corner. */}
+        {/* The agent's screen, live, with the agent's own tile laid over one corner. */}
         <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
           <img
             ref={screenRef}
-            alt="The agent's browser"
+            alt="The agent's screen"
             className={cn('h-full w-full object-contain', !hasScreen && 'invisible')}
           />
           {!hasScreen && (
             <p className="absolute inset-0 flex items-center justify-center text-sm text-zinc-500">
-              The agent's browser appears here once it opens.
+              Starting the agent's screen…
             </p>
           )}
           <div className="absolute bottom-3 left-3 w-40 drop-shadow-lg sm:w-52 md:w-64">
