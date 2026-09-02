@@ -19,14 +19,15 @@ class FakeWS {
   onerror: (() => void) | null = null;
   onclose: ((e: { code: number }) => void) | null = null;
   readyState = FakeWS.CONNECTING;
-  sent: string[] = [];
+  binaryType = 'blob';
+  sent: (string | ArrayBuffer)[] = [];
   url: string;
 
   constructor(url: string) {
     this.url = url;
     FakeWS.instances.push(this);
   }
-  send(data: string) {
+  send(data: string | ArrayBuffer) {
     this.sent.push(data);
   }
   close() {
@@ -34,12 +35,20 @@ class FakeWS {
   }
 
   // Test helpers
+  /** The JSON frames only — the audio frames are binary and not parseable. */
+  get sentText(): string[] {
+    return this.sent.filter((f): f is string => typeof f === 'string');
+  }
   open() {
     this.readyState = FakeWS.OPEN;
     this.onopen?.();
   }
   deliver(obj: unknown) {
     this.onmessage?.({ data: JSON.stringify(obj) } as MessageEvent);
+  }
+  /** A frame of the agent's speech, as the browser delivers it. */
+  deliverAudio(frame: ArrayBuffer) {
+    this.onmessage?.({ data: frame } as MessageEvent);
   }
 }
 
@@ -179,7 +188,7 @@ describe('useWebSocket', () => {
     // The hook must not gate on isTyping: this frame is what the gateway offers
     // to the turn that owns t1, and the thread id is what makes that offer
     // possible at all.
-    expect(JSON.parse(ws.sent.at(-1)!)).toEqual({
+    expect(JSON.parse(ws.sentText.at(-1)!)).toEqual({
       type: 'chat',
       payload: {
         mode: 'followup',
@@ -199,5 +208,148 @@ describe('useWebSocket', () => {
     act(() => ws.deliver({ type: 'status', payload: { connected: true } }));
 
     expect(result.current.isTyping).toBe(true);
+  });
+
+  describe('voice frames', () => {
+    const pcm = (byte: number) => new Uint8Array([byte, 0, byte, 0]).buffer;
+
+    it('asks for the audio as buffers rather than blobs', async () => {
+      // A blob needs an asynchronous read to open, which would let the audio
+      // overtake or fall behind the control frames it is ordered against.
+      const { ws } = await renderConnected({ onVoiceAudio: vi.fn() });
+      expect(ws.binaryType).toBe('arraybuffer');
+    });
+
+    it('keeps the chat path parsing with audio interleaved', async () => {
+      const onMessage = vi.fn();
+      const onVoiceAudio = vi.fn();
+      const { result, ws } = await renderConnected({ onMessage, onVoiceAudio });
+
+      act(() => ws.deliver({ type: 'chat', payload: { id: 'm1', content: 'first' } }));
+      act(() => ws.deliverAudio(pcm(1)));
+      act(() => ws.deliver({ type: 'chat', payload: { id: 'm2', content: 'second' } }));
+
+      expect(onMessage.mock.calls.map(([m]) => m.id)).toEqual(['m1', 'm2']);
+      expect(onVoiceAudio).toHaveBeenCalledTimes(1);
+      expect(result.current.status).toBe('connected');
+    });
+
+    it('routes audio to onVoiceAudio and never to onMessage', async () => {
+      const onMessage = vi.fn();
+      const onVoiceAudio = vi.fn();
+      const { ws } = await renderConnected({ onMessage, onVoiceAudio });
+
+      const frame = pcm(7);
+      act(() => ws.deliverAudio(frame));
+
+      expect(onVoiceAudio).toHaveBeenCalledWith(frame);
+      expect(onMessage).not.toHaveBeenCalled();
+    });
+
+    it('hands audio and the clear that cancels it over in arrival order', async () => {
+      // The guarantee the barge-in rests on: one handler, no await, so a
+      // `voice_clear` cannot be applied before the audio it is meant to drop.
+      const seen: string[] = [];
+      const { ws } = await renderConnected({
+        onVoiceAudio: () => seen.push('audio'),
+        onVoiceEvent: (e) => seen.push(e.type),
+      });
+
+      act(() => ws.deliverAudio(pcm(1)));
+      act(() => ws.deliverAudio(pcm(2)));
+      act(() => ws.deliver({ type: 'voice_clear' }));
+      act(() => ws.deliverAudio(pcm(3)));
+
+      expect(seen).toEqual(['audio', 'audio', 'clear', 'audio']);
+    });
+
+    it('routes each control frame to the latest onVoiceEvent', async () => {
+      const first = vi.fn();
+      const { rerender, ws } = await renderConnected({ onVoiceEvent: first });
+
+      const onVoiceEvent = vi.fn();
+      rerender({ onVoiceEvent });
+
+      act(() =>
+        ws.deliver({
+          type: 'voice_hello',
+          payload: { format: { encoding: 'pcm16', sampleRate: 24_000, channels: 1 } },
+        }),
+      );
+      act(() => ws.deliver({ type: 'voice_state', payload: { state: 'live' } }));
+      act(() => ws.deliver({ type: 'voice_clear' }));
+      act(() =>
+        ws.deliver({
+          type: 'voice_error',
+          payload: { error: 'There is already a voice chat running. End that one first.' },
+        }),
+      );
+      act(() => ws.deliver({ type: 'voice_state', payload: { state: 'ended' } }));
+
+      expect(first).not.toHaveBeenCalled();
+      expect(onVoiceEvent.mock.calls.map(([e]) => e)).toEqual([
+        { type: 'hello', format: { encoding: 'pcm16', sampleRate: 24_000, channels: 1 } },
+        { type: 'state', state: 'live' },
+        { type: 'clear' },
+        { type: 'error', error: 'There is already a voice chat running. End that one first.' },
+        { type: 'state', state: 'ended' },
+      ]);
+    });
+
+    it('reports a refusal that arrived without text, rather than nothing', async () => {
+      const onVoiceEvent = vi.fn();
+      const { ws } = await renderConnected({ onVoiceEvent });
+
+      act(() => ws.deliver({ type: 'voice_error', payload: {} }));
+
+      expect(onVoiceEvent).toHaveBeenCalledWith({
+        type: 'error',
+        error: 'The voice chat could not run.',
+      });
+    });
+
+    it('drops a half-stated format and an unknown state', async () => {
+      const onVoiceEvent = vi.fn();
+      const { ws } = await renderConnected({ onVoiceEvent });
+
+      act(() => ws.deliver({ type: 'voice_hello', payload: { format: { encoding: 'pcm16' } } }));
+      act(() => ws.deliver({ type: 'voice_state', payload: { state: 'starting' } }));
+      act(() => ws.deliver({ type: 'voice_state' }));
+
+      expect(onVoiceEvent).not.toHaveBeenCalled();
+    });
+
+    it('sends start, audio and stop without disturbing the turn state', async () => {
+      const { result, ws } = await renderConnected({ onVoiceEvent: vi.fn() });
+
+      const frame = pcm(9);
+      act(() => {
+        expect(result.current.sendVoiceStart('t1')).toBe(true);
+        result.current.sendVoiceAudio(frame);
+        result.current.sendVoiceStop();
+      });
+
+      expect(ws.sent).toEqual([
+        JSON.stringify({ type: 'voice_start', payload: { threadId: 't1' } }),
+        frame,
+        JSON.stringify({ type: 'voice_stop' }),
+      ]);
+      // A call is not a turn: the composer's spinner belongs to the text chat.
+      expect(result.current.isTyping).toBe(false);
+    });
+
+    it('drops the audio and refuses to start while the socket is down', async () => {
+      const { result, ws } = await renderConnected({ onVoiceEvent: vi.fn() });
+
+      act(() => ws.onclose?.({ code: 1006 }));
+
+      act(() => {
+        expect(result.current.sendVoiceStart()).toBe(false);
+        result.current.sendVoiceAudio(pcm(1));
+        result.current.sendVoiceStop();
+      });
+
+      expect(ws.sent).toEqual([]);
+    });
   });
 });
