@@ -59,6 +59,8 @@ const BROWSER_CANDIDATES = [
   '/usr/bin/google-chrome-stable',
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
+  // Local development on macOS, where the voice chat opens a browser on the desktop.
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 ].filter((p): p is string => Boolean(p));
 
 /**
@@ -128,6 +130,12 @@ async function clearStaleProfileLocks(userDataDir: string): Promise<void> {
 export interface BrowserStackOptions {
   /** DISPLAY, PULSE_SINK, PULSE_SOURCE and friends from the audio stack. */
   env: Record<string, string>;
+  /**
+   * Where the profile lives. Defaults to the meeting bot's signed-in profile; a
+   * browser that may run beside a live call uses its own, since Chromium refuses a
+   * second instance on one profile.
+   */
+  profileDir?: string;
 }
 
 /**
@@ -283,7 +291,7 @@ export class BrowserStack {
     bypassProxyForLoopback();
     const executablePath = await resolveBrowser();
     const port = await freePort();
-    const userDataDir = profileDir();
+    const userDataDir = options.profileDir ?? profileDir();
     await fs.mkdir(userDataDir, { recursive: true });
     await clearStaleProfileLocks(userDataDir);
 

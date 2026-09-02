@@ -378,3 +378,9 @@ export function webSocketUrl(): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
   return `${proto}://${window.location.host}/api/ws`;
 }
+
+/** The voice chat socket: pcm16 audio both ways, JSON status frames back. */
+export function voiceWebSocketUrl(): string {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}/api/voice`;
+}
