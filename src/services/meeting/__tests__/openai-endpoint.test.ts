@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const mockConfig: { openaiApiKey?: string; openaiRealtimeModel: string } = {
+const mockConfig: {
+  openaiApiKey?: string;
+  openaiRealtimeModel: string;
+  openaiRealtimeUrl?: string;
+} = {
   openaiApiKey: undefined,
   openaiRealtimeModel: 'gpt-realtime',
+  openaiRealtimeUrl: undefined,
 };
 vi.mock('../../../config', () => ({ config: mockConfig }));
 
@@ -15,6 +20,7 @@ const savedProxy = process.env.HTTPS_PROXY;
 beforeEach(() => {
   mockConfig.openaiApiKey = 'sk-test-key';
   mockConfig.openaiRealtimeModel = 'gpt-realtime';
+  mockConfig.openaiRealtimeUrl = undefined;
   delete process.env.HTTPS_PROXY;
   delete process.env.https_proxy;
 });
@@ -25,9 +31,24 @@ afterEach(() => {
 });
 
 describe('resolveRealtimeEndpoint', () => {
-  it('always connects directly to OpenAI — there is no gateway mount for Realtime', () => {
+  it('connects directly to OpenAI — there is no gateway mount for Realtime', () => {
     const endpoint = resolveRealtimeEndpoint();
     expect(endpoint.url).toBe('wss://api.openai.com/v1/realtime?model=gpt-realtime');
+  });
+
+  it('takes the host from OPENAI_REALTIME_URL when it is set', () => {
+    mockConfig.openaiRealtimeUrl = 'ws://127.0.0.1:3103/v1/realtime';
+    expect(resolveRealtimeEndpoint().url).toBe(
+      'ws://127.0.0.1:3103/v1/realtime?model=gpt-realtime',
+    );
+  });
+
+  it('still requires a key against an overridden host', () => {
+    // The host moves; nothing about authentication does, so a local voice model
+    // is reached the same way the real one is.
+    mockConfig.openaiRealtimeUrl = 'ws://127.0.0.1:3103/v1/realtime';
+    mockConfig.openaiApiKey = undefined;
+    expect(() => resolveRealtimeEndpoint()).toThrow(/OPENAI_API_KEY is not set/);
   });
 
   it('sends the key as a header, so a credential sentinel stays rewritable', () => {
