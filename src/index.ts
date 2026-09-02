@@ -29,6 +29,7 @@ import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
 import { trackAgentStarted } from './lib/startup-telemetry';
 import { heartbeatService } from './services/heartbeat.service';
 import { meetingBotService } from './services/meeting/meeting-bot.service';
+import { voiceChatService } from './services/voice-chat/voice-chat.service';
 import { initMeetingToolAvailability } from './lib/tool-collection';
 import { cronSchedulerService } from './services/cron-scheduler.service';
 import { goalService } from './services/goal.service';
@@ -75,6 +76,7 @@ messageDeliveryService.register(slackAdapterService);
 
 // Initialize WebSocket gateway before listening
 webSocketGatewayService.initialize(httpServer);
+voiceChatService.initialize(httpServer);
 
 const initialize = async () => {
   try {
@@ -258,6 +260,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   // socket, so server.close() waits and the 5s force-exit below fires.
   cancelModelCatalogRefresh();
   webSocketGatewayService.closeAll();
+  voiceChatService.closeAll();
   // Leave any live call before the process goes: otherwise the browser and audio
   // daemon die with us and the bot lingers in the meeting as a frozen participant.
   await meetingBotService.shutdown().catch((err) => {

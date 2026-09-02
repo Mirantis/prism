@@ -15,6 +15,7 @@ const ROUTE_TITLES: Record<string, string> = {
   '/channels': 'Channels',
   '/cron': 'Scheduled Tasks',
   '/webhooks': 'Webhooks',
+  '/scratchpad': 'Scratchpad',
   '/profile': 'Profile',
 };
 

@@ -106,9 +106,15 @@ class WebSocketGatewayService {
    * Initialize WebSocket server
    */
   initialize(server: HttpServer): void {
-    this.wss = new WebSocketServer({
-      server,
-      path: '/api/ws',
+    // `noServer`: the voice chat endpoint (`/api/voice`) shares this HTTP server,
+    // and a `ws` server bound with `path` answers every other path's upgrade with
+    // a 400. Each endpoint picks its own upgrades off the server instead.
+    const wss = new WebSocketServer({ noServer: true });
+    this.wss = wss;
+    server.on('upgrade', (req, socket, head) => {
+      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+      if (pathname !== '/api/ws') return;
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
     });
 
     this.wss.on('connection', (ws: AuthenticatedWebSocket, req: IncomingMessage) => {

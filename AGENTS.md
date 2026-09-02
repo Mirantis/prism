@@ -560,6 +560,18 @@ for the full env block.
 
 `tsx watch` restarts on every save (~1s).
 
+### The container image with live code (`npm run docker:dev`)
+
+`scripts/docker-dev.sh` runs the published image with this checkout's `.env`,
+`prisma/`, `dist/` and `web/dist` mounted in, compiles `src/` on the host with
+`tsc --watch`, and restarts the server in the container on every emit. Ctrl+C stops
+it and removes the container. `PRISM_IMAGE`, `PRISM_PORT`, `PRISM_CONTAINER` and
+`PRISM_VOLUME` override the defaults. The image still supplies `node_modules` and
+the generated Prisma client, so the script warns when its `package-lock.json` or
+Prisma schema differs from the checkout's; pull a newer image or build one with
+`npm run docker:build` then. This is the loop for anything that needs the image's
+toolchain, such as the voice chat's browser on a virtual display.
+
 ### Production-shape preview (no HMR, no Vite)
 
 Skip the image rebuild while still hitting `:3003` directly: volume-mount

@@ -1,5 +1,13 @@
 import { Link, useRouterState } from '@tanstack/react-router';
-import { LayoutDashboard, MessageSquare, MessagesSquare, Clock, Webhook, Bot } from 'lucide-react';
+import {
+  LayoutDashboard,
+  MessageSquare,
+  MessagesSquare,
+  Clock,
+  Webhook,
+  NotebookPen,
+  Bot,
+} from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -19,6 +27,7 @@ const NAV_ITEMS = [
   { to: '/channels' as const, label: 'Channels', icon: MessagesSquare },
   { to: '/cron' as const, label: 'Scheduled Tasks', icon: Clock },
   { to: '/webhooks' as const, label: 'Webhooks', icon: Webhook },
+  { to: '/scratchpad' as const, label: 'Scratchpad', icon: NotebookPen },
   { to: '/profile' as const, label: 'Profile', icon: Bot },
 ];
 
