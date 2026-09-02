@@ -123,7 +123,9 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     await env.cleanup();
   });
   BeforeEachScenario(async () => {
-    session = startPrism({ env: env.prismEnv, runtime: env.runtime });
+    // The CLI sends its cwd as the thread's workspace root, and the shell tools
+    // prefer that over SHELL_WORKSPACE_ROOT, so the file is read from here.
+    session = startPrism({ env: env.prismEnv, runtime: env.runtime, cwd: workspaceDir });
     await session!.waitForFrame(/Prism/, BOOT_FRAME_TIMEOUT_MS);
   });
   AfterEachScenario(async () => {
