@@ -22,6 +22,7 @@ import { logger } from '../../logger';
 import { config } from '../../config';
 import { trackEvent } from '../../lib/telemetry';
 import { VoiceConversation } from '../meeting/voice-conversation';
+import { meanGateLatencyMs } from '../meeting/gate-stats';
 import { prepareMeetingTools } from '../meeting/tool-bridge';
 import { buildVoiceInstructions } from './voice-instructions';
 import { voiceSessionLock } from './voice-session-lock';
@@ -52,11 +53,8 @@ export interface VoiceChatSignal extends SocketAudioChannel {
  * where most of what is said is said to somebody else, so each utterance is put to
  * the addressed gate and only the ones aimed at the agent are answered.
  *
- * The two modes the client picks from, and no `auto`. `ResponsePolicy` resolves `auto`
- * from a participant count, which a single mixed microphone cannot produce — there is no
- * roster to read and no way to tell four people from one. Offering it would mean
- * offering a guess that never resolves, so the client says which situation its
- * microphone is in. It is the only one that knows.
+ * `auto` is not offered: it resolves from a participant count, and one mixed microphone
+ * yields none. The client states which of the two it wants.
  */
 export type VoiceListeningMode = 'open' | 'addressed';
 
@@ -117,9 +115,9 @@ class VoiceChatService {
     this.state = 'starting';
     const epoch = ++this.epoch;
     // Resolved once and passed to both halves: the prompt tells the model it is being
-    // filtered and the policy does the filtering, and a call where those two disagree
-    // is one that explains gaps in a conversation that has none, or sits silent through
-    // a room it thinks it should answer.
+    // filtered and the policy does the filtering. A call where those two disagree either
+    // explains gaps in a conversation that has none, or waits to be named in a room that
+    // will not name it.
     const mode: VoiceListeningMode = input.mode ?? 'open';
 
     // Built into locals and published onto `this` only once the epoch check below says
@@ -194,7 +192,7 @@ class VoiceChatService {
       trackEvent('voice chat started', input.userId, {
         tools: String(tools.count),
         locked_in: String(lockedIn),
-        mode,
+        response_mode: mode,
       });
       return true;
     } catch (err) {
@@ -267,7 +265,7 @@ class VoiceChatService {
       const stats = conversation?.statistics;
       trackEvent('voice chat ended', userId, {
         status,
-        mode,
+        response_mode: mode,
         duration_ms: String(Date.now() - startedAt),
         responses: String(stats?.responses ?? 0),
         tool_calls: String(stats?.toolCalls ?? 0),
@@ -283,7 +281,8 @@ class VoiceChatService {
         suppressed: String(stats?.suppressed ?? 0),
         gate_calls: String(stats?.gateCalls ?? 0),
         gate_failed: String(stats?.gateFailed ?? 0),
-        gate_latency_ms: String(stats?.gateLatencyMs ?? 0),
+        // The mean, which is what `meeting ended` emits under this key.
+        gate_latency_ms: String(meanGateLatencyMs(stats)),
       });
     }
 

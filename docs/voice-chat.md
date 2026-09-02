@@ -20,9 +20,10 @@ directly to `api.openai.com` — the same key voice meetings use, see
 [Configuration](configuration.md#voice-meetings).
 
 If the runtime's outbound network is filtered, `api.openai.com` has to be
-reachable directly. A proxy that terminates TLS breaks the connection, because
-the voice model is reached over a WebSocket rather than plain requests. A
-runtime that cannot reach it refuses the call with
+allowed. The voice model is reached over a WebSocket, which the Lens Agents LLM
+gateway does not carry — it routes requests only — so this connection goes
+direct even where other model traffic is proxied. A runtime that cannot reach it
+refuses the call with
 `Realtime connection failed: Unexpected server response: 403`.
 
 Nothing else. The audio travels on the WebSocket the client already uses for
@@ -55,7 +56,7 @@ sent as **binary** frames.
 
 | Type | Payload | Meaning |
 |------|---------|---------|
-| `voice_start` | `threadId` (string, optional), `mode` (string, optional) | Start a session. `threadId` is the thread the call belongs to, which the agent's tools use; omit it and the tools that need a thread work without one. `mode` is `open` or `addressed` — see [Who the agent answers](#who-the-agent-answers). It defaults to `open`, and an unrecognized value is treated as absent. |
+| `voice_start` | `threadId` (string, optional), `mode` (string, optional) | Start a session. `threadId` is the thread the call belongs to, which the agent's tools use; omit it and the tools that need a thread work without one. `mode` is `open` or `addressed` — see [Who the agent answers](#who-the-agent-answers). Omit it for `open`. Any other value is refused with `voice_error`, rather than quietly answered as `open`. |
 | *binary* | — | One frame of your microphone. See [The audio](#the-audio). |
 | `voice_stop` | none | End the session. Only the socket that started the session can end it; from any other socket this does nothing. Sent before the session opens it still counts: the session ends as soon as it opens. |
 
@@ -63,7 +64,7 @@ sent as **binary** frames.
 
 | Type | Payload | Meaning |
 |------|---------|---------|
-| `voice_hello` | `format`: `{encoding, sampleRate, channels}` | The audio format, for both directions. Sent once, before `live`. |
+| `voice_hello` | `format`: `{encoding, sampleRate, channels}` | The audio format, for both directions. Sent once per session; see step 2 on its order against `live`. |
 | `voice_state` | `state`: `live` or `ended` | `live` — audio flows. `ended` — the session is over; release the microphone. |
 | `voice_clear` | none | **Drop every audio frame you have not played yet, now.** See [Interrupting](#interrupting). |
 | `voice_error` | `error` (string) | Why the session could not start, or could not continue. Readable text, meant to be shown to the user. |
@@ -121,17 +122,15 @@ agent listens to all of it and answers only the utterances aimed at it, so
 somebody has to call it by name. This is a phone lying on the table in a
 meeting.
 
-Whether an utterance was aimed at the agent is judged from the audio by the
-voice model itself, not by matching the name as text. So a name that is
-mentioned rather than used — "I asked Prism about that yesterday" — does not
-summon it, and a follow-up in an exchange it is already part of reaches it
-without the name being repeated.
+A name that is mentioned rather than used — "I asked Prism about that
+yesterday" — does not summon it. A follow-up inside an exchange it is already
+part of reaches it without the name being repeated.
 
 Two things follow from `addressed` that are worth designing a client around:
 
-- **The agent stays quiet for long stretches, and that is it working.** It is
-  told it is being filtered, so it answers the question it was asked instead of
-  explaining the gaps or asking whether you meant it.
+- **The agent stays quiet for long stretches, and that is it working.** When it
+  does answer it answers the question, without explaining the gaps or asking
+  whether you meant it.
 - **Judging each utterance takes about a second**, on top of the answer itself.
   In `open` mode nothing is judged, so a reply starts as soon as you stop.
 
@@ -177,12 +176,13 @@ Every one of these arrives as `voice_error` with the text in `payload.error`.
 | Text | Cause |
 |------|-------|
 | `Agent runtime is still initializing; retry shortly` | The runtime has not finished loading its agent. Retry. |
+| `mode must be "open" or "addressed"` | `voice_start` carried a `mode` this runtime does not serve. Nothing started. |
 | `I'm in a meeting call right now. That has to end before I can talk here.` | A Google Meet call holds the agent's voice. |
 | `There is already a voice chat running. End that one first.` | Another client — a second tab, a second device — has the session. The running call is unaffected. |
 | `Could not start the voice chat: …` | Startup failed, with the reason appended: the model session would not open, or the agent's context could not be read. |
 | A reason from the model session, e.g. `the model closed the socket` | The Realtime session ended under the call. `voice_state: ended` follows. |
 
-The first three are refusals: nothing started, and no `ended` frame follows. The
+The first four are refusals: nothing started, and no `ended` frame follows. The
 last two end a session that was running.
 
 A microphone the user denies is the client's own error to report — the runtime

@@ -102,16 +102,21 @@ function stringField(payload: Record<string, unknown>, key: string): string | un
 }
 
 /**
- * Which listening mode the client asked for, or undefined for the service's default.
+ * Which listening mode the client asked for: the mode, `undefined` when it said nothing,
+ * or `null` when it asked for something this does not serve.
  *
- * An unrecognized value is treated as unstated rather than refused. The two modes differ
- * in how much the agent says, not in what it is allowed to do, so the cost of ignoring a
- * misspelling is a chattier call — where refusing the session would deny a client a call
- * over a field it could have omitted.
+ * `null` is refused rather than defaulted, which is the opposite of how the rest of this
+ * payload is read. The modes do not differ only in how much the agent says: in `open` it
+ * answers every utterance, and an answer can be a tool call the runtime executes for
+ * real. So a client that means `addressed` and misspells it would get an agent that talks
+ * over a room and acts on what it hears there, with nothing in the frames to say why. A
+ * client that sent the field asked for something specific, and it is cheaper to be told
+ * than to find out from the room.
  */
-function listeningMode(payload: Record<string, unknown>): VoiceListeningMode | undefined {
+function listeningMode(payload: Record<string, unknown>): VoiceListeningMode | undefined | null {
   const value = payload['mode'];
-  return value === 'open' || value === 'addressed' ? value : undefined;
+  if (value === undefined || value === null) return undefined;
+  return value === 'open' || value === 'addressed' ? value : null;
 }
 
 // ============================================================================
@@ -378,6 +383,15 @@ class WebSocketGatewayService {
       return;
     }
 
+    const mode = listeningMode(payload);
+    if (mode === null) {
+      this.sendTo(ws, {
+        type: 'voice_error',
+        payload: { error: 'mode must be "open" or "addressed"' },
+      });
+      return;
+    }
+
     // Answering takes a moment, and the client can give up inside it.
     const starting = { ws, cancelled: false };
     this.voiceStarting = starting;
@@ -385,7 +399,7 @@ class WebSocketGatewayService {
       userId,
       agentId,
       threadId: stringField(payload, 'threadId'),
-      mode: listeningMode(payload),
+      mode,
       signal: this.voiceSignal(ws),
     });
     if (this.voiceStarting === starting) this.voiceStarting = null;
