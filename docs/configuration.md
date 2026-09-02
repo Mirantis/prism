@@ -467,13 +467,14 @@ under the data dir, so sign-in happens once rather than per meeting.
 ## Voice chat
 
 [Voice chat](voice-chat.md) is a direct voice conversation between the agent and
-one client, over WebRTC. It needs the same `OPENAI_API_KEY` as voice meetings and
-uses the same voice, model and reasoning settings from the table above. The agent
-has one voice, so a voice chat and a Meet call exclude each other.
+one client. It needs the same `OPENAI_API_KEY` as voice meetings and uses the
+same voice, model and reasoning settings from the table above. The agent has one
+voice, so a voice chat and a Meet call exclude each other.
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `VOICE_ICE_SERVERS` | STUN and TURN servers the runtime's peer offers to ICE, as a JSON array in the WebRTC shape: `[{"urls":"stun:stun.example.org:3478"},{"urls":"turn:turn.example.org:3478","username":"u","credential":"c"}]`. Empty means **host candidates only** — the client has to reach the runtime's host directly, which covers localhost, a LAN and a port mapping but not a browser arriving through a reverse proxy. A remote deployment needs STUN here, and a network that blocks direct UDP needs TURN as well. Nothing is provisioned for you. An entry with no usable `urls`, or a value that is not a JSON array, is dropped with a startup warning and the runtime boots on host candidates. | — (none) |
+**There is nothing else to configure.** The audio travels on the WebSocket the
+client already uses for chat, so a voice chat works wherever chat works and needs
+no relay and no browser — unlike a voice meeting, it runs in the installed binary
+too.
 
 ## Observability
 

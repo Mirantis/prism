@@ -64,7 +64,7 @@ What the agent can do.
 - **[Voice meetings](voice-meetings.md)** — the agent joins a Google Meet call and
   takes part by voice, listening, speaking and using its tools live.
 - **[Voice chat](voice-chat.md)** — a direct voice conversation with the agent over
-  WebRTC, and the client contract a new client is written against.
+  the chat WebSocket, and the client contract a new client is written against.
 - **[Skills](skills.md)** — installable `SKILL.md` capability bundles (the
   agentskills.io standard) the agent uses automatically, from a global directory
   or a repository's own `.claude/skills`.

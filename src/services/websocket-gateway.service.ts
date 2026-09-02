@@ -19,6 +19,7 @@ import { threadTitleService, type ThreadTitleChange } from './thread-title.servi
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
 import { compactionService, type CompactionEvent } from './compaction.service';
 import { voiceChatService, type VoiceChatSignal } from './voice/voice-chat.service';
+import { VOICE_AUDIO_FORMAT } from './voice/socket-audio';
 
 // ============================================================================
 // Types
@@ -31,7 +32,7 @@ interface AuthenticatedWebSocket extends WebSocket {
 }
 
 interface WebSocketMessage {
-  type: 'chat' | 'ping' | 'pong' | 'subscribe' | 'cancel' | 'voice_offer' | 'voice_ice' | 'voice_stop';
+  type: 'chat' | 'ping' | 'pong' | 'subscribe' | 'cancel' | 'voice_start' | 'voice_stop';
   mode?: 'followup' | 'collect';
   content?: string;
   threadId?: string;
@@ -64,10 +65,10 @@ interface WebSocketResponse {
     | 'thread'
     | 'context'
     | 'compaction'
-    | 'voice_answer'
-    | 'voice_ice'
     | 'voice_state'
-    | 'voice_error';
+    | 'voice_error'
+    | 'voice_hello'
+    | 'voice_clear';
   threadId?: string;
   messageId?: string;
   content?: string;
@@ -187,8 +188,15 @@ class WebSocketGatewayService {
     logger.info('WebSocket connected for user %s (%d connections)', userId, userConnections.length);
 
     // Handle messages
-    ws.on('message', async (data: Buffer) => {
+    ws.on('message', async (data: Buffer, isBinary: boolean) => {
       try {
+        // Audio first, and never parsed. A binary frame is one frame of the
+        // client's microphone; running it through `JSON.parse` would fail on
+        // every one of them fifty times a second and answer each with an error.
+        if (isBinary) {
+          this.handleBinary(ws, data);
+          return;
+        }
         const message: WebSocketMessage = JSON.parse(data.toString());
         await this.handleMessage(ws, userId, message);
       } catch (error: unknown) {
@@ -256,15 +264,10 @@ class WebSocketGatewayService {
         // User is subscribing to notifications (already connected)
         break;
 
-      // Voice signalling. Only the offer, the client's candidates and its stop
-      // ride this socket; the audio itself goes over the peer connection those
-      // three frames set up.
-      case 'voice_offer':
-        await this.handleVoiceOffer(ws, userId, message);
-        break;
-
-      case 'voice_ice':
-        await this.handleVoiceIce(ws, message);
+      // Voice control. The audio itself rides this socket too, as binary frames
+      // handled before the JSON path — see `handleBinary`.
+      case 'voice_start':
+        await this.handleVoiceStart(ws, userId, message);
         break;
 
       case 'voice_stop':
@@ -302,20 +305,15 @@ class WebSocketGatewayService {
    * Open a voice chat for the client on this socket.
    *
    * The session belongs to the runtime rather than to the socket, so a second
-   * client's offer is refused with a `voice_error` and leaves the running call
+   * client's request is refused with a `voice_error` and leaves the running call
    * alone. See docs/voice-chat.md for the frames.
    */
-  private async handleVoiceOffer(
+  private async handleVoiceStart(
     ws: AuthenticatedWebSocket,
     userId: string,
     message: WebSocketMessage
   ): Promise<void> {
     const payload = payloadOf(message);
-    const sdp = stringField(payload, 'sdp');
-    if (!sdp) {
-      this.sendTo(ws, { type: 'voice_error', payload: { error: 'A voice offer needs an sdp' } });
-      return;
-    }
 
     const agentId = config.agentId;
     if (!agentId) {
@@ -333,7 +331,6 @@ class WebSocketGatewayService {
       userId,
       agentId,
       threadId: stringField(payload, 'threadId'),
-      offerSdp: sdp,
       signal: this.voiceSignal(ws),
     });
     if (this.voiceStarting === starting) this.voiceStarting = null;
@@ -349,22 +346,21 @@ class WebSocketGatewayService {
     }
 
     this.voiceSocket = ws;
+    // Sent after the session is the socket's, so a client that was refused never
+    // reads a format it cannot use.
+    this.sendTo(ws, { type: 'voice_hello', payload: { format: VOICE_AUDIO_FORMAT } });
   }
 
-  /** Forward a candidate the client gathered. From any other socket it is ignored. */
-  private async handleVoiceIce(ws: AuthenticatedWebSocket, message: WebSocketMessage): Promise<void> {
-    // The candidates of a client that was refused a session are not this peer's.
+  /**
+   * One frame of the client's microphone.
+   *
+   * Only from the socket that holds the session: another client's audio is not this
+   * call's, and a frame arriving after a call ended is ordinary rather than an error, so
+   * both are dropped in silence.
+   */
+  private handleBinary(ws: AuthenticatedWebSocket, data: Buffer): void {
     if (this.voiceSocket !== ws) return;
-
-    const payload = payloadOf(message);
-    const candidate = stringField(payload, 'candidate');
-    if (!candidate) return;
-
-    await voiceChatService.addIceCandidate({
-      candidate,
-      sdpMid: stringField(payload, 'sdpMid'),
-      sdpMLineIndex: typeof payload.sdpMLineIndex === 'number' ? payload.sdpMLineIndex : undefined,
-    });
+    voiceChatService.pushAudio(data);
   }
 
   /** End the session this socket opened. A stop from any other socket does nothing. */
@@ -377,8 +373,11 @@ class WebSocketGatewayService {
   /** How the voice service answers the client that asked for the session. */
   private voiceSignal(ws: AuthenticatedWebSocket): VoiceChatSignal {
     return {
-      answer: (sdp) => this.sendTo(ws, { type: 'voice_answer', payload: { sdp } }),
-      iceCandidate: (candidate) => this.sendTo(ws, { type: 'voice_ice', payload: candidate }),
+      sendAudio: (pcm) => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        ws.send(pcm, { binary: true });
+      },
+      sendClear: () => this.sendTo(ws, { type: 'voice_clear' }),
       state: (state) => {
         if (state === 'ended' && this.voiceSocket === ws) this.voiceSocket = null;
         this.sendTo(ws, { type: 'voice_state', payload: { state } });

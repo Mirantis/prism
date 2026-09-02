@@ -4,7 +4,11 @@
  * Wires the five collaborators into one loop and owns nothing else — the browser,
  * the audio devices and the meeting's lifecycle all belong to the service above:
  *
- *     capture (48k) → Downsampler → RealtimeSession → Upsampler → AudioPlayback
+ *     capture → Downsampler → RealtimeSession → Upsampler → AudioPlayback
+ *
+ * The two resamplers are there for a transport that speaks 48 kHz, which a
+ * browser on a virtual audio device does. A transport that already speaks the
+ * model's 24 kHz passes `sampleRate` and both become identity.
  *                                        │
  *                                   ResponsePolicy (open room, or gate it?)
  *                                        │
@@ -35,7 +39,7 @@
 
 import { logger } from '../../logger';
 import { config } from '../../config';
-import { Downsampler, Upsampler } from './resampler';
+import { Downsampler, Upsampler, MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } from './resampler';
 import { RealtimeSession, type RealtimeSessionOptions } from './realtime-session';
 import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { BargeInPolicy } from './barge-in';
@@ -71,8 +75,18 @@ import type { PreparedMeetingTools } from './tool-bridge';
 export interface VoiceConversationOptions {
   instructions: string;
   tools: PreparedMeetingTools;
-  /** Written with 48 kHz pcm16 — `pacat`'s stdin in production. */
+  /** Written with pcm16 at `sampleRate` — `pacat`'s stdin in production. */
   sink: PlaybackSink;
+  /**
+   * The rate the transport speaks, in and out. Defaults to the meeting's 48 kHz.
+   *
+   * `REALTIME_SAMPLE_RATE` means the transport already speaks the model's own
+   * rate, so both resamplers are skipped and the audio reaches the model as the
+   * client captured it. Only those two values exist: the resampler is a fixed
+   * 2:1 decimation, so anything else would need a converter that is not here,
+   * and silently accepting it would change pitch rather than fail.
+   */
+  sampleRate?: number;
   /** `auto` follows the participant count; see response-policy.ts. */
   responseMode: ResponseMode;
   /** The name the agent answers to — the same one the room hears it introduce. */
@@ -149,6 +163,9 @@ export class VoiceConversation {
   private readonly responsePolicy: ResponsePolicy;
   private readonly downsampler = new Downsampler();
   private readonly upsampler = new Upsampler();
+  /** Identity when the transport already speaks the model's rate. */
+  private readonly toModel: (pcm: Buffer) => Buffer;
+  private readonly fromModel: (pcm: Buffer) => Buffer;
   private responses = 0;
   private toolCalls = 0;
   private interruptions = 0;
@@ -219,7 +236,16 @@ export class VoiceConversation {
 
     this.responsePolicy = new ResponsePolicy({ mode: options.responseMode });
 
-    this.playback = new AudioPlayback(options.sink);
+    const rate = options.sampleRate ?? MEETING_SAMPLE_RATE;
+    if (rate !== MEETING_SAMPLE_RATE && rate !== REALTIME_SAMPLE_RATE) {
+      throw new Error(
+        `A voice conversation speaks ${MEETING_SAMPLE_RATE} or ${REALTIME_SAMPLE_RATE} Hz, not ${rate}`,
+      );
+    }
+    const passthrough = rate === REALTIME_SAMPLE_RATE;
+    this.toModel = passthrough ? (pcm) => pcm : (pcm) => this.downsampler.process(pcm);
+    this.fromModel = passthrough ? (pcm) => pcm : (pcm) => this.upsampler.process(pcm);
+    this.playback = new AudioPlayback(options.sink, rate);
 
     this.bargeIn = new BargeInPolicy({
       pausePlayback: () => this.playback.pause(),
@@ -273,7 +299,7 @@ export class VoiceConversation {
         this.bargeIn.onUtteranceStarted();
         this.currentItemId = itemId;
       }
-      this.playback.enqueue(this.upsampler.process(pcm24k), itemId);
+      this.playback.enqueue(this.fromModel(pcm24k), itemId);
     });
 
     this.session.on('speechStarted', () => this.bargeIn.onSpeechStarted());
@@ -457,10 +483,10 @@ export class VoiceConversation {
     await this.session.connect();
   }
 
-  /** Feed captured audio (48 kHz pcm16 mono) to the model. */
-  pushAudio(pcm48k: Buffer): void {
+  /** Feed captured audio (pcm16 mono, at the configured rate) to the model. */
+  pushAudio(pcm: Buffer): void {
     if (this.stopped || !this.session.isOpen) return;
-    this.session.sendAudio(this.downsampler.process(pcm48k));
+    this.session.sendAudio(this.toModel(pcm));
   }
 
   /**

@@ -10,8 +10,12 @@
  * no thread message, no tool-call row: what the user hears is what the call produced.
  *
  * Signalling is somebody else's job. This service is handed a `VoiceChatSignal` to talk
- * back through, so the transport it drives and the socket the client is on stay
- * independent of each other.
+ * back through, so the socket the client is on stays somebody else's to own.
+ *
+ * The audio travels on that same socket. There is nothing to negotiate and nothing to
+ * reach, so a session is live as soon as it is built — which is why a hosted runtime can
+ * carry a call at all: it has no inbound path for media, and a peer connection needed
+ * one.
  */
 
 import { logger } from '../../logger';
@@ -21,18 +25,18 @@ import { VoiceConversation } from '../meeting/voice-conversation';
 import { prepareMeetingTools } from '../meeting/tool-bridge';
 import { buildVoiceInstructions } from './voice-instructions';
 import { voiceSessionLock } from './voice-session-lock';
-import { createWrtcTransport, isVoiceTransportAvailable } from './wrtc-transport';
-import type { VoiceIceCandidate, VoiceTransport } from './voice-transport.interface';
+import { SocketAudio, VOICE_AUDIO_FORMAT, type SocketAudioChannel } from './socket-audio';
 
 /** What the client is told about the session it asked for. */
 export type VoiceChatState = 'live' | 'ended';
 
-/** How the service answers the client. One implementation per transport of signalling. */
-export interface VoiceChatSignal {
-  /** The peer's answer to the client's offer. */
-  answer(sdp: string): void;
-  /** One of the runtime's own ICE candidates. */
-  iceCandidate(candidate: VoiceIceCandidate): void;
+/**
+ * How the service answers the client, and how the agent's audio reaches it.
+ *
+ * `sendAudio` and `sendClear` are the audio half; the rest is the session's state. One
+ * implementation, in the gateway that owns the socket.
+ */
+export interface VoiceChatSignal extends SocketAudioChannel {
   /** The session is up, or it is over. */
   state(state: VoiceChatState): void;
   /** Why the session could not start, or could not continue. */
@@ -44,8 +48,6 @@ export interface StartVoiceChatInput {
   agentId: string;
   /** The thread the call was started from, for the tools that take one. */
   threadId?: string;
-  /** The client's SDP offer, verbatim. */
-  offerSdp: string;
   signal: VoiceChatSignal;
 }
 
@@ -59,7 +61,7 @@ class VoiceChatService {
    * act — and so `stop()` can cancel a start that is still several awaits from done.
    */
   private epoch = 0;
-  private transport: VoiceTransport | null = null;
+  private transport: SocketAudio | null = null;
   private conversation: VoiceConversation | null = null;
   private signal: VoiceChatSignal | null = null;
   private userId: string | null = null;
@@ -71,19 +73,17 @@ class VoiceChatService {
   }
 
   /**
-   * Answer a client's offer and open the session behind it.
+   * Open a session for the client that asked for one.
    *
-   * Resolves once the answer is on its way, not when the media path is up: the client
-   * hears `state('live')` for that. A refusal is an `error` frame, never a rejection —
-   * every reason this cannot run is something the user needs told in words — so the
-   * answer comes back as `true` when this offer opened the session, which is what lets
-   * signalling tell its own session from one it was refused.
+   * A refusal is an `error` frame, never a rejection — every reason this cannot run is
+   * something the user needs told in words — so the answer comes back as `true` when
+   * this request opened the session, which is what lets signalling tell its own session
+   * from one it was refused.
+   *
+   * There is no build that cannot carry a call any more: the audio rides the socket the
+   * client is already on, so there is no native binding to be missing.
    */
   async start(input: StartVoiceChatInput): Promise<boolean> {
-    if (!(await isVoiceTransportAvailable())) {
-      input.signal.error('This build cannot carry a voice chat — its WebRTC support is missing.');
-      return false;
-    }
     if (!voiceSessionLock.tryAcquire('voice-chat')) {
       input.signal.error(
         voiceSessionLock.holder === 'meeting'
@@ -99,18 +99,12 @@ class VoiceChatService {
     // Built into locals and published onto `this` only once the epoch check below says
     // the session is still wanted: a `stop()` during startup has nothing else to release,
     // and a peer left running would hold a metered Realtime socket open.
-    let transport: VoiceTransport | null = null;
+    let transport: SocketAudio | null = null;
     let conversation: VoiceConversation | null = null;
     const releaseLocals = async (): Promise<void> => {
       conversation?.stop();
       await transport?.close();
     };
-
-    // Candidates gather as soon as the answer is set, and a client cannot add one before
-    // it has that answer. Held until it goes out, so the order on the socket is the order
-    // the client can use.
-    let answered = false;
-    const queued: VoiceIceCandidate[] = [];
 
     try {
       // Instructions and tools first: they need the database, and failing here should cost
@@ -130,35 +124,25 @@ class VoiceChatService {
         lockedIn,
       });
 
-      transport = await createWrtcTransport({
+      transport = new SocketAudio(input.signal, {
         onAudio: (pcm) => {
           if (this.epoch === epoch) this.conversation?.pushAudio(pcm);
         },
-        onIceCandidate: (candidate) => {
-          if (this.epoch !== epoch) return;
-          if (answered) input.signal.iceCandidate(candidate);
-          else queued.push(candidate);
-        },
-        onConnected: () => {
-          if (this.epoch !== epoch) return;
-          logger.info('[VoiceChat] The media path is up');
-          input.signal.state('live');
-        },
-        onClosed: (reason) => void this.end(epoch, 'disconnected', reason),
       });
 
       conversation = new VoiceConversation({
         instructions,
         tools,
         sink: transport.sink,
+        // The transport speaks the model's own rate, so nothing resamples between the
+        // client's microphone and the model.
+        sampleRate: VOICE_AUDIO_FORMAT.sampleRate,
         responseMode: 'open',
         agentName,
         voice: config.openaiRealtimeVoice,
         onSessionLost: (reason) => void this.end(epoch, 'error', reason),
       });
       await conversation.start();
-
-      const answerSdp = await transport.accept(input.offerSdp);
 
       // Startup is several awaits long, and a `stop()` in any of them ended this session
       // before it began. Release what was built rather than publishing a session nobody
@@ -177,12 +161,11 @@ class VoiceChatService {
       this.startedAt = Date.now();
       this.state = 'live';
 
-      input.signal.answer(answerSdp);
-      answered = true;
-      for (const candidate of queued) input.signal.iceCandidate(candidate);
-      queued.length = 0;
+      // Live immediately: the socket that asked is the socket the audio travels on, so
+      // there is no media path still to come up and nothing to wait for.
+      input.signal.state('live');
 
-      logger.info({ tools: tools.count }, '[VoiceChat] Answered the offer');
+      logger.info({ tools: tools.count }, '[VoiceChat] Session is live');
       trackEvent('voice chat started', input.userId, {
         tools: String(tools.count),
         locked_in: String(lockedIn),
@@ -201,16 +184,14 @@ class VoiceChatService {
     }
   }
 
-  /** Add a candidate the client sent. Ignored when no session is live. */
-  async addIceCandidate(candidate: VoiceIceCandidate): Promise<void> {
-    if (!this.transport) return;
-    try {
-      await this.transport.addIceCandidate(candidate);
-    } catch (err) {
-      // A candidate the peer will not take costs one path, not the call: ICE carries on
-      // with the ones it has.
-      logger.warn({ err }, '[VoiceChat] The peer refused a candidate');
-    }
+  /**
+   * A frame of the client's audio. Dropped when no session is running.
+   *
+   * Dropped rather than refused: a frame in flight when a call ends is ordinary, and
+   * answering it would tell the client something it already knows.
+   */
+  pushAudio(pcm: Buffer): void {
+    this.transport?.push(pcm);
   }
 
   /** End the session, from the client asking or from its socket closing. */
