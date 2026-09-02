@@ -13,6 +13,10 @@ from this page alone.
 **Nothing about the call is written down.** There is no transcript, and no message
 appears in the thread. What you hear is all the call produces.
 
+The [web UI](web-ui.md#chat) is one such client already: click the microphone in
+the composer, allow your browser's microphone request, and talk. Click it again to
+end the call.
+
 ## What you need
 
 1. **`OPENAI_API_KEY`.** The voice model is OpenAI's Realtime API, connected

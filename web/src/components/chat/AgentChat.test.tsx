@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ConversationMessage } from '@/types';
@@ -14,19 +14,27 @@ import type { ConversationMessage } from '@/types';
 const { wsHolder } = vi.hoisted(() => ({
   wsHolder: {
     onMessage: undefined as ((m: ConversationMessage) => void) | undefined,
+    onVoice: undefined as ((f: unknown) => void) | undefined,
     isTyping: false,
     sendFollowup: vi.fn(),
+    sendVoiceOffer: vi.fn(),
+    sendVoiceIce: vi.fn(),
+    sendVoiceStop: vi.fn(),
   },
 }));
 
 vi.mock('@/hooks/use-websocket', () => ({
-  useWebSocket: (opts: { onMessage?: (m: ConversationMessage) => void }) => {
+  useWebSocket: (opts: { onMessage?: (m: ConversationMessage) => void; onVoice?: (f: unknown) => void }) => {
     wsHolder.onMessage = opts.onMessage;
+    wsHolder.onVoice = opts.onVoice;
     return {
       status: 'connected',
       isTyping: wsHolder.isTyping,
       sendFollowup: wsHolder.sendFollowup,
       cancel: vi.fn(),
+      sendVoiceOffer: wsHolder.sendVoiceOffer,
+      sendVoiceIce: wsHolder.sendVoiceIce,
+      sendVoiceStop: wsHolder.sendVoiceStop,
     };
   },
 }));
@@ -51,7 +59,10 @@ vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn() }));
 // on screen without pulling in the full message/markdown renderer.
 vi.mock('./ChatMessageList', () => ({
   default: ({ messages }: { messages: ConversationMessage[] }) => (
-    <div data-testid="list">{messages.map((m) => `${m.id}:${m.threadId}`).join(',')}</div>
+    <>
+      <div data-testid="list">{messages.map((m) => `${m.id}:${m.threadId}`).join(',')}</div>
+      <div data-testid="contents">{messages.map((m) => m.content).join('|')}</div>
+    </>
   ),
 }));
 // Composer stub: enough of the real contract (controlled value + a submit
@@ -61,15 +72,28 @@ vi.mock('./ChatInput', () => ({
     value,
     onChange,
     onSend,
+    voiceState,
+    onVoiceStart,
+    onVoiceStop,
   }: {
     value: string;
     onChange: (v: string) => void;
     onSend: (e: { preventDefault: () => void }) => void;
+    voiceState: string;
+    onVoiceStart: () => void;
+    onVoiceStop: () => void;
   }) => (
     <div data-testid="input">
       <input data-testid="composer" value={value} onChange={(e) => onChange(e.target.value)} />
       <button data-testid="send" onClick={() => onSend({ preventDefault: () => {} })}>
         send
+      </button>
+      <span data-testid="voice-state">{voiceState}</span>
+      <button data-testid="voice-start" onClick={onVoiceStart}>
+        start
+      </button>
+      <button data-testid="voice-stop" onClick={onVoiceStop}>
+        stop
       </button>
     </div>
   ),
@@ -128,6 +152,110 @@ describe('AgentChat inbound message scoping', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['thread', 'a1', 't2'] });
 
     cleanup();
+  });
+});
+
+/** Just enough of the browser's audio machinery for a call to be started here. */
+class FakePC {
+  localDescription = { type: 'offer', sdp: 'v=0\r\noffer' };
+  connectionState = 'new';
+  onicecandidate: unknown = null;
+  ontrack: unknown = null;
+  onconnectionstatechange: unknown = null;
+  addTrack() {}
+  async createOffer() {
+    return this.localDescription;
+  }
+  async setLocalDescription() {}
+  async setRemoteDescription() {}
+  async addIceCandidate() {}
+  close() {}
+}
+
+describe('AgentChat voice chat', () => {
+  const getUserMedia = vi.fn(async () => ({ getTracks: () => [{ stop: () => {} }] }));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    wsHolder.onVoice = undefined;
+    wsHolder.isTyping = false;
+    mockGetThread.mockResolvedValue({ id: 't1', messages: [] });
+    getUserMedia.mockImplementation(async () => ({ getTracks: () => [{ stop: () => {} }] }));
+    vi.stubGlobal('RTCPeerConnection', FakePC);
+    Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia }, configurable: true });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  async function mount() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AgentChat threadId="t1" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(mockGetThread).toHaveBeenCalledWith('a1', 'u1', 't1'));
+    await waitFor(() => expect(wsHolder.onVoice).toBeTypeOf('function'));
+  }
+
+  function contents() {
+    return screen.getByTestId('contents').textContent ?? '';
+  }
+
+  // Every refusal the runtime writes is shown word for word: docs/voice-chat.md writes
+  // that text for the user, so re-wording it here would make its error table fiction.
+  it.each([
+    'There is already a voice chat running. End that one first.',
+    "I'm in a meeting call right now. That has to end before I can talk here.",
+    'Could not start the voice chat: the model session would not open',
+    'This build cannot carry a voice chat — its WebRTC support is missing.',
+  ])('shows the refusal "%s" as a line in the conversation', async (error) => {
+    await mount();
+
+    act(() => wsHolder.onVoice!({ kind: 'error', error }));
+
+    await waitFor(() => expect(contents()).toContain(error));
+  });
+
+  it('reports a denied microphone itself, which the runtime never sees', async () => {
+    getUserMedia.mockRejectedValue(new Error('NotAllowedError'));
+    await mount();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('voice-start'));
+    });
+
+    await waitFor(() => expect(contents()).toContain('Voice chat needs your microphone'));
+    expect(wsHolder.sendVoiceOffer).not.toHaveBeenCalled();
+  });
+
+  it('adds nothing to the conversation for a call that runs and ends', async () => {
+    // Criterion: the interface must not imply a transcript exists. A call that ends
+    // normally leaves no line at all, so nothing on screen reads as a message that
+    // failed to arrive.
+    await mount();
+    const before = contents();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('voice-start'));
+    });
+    expect(wsHolder.sendVoiceOffer).toHaveBeenCalledWith('v=0\r\noffer', 't1');
+
+    await act(async () => {
+      wsHolder.onVoice!({ kind: 'answer', sdp: 'v=0\r\nanswer' });
+    });
+    act(() => wsHolder.onVoice!({ kind: 'state', state: 'live' }));
+    await waitFor(() => expect(screen.getByTestId('voice-state').textContent).toBe('live'));
+
+    act(() => fireEvent.click(screen.getByTestId('voice-stop')));
+    expect(wsHolder.sendVoiceStop).toHaveBeenCalledTimes(1);
+    act(() => wsHolder.onVoice!({ kind: 'state', state: 'ended' }));
+
+    await waitFor(() => expect(screen.getByTestId('voice-state').textContent).toBe('idle'));
+    expect(contents()).toBe(before);
   });
 });
 

@@ -18,6 +18,9 @@ const baseProps = {
   onFilesSelected: () => {},
   onRemoveAttachment: () => {},
   contextUsage: null,
+  voiceState: 'idle' as const,
+  onVoiceStart: () => {},
+  onVoiceStop: () => {},
 };
 
 const usage = {
@@ -95,6 +98,28 @@ describe('ChatInput', () => {
     render(<ChatInput {...baseProps} value="hi" connectionStatus="disconnected" onSend={onSend} />);
     fireEvent.keyDown(screen.getByPlaceholderText('Message your agent...'), { key: 'Enter' });
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  describe('voice call in the meta strip', () => {
+    it('shows nothing while there is no call', () => {
+      render(<ChatInput {...baseProps} />);
+      expect(screen.queryByTestId('voice-call-indicator')).toBeNull();
+    });
+
+    it('says the call is live, on a healthy connection', () => {
+      // The strip renders on its own for a call: a connected composer with no context
+      // reading has nothing else to put in it.
+      render(<ChatInput {...baseProps} voiceState="live" />);
+      expect(screen.getByTestId('voice-call-indicator')).toHaveTextContent('Voice chat live');
+    });
+
+    it('never says recording or transcribing, and shows no timer', () => {
+      // Criterion: the interface must not imply a transcript exists.
+      render(<ChatInput {...baseProps} voiceState="live" />);
+      const text = screen.getByTestId('voice-call-indicator').textContent ?? '';
+      expect(text.toLowerCase()).not.toMatch(/record|transcri/);
+      expect(text).not.toMatch(/\d/);
+    });
   });
 
   describe('context meter in the meta strip', () => {

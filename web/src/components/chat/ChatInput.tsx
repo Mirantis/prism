@@ -17,10 +17,12 @@ import {
 } from '@/components/ui/input-group';
 import { ArrowUp, Paperclip, Square } from 'lucide-react';
 import type { ConnectionStatus } from '@/hooks/use-websocket';
+import type { VoiceCallState } from '@/hooks/use-voice-call';
 import type { ContextUsage } from '@/types';
 import { PendingAttachmentChip, type PendingAttachment } from './ChatAttachmentChip';
 import CommandPopup from './CommandPopup';
 import ContextMeter from './context-meter';
+import VoiceCallButton from './voice-call-button';
 import { filterByPrefix, isSlashMode, type SlashCommand } from './commands';
 
 interface ChatInputProps {
@@ -42,7 +44,19 @@ interface ChatInputProps {
   contextUsage: ContextUsage | null;
   /** A compaction is running for the active thread — show a note in the meta strip. */
   isCompacting?: boolean;
+  /** Where the voice call is, for the microphone button and the meta strip. */
+  voiceState: VoiceCallState;
+  onVoiceStart: () => void;
+  onVoiceStop: () => void;
 }
+
+const voiceLabels: Record<VoiceCallState, string> = {
+  idle: '',
+  starting: 'Voice chat starting…',
+  connecting: 'Voice chat connecting…',
+  live: 'Voice chat live',
+  ending: 'Voice chat ending…',
+};
 
 const statusColors: Record<ConnectionStatus, string> = {
   connected: 'bg-green-500',
@@ -63,6 +77,9 @@ export default function ChatInput({
   onRemoveAttachment,
   contextUsage,
   isCompacting = false,
+  voiceState,
+  onVoiceStart,
+  onVoiceStop,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -209,7 +226,7 @@ export default function ChatInput({
         Connection notice on the left, context on the right; when only one is
         present it still lands on its own side.
       */}
-      {(connectionStatus !== 'connected' || contextUsage || isCompacting) && (
+      {(connectionStatus !== 'connected' || contextUsage || isCompacting || voiceState !== 'idle') && (
         <div className="flex items-center justify-between gap-2 bg-muted/50 px-4 py-1.5 text-xs text-muted-foreground">
           <span className="flex items-center gap-2">
             {connectionStatus !== 'connected' && (
@@ -222,6 +239,17 @@ export default function ChatInput({
               <span data-testid="compacting-indicator" className="flex items-center gap-1.5">
                 <span className="inline-block size-1.5 animate-pulse rounded-full bg-yellow-500" />
                 Compacting conversation…
+              </span>
+            )}
+            {/*
+              The call's own state, and nothing more: no elapsed timer and no
+              "recording", either of which would read as a recording light over a call
+              that writes nothing down.
+            */}
+            {voiceState !== 'idle' && (
+              <span data-testid="voice-call-indicator" className="flex items-center gap-1.5">
+                <span className="inline-block size-1.5 animate-pulse rounded-full bg-green-500" />
+                {voiceLabels[voiceState]}
               </span>
             )}
           </span>
@@ -266,6 +294,12 @@ export default function ChatInput({
               >
                 <Paperclip className="size-3.5" />
               </InputGroupButton>
+              <VoiceCallButton
+                state={voiceState}
+                isConnected={connectionStatus === 'connected'}
+                onStart={onVoiceStart}
+                onStop={onVoiceStop}
+              />
             </InputGroupAddon>
             <InputGroupTextarea
               ref={textareaRef}

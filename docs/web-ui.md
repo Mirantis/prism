@@ -54,6 +54,9 @@ The main conversation surface.
   longer be downloaded — share it again if needed.
 - **Stopping.** While the agent is responding, a stop button appears next to
   send. It cancels the in-flight turn.
+- **Voice chat.** Click the microphone next to the paperclip to talk to the agent
+  out loud, allow your browser's microphone request, and click the button again to
+  end the call — see **[Voice chat](voice-chat.md)**.
 - **Steering a response in progress.** You can keep typing while the agent
   works, and **Enter sends** — send stays live for the whole turn, alongside
   stop. A message sent mid-response is handed to the turn already running: the

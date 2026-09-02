@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, type FormEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { runtimeApi } from '@/api/runtime-client';
 import { ApiError } from '@/api/errors';
 import { useAgent } from '@/lib/agent-context';
-import { useWebSocket } from '@/hooks/use-websocket';
+import { useWebSocket, type VoiceFrame } from '@/hooks/use-websocket';
+import { useVoiceCall } from '@/hooks/use-voice-call';
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   type Attachment,
@@ -14,6 +15,7 @@ import {
 } from '@/types';
 import ChatMessageList from './ChatMessageList';
 import ChatInput from './ChatInput';
+import VoiceCallAudio from './voice-call-audio';
 import type { PendingAttachment } from './ChatAttachmentChip';
 import { findExact, parseCommandLine, type SlashCommand } from './commands';
 
@@ -33,8 +35,22 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   // appended directly in the WS callback) so the note goes through
   // appendSystemMessage, which is declared further down.
   const [compactionNotice, setCompactionNotice] = useState<CompactionEvent | null>(null);
+  // Why a voice call ended, or why it never started, pending a SYSTEM note. Staged the
+  // same way as compactionNotice, and for the same reason.
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+  // The call is set up below, because it needs the socket's senders, while the socket
+  // needs the call's frame handler. This ref breaks that circle.
+  const voiceFrameRef = useRef<((frame: VoiceFrame) => void) | null>(null);
 
-  const { status, isTyping, sendFollowup, cancel } = useWebSocket({
+  const {
+    status,
+    isTyping,
+    sendFollowup,
+    cancel,
+    sendVoiceOffer,
+    sendVoiceIce,
+    sendVoiceStop,
+  } = useWebSocket({
     onMessage: (msg) => {
       // Deliveries are broadcast to all of the user's connections tagged with
       // their own thread id — a heartbeat, a cron task, a Slack turn, or a turn
@@ -69,7 +85,19 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     onThreadUpdate: () => {
       queryClient.invalidateQueries({ queryKey: ['threads', agent.agentId, 'recents'] });
     },
+    onVoice: (frame) => voiceFrameRef.current?.(frame),
   });
+
+  // The call the microphone button drives. The thread travels with the offer, so the
+  // agent's tools work on the conversation the user is looking at.
+  const voice = useVoiceCall({
+    sendOffer: sendVoiceOffer,
+    sendIce: sendVoiceIce,
+    sendStop: sendVoiceStop,
+    threadId: activeThreadId,
+    onError: setVoiceNotice,
+  });
+  voiceFrameRef.current = voice.onFrame;
 
   // Cancel the in-flight turn and drop an ephemeral marker so the user gets
   // explicit confirmation. The marker is client-only (never stored), so it
@@ -269,6 +297,17 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     }
   }, [compactionNotice, appendSystemMessage]);
 
+  // Why a voice call was refused or ended badly, shown as a client-only line. The
+  // runtime's text is rendered word for word: docs/voice-chat.md writes it for the user,
+  // and re-wording it here would make that contract's error table fiction. A call that
+  // ends normally adds nothing at all, so nothing on screen reads as a message that
+  // never arrived.
+  useEffect(() => {
+    if (!voiceNotice) return;
+    setVoiceNotice(null);
+    appendSystemMessage(voiceNotice);
+  }, [voiceNotice, appendSystemMessage]);
+
   // Run a slash command locally and surface its result as a SYSTEM message. The
   // command itself calls the runtime's REST endpoints (e.g. /skills run streams
   // the agent's reply back over WebSocket); we never send the slash text to the
@@ -364,7 +403,11 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         onRemoveAttachment={handleRemoveAttachment}
         contextUsage={contextUsage}
         isCompacting={isCompacting}
+        voiceState={voice.state}
+        onVoiceStart={() => void voice.start()}
+        onVoiceStop={voice.stop}
       />
+      <VoiceCallAudio stream={voice.remoteStream} />
     </div>
   );
 }
