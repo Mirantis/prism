@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, type FormEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { runtimeApi } from '@/api/runtime-client';
 import { ApiError } from '@/api/errors';
 import { useAgent } from '@/lib/agent-context';
 import { useWebSocket } from '@/hooks/use-websocket';
+import { useVoiceCall, type VoiceCall } from '@/hooks/use-voice-call';
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   type Attachment,
@@ -34,7 +35,20 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   // appendSystemMessage, which is declared further down.
   const [compactionNotice, setCompactionNotice] = useState<CompactionEvent | null>(null);
 
-  const { status, isTyping, sendFollowup, cancel } = useWebSocket({
+  // The socket hands out the senders and the call hands back the handlers, so one of the
+  // two is read late. The socket's callbacks are bound once, so the call goes through a
+  // ref and the socket is not re-bound as the call's state changes.
+  const voiceRef = useRef<VoiceCall | null>(null);
+
+  const {
+    status,
+    isTyping,
+    sendFollowup,
+    cancel,
+    sendVoiceStart,
+    sendVoiceStop,
+    sendVoiceAudio,
+  } = useWebSocket({
     onMessage: (msg) => {
       // Deliveries are broadcast to all of the user's connections tagged with
       // their own thread id — a heartbeat, a cron task, a Slack turn, or a turn
@@ -69,7 +83,18 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     onThreadUpdate: () => {
       queryClient.invalidateQueries({ queryKey: ['threads', agent.agentId, 'recents'] });
     },
+    onVoiceEvent: (event) => voiceRef.current?.handleEvent(event),
+    onVoiceAudio: (frame) => voiceRef.current?.handleAudio(frame),
   });
+
+  const voice = useVoiceCall({
+    sendVoiceStart,
+    sendVoiceStop,
+    sendVoiceAudio,
+    threadId: activeThreadId,
+    isConnected: status === 'connected',
+  });
+  voiceRef.current = voice;
 
   // Cancel the in-flight turn and drop an ephemeral marker so the user gets
   // explicit confirmation. The marker is client-only (never stored), so it
@@ -361,6 +386,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         onRemoveAttachment={handleRemoveAttachment}
         contextUsage={contextUsage}
         isCompacting={isCompacting}
+        voice={voice}
       />
     </div>
   );

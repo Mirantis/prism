@@ -17,10 +17,13 @@ import {
 } from '@/components/ui/input-group';
 import { ArrowUp, Paperclip, Square } from 'lucide-react';
 import type { ConnectionStatus } from '@/hooks/use-websocket';
+import type { VoiceCall } from '@/hooks/use-voice-call';
 import type { ContextUsage } from '@/types';
 import { PendingAttachmentChip, type PendingAttachment } from './ChatAttachmentChip';
 import CommandPopup from './CommandPopup';
 import ContextMeter from './context-meter';
+import VoiceCallButton from './voice-call-button';
+import VoiceCallStatus from './voice-call-status';
 import { filterByPrefix, isSlashMode, type SlashCommand } from './commands';
 
 interface ChatInputProps {
@@ -42,6 +45,8 @@ interface ChatInputProps {
   contextUsage: ContextUsage | null;
   /** A compaction is running for the active thread — show a note in the meta strip. */
   isCompacting?: boolean;
+  /** The voice chat, or nothing when the surface does not offer one. */
+  voice?: VoiceCall;
 }
 
 const statusColors: Record<ConnectionStatus, string> = {
@@ -63,6 +68,7 @@ export default function ChatInput({
   onRemoveAttachment,
   contextUsage,
   isCompacting = false,
+  voice,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -101,6 +107,11 @@ export default function ChatInput({
       : isPending
         ? 'Send — the running turn will pick this up'
         : 'Send message';
+
+  // A running call and a refused one both have something to say, so the strip opens for
+  // either. A refusal has to be readable text somewhere, and the composer is where the
+  // user pressed the button.
+  const hasVoiceNotice = voice ? voice.status !== 'idle' || voice.error !== null : false;
 
   // Filtered command list shown while typing a leading "/" with no space yet.
   // '/' alone lists everything; '/sk' filters by prefix. Mirrors the TUI's
@@ -209,7 +220,7 @@ export default function ChatInput({
         Connection notice on the left, context on the right; when only one is
         present it still lands on its own side.
       */}
-      {(connectionStatus !== 'connected' || contextUsage || isCompacting) && (
+      {(connectionStatus !== 'connected' || contextUsage || isCompacting || hasVoiceNotice) && (
         <div className="flex items-center justify-between gap-2 bg-muted/50 px-4 py-1.5 text-xs text-muted-foreground">
           <span className="flex items-center gap-2">
             {connectionStatus !== 'connected' && (
@@ -223,6 +234,13 @@ export default function ChatInput({
                 <span className="inline-block size-1.5 animate-pulse rounded-full bg-yellow-500" />
                 Compacting conversation…
               </span>
+            )}
+            {voice && (
+              <VoiceCallStatus
+                status={voice.status}
+                isSpeaking={voice.isSpeaking}
+                error={voice.error}
+              />
             )}
           </span>
           {contextUsage && <ContextMeter usage={contextUsage} />}
@@ -266,6 +284,14 @@ export default function ChatInput({
               >
                 <Paperclip className="size-3.5" />
               </InputGroupButton>
+              {voice && (
+                <VoiceCallButton
+                  status={voice.status}
+                  disabled={connectionStatus !== 'connected'}
+                  onStart={voice.start}
+                  onStop={voice.stop}
+                />
+              )}
             </InputGroupAddon>
             <InputGroupTextarea
               ref={textareaRef}

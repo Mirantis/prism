@@ -97,6 +97,11 @@ describe('ChatInput', () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  it('offers no voice control when the surface passes no call', () => {
+    render(<ChatInput {...baseProps} />);
+    expect(screen.queryByTestId('voice-call-button')).toBeNull();
+  });
+
   describe('context meter in the meta strip', () => {
     it('renders nothing when there is no measurement yet', () => {
       // A fresh thread must show no reading at all — "100%" would be a claim the
