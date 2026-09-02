@@ -68,6 +68,9 @@ export function sourceIsRunning(pactlShortSources: string, sourceName: string): 
   return false;
 }
 
+/** The virtual display's geometry, which anything that grabs the screen needs too. */
+export const VIRTUAL_DISPLAY_SIZE = '1280x720';
+
 export interface AudioStackHandles {
   /** Env vars Chrome needs to use the virtual devices and display. */
   browserEnv: Record<string, string>;
@@ -162,7 +165,7 @@ export class AudioStack {
   private async startXvfb(): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       // 1280x720 is enough for Meet's join UI and keeps the framebuffer small.
-      const proc = spawn('Xvfb', ['-displayfd', '1', '-screen', '0', '1280x720x24', '-nolisten', 'tcp'], {
+      const proc = spawn('Xvfb', ['-displayfd', '1', '-screen', '0', `${VIRTUAL_DISPLAY_SIZE}x24`, '-nolisten', 'tcp'], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       this.xvfb = proc;

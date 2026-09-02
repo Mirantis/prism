@@ -1,10 +1,14 @@
 /**
- * The browser tools of a voice chat, and how they reach the Realtime model.
+ * The browser and desktop tools of a voice chat, and how they reach the Realtime model.
  *
  * `browse` and `see_screen` are the meeting's tools (`tools/meeting.ts`) bound to this
  * session's browser instead of the meeting bot's: same names, same schemas, so the
  * prompt text written for a call reads the same here. The meeting's copies, which
  * answer "I am not in a meeting", are dropped from the agent's set in their favour.
+ *
+ * The `desktop_*` tools exist only where the runtime owns the display: they move the
+ * mouse and press keys on it by pixel coordinates read off the picture `see_screen`
+ * gives, and each answers with a fresh picture.
  */
 
 import { asSchema, tool, type Tool } from 'ai';
@@ -14,6 +18,7 @@ import { MEETING_SCREEN_TOOL_NAMES } from '../../tools/meeting';
 import type { BrowserCommand, BrowserReading, BrowserResult } from '../meeting/browser-control';
 import type { RealtimeFunctionTool } from '../meeting/realtime-session';
 import type { PreparedMeetingTools } from '../meeting/tool-bridge';
+import type { MouseButton, ScrollDirection } from './desktop-control';
 
 /** What a session offers the tools: its browser, and the model to show a picture to. */
 export interface VoiceChatBrowser {
@@ -21,8 +26,36 @@ export interface VoiceChatBrowser {
   lookAtScreen(): Promise<{ success: boolean; message: string } & Partial<BrowserReading>>;
 }
 
-export function createVoiceChatTools(browser: VoiceChatBrowser): Record<string, Tool> {
+export interface DesktopActionResult {
+  success: boolean;
+  message: string;
+}
+
+/** The desktop a session owns, when it owns one. Every action shows the model the result. */
+export interface VoiceChatDesktop {
+  width: number;
+  height: number;
+  click(input: { x: number; y: number; button?: MouseButton; double?: boolean }): Promise<DesktopActionResult>;
+  type(input: { text: string }): Promise<DesktopActionResult>;
+  key(input: { keys: string }): Promise<DesktopActionResult>;
+  scroll(input: { x: number; y: number; direction: ScrollDirection; clicks?: number }): Promise<DesktopActionResult>;
+}
+
+export function createVoiceChatTools(
+  browser: VoiceChatBrowser,
+  desktop: VoiceChatDesktop | null,
+): Record<string, Tool> {
+  const screenDescription = desktop
+    ? `See your whole screen right now — a picture of the ${desktop.width} by ${desktop.height} ` +
+      'desktop with every window on it, plus the text and controls of the browser tab in front. ' +
+      'Use it to find what to click, to check what an action did, or to answer a question ' +
+      'about what is on screen. Takes a couple of seconds.'
+    : 'See what your browser is showing right now — a picture of the tab in front, plus ' +
+      'the text and controls of the page. Use it to check a page `browse` reported oddly, ' +
+      'or to answer a question about what is on screen. Takes a couple of seconds.';
+
   return {
+    ...(desktop ? createDesktopTools(desktop) : {}),
     browse: tool({
       description:
         'Use your web browser: open a page, click things, type, scroll, and work in ' +
@@ -78,12 +111,61 @@ export function createVoiceChatTools(browser: VoiceChatBrowser): Record<string, 
     }),
 
     see_screen: tool({
-      description:
-        'See what your browser is showing right now — a picture of the tab in front, plus ' +
-        'the text and controls of the page. Use it to check a page `browse` reported oddly, ' +
-        'or to answer a question about what is on screen. Takes a couple of seconds.',
+      description: screenDescription,
       inputSchema: z.object({}),
       execute: async () => browser.lookAtScreen(),
+    }),
+  };
+}
+
+function createDesktopTools(desktop: VoiceChatDesktop): Record<string, Tool> {
+  const where =
+    `Pixel coordinates on the ${desktop.width} by ${desktop.height} screen, as seen in the ` +
+    'picture from `see_screen`: x from the left edge, y from the top.';
+
+  return {
+    desktop_click: tool({
+      description:
+        'Click somewhere on your desktop: a menu, a button, a window, a text field to focus. ' +
+        `${where} Answers with a fresh picture of the screen after the click.`,
+      inputSchema: z.object({
+        x: z.number().describe('Pixels from the left edge.'),
+        y: z.number().describe('Pixels from the top edge.'),
+        button: z.enum(['left', 'middle', 'right']).optional().describe('Defaults to left.'),
+        double: z.boolean().optional().describe('True for a double-click.'),
+      }),
+      execute: async (input) => desktop.click(input),
+    }),
+
+    desktop_type: tool({
+      description:
+        'Type text on your desktop, into whatever has the keyboard focus — click a field or a ' +
+        'terminal first. Answers with a fresh picture of the screen.',
+      inputSchema: z.object({ text: z.string().min(1).describe('The text to type, as is.') }),
+      execute: async (input) => desktop.type(input),
+    }),
+
+    desktop_key: tool({
+      description:
+        'Press one key or a chord on your desktop, such as "Return", "Escape", "Tab", ' +
+        '"ctrl+l", "alt+F4" or "super". Answers with a fresh picture of the screen.',
+      inputSchema: z.object({
+        keys: z.string().describe('A key name, or names joined with "+", in X11 keysym spelling.'),
+      }),
+      execute: async (input) => desktop.key(input),
+    }),
+
+    desktop_scroll: tool({
+      description:
+        `Scroll the mouse wheel over a point on your desktop. ${where} Answers with a fresh ` +
+        'picture of the screen.',
+      inputSchema: z.object({
+        x: z.number().describe('Pixels from the left edge.'),
+        y: z.number().describe('Pixels from the top edge.'),
+        direction: z.enum(['up', 'down']),
+        clicks: z.number().int().min(1).max(20).optional().describe('Wheel clicks; defaults to 3.'),
+      }),
+      execute: async (input) => desktop.scroll(input),
     }),
   };
 }

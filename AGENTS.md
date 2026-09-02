@@ -570,7 +570,10 @@ it and removes the container. `PRISM_IMAGE`, `PRISM_PORT`, `PRISM_CONTAINER` and
 the generated Prisma client, so the script warns when its `package-lock.json` or
 Prisma schema differs from the checkout's; pull a newer image or build one with
 `npm run docker:build` then. This is the loop for anything that needs the image's
-toolchain, such as the voice chat's browser on a virtual display.
+toolchain: in the container the voice chat's browser runs on an XFCE desktop on the
+virtual display, and the Scratchpad page shows that whole desktop, captured with
+`ffmpeg`. On a host with its own display the browser opens there instead and the page
+shows the tab in front.
 
 ### Production-shape preview (no HMR, no Vite)
 

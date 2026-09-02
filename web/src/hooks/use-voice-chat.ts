@@ -9,8 +9,8 @@ import { voiceWebSocketUrl } from '@/api/runtime-client';
  * binary frames. Both directions run through one AudioWorklet
  * (`/voice-chat-processor.js`), which plays the two incoming streams mixed and
  * reports when the agent's voice is producing sound. JSON text frames carry the
- * runtime's status and pictures of the browser. Mute stops sending frames; the socket
- * and the session stay up.
+ * runtime's status and pictures of the agent's screen. Mute stops sending frames; the
+ * socket and the session stay up.
  */
 
 export type VoiceChatState = 'connecting' | 'ready' | 'ended' | 'error' | 'mic-denied';
@@ -21,7 +21,7 @@ interface StatusFrame {
   message?: string;
 }
 
-/** One picture of the agent's browser, as base64 JPEG. */
+/** One picture of the agent's screen, as base64 JPEG. */
 interface ScreenFrame {
   type: 'screen';
   data: string;
@@ -52,12 +52,12 @@ export function useVoiceChat() {
   const [message, setMessage] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
-  /** True once the first picture of the agent's browser has arrived. */
+  /** True once the first picture of the agent's screen has arrived. */
   const [hasScreen, setHasScreen] = useState(false);
   const mutedRef = useRef(false);
   const contextRef = useRef<AudioContext | null>(null);
   /**
-   * The image the browser pictures are drawn into. Written directly rather than
+   * The image the screen pictures are drawn into. Written directly rather than
    * through state: several frames a second, each a long string, is no job for a
    * re-render.
    */
