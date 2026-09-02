@@ -372,6 +372,11 @@ const embeddingModelId = embeddingModelIds[embeddingProvider];
 // follows OpenAI's current snapshot, and a voice model changing under a live
 // deployment shifts turn-taking and prosody with no code change to point at.
 const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1';
+// Where the Realtime WebSocket goes. `OPENAI_BASE_URL` does not move it — that one
+// is the Responses API endpoint — so a test that needs a local voice model has no
+// other way in: the runtime under test is a separate process, and the in-process
+// endpoint override cannot cross that boundary. Unset means api.openai.com.
+const openaiRealtimeUrl = process.env.OPENAI_REALTIME_URL || undefined;
 // `marin` is markedly better for conversation than the API's `alloy` default.
 // Overridable because a future model may retire a voice name.
 const openaiRealtimeVoice = process.env.OPENAI_REALTIME_VOICE || 'marin';
@@ -816,6 +821,9 @@ export const config = {
   // admit named guests, defaulting to the agent's name.
   openaiApiKey,
   openaiRealtimeModel,
+  // OPENAI_REALTIME_URL, unset in every deployment: the Realtime WebSocket host,
+  // for a test that runs a local voice model instead of api.openai.com.
+  openaiRealtimeUrl,
   openaiRealtimeVoice,
   // OPENAI_REALTIME_REASONING_EFFORT, default 'high' (the API's own default is
   // 'low'); '' sends no setting at all and leaves the choice to the API.

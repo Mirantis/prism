@@ -45,7 +45,10 @@ export function resolveRealtimeEndpoint(model?: string): RealtimeEndpoint {
   }
 
   const modelId = model || config.openaiRealtimeModel;
-  const url = `${REALTIME_HOST}?model=${encodeURIComponent(modelId)}`;
+  // `OPENAI_REALTIME_URL` points the socket at a local voice model. The key is
+  // still required, so the only thing that changes is the host.
+  const base = config.openaiRealtimeUrl || REALTIME_HOST;
+  const url = `${base}?model=${encodeURIComponent(modelId)}`;
 
   // Realtime went GA in August 2025; the `OpenAI-Beta: realtime=v1` header the
   // preview models required is no longer sent.
