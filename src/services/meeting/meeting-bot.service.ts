@@ -20,9 +20,7 @@
 import { logger } from '../../logger';
 import { config } from '../../config';
 import { trackEvent } from '../../lib/telemetry';
-import { contextService } from '../context.service';
-import { buildSystemPromptParts } from '../../prompts/context-builder';
-import { getMeetingInstructions } from '../../prompts/meeting-prompt';
+import { buildVoiceInstructions, type VoiceInstructions } from '../voice/voice-instructions';
 import { AudioStack } from './audio-stack';
 import { BrowserStack } from './browser-stack';
 import { VoiceConversation, type VoiceConversationStats } from './voice-conversation';
@@ -1435,37 +1433,14 @@ export class MeetingBotService {
     if (this.state === 'idle') voiceSessionLock.release('meeting');
   }
 
-  /**
-   * Build the model's session instructions: the agent's own system prompt, plus
-   * how to behave in a live call.
-   *
-   * Same pipeline `invoke()` uses, so Soul, User, Agent Guide, Memory and Skills
-   * all carry over — that is what makes the voice in the room the agent rather
-   * than a generic assistant wearing its name. Conversation history is left out:
-   * a meeting is its own context, and a whole thread would bloat a session that
-   * pays per audio token.
-   */
-  private async buildInstructions(
-    input: JoinMeetingInput,
-  ): Promise<{ instructions: string; agentName: string; lockedIn: boolean }> {
-    const context = await contextService.getAgentContext(input.userId, {
+  /** Build the model's session instructions, naming the platform the room is on. */
+  private async buildInstructions(input: JoinMeetingInput): Promise<VoiceInstructions> {
+    return buildVoiceInstructions({
+      userId: input.userId,
       agentId: input.agentId,
-      includeConversation: false,
+      platform: this.provider?.displayName ?? 'video call',
+      responseMode: this.responseMode,
     });
-    const parts = await buildSystemPromptParts(context, 'meeting');
-    const instructions = [
-      parts.map((p) => p.text).join('\n\n---\n\n'),
-      getMeetingInstructions({
-        agentName: context.agentName,
-        platform: this.provider?.displayName ?? 'video call',
-        responseMode: this.responseMode,
-      }),
-    ].join('\n\n---\n\n');
-    // Handed back so the caller can give the same name to the gate that decides
-    // whether the agent was called — the room hears this one, so it is the one
-    // people will actually say. `lockedIn` rides along from this same context so
-    // the tool set matches the prompt built beside it.
-    return { instructions, agentName: context.agentName, lockedIn: context.lockedIn };
   }
 
   /** Called from the process shutdown path so a container exit leaves the call. */
