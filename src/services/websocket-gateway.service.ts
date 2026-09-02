@@ -20,6 +20,7 @@ import { threadTitleService, type ThreadTitleChange } from './thread-title.servi
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
 import { compactionService, type CompactionEvent } from './compaction.service';
 import { updateService, type UpdateEvent } from './update/update.service';
+import { voiceChatService, type VoiceChatSignal } from './voice/voice-chat.service';
 
 // ============================================================================
 // Types
@@ -32,7 +33,7 @@ interface AuthenticatedWebSocket extends WebSocket {
 }
 
 interface WebSocketMessage {
-  type: 'chat' | 'ping' | 'pong' | 'subscribe' | 'cancel';
+  type: 'chat' | 'ping' | 'pong' | 'subscribe' | 'cancel' | 'voice_offer' | 'voice_ice' | 'voice_stop';
   mode?: 'followup' | 'collect';
   content?: string;
   threadId?: string;
@@ -40,6 +41,8 @@ interface WebSocketMessage {
   agentId?: string;
   // Ids of files already uploaded via POST /agents/attachments.
   attachmentIds?: string[];
+  // The voice frames carry their fields here. See docs/voice-chat.md.
+  payload?: unknown;
 }
 
 /**
@@ -55,7 +58,19 @@ interface WebSocketMessage {
 type ThreadedMessage = WebSocketMessage & { threadId: string };
 
 interface WebSocketResponse {
-  type: 'chat' | 'pong' | 'error' | 'status' | 'thread' | 'context' | 'compaction' | 'update';
+  type:
+    | 'chat'
+    | 'pong'
+    | 'error'
+    | 'status'
+    | 'thread'
+    | 'context'
+    | 'compaction'
+    | 'update'
+    | 'voice_answer'
+    | 'voice_ice'
+    | 'voice_state'
+    | 'voice_error';
   threadId?: string;
   messageId?: string;
   content?: string;
@@ -67,6 +82,18 @@ interface WebSocketResponse {
 /** Narrow to a message the gateway may offer to a live turn. */
 function hasThread(message: WebSocketMessage): message is ThreadedMessage {
   return typeof message.threadId === 'string' && message.threadId.length > 0;
+}
+
+/** A frame's payload, as fields the caller can read one at a time. */
+function payloadOf(message: WebSocketMessage): Record<string, unknown> {
+  const payload = message.payload;
+  return typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : {};
+}
+
+/** A payload field, when the client sent it as a string with something in it. */
+function stringField(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 // ============================================================================
@@ -82,6 +109,10 @@ class WebSocketGatewayService {
   // aborts it, which stops the LLM generation mid-turn (see invokeStream).
   // Single-flight per user, so one controller per userId is sufficient.
   private activeRequests: Map<string, AbortController> = new Map();
+  // The socket whose offer opened the voice session that is running, so closing
+  // it ends the call. A socket that was refused a session never becomes this
+  // one, and so cannot end somebody else's by going away.
+  private voiceSocket: AuthenticatedWebSocket | null = null;
 
   constructor() {
     // Push thread-title changes (placeholder + LLM upgrade) to the user's web
@@ -212,6 +243,12 @@ class WebSocketGatewayService {
     // Handle close
     ws.on('close', (code, _reason) => {
       this.removeConnection(userId, ws);
+      // The client that was talking is gone, so the call is over: signalling is
+      // the only way it could stop the session or hear that it ended.
+      if (this.voiceSocket === ws) {
+        this.voiceSocket = null;
+        void voiceChatService.stop('the client disconnected');
+      }
       logger.info('WebSocket disconnected for user %s - code: %d', userId, code);
     });
 
@@ -251,6 +288,21 @@ class WebSocketGatewayService {
         // User is subscribing to notifications (already connected)
         break;
 
+      // Voice signalling. Only the offer, the client's candidates and its stop
+      // ride this socket; the audio itself goes over the peer connection those
+      // three frames set up.
+      case 'voice_offer':
+        await this.handleVoiceOffer(ws, userId, message);
+        break;
+
+      case 'voice_ice':
+        await this.handleVoiceIce(message);
+        break;
+
+      case 'voice_stop':
+        await this.handleVoiceStop(ws);
+        break;
+
       default:
         logger.warn('Unknown WebSocket message type: %s', message.type);
         ws.send(JSON.stringify({ type: 'error', payload: { error: 'Unknown message type' } }));
@@ -276,6 +328,82 @@ class WebSocketGatewayService {
       this.broadcast(userId, { type: 'status', payload: { processing: false } });
     }
     this.messageQueues.delete(userId);
+  }
+
+  /**
+   * Open a voice chat for the client on this socket.
+   *
+   * The session belongs to the runtime rather than to the socket, so a second
+   * client's offer is refused with a `voice_error` and leaves the running call
+   * alone. See docs/voice-chat.md for the frames.
+   */
+  private async handleVoiceOffer(
+    ws: AuthenticatedWebSocket,
+    userId: string,
+    message: WebSocketMessage
+  ): Promise<void> {
+    const payload = payloadOf(message);
+    const sdp = stringField(payload, 'sdp');
+    if (!sdp) {
+      this.sendTo(ws, { type: 'voice_error', payload: { error: 'A voice offer needs an sdp' } });
+      return;
+    }
+
+    const agentId = config.agentId;
+    if (!agentId) {
+      this.sendTo(ws, {
+        type: 'voice_error',
+        payload: { error: 'Agent runtime is still initializing; retry shortly' },
+      });
+      return;
+    }
+
+    const started = await voiceChatService.start({
+      userId,
+      agentId,
+      threadId: stringField(payload, 'threadId'),
+      offerSdp: sdp,
+      signal: this.voiceSignal(ws),
+    });
+    if (started) this.voiceSocket = ws;
+  }
+
+  /** Forward a candidate the client gathered. */
+  private async handleVoiceIce(message: WebSocketMessage): Promise<void> {
+    const payload = payloadOf(message);
+    const candidate = stringField(payload, 'candidate');
+    if (!candidate) return;
+
+    await voiceChatService.addIceCandidate({
+      candidate,
+      sdpMid: stringField(payload, 'sdpMid'),
+      sdpMLineIndex: typeof payload.sdpMLineIndex === 'number' ? payload.sdpMLineIndex : undefined,
+    });
+  }
+
+  /** End the session this socket opened. A stop from any other socket does nothing. */
+  private async handleVoiceStop(ws: AuthenticatedWebSocket): Promise<void> {
+    if (this.voiceSocket !== ws) return;
+    await voiceChatService.stop();
+  }
+
+  /** How the voice service answers the client that asked for the session. */
+  private voiceSignal(ws: AuthenticatedWebSocket): VoiceChatSignal {
+    return {
+      answer: (sdp) => this.sendTo(ws, { type: 'voice_answer', payload: { sdp } }),
+      iceCandidate: (candidate) => this.sendTo(ws, { type: 'voice_ice', payload: candidate }),
+      state: (state) => {
+        if (state === 'ended' && this.voiceSocket === ws) this.voiceSocket = null;
+        this.sendTo(ws, { type: 'voice_state', payload: { state } });
+      },
+      error: (error) => this.sendTo(ws, { type: 'voice_error', payload: { error } }),
+    };
+  }
+
+  /** Send to one socket, which the client may have closed under us. */
+  private sendTo(ws: AuthenticatedWebSocket, response: WebSocketResponse): void {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify(response));
   }
 
   /**
