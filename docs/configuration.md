@@ -298,6 +298,7 @@ model IDs are plain OpenAI API model names**; **OpenRouter model IDs are
 | `BEDROCK_MODEL_ID` | **(Bedrock)** Main model (the agent's reasoning loop) | `global.anthropic.claude-opus-5` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | **(Bedrock)** Fast model for classification gates: the [heartbeat](heartbeat.md) and [scheduled-task](scheduled-tasks.md) DELIVER/SUPPRESS gate, and the optional [tool-risk gate](tools.md#risk-gate) | a Claude Haiku model |
 | `BEDROCK_EMBEDDING_MODEL_ID` | **(Bedrock)** Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
+| `BEDROCK_CONVERSE_PROMPT_CACHE` | **(Bedrock)** Set to `on` to use prompt caching with a non-Claude model. Off by default, because a Bedrock model that does not support prompt caching rejects every request instead of ignoring it. Claude caches either way. | `off` |
 | `AWS_REGION` | **(Bedrock)** AWS region for Bedrock | `us-east-1` |
 | `AZURE_MODEL_ID` | **(Azure)** Main model — a Claude chat deployment name | `claude-opus-5` |
 | `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast Claude deployment for classification gates | `claude-haiku-4-5` |

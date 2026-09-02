@@ -47,6 +47,7 @@ import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
 import { ensureWorkspaceRoot } from './tools/shell/config';
 import { ensureDataDirs } from './lib/data-dir';
 import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
+import { hasPromptCacheBreakpoint } from './lib/llm-providers/bedrock/bedrock-provider';
 import { runBackfill } from './scripts/backfill-embeddings';
 
 // What `ps` and `top` show for this process.
@@ -136,6 +137,13 @@ const initialize = async () => {
         embeddings: config.embeddingModelId
           ? `${config.embeddingProvider}:${config.embeddingModelId}`
           : 'disabled',
+        // Bedrock is the one vendor where the breakpoint depends on the model:
+        // Claude gets one, and a Converse model only with
+        // BEDROCK_CONVERSE_PROMPT_CACHE=on. Reported for the configured model,
+        // which a per-agent or per-invocation override can still replace.
+        ...(config.llmProvider === 'bedrock'
+          ? { promptCache: hasPromptCacheBreakpoint(config.chatModelId) ? 'on' : 'off' }
+          : {}),
       },
       '[Startup] LLM provider',
     );

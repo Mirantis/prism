@@ -743,7 +743,7 @@ src/
 │   ├── attachment-boot.ts      # Boot-time attachment storage reconciliation, in order: missing media files → content expiry → legacy BLOB backfill
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
 │   ├── llm-providers/          # One folder per chat vendor, plus the shared contract and the selector
-│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (Anthropic breakpoint or the empty `NO_CACHE_POINT`) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares
+│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (the Anthropic breakpoint, Converse's own `BEDROCK_CACHE_POINT`, or the empty `NO_CACHE_POINT`) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares
 │   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai/openrouter/anthropic), passes each its optional gateway baseURL (anthropic is direct-only, no argument); `isProviderConfigured()`
 │   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors (and the bedrock embedding provider) need: AWS credential resolution, `isAnthropicModelId()`
 │   │   ├── bedrock/
@@ -819,6 +819,7 @@ What the operator sets on `docker run`:
 | `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | — |
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `global.anthropic.claude-opus-5` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat & scheduled-task DELIVER/SUPPRESS) | `global.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `BEDROCK_CONVERSE_PROMPT_CACHE` | `on` sends a prompt-cache breakpoint on Bedrock's Converse branch (a non-Claude model). Off by default: a model without prompt-cache support answers a request that has a `cachePoint` block with "You invoked an unsupported model or your request did not allow prompt caching", so every turn fails, and AWS publishes no per-model capability the runtime can read. Claude routes through the Anthropic Messages branch and keeps its breakpoint either way. Only `on` enables it; any other value reads as off, untracked, since a typo lands on the side that runs | `off` |
 | `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
 | `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-5` / `claude-haiku-4-5` |
 | `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (fail-open if absent; `''` to skip) | `text-embedding-3-small` |

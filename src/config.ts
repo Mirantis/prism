@@ -182,6 +182,16 @@ const bedrockModelId = process.env.BEDROCK_MODEL_ID || 'global.anthropic.claude-
 const bedrockClassificationModelId =
   process.env.BEDROCK_CLASSIFICATION_MODEL_ID || 'global.anthropic.claude-haiku-4-5-20251001-v1:0';
 const bedrockEmbeddingModelId = process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazon.titan-embed-text-v2:0';
+// Opt a Converse model back into prompt-cache breakpoints. Off by default: a
+// Bedrock model without prompt-cache support rejects a request that has a
+// `cachePoint` block, so the breakpoint is withheld until an operator says their
+// model takes one. It reaches the Converse branch only — Claude on Bedrock keeps
+// its breakpoint either way, which is where the measured cache value is.
+//
+// Only `on` enables it, and an unrecognized value is not tracked as invalid the
+// way TOOL_RISK_GATE_MODE is: a typo here leaves caching off, which runs.
+const bedrockConversePromptCache =
+  (process.env.BEDROCK_CONVERSE_PROMPT_CACHE ?? 'off').trim().toLowerCase() === 'on';
 // Azure model IDs are deployment names. Chat/classification default to
 // Foundry's default Claude deployment names; embeddings default to an Azure
 // OpenAI text-embedding-3 deployment (like Bedrock defaults to Titan). The
@@ -563,6 +573,7 @@ export const config = {
   bedrockModelId,
   bedrockClassificationModelId,
   bedrockEmbeddingModelId,
+  bedrockConversePromptCache,
   awsRegion,
   awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID,
   awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
