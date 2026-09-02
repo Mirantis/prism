@@ -157,16 +157,25 @@ export function resetThread(dbPath: string): void {
 }
 
 /**
- * Count stored conversation rows for a role, straight from SQLite.
+ * Count the conversation rows a client sees for a role, straight from SQLite.
  *
  * Authoritative check that a message the user sent actually became history —
  * the frame only shows what was rendered.
+ *
+ * Internal rows are excluded, because they are not messages: one reply is
+ * stored as one row per step plus, in concise mode, a row per intermediate
+ * text, and a turn's recalled memories are a row of their own. Counting those
+ * makes "the reply landed" true before it has, which is what a caller waiting
+ * on a count is really asking. `countMessagesContaining` stays inclusive — it
+ * asks what the agent said, wherever it was stored.
  */
 export function countMessages(dbPath: string, role: 'USER' | 'AGENT'): number {
   const db = new Database(dbPath, { readonly: true });
   try {
     const row = db
-      .prepare('SELECT COUNT(*) AS n FROM conversation_messages WHERE role = ?')
+      .prepare(
+        'SELECT COUNT(*) AS n FROM conversation_messages WHERE role = ? AND internalStep = 0',
+      )
       .get(role) as { n: number };
     return row.n;
   } finally {
