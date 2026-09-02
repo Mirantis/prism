@@ -26,9 +26,13 @@ a Meet call is live, and a Meet call is refused while a voice chat is live.
 
 ## Starting a call
 
-No screen in the web UI or the terminal UI starts a voice chat yet. A call is
-started by a client that speaks the runtime's voice frames on the chat
-connection — `src/services/voice/socket-audio.ts` and
+Press the microphone in the chat composer of the [Web UI](web-ui.md#chat). The
+browser asks for the microphone the first time, and the same button ends the
+call.
+
+The terminal UI has no voice control. Another client starts a call by speaking
+the runtime's voice frames on the chat connection —
+`src/services/voice/socket-audio.ts` and
 `src/services/websocket-gateway.service.ts` define them.
 
 ## Who the agent answers

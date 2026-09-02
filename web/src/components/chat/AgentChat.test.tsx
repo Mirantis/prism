@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ConversationMessage } from '@/types';
+import type { VoiceCall } from '@/hooks/use-voice-call';
+import type { VoiceEvent } from '@/hooks/use-websocket';
 
 // Capture the onMessage the component hands to useWebSocket so the test can
 // drive inbound deliveries. The mock re-captures on every render, so the
@@ -14,21 +16,45 @@ import type { ConversationMessage } from '@/types';
 const { wsHolder } = vi.hoisted(() => ({
   wsHolder: {
     onMessage: undefined as ((m: ConversationMessage) => void) | undefined,
+    // The voice frames arrive on the same socket, and the component routes them to the
+    // call through a ref. Captured here so a test can deliver one.
+    onVoiceEvent: undefined as ((e: unknown) => void) | undefined,
+    onVoiceAudio: undefined as ((f: ArrayBuffer) => void) | undefined,
     isTyping: false,
     sendFollowup: vi.fn(),
+    sendVoiceStart: vi.fn(() => true),
+    sendVoiceStop: vi.fn(),
+    sendVoiceAudio: vi.fn(),
   },
 }));
 
 vi.mock('@/hooks/use-websocket', () => ({
-  useWebSocket: (opts: { onMessage?: (m: ConversationMessage) => void }) => {
+  useWebSocket: (opts: {
+    onMessage?: (m: ConversationMessage) => void;
+    onVoiceEvent?: (e: unknown) => void;
+    onVoiceAudio?: (f: ArrayBuffer) => void;
+  }) => {
     wsHolder.onMessage = opts.onMessage;
+    wsHolder.onVoiceEvent = opts.onVoiceEvent;
+    wsHolder.onVoiceAudio = opts.onVoiceAudio;
     return {
       status: 'connected',
       isTyping: wsHolder.isTyping,
       sendFollowup: wsHolder.sendFollowup,
       cancel: vi.fn(),
+      sendVoiceStart: wsHolder.sendVoiceStart,
+      sendVoiceStop: wsHolder.sendVoiceStop,
+      sendVoiceAudio: wsHolder.sendVoiceAudio,
     };
   },
+}));
+
+const { voiceAudio } = vi.hoisted(() => ({
+  voiceAudio: { enqueue: vi.fn(), clear: vi.fn(), stop: vi.fn(async () => {}) },
+}));
+vi.mock('@/lib/voice-audio', () => ({
+  VOICE_SAMPLE_RATE: 24_000,
+  startVoiceAudio: async () => voiceAudio,
 }));
 
 vi.mock('@/lib/agent-context', () => ({
@@ -61,15 +87,21 @@ vi.mock('./ChatInput', () => ({
     value,
     onChange,
     onSend,
+    voice,
   }: {
     value: string;
     onChange: (v: string) => void;
     onSend: (e: { preventDefault: () => void }) => void;
+    voice?: VoiceCall;
   }) => (
     <div data-testid="input">
       <input data-testid="composer" value={value} onChange={(e) => onChange(e.target.value)} />
       <button data-testid="send" onClick={() => onSend({ preventDefault: () => {} })}>
         send
+      </button>
+      <span data-testid="voice-status">{voice?.status}</span>
+      <button data-testid="voice-start" onClick={() => voice?.start()}>
+        voice
       </button>
     </div>
   ),
@@ -157,6 +189,39 @@ describe('AgentChat mid-turn send (steering)', () => {
     expect(wsHolder.sendFollowup).toHaveBeenCalledWith('change of plan', 'a1', 't1', []);
     // The optimistic echo renders immediately, as it does for an idle send.
     await waitFor(() => expect(screen.getByTestId('list').textContent).toContain(':t1'));
+
+    cleanup();
+  });
+});
+
+describe('AgentChat voice call', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    wsHolder.isTyping = false;
+    wsHolder.sendVoiceStart.mockReturnValue(true);
+    mockGetThread.mockResolvedValue({ id: 't1', messages: [] });
+  });
+
+  it('carries the frames between the socket and the call, in both directions', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <AgentChat threadId="t1" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(mockGetThread).toHaveBeenCalledWith('a1', 'u1', 't1'));
+
+    fireEvent.click(screen.getByTestId('voice-start'));
+    // The call is asked for on the thread being viewed, so the agent's tools have one.
+    await waitFor(() => expect(wsHolder.sendVoiceStart).toHaveBeenCalledWith('t1'));
+
+    act(() => wsHolder.onVoiceEvent!({ type: 'state', state: 'live' } satisfies VoiceEvent));
+    expect(screen.getByTestId('voice-status').textContent).toBe('live');
+
+    const frame = new Int16Array([7, 8]).buffer;
+    act(() => wsHolder.onVoiceAudio!(frame));
+    expect(voiceAudio.enqueue).toHaveBeenCalledWith(frame);
 
     cleanup();
   });
