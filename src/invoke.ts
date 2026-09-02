@@ -271,8 +271,9 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // change there still hits this one.
     //
     // Bedrock allows 4. The Anthropic Messages path spends 3: this, the last message
-    // (via prepareStep) and the last tool. Converse ignores the tools one (see
-    // withToolsCacheControl), so it spends 2.
+    // (via prepareStep) and the last tool. On Converse the fragment is empty unless
+    // the operator opts in, and the tools one never applies (see
+    // withToolsCacheControl), so it spends 0 or 2.
     const cachedSystem: SystemModelMessage[] = systemParts.map((part) => ({
       role: 'system' as const,
       content: part.text,
