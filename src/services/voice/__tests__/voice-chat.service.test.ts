@@ -193,18 +193,20 @@ describe('the audio path', () => {
 });
 
 describe('ending a session', () => {
-  it('tears the session down and frees the voice when the peer disconnects', async () => {
+  // A client that walks away leaves the peer `disconnected`; a path that breaks under a
+  // live call leaves it `failed`. Both end the session and give the voice back.
+  it.each(['disconnected', 'failed'])('tears the session down when the peer is %s', async (state) => {
     const { signal, conversation } = await startSession();
     clientSendsAudio();
     const peer = lastFakePeer();
 
-    peer.becomes('failed');
+    peer.becomes(state);
     // The ending awaits the peer's close, so let it run.
     await vi.waitFor(() => expect(signal.state).toHaveBeenCalledWith('ended'));
 
     expect(conversation.stop).toHaveBeenCalled();
     expect(peer.closed).toBe(true);
-    expect(signal.error).toHaveBeenCalledWith(expect.stringContaining('failed'));
+    expect(signal.error).toHaveBeenCalledWith(`the media connection is ${state}`);
     expect(voiceSessionLock.holder).toBeNull();
     expect(voiceChatService.isLive).toBe(false);
   });

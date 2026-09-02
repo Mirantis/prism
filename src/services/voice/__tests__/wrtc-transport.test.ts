@@ -46,6 +46,13 @@ beforeEach(() => {
 });
 
 describe('the outbound frame size', () => {
+  it('puts the track the core speaks on onto the peer', async () => {
+    const { peer, source } = await transport();
+
+    // What the source emits reaches the client only because this track is on the peer.
+    expect(peer.added).toEqual([source.track]);
+  });
+
   it('re-frames what the core writes into 10 ms frames', async () => {
     const { t, source } = await transport();
 
@@ -125,14 +132,21 @@ describe('the session lifecycle', () => {
     await expect(t.accept('v=0\r\noffer')).resolves.toBe('v=0\r\nanswer');
   });
 
-  it('reports the media path coming up and going away', async () => {
+  it('reports the media path coming up', async () => {
     const { events, peer } = await transport();
 
     peer.becomes('connected');
     expect(events.onConnected).toHaveBeenCalled();
+  });
 
-    peer.becomes('failed');
-    expect(events.onClosed).toHaveBeenCalledWith(expect.stringContaining('failed'));
+  // Each of the three ends a call. `disconnected` is the one a client that walks away
+  // produces, and it is as terminal here as a failure.
+  it.each(['failed', 'closed', 'disconnected'])('reports a peer that is %s', async (state) => {
+    const { events, peer } = await transport();
+
+    peer.becomes(state);
+
+    expect(events.onClosed).toHaveBeenCalledWith(`the media connection is ${state}`);
   });
 
   it('reports a candidate to the client and swallows the end of gathering', async () => {
