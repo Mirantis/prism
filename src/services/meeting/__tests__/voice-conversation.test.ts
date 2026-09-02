@@ -572,3 +572,35 @@ describe('knowing who has the floor', () => {
     });
   });
 });
+
+describe('taking captured audio in', () => {
+  /** Every `input_audio_buffer.append` on the wire, oldest first. */
+  const appends = (sent: Record<string, unknown>[]): string[] =>
+    sent.filter((e) => e.type === 'input_audio_buffer.append').map((e) => String(e.audio));
+
+  it('halves the rate of what the caller pushes', async () => {
+    const { h, sent } = await speakingHarness();
+    active = h;
+
+    // 10 ms of 48 kHz pcm16 mono: 480 samples, two bytes each.
+    h.conversation.pushAudio(Buffer.alloc(960));
+    await settle();
+
+    // The same 10 ms at the 24 kHz the Realtime API takes: 240 samples.
+    const audio = appends(sent);
+    expect(audio).toHaveLength(1);
+    expect(Buffer.from(audio[0]!, 'base64')).toHaveLength(480);
+  });
+
+  it('sends nothing after the conversation stops', async () => {
+    const { h, sent } = await speakingHarness();
+    active = h;
+
+    h.conversation.stop();
+    await settle();
+    h.conversation.pushAudio(Buffer.alloc(960));
+    await settle();
+
+    expect(appends(sent)).toHaveLength(0);
+  });
+});

@@ -132,7 +132,7 @@ class FakeVoiceConversation {
   setCurrentSpeaker = conversationSetCurrentSpeaker;
   setAudible = conversationSetAudible;
   showImage = conversationShowImage;
-  pushMeetingAudio = vi.fn();
+  pushAudio = vi.fn();
   get responseMode() {
     return 'addressed';
   }
