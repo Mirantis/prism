@@ -41,6 +41,7 @@ import {
   unwrapToolOutput,
 } from './lib/tool-output-limiter';
 import { withToolLifecycleEvents } from './lib/tool-lifecycle';
+import { captureAssistantParts } from './lib/assistant-parts';
 import {
   isToolRiskGateError,
   withToolRiskGate,
@@ -330,6 +331,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         externalMessageId: m.externalMessageId ?? null,
         internalStep: m.internalStep ?? false,
         contentChars: m.content.length,
+        hasAssistantParts: m.assistantParts != null,
       })),
     });
 
@@ -439,6 +441,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
               : renderToolResultDetailed(tr.output, { toolName: tc.toolName });
           stepToolCalls.push({
             tool: tc.toolName,
+            toolCallId: tc.toolCallId,
             input: JSON.stringify(tc.input),
             // A gate refusal has no tool result to render — the summary of *why*
             // is what the record carries, and it is already small.
@@ -496,9 +499,14 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
               }
             : undefined;
 
+        // The assistant turn exactly as the provider produced it, so the row
+        // that stores this step replays the bytes the provider cached here.
+        const assistantParts = captureAssistantParts(step.content ?? []);
+
         channel.push({
           text: step.text,
           toolCalls: stepToolCalls,
+          ...(assistantParts ? { assistantParts } : {}),
           ...(usage ? { usage } : {}),
           blocks,
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),

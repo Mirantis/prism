@@ -526,9 +526,15 @@ Respond with exactly one word: WORTHY or SKIP`;
     const { userId, agentId, threadId, prompt, channelContext, metadata } = params;
 
     let agentMessage: StreamedTurn['agentMessage'];
+    // Calls made by steps that stored no delivered row yet. They ride out on the
+    // next delivered row so the client's tool chips still cover the whole turn,
+    // while each step's own row carries its own calls for the model.
     let pendingToolCalls: ToolCallRecord[] = [];
     let bufferedStep: InvokeStep | null = null;
-    let bufferedToolCalls: ToolCallRecord[] = [];
+    // Whether anything has reached the reader yet. A turn that only called tools
+    // still shows the reader what it did, so the final row is delivered when
+    // nothing before it was.
+    let delivered = false;
     const responseTexts: string[] = [];
     const allBlocks: UIBlock[] = [];
     const allToolCalls: ToolCallRecord[] = [];
@@ -556,91 +562,162 @@ Respond with exactly one word: WORTHY or SKIP`;
       allToolCalls.push(...step.toolCalls);
       if (step.blocks) allBlocks.push(...step.blocks);
       if (step.attachmentIds) allAttachmentIds.push(...step.attachmentIds);
-      pendingToolCalls.push(...step.toolCalls);
 
-      if (step.text) {
-        responseTexts.push(step.text);
+      if (step.text) responseTexts.push(step.text);
 
-        // Flush previously-buffered step now that we know it wasn't last:
-        // no blocks, no feedback gate.
-        if (bufferedStep) {
-          if (params.verbose) {
-            agentMessage = await messageDeliveryService.publish(
-              userId,
-              threadId,
-              bufferedStep.text,
-              'USER_INPUT',
-              {
-                toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
-                channelContext: channelContext
-                  ? { ...channelContext, includeFeedback: false }
-                  : undefined,
-              }
-            );
-          } else {
-            // Concise mode: persist without delivering to the channel. Marked
-            // internalStep so client history hides it, while the model-context
-            // read still replays it (tool rounds must survive for the model).
-            const { message: persisted } = await conversationService.addMessage(threadId, {
-              content: bufferedStep.text,
-              role: 'AGENT',
-              triggeredBy: 'USER_INPUT',
-              toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
-              internalStep: true,
-            });
-            agentMessage = persisted;
-          }
+      // One row per step, written in step order, because one row holds one
+      // assistant turn: a tool loop is N assistant/tool pairs to the provider,
+      // and folding them into a single row replays a history where the agent
+      // answered first and called every tool afterwards.
+      //
+      // The buffer is one step deep: a step is written once the next one
+      // arrives, so the last step — the one that carries the turn's blocks and
+      // the feedback decision — is known by then.
+      if (bufferedStep) {
+        const written = await this.persistStep(bufferedStep, {
+          userId,
+          threadId,
+          verbose: params.verbose,
+          channelContext,
+          pendingToolCalls,
+        });
+        if (written?.delivered) {
+          agentMessage = written.message;
+          delivered = true;
+          pendingToolCalls = [];
+        } else {
+          if (written) agentMessage = written.message;
+          pendingToolCalls.push(...bufferedStep.toolCalls);
         }
-
-        bufferedStep = step;
-        bufferedToolCalls = pendingToolCalls;
-        pendingToolCalls = [];
       }
+
+      bufferedStep = step;
     }
 
-    // Stream is done. The buffered step (if any) is the LAST text step:
-    // attach the accumulated blocks and the feedback decision here.
+    // Stream is done. The last step carries the turn's blocks, its shared files
+    // and the feedback decision — it is the answer in every turn that produced
+    // one, and `persistStep` delivers it as long as there is anything to show.
     if (bufferedStep) {
-      const includeFeedback = await this.shouldShowFeedback(
-        threadId, prompt, bufferedStep.text, userId, agentId, params.abortSignal,
-      );
-      agentMessage = await messageDeliveryService.publish(
+      const written = await this.persistStep(bufferedStep, {
         userId,
         threadId,
-        bufferedStep.text,
-        'USER_INPUT',
-        {
-          toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
-          blocks: allBlocks.length > 0 ? allBlocks : undefined,
-          attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
-          channelContext: channelContext ? { ...channelContext, includeFeedback } : undefined,
-        }
-      );
+        verbose: params.verbose,
+        channelContext,
+        pendingToolCalls,
+        final: {
+          delivered,
+          blocks: allBlocks,
+          attachmentIds: allAttachmentIds,
+          prompt,
+          agentId,
+          abortSignal: params.abortSignal,
+        },
+      });
+      if (written) agentMessage = written.message;
     }
 
     const response = responseTexts.join('\n\n');
 
-    // Fallback: the stream produced no text step. Publish only if there's still
-    // something to show (tool calls or UI blocks) — e.g. a tool-only turn. When
-    // a turn is canceled before producing anything, skip it rather than render
-    // an empty agent bubble. (In this branch `response` is always '' because any
-    // text step would have set `agentMessage` via the buffered-step publish.)
-    if (!agentMessage && (allToolCalls.length > 0 || allBlocks.length > 0)) {
-      agentMessage = await messageDeliveryService.publish(
-        userId,
-        threadId,
-        response,
-        'USER_INPUT',
-        {
-          toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
-          blocks: allBlocks.length > 0 ? allBlocks : undefined,
-          attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
-          channelContext,
-        }
-      );
+    return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage };
+  }
+
+  /**
+   * Write one step's row, and deliver it when there is something for the reader.
+   *
+   * A row holds two records with different readers, which is why the tool-call
+   * list differs between them:
+   *
+   * - **The model** reads `assistantParts` — this step's assistant turn as the
+   *   provider produced it — and takes each call's result from `toolCalls` by id.
+   *   That is why a step needs its own row: one row is one assistant turn.
+   * - **The client** draws chips from `toolCalls`, and only sees delivered rows.
+   *   A delivered row therefore carries the calls of the hidden steps before it
+   *   too. The model ignores those: their ids are in another row's parts.
+   *
+   * Returns null when the step left nothing worth a row.
+   */
+  private async persistStep(
+    step: InvokeStep,
+    ctx: {
+      userId: string;
+      threadId: string;
+      verbose: boolean;
+      channelContext: PublishOptions['channelContext'];
+      pendingToolCalls: ToolCallRecord[];
+      final?: {
+        /** Whether an earlier step already delivered something to the reader. */
+        delivered: boolean;
+        blocks: UIBlock[];
+        attachmentIds: string[];
+        prompt: string;
+        agentId: string;
+        abortSignal?: AbortSignal;
+      };
+    }
+  ): Promise<{ message: StreamedTurn['agentMessage']; delivered: boolean } | null> {
+    const blocks = ctx.final?.blocks ?? [];
+    const attachmentIds = ctx.final?.attachmentIds ?? [];
+    const hasParts = Boolean(step.assistantParts?.length);
+
+    if (!step.text && step.toolCalls.length === 0 && !hasParts && attachmentIds.length === 0) {
+      return null;
     }
 
-    return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage };
+    // Text is what a reader came for. Past that, the final step delivers when
+    // nothing else did and there is still something to show — the tool chips of
+    // a turn that only called tools, a file it shared, a block it built. A step
+    // with none of that would draw an empty bubble, so it stays hidden.
+    const somethingToShow =
+      ctx.pendingToolCalls.length + step.toolCalls.length > 0 ||
+      attachmentIds.length > 0 ||
+      blocks.length > 0;
+    const deliver = Boolean(
+      step.text || (ctx.final && !ctx.final.delivered && somethingToShow)
+    );
+
+    if (!deliver || (!ctx.verbose && !ctx.final)) {
+      // Hidden from client history, replayed for the model. In concise mode that
+      // covers every intermediate step; in both modes it covers a step that only
+      // called tools.
+      const { message } = await conversationService.addMessage(ctx.threadId, {
+        content: step.text,
+        role: 'AGENT',
+        triggeredBy: 'USER_INPUT',
+        toolCalls: step.toolCalls.length > 0 ? step.toolCalls : undefined,
+        assistantParts: step.assistantParts,
+        internalStep: true,
+      });
+      return { message, delivered: false };
+    }
+
+    const clientToolCalls = [...ctx.pendingToolCalls, ...step.toolCalls];
+    const includeFeedback = ctx.final
+      ? await this.shouldShowFeedback(
+          ctx.threadId,
+          ctx.final.prompt,
+          step.text,
+          ctx.userId,
+          ctx.final.agentId,
+          ctx.final.abortSignal
+        )
+      : false;
+
+    const message = await messageDeliveryService.publish(
+      ctx.userId,
+      ctx.threadId,
+      step.text,
+      'USER_INPUT',
+      {
+        toolCalls: clientToolCalls.length > 0 ? clientToolCalls : undefined,
+        assistantParts: step.assistantParts,
+        ...(ctx.final && blocks.length > 0 ? { blocks } : {}),
+        ...(ctx.final && attachmentIds.length > 0 ? { attachmentIds } : {}),
+        channelContext: ctx.channelContext
+          ? { ...ctx.channelContext, includeFeedback }
+          : undefined,
+      }
+    );
+    return { message, delivered: true };
   }
 }
 

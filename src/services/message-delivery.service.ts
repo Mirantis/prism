@@ -39,6 +39,12 @@ export type MessageTrigger = (typeof MESSAGE_TRIGGERS)[number];
 export interface PublishOptions {
   /** Tool calls made during message generation */
   toolCalls?: ToolCallRecord[];
+  /**
+   * The step's assistant turn as the provider produced it, stored for replay
+   * (see `lib/assistant-parts.ts`). Nothing is delivered from it — it exists
+   * only so a later turn sends the provider the bytes it cached.
+   */
+  assistantParts?: unknown[];
   /** UI blocks for rich rendering */
   blocks?: unknown[];
   /**
@@ -111,6 +117,7 @@ export class MessageDeliveryService {
       role: 'AGENT',
       triggeredBy,
       toolCalls: options?.toolCalls,
+      assistantParts: options?.assistantParts,
       blocks: options?.blocks,
     });
 

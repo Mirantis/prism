@@ -228,16 +228,36 @@ describe('withToolOutputCapture', () => {
     });
 
     const out = await runTool(wrapped);
-    const view = (await modelView(wrapped, out)) as {
-      type: string;
-      value: Array<{ type: string; text: string }>;
-    };
+    const view = (await modelView(wrapped, out)) as { type: string; value: string };
 
     // The tool's own hook still saw its own return, not our envelope.
     expect(own).toHaveBeenCalledWith(expect.objectContaining({ output: raw }));
-    expect(view.type).toBe('content');
-    expect(view.value[0].text).toContain('[INCOMPLETE OUTPUT');
-    expect(view.value[0].text.length).toBeLessThan(1500);
+    // Text-only parts collapse to the one text block replay sends, so the live
+    // turn and every later replay of it are the same bytes.
+    expect(view.type).toBe('text');
+    expect(view.value).toContain('[INCOMPLETE OUTPUT');
+    expect(view.value.length).toBeLessThan(1500);
+  });
+
+  it('collapses a text-only content result to the single block replay sends', async () => {
+    // Replay has only the joined text — a stored result is what
+    // `stringifyToolOutput` produced — so the live send has to match it or the
+    // assistant/tool pair a turn cached is not the one the next turn sends.
+    const raw = { content: [{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }] };
+    const own = async ({ output }: { output: unknown }) => ({
+      type: 'content' as const,
+      value: (output as { content: Array<{ type: string; text: string }> }).content,
+    });
+    const wrapped = withToolOutputCapture(toolWith(() => raw, { toModelOutput: own }), {
+      spill: false,
+    });
+
+    const out = await runTool(wrapped);
+    const view = (await modelView(wrapped, out)) as { type: string; value: string };
+
+    expect(view).toEqual({ type: 'text', value: 'first\nsecond' });
+    // The same string a stored row holds for this result.
+    expect(view.value).toBe(stringifyToolOutput(raw));
   });
 
   it('never cuts a non-text part', async () => {

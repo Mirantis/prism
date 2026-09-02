@@ -190,7 +190,24 @@ model ConversationMessage {
   role        MessageRole
   content     String
   triggeredBy MessageTrigger
+  // The client's record of what the agent called this turn: what renders as
+  // tool chips in the web UI and the TUI. On a delivered row it holds every
+  // call since the last delivered one, which is what the client draws.
+  //
+  // It is also the model's tool-*result* source — a result is matched to a call
+  // in `assistantParts` by `toolCallId`, so extra records here are ignored — and
+  // on a row that predates `assistantParts` it is the model's record of the calls
+  // themselves.
   toolCalls   Json?
+  // One step's assistant content parts, as the provider produced them: reasoning
+  // (with the provider metadata that carries its signature), text, tool calls.
+  // Replayed verbatim, so the assistant message a later turn sends is the one
+  // the provider cached during the live turn.
+  //
+  // Null on a row written before this column, and on a row that is not one
+  // step's assistant turn; replay falls back to building the message from
+  // `content` and `toolCalls`.
+  assistantParts Json?
   blocks      Json?
   tokenCount  Int?
 

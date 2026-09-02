@@ -46,6 +46,7 @@
 
 import { EventEmitter } from 'node:events';
 import { generateText, type LanguageModel, type ModelMessage, type SystemModelMessage, type Tool } from 'ai';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { logger } from '../logger';
@@ -58,6 +59,7 @@ import type { CachePointFragment } from '../lib/llm-providers/llm-provider';
 import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withToolOutputCapture } from '../lib/tool-output-limiter';
 import { removeToolOutputs } from '../lib/tool-output-store';
+import { parseAssistantParts, stripReasoningParts } from '../lib/assistant-parts';
 import type { Invoker } from '../lib/task-tool';
 import { buildSystemPromptParts, buildConversationMessages } from '../prompts/context-builder';
 import { getTaskToolInstructions } from '../prompts/task-tool-prompt';
@@ -83,6 +85,11 @@ export interface ForkRow {
   internalStep: boolean;
   /** For the post-compaction size estimate (~4 chars/token). */
   contentChars: number;
+  /**
+   * Whether the row stores an assistant turn. Only a row that does can hold
+   * reasoning for the commit to clear, so the tail is left unread otherwise.
+   */
+  hasAssistantParts: boolean;
 }
 
 /** A turn's request ingredients, handed over by invokeStream. */
@@ -540,6 +547,10 @@ class CompactionService {
       select: { threadSource: true },
     });
 
+    // The tail survives verbatim behind the summary, so its stored reasoning is
+    // now bound to a history that no longer reaches the provider.
+    const tailUpdates = await this.clearTailReasoning(tail > 0 ? rows.slice(-tail) : []);
+
     // The message rows this pass marks compacted. A compacted message never
     // re-enters the context, so any tool output it saved is now unreachable and can
     // be reclaimed.
@@ -559,6 +570,7 @@ class CompactionService {
           where: { id: { in: internalIds } },
           data: { isCompacted: true },
         }),
+        ...tailUpdates,
         prisma.conversationThread.update({
           where: { id: threadId },
           data: {
@@ -581,6 +593,7 @@ class CompactionService {
           where: { id: { in: ids } },
           data: { isCompacted: true },
         }),
+        ...tailUpdates,
         prisma.conversationThread.update({
           where: { id: threadId },
           data: {
@@ -598,6 +611,48 @@ class CompactionService {
       `[Compaction] compacted ${compactable.length} message(s) in thread ${threadId} (${summary.length} chars of summary)`,
     );
     return { messagesCompacted: compactable.length };
+  }
+
+  /**
+   * Updates that drop the stored reasoning from the rows the summary leaves in
+   * place.
+   *
+   * A reasoning block's signature is bound to the messages that preceded it. The
+   * tail is replayed after a summary that replaced those messages, so the block
+   * can no longer earn a cache read, and a model that checks the binding refuses
+   * the request outright. Text and tool calls stay, so the row still replays its
+   * structure and the provider's own call ids.
+   *
+   * Returned rather than applied, so it commits in the same transaction as the
+   * flags — a summary that is live while the tail still claims the old history is
+   * the state this exists to prevent.
+   */
+  private async clearTailReasoning(tailRows: ForkRow[]): Promise<Prisma.PrismaPromise<unknown>[]> {
+    const ids = tailRows.filter((r) => r.hasAssistantParts).map((r) => r.id);
+    if (ids.length === 0) return [];
+
+    const stored = await prisma.conversationMessage.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, assistantParts: true },
+    });
+
+    const updates: Prisma.PrismaPromise<unknown>[] = [];
+    for (const row of stored) {
+      const parts = parseAssistantParts(row.assistantParts);
+      if (!parts || !parts.some((part) => part.type === 'reasoning')) continue;
+      const kept = stripReasoningParts(parts);
+      updates.push(
+        prisma.conversationMessage.update({
+          where: { id: row.id },
+          data: {
+            assistantParts: kept
+              ? (kept as unknown as Prisma.InputJsonValue)
+              : Prisma.DbNull,
+          },
+        }),
+      );
+    }
+    return updates;
   }
 
   /**
@@ -738,13 +793,20 @@ class CompactionService {
 }
 
 function toForkRows(
-  messages: Array<{ id: string; externalMessageId?: string | null; internalStep?: boolean; content: string }>,
+  messages: Array<{
+    id: string;
+    externalMessageId?: string | null;
+    internalStep?: boolean;
+    content: string;
+    assistantParts?: unknown;
+  }>,
 ): ForkRow[] {
   return messages.map((m) => ({
     id: m.id,
     externalMessageId: m.externalMessageId ?? null,
     internalStep: m.internalStep ?? false,
     contentChars: m.content.length,
+    hasAssistantParts: m.assistantParts != null,
   }));
 }
 

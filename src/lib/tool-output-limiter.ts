@@ -447,9 +447,8 @@ export function withToolOutputCapture(
               ...opts,
               output: unwrapToolOutput(opts.output),
             })) as ToolModelOutput;
-            return capModelOutput(
-              inner,
-              isSpilledToolOutput(opts.output) ? opts.output.text : null
+            return collapseTextOnlyContent(
+              capModelOutput(inner, isSpilledToolOutput(opts.output) ? opts.output.text : null)
             );
           }
         : async ({ output }: { output: unknown }): Promise<ToolResultOutput> => ({
@@ -481,6 +480,32 @@ type ToolModelOutput =
  * rather than a smaller one, and image size is already bounded where images are
  * made.
  */
+/**
+ * Turn a text-only `content` result into the single text block replay sends.
+ *
+ * An MCP tool's own `toModelOutput` returns its text as a list of content parts,
+ * and the provider sends each as its own block. Replay has only the joined text —
+ * `stringifyToolOutput` is what produced the stored view — so the same result
+ * reaches the model as one block on every later turn, and the two forms are
+ * different bytes for the same characters. That difference sits inside the
+ * assistant/tool pair a turn caches, so it costs the cached prefix from there on.
+ *
+ * The join matches `stringifyToolOutput` exactly, including dropping an empty
+ * part. A result holding anything but text is left alone: an image cannot be
+ * carried by a string, so those results keep both forms and replay from the text.
+ */
+export function collapseTextOnlyContent(inner: ToolModelOutput): ToolModelOutput {
+  if (inner.type !== 'content') return inner;
+  if (!inner.value.every((part) => part.type === 'text')) return inner;
+  return {
+    type: 'text',
+    value: inner.value
+      .filter((part): part is { type: 'text'; text: string } => Boolean(part.text))
+      .map((part) => part.text)
+      .join('\n'),
+  };
+}
+
 export function capModelOutput(inner: ToolModelOutput, cutText: string | null): ToolModelOutput {
   if (cutText === null) return inner;
 

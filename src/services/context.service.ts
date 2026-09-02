@@ -88,6 +88,10 @@ class ContextService {
     const windowed = messages.filter(m =>
       m.content.trim().length > 0 ||
       (m.role === 'AGENT' && Boolean(m.toolCalls)) ||
+      // A step whose assistant turn is stored replays from it, so the row is
+      // load-bearing even with no text and no tool calls of its own — dropping
+      // it sends the provider a history it never produced.
+      (m.role === 'AGENT' && Boolean(m.assistantParts)) ||
       metaMap.has(keyOf(m)),
     );
 

@@ -6,6 +6,7 @@
 
 import { ConversationMessage, SteeringMessage } from './prompts/context-builder';
 import { ToolLifecycleListener } from './lib/tool-lifecycle';
+import { StoredAssistantPart } from './lib/assistant-parts';
 
 // ============================================================================
 // Agent Status
@@ -169,6 +170,16 @@ export interface ToolOutputTruncation {
 
 export interface ToolCallRecord {
   tool: string;
+  /**
+   * The id the provider gave this call. Replay sends it back verbatim, so a
+   * replayed assistant message matches the one the provider cached during the
+   * live turn — a synthesized id changes those bytes and costs the cached
+   * prefix from that message onward.
+   *
+   * Absent on a row written before this field existed; `parseToolCalls` then
+   * synthesizes an id from the message id, as every row used to.
+   */
+  toolCallId?: string;
   input: string;
   /**
    * The model-facing text for this result — the cut view when it was cut, not the
@@ -201,6 +212,13 @@ export interface InvokeError {
 export interface InvokeStep {
   text: string;
   toolCalls: ToolCallRecord[];
+  /**
+   * This step's assistant turn as the provider produced it, for the row that
+   * stores the step. Absent when the step held content the capture cannot carry
+   * back (see `captureAssistantParts`), and the row then replays from `text` and
+   * `toolCalls` as it did before.
+   */
+  assistantParts?: StoredAssistantPart[];
   // What the provider reported for this step, when it reports usage at all.
   //
   // `totalTokens` is aggregated by invoke() into InvokeResponse.usage so callers
