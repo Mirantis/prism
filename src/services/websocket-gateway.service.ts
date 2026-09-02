@@ -110,6 +110,10 @@ class WebSocketGatewayService {
   // it ends the call. A socket that was refused a session never becomes this
   // one, and so cannot end somebody else's by going away.
   private voiceSocket: AuthenticatedWebSocket | null = null;
+  // The socket whose offer is still being answered, and whether its client gave
+  // up while it waited. A stop or a disconnect that lands before the answer has
+  // no session to end yet, so it is honoured once the start returns.
+  private voiceStarting: { ws: AuthenticatedWebSocket; cancelled: boolean } | null = null;
 
   constructor() {
     // Push thread-title changes (placeholder + LLM upgrade) to the user's web
@@ -208,6 +212,7 @@ class WebSocketGatewayService {
       this.removeConnection(userId, ws);
       // The client that was talking is gone, so the call is over: signalling is
       // the only way it could stop the session or hear that it ended.
+      if (this.voiceStarting?.ws === ws) this.voiceStarting.cancelled = true;
       if (this.voiceSocket === ws) {
         this.voiceSocket = null;
         void voiceChatService.stop('the client disconnected');
@@ -259,7 +264,7 @@ class WebSocketGatewayService {
         break;
 
       case 'voice_ice':
-        await this.handleVoiceIce(message);
+        await this.handleVoiceIce(ws, message);
         break;
 
       case 'voice_stop':
@@ -321,6 +326,9 @@ class WebSocketGatewayService {
       return;
     }
 
+    // Answering takes a moment, and the client can give up inside it.
+    const starting = { ws, cancelled: false };
+    this.voiceStarting = starting;
     const started = await voiceChatService.start({
       userId,
       agentId,
@@ -328,11 +336,26 @@ class WebSocketGatewayService {
       offerSdp: sdp,
       signal: this.voiceSignal(ws),
     });
-    if (started) this.voiceSocket = ws;
+    if (this.voiceStarting === starting) this.voiceStarting = null;
+    if (!started) return;
+
+    // Nobody is on the other end of the session that just opened. End it here:
+    // its peer has no client to connect to, so it would hold the agent's voice
+    // until the media path times out, and a peer that never got a candidate may
+    // never report a failure at all.
+    if (starting.cancelled || ws.readyState !== WebSocket.OPEN) {
+      await voiceChatService.stop('the client left before the call started');
+      return;
+    }
+
+    this.voiceSocket = ws;
   }
 
-  /** Forward a candidate the client gathered. */
-  private async handleVoiceIce(message: WebSocketMessage): Promise<void> {
+  /** Forward a candidate the client gathered. From any other socket it is ignored. */
+  private async handleVoiceIce(ws: AuthenticatedWebSocket, message: WebSocketMessage): Promise<void> {
+    // The candidates of a client that was refused a session are not this peer's.
+    if (this.voiceSocket !== ws) return;
+
     const payload = payloadOf(message);
     const candidate = stringField(payload, 'candidate');
     if (!candidate) return;
@@ -346,6 +369,7 @@ class WebSocketGatewayService {
 
   /** End the session this socket opened. A stop from any other socket does nothing. */
   private async handleVoiceStop(ws: AuthenticatedWebSocket): Promise<void> {
+    if (this.voiceStarting?.ws === ws) this.voiceStarting.cancelled = true;
     if (this.voiceSocket !== ws) return;
     await voiceChatService.stop();
   }

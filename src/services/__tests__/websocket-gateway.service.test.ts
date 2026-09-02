@@ -103,6 +103,7 @@ describe('Requirement: WebSocket Gateway', () => {
     service.processingUsers = new Set();
     service.activeRequests = new Map();
     service.voiceSocket = null;
+    service.voiceStarting = null;
 
     // Default mock responses. `steered: false` is the engine's answer when no
     // turn is live on the thread, which is what the gateway checks before
@@ -844,7 +845,10 @@ describe('Requirement: WebSocket Gateway', () => {
     });
 
     it('forwards a candidate the client gathered, and ignores a frame without one', async () => {
-      await frame(createMockWebSocket(), {
+      const owner = createMockWebSocket();
+      await frame(owner, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+
+      await frame(owner, {
         type: 'voice_ice',
         payload: { candidate: 'candidate:2 1 udp', sdpMid: '0', sdpMLineIndex: 0 },
       });
@@ -856,8 +860,51 @@ describe('Requirement: WebSocket Gateway', () => {
       });
 
       // The end of gathering is the client's business, not the peer's.
-      await frame(createMockWebSocket(), { type: 'voice_ice', payload: { candidate: null } });
+      await frame(owner, { type: 'voice_ice', payload: { candidate: null } });
       expect(mockVoice.addIceCandidate).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores a candidate from a socket that does not hold the session', async () => {
+      const owner = createMockWebSocket();
+      await frame(owner, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+
+      // A second client was refused the session, and keeps gathering anyway.
+      const other = createMockWebSocket();
+      mockVoice.start.mockResolvedValue(false);
+      await frame(other, { type: 'voice_offer', payload: { sdp: 'v=0\r\nsecond' } });
+      await frame(other, { type: 'voice_ice', payload: { candidate: 'candidate:9 1 udp' } });
+
+      expect(mockVoice.addIceCandidate).not.toHaveBeenCalled();
+    });
+
+    it('ends a session whose client asked to stop before the answer arrived', async () => {
+      const ws = createMockWebSocket();
+      let answer: (started: boolean) => void = () => {};
+      mockVoice.start.mockReturnValue(new Promise<boolean>((resolve) => (answer = resolve)));
+
+      const offer = frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      await frame(ws, { type: 'voice_stop' });
+      answer(true);
+      await offer;
+
+      expect(mockVoice.stop).toHaveBeenCalledWith('the client left before the call started');
+      // Nothing to end later: the session never became this socket's.
+      expect(service.voiceSocket).toBeNull();
+    });
+
+    it('ends a session whose client went away before the answer arrived', async () => {
+      const ws = createMockWebSocket();
+      service.handleConnection(ws, { url: '/api/ws', headers: { host: 'localhost:3003' } });
+      let answer: (started: boolean) => void = () => {};
+      mockVoice.start.mockReturnValue(new Promise<boolean>((resolve) => (answer = resolve)));
+
+      const offer = frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      ws.emit('close', 1001);
+      answer(true);
+      await offer;
+
+      expect(mockVoice.stop).toHaveBeenCalledWith('the client left before the call started');
+      expect(service.voiceSocket).toBeNull();
     });
 
     it('ends the session for the socket that opened it, and for no other', async () => {
