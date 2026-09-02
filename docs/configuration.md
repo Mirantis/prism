@@ -465,6 +465,17 @@ under the data dir, so sign-in happens once rather than per meeting.
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call, so a meeting nobody ended can't hold a browser and a metered socket open. Junk or non-positive falls back to the default. | `60` |
 | `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room for a host to admit the agent, counted from when the join request goes in (reaching the lobby is budgeted separately). | `300` |
 
+## Voice chat
+
+[Voice chat](voice-chat.md) is a direct voice conversation between the agent and
+one client, over WebRTC. It needs the same `OPENAI_API_KEY` as voice meetings and
+uses the same voice, model and reasoning settings from the table above. The agent
+has one voice, so a voice chat and a Meet call exclude each other.
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `VOICE_ICE_SERVERS` | STUN and TURN servers the runtime's peer offers to ICE, as a JSON array in the WebRTC shape: `[{"urls":"stun:stun.example.org:3478"},{"urls":"turn:turn.example.org:3478","username":"u","credential":"c"}]`. Empty means **host candidates only** — the client has to reach the runtime's host directly, which covers localhost, a LAN and a port mapping but not a browser arriving through a reverse proxy. A remote deployment needs STUN here, and a network that blocks direct UDP needs TURN as well. Nothing is provisioned for you. An entry with no usable `urls`, or a value that is not a JSON array, is dropped with a startup warning and the runtime boots on host candidates. | — (none) |
+
 ## Observability
 
 All optional; each is off until its variable is set. Langfuse traces every LLM
