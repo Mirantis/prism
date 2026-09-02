@@ -262,6 +262,17 @@ announces and confirms before anything destructive — so a meeting link effecti
 grants the agent's authority, over itself included. See
 [docs/voice-meetings.md](docs/voice-meetings.md).
 
+### Voice chat
+
+A client can also talk to the agent **directly over WebRTC**, with no meeting in
+between: signalling rides the chat WebSocket, the audio rides the peer connection,
+and the agent keeps its tools while you speak. It uses the same `OPENAI_API_KEY`
+and the same voice as a meeting, and shares the one-call-at-a-time rule with it.
+The list of STUN and TURN servers is configuration with an empty default, so out
+of the box the client has to reach the runtime's host directly. The client
+contract — every frame, the audio format, the lifecycle and the errors — is in
+[docs/voice-chat.md](docs/voice-chat.md).
+
 ### Sessions and idle handling
 
 A configurable daily reset (default 4 AM local time) and idle timeouts give
@@ -359,10 +370,11 @@ restarts.
 | `CONTEXT_WINDOW_TOKENS` | Context window to assume for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry at startup (e.g. `https://models.dev/api.json`); unset means no outbound call, bundled catalog only | — (disabled) |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check on the Slack app identity | — |
-| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) (OpenAI Realtime API, connected directly — not via the Lens Agents gateway); also the chat credential when `LLM_PROVIDER=openai`, and the default embedding credential when `LLM_PROVIDER=anthropic` | — (disabled) |
+| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) and [voice chat](docs/voice-chat.md) (OpenAI Realtime API, connected directly — not via the Lens Agents gateway); also the chat credential when `LLM_PROVIDER=openai`, and the default embedding credential when `LLM_PROVIDER=anthropic` | — (disabled) |
 | `ANTHROPIC_API_KEY` | Chat credential when `LLM_PROVIDER=anthropic` (the first-party Anthropic API; always direct — no gateway mount) | — |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice (pinned snapshot) | `gpt-realtime-2.1` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one meeting call | `60` |
+| `VOICE_ICE_SERVERS` | STUN and TURN servers the [voice chat](docs/voice-chat.md) peer offers, as a JSON array in the WebRTC shape | — (host candidates only) |
 | `LANGFUSE_SECRET_KEY` | Enables Langfuse tracing when set | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server | `http://localhost:3100` |
