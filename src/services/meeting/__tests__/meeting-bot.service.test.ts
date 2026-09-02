@@ -267,6 +267,9 @@ vi.mock('../../../config', () => ({
 }));
 
 const { MeetingBotService, MEETING_CHAT_MAX_CHARS } = await import('../meeting-bot.service');
+// The real lock, not a mock: what these tests measure is the service taking and
+// handing back the one voice the runtime has.
+const { voiceSessionLock } = await import('../../voice/voice-session-lock');
 
 const URL = 'https://meet.google.com/abc-defg-hij';
 const input = { url: URL, userId: 'u1', agentId: 'a1', threadId: 't1' };
@@ -337,6 +340,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  // The lock is one per runtime while a `MeetingBotService` here is one per test, so a
+  // test that ends with a call still live would refuse the next test's join.
+  voiceSessionLock.release('meeting');
 });
 
 /** Let the fire-and-forget join flow settle. */
@@ -675,6 +681,30 @@ describe('joining', () => {
     // The first call is untouched.
     expect(service.status().state).toBe('in_call');
     expect(browserStop).not.toHaveBeenCalled();
+  });
+
+  it('refuses a call while a browser voice chat holds the agent voice', async () => {
+    voiceSessionLock.tryAcquire('voice-chat');
+
+    const result = await service.join(input);
+
+    expect(result.state).toBe('idle');
+    expect(result.message).toMatch(/voice chat/i);
+    // The refusal comes before any of the call's infrastructure is built.
+    expect(audioStart).not.toHaveBeenCalled();
+    expect(browserStart).not.toHaveBeenCalled();
+    voiceSessionLock.release('voice-chat');
+  });
+
+  it('hands the voice back once the call ends', async () => {
+    await service.join(input);
+    await settle();
+    expect(voiceSessionLock.holder).toBe('meeting');
+
+    await service.leave();
+
+    // Otherwise the first Meet call of the process would block voice chat for good.
+    expect(voiceSessionLock.holder).toBeNull();
   });
 
   it('rejects an unsupported link without starting anything', async () => {
