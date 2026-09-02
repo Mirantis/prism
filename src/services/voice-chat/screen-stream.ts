@@ -10,6 +10,7 @@
 
 import type { CDPSession, Page } from 'playwright-core';
 import { logger } from '../../logger';
+import type { PictureStream } from './picture-stream';
 
 /** How often to check which tab is in front. */
 const FOLLOW_INTERVAL_MS = 1000;
@@ -26,7 +27,7 @@ const FRAME_QUALITY = 50;
 const FRAME_MAX_WIDTH = 1024;
 const FRAME_MAX_HEIGHT = 576;
 
-export class ScreenStream {
+export class ScreenStream implements PictureStream {
   private session: CDPSession | null = null;
   private page: Page | null = null;
   private followTimer: NodeJS.Timeout | null = null;

@@ -99,6 +99,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-liberation fontconfig \
         iptables \
         chromium xvfb pulseaudio pulseaudio-utils \
+        xfce4 xfce4-terminal dbus-x11 ffmpeg xdotool \
         tini \
         binutils \
         file \

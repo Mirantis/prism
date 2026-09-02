@@ -49,6 +49,12 @@ if image_differs package-lock.json || image_differs prisma/sqlite/schema.prisma;
   echo "Warning: $IMAGE was built from a different package-lock.json or Prisma schema than this checkout." >&2
   echo "         Pull a newer image, or build one with 'npm run docker:build' and set PRISM_IMAGE=prism-agent:local." >&2
 fi
+# The voice chat's desktop needs packages the Dockerfile installs; an image built before
+# they were added starts, then refuses every voice chat.
+if ! docker run --rm --entrypoint sh "$IMAGE" -c 'command -v startxfce4 ffmpeg xdotool > /dev/null' 2>/dev/null; then
+  echo "Warning: $IMAGE lacks the desktop packages (xfce4, ffmpeg, xdotool); voice chats will refuse to start." >&2
+  echo "         Build one with 'npm run docker:build' and set PRISM_IMAGE=prism-agent:local." >&2
+fi
 
 echo "Compiling src/ to dist/ and the web UI to web/dist/..."
 npx tsc

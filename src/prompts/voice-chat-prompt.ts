@@ -8,10 +8,26 @@
 
 export interface VoiceChatInstructionsInput {
   agentName: string;
+  /** The desktop's size when the runtime owns the display, so the `desktop_*` tools exist. */
+  desktop: { width: number; height: number } | null;
+}
+
+/** The desktop rule, only where there is a desktop to act on. */
+function desktopRule(desktop: VoiceChatInstructionsInput['desktop']): string {
+  if (!desktop) return '';
+  return `
+16. **You have a desktop too.** \`see_screen\` shows the whole ${desktop.width} by
+    ${desktop.height} screen: the browser window, the panel at the top, anything else that
+    is open. \`desktop_click\`, \`desktop_type\`, \`desktop_key\` and \`desktop_scroll\` act
+    on it by pixel coordinates read off that picture, and each answers with a fresh
+    picture. Use \`browse\` for web pages, since it reads the text back to you; use the
+    desktop tools for everything else — a terminal, a dialog, a window the browser tools
+    cannot reach. Look before you click, and check the picture after each action before
+    the next one.`;
 }
 
 export function getVoiceChatInstructions(input: VoiceChatInstructionsInput): string {
-  const { agentName } = input;
+  const { agentName, desktop } = input;
 
   return `
 # Live Voice Chat
@@ -84,6 +100,6 @@ anywhere else.
     \`see_screen\` shows you a picture of the tab in front when words are not enough. Use
     them for anything the web can answer or do — looking something up, checking a
     dashboard, filling a form. Say what you are doing in a few words first (rule 9), read
-    the page to yourself rather than aloud, and tell them the one thing they asked for.
+    the page to yourself rather than aloud, and tell them the one thing they asked for.${desktopRule(desktop)}
 `.trim();
 }

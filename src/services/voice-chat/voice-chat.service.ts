@@ -27,7 +27,7 @@ import { getVoiceChatInstructions } from '../../prompts/voice-chat-prompt';
 import { VoiceConversation } from '../meeting/voice-conversation';
 import { prepareMeetingTools } from '../meeting/tool-bridge';
 import { isRealtimeConfigured } from '../meeting/openai-endpoint';
-import { AudioStack, type AudioStackHandles } from '../meeting/audio-stack';
+import { AudioStack, VIRTUAL_DISPLAY_SIZE, type AudioStackHandles } from '../meeting/audio-stack';
 import { BrowserStack } from '../meeting/browser-stack';
 import {
   capture,
@@ -43,9 +43,16 @@ import {
   createVoiceChatTools,
   mergePreparedTools,
   prepareRealtimeTools,
+  type DesktopActionResult,
   type VoiceChatBrowser,
+  type VoiceChatDesktop,
 } from './voice-chat-tools';
+import { DesktopControl, type MouseButton, type ScrollDirection } from './desktop-control';
+import { hasBinaries } from './has-binary';
 import { ScreenStream } from './screen-stream';
+import { DisplayStream } from './display-stream';
+import { DesktopSession } from './desktop-session';
+import type { PictureStream } from './picture-stream';
 
 export const VOICE_CHAT_PATH = '/api/voice';
 
@@ -96,13 +103,20 @@ const START_PAGE =
 
 /** The label a screenshot carries into the session; see `meeting-bot.service.ts`. */
 const SCREEN_LOOK_NOTE =
-  'This is a picture of your own browser as it looks right now, in answer to your ' +
+  'This is a picture of your own screen as it looks right now, in answer to your ' +
   'see_screen call. Your user did not say this.';
+const DESKTOP_AFTER_NOTE =
+  'This is a picture of your own screen right after the desktop action you just took. ' +
+  'Your user did not say this.';
+/** How long the desktop gets to redraw after an action before the picture is taken. */
+const ACTION_SETTLE_MS = 400;
 
 /** Everything one connection owns, released together when it ends. */
-class VoiceChatSession implements VoiceChatBrowser {
+class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop {
   conversation: VoiceConversation | null = null;
   browser: BrowserStack | null = null;
+  /** Mouse, keyboard and camera for the virtual display. Null where the browser is on a real one. */
+  private desktopControl: DesktopControl | null = null;
   /** The first, blank tab `BrowserStack.start()` opens; `browse` works in others. */
   private mainPage: Page | null = null;
   /** A virtual display for the browser on a host without one (the container). */
@@ -113,7 +127,9 @@ class VoiceChatSession implements VoiceChatBrowser {
    * a real display, where the browser's sound comes out of the host's own speakers.
    */
   private audioHandles: AudioStackHandles | null = null;
-  private screen: ScreenStream | null = null;
+  /** The XFCE desktop on the virtual display. Null where the browser is on a real one. */
+  private desktop: DesktopSession | null = null;
+  private screen: PictureStream | null = null;
   /** Everything that moves the front tab runs in arrival order; see the meeting service. */
   private frontTail: Promise<void> = Promise.resolve();
 
@@ -124,6 +140,7 @@ class VoiceChatSession implements VoiceChatBrowser {
   async openBrowser(): Promise<void> {
     const browser = new BrowserStack();
     let display: AudioStack | null = null;
+    let desktop: DesktopSession | null = null;
     try {
       let env: Record<string, string> = {};
       let handles: AudioStackHandles | null = null;
@@ -135,6 +152,19 @@ class VoiceChatSession implements VoiceChatBrowser {
         handles.onLost((reason) =>
           logger.warn(`[VoiceChat] Browser audio capture lost: ${reason}`),
         );
+        // The desktop is part of the deal here, the same as the browser: an image
+        // without its packages ends the chat with a message rather than a lesser page.
+        if (!(await hasBinaries('dbus-launch', 'startxfce4', 'xdotool', 'ffmpeg'))) {
+          throw new Error(
+            'this image lacks the desktop packages (xfce4, dbus-x11, ffmpeg, xdotool); ' +
+              'rebuild it with `npm run docker:build`',
+          );
+        }
+        // The desktop before the browser, so the window manager is there to place the
+        // browser's window when it opens.
+        desktop = new DesktopSession(env);
+        desktop.start();
+        this.desktopControl = new DesktopControl(env, VIRTUAL_DISPLAY_SIZE);
       }
       this.mainPage = await browser.start({
         env,
@@ -148,18 +178,28 @@ class VoiceChatSession implements VoiceChatBrowser {
         .catch((err) => logger.warn({ err }, '[VoiceChat] Start page did not load'));
       this.browser = browser;
       this.display = display;
+      this.desktop = desktop;
       this.audioHandles = handles;
     } catch (err) {
+      this.desktopControl = null;
       await browser.stop().catch(() => undefined);
+      await desktop?.stop();
       await display?.stop().catch(() => undefined);
       const reason = err instanceof Error ? err.message : String(err);
       throw new Error(`Could not open the browser: ${reason}`);
     }
   }
 
-  /** Start sending pictures of the tab in front; `openBrowser()` has to have run. */
+  /**
+   * Start sending pictures; `openBrowser()` has to have run.
+   *
+   * Where the runtime owns the display, the page sees the whole desktop. Where the
+   * browser is on the host's own display, it sees the tab in front.
+   */
   startScreenStream(onFrame: (jpegBase64: string) => void): void {
-    this.screen = new ScreenStream(() => this.browser?.front() ?? null, onFrame);
+    this.screen = this.audioHandles
+      ? new DisplayStream(this.audioHandles.browserEnv.DISPLAY, VIRTUAL_DISPLAY_SIZE, onFrame)
+      : new ScreenStream(() => this.browser?.front() ?? null, onFrame);
     this.screen.start();
   }
 
@@ -192,10 +232,33 @@ class VoiceChatSession implements VoiceChatBrowser {
     });
   }
 
+  /**
+   * Show the model the screen: the whole desktop where the runtime owns the display,
+   * else the browser tab in front. The tab's reading rides along in both cases, since
+   * the words on the page are worth more to a voice model than pixels.
+   */
   async lookAtScreen(): Promise<{ success: boolean; message: string } & Partial<BrowserReading>> {
     const page = this.browser?.front();
-    if (!page) return { success: false, message: 'There is no browser window open.' };
+    const control = this.desktopControl;
 
+    if (control) {
+      try {
+        const shown = await this.showDesktop(control, SCREEN_LOOK_NOTE);
+        const reading = page ? await read(page).catch(() => ({})) : {};
+        return {
+          success: true,
+          message: shown
+            ? `This is my whole ${control.width} by ${control.height} screen.`
+            : 'Here is what the browser tab says. I could not get the picture through.',
+          ...reading,
+        };
+      } catch (err) {
+        logger.error({ err }, '[VoiceChat] Desktop capture failed');
+        return { success: false, message: 'I could not get a picture of the screen.' };
+      }
+    }
+
+    if (!page) return { success: false, message: 'There is no browser window open.' };
     try {
       const { imageUrl, reading } = await capture(page);
       const shown = this.conversation?.showImage(imageUrl, SCREEN_LOOK_NOTE) ?? false;
@@ -212,6 +275,82 @@ class VoiceChatSession implements VoiceChatBrowser {
     }
   }
 
+  get width(): number {
+    return this.desktopControl?.width ?? 0;
+  }
+
+  get height(): number {
+    return this.desktopControl?.height ?? 0;
+  }
+
+  /** Whether `desktop_*` tools have anything to act on. */
+  get hasDesktop(): boolean {
+    return this.desktopControl !== null;
+  }
+
+  click(input: { x: number; y: number; button?: MouseButton; double?: boolean }): Promise<DesktopActionResult> {
+    const button = input.button ?? 'left';
+    return this.desktopAction(
+      (control) => control.click(input.x, input.y, button, input.double ? 2 : 1),
+      `${input.double ? 'Double-clicked' : 'Clicked'} ${button} at (${Math.round(input.x)}, ${Math.round(input.y)})`,
+    );
+  }
+
+  type(input: { text: string }): Promise<DesktopActionResult> {
+    return this.desktopAction(
+      (control) => control.type(input.text),
+      `Typed ${input.text.length} character${input.text.length === 1 ? '' : 's'}`,
+    );
+  }
+
+  key(input: { keys: string }): Promise<DesktopActionResult> {
+    return this.desktopAction((control) => control.key(input.keys), `Pressed ${input.keys}`);
+  }
+
+  scroll(input: { x: number; y: number; direction: ScrollDirection; clicks?: number }): Promise<DesktopActionResult> {
+    return this.desktopAction(
+      (control) => control.scroll(input.x, input.y, input.direction, input.clicks ?? 3),
+      `Scrolled ${input.direction} at (${Math.round(input.x)}, ${Math.round(input.y)})`,
+    );
+  }
+
+  /**
+   * Run one desktop action, wait for the screen to settle, and show the model the
+   * result. Queued with the browser commands, since both move what is on the screen.
+   */
+  private desktopAction(
+    act: (control: DesktopControl) => Promise<void>,
+    message: string,
+  ): Promise<DesktopActionResult> {
+    const control = this.desktopControl;
+    if (!control) {
+      return Promise.resolve({ success: false, message: 'There is no desktop in this voice chat.' });
+    }
+    return this.onFrontQueue(async () => {
+      try {
+        await act(control);
+        await new Promise((r) => setTimeout(r, ACTION_SETTLE_MS));
+        const shown = await this.showDesktop(control, DESKTOP_AFTER_NOTE);
+        return {
+          success: true,
+          message: shown
+            ? `${message}. The picture shows the screen now.`
+            : `${message}. I could not get a picture afterwards.`,
+        };
+      } catch (err) {
+        const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);
+        logger.info(`[VoiceChat:Desktop] ${message} failed: ${detail}`);
+        return { success: false, message: `That did not work: ${detail}` };
+      }
+    });
+  }
+
+  /** One picture of the desktop into the session. Returns whether the model got it. */
+  private async showDesktop(control: DesktopControl, note: string): Promise<boolean> {
+    const jpeg = await control.capture();
+    return this.conversation?.showImage(`data:image/jpeg;base64,${jpeg.toString('base64')}`, note) ?? false;
+  }
+
   /** Release everything. Safe to call more than once. */
   async stop(): Promise<void> {
     this.conversation?.stop();
@@ -220,12 +359,16 @@ class VoiceChatSession implements VoiceChatBrowser {
     this.screen = null;
     await screen?.stop();
     const browser = this.browser;
+    const desktop = this.desktop;
     const display = this.display;
     this.browser = null;
+    this.desktop = null;
+    this.desktopControl = null;
     this.display = null;
     this.mainPage = null;
     this.audioHandles = null;
     await browser?.stop().catch(() => undefined);
+    await desktop?.stop();
     await display?.stop().catch(() => undefined);
   }
 
@@ -374,11 +517,18 @@ class VoiceChatService {
           : '[VoiceChat] Browser audio plays on this host, not through the page',
       );
 
-      const { instructions, agentName, lockedIn } = await this.buildInstructions(userId, agentId);
+      const desktopSize = session.hasDesktop
+        ? { width: session.width, height: session.height }
+        : null;
+      const { instructions, agentName, lockedIn } = await this.buildInstructions(
+        userId,
+        agentId,
+        desktopSize,
+      );
       const agentTools = await prepareMeetingTools({ userId, agentId, lockedIn });
       const tools = mergePreparedTools(
         agentTools,
-        prepareRealtimeTools(createVoiceChatTools(session)),
+        prepareRealtimeTools(createVoiceChatTools(session, session.hasDesktop ? session : null)),
       );
       if (closed) return;
 
@@ -430,6 +580,7 @@ class VoiceChatService {
   private async buildInstructions(
     userId: string,
     agentId: string,
+    desktop: { width: number; height: number } | null,
   ): Promise<{ instructions: string; agentName: string; lockedIn: boolean }> {
     const context = await contextService.getAgentContext(userId, {
       agentId,
@@ -438,7 +589,7 @@ class VoiceChatService {
     const parts = await buildSystemPromptParts(context, 'meeting');
     const instructions = [
       parts.map((p) => p.text).join('\n\n---\n\n'),
-      getVoiceChatInstructions({ agentName: context.agentName }),
+      getVoiceChatInstructions({ agentName: context.agentName, desktop }),
     ].join('\n\n---\n\n');
     return { instructions, agentName: context.agentName, lockedIn: context.lockedIn };
   }
