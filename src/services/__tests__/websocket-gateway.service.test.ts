@@ -12,10 +12,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Use vi.hoisted to create mocks that are available before vi.mock hoisting
-const { mockChat, mockConfig, mockTitleEvents } = vi.hoisted(() => {
+const { mockChat, mockConfig, mockTitleEvents, mockVoice } = vi.hoisted(() => {
   const listeners: Array<(payload: unknown) => void> = [];
   return {
     mockChat: vi.fn(),
+    // The voice session owner. The gateway only carries its signalling, so what a
+    // test asserts here is which frames go to which socket.
+    mockVoice: {
+      start: vi.fn(),
+      addIceCandidate: vi.fn(),
+      stop: vi.fn(),
+    },
     mockConfig: {
       agentId: undefined as string | undefined,
       ownerUserId: '00000000-0000-0000-0000-000000000001',
@@ -45,6 +52,10 @@ vi.mock('../thread-title.service', () => ({
 
 vi.mock('../../config', () => ({
   config: mockConfig,
+}));
+
+vi.mock('../voice/voice-chat.service', () => ({
+  voiceChatService: mockVoice,
 }));
 
 // Import after mocking
@@ -91,11 +102,16 @@ describe('Requirement: WebSocket Gateway', () => {
     service.messageQueues = new Map();
     service.processingUsers = new Set();
     service.activeRequests = new Map();
+    service.voiceSocket = null;
 
     // Default mock responses. `steered: false` is the engine's answer when no
     // turn is live on the thread, which is what the gateway checks before
     // falling back to its own queue.
     mockChat.mockResolvedValue({ steered: false });
+    // The session opens, which is the case every voice test but the refusal wants.
+    mockVoice.start.mockResolvedValue(true);
+    mockVoice.stop.mockResolvedValue(undefined);
+    mockVoice.addIceCandidate.mockResolvedValue(undefined);
   });
 
   describe('Scenario: Connection tracking', () => {
@@ -727,6 +743,160 @@ describe('Requirement: WebSocket Gateway', () => {
 
       // Should not throw
       service.removeConnection('user-nonexistent', ws);
+    });
+  });
+
+  describe('Scenario: Voice signalling', () => {
+    type MockSocket = ReturnType<typeof createMockWebSocket>;
+
+    /** Deliver a frame to the socket's handler the way a client's message does. */
+    async function frame(ws: MockSocket, message: unknown): Promise<void> {
+      await service.handleMessage(ws, 'user-123', message);
+    }
+
+    /** The signal the gateway handed the voice service for its nth offer. */
+    function signalOf(call = 0) {
+      return mockVoice.start.mock.calls[call]![0].signal;
+    }
+
+    /** What the socket was sent last, as the object it was sent as. */
+    function lastSent(ws: MockSocket): unknown {
+      const calls = ws.send.mock.calls;
+      return JSON.parse(calls[calls.length - 1]![0] as string);
+    }
+
+    it('opens a session from an offer and answers on the socket that sent it', async () => {
+      const ws = createMockWebSocket();
+
+      await frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer', threadId: 'thread-1' } });
+
+      expect(mockVoice.start).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-123',
+          agentId: 'agent-123',
+          threadId: 'thread-1',
+          offerSdp: 'v=0\r\noffer',
+        })
+      );
+
+      signalOf().answer('v=0\r\nanswer');
+      expect(lastSent(ws)).toEqual({ type: 'voice_answer', payload: { sdp: 'v=0\r\nanswer' } });
+    });
+
+    it('carries the runtime candidates, the session state and its errors back', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      const signal = signalOf();
+
+      signal.iceCandidate({ candidate: 'candidate:1 1 udp', sdpMid: '0' });
+      expect(lastSent(ws)).toEqual({
+        type: 'voice_ice',
+        payload: { candidate: 'candidate:1 1 udp', sdpMid: '0' },
+      });
+
+      signal.state('live');
+      expect(lastSent(ws)).toEqual({ type: 'voice_state', payload: { state: 'live' } });
+
+      signal.error('the peer went away');
+      expect(lastSent(ws)).toEqual({ type: 'voice_error', payload: { error: 'the peer went away' } });
+
+      signal.state('ended');
+      expect(lastSent(ws)).toEqual({ type: 'voice_state', payload: { state: 'ended' } });
+      // The session is over, so this socket's close no longer ends anything.
+      expect(service.voiceSocket).toBeNull();
+    });
+
+    it('says nothing on a socket the client has closed', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+      const signal = signalOf();
+      ws.send.mockClear();
+      ws.readyState = 3; // CLOSED
+
+      signal.state('live');
+
+      expect(ws.send).not.toHaveBeenCalled();
+    });
+
+    it('refuses an offer with no sdp', async () => {
+      const ws = createMockWebSocket();
+
+      await frame(ws, { type: 'voice_offer', payload: {} });
+
+      expect(mockVoice.start).not.toHaveBeenCalled();
+      expect(lastSent(ws)).toEqual({
+        type: 'voice_error',
+        payload: { error: 'A voice offer needs an sdp' },
+      });
+    });
+
+    it('refuses an offer while the runtime is still starting up', async () => {
+      mockConfig.agentId = undefined;
+      const ws = createMockWebSocket();
+
+      await frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+
+      expect(mockVoice.start).not.toHaveBeenCalled();
+      expect(lastSent(ws)).toEqual({
+        type: 'voice_error',
+        payload: { error: 'Agent runtime is still initializing; retry shortly' },
+      });
+    });
+
+    it('forwards a candidate the client gathered, and ignores a frame without one', async () => {
+      await frame(createMockWebSocket(), {
+        type: 'voice_ice',
+        payload: { candidate: 'candidate:2 1 udp', sdpMid: '0', sdpMLineIndex: 0 },
+      });
+
+      expect(mockVoice.addIceCandidate).toHaveBeenCalledWith({
+        candidate: 'candidate:2 1 udp',
+        sdpMid: '0',
+        sdpMLineIndex: 0,
+      });
+
+      // The end of gathering is the client's business, not the peer's.
+      await frame(createMockWebSocket(), { type: 'voice_ice', payload: { candidate: null } });
+      expect(mockVoice.addIceCandidate).toHaveBeenCalledTimes(1);
+    });
+
+    it('ends the session for the socket that opened it, and for no other', async () => {
+      const owner = createMockWebSocket();
+      await frame(owner, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+
+      // A second client is refused the session, so its stop is not the owner's.
+      const other = createMockWebSocket();
+      mockVoice.start.mockResolvedValue(false);
+      await frame(other, { type: 'voice_offer', payload: { sdp: 'v=0\r\nsecond' } });
+
+      await frame(other, { type: 'voice_stop' });
+      expect(mockVoice.stop).not.toHaveBeenCalled();
+
+      await frame(owner, { type: 'voice_stop' });
+      expect(mockVoice.stop).toHaveBeenCalledTimes(1);
+    });
+
+    it('ends the session when the socket that opened it goes away', async () => {
+      const ws = createMockWebSocket();
+      service.handleConnection(ws, { url: '/api/ws', headers: { host: 'localhost:3003' } });
+      await frame(ws, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+
+      ws.emit('close', 1000);
+
+      expect(mockVoice.stop).toHaveBeenCalledWith('the client disconnected');
+      expect(service.voiceSocket).toBeNull();
+    });
+
+    it('leaves the session alone when another socket goes away', async () => {
+      const owner = createMockWebSocket();
+      await frame(owner, { type: 'voice_offer', payload: { sdp: 'v=0\r\noffer' } });
+
+      const other = createMockWebSocket();
+      service.handleConnection(other, { url: '/api/ws', headers: { host: 'localhost:3003' } });
+      other.emit('close', 1000);
+
+      expect(mockVoice.stop).not.toHaveBeenCalled();
+      expect(service.voiceSocket).toBe(owner);
     });
   });
 });

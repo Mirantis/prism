@@ -29,6 +29,7 @@ import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
 import { trackAgentStarted } from './lib/startup-telemetry';
 import { heartbeatService } from './services/heartbeat.service';
 import { meetingBotService } from './services/meeting/meeting-bot.service';
+import { voiceChatService } from './services/voice/voice-chat.service';
 import { initMeetingToolAvailability } from './lib/tool-collection';
 import { cronSchedulerService } from './services/cron-scheduler.service';
 import { goalService } from './services/goal.service';
@@ -269,6 +270,11 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   // daemon die with us and the bot lingers in the meeting as a frozen participant.
   await meetingBotService.shutdown().catch((err) => {
     logger.warn(`[Meeting] Shutdown teardown failed: ${String(err)}`);
+  });
+  // Same for a browser voice chat: the peer dies with the process, so end the
+  // session while there is still a socket to say so on.
+  await voiceChatService.shutdown().catch((err) => {
+    logger.warn(`[VoiceChat] Shutdown teardown failed: ${String(err)}`);
   });
   await messageDeliveryService.shutdownAll();
   // Plugin MCP servers are child processes we spawned; close them explicitly so
