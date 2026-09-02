@@ -24,6 +24,7 @@ import { buildVoiceInstructions, type VoiceInstructions } from '../voice/voice-i
 import { AudioStack } from './audio-stack';
 import { BrowserStack } from './browser-stack';
 import { VoiceConversation, type VoiceConversationStats } from './voice-conversation';
+import { meanGateLatencyMs } from './gate-stats';
 import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet';
@@ -232,21 +233,6 @@ export interface JoinMeetingInput {
   threadId?: string;
   /** How much the agent speaks up; `auto` follows the participant count. */
   responseMode?: ResponseMode;
-}
-
-/**
- * Mean time a verdict took, in whole milliseconds.
- *
- * This is the number that says whether the gate is keeping the room waiting: it
- * sits between somebody finishing a sentence and the agent starting to answer.
- * Zero when nothing was judged, rather than absent — a call where nobody spoke to
- * the agent is a common outcome, and a missing property looks the same as a build
- * that never emitted it.
- */
-function meanGateLatencyMs(stats: VoiceConversationStats | undefined): number {
-  const calls = stats?.gateCalls ?? 0;
-  if (calls === 0) return 0;
-  return Math.round((stats?.gateLatencyMs ?? 0) / calls);
 }
 
 /**
