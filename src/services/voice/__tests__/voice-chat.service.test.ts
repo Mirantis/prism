@@ -42,6 +42,7 @@ class FakeConversation {
   readonly start = vi.fn(async () => {});
   readonly sink: PlaybackSink;
   readonly sampleRate?: number;
+  readonly responseMode?: string;
   readonly onSessionLost?: (reason: string) => void;
   readonly statistics = {
     responses: 2,
@@ -49,15 +50,21 @@ class FakeConversation {
     interruptions: 0,
     utterances: 4,
     responsesFailed: 0,
+    suppressed: 3,
+    gateCalls: 4,
+    gateFailed: 1,
+    gateLatencyMs: 900,
   };
 
   constructor(options: {
     sink: PlaybackSink;
     sampleRate?: number;
+    responseMode?: string;
     onSessionLost?: (reason: string) => void;
   }) {
     this.sink = options.sink;
     this.sampleRate = options.sampleRate;
+    this.responseMode = options.responseMode;
     this.onSessionLost = options.onSessionLost;
     conversations.push(this);
   }
@@ -67,6 +74,7 @@ vi.mock('../../meeting/voice-conversation', () => ({ VoiceConversation: FakeConv
 
 const { voiceChatService } = await import('../voice-chat.service');
 const { voiceSessionLock } = await import('../voice-session-lock');
+const { buildVoiceInstructions } = await import('../voice-instructions');
 
 /** A signal that records everything the service says and sends to the client. */
 function fakeSignal() {
@@ -76,12 +84,15 @@ function fakeSignal() {
 type Signal = ReturnType<typeof fakeSignal>;
 
 /** Start a session and hand back everything the assertions need. */
-async function startSession(): Promise<{ signal: Signal; conversation: FakeConversation }> {
+async function startSession(
+  mode?: 'open' | 'addressed',
+): Promise<{ signal: Signal; conversation: FakeConversation }> {
   const signal = fakeSignal();
   await voiceChatService.start({
     userId: 'user-1',
     agentId: 'agent-1',
     threadId: 'thread-1',
+    mode,
     signal,
   });
   return { signal, conversation: conversations[conversations.length - 1]! };
@@ -90,6 +101,7 @@ async function startSession(): Promise<{ signal: Signal; conversation: FakeConve
 beforeEach(() => {
   conversations.length = 0;
   trackEvent.mockClear();
+  vi.mocked(buildVoiceInstructions).mockClear();
 });
 
 afterEach(async () => {
@@ -136,6 +148,62 @@ describe('starting a session', () => {
 
     expect(signal.error).toHaveBeenCalledWith(expect.stringContaining('already a voice chat'));
     expect(signal.state).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Which utterances the agent answers, which the client picks because it is the only one
+ * that knows what its microphone is pointed at: held to an ear, or lying on a table with
+ * a meeting going on around it.
+ */
+describe('the listening mode', () => {
+  it('answers everything when the client asks for nothing', async () => {
+    const { conversation } = await startSession();
+    expect(conversation.responseMode).toBe('open');
+  });
+
+  it('gates on being addressed when the client asks for it', async () => {
+    const { conversation } = await startSession('addressed');
+    expect(conversation.responseMode).toBe('addressed');
+  });
+
+  /**
+   * The invariant worth a test of its own. The prompt tells the model whether it is being
+   * filtered and the policy does the filtering, so a call where the two disagree is one
+   * that either explains gaps in a conversation that has none, or waits to be named in a
+   * room where nothing will name it.
+   */
+  it('tells the prompt and the policy the same thing', async () => {
+    const { conversation } = await startSession('addressed');
+
+    expect(vi.mocked(buildVoiceInstructions)).toHaveBeenCalledWith(
+      expect.objectContaining({ responseMode: 'addressed' }),
+    );
+    expect(conversation.responseMode).toBe('addressed');
+  });
+
+  it('reports the mode and the gate numbers to telemetry', async () => {
+    await startSession('addressed');
+    await voiceChatService.stop();
+
+    expect(trackEvent).toHaveBeenCalledWith(
+      'voice chat started',
+      'user-1',
+      expect.objectContaining({ mode: 'addressed' }),
+    );
+    expect(trackEvent).toHaveBeenCalledWith(
+      'voice chat ended',
+      'user-1',
+      // `gate_failed` is the number that separates an agent nobody addressed from one
+      // that could not tell, and the two sound identical from the room.
+      expect.objectContaining({
+        mode: 'addressed',
+        suppressed: '3',
+        gate_calls: '4',
+        gate_failed: '1',
+        gate_latency_ms: '900',
+      }),
+    );
   });
 });
 
@@ -230,6 +298,7 @@ describe('ending a session', () => {
     expect(trackEvent).toHaveBeenCalledWith('voice chat started', 'user-1', {
       tools: '3',
       locked_in: 'false',
+      mode: 'open',
     });
     expect(trackEvent).toHaveBeenCalledWith(
       'voice chat ended',
