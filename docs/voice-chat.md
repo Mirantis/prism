@@ -119,7 +119,13 @@ way it does in a phone call.
 | `voice_answer` | Connecting | Set the remote description, exchange candidates. Show the user that the call is connecting, not that it is live. |
 | `voice_state: live` | Live | Audio flows. Offer one control that ends the call. |
 | `voice_error` | Failing or refused | Show the text. When it is a refusal, no session started and no `ended` follows. |
+| Neither `live` nor an error | Failing | Watch your own peer connection. Treat its `failed` state as the end of the call, and send `voice_stop`. |
 | `voice_state: ended` | Over | Release the microphone and close the peer connection. |
+
+The runtime sets no deadline on a media path that never comes up: a peer that
+never connects sends no `live`, no `voice_error` and no `ended`, so the client's
+own peer connection is the only thing that reports it. This is the reverse-proxy
+case above.
 
 Three things end a session: the client's `voice_stop`, the socket closing, and a
 failure. A failure sends `voice_error` first and `voice_state: ended` after, so a
