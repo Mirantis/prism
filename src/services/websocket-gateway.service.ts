@@ -200,10 +200,9 @@ class WebSocketGatewayService {
     // supports, rather than `verifyClient`.
     server.on('upgrade', (req, socket, head) => {
       const { pathname } = new URL(req.url ?? '', 'http://localhost');
-      if (pathname !== '/api/ws') {
-        socket.destroy();
-        return;
-      }
+      // Another endpoint's upgrade: the voice chat's `/api/voice` shares this server
+      // and picks its own off the same event.
+      if (pathname !== '/api/ws') return;
 
       // A WebSocket handshake is exempt from the same-origin policy, so the
       // same rules the HTTP routes get are applied to it here.
