@@ -24,9 +24,30 @@ interface WebSocketMessage {
     | 'thread'
     | 'context'
     | 'compaction'
-    | 'update';
+    | 'update'
+    | 'voice_state'
+    | 'voice_error'
+    | 'voice_hello'
+    | 'voice_clear';
   payload?: unknown;
 }
+
+/** The audio format a voice session carries, in both directions. */
+export interface VoiceFormat {
+  encoding: string;
+  sampleRate: number;
+  channels: number;
+}
+
+/**
+ * A voice control frame, normalized. The audio itself is not here: it arrives as
+ * binary frames and goes straight to `onVoiceAudio`. See docs/voice-chat.md.
+ */
+export type VoiceEvent =
+  | { type: 'hello'; format: VoiceFormat }
+  | { type: 'state'; state: 'live' | 'ended' }
+  | { type: 'clear' }
+  | { type: 'error'; error: string };
 
 interface UseWebSocketOptions {
   onMessage?: (msg: ConversationMessage) => void;
@@ -46,6 +67,18 @@ interface UseWebSocketOptions {
   onCompaction?: (event: CompactionEvent) => void;
   /** Self-update progress (available/updating/failed). Install-level, not thread-scoped. */
   onUpdate?: (event: UpdateEvent) => void;
+  /**
+   * A voice control frame arrived. A callback for the same reason as the two
+   * above: the voice session belongs to the caller, which owns the microphone
+   * and the playback.
+   */
+  onVoiceEvent?: (event: VoiceEvent) => void;
+  /**
+   * A frame of the agent's speech, pcm16 at the rate `voice_hello` states. Called
+   * from the socket handler with no await in front of it, so frames and the
+   * `clear` that cancels them arrive in the order the runtime sent them.
+   */
+  onVoiceAudio?: (frame: ArrayBuffer) => void;
   reconnectInterval?: number;
   maxReconnectAttempts?: number;
 }
@@ -57,6 +90,8 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     onContextUsage,
     onCompaction,
     onUpdate,
+    onVoiceEvent,
+    onVoiceAudio,
     reconnectInterval = 3000,
     maxReconnectAttempts = 10,
   } = opts;
@@ -76,17 +111,30 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const onContextUsageRef = useRef(onContextUsage);
   const onCompactionRef = useRef(onCompaction);
   const onUpdateRef = useRef(onUpdate);
+  const onVoiceEventRef = useRef(onVoiceEvent);
+  const onVoiceAudioRef = useRef(onVoiceAudio);
   onMessageRef.current = onMessage;
   onThreadUpdateRef.current = onThreadUpdate;
   onContextUsageRef.current = onContextUsage;
   onCompactionRef.current = onCompaction;
   onUpdateRef.current = onUpdate;
+  onVoiceEventRef.current = onVoiceEvent;
+  onVoiceAudioRef.current = onVoiceAudio;
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [isTyping, setIsTyping] = useState(false);
 
   const handleMessage = useCallback(
     (event: MessageEvent) => {
+      // Audio, not JSON. Taken before the parse so a frame of speech is never
+      // read as chat, and handed on synchronously so it keeps its place among
+      // the text frames — `voice_clear` cancels the audio that precedes it.
+      // `binaryType` is 'arraybuffer' (set at connect), so nothing else arrives
+      // here as a non-string.
+      if (typeof event.data !== 'string') {
+        onVoiceAudioRef.current?.(event.data as ArrayBuffer);
+        return;
+      }
       try {
         const data = JSON.parse(event.data) as WebSocketMessage;
         switch (data.type) {
@@ -169,6 +217,41 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             }
             break;
           }
+          case 'voice_state': {
+            const p = data.payload as { state?: string } | undefined;
+            if (p?.state === 'live' || p?.state === 'ended') {
+              onVoiceEventRef.current?.({ type: 'state', state: p.state });
+            }
+            break;
+          }
+          case 'voice_hello': {
+            const p = data.payload as { format?: Partial<VoiceFormat> } | undefined;
+            const format = p?.format;
+            // Validated before forwarding, like the two cases above: the caller
+            // builds its capture around this format, and a half-stated one would
+            // configure the microphone with an undefined rate.
+            if (
+              typeof format?.encoding === 'string' &&
+              typeof format.sampleRate === 'number' &&
+              typeof format.channels === 'number'
+            ) {
+              onVoiceEventRef.current?.({ type: 'hello', format: format as VoiceFormat });
+            }
+            break;
+          }
+          case 'voice_clear':
+            onVoiceEventRef.current?.({ type: 'clear' });
+            break;
+          case 'voice_error': {
+            const p = data.payload as { error?: string } | undefined;
+            // A refusal with no text still has to reach the user as words, since
+            // the alternative is a control that does nothing and says nothing.
+            onVoiceEventRef.current?.({
+              type: 'error',
+              error: p?.error?.trim() || 'The voice chat could not run.',
+            });
+            break;
+          }
           case 'heartbeat':
             if (wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({ type: 'pong' }));
@@ -199,6 +282,10 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     setStatus('connecting');
     try {
       const ws = new WebSocket(webSocketUrl());
+      // The agent's speech arrives as binary frames. As Blobs they would need a
+      // read to open, which is asynchronous — and audio that is reordered against
+      // the `voice_clear` cancelling it is audio the user hears after a barge-in.
+      ws.binaryType = 'arraybuffer';
       ws.onopen = () => {
         setStatus('connected');
         reconnectAttempts.current = 0;
@@ -257,6 +344,32 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     [sendMessage],
   );
 
+  // The voice senders. None of them touches `isTyping`: a call is not a turn, and
+  // the composer's spinner and STOP button belong to the text conversation.
+  //
+  // `mode` is left unset on purpose, which the runtime reads as `open` — every
+  // utterance answered. A browser tab is somebody talking to the agent.
+  const sendVoiceStart = useCallback((threadId?: string) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return false;
+    wsRef.current.send(JSON.stringify({ type: 'voice_start', payload: { threadId } }));
+    return true;
+  }, []);
+
+  const sendVoiceStop = useCallback(() => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: 'voice_stop' }));
+  }, []);
+
+  /**
+   * One frame of the microphone, pcm16 mono at the session's rate. Dropped when the
+   * socket is not open: the client streams continuously, silence included, so a
+   * dropped frame is a gap in the audio and never an error to report.
+   */
+  const sendVoiceAudio = useCallback((frame: ArrayBuffer) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(frame);
+  }, []);
+
   // Cancel the in-flight turn: tell the runtime to abort the LLM generation
   // and optimistically clear the typing state so the STOP button reverts
   // immediately (the runtime also broadcasts a terminal { processing: false }).
@@ -289,5 +402,8 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     isTyping,
     sendFollowup,
     cancel,
+    sendVoiceStart,
+    sendVoiceStop,
+    sendVoiceAudio,
   };
 }
