@@ -192,6 +192,93 @@ describe('useWebSocket', () => {
     expect(result.current.isTyping).toBe(true);
   });
 
+  describe('voice frames', () => {
+    it('routes every voice frame to the latest onVoice', async () => {
+      // Same ref-freshness contract as the callbacks above: the socket handler is
+      // bound once, so a stale closure would hand the frames to a call state
+      // machine that no longer exists.
+      const first = vi.fn();
+      const { rerender, ws } = await renderConnected({ onVoice: first });
+
+      const second = vi.fn();
+      rerender({ onVoice: second });
+
+      act(() => ws.deliver({ type: 'voice_answer', payload: { sdp: 'v=0\r\n' } }));
+      act(() =>
+        ws.deliver({
+          type: 'voice_ice',
+          payload: { candidate: 'candidate:1 1 udp 1 10.0.0.4 51000 typ host', sdpMid: '0', sdpMLineIndex: 0 },
+        }),
+      );
+      act(() => ws.deliver({ type: 'voice_state', payload: { state: 'live' } }));
+      act(() => ws.deliver({ type: 'voice_error', payload: { error: 'There is already a voice chat running.' } }));
+
+      expect(first).not.toHaveBeenCalled();
+      expect(second.mock.calls.map(([frame]) => frame)).toEqual([
+        { kind: 'answer', sdp: 'v=0\r\n' },
+        {
+          kind: 'ice',
+          candidate: { candidate: 'candidate:1 1 udp 1 10.0.0.4 51000 typ host', sdpMid: '0', sdpMLineIndex: 0 },
+        },
+        { kind: 'state', state: 'live' },
+        { kind: 'error', error: 'There is already a voice chat running.' },
+      ]);
+    });
+
+    it('drops a malformed voice frame rather than forwarding it', async () => {
+      const onVoice = vi.fn();
+      const { ws } = await renderConnected({ onVoice });
+
+      // A state that is neither `live` nor `ended` would strand the call: the UI
+      // would leave the state machine wherever the last good frame put it.
+      act(() => ws.deliver({ type: 'voice_state', payload: { state: 'nearly' } }));
+      act(() => ws.deliver({ type: 'voice_state' }));
+      act(() => ws.deliver({ type: 'voice_answer', payload: {} }));
+      act(() => ws.deliver({ type: 'voice_ice', payload: { sdpMid: '0' } }));
+      act(() => ws.deliver({ type: 'voice_error', payload: { error: 42 } }));
+
+      expect(onVoice).not.toHaveBeenCalled();
+    });
+
+    it('sends the three client frames as docs/voice-chat.md specifies them', async () => {
+      const { result, ws } = await renderConnected({});
+
+      act(() => result.current.sendVoiceOffer('v=0\r\nm=audio', 't1'));
+      expect(JSON.parse(ws.sent.at(-1)!)).toEqual({
+        type: 'voice_offer',
+        payload: { sdp: 'v=0\r\nm=audio', threadId: 't1' },
+      });
+
+      // No thread: the frame carries the sdp alone rather than a null threadId.
+      act(() => result.current.sendVoiceOffer('v=0\r\nm=audio'));
+      expect(JSON.parse(ws.sent.at(-1)!)).toEqual({
+        type: 'voice_offer',
+        payload: { sdp: 'v=0\r\nm=audio' },
+      });
+
+      act(() =>
+        result.current.sendVoiceIce({ candidate: 'candidate:2 1 udp 1 10.0.0.9 54321 typ host', sdpMid: '0', sdpMLineIndex: 0 }),
+      );
+      expect(JSON.parse(ws.sent.at(-1)!)).toEqual({
+        type: 'voice_ice',
+        payload: { candidate: 'candidate:2 1 udp 1 10.0.0.9 54321 typ host', sdpMid: '0', sdpMLineIndex: 0 },
+      });
+
+      act(() => result.current.sendVoiceStop());
+      expect(JSON.parse(ws.sent.at(-1)!)).toEqual({ type: 'voice_stop' });
+    });
+
+    it('sends nothing on a socket that is not open', async () => {
+      const { result, ws } = await renderConnected({});
+      act(() => ws.close());
+
+      act(() => result.current.sendVoiceOffer('v=0\r\n'));
+      act(() => result.current.sendVoiceStop());
+
+      expect(ws.sent).toEqual([]);
+    });
+  });
+
   it('ignores the connect handshake status, which carries no processing flag', async () => {
     const { result, ws } = await renderConnected({ onMessage: vi.fn() });
 

@@ -14,9 +14,35 @@ interface ChatMessage {
 }
 
 interface WebSocketMessage {
-  type: 'chat' | 'status' | 'error' | 'typing' | 'heartbeat' | 'pong' | 'thread' | 'context' | 'compaction';
+  type:
+    | 'chat'
+    | 'status'
+    | 'error'
+    | 'typing'
+    | 'heartbeat'
+    | 'pong'
+    | 'thread'
+    | 'context'
+    | 'compaction'
+    | 'voice_answer'
+    | 'voice_ice'
+    | 'voice_state'
+    | 'voice_error';
   payload?: unknown;
 }
+
+/**
+ * One of the runtime's four voice frames, validated. See docs/voice-chat.md.
+ *
+ * One union through one callback rather than four options: the four frames drive a
+ * single call state machine in a single owner, so four callbacks would be four refs
+ * to keep fresh for nothing.
+ */
+export type VoiceFrame =
+  | { kind: 'answer'; sdp: string }
+  | { kind: 'ice'; candidate: RTCIceCandidateInit }
+  | { kind: 'state'; state: 'live' | 'ended' }
+  | { kind: 'error'; error: string };
 
 interface UseWebSocketOptions {
   onMessage?: (msg: ConversationMessage) => void;
@@ -34,6 +60,8 @@ interface UseWebSocketOptions {
    * caller knows which thread is on screen.
    */
   onCompaction?: (event: CompactionEvent) => void;
+  /** A voice-chat frame from the runtime, for the caller that owns the call. */
+  onVoice?: (frame: VoiceFrame) => void;
   reconnectInterval?: number;
   maxReconnectAttempts?: number;
 }
@@ -44,6 +72,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     onThreadUpdate,
     onContextUsage,
     onCompaction,
+    onVoice,
     reconnectInterval = 3000,
     maxReconnectAttempts = 10,
   } = opts;
@@ -62,10 +91,12 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const onThreadUpdateRef = useRef(onThreadUpdate);
   const onContextUsageRef = useRef(onContextUsage);
   const onCompactionRef = useRef(onCompaction);
+  const onVoiceRef = useRef(onVoice);
   onMessageRef.current = onMessage;
   onThreadUpdateRef.current = onThreadUpdate;
   onContextUsageRef.current = onContextUsage;
   onCompactionRef.current = onCompaction;
+  onVoiceRef.current = onVoice;
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [isTyping, setIsTyping] = useState(false);
@@ -140,6 +171,33 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             ) {
               onCompactionRef.current?.(p as CompactionEvent);
             }
+            break;
+          }
+          // The four voice frames. Validated before they are forwarded, the same
+          // way the two above are: a `voice_state` carrying anything but `live` or
+          // `ended` would otherwise strand the call state machine mid-call.
+          case 'voice_answer': {
+            const p = data.payload as { sdp?: unknown } | undefined;
+            if (typeof p?.sdp === 'string') onVoiceRef.current?.({ kind: 'answer', sdp: p.sdp });
+            break;
+          }
+          case 'voice_ice': {
+            const p = data.payload as Partial<RTCIceCandidateInit> | undefined;
+            if (typeof p?.candidate === 'string') {
+              onVoiceRef.current?.({ kind: 'ice', candidate: p as RTCIceCandidateInit });
+            }
+            break;
+          }
+          case 'voice_state': {
+            const p = data.payload as { state?: unknown } | undefined;
+            if (p?.state === 'live' || p?.state === 'ended') {
+              onVoiceRef.current?.({ kind: 'state', state: p.state });
+            }
+            break;
+          }
+          case 'voice_error': {
+            const p = data.payload as { error?: unknown } | undefined;
+            if (typeof p?.error === 'string') onVoiceRef.current?.({ kind: 'error', error: p.error });
             break;
           }
           case 'heartbeat':
@@ -240,6 +298,33 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     setIsTyping(false);
   }, []);
 
+  // The three client voice frames, each its own named sender rather than one generic
+  // `send`: this socket carries every chat message, and a generic send would let any
+  // caller put any frame on it.
+  const sendVoiceOffer = useCallback((sdp: string, threadId?: string) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: 'voice_offer', payload: { sdp, threadId } }));
+  }, []);
+
+  const sendVoiceIce = useCallback((candidate: RTCIceCandidateInit) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(
+      JSON.stringify({
+        type: 'voice_ice',
+        payload: {
+          candidate: candidate.candidate,
+          sdpMid: candidate.sdpMid ?? undefined,
+          sdpMLineIndex: candidate.sdpMLineIndex ?? undefined,
+        },
+      }),
+    );
+  }, []);
+
+  const sendVoiceStop = useCallback(() => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: 'voice_stop' }));
+  }, []);
+
   useEffect(() => {
     isMountedRef.current = true;
     const timer = setTimeout(() => {
@@ -262,5 +347,8 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     isTyping,
     sendFollowup,
     cancel,
+    sendVoiceOffer,
+    sendVoiceIce,
+    sendVoiceStop,
   };
 }
