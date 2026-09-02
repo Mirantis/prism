@@ -27,6 +27,20 @@ export AWS_SESSION_TOKEN=
 The coding sub-agent scenario also runs the `claude` CLI, so install it
 (`npm install -g @anthropic-ai/claude-code`); it uses the same Bedrock token.
 
+### The voice chat scenario
+
+It needs no OpenAI account: the runtime's voice socket is pointed at
+`support/mock-realtime-server.ts`, and the microphone is Chromium's own synthetic
+capture device.
+
+On a host with no Playwright-managed browser, name a system Chromium instead:
+
+```bash
+E2E_CHROMIUM_PATH=/usr/bin/chromium npm run test --workspace=prism-agent-e2e
+```
+
+Never commit that path — CI has its own browser and must keep using it.
+
 ## Running Tests
 
 From the repo root:
@@ -140,7 +154,7 @@ permissions it was granted.
 ## How It Works
 
 1. Playwright config provisions `prisma/sqlite/e2e.db` and runs Prisma migrations (at config load).
-2. Playwright starts two dev servers: agent-runtime (:3003 via tsx) and the Vite web app (:5173).
+2. Playwright starts three servers: agent-runtime (:3003 via tsx), the Vite web app (:5173), and the mock voice model (:3103, `support/mock-realtime-server.ts`).
 3. `global-setup.ts` starts the OTEL Collector + MinIO stack and seeds the SQLite DB.
 4. `global-teardown.ts` stops the OTEL stack and disconnects Prisma.
 
