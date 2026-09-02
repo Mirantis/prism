@@ -8,6 +8,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { config } from '../../../config';
+import {
+  fakeWrtcModule,
+  lastFakePeer,
+  lastFakeSink,
+  lastFakeSource,
+  resetFakeWrtc,
+} from '../../../test-utils/fake-wrtc';
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -17,93 +24,7 @@ vi.mock('../../../config', () => ({
   config: { voiceIceServers: [] },
 }));
 
-interface AudioData {
-  samples: Int16Array;
-  sampleRate: number;
-  numberOfFrames: number;
-}
-
-/** Every peer, source and sink the transport built, in construction order. */
-const peers: FakePeer[] = [];
-const sources: FakeSource[] = [];
-const sinks: FakeSink[] = [];
-
-class FakeTrack {
-  stopped = false;
-  stop(): void {
-    this.stopped = true;
-  }
-}
-
-class FakeSource {
-  readonly frames: AudioData[] = [];
-  readonly track = new FakeTrack();
-  createTrack(): FakeTrack {
-    return this.track;
-  }
-  onData(data: AudioData): void {
-    // The real addon throws on any other count, so the stub does too — a test that
-    // passed here while production threw would be worse than no test.
-    if (data.samples.length !== 480) throw new Error(`expected 480 samples, got ${data.samples.length}`);
-    this.frames.push(data);
-  }
-}
-
-class FakeSink {
-  ondata: ((data: AudioData) => void) | null = null;
-  stopped = false;
-  constructor(readonly track: unknown) {
-    sinks.push(this);
-  }
-  stop(): void {
-    this.stopped = true;
-  }
-}
-
-class FakePeer {
-  onicecandidate: ((event: { candidate: unknown }) => void) | null = null;
-  onconnectionstatechange: (() => void) | null = null;
-  ontrack: ((event: { track: unknown }) => void) | null = null;
-  connectionState = 'new';
-  closed = false;
-  readonly added: unknown[] = [];
-  readonly candidates: unknown[] = [];
-  constructor(readonly configuration: { iceServers: unknown[] }) {
-    peers.push(this);
-  }
-  addTrack(track: unknown): void {
-    this.added.push(track);
-  }
-  async setRemoteDescription(): Promise<void> {}
-  async createAnswer(): Promise<{ type: string; sdp: string }> {
-    return { type: 'answer', sdp: 'v=0\r\nanswer' };
-  }
-  async setLocalDescription(): Promise<void> {}
-  async addIceCandidate(candidate: unknown): Promise<void> {
-    this.candidates.push(candidate);
-  }
-  close(): void {
-    this.closed = true;
-  }
-  /** Drive the state machine the way the library would. */
-  becomes(state: string): void {
-    this.connectionState = state;
-    this.onconnectionstatechange?.();
-  }
-}
-
-vi.mock('@roamhq/wrtc', () => ({
-  RTCPeerConnection: FakePeer,
-  nonstandard: {
-    RTCAudioSink: FakeSink,
-    RTCAudioSource: class extends FakeSource {
-      constructor() {
-        super();
-        sources.push(this);
-      }
-    },
-  },
-}));
+vi.mock('@roamhq/wrtc', () => fakeWrtcModule);
 
 const { createWrtcTransport } = await import('../wrtc-transport');
 
@@ -116,13 +37,11 @@ async function transport() {
     onClosed: vi.fn(),
   };
   const t = await createWrtcTransport(events);
-  return { t, events, peer: peers[peers.length - 1]!, source: sources[sources.length - 1]! };
+  return { t, events, peer: lastFakePeer(), source: lastFakeSource() };
 }
 
 beforeEach(() => {
-  peers.length = 0;
-  sources.length = 0;
-  sinks.length = 0;
+  resetFakeWrtc();
   vi.mocked(config).voiceIceServers = [];
 });
 
@@ -164,7 +83,7 @@ describe('the audio the client sends', () => {
   it('passes 48 kHz frames on and drops every other rate', async () => {
     const { t, events, peer } = await transport();
     peer.ontrack?.({ track: {} });
-    const sink = sinks[sinks.length - 1]!;
+    const sink = lastFakeSink();
 
     // Every session opens with a couple of these, and the core takes 48 kHz alone.
     sink.ondata?.({ samples: new Int16Array(160), sampleRate: 16_000, numberOfFrames: 160 });
@@ -228,7 +147,7 @@ describe('the session lifecycle', () => {
   it('releases the sink, the track and the peer, once', async () => {
     const { t, source, peer } = await transport();
     peer.ontrack?.({ track: {} });
-    const sink = sinks[sinks.length - 1]!;
+    const sink = lastFakeSink();
 
     await t.close();
     await t.close();
