@@ -15,6 +15,9 @@ config({ path: path.resolve(__dirname, '.env.e2e.local'), override: true });
 // dev-server proxy ("/agents" + "/api/ws" → :3003) just works.
 const RUNTIME_PORT = 3003;
 const WEB_PORT = 5173;
+// The local stand-in for OpenAI's Realtime API (support/mock-realtime-server.ts),
+// so a voice call runs with no OpenAI account.
+const MOCK_REALTIME_PORT = 3103;
 
 // SQLite e2e DB lives next to the schema so Prisma's schema-relative path
 // resolution (file:./e2e.db) lands on the same file from every cwd.
@@ -150,6 +153,21 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    // The voice scenario needs a microphone. The fake device is a synthetic tone
+    // Chromium generates itself, so it needs no fixture and no host audio, and it
+    // only ever appears to a `getUserMedia` caller — every other scenario is
+    // unaffected. The grant is Playwright's own, per origin, which is preferred
+    // over `--use-fake-ui-for-media-stream`: that one auto-accepts every prompt.
+    launchOptions: {
+      args: ['--use-fake-device-for-media-stream'],
+      // CI runs Playwright's own browser and must keep doing so. A host with no
+      // Playwright download (its CDN is not always reachable) points this at a
+      // system Chromium instead — a local export, never a path committed here.
+      ...(process.env.E2E_CHROMIUM_PATH
+        ? { executablePath: process.env.E2E_CHROMIUM_PATH }
+        : {}),
+    },
+    permissions: ['microphone'],
   },
 
   projects: [
@@ -218,6 +236,10 @@ export default defineConfig({
         // their expected percentage from the bundled catalog, so a fresher remote
         // window would make them flaky by design.
         MODELS_DEV_URL: '',
+        // Voice chat, pointed at the mock below. The key is required even against
+        // a local server, and is invented: nothing authenticates it.
+        OPENAI_REALTIME_URL: `ws://127.0.0.1:${MOCK_REALTIME_PORT}/v1/realtime`,
+        OPENAI_API_KEY: 'sk-e2e-not-a-real-key',
       },
     },
     {
@@ -229,6 +251,19 @@ export default defineConfig({
       // Vite is a serving Vite.
       timeout: 180_000,
       reuseExistingServer: !process.env.CI,
+    },
+    {
+      // The voice model the runtime talks to. Playwright owns its lifecycle, and
+      // `stdout: 'pipe'` puts its log beside the runtime's — which is where a
+      // failing voice scenario is read from.
+      command: 'npx tsx support/mock-realtime-server.ts',
+      cwd: __dirname,
+      url: `http://127.0.0.1:${MOCK_REALTIME_PORT}/health`,
+      timeout: 60_000,
+      reuseExistingServer: !process.env.CI,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { MOCK_REALTIME_PORT: String(MOCK_REALTIME_PORT) },
     },
   ],
 });
