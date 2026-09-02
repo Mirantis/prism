@@ -68,8 +68,8 @@ Every frame is one JSON object with a `type` and a `payload`.
 | Type | Payload | Meaning |
 |------|---------|---------|
 | `voice_offer` | `sdp` (string, required), `threadId` (string, optional) | Start a session. `threadId` is the thread the call belongs to, which the agent's tools use; omit it and the tools that need a thread work without one. |
-| `voice_ice` | `candidate` (string, required), `sdpMid` (string), `sdpMLineIndex` (number) | One of your candidates. Send these after the answer arrives; one sent earlier is dropped. A frame with no `candidate` string is ignored, so the end-of-gathering marker needs no frame of its own. |
-| `voice_stop` | none | End the session. Only the socket whose offer opened the session can end it; from any other socket this does nothing. |
+| `voice_ice` | `candidate` (string, required), `sdpMid` (string), `sdpMLineIndex` (number) | One of your candidates. Send these after the answer arrives; one sent earlier, or one from a socket that does not hold the session, is dropped. A frame with no `candidate` string is ignored, so the end-of-gathering marker needs no frame of its own. |
+| `voice_stop` | none | End the session. Only the socket whose offer opened the session can end it; from any other socket this does nothing. Sent before the answer arrives it still counts: the session ends as soon as it opens. |
 
 ### Runtime to client
 
