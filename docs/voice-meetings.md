@@ -22,6 +22,10 @@ Google Meet is the only supported platform today. The runtime's meeting support 
 platform-agnostic underneath, so Teams and Zoom can be added without touching the
 audio or model path.
 
+For a voice conversation with no meeting in it, see [voice chat](voice-chat.md). The
+agent has one voice, so a meeting is refused while a voice chat is live, and the
+other way round.
+
 ## What you need
 
 Voice meetings need three things, and the agent's `join_meeting` tool only
