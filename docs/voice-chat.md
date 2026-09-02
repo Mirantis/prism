@@ -35,9 +35,11 @@ both. Control frames are JSON objects with a `type` and a `payload`; audio is
 sent as **binary** frames.
 
 1. The client sends `voice_start`.
-2. The runtime answers `voice_hello` with the audio format, then
-   `voice_state: live`. Audio flows in both directions from there — or the
-   runtime refuses with `voice_error`.
+2. The runtime answers `voice_state: live` and `voice_hello`, in that order, and
+   audio flows in both directions from there — or it refuses with `voice_error`.
+   Do not depend on the order of those two: `live` is sent by the session as it
+   opens and `hello` by the socket that carried the request, so a future change
+   to either could swap them. Wait for whichever you need.
 3. Each side sends binary frames of audio for as long as the call runs.
 4. The client sends `voice_stop` to end the call — or just closes the socket.
 5. The runtime sends `voice_state: ended`. That is always the last frame of a
@@ -65,8 +67,8 @@ sent as **binary** frames.
 
 ```json
 → {"type":"voice_start","payload":{"threadId":"3f1c…"}}
-← {"type":"voice_hello","payload":{"format":{"encoding":"pcm16","sampleRate":24000,"channels":1}}}
 ← {"type":"voice_state","payload":{"state":"live"}}
+← {"type":"voice_hello","payload":{"format":{"encoding":"pcm16","sampleRate":24000,"channels":1}}}
 → <binary: 480 bytes of pcm16>
 ← <binary: 960 bytes of pcm16>
 ← {"type":"voice_clear"}
@@ -114,7 +116,7 @@ whatever is buffered is audio nobody can recall.
 
 | The client has | The state | What to do |
 |----------------|-----------|------------|
-| Sent `voice_start` | Starting | Wait for `voice_hello` or `voice_error`. |
+| Sent `voice_start` | Starting | Wait for `voice_state: live` and `voice_hello`, or for `voice_error`. |
 | `voice_state: live` | Live | Audio flows. Offer one control that ends the call. |
 | `voice_error` | Failing or refused | Show the text. When it is a refusal, no session started and no `ended` follows. |
 | `voice_state: ended` | Over | Release the microphone. |
