@@ -40,6 +40,7 @@ import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet';
 import { withTimeout } from '../../utils/with-timeout';
+import { voiceSessionLock } from '../voice/voice-session-lock';
 import type {
   ChatSendStep,
   JoinStep,
@@ -587,6 +588,16 @@ export class MeetingBotService {
     const misconfigured = provider.configurationError();
     if (misconfigured) return { state: 'idle', message: misconfigured };
 
+    // The agent has one voice, and a browser voice chat may be using it. The lock is
+    // held for exactly as long as this service is not `idle`, so the two release sites
+    // below are the two places that word is written.
+    if (!voiceSessionLock.tryAcquire('meeting')) {
+      return {
+        state: 'idle',
+        message: `I'm in a voice chat right now. End that first and I'll join the call.`,
+      };
+    }
+
     this.provider = provider;
     this.current = input;
     this.responseMode = input.responseMode ?? 'auto';
@@ -724,7 +735,10 @@ export class MeetingBotService {
     this.startupEpoch = null;
     // Held in `leaving` by `teardown()` precisely until this moment: the shared
     // browser profile was not free until this startup let go of it.
-    if (this.state === 'leaving') this.state = 'idle';
+    if (this.state === 'leaving') {
+      this.state = 'idle';
+      voiceSessionLock.release('meeting');
+    }
   }
 
   /** Await the join outcome, then either settle into the call or clean up. */
@@ -2013,6 +2027,7 @@ export class MeetingBotService {
     // live lock and open a second Chromium on it — see `startupEpoch`. It flips this
     // to `idle` itself once it has let go.
     this.state = this.startupEpoch === null ? 'idle' : 'leaving';
+    if (this.state === 'idle') voiceSessionLock.release('meeting');
   }
 
   /**
