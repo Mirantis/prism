@@ -2384,6 +2384,92 @@ describe('invoke', () => {
       expect(reports).toHaveLength(1);
     });
   });
+
+  describe('replayed reasoning the provider will not accept', () => {
+    // A reasoning block's signature is bound to the system prompt, the tools and
+    // the messages before it. Where a provider checks that, the same request sent
+    // again fails the same way and a request without the blocks succeeds.
+    const BINDING_ERROR = new Error(
+      'messages.1.content.0: Invalid `signature` in `thinking` block. ' +
+        'The block is bound to a different conversation.',
+    );
+
+    /** History that replays a stored reasoning block, as a real thread does. */
+    function historyWithReasoning() {
+      mockBuildConversationMessages.mockReturnValue([
+        { role: 'user', content: 'list pods' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'reasoning', text: '', providerOptions: { anthropic: { signature: 'sig' } } },
+            { type: 'text', text: 'two are down' },
+          ],
+        },
+        { role: 'user', content: 'and now?' },
+      ]);
+    }
+
+    const reasoningPartsSent = (call: number): unknown[] =>
+      (mockGenerateText.mock.calls[call][0].messages as Array<{ content: unknown }>).flatMap((m) =>
+        Array.isArray(m.content)
+          ? (m.content as Array<{ type: string }>).filter((part) => part.type === 'reasoning')
+          : [],
+      );
+
+    it('sends the turn again without the reasoning, and answers', async () => {
+      historyWithReasoning();
+      mockGenerateText
+        .mockRejectedValueOnce(BINDING_ERROR)
+        .mockResolvedValueOnce({ text: 'ok', steps: [{ text: 'ok', toolCalls: [], toolResults: [] }] });
+
+      const result = await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
+
+      expect(mockGenerateText).toHaveBeenCalledTimes(2);
+      expect(reasoningPartsSent(0)).toHaveLength(1);
+      expect(reasoningPartsSent(1)).toHaveLength(0);
+      // The user sees the answer, not the error step.
+      expect(result.response).toBe('ok');
+    });
+
+    it('reports the second failure rather than trying a third time', async () => {
+      historyWithReasoning();
+      mockGenerateText.mockRejectedValue(BINDING_ERROR);
+
+      const result = await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
+
+      expect(mockGenerateText).toHaveBeenCalledTimes(2);
+      expect(result.response).toContain('I encountered an error');
+    });
+
+    it('does not retry a failure of any other kind', async () => {
+      historyWithReasoning();
+      mockGenerateText.mockRejectedValue(new Error('rate limited'));
+
+      await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
+
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry once a step has already been delivered', async () => {
+      // The binding is checked before the model runs, so a turn that produced a
+      // step failed for another reason, and sending it again would repeat the
+      // steps the user already has.
+      historyWithReasoning();
+      mockGenerateText.mockImplementationOnce((opts: Record<string, unknown>) => {
+        (opts.onStepFinish as (step: unknown) => void)({
+          text: 'working on it',
+          toolCalls: [],
+          toolResults: [],
+        });
+        return Promise.reject(BINDING_ERROR);
+      });
+
+      const result = await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
+
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+      expect(result.response).toContain('working on it');
+    });
+  });
 });
 
 describe('withToolsCacheControl', () => {

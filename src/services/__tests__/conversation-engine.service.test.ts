@@ -567,6 +567,40 @@ describe('Requirement: Conversation Engine', () => {
       expect(published.assistantParts).toBeUndefined();
     });
 
+    it('delivers a file the turn shared even when it ended on a tool-only step', async () => {
+      // Only `publish` links an attachment to a message, and an unlinked file is
+      // one the janitor sweeps as an orphan. Reachable in verbose mode: an
+      // intermediate text step has already been delivered, then the turn shares a
+      // file and the stream ends without further text.
+      mockGetAgent.mockResolvedValue({ verbose: true });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'Let me get that.', toolCalls: [] },
+        {
+          text: '',
+          toolCalls: [
+            { tool: 'share_file', input: '{}', output: 'ok', success: true, timestamp: '2025-01-01' },
+          ],
+          attachmentIds: ['att-1'],
+        },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Send me the report',
+      });
+
+      expect(mockPublish).toHaveBeenCalledTimes(2);
+      expect(mockPublish).toHaveBeenNthCalledWith(
+        2,
+        'user-123',
+        'thread-123',
+        '',
+        'USER_INPUT',
+        expect.objectContaining({ attachmentIds: ['att-1'] }),
+      );
+    });
+
     it('should fall back to a single publish when the stream yields no text-bearing steps', async () => {
       // Stream yields only a tool-call-only step (no text). With streaming
       // there's nothing to publish per-step, so the fallback at the end

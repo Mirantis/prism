@@ -480,6 +480,25 @@ type ToolModelOutput =
  * rather than a smaller one, and image size is already bounded where images are
  * made.
  */
+export function capModelOutput(inner: ToolModelOutput, cutText: string | null): ToolModelOutput {
+  if (cutText === null) return inner;
+
+  switch (inner.type) {
+    case 'text':
+    case 'json':
+      return { type: 'text', value: cutText };
+    case 'error-text':
+    case 'error-json':
+      return { type: 'error-text', value: cutText };
+    case 'content': {
+      const nonText = inner.value.filter((part) => part.type !== 'text');
+      return { type: 'content', value: [{ type: 'text', text: cutText }, ...nonText] };
+    }
+    default:
+      return inner;
+  }
+}
+
 /**
  * Turn a text-only `content` result into the single text block replay sends.
  *
@@ -504,23 +523,4 @@ export function collapseTextOnlyContent(inner: ToolModelOutput): ToolModelOutput
       .map((part) => part.text)
       .join('\n'),
   };
-}
-
-export function capModelOutput(inner: ToolModelOutput, cutText: string | null): ToolModelOutput {
-  if (cutText === null) return inner;
-
-  switch (inner.type) {
-    case 'text':
-    case 'json':
-      return { type: 'text', value: cutText };
-    case 'error-text':
-    case 'error-json':
-      return { type: 'error-text', value: cutText };
-    case 'content': {
-      const nonText = inner.value.filter((part) => part.type !== 'text');
-      return { type: 'content', value: [{ type: 'text', text: cutText }, ...nonText] };
-    }
-    default:
-      return inner;
-  }
 }

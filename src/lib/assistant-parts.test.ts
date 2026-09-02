@@ -4,10 +4,12 @@
 
 import { describe, it, expect } from 'vitest';
 
+import type { ModelMessage } from 'ai';
+
 import {
   captureAssistantParts,
   parseAssistantParts,
-  stripReasoningParts,
+  withoutReasoning,
   toolCallsIn,
   type StoredAssistantPart,
 } from './assistant-parts';
@@ -61,6 +63,25 @@ describe('captureAssistantParts', () => {
     ).toBeNull();
   });
 
+  it('substitutes an object for a tool call the model wrote badly', () => {
+    // The SDK keeps the raw string and marks the call invalid, and sends an
+    // empty object in its place. Storing the string would replay a request the
+    // provider refuses, on this turn and on every turn after it.
+    const parts = captureAssistantParts([
+      {
+        type: 'tool-call',
+        toolCallId: 'toolu_1',
+        toolName: 'list_pods',
+        input: '{"ns":"defau',
+        invalid: true,
+      },
+    ]);
+
+    expect(parts).toEqual([
+      { type: 'tool-call', toolCallId: 'toolu_1', toolName: 'list_pods', input: {} },
+    ]);
+  });
+
   it('returns null for a step that produced nothing', () => {
     expect(captureAssistantParts([])).toBeNull();
     expect(captureAssistantParts([{ type: 'text', text: '' }])).toBeNull();
@@ -93,6 +114,16 @@ describe('parseAssistantParts', () => {
     expect(name.length).toBeLessThanOrEqual(64);
   });
 
+  it('substitutes an object for a stored tool call whose input is not one', () => {
+    const parsed = parseAssistantParts([
+      { type: 'tool-call', toolCallId: 'toolu_1', toolName: 'list_pods', input: '{"ns":"defau' },
+    ]);
+
+    expect(parsed).toEqual([
+      { type: 'tool-call', toolCallId: 'toolu_1', toolName: 'list_pods', input: {} },
+    ]);
+  });
+
   it('returns null for a value it cannot replay in full', () => {
     expect(parseAssistantParts(null)).toBeNull();
     expect(parseAssistantParts([])).toBeNull();
@@ -103,24 +134,58 @@ describe('parseAssistantParts', () => {
   });
 });
 
-describe('stripReasoningParts', () => {
-  it('keeps the text and the calls, and drops the bound reasoning', () => {
-    const parts: StoredAssistantPart[] = [
-      { type: 'reasoning', text: '', providerOptions: signature },
-      { type: 'text', text: 'answer' },
-      { type: 'tool-call', toolCallId: 'toolu_1', toolName: 'list_pods', input: {} },
+describe('withoutReasoning', () => {
+  it('drops the reasoning and keeps the rest of the request', () => {
+    const messages: ModelMessage[] = [
+      { role: 'user', content: 'list pods' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: '', providerOptions: signature },
+          { type: 'text', text: 'checking' },
+          { type: 'tool-call', toolCallId: 'toolu_1', toolName: 'list_pods', input: {} },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'toolu_1',
+            toolName: 'list_pods',
+            output: { type: 'text', value: 'ok' },
+          },
+        ],
+      },
     ];
 
-    expect(stripReasoningParts(parts)).toEqual([
-      { type: 'text', text: 'answer' },
-      { type: 'tool-call', toolCallId: 'toolu_1', toolName: 'list_pods', input: {} },
+    expect(withoutReasoning(messages)).toEqual([
+      { role: 'user', content: 'list pods' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'checking' },
+          { type: 'tool-call', toolCallId: 'toolu_1', toolName: 'list_pods', input: {} },
+        ],
+      },
+      messages[2],
     ]);
   });
 
-  it('returns null when reasoning was all there was', () => {
-    expect(
-      stripReasoningParts([{ type: 'reasoning', text: '', providerOptions: signature }])
-    ).toBeNull();
+  it('drops a message that held nothing but reasoning', () => {
+    // An empty content array is not a message a provider accepts, and such a
+    // message has no tool call for a tool result to answer.
+    const messages: ModelMessage[] = [
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: [{ type: 'reasoning', text: '', providerOptions: signature }] },
+    ];
+
+    expect(withoutReasoning(messages)).toEqual([{ role: 'user', content: 'hi' }]);
+  });
+
+  it('leaves a plain-string assistant message alone', () => {
+    const messages: ModelMessage[] = [{ role: 'assistant', content: 'hello' }];
+    expect(withoutReasoning(messages)).toEqual(messages);
   });
 });
 

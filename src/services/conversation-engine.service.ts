@@ -663,16 +663,18 @@ Respond with exactly one word: WORTHY or SKIP`;
       return null;
     }
 
-    // Text is what a reader came for. Past that, the final step delivers when
-    // nothing else did and there is still something to show — the tool chips of
-    // a turn that only called tools, a file it shared, a block it built. A step
-    // with none of that would draw an empty bubble, so it stays hidden.
-    const somethingToShow =
-      ctx.pendingToolCalls.length + step.toolCalls.length > 0 ||
-      attachmentIds.length > 0 ||
-      blocks.length > 0;
+    // Text is what a reader came for. A file the agent shared and a block it
+    // built are delivered too, whatever else this turn already said: only
+    // `publish` links an attachment to a message, and a file left unlinked is
+    // one the janitor sweeps as an orphan. Tool chips are the weakest claim —
+    // they are worth an otherwise empty bubble only when the turn said nothing
+    // else at all.
     const deliver = Boolean(
-      step.text || (ctx.final && !ctx.final.delivered && somethingToShow)
+      step.text ||
+        (ctx.final && (attachmentIds.length > 0 || blocks.length > 0)) ||
+        (ctx.final &&
+          !ctx.final.delivered &&
+          ctx.pendingToolCalls.length + step.toolCalls.length > 0)
     );
 
     if (!deliver || (!ctx.verbose && !ctx.final)) {

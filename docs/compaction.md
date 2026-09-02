@@ -56,7 +56,7 @@ newer replies afterwards. The Slack channel itself is never modified.
 | Variable | Meaning | Default |
 |----------|---------|---------|
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact at this percent of the model's window; `0` disables auto-compaction | `90` |
-| `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction | `6` |
+| `COMPACTION_TAIL_MESSAGES` | Newest stored messages kept out of compaction. One reply that used tools is stored as several | `6` |
 
 Auto-compaction works best when the model's context window is known; see
 **[Context-window size](configuration.md#context-window-size)**. For a model

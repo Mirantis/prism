@@ -176,8 +176,8 @@ export interface ToolCallRecord {
    * live turn — a synthesized id changes those bytes and costs the cached
    * prefix from that message onward.
    *
-   * Absent on a row written before this field existed; `parseToolCalls` then
-   * synthesizes an id from the message id, as every row used to.
+   * Absent on a row that predates the field; `parseToolCalls` then synthesizes
+   * an id from the message id.
    */
   toolCallId?: string;
   input: string;
@@ -215,8 +215,8 @@ export interface InvokeStep {
   /**
    * This step's assistant turn as the provider produced it, for the row that
    * stores the step. Absent when the step held content the capture cannot carry
-   * back (see `captureAssistantParts`), and the row then replays from `text` and
-   * `toolCalls` as it did before.
+   * back (see `captureAssistantParts`); the row then replays from `text` and
+   * `toolCalls`.
    */
   assistantParts?: StoredAssistantPart[];
   // What the provider reported for this step, when it reports usage at all.

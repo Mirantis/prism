@@ -140,19 +140,63 @@ const CONTEXT_OVERFLOW_PATTERNS = [
  * the SDK's `lastError` retry wrapper like `buildErrorStep` does.
  */
 export function isContextOverflowError(error: unknown): boolean {
-  const unwrapped = (error && typeof error === 'object' && 'lastError' in error)
-    ? (error as { lastError: unknown }).lastError
-    : error;
+  const unwrapped = unwrapSdkError(error);
+  if (!unwrapped || typeof unwrapped !== 'object') return false;
+  if (getStatusCode(unwrapped as Record<string, unknown>) === 413) return true;
+
+  return errorTexts(unwrapped).some((text) =>
+    CONTEXT_OVERFLOW_PATTERNS.some((p) => p.test(text))
+  );
+}
+
+/**
+ * Message patterns for "a reasoning block no longer matches the request it is
+ * replayed in". A provider that binds a reasoning block's signature to the
+ * system prompt, the tools and the messages before it refuses the whole request
+ * once any of those change, and names removing the blocks as the way through.
+ *
+ * Narrow on purpose: a tampered signature reports the same first sentence and is
+ * refused whatever the caller does, so the binding clause is what separates the
+ * request worth sending again from the one that is simply invalid.
+ */
+const THINKING_BINDING_PATTERNS = [
+  /bound to a different conversation/i,
+  /prefix[_ ]binding[_ ]mismatch/i,
+];
+
+/**
+ * Check whether an error means the replayed reasoning no longer fits the request.
+ *
+ * The one error class where sending the same request again is pointless but a
+ * narrower one succeeds: without the reasoning blocks the request is the same
+ * conversation, minus a cache read. Unwraps the SDK's `lastError` retry wrapper
+ * like `buildErrorStep` does.
+ */
+export function isThinkingBindingError(error: unknown): boolean {
+  const unwrapped = unwrapSdkError(error);
   if (!unwrapped || typeof unwrapped !== 'object') return false;
 
-  const err = unwrapped as Record<string, unknown>;
-  if (getStatusCode(err) === 413) return true;
+  const texts = errorTexts(unwrapped);
+  return (
+    texts.some((text) => THINKING_BINDING_PATTERNS.some((p) => p.test(text))) &&
+    texts.some((text) => /thinking/i.test(text))
+  );
+}
 
+/** The SDK retries internally and wraps the final failure with `lastError`. */
+function unwrapSdkError(error: unknown): unknown {
+  return error && typeof error === 'object' && 'lastError' in error
+    ? (error as { lastError: unknown }).lastError
+    : error;
+}
+
+/** Every piece of provider text an error carries, for the pattern checks. */
+function errorTexts(unwrapped: unknown): string[] {
   const texts: string[] = [];
   if (unwrapped instanceof Error) texts.push(unwrapped.message);
   const detail = getErrorDetail(unwrapped);
   if (detail) texts.push(detail);
-  const body = getResponseBody(err);
+  const body = getResponseBody(unwrapped as Record<string, unknown>);
   if (typeof body === 'string') texts.push(body);
   else if (body && typeof body === 'object') {
     const message = (body as Record<string, unknown>).message;
@@ -165,8 +209,7 @@ export function isContextOverflowError(error: unknown): boolean {
       if (typeof code === 'string') texts.push(code);
     }
   }
-
-  return texts.some((text) => CONTEXT_OVERFLOW_PATTERNS.some((p) => p.test(text)));
+  return texts;
 }
 
 /**

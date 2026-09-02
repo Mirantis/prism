@@ -24,7 +24,6 @@ const { mockPrisma } = vi.hoisted(() => ({
     },
     conversationMessage: {
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
-      update: vi.fn(),
       findFirst: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       count: vi.fn(),
@@ -202,7 +201,6 @@ beforeEach(() => {
   mockCollectTools.mockResolvedValue({ tools: { shell: { description: 'sh' } }, subagents: [] });
   mockPrisma.conversationThread.update.mockResolvedValue({});
   mockPrisma.conversationMessage.updateMany.mockResolvedValue({ count: 0 });
-  mockPrisma.conversationMessage.update.mockReturnValue({});
   mockPrisma.conversationThread.findUnique.mockResolvedValue({
     threadSource: 'DATABASE',
     contextTokens: 12_345,
@@ -737,102 +735,6 @@ describe('hasCompactableHistory', () => {
     mockPrisma.conversationThread.findUnique.mockResolvedValue({ threadSource: 'SLACK' });
     await expect(compactionService.hasCompactableHistory(THREAD)).resolves.toBe(true);
     expect(mockPrisma.conversationMessage.count).not.toHaveBeenCalled();
-  });
-});
-
-describe('the reasoning the tail can no longer use', () => {
-  // A reasoning block's signature is bound to the messages before it. The tail
-  // survives behind a summary that replaced those messages, so the block earns
-  // no cache read, and a model that checks the binding refuses the request.
-  const signature = { anthropic: { signature: 'CAIS8gIKdwgREAEYAipA' } };
-
-  function contextWithStoredTurns(parts: Record<string, unknown[] | undefined>) {
-    return {
-      model: 'stored-model',
-      lockedIn: false,
-      recentMessages: Array.from({ length: 10 }, (_, i) => ({
-        id: `m${i}`,
-        role: 'AGENT',
-        content: 'x'.repeat(100),
-        externalMessageId: null,
-        internalStep: false,
-        assistantParts: parts[`m${i}`],
-      })),
-    };
-  }
-
-  /** Answer the tail read and the reclaim read from the same findMany mock. */
-  function answerFindMany(rows: Array<{ id: string; assistantParts: unknown[] }>) {
-    mockPrisma.conversationMessage.findMany.mockImplementation(
-      async (args: { select?: Record<string, boolean> }) =>
-        args.select?.assistantParts ? rows : [],
-    );
-  }
-
-  it('clears it from a surviving row, keeping the text and the calls', async () => {
-    const stored = [
-      { type: 'reasoning', text: '', providerOptions: signature },
-      { type: 'text', text: 'answer' },
-      { type: 'tool-call', toolCallId: 'toolu_1', toolName: 'list_pods', input: {} },
-    ];
-    mockGetAgentContext.mockResolvedValue(contextWithStoredTurns({ m9: stored }));
-    answerFindMany([{ id: 'm9', assistantParts: stored }]);
-
-    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
-
-    expect(mockPrisma.conversationMessage.update).toHaveBeenCalledWith({
-      where: { id: 'm9' },
-      data: {
-        assistantParts: [
-          { type: 'text', text: 'answer' },
-          { type: 'tool-call', toolCallId: 'toolu_1', toolName: 'list_pods', input: {} },
-        ],
-      },
-    });
-  });
-
-  it('reads nothing when no surviving row stores a turn', async () => {
-    // The common case, and one DB round trip per compaction if it were skipped.
-    mockGetAgentContext.mockResolvedValue(contextWithStoredTurns({}));
-    answerFindMany([{ id: 'm9', assistantParts: [] }]);
-
-    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
-
-    const tailReads = mockPrisma.conversationMessage.findMany.mock.calls.filter(
-      (call: [{ select?: Record<string, boolean> }]) => call[0].select?.assistantParts,
-    );
-    expect(tailReads).toHaveLength(0);
-    expect(mockPrisma.conversationMessage.update).not.toHaveBeenCalled();
-  });
-
-  it('leaves a row alone when its stored turn holds no reasoning', async () => {
-    const stored = [{ type: 'text', text: 'answer' }];
-    mockGetAgentContext.mockResolvedValue(contextWithStoredTurns({ m9: stored }));
-    answerFindMany([{ id: 'm9', assistantParts: stored }]);
-
-    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
-
-    expect(mockPrisma.conversationMessage.update).not.toHaveBeenCalled();
-  });
-
-  it('commits the clear with the compaction, not before it', async () => {
-    // A live summary while the tail still claims the old history is the state
-    // this exists to prevent, so the update rides the same transaction.
-    const stored = [{ type: 'reasoning', text: '', providerOptions: signature }];
-    mockGetAgentContext.mockResolvedValue(contextWithStoredTurns({ m9: stored }));
-    answerFindMany([{ id: 'm9', assistantParts: stored }]);
-
-    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
-
-    // Nothing but reasoning was stored, so the row goes back to replaying from
-    // its content and its tool calls.
-    expect(mockPrisma.conversationMessage.update).toHaveBeenCalledWith({
-      where: { id: 'm9' },
-      data: { assistantParts: expect.anything() },
-    });
-    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
-    const ops = mockPrisma.$transaction.mock.calls[0][0] as unknown[];
-    expect(ops).toHaveLength(3);
   });
 });
 
