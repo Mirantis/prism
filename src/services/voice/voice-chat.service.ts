@@ -75,12 +75,14 @@ class VoiceChatService {
    *
    * Resolves once the answer is on its way, not when the media path is up: the client
    * hears `state('live')` for that. A refusal is an `error` frame, never a rejection —
-   * every reason this cannot run is something the user needs told in words.
+   * every reason this cannot run is something the user needs told in words — so the
+   * answer comes back as `true` when this offer opened the session, which is what lets
+   * signalling tell its own session from one it was refused.
    */
-  async start(input: StartVoiceChatInput): Promise<void> {
+  async start(input: StartVoiceChatInput): Promise<boolean> {
     if (!(await isVoiceTransportAvailable())) {
       input.signal.error('This build cannot carry a voice chat — its WebRTC support is missing.');
-      return;
+      return false;
     }
     if (!voiceSessionLock.tryAcquire('voice-chat')) {
       input.signal.error(
@@ -88,7 +90,7 @@ class VoiceChatService {
           ? `I'm in a meeting call right now. That has to end before I can talk here.`
           : `There is already a voice chat running. End that one first.`,
       );
-      return;
+      return false;
     }
 
     this.state = 'starting';
@@ -165,7 +167,7 @@ class VoiceChatService {
       // it by now.
       if (this.epoch !== epoch) {
         await releaseLocals();
-        return;
+        return false;
       }
 
       this.transport = transport;
@@ -185,6 +187,7 @@ class VoiceChatService {
         tools: String(tools.count),
         locked_in: String(lockedIn),
       });
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error({ err }, '[VoiceChat] Failed to start the session');
@@ -194,6 +197,7 @@ class VoiceChatService {
       await releaseLocals();
       if (this.epoch === epoch) this.markIdle();
       input.signal.error(`Could not start the voice chat: ${message}`);
+      return false;
     }
   }
 
