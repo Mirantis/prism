@@ -11,6 +11,7 @@ import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { VoiceConversation } from '../voice-conversation';
+import { REALTIME_SAMPLE_RATE } from '../resampler';
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -94,7 +95,7 @@ async function harness(): Promise<Harness> {
  * client sends back — `response.create` being the one that puts the agent's voice
  * in the room.
  */
-async function speakingHarness(): Promise<{
+async function speakingHarness(sampleRate?: number): Promise<{
   h: Harness;
   send: (event: Record<string, unknown>) => void;
   sent: Record<string, unknown>[];
@@ -126,6 +127,7 @@ async function speakingHarness(): Promise<{
     agentName: 'Emma',
     // Named, so every utterance goes to the gate rather than being answered outright.
     responseMode: 'addressed',
+    sampleRate,
     endpointOverride: { url: `ws://127.0.0.1:${port}`, headers: {} },
   });
   await conversation.start();
@@ -590,6 +592,39 @@ describe('taking captured audio in', () => {
     const audio = appends(sent);
     expect(audio).toHaveLength(1);
     expect(Buffer.from(audio[0]!, 'base64')).toHaveLength(480);
+  });
+
+  it('sends what the caller pushes untouched when the transport speaks 24 kHz', async () => {
+    // A transport already on the model's rate skips both resamplers, so the bytes
+    // the client captured are the bytes the model receives. That is what makes the
+    // socket path free of conversion at either end.
+    const { h, sent } = await speakingHarness(REALTIME_SAMPLE_RATE);
+    active = h;
+
+    h.conversation.pushAudio(Buffer.alloc(480));
+    await settle();
+
+    const audio = appends(sent);
+    expect(audio).toHaveLength(1);
+    expect(Buffer.from(audio[0]!, 'base64')).toHaveLength(480);
+  });
+
+  it('refuses a rate it has no converter for', () => {
+    // 2:1 decimation is the whole of the resampler, so a third rate would change
+    // pitch rather than fail. Better to refuse at construction.
+    expect(
+      () =>
+        new VoiceConversation({
+          instructions: 'x',
+          tools: { declarations: [], count: 0, execute: vi.fn() },
+          sink: { write: vi.fn() },
+          agentName: 'Prism',
+          sampleRate: 16_000,
+          // Pointed at nothing: the rate is refused before anything connects, and
+          // a session left resolving the real endpoint outlives the test.
+          endpointOverride: { url: 'ws://127.0.0.1:1', headers: {} },
+        }),
+    ).toThrow(/16000/);
   });
 
   it('sends nothing after the conversation stops', async () => {

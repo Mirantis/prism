@@ -29,7 +29,6 @@
 
 import { logger } from '../../logger';
 import {
-  MEETING_SAMPLE_RATE,
   pcm16BytesDurationMs,
   pcm16BytesForMs,
   pcm16DurationMs,
@@ -70,6 +69,17 @@ const PREROLL_DEADLINE_MS = 250;
 /** Where audio is written — `pacat`'s stdin in production. */
 export interface PlaybackSink {
   write(chunk: Buffer): boolean | void;
+  /**
+   * Drop audio queued beyond this process, if the far end holds any.
+   *
+   * A local device does not: `pacat` plays what it is given as fast as it is
+   * written, so the only unrecallable audio is the `TARGET_LEAD_MS` already
+   * committed, and this stays unimplemented there. A sink that writes to a
+   * client across a network is the case it exists for — everything written is
+   * sitting in that client's buffer, and without being told to drop it the
+   * agent keeps talking after being interrupted.
+   */
+  clear?(): void;
 }
 
 interface QueuedChunk {
@@ -108,7 +118,19 @@ export class AudioPlayback {
   /** Item of the most recently written chunk — the one currently audible. */
   private writingItem: string | null = null;
 
-  constructor(private readonly sink: PlaybackSink) {}
+  /**
+   * `sampleRate` is required rather than defaulted.
+   *
+   * Every millisecond this class computes — the pre-roll, the lead it chases, the
+   * `playedMs` it reports for truncation — comes from it. A default would be
+   * invisible in review and audible in production: 24 kHz audio paced as 48 kHz
+   * writes at half the rate the device drains, and reports twice the audio as
+   * heard.
+   */
+  constructor(
+    private readonly sink: PlaybackSink,
+    private readonly sampleRate: number,
+  ) {}
 
   /**
    * Enqueue model speech for a response item.
@@ -179,6 +201,10 @@ export class AudioPlayback {
     this.writtenMsByItem.clear();
     this.writingItem = null;
     this.stopTimer();
+    // Told after the snapshots are taken, not before: the numbers above describe
+    // what the far end heard, and a sink that drops its own queue changes what it
+    // is about to play rather than what it already did.
+    this.clearSink();
     return items;
   }
 
@@ -254,7 +280,7 @@ export class AudioPlayback {
   /** Hold the first write until there is enough audio to survive a hiccup. */
   private readyToStart(): boolean {
     if (this.startedAt !== null) return true;
-    if (pcm16BytesDurationMs(this.queuedBytes, MEETING_SAMPLE_RATE) >= PREROLL_MS) return true;
+    if (pcm16BytesDurationMs(this.queuedBytes, this.sampleRate) >= PREROLL_MS) return true;
     return this.firstEnqueueAt !== null && Date.now() - this.firstEnqueueAt >= PREROLL_DEADLINE_MS;
   }
 
@@ -267,7 +293,7 @@ export class AudioPlayback {
   private writeOneChunk(target: number): boolean {
     const head = this.queue[0];
     const remainingMs = target - this.writtenMs;
-    const wantBytes = Math.max(pcm16BytesForMs(remainingMs, MEETING_SAMPLE_RATE), 2);
+    const wantBytes = Math.max(pcm16BytesForMs(remainingMs, this.sampleRate), 2);
 
     let piece: Buffer;
     if (head.chunk.length <= wantBytes) {
@@ -289,7 +315,7 @@ export class AudioPlayback {
       return false;
     }
 
-    const ms = pcm16DurationMs(piece, MEETING_SAMPLE_RATE);
+    const ms = pcm16DurationMs(piece, this.sampleRate);
     this.writtenMs += ms;
     this.writingItem = head.itemId;
     this.writtenMsByItem.set(head.itemId, (this.writtenMsByItem.get(head.itemId) ?? 0) + ms);
@@ -302,5 +328,20 @@ export class AudioPlayback {
     this.queue = [];
     this.queuedBytes = 0;
     this.stopTimer();
+    this.clearSink();
+  }
+
+  /**
+   * Ask the sink to drop what it holds, when it holds anything.
+   *
+   * Never throws upward: this runs while a call is being interrupted or torn
+   * down, and a sink that will not clear must not stop either from finishing.
+   */
+  private clearSink(): void {
+    try {
+      this.sink.clear?.();
+    } catch (err) {
+      logger.warn({ err }, '[Meeting] Playback sink would not clear');
+    }
   }
 }

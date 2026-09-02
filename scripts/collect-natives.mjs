@@ -5,9 +5,9 @@
  * The prism-server SEA bundle keeps its native deps external; at runtime the
  * extracted bundle resolves them from a `node_modules/` that sits next to the
  * binary. This copies that closure — better-sqlite3, @prisma/client (+ the
- * generated .prisma/client engine), sqlite-vec and @roamhq/wrtc (+ their platform
- * subpkgs) and their transitive deps — into `dist-sea/<os-arch>/node_modules`, and
- * the built SPA into `dist-sea/<os-arch>/web`.
+ * generated .prisma/client engine), sqlite-vec (+ the platform subpkg) and
+ * their transitive deps — into `dist-sea/<os-arch>/node_modules`, and the
+ * built SPA into `dist-sea/<os-arch>/web`.
  *
  * Run AFTER `npm run build:web` and `node scripts/build-sea.mjs prism-server`.
  */
@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
 const ROOT = path.resolve(import.meta.dirname, '..');
 const ROOT_MODULES = path.join(ROOT, 'node_modules');
 
-const ROOTS = ['better-sqlite3', '@prisma/client', 'sqlite-vec', '@roamhq/wrtc'];
+const ROOTS = ['better-sqlite3', '@prisma/client', 'sqlite-vec'];
 
 /** Resolve a package's install dir (handles hoisting + restrictive `exports`). */
 function pkgDir(name) {

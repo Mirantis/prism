@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AudioPlayback } from '../audio-playback';
-import { MEETING_SAMPLE_RATE, pcm16BytesForMs } from '../resampler';
+import { MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE, pcm16BytesForMs } from '../resampler';
 
 /** `ms` of silence at the meeting's rate. */
 function audio(ms: number): Buffer {
@@ -30,7 +30,7 @@ describe('AudioPlayback', () => {
 
   it('hands over only a small lead, not the whole utterance', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
 
     // Five seconds arrive at once, as the Realtime API really delivers them.
     playback.enqueue(audio(5000), 'item-1');
@@ -43,7 +43,7 @@ describe('AudioPlayback', () => {
 
   it('keeps feeding the device as time passes', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
     playback.enqueue(audio(5000), 'item-1');
 
     vi.advanceTimersByTime(1000);
@@ -58,7 +58,7 @@ describe('AudioPlayback', () => {
 
   it('catches up after a late tick instead of starving the device', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
     playback.enqueue(audio(5000), 'item-1');
 
     // Simulates the event loop being blocked — a GC pause or a tool call. A fixed
@@ -71,7 +71,7 @@ describe('AudioPlayback', () => {
 
   it('does NOT discard the previous item when a new one arrives', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
 
     // The exact production bug: the model says "let me check that" (item-1), calls a
     // tool, and the follow-up response arrives as item-2. Discarding item-1 cut the
@@ -85,7 +85,7 @@ describe('AudioPlayback', () => {
 
   it('reports played time measured from the clock', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
     playback.enqueue(audio(3000), 'item-1');
 
     vi.advanceTimersByTime(1000);
@@ -98,7 +98,7 @@ describe('AudioPlayback', () => {
 
   it('never claims more was heard than was handed over', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
     playback.enqueue(audio(200), 'item-1');
 
     vi.advanceTimersByTime(5000);
@@ -108,7 +108,7 @@ describe('AudioPlayback', () => {
 
   it('attributes played time to the audible item after a switch', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
 
     playback.enqueue(audio(400), 'item-1');
     playback.enqueue(audio(2000), 'item-2');
@@ -128,7 +128,7 @@ describe('AudioPlayback', () => {
 
   it('drops unplayed audio on flush and reports what was heard', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
     playback.enqueue(audio(5000), 'item-1');
     vi.advanceTimersByTime(1000);
     const written = s.totalMs();
@@ -146,7 +146,7 @@ describe('AudioPlayback', () => {
 
   it('stops while paused and continues on resume', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
     playback.enqueue(audio(5000), 'item-1');
     vi.advanceTimersByTime(300);
 
@@ -162,7 +162,7 @@ describe('AudioPlayback', () => {
 
   it('plays an utterance shorter than the pre-roll rather than holding it forever', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
 
     // Below the pre-roll and no more is coming: a deadline releases it, otherwise a
     // brief "mm-hm" from the bot would be silently swallowed.
@@ -175,7 +175,7 @@ describe('AudioPlayback', () => {
 
   it('counts itself as speaking while audio is still in the device', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
 
     playback.enqueue(audio(1000), 'item-1');
     // Barge-in must work during the lead as well as while queued.
@@ -186,7 +186,7 @@ describe('AudioPlayback', () => {
 
   it('does not burst after a gap between phrases', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
 
     playback.enqueue(audio(300), 'item-1');
     vi.advanceTimersByTime(2000);
@@ -200,7 +200,7 @@ describe('AudioPlayback', () => {
 
   it('reports never-played items so their transcript is truncated too', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
 
     // item-2's audio arrived but never reached the device: nothing was heard, and
     // without a 0ms truncate its transcript would stay in the model's context.
@@ -212,12 +212,84 @@ describe('AudioPlayback', () => {
     expect(items[1].playedMs).toBe(0);
   });
 
-  it('survives a sink that throws', () => {
-    const playback = new AudioPlayback({
-      write: () => {
-        throw new Error('pacat died');
-      },
+  describe('the sink it was given', () => {
+    it('paces by the rate it was told, not by a fixed one', () => {
+      // The same wall time at half the rate is half the bytes. A wrong rate is
+      // silent otherwise: the device starves and `playedMs` reports double.
+      const fast = recordingSink();
+      const slow = recordingSink();
+      const at48 = new AudioPlayback(fast.sink, MEETING_SAMPLE_RATE);
+      const at24 = new AudioPlayback(slow.sink, REALTIME_SAMPLE_RATE);
+
+      at48.enqueue(Buffer.alloc(pcm16BytesForMs(1000, MEETING_SAMPLE_RATE)), 'item-1');
+      at24.enqueue(Buffer.alloc(pcm16BytesForMs(1000, REALTIME_SAMPLE_RATE)), 'item-1');
+      vi.advanceTimersByTime(500);
+
+      const bytesAt48 = fast.writes.reduce((n, b) => n + b.length, 0);
+      const bytesAt24 = slow.writes.reduce((n, b) => n + b.length, 0);
+      expect(bytesAt48).toBeGreaterThan(0);
+      expect(bytesAt24).toBeCloseTo(bytesAt48 / 2, -2);
     });
+
+    it('tells a sink that holds a queue to drop it when the floor is yielded', () => {
+      // The case this exists for: a sink writing to a client across a network has
+      // everything already written sitting in that client's buffer, so without
+      // this the agent talks over the person who interrupted it.
+      const cleared = vi.fn();
+      const playback = new AudioPlayback(
+        { write: () => {}, clear: cleared },
+        MEETING_SAMPLE_RATE,
+      );
+
+      playback.enqueue(audio(1000), 'item-1');
+      vi.advanceTimersByTime(200);
+      playback.flush();
+
+      expect(cleared).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears on dispose as well, so a torn-down call leaves nothing playing', () => {
+      const cleared = vi.fn();
+      const playback = new AudioPlayback({ write: () => {}, clear: cleared }, MEETING_SAMPLE_RATE);
+      playback.enqueue(audio(200), 'item-1');
+      playback.dispose();
+      expect(cleared).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks nothing of a sink that plays what it is given', () => {
+      // `pacat` has no queue to drop, so it implements none of this and must not
+      // be required to.
+      const playback = new AudioPlayback({ write: () => {} }, MEETING_SAMPLE_RATE);
+      playback.enqueue(audio(200), 'item-1');
+      expect(() => playback.flush()).not.toThrow();
+      expect(() => playback.dispose()).not.toThrow();
+    });
+
+    it('finishes yielding the floor even when clearing fails', () => {
+      const playback = new AudioPlayback(
+        {
+          write: () => {},
+          clear: () => {
+            throw new Error('the socket went away');
+          },
+        },
+        MEETING_SAMPLE_RATE,
+      );
+      playback.enqueue(audio(1000), 'item-1');
+      vi.advanceTimersByTime(200);
+      expect(() => playback.flush()).not.toThrow();
+    });
+  });
+
+  it('survives a sink that throws', () => {
+    const playback = new AudioPlayback(
+      {
+        write: () => {
+          throw new Error('pacat died');
+        },
+      },
+      MEETING_SAMPLE_RATE,
+    );
 
     playback.enqueue(audio(500), 'item-1');
     expect(() => vi.advanceTimersByTime(500)).not.toThrow();
@@ -226,7 +298,7 @@ describe('AudioPlayback', () => {
 
   it('ignores audio enqueued after dispose', () => {
     const s = recordingSink();
-    const playback = new AudioPlayback(s.sink);
+    const playback = new AudioPlayback(s.sink, MEETING_SAMPLE_RATE);
 
     playback.dispose();
     playback.enqueue(audio(500), 'item-1');
