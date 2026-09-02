@@ -43,11 +43,30 @@ export interface VoiceChatSignal extends SocketAudioChannel {
   error(message: string): void;
 }
 
+/**
+ * Which utterances the agent answers.
+ *
+ * `open` is a conversation: one person is talking to the agent, so everything the
+ * microphone hears is meant for it and every utterance is answered at its turn
+ * boundary. `addressed` is a room: a phone on a table with several people around it,
+ * where most of what is said is said to somebody else, so each utterance is put to
+ * the addressed gate and only the ones aimed at the agent are answered.
+ *
+ * The two modes the client picks from, and no `auto`. `ResponsePolicy` resolves `auto`
+ * from a participant count, which a single mixed microphone cannot produce — there is no
+ * roster to read and no way to tell four people from one. Offering it would mean
+ * offering a guess that never resolves, so the client says which situation its
+ * microphone is in. It is the only one that knows.
+ */
+export type VoiceListeningMode = 'open' | 'addressed';
+
 export interface StartVoiceChatInput {
   userId: string;
   agentId: string;
   /** The thread the call was started from, for the tools that take one. */
   threadId?: string;
+  /** Defaults to `open` — a client that says nothing is holding a phone to its ear. */
+  mode?: VoiceListeningMode;
   signal: VoiceChatSignal;
 }
 
@@ -66,6 +85,8 @@ class VoiceChatService {
   private signal: VoiceChatSignal | null = null;
   private userId: string | null = null;
   private startedAt: number | null = null;
+  /** Held for the ending event: the gate numbers below mean nothing without it. */
+  private mode: VoiceListeningMode = 'open';
 
   /** Whether a session is running, for a caller that wants to know before it offers. */
   get isLive(): boolean {
@@ -95,6 +116,11 @@ class VoiceChatService {
 
     this.state = 'starting';
     const epoch = ++this.epoch;
+    // Resolved once and passed to both halves: the prompt tells the model it is being
+    // filtered and the policy does the filtering, and a call where those two disagree
+    // is one that explains gaps in a conversation that has none, or sits silent through
+    // a room it thinks it should answer.
+    const mode: VoiceListeningMode = input.mode ?? 'open';
 
     // Built into locals and published onto `this` only once the epoch check below says
     // the session is still wanted: a `stop()` during startup has nothing else to release,
@@ -113,9 +139,7 @@ class VoiceChatService {
         userId: input.userId,
         agentId: input.agentId,
         platform: 'voice',
-        // One person is on the other end, so everything said is said to the agent. No
-        // addressed gate, and nothing to decide per utterance.
-        responseMode: 'open',
+        responseMode: mode,
       });
       const tools = await prepareMeetingTools({
         userId: input.userId,
@@ -137,7 +161,7 @@ class VoiceChatService {
         // The transport speaks the model's own rate, so nothing resamples between the
         // client's microphone and the model.
         sampleRate: VOICE_AUDIO_FORMAT.sampleRate,
-        responseMode: 'open',
+        responseMode: mode,
         agentName,
         voice: config.openaiRealtimeVoice,
         onSessionLost: (reason) => void this.end(epoch, 'error', reason),
@@ -159,16 +183,18 @@ class VoiceChatService {
       this.signal = input.signal;
       this.userId = input.userId;
       this.startedAt = Date.now();
+      this.mode = mode;
       this.state = 'live';
 
       // Live immediately: the socket that asked is the socket the audio travels on, so
       // there is no media path still to come up and nothing to wait for.
       input.signal.state('live');
 
-      logger.info({ tools: tools.count }, '[VoiceChat] Session is live');
+      logger.info({ tools: tools.count, mode }, '[VoiceChat] Session is live');
       trackEvent('voice chat started', input.userId, {
         tools: String(tools.count),
         locked_in: String(lockedIn),
+        mode,
       });
       return true;
     } catch (err) {
@@ -218,7 +244,7 @@ class VoiceChatService {
     // while the peer closes, from becoming a second ending.
     this.state = 'ending';
     this.epoch += 1;
-    const { conversation, transport, signal, userId, startedAt } = this;
+    const { conversation, transport, signal, userId, startedAt, mode } = this;
     this.conversation = null;
     this.transport = null;
     this.signal = null;
@@ -241,6 +267,7 @@ class VoiceChatService {
       const stats = conversation?.statistics;
       trackEvent('voice chat ended', userId, {
         status,
+        mode,
         duration_ms: String(Date.now() - startedAt),
         responses: String(stats?.responses ?? 0),
         tool_calls: String(stats?.toolCalls ?? 0),
@@ -249,6 +276,14 @@ class VoiceChatService {
         // Answers the agent gave that produced no audio — silence the user cannot
         // account for, and the one number that says the call was not what it looked like.
         responses_failed: String(stats?.responsesFailed ?? 0),
+        // Zero throughout an `open` call, which is the point of reporting `mode` beside
+        // them. In `addressed` they are how a quiet call is read: `suppressed` is the
+        // gate doing its job, while `gate_failed` is the agent having been deaf, and the
+        // two produce identical silence in the room.
+        suppressed: String(stats?.suppressed ?? 0),
+        gate_calls: String(stats?.gateCalls ?? 0),
+        gate_failed: String(stats?.gateFailed ?? 0),
+        gate_latency_ms: String(stats?.gateLatencyMs ?? 0),
       });
     }
 

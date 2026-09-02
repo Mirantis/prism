@@ -19,7 +19,11 @@ import { threadTitleService, type ThreadTitleChange } from './thread-title.servi
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
 import { compactionService, type CompactionEvent } from './compaction.service';
 import { updateService, type UpdateEvent } from './update/update.service';
-import { voiceChatService, type VoiceChatSignal } from './voice/voice-chat.service';
+import {
+  voiceChatService,
+  type VoiceChatSignal,
+  type VoiceListeningMode,
+} from './voice/voice-chat.service';
 import { VOICE_AUDIO_FORMAT } from './voice/socket-audio';
 
 // ============================================================================
@@ -94,6 +98,19 @@ function payloadOf(message: WebSocketMessage): Record<string, unknown> {
 function stringField(payload: Record<string, unknown>, key: string): string | undefined {
   const value = payload[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Which listening mode the client asked for, or undefined for the service's default.
+ *
+ * An unrecognized value is treated as unstated rather than refused. The two modes differ
+ * in how much the agent says, not in what it is allowed to do, so the cost of ignoring a
+ * misspelling is a chattier call — where refusing the session would deny a client a call
+ * over a field it could have omitted.
+ */
+function listeningMode(payload: Record<string, unknown>): VoiceListeningMode | undefined {
+  const value = payload['mode'];
+  return value === 'open' || value === 'addressed' ? value : undefined;
 }
 
 // ============================================================================
@@ -340,6 +357,7 @@ class WebSocketGatewayService {
       userId,
       agentId,
       threadId: stringField(payload, 'threadId'),
+      mode: listeningMode(payload),
       signal: this.voiceSignal(ws),
     });
     if (this.voiceStarting === starting) this.voiceStarting = null;
