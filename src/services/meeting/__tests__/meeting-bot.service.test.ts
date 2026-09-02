@@ -94,7 +94,7 @@ class FakeVoiceConversation {
   setParticipantCount = conversationSetParticipantCount;
   setCurrentSpeaker = conversationSetCurrentSpeaker;
   setAudible = conversationSetAudible;
-  pushMeetingAudio = vi.fn();
+  pushAudio = vi.fn();
   get responseMode() {
     return 'addressed';
   }

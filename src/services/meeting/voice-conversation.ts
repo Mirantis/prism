@@ -457,8 +457,8 @@ export class VoiceConversation {
     await this.session.connect();
   }
 
-  /** Feed captured meeting audio (48 kHz pcm16 mono) to the model. */
-  pushMeetingAudio(pcm48k: Buffer): void {
+  /** Feed captured audio (48 kHz pcm16 mono) to the model. */
+  pushAudio(pcm48k: Buffer): void {
     if (this.stopped || !this.session.isOpen) return;
     this.session.sendAudio(this.downsampler.process(pcm48k));
   }

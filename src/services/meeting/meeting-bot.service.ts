@@ -544,7 +544,7 @@ export class MeetingBotService {
       // this point still belongs to whatever ran before — and, if this call is
       // abandoned, will belong to whatever runs next.
       const live = conversation;
-      handles.onCapture((pcm) => live.pushMeetingAudio(pcm));
+      handles.onCapture((pcm) => live.pushAudio(pcm));
 
       browser = new BrowserStack();
       const page = await browser.start({ env: handles.browserEnv });
