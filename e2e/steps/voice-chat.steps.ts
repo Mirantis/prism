@@ -18,10 +18,11 @@
 
 import { createBdd } from 'playwright-bdd';
 import { expect, type Locator, type Page } from '@playwright/test';
+import { MOCK_REALTIME_PORT } from '../support/mock-realtime-port';
 
 const { Given, When, Then } = createBdd();
 
-const MOCK_STATE_URL = `http://127.0.0.1:${process.env.MOCK_REALTIME_PORT || 3103}/state`;
+const MOCK_STATE_URL = `http://127.0.0.1:${MOCK_REALTIME_PORT}/state`;
 
 /** How much of the microphone counts as the browser reaching the model. */
 const MICROPHONE_MS = 500;

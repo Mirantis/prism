@@ -6,6 +6,7 @@ import os from 'os';
 import { execSync } from 'child_process';
 import { config } from 'dotenv';
 import { DEFAULT_AGENT_ID, E2E_WORKSPACE, TEST_USER } from './fixtures/test-data';
+import { MOCK_REALTIME_PORT } from './support/mock-realtime-port';
 
 // Load e2e environment variables (.env.e2e.local overrides for secrets)
 config({ path: path.resolve(__dirname, '.env.e2e') });
@@ -15,9 +16,6 @@ config({ path: path.resolve(__dirname, '.env.e2e.local'), override: true });
 // dev-server proxy ("/agents" + "/api/ws" → :3003) just works.
 const RUNTIME_PORT = 3003;
 const WEB_PORT = 5173;
-// The local stand-in for OpenAI's Realtime API (support/mock-realtime-server.ts),
-// so a voice call runs with no OpenAI account.
-const MOCK_REALTIME_PORT = 3103;
 
 // SQLite e2e DB lives next to the schema so Prisma's schema-relative path
 // resolution (file:./e2e.db) lands on the same file from every cwd.

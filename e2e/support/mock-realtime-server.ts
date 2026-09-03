@@ -20,8 +20,7 @@
 
 import http from 'http';
 import { WebSocketServer, type WebSocket } from 'ws';
-
-const PORT = Number(process.env.MOCK_REALTIME_PORT || 3103);
+import { MOCK_REALTIME_PORT } from './mock-realtime-port';
 
 /** pcm16 mono at the rate the Realtime API speaks, in both directions. */
 const SAMPLE_RATE = 24_000;
@@ -172,4 +171,6 @@ function log(message: string): void {
   console.log(`[MockRealtime] ${message}`);
 }
 
-server.listen(PORT, '127.0.0.1', () => log(`listening on ws://127.0.0.1:${PORT}/v1/realtime`));
+server.listen(MOCK_REALTIME_PORT, '127.0.0.1', () =>
+  log(`listening on ws://127.0.0.1:${MOCK_REALTIME_PORT}/v1/realtime`),
+);
