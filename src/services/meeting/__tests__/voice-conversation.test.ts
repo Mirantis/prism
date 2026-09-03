@@ -11,7 +11,7 @@ import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { VoiceConversation } from '../voice-conversation';
-import { REALTIME_SAMPLE_RATE } from '../resampler';
+import { MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } from '../resampler';
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -73,6 +73,7 @@ async function harness(): Promise<Harness> {
     tools: { declarations: [], count: 0, execute: vi.fn() },
     sink: { write: vi.fn() },
     agentName: 'Prism',
+    sampleRate: MEETING_SAMPLE_RATE,
     endpointOverride: { url: `ws://127.0.0.1:${port}`, headers: {} },
     onSessionLost: (reason) => lost.push(reason),
   });
@@ -95,7 +96,7 @@ async function harness(): Promise<Harness> {
  * client sends back — `response.create` being the one that puts the agent's voice
  * in the room.
  */
-async function speakingHarness(sampleRate?: number): Promise<{
+async function speakingHarness(sampleRate: number = MEETING_SAMPLE_RATE): Promise<{
   h: Harness;
   send: (event: Record<string, unknown>) => void;
   sent: Record<string, unknown>[];

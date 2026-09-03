@@ -5,10 +5,6 @@
  * the audio devices and the meeting's lifecycle all belong to the service above:
  *
  *     capture → Downsampler → RealtimeSession → Upsampler → AudioPlayback
- *
- * The two resamplers are there for a transport that speaks 48 kHz, which a
- * browser on a virtual audio device does. A transport that already speaks the
- * model's 24 kHz passes `sampleRate` and both become identity.
  *                                        │
  *                                   ResponsePolicy (open room, or gate it?)
  *                                        │
@@ -17,6 +13,10 @@
  *                                   BargeInPolicy (yields the floor to humans)
  *                                        │
  *                                   ToolBridge (runs the agent's real tools)
+ *
+ * The two resamplers are there for a transport that speaks 48 kHz, which a browser on a
+ * virtual audio device does. A transport that already speaks the model's 24 kHz says so
+ * in `sampleRate`, and both become identity.
  *
  * Every response on this session is one asked for here: the server is configured
  * never to answer on its own, so an utterance becomes speech only if this decides
@@ -78,15 +78,19 @@ export interface VoiceConversationOptions {
   /** Written with pcm16 at `sampleRate` — `pacat`'s stdin in production. */
   sink: PlaybackSink;
   /**
-   * The rate the transport speaks, in and out. Defaults to the meeting's 48 kHz.
+   * The rate the transport speaks, in and out.
    *
    * `REALTIME_SAMPLE_RATE` means the transport already speaks the model's own
    * rate, so both resamplers are skipped and the audio reaches the model as the
    * client captured it. Only those two values exist: the resampler is a fixed
    * 2:1 decimation, so anything else would need a converter that is not here,
    * and silently accepting it would change pitch rather than fail.
+   *
+   * Stated rather than defaulted, for the same reason `AudioPlayback` requires it: a
+   * default is right for one of the two transports and wrong for the other, and getting
+   * it wrong is audible rather than a failure.
    */
-  sampleRate?: number;
+  sampleRate: number;
   /** `auto` follows the participant count; see response-policy.ts. */
   responseMode: ResponseMode;
   /** The name the agent answers to — the same one the room hears it introduce. */
@@ -236,7 +240,7 @@ export class VoiceConversation {
 
     this.responsePolicy = new ResponsePolicy({ mode: options.responseMode });
 
-    const rate = options.sampleRate ?? MEETING_SAMPLE_RATE;
+    const rate = options.sampleRate;
     if (rate !== MEETING_SAMPLE_RATE && rate !== REALTIME_SAMPLE_RATE) {
       throw new Error(
         `A voice conversation speaks ${MEETING_SAMPLE_RATE} or ${REALTIME_SAMPLE_RATE} Hz, not ${rate}`,

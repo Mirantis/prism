@@ -34,6 +34,7 @@ import {
   type BrowserResult,
 } from './browser-control';
 import { VoiceConversation, type VoiceConversationStats } from './voice-conversation';
+import { MEETING_SAMPLE_RATE } from './resampler';
 import { meanGateLatencyMs } from './gate-stats';
 import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
@@ -633,6 +634,9 @@ export class MeetingBotService {
         instructions,
         tools,
         sink: handles.playbackSink,
+        // The virtual audio devices run at the meeting rate, so both resamplers are in
+        // the path. Stated rather than defaulted — see the option's own comment.
+        sampleRate: MEETING_SAMPLE_RATE,
         responseMode: this.responseMode,
         // The name the prompt introduces it by, not `config.agentName`. These
         // differ the moment someone renames the agent in its workspace — and an
