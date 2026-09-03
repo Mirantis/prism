@@ -479,6 +479,128 @@ describe('Requirement: Conversation Engine', () => {
       );
     });
 
+    it('writes one row per step, so a tool loop replays as the pairs it was', async () => {
+      // A row holds one assistant turn. Folding a loop into one row replays a
+      // history where the agent answered first and called every tool after.
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: '',
+          toolCalls: [
+            { tool: 'tool_a', toolCallId: 'toolu_1', input: '{}', output: 'a', success: true, timestamp: '2025-01-01' },
+          ],
+          assistantParts: [
+            { type: 'tool-call', toolCallId: 'toolu_1', toolName: 'tool_a', input: {} },
+          ],
+        },
+        {
+          text: '',
+          toolCalls: [
+            { tool: 'tool_b', toolCallId: 'toolu_2', input: '{}', output: 'b', success: true, timestamp: '2025-01-01' },
+          ],
+          assistantParts: [
+            { type: 'tool-call', toolCallId: 'toolu_2', toolName: 'tool_b', input: {} },
+          ],
+        },
+        { text: 'Done.', toolCalls: [], assistantParts: [{ type: 'text', text: 'Done.' }] },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Do things',
+      });
+
+      const stepRows = mockAddMessage.mock.calls
+        .map((c: unknown[]) => c[1] as Record<string, unknown>)
+        .filter((input) => input.role === 'AGENT');
+
+      // One hidden row per tool-only step, each with its own call and its own
+      // assistant turn — not both calls on one row.
+      expect(stepRows).toHaveLength(2);
+      expect(stepRows[0]).toMatchObject({
+        internalStep: true,
+        toolCalls: [expect.objectContaining({ tool: 'tool_a' })],
+        assistantParts: [expect.objectContaining({ toolCallId: 'toolu_1' })],
+      });
+      expect(stepRows[1]).toMatchObject({
+        internalStep: true,
+        toolCalls: [expect.objectContaining({ tool: 'tool_b' })],
+        assistantParts: [expect.objectContaining({ toolCallId: 'toolu_2' })],
+      });
+
+      // The delivered row stores only its own step's turn for the model, while
+      // its `toolCalls` still carries the whole turn for the client's chips.
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-123',
+        'thread-123',
+        'Done.',
+        'USER_INPUT',
+        expect.objectContaining({
+          assistantParts: [{ type: 'text', text: 'Done.' }],
+          toolCalls: expect.arrayContaining([
+            expect.objectContaining({ tool: 'tool_a' }),
+            expect.objectContaining({ tool: 'tool_b' }),
+          ]),
+        }),
+      );
+    });
+
+    it('stores no assistant turn for a step the capture could not carry', async () => {
+      // The step then replays from `content` + `toolCalls`, as every row did
+      // before the column existed.
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        {
+          text: 'Done.',
+          toolCalls: [
+            { tool: 'tool_a', input: '{}', output: 'a', success: true, timestamp: '2025-01-01' },
+          ],
+        },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Do things',
+      });
+
+      const published = mockPublish.mock.calls[0][4] as { assistantParts?: unknown };
+      expect(published.assistantParts).toBeUndefined();
+    });
+
+    it('delivers a file the turn shared even when it ended on a tool-only step', async () => {
+      // Only `publish` links an attachment to a message, and an unlinked file is
+      // one the janitor sweeps as an orphan. Reachable in verbose mode: an
+      // intermediate text step has already been delivered, then the turn shares a
+      // file and the stream ends without further text.
+      mockGetAgent.mockResolvedValue({ verbose: true });
+      mockInvokeStream.mockReturnValue(streamFromSteps([
+        { text: 'Let me get that.', toolCalls: [] },
+        {
+          text: '',
+          toolCalls: [
+            { tool: 'share_file', input: '{}', output: 'ok', success: true, timestamp: '2025-01-01' },
+          ],
+          attachmentIds: ['att-1'],
+        },
+      ]));
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Send me the report',
+      });
+
+      expect(mockPublish).toHaveBeenCalledTimes(2);
+      expect(mockPublish).toHaveBeenNthCalledWith(
+        2,
+        'user-123',
+        'thread-123',
+        '',
+        'USER_INPUT',
+        expect.objectContaining({ attachmentIds: ['att-1'] }),
+      );
+    });
+
     it('should fall back to a single publish when the stream yields no text-bearing steps', async () => {
       // Stream yields only a tool-call-only step (no text). With streaming
       // there's nothing to publish per-step, so the fallback at the end

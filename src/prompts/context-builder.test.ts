@@ -1094,6 +1094,187 @@ describe('buildConversationMessages', () => {
   });
 });
 
+describe('replaying a stored assistant turn', () => {
+  const signature = { anthropic: { signature: 'CAIS8gIKdwgREAEYAipA' } };
+
+  it('sends back the provider\'s own parts and ids, not rebuilt ones', () => {
+    // This is the whole point: the assistant message a turn cached at its
+    // breakpoint is only read by the next turn if the replay is the same bytes.
+    const context = createTestAgentContext({
+      recentMessages: [
+        { id: '1', role: 'USER', content: 'list pods' },
+        {
+          id: 'msg-abc',
+          role: 'AGENT',
+          content: 'Two pods are down.',
+          assistantParts: [
+            { type: 'reasoning', text: '', providerOptions: signature },
+            { type: 'tool-call', toolCallId: 'toolu_bdrk_01', toolName: 'list_pods', input: { ns: 'default' } },
+          ],
+          toolCalls: [
+            {
+              tool: 'list_pods',
+              toolCallId: 'toolu_bdrk_01',
+              input: '{"ns":"default"}',
+              output: '["pod-1","pod-2"]',
+              success: true,
+              rendered: true,
+              timestamp: '2026-01-01T00:00:00Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    const messages = buildConversationMessages(context);
+
+    expect(messages[1]).toEqual({
+      role: 'assistant',
+      content: [
+        { type: 'reasoning', text: '', providerOptions: signature },
+        { type: 'tool-call', toolCallId: 'toolu_bdrk_01', toolName: 'list_pods', input: { ns: 'default' } },
+      ],
+    });
+    expect(messages[2]).toEqual({
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 'toolu_bdrk_01',
+          toolName: 'list_pods',
+          output: { type: 'text', value: '["pod-1","pod-2"]' },
+        },
+      ],
+    });
+  });
+
+  it('does not replay the turn\'s final text onto an earlier step\'s calls', () => {
+    // The row's `content` is what the reader was shown. Sending it inside the
+    // assistant message that made the calls would replay a history where the
+    // agent answered first and called its tools afterwards.
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-abc',
+          role: 'AGENT',
+          content: 'Two pods are down.',
+          assistantParts: [
+            { type: 'tool-call', toolCallId: 'toolu_1', toolName: 'list_pods', input: {} },
+          ],
+          toolCalls: [
+            {
+              tool: 'list_pods',
+              toolCallId: 'toolu_1',
+              input: '{}',
+              output: 'ok',
+              success: true,
+              rendered: true,
+              timestamp: '2026-01-01T00:00:00Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    const assistant = buildConversationMessages(context)[0].content as Array<{ type: string }>;
+    expect(assistant.map((p) => p.type)).toEqual(['tool-call']);
+  });
+
+  it('ignores a record for a call another row made', () => {
+    // A delivered row carries the whole turn's calls so the client can draw
+    // them; only the ids in its own parts are the model's.
+    const record = (id: string) => ({
+      tool: 'list_pods',
+      toolCallId: id,
+      input: '{}',
+      output: id,
+      success: true,
+      rendered: true as const,
+      timestamp: '2026-01-01T00:00:00Z',
+    });
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-abc',
+          role: 'AGENT',
+          content: '',
+          assistantParts: [
+            { type: 'tool-call', toolCallId: 'toolu_2', toolName: 'list_pods', input: {} },
+          ],
+          toolCalls: [record('toolu_1'), record('toolu_2')],
+        },
+      ],
+    });
+
+    const tool = buildConversationMessages(context)[1].content as Array<{
+      toolCallId: string;
+      output: { value: string };
+    }>;
+    expect(tool).toHaveLength(1);
+    expect(tool[0]).toMatchObject({ toolCallId: 'toolu_2', output: { value: 'toolu_2' } });
+  });
+
+  it('falls back to the rebuilt message on a row with no stored turn', () => {
+    // Every row written before the column exists, and every row whose step held
+    // content the capture cannot carry.
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-abc',
+          role: 'AGENT',
+          content: 'Let me check.',
+          toolCalls: [
+            {
+              tool: 'list_pods',
+              input: '{}',
+              output: 'ok',
+              success: true,
+              rendered: true,
+              timestamp: '2026-01-01T00:00:00Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    const messages = buildConversationMessages(context);
+    expect(messages[0].content).toEqual([
+      { type: 'text', text: 'Let me check.' },
+      { type: 'tool-call', toolCallId: 'msg-abc-tc-0', toolName: 'list_pods', input: {} },
+    ]);
+  });
+
+  it('keeps the provider id from a legacy-shaped row that has one', () => {
+    // `toolCallId` on the record is enough to stop synthesizing an id, whether
+    // or not the row also stores its assistant turn.
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-abc',
+          role: 'AGENT',
+          content: '',
+          toolCalls: [
+            {
+              tool: 'list_pods',
+              toolCallId: 'toolu_bdrk_09',
+              input: '{}',
+              output: 'ok',
+              success: true,
+              rendered: true,
+              timestamp: '2026-01-01T00:00:00Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    const assistant = buildConversationMessages(context)[0].content as Array<{
+      toolCallId: string;
+    }>;
+    expect(assistant[0].toolCallId).toBe('toolu_bdrk_09');
+  });
+});
+
 describe('buildConversationMessages with attachments (metadata stubs)', () => {
   const textOf = (content: unknown): string =>
     typeof content === 'string'

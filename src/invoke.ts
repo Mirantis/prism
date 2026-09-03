@@ -41,6 +41,7 @@ import {
   unwrapToolOutput,
 } from './lib/tool-output-limiter';
 import { withToolLifecycleEvents } from './lib/tool-lifecycle';
+import { captureAssistantParts, withoutReasoning } from './lib/assistant-parts';
 import {
   isToolRiskGateError,
   withToolRiskGate,
@@ -48,7 +49,12 @@ import {
 import { InvokeError, InvokeRequest, InvokeResponse, InvokeStep, ToolCallRecord, UIBlock } from './types';
 import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from './constants';
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
-import { buildErrorStep, buildRefusalStep, isContextOverflowError } from './lib/llm-errors';
+import {
+  buildErrorStep,
+  buildRefusalStep,
+  isContextOverflowError,
+  isThinkingBindingError,
+} from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
 import { trackEvent, langfuseTelemetry } from './lib/telemetry';
 import { AsyncChannel } from './utils/async-channel';
@@ -334,10 +340,15 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     });
 
 
-    generateText({
+    // Parameterized on the message array so one narrower retry is possible: a
+    // provider that binds a reasoning block's signature to the messages before it
+    // refuses the whole request when the prefix has moved since the block was
+    // stored, and the same request sent again fails the same way.
+    let stepsSeen = 0;
+    const runTurn = (turnMessages: ModelMessage[]) => generateText({
       model,
       system: cachedSystem,
-      messages,
+      messages: turnMessages,
       tools: Object.keys(cachedTools).length > 0 ? cachedTools : undefined,
       toolChoice: 'auto',
       maxOutputTokens: MAX_OUTPUT_TOKENS,
@@ -439,6 +450,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
               : renderToolResultDetailed(tr.output, { toolName: tc.toolName });
           stepToolCalls.push({
             tool: tc.toolName,
+            toolCallId: tc.toolCallId,
             input: JSON.stringify(tc.input),
             // A gate refusal has no tool result to render — the summary of *why*
             // is what the record carries, and it is already small.
@@ -496,15 +508,23 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
               }
             : undefined;
 
+        // The assistant turn exactly as the provider produced it, so the row
+        // that stores this step replays the bytes the provider cached here.
+        const assistantParts = captureAssistantParts(step.content ?? []);
+
+        stepsSeen += 1;
         channel.push({
           text: step.text,
           toolCalls: stepToolCalls,
+          ...(assistantParts ? { assistantParts } : {}),
           ...(usage ? { usage } : {}),
           blocks,
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         });
       },
-   }).then(async (result) => {
+   });
+
+    const onResult = async (result: Awaited<ReturnType<typeof runTurn>>) => {
       // A refusal ends the turn with no text, no tool calls and no error, so
       // nothing downstream has anything to publish. Checked across every step
       // rather than on the final one: a turn that spoke before it declined has
@@ -598,7 +618,9 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       }
 
       channel.close();
-    }).catch((error) => {
+    };
+
+    const onFailure = (error: unknown) => {
       // User-initiated cancellation: the caller aborted our signal, so
       // generateText rejected with an AbortError. Close the stream quietly —
       // already-completed steps were already pushed and stay delivered; we
@@ -625,7 +647,23 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       // formatter for LLM/runtime errors (budget-aware).
       channel.push(buildErrorStep(error));
       channel.close();
-    });
+    };
+
+    runTurn(messages)
+      .then(onResult)
+      .catch((error) => {
+        // The binding is checked before the model runs, so a turn that produced a
+        // step failed for some other reason and must not be sent twice.
+        if (stepsSeen > 0 || !isThinkingBindingError(error)) return onFailure(error);
+        logger.warn(
+          'Replayed reasoning does not match this request; retrying without it',
+        );
+        trackEvent('invocation reasoning stripped', request.userId, {
+          'invoke.mode': request.mode,
+          'agent.id': request.agentId,
+        });
+        return runTurn(withoutReasoning(messages)).then(onResult).catch(onFailure);
+      });
 
     // Yield steps as they arrive. Errors from generateText surface as a
     // final friendly step (with optional structured `error` metadata) via

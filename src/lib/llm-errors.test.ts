@@ -15,6 +15,7 @@ import {
   getSpendingLimitDetail,
   getErrorDetail,
   isContextOverflowError,
+  isThinkingBindingError,
   logSpendingLimitWarning,
   buildErrorStep,
 } from './llm-errors';
@@ -325,5 +326,51 @@ describe('isContextOverflowError', () => {
     ).toBe(false);
     expect(isContextOverflowError(null)).toBe(false);
     expect(isContextOverflowError('prompt is too long')).toBe(false);
+  });
+});
+
+describe('isThinkingBindingError', () => {
+  const bound =
+    'messages.3.content.0: Invalid `signature` in `thinking` block. ' +
+    'The block is bound to a different conversation. Remove the block, or set ' +
+    '`thinking.block_binding.prefix_mismatch_behavior` to "drop_block".';
+
+  it('matches the block-binding refusal', () => {
+    expect(isThinkingBindingError(new Error(bound))).toBe(true);
+  });
+
+  it('matches it in a response body', () => {
+    expect(
+      isThinkingBindingError({
+        statusCode: 400,
+        responseBody: JSON.stringify({ error: { message: bound } }),
+      }),
+    ).toBe(true);
+  });
+
+  it('matches the field name the API uses for the same check', () => {
+    expect(
+      isThinkingBindingError(new Error('thinking: prefix_binding_mismatch on message 4')),
+    ).toBe(true);
+  });
+
+  it('unwraps the SDK retry wrapper (lastError)', () => {
+    expect(isThinkingBindingError({ lastError: new Error(bound) })).toBe(true);
+  });
+
+  it('does not match a tampered signature, which no retry can fix', () => {
+    // Same first sentence, no binding clause: the request is invalid however it
+    // is sent again, so sending it again is waste.
+    expect(
+      isThinkingBindingError(
+        new Error('messages.3.content.0: Invalid `signature` in `thinking` block.'),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not match an unrelated failure', () => {
+    expect(isThinkingBindingError(new Error('prompt is too long'))).toBe(false);
+    expect(isThinkingBindingError({ statusCode: 500 })).toBe(false);
+    expect(isThinkingBindingError(null)).toBe(false);
   });
 });

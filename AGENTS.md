@@ -870,7 +870,28 @@ There are two entry points for chat, both handled locally by the agent-runtime:
 
 In both cases, `conversationEngineService.chat()` manages the thread, **iterates `invokeStream()` directly** (no queue, no HTTP), and `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
 
-The engine keeps a **one-step buffer**: it can't know a step is the last text step until the next step (or stream end) arrives, so the last publish is the one that carries the accumulated UI `blocks` and the `shouldShowFeedback` decision. Earlier steps publish with `includeFeedback: false` and no blocks.
+The engine writes **one row per step**, in step order, through a **one-step
+buffer**: a step is stored once the next one arrives, so the last step — the one
+carrying the accumulated UI `blocks`, the shared files and the
+`shouldShowFeedback` decision — is known by then. Earlier steps publish with
+`includeFeedback: false` and no blocks.
+
+One row per step because one row holds one assistant turn: a tool loop is N
+assistant/tool pairs to the provider, and the row's `assistantParts` is that
+step's turn exactly as the provider produced it — reasoning metadata, text, tool
+calls — replayed verbatim so the assistant message a later turn sends is the one
+the provider cached (`lib/assistant-parts.ts`). Its `toolCalls` is the client's
+record instead: a delivered row carries the calls of the hidden steps before it
+so the tool chips cover the whole turn, and the model ignores those because a
+result is matched to a call in `assistantParts` by `toolCallId`. A row without
+`assistantParts` — every row written before the column, and any step holding
+content the capture cannot carry — replays from `content` + `toolCalls`.
+
+A step that only called tools is `internalStep`, so client history hides it while
+the model-context read replays it. Where a provider binds a reasoning block's
+signature to the messages before it, a moved prefix refuses the whole request;
+`invokeStream` sends the turn once more without the reasoning on that one error
+(`isThinkingBindingError`).
 
 The management `POST /agents/chat` endpoint remains available for internal/debug use.
 

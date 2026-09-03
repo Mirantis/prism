@@ -318,7 +318,7 @@ model IDs are plain OpenAI API model names**; **OpenRouter model IDs are
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-[compact](compaction.md) a conversation when its context occupancy reaches this percent of the model's window. `0` disables auto-compaction; out-of-range values fall back to the default. | `90` |
-| `COMPACTION_TAIL_MESSAGES` | How many of the newest messages stay out of compaction and remain in the context verbatim. `0` is allowed. | `6` |
+| `COMPACTION_TAIL_MESSAGES` | How many of the newest messages stay out of compaction and remain in the context verbatim. Counted in stored messages, and one reply that used tools is stored as several — so a busy exchange can fill the tail on its own. `0` is allowed. | `6` |
 
 The mantle **chat and classification** variables deliberately do **not** fall
 back to their `BEDROCK_*` counterparts, since those carry a cross-region prefix

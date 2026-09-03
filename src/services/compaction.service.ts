@@ -540,6 +540,7 @@ class CompactionService {
       select: { threadSource: true },
     });
 
+
     // The message rows this pass marks compacted. A compacted message never
     // re-enters the context, so any tool output it saved is now unreachable and can
     // be reclaimed.
@@ -738,7 +739,12 @@ class CompactionService {
 }
 
 function toForkRows(
-  messages: Array<{ id: string; externalMessageId?: string | null; internalStep?: boolean; content: string }>,
+  messages: Array<{
+    id: string;
+    externalMessageId?: string | null;
+    internalStep?: boolean;
+    content: string;
+  }>,
 ): ForkRow[] {
   return messages.map((m) => ({
     id: m.id,

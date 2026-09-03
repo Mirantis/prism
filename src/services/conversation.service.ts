@@ -35,6 +35,11 @@ export interface MessageInput {
   role: MessageRole;
   triggeredBy: MessageTrigger;
   toolCalls?: unknown[];
+  /**
+   * This step's assistant turn as the provider produced it. Stored so replay
+   * sends back the bytes the provider cached; see `lib/assistant-parts.ts`.
+   */
+  assistantParts?: unknown[];
   blocks?: unknown[];
   tokenCount?: number;
   // Multi-user context (for channel messages)
@@ -415,6 +420,7 @@ class ConversationService {
         content: input.content,
         triggeredBy: input.triggeredBy,
         toolCalls: input.toolCalls as Prisma.InputJsonValue | undefined,
+        assistantParts: input.assistantParts as Prisma.InputJsonValue | undefined,
         blocks: input.blocks as Prisma.InputJsonValue | undefined,
         tokenCount: input.tokenCount,
         senderExternalId: input.senderExternalId,

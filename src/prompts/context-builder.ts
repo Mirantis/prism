@@ -15,6 +15,7 @@ import { skillCatalogService, type SkillSource } from '../services/skill-catalog
 import { pluginCatalogService } from '../services/plugin-catalog.service';
 import { resolveSkillsDir, resolvePluginsDir } from '../lib/data-dir';
 import { toModelToolName } from '../lib/tool-names';
+import { parseAssistantParts, toolCallsIn } from '../lib/assistant-parts';
 import { renderLegacyStoredOutput } from '../lib/tool-output-limiter';
 
 // Minimal type for conversation messages (matches Prisma's shape).
@@ -24,6 +25,9 @@ export interface ConversationMessage {
   role: 'USER' | 'AGENT' | 'SYSTEM';
   content: string;
   toolCalls?: unknown;
+  // One step's assistant turn as the provider produced it. Replayed verbatim
+  // where present; a row without it is rebuilt from `content` + `toolCalls`.
+  assistantParts?: unknown;
   // Provenance fields the compaction fork records so its commit can mark
   // exactly the rows that were in this context (Slack rows are watermarked by
   // ts, internal-step rows are flag-flipped). Optional because synthetic
@@ -515,6 +519,33 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
         messages.push({ role: 'user', content: parts });
       }
     } else if (msg.role === 'AGENT') {
+      const stored = parseAssistantParts(msg.assistantParts);
+
+      if (stored) {
+        // The step's own assistant turn, byte-for-byte what the provider
+        // produced and cached during the live turn.
+        messages.push({ role: 'assistant', content: stored } satisfies AssistantModelMessage);
+
+        const storedCalls = toolCallsIn(stored);
+        if (storedCalls.length > 0) {
+          // Results come from `toolCalls`, matched to the call by id. A record
+          // for a call in another row is ignored — a delivered row carries the
+          // whole turn's calls for the client to draw.
+          const byId = new Map(parseToolCalls(msg).map((tc) => [tc.id, tc]));
+          messages.push({
+            role: 'tool',
+            content: storedCalls.map((call) => ({
+              type: 'tool-result' as const,
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              // Verbatim, as in the fallback path below.
+              output: { type: 'text' as const, value: byId.get(call.toolCallId)?.output ?? '' },
+            })),
+          } satisfies ToolModelMessage);
+        }
+        continue;
+      }
+
       const toolCalls = parseToolCalls(msg);
 
       if (toolCalls.length > 0) {
@@ -666,7 +697,11 @@ function parseToolCalls(msg: ConversationMessage): Array<{
     const stored = typeof tc.output === 'string' ? tc.output : '';
 
     results.push({
-      id: `${msg.id}-tc-${i}`,
+      // The provider's own id where the row has it, so the replayed assistant
+      // message is byte-identical to the live one and the cached prefix holds
+      // past it. A row written before `toolCallId` existed keeps the
+      // synthesized id it has always replayed under.
+      id: typeof tc.toolCallId === 'string' && tc.toolCallId ? tc.toolCallId : `${msg.id}-tc-${i}`,
       tool: toModelToolName(tc.tool),
       parsedInput,
       // `rendered` marks a row written under the render-at-execute contract: its
