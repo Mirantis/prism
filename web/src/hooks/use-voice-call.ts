@@ -3,14 +3,11 @@ import { startVoiceAudio, VOICE_SAMPLE_RATE, type VoiceAudio } from '@/lib/voice
 import type { VoiceEvent, VoiceFormat } from './use-websocket';
 
 /**
- * A voice call with the agent, from the button to the microphone and back.
+ * A voice call with the agent: the microphone, the playback, and the call's state.
  *
- * The hook owns the call and nothing else. It is handed the three senders from the chat
- * socket, and it hands back the state a control renders: whether a call can be started,
- * whether one is running, whether the agent is speaking, and the last refusal in words.
- *
- * Nothing is written down. A call leaves no transcript and no message in the thread, so
- * the state here is all there is of it and it is gone when the call ends.
+ * Takes the three senders from the chat socket and returns what a control renders —
+ * whether a call is running, whether the agent is speaking, and the last refusal in
+ * words. The state is held here only; a call writes nothing to the thread.
  */
 
 export type VoiceCallStatus = 'idle' | 'starting' | 'live';

@@ -2,12 +2,7 @@ import { Mic, PhoneOff } from 'lucide-react';
 import { InputGroupButton } from '@/components/ui/input-group';
 import type { VoiceCallStatus } from '@/hooks/use-voice-call';
 
-/**
- * The one control for a voice chat: it starts a call, and while one runs it ends it.
- *
- * It sits in the composer beside the attach button, where a call is a way of saying
- * something rather than a page of its own.
- */
+/** The one control for a voice chat: it starts a call, and while one runs it ends it. */
 export default function VoiceCallButton({
   status,
   disabled,
