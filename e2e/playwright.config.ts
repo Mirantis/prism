@@ -156,13 +156,16 @@ export default defineConfig({
     // The voice scenario needs a microphone. The fake device is a synthetic tone
     // Chromium generates itself, so it needs no fixture and no host audio, and it
     // only ever appears to a `getUserMedia` caller — every other scenario is
-    // unaffected. The grant is Playwright's own, per origin, which is preferred
-    // over `--use-fake-ui-for-media-stream`: that one auto-accepts every prompt.
+    // unaffected. The grant is Playwright's own, per origin, and stays that way:
+    // `--use-fake-ui-for-media-stream` grants the microphone whatever
+    // `permissions` says, which would make the grant here decoration for the whole
+    // suite and leave a "microphone blocked" scenario unwritable.
     launchOptions: {
       args: ['--use-fake-device-for-media-stream'],
       // CI runs Playwright's own browser and must keep doing so. A host with no
       // Playwright download (its CDN is not always reachable) points this at a
       // system Chromium instead — a local export, never a path committed here.
+      // It coexists with the project's `channel`.
       ...(process.env.E2E_CHROMIUM_PATH
         ? { executablePath: process.env.E2E_CHROMIUM_PATH }
         : {}),
@@ -173,7 +176,12 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      // `channel: 'chromium'` is the full browser. Playwright's headless default is
+      // `chromium-headless-shell`, which implements no `getUserMedia` at all, so the
+      // fake device above answers `NotSupportedError` there and a voice call cannot
+      // start. `playwright install chromium` downloads both builds, so this needs
+      // nothing from the workflow.
+      use: { ...devices['Desktop Chrome'], channel: 'chromium' },
     },
   ],
 
