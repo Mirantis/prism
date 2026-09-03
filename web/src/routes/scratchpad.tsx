@@ -1,9 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { cn } from '@/lib/utils';
 import { useAgent } from '@/lib/agent-context';
 import { useVoiceChat, type VoiceChatState } from '@/hooks/use-voice-chat';
 import { AgentTile } from '@/components/voice/agent-tile';
+import { FrameStats } from '@/components/voice/frame-stats';
 import { MuteButton } from '@/components/voice/mute-button';
+import { ScreenView } from '@/components/voice/screen-view';
 
 export const Route = createFileRoute('/scratchpad')({
   component: ScratchpadPage,
@@ -20,8 +21,18 @@ const STATE_LABEL: Record<VoiceChatState, string> = {
 
 function ScratchpadPage() {
   const agent = useAgent();
-  const { state, message, muted, agentSpeaking, hasScreen, screenRef, toggleMute } =
-    useVoiceChat();
+  const {
+    state,
+    message,
+    muted,
+    agentSpeaking,
+    hasScreen,
+    hasDesktop,
+    lastFrame,
+    screenRef,
+    toggleMute,
+    sendInput,
+  } = useVoiceChat();
 
   return (
     <div className="space-y-6">
@@ -29,21 +40,21 @@ function ScratchpadPage() {
 
       <div className="flex flex-col items-center gap-4 rounded-xl bg-zinc-900 p-4">
         {/* The agent's screen, live, with the agent's own tile laid over one corner. */}
-        <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
-          <img
-            ref={screenRef}
-            alt="The agent's screen"
-            className={cn('h-full w-full object-contain', !hasScreen && 'invisible')}
-          />
-          {!hasScreen && (
-            <p className="absolute inset-0 flex items-center justify-center text-sm text-zinc-500">
-              Starting the agent's screen…
-            </p>
-          )}
+        <ScreenView
+          screenRef={screenRef}
+          hasScreen={hasScreen}
+          controllable={hasDesktop && state === 'ready'}
+          onInput={sendInput}
+        >
           <div className="absolute bottom-3 left-3 w-40 drop-shadow-lg sm:w-52 md:w-64">
             <AgentTile name={agent.name} speaking={agentSpeaking} compact />
           </div>
-        </div>
+          {hasScreen && (
+            <div className="absolute bottom-3 right-3">
+              <FrameStats lastFrame={lastFrame} />
+            </div>
+          )}
+        </ScreenView>
 
         <div className="flex flex-col items-center gap-3">
           {STATE_LABEL[state] && <p className="text-sm text-zinc-400">{STATE_LABEL[state]}</p>}
