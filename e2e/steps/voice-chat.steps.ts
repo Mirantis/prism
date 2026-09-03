@@ -29,7 +29,8 @@ const MICROPHONE_MS = 500;
 const EXCHANGE_TIMEOUT_MS = 30_000;
 
 interface MockState {
-  connected: boolean;
+  /** How many voice sessions the model has open right now. */
+  sessions: number;
   inboundMs: number;
   responsesRequested: number;
   deltasSent: number;
@@ -43,7 +44,7 @@ interface MockState {
  * time (`workers: 1`), the same reason `common.steps.ts` keeps the agent id in a
  * module variable.
  */
-let baseline: MockState = { connected: false, inboundMs: 0, responsesRequested: 0, deltasSent: 0 };
+let baseline: MockState = { sessions: 0, inboundMs: 0, responsesRequested: 0, deltasSent: 0 };
 
 async function readState(): Promise<MockState> {
   const response = await fetch(MOCK_STATE_URL);
@@ -56,7 +57,7 @@ async function readState(): Promise<MockState> {
 /** The whole exchange in one line, for a failure message. */
 function describeExchange(state: MockState): string {
   return (
-    `voice model: connected=${state.connected}, ` +
+    `voice model: sessions open=${state.sessions}, ` +
     `microphone=${Math.round(state.inboundMs - baseline.inboundMs)}ms, ` +
     `answers requested=${state.responsesRequested - baseline.responsesRequested}, ` +
     `audio frames sent=${state.deltasSent - baseline.deltasSent} ` +
@@ -143,7 +144,7 @@ Given('the voice model has heard nothing yet', async ({ page }) => {
   watchPage(page);
   pageProblems = [];
   baseline = await readState();
-  expect(baseline.connected, `a session was still open: ${describeExchange(baseline)}`).toBe(false);
+  expect(baseline.sessions, `a session was still open: ${describeExchange(baseline)}`).toBe(0);
 });
 
 When('I start a voice chat from the composer', async ({ page }) => {
@@ -198,5 +199,5 @@ Then('the composer offers a new voice chat', async ({ page }) => {
 });
 
 Then('the voice model has no session open', async ({ page }) => {
-  await waitForModel('the voice session closing', (state) => !state.connected, page);
+  await waitForModel('the voice session closing', (state) => state.sessions === 0, page);
 });
