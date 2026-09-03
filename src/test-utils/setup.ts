@@ -70,8 +70,5 @@ vi.mock('../config', () => ({
     // Read at log time rather than at startup, so leaving it out would silently take
     // whichever branch `undefined` happens to fall into.
     meetingTranscriptLogging: 'off',
-    // Same reason: read at request time, and `undefined` falls onto the off branch
-    // by luck rather than by the default this states.
-    bedrockConversePromptCache: false,
   },
 }));

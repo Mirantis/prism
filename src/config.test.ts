@@ -202,29 +202,6 @@ describe('config', () => {
     });
   });
 
-  describe('BEDROCK_CONVERSE_PROMPT_CACHE', () => {
-    it('defaults to false when unset', async () => {
-      delete process.env.BEDROCK_CONVERSE_PROMPT_CACHE;
-      const cfg = await loadConfig();
-      expect(cfg.bedrockConversePromptCache).toBe(false);
-    });
-
-    it('is case-insensitive and trims whitespace', async () => {
-      process.env.BEDROCK_CONVERSE_PROMPT_CACHE = '  ON  ';
-      const cfg = await loadConfig();
-      expect(cfg.bedrockConversePromptCache).toBe(true);
-    });
-
-    it.each(['true', '1', 'yes', 'enabled', ''])(
-      'reads %o as off — only "on" enables the breakpoint',
-      async (raw) => {
-        process.env.BEDROCK_CONVERSE_PROMPT_CACHE = raw;
-        const cfg = await loadConfig();
-        expect(cfg.bedrockConversePromptCache).toBe(false);
-      },
-    );
-  });
-
   describe('LLM_PROVIDER selection', () => {
     // These assert built-in defaults, so any model-id var the developer happens
     // to have exported would otherwise leak in through `originalEnv` — and the
