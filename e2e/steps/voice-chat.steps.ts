@@ -64,7 +64,26 @@ function describeExchange(state: MockState): string {
   );
 }
 
-/** What is on screen about the call, for the same message. */
+/**
+ * Console errors and uncaught page errors seen since the scenario's baseline.
+ *
+ * The composer can only say that the audio path did not open; which of the microphone,
+ * the audio context and the worklet module refused is in the console. Collected here so a
+ * failure names itself from the report instead of needing the browser reopened.
+ */
+let pageProblems: string[] = [];
+const watchedPages = new WeakSet<Page>();
+
+function watchPage(page: Page): void {
+  if (watchedPages.has(page)) return;
+  watchedPages.add(page);
+  page.on('console', (message) => {
+    if (message.type() === 'error') pageProblems.push(`console: ${message.text()}`);
+  });
+  page.on('pageerror', (error) => pageProblems.push(`page error: ${error.message}`));
+}
+
+/** What is on screen about the call, and what the page complained about, for the same message. */
 async function describeScreen(page: Page): Promise<string> {
   const read = async (testId: string) => {
     const element = page.getByTestId(testId);
@@ -76,7 +95,8 @@ async function describeScreen(page: Page): Promise<string> {
   return (
     `screen: indicator=${indicator === null ? 'absent' : JSON.stringify(indicator)}, ` +
     `refusal=${error === null ? 'none' : JSON.stringify(error)}, ` +
-    `control=${button === null ? 'absent' : 'present'}`
+    `control=${button === null ? 'absent' : 'present'}. ` +
+    `browser: ${pageProblems.length === 0 ? 'nothing on the console' : pageProblems.join(' | ')}`
   );
 }
 
@@ -118,7 +138,10 @@ const voiceButton = (page: Page) => page.getByTestId('voice-call-button');
 const voiceIndicator = (page: Page) => page.getByTestId('voice-call-indicator');
 const voiceSpeaking = (page: Page) => page.getByTestId('voice-call-speaking');
 
-Given('the voice model has heard nothing yet', async () => {
+Given('the voice model has heard nothing yet', async ({ page }) => {
+  // The page outlives the reload later in the scenario, so one attach covers both calls.
+  watchPage(page);
+  pageProblems = [];
   baseline = await readState();
   expect(baseline.connected, `a session was still open: ${describeExchange(baseline)}`).toBe(false);
 });
