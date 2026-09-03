@@ -1,196 +1,89 @@
 # Voice chat
 
-A client can talk to the agent out loud: it sends your microphone, the agent
+You can talk to the agent out loud: your client sends your microphone, the agent
 answers, and its tools run while you speak. Where
 [voice meetings](voice-meetings.md) put the agent in a Google Meet call, a voice
-chat is a direct one-to-one conversation between the agent and one client.
+chat is a direct conversation between the agent and one client.
 
-This page is the client contract. It describes every frame on the wire, the audio
-format in both directions, the session lifecycle and every error the runtime
-sends, so a new client — a browser, an iOS app, a test harness — can be written
-from this page alone.
-
-**Nothing about the call is written down.** There is no transcript, and no message
-appears in the thread. What you hear is all the call produces.
+**Nothing about the call is written down.** There is no transcript, and no
+message appears in the thread. What you hear is all the call produces.
 
 ## What you need
 
-Only `OPENAI_API_KEY`. The voice model is OpenAI's Realtime API, connected
-directly to `api.openai.com` — the same key voice meetings use, see
-[Configuration](configuration.md#voice-meetings).
+Only `OPENAI_API_KEY`, the same key voice meetings use — see
+[Configuration](configuration.md#voice-chat).
 
-If the runtime's outbound network is filtered, `api.openai.com` has to be
-allowed. The voice model is reached over a WebSocket, which the Lens Agents LLM
-gateway does not carry — it routes requests only — so this connection goes
-direct even where other model traffic is proxied. A runtime that cannot reach it
-refuses the call with
-`Realtime connection failed: Unexpected server response: 403`.
+If the runtime's outbound network is filtered, allow `api.openai.com`. A runtime
+that cannot reach it refuses the call and says why.
 
-Nothing else. The audio travels on the WebSocket the client already uses for
+Nothing else. The audio travels on the connection your client already uses for
 chat, so a voice chat works wherever chat works: a container, a hosted sandbox
-behind a reverse proxy, the installed binary. It needs no relay, no ICE, no
-browser and no audio packages — where a voice meeting needs Chromium and
-PulseAudio, this needs neither.
+behind a reverse proxy, the installed binary. A voice meeting needs Chromium and
+PulseAudio; this needs neither.
 
-The agent has one voice, so **one call at a time**: a voice chat is refused while
+The agent has one voice, so **one call at a time**. A voice chat is refused while
 a Meet call is live, and a Meet call is refused while a voice chat is live.
 
-## The exchange
+## Starting a call
 
-Everything rides the WebSocket at `/api/ws` — the control frames and the audio
-both. Control frames are JSON objects with a `type` and a `payload`; audio is
-sent as **binary** frames.
-
-1. The client sends `voice_start`.
-2. The runtime answers `voice_state: live` and `voice_hello`, in that order, and
-   audio flows in both directions from there — or it refuses with `voice_error`.
-   Do not depend on the order of those two: `live` is sent by the session as it
-   opens and `hello` by the socket that carried the request, so a future change
-   to either could swap them. Wait for whichever you need.
-3. Each side sends binary frames of audio for as long as the call runs.
-4. The client sends `voice_stop` to end the call — or just closes the socket.
-5. The runtime sends `voice_state: ended`. That is always the last frame of a
-   session.
-
-### Client to runtime
-
-| Type | Payload | Meaning |
-|------|---------|---------|
-| `voice_start` | `threadId` (string, optional), `mode` (string, optional) | Start a session. `threadId` is the thread the call belongs to, which the agent's tools use; omit it and the tools that need a thread work without one. `mode` is `open` or `addressed` — see [Who the agent answers](#who-the-agent-answers). Omit it for `open`. Any other value is refused with `voice_error`, rather than quietly answered as `open`. |
-| *binary* | — | One frame of your microphone. See [The audio](#the-audio). |
-| `voice_stop` | none | End the session. Only the socket that started the session can end it; from any other socket this does nothing. Sent before the session opens it still counts: the session ends as soon as it opens. |
-
-### Runtime to client
-
-| Type | Payload | Meaning |
-|------|---------|---------|
-| `voice_hello` | `format`: `{encoding, sampleRate, channels}` | The audio format, for both directions. Sent once per session; see step 2 on its order against `live`. |
-| `voice_state` | `state`: `live` or `ended` | `live` — audio flows. `ended` — the session is over; release the microphone. |
-| `voice_clear` | none | **Drop every audio frame you have not played yet, now.** See [Interrupting](#interrupting). |
-| `voice_error` | `error` (string) | Why the session could not start, or could not continue. Readable text, meant to be shown to the user. |
-| *binary* | — | One frame of the agent's speech. |
-
-### An example session
-
-```json
-→ {"type":"voice_start","payload":{"threadId":"3f1c…","mode":"addressed"}}
-← {"type":"voice_state","payload":{"state":"live"}}
-← {"type":"voice_hello","payload":{"format":{"encoding":"pcm16","sampleRate":24000,"channels":1}}}
-→ <binary: 480 bytes of pcm16>
-← <binary: 960 bytes of pcm16>
-← {"type":"voice_clear"}
-→ {"type":"voice_stop"}
-← {"type":"voice_state","payload":{"state":"ended"}}
-```
-
-## The audio
-
-**pcm16, mono, 24 kHz, little-endian, in both directions.** One frame per binary
-message; about 20 ms of audio per frame is a good size, and no size is required.
-
-That rate is the voice model's own, so nothing between your microphone and the
-model converts anything. Getting there is the client's job, and it is cheap: a
-browser builds `new AudioContext({ sampleRate: 24000 })` and the platform
-resamples capture into it; on iOS, `AVAudioConverter` does it.
-
-A frame with an odd number of bytes is dropped — pcm16 is two bytes a sample, and
-half a sample would shift every sample after it.
-
-Two obligations, both load-bearing:
-
-- **Stream continuously, silence included.** The turn detector needs the silence
-  to decide an utterance has ended. A client that sends only while it thinks
-  somebody is talking will hang mid-conversation.
-- **Handle text and binary frames in the order they arrive.** `voice_clear` is
-  ordered against the audio it cancels, so a client that hands audio to an audio
-  thread while decoding JSON elsewhere will drop the wrong frames.
-
-The agent yields the floor when you start talking, so an interruption works the
-way it does in a phone call.
+No screen in the web UI or the terminal UI starts a voice chat yet. A call is
+started by a client that speaks the runtime's voice frames on the chat
+connection — `src/services/voice/socket-audio.ts` and
+`src/services/websocket-gateway.service.ts` define them.
 
 ## Who the agent answers
 
-A voice chat is either a conversation or a room, and only the client knows
-which. `mode` on `voice_start` says so.
+A voice chat is either a conversation or a room, and the client says which when
+the call starts. Changing it means ending the call and starting another.
 
-**`open`** — the default. One person is talking to the agent, so everything the
-microphone hears is meant for it, and the agent answers each utterance as soon
-as you stop speaking. This is a phone held to your ear.
+**A conversation** is the default: one person is talking to the agent, so
+everything the microphone hears is meant for it, and the agent answers each
+utterance as soon as you stop speaking. This is a phone held to your ear.
 
-**`addressed`** — several people are talking, most of it to each other. The
-agent listens to all of it and answers only the utterances aimed at it, so
-somebody has to call it by name. This is a phone lying on the table in a
-meeting.
+**A room** is several people talking, most of it to each other. The agent listens
+to all of it and answers only the utterances aimed at it, so somebody has to call
+it by name. A name that is mentioned rather than used — "I asked Prism about that
+yesterday" — does not summon it, and a follow-up inside an exchange it is already
+part of reaches it without the name being repeated. Expect two things: the agent
+stays quiet for long stretches, which is it working, and each answer starts about
+a second later than in a conversation.
 
-A name that is mentioned rather than used — "I asked Prism about that
-yesterday" — does not summon it. A follow-up inside an exchange it is already
-part of reaches it without the name being repeated.
+## What it can do, and its authority
 
-Two things follow from `addressed` that are worth designing a client around:
+The agent brings the tools it has in a call: its shell, its memory, its
+configuration, and whatever else the runtime gives it. The one tool withheld is
+**file sharing** — it stores a file and hands back a reference for the chat
+machinery to deliver, which a call does not run, so it would file something away
+that reached nobody. Ask the agent for the file in chat afterwards.
 
-- **The agent stays quiet for long stretches, and that is it working.** When it
-  does answer it answers the question, without explaining the gaps or asking
-  whether you meant it.
-- **Judging each utterance takes about a second**, on top of the answer itself.
-  In `open` mode nothing is judged, so a reply starts as soon as you stop.
+**A call is not an authenticated channel.** The runtime does not authenticate a
+voice chat any more than it authenticates its other endpoints: auth is terminated
+by the platform routing in front of the container. Whoever reaches that
+connection can speak, and the agent cannot verify who they are.
 
-Pick the mode when the call starts. Changing it means ending the call and
-starting another.
+Nothing is held back for safety. The single guardrail is an instruction in the
+agent's prompt: announce what it is about to do and get an explicit "yes" before
+anything that deletes, deploys, spends money, grants access, or changes its own
+configuration. **That includes changing itself** — renaming itself, rewriting its
+Soul, user profile, memory, vision or heartbeat config, and changing its
+settings. So a sentence agreed in a call can change the agent for every future
+turn on every channel, not just for the length of the call.
 
-## Interrupting
+Instructions are a strong default, not enforcement. Treat access to a voice chat
+as handing over the agent's own authority, its own configuration included. Waiting
+to be addressed narrows what the agent *responds* to, not what it can be asked to
+do. For a real restriction, start the agent with a narrower tool surface.
 
-When you interrupt, the runtime stops speaking and tells the model how much of
-its answer you actually heard. It also sends **`voice_clear`**, because the audio
-it had already written is in *your* buffer by then.
+## When it doesn't work
 
-A client that ignores `voice_clear` keeps playing the sentence it was interrupted
-in, for as long as its buffer holds — so the agent talks over the person who
-interrupted it. Drop the queue when that frame arrives, and keep the queue small:
-whatever is buffered is audio nobody can recall.
-
-## The session lifecycle
-
-| The client has | The state | What to do |
-|----------------|-----------|------------|
-| Sent `voice_start` | Starting | Wait for `voice_state: live` and `voice_hello`, or for `voice_error`. |
-| `voice_state: live` | Live | Audio flows. Offer one control that ends the call. |
-| `voice_error` | Failing or refused | Show the text. When it is a refusal, no session started and no `ended` follows. |
-| `voice_state: ended` | Over | Release the microphone. |
-
-Three things end a session: the client's `voice_stop`, the socket closing, and a
-failure. A failure sends `voice_error` first and `voice_state: ended` after, so a
-client that only watches `ended` still tears down correctly, and one that shows
-the error can say why. An ending the client asked for sends `ended` alone.
-
-A runtime that shuts down ends the live session as it goes. The socket closes at
-the same time, so treat a closed socket as the end of the call rather than
-waiting for `ended`. A voice chat has no duration cap of its own: it runs until
-one of the endings above.
-
-Once a session has ended, a new `voice_start` starts a new one.
-
-## Errors
-
-Every one of these arrives as `voice_error` with the text in `payload.error`.
-
-| Text | Cause |
-|------|-------|
-| `Agent runtime is still initializing; retry shortly` | The runtime has not finished loading its agent. Retry. |
-| `mode must be "open" or "addressed"` | `voice_start` carried a `mode` this runtime does not serve. Nothing started. |
-| `I'm in a meeting call right now. That has to end before I can talk here.` | A Google Meet call holds the agent's voice. |
-| `There is already a voice chat running. End that one first.` | Another client — a second tab, a second device — has the session. The running call is unaffected. |
-| `Could not start the voice chat: …` | Startup failed, with the reason appended: the model session would not open, or the agent's context could not be read. |
-| A reason from the model session, e.g. `the model closed the socket` | The Realtime session ended under the call. `voice_state: ended` follows. |
-
-The first four are refusals: nothing started, and no `ended` frame follows. The
-last two end a session that was running.
-
-A microphone the user denies is the client's own error to report — the runtime
-never sees it, because there is no `voice_start` to send.
-
-## What this costs
-
-Worth knowing if you are writing a client for a phone. A WebSocket has no jitter
-buffer, no packet-loss concealment and no congestion control, so a poor mobile
-link sounds worse here than a media transport would. pcm16 at 24 kHz is about
-384 kbit/s each way.
+- **The call is refused.** The text says why: a Meet call holds the agent's
+  voice, another client already has the session, or the runtime is still loading
+  its agent and the call can be retried.
+- **The call ends on its own.** The agent's model session closed. Start another.
+- **The agent talks over you, or answers nothing.** Both are the client's audio
+  handling: it has to send your microphone continuously, silence included, since
+  the silence is how the end of an utterance is found, and it has to drop
+  unplayed audio when the runtime tells it to.
+- **Speech sounds broken on a mobile link.** The audio rides the chat connection,
+  which has no jitter buffer and no packet-loss concealment, so a poor link sounds
+  worse here than a media transport would.

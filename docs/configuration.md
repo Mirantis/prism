@@ -454,9 +454,9 @@ under the data dir, so sign-in happens once rather than per meeting.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `OPENAI_API_KEY` | Enables voice meetings. The same key drives chat when `LLM_PROVIDER=openai`, and memory embeddings by default when `LLM_PROVIDER=anthropic` — see [Provider selection](#provider-selection). | — (disabled) |
-| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot so a new one cannot change behaviour under you; `gpt-realtime-mini` is materially cheaper. | `gpt-realtime-2.1` |
+| `OPENAI_REALTIME_MODEL` | Realtime model for the agent's voice, in a meeting and in a [voice chat](voice-chat.md). Pinned to a snapshot so a new one cannot change behaviour under you; `gpt-realtime-mini` is materially cheaper. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
-| `OPENAI_REALTIME_REASONING_EFFORT` | How hard the in-meeting model thinks before it answers or picks a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. The API's own default is `low`, which suits a voice agent that reads out an order status; the model in a call here holds the agent's real toolset — shell, kubectl, integrations, its own configuration — so this defaults higher. The cost is latency, and latency in a call is silence in a room, so lower it if the pause is more noticeable than the mistakes it prevents. Set empty to send no setting and take the API's default. | `high` |
+| `OPENAI_REALTIME_REASONING_EFFORT` | How hard the voice model thinks before it answers or picks a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. The API's own default is `low`, which suits a voice agent that reads out an order status; the model in a call here holds the agent's real toolset — shell, kubectl, integrations, its own configuration — so this defaults higher. The cost is latency, and latency in a call is silence in a room, so lower it if the pause is more noticeable than the mistakes it prevents. Set empty to send no setting and take the API's default. | `high` |
 | `GOOGLE_BOT_EMAIL` | Google account the agent signs into for meetings. **Effectively required**: Google auto-denies automated anonymous guests, so without this the agent reaches the lobby and is refused. Use a dedicated account. | — |
 | `GOOGLE_BOT_PASSWORD` | Password for that account. **Must be the real password in plain text — a credential sentinel does not work here.** A sentinel is rewritten on the wire by the proxy, which only works for a secret sent as an HTTP header; this one is typed into Google's sign-in form by the browser, over TLS to Google, so the runtime has to hold the actual value. A deliberate trade-off: Google Meet has no bot or service-account API, so being in a call means driving a real browser signed into a real account. Treat it accordingly — a dedicated account with nothing else attached to it. Accounts with a phone/hardware challenge or enforced SSO cannot be signed in unattended. | — |
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used only so a call can be read back in the log — never fed to the model, which hears audio, and no decision waits on it. **Only requested when `MEETING_TRANSCRIPT_LOGGING=full`**: it bills per minute of audio, and with logging off the words would be transcribed and then dropped. Billed at a small fraction of the Realtime audio rate for the same minute. The default accepts `keywords`, which is how the agent's own name and the other participants' names are given to it; a model without them still works, but names in the log are likelier to be wrong. | `gpt-live-transcribe` |
@@ -472,10 +472,14 @@ one client. It needs the same `OPENAI_API_KEY` as voice meetings and uses the
 same voice, model and reasoning settings from the table above. The agent has one
 voice, so a voice chat and a Meet call exclude each other.
 
-**There is nothing else to configure.** The audio travels on the WebSocket the
+**There is nothing else to configure.** The audio travels on the connection the
 client already uses for chat, so a voice chat works wherever chat works and needs
-no relay and no browser — unlike a voice meeting, it runs in the installed binary
-too.
+no relay and no browser. A voice meeting cannot run in the installed binary; this
+can.
+
+No screen in the web UI or the terminal UI starts a call yet, so reaching one
+needs a client written against the runtime's voice frames — see
+[Voice chat](voice-chat.md#starting-a-call).
 
 ## Observability
 
