@@ -460,6 +460,12 @@ gate 403s a path whose backend is not the one the project's policy selected;
 the gateway holds the platform credentials, so no local LLM key is needed on that path). The one
 OpenAI call that never rides the gateway is the voice-meeting Realtime
 WebSocket — the openai mount routes POST only.
+`config.ts` resolves each vendor's endpoint once, in this order: the explicit
+`*_BASE_URL`, else the gateway mount, else the vendor's own host. A factory
+receives that endpoint and chooses nothing. The keyless path follows an origin
+comparison (`isGatewayEndpoint`) rather than the presence of `NEXUS_API_URL`: an
+endpoint on the gateway host sends a decoy key, since the gateway injects the
+real one, and an endpoint anywhere else needs a local key.
 
 ## SEA binaries — Node 22 pin
 
@@ -822,18 +828,18 @@ What the operator sets on `docker run`:
 | `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
 | `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-5` / `claude-haiku-4-5` |
 | `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (fail-open if absent; `''` to skip) | `text-embedding-3-small` |
-| `AZURE_FOUNDRY_BASE_URL` | Override the derived `…/anthropic/v1` Foundry chat endpoint | derived from resource |
+| `AZURE_FOUNDRY_BASE_URL` | Override the Foundry chat endpoint; outranks the gateway mount | derived from resource |
 | `AZURE_API_VERSION` | Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
 | `BEDROCK_MANTLE_MODEL_ID` / `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` | **Bare** Bedrock IDs for mantle (chat / classification gate); no fallback to the prefixed `BEDROCK_*` vars | `anthropic.claude-opus-5` / `anthropic.claude-haiku-4-5` |
 | `BEDROCK_MANTLE_EMBEDDING_MODEL_ID` | Memory embeddings under mantle — Titan on bedrock-runtime, since mantle serves none (`''` to skip) | `amazon.titan-embed-text-v2:0` |
-| `BEDROCK_MANTLE_BASE_URL` | Override the derived `…/anthropic/v1` mantle chat endpoint | derived from region |
+| `BEDROCK_MANTLE_BASE_URL` | Override the mantle chat endpoint; outranks the gateway mount | derived from region |
 | `OPENAI_MODEL_ID` / `OPENAI_CLASSIFICATION_MODEL_ID` | OpenAI model IDs (chat / classification gate). The provider pins gate calls to `reasoningEffort: 'none'` and omits their `temperature`, keeping the gates' tiny token budgets valid on GPT-5.x | `gpt-5.6-sol` / `gpt-5.6-luna` |
 | `OPENAI_EMBEDDING_MODEL_ID` | Memory embeddings under openai — a `text-embedding-3` model truncated to 1024 dims (`''` to skip) | `text-embedding-3-small` |
 | `OPENROUTER_MODEL_ID` / `OPENROUTER_CLASSIFICATION_MODEL_ID` | OpenRouter model IDs (chat / classification gate). Every id is `vendor/model`; the defaults mirror the OpenAI tiers so the shared provider's GPT-5.x parameter handling stays valid | `openai/gpt-5.6-sol` / `openai/gpt-5.6-luna` |
 | `OPENROUTER_EMBEDDING_MODEL_ID` | Memory embeddings under openrouter — **off by default**: the vendors it routes differ in native dimensionality and the index is fixed at 1024 (`openai/text-embedding-3-small` truncates to it) | `''` (disabled) |
 | `OPENROUTER_API_KEY` | OpenRouter API key, sent as a bearer header. Required direct; not needed through the gateway. May be a `__nexus_cred:<uuid>__` sentinel since it only rides a header | — |
-| `OPENROUTER_BASE_URL` | Override the direct OpenRouter endpoint (must serve the Responses API) | `https://openrouter.ai/api/v1` |
-| `OPENAI_BASE_URL` | Override the direct chat/embeddings endpoint (must serve the Responses API; does not move the Realtime socket) | SDK default (`https://api.openai.com/v1`) |
+| `OPENROUTER_BASE_URL` | Override the OpenRouter chat/embeddings endpoint (must serve the Responses API); outranks the gateway mount | `https://openrouter.ai/api/v1` |
+| `OPENAI_BASE_URL` | Override the chat/embeddings endpoint (must serve the Responses API; does not move the Realtime socket); outranks the gateway mount | SDK default (`https://api.openai.com/v1`) |
 | `ANTHROPIC_API_KEY` | First-party Anthropic API key, sent as `x-api-key`; **always required** under `LLM_PROVIDER=anthropic` (direct-only — no Nexus mount). May be a `__nexus_cred:<uuid>__` sentinel | — |
 | `ANTHROPIC_MODEL_ID` / `ANTHROPIC_CLASSIFICATION_MODEL_ID` | Bare first-party model IDs (chat / classification gate) | `claude-opus-5` / `claude-haiku-4-5` |
 | `ANTHROPIC_BASE_URL` | Override the direct chat endpoint (must end at `/v1`) | SDK default (`https://api.anthropic.com/v1`) |

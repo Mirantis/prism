@@ -82,8 +82,10 @@ Bedrock, `…/llm/azure/anthropic/v1` for Azure,
 `…/llm/bedrock-mantle/anthropic/{region}/v1` for mantle, `…/llm/openai/v1` for
 OpenAI, `…/llm/openrouter/openai/v1` for OpenRouter), otherwise they go
 direct. Memory embeddings route independently, on the embedding platform's own
-mount — see [Memory embeddings](#memory-embeddings). Through the gateway the
-platform credentials are held for you, so no local LLM credential is needed.
+mount — see [Memory embeddings](#memory-embeddings). A `*_BASE_URL` you set
+wins over the gateway mount, so you can point a gateway deployment at your own
+endpoint. Through the gateway the platform credentials are held for you, so no
+local LLM credential is needed.
 Two exceptions stay off the gateway: the voice-meeting Realtime WebSocket,
 which always goes direct to `api.openai.com` (the gateway's openai mount
 routes POST only), and `anthropic` chat as above. The credentials and model
@@ -96,14 +98,14 @@ platform.
 |----------|---------|
 | `AWS_BEARER_TOKEN_BEDROCK` | **(Bedrock, Mantle)** Bedrock API key — one credential for both AWS endpoints. On Bedrock the AI SDK auto-selects bearer auth when this is set; on mantle it is sent as the `x-api-key` header and is **required** for direct mode, which has no SigV4 path. Not needed when routing through the Lens Agents gateway. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | **(Bedrock)** AWS SigV4 credentials, as an alternative to the bearer token. Mantle chat cannot use these, but they still serve the Titan embedding leg under `bedrock-mantle`. |
-| `BEDROCK_MANTLE_BASE_URL` | **(Mantle)** Override the derived mantle chat endpoint (must end at `/anthropic/v1`). Applies to direct mode only. |
+| `BEDROCK_MANTLE_BASE_URL` | **(Mantle)** Override the derived mantle chat endpoint (must end at `/anthropic/v1`). |
 | `AZURE_API_KEY` | **(Azure)** Foundry resource key, sent as the `x-api-key` header. Required for direct mode only — when routing through the Lens Agents gateway it holds the key for both chat and embeddings. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `AZURE_RESOURCE_NAME` | **(Azure, direct)** Foundry resource name — derives the chat endpoint `https://{resource}.services.ai.azure.com/anthropic/v1` and the embeddings endpoint `https://{resource}.openai.azure.com`. |
 | `AZURE_FOUNDRY_BASE_URL` | **(Azure)** Override the derived Foundry Anthropic chat endpoint (must end at `/anthropic/v1`). |
 | `OPENAI_API_KEY` | **(OpenAI)** API key, sent as a bearer header. Required for direct mode only — through the Lens Agents gateway it holds the key. Shared with [voice meetings](voice-meetings.md): setting it also enables the meeting tools when the browser/audio toolchain is present. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
-| `OPENAI_BASE_URL` | **(OpenAI, direct)** Override the chat/embeddings endpoint (must serve the Responses API). Does not move the voice-meeting Realtime WebSocket. |
+| `OPENAI_BASE_URL` | **(OpenAI)** Override the chat/embeddings endpoint (must serve the Responses API). Does not move the voice-meeting Realtime WebSocket. |
 | `OPENROUTER_API_KEY` | **(OpenRouter)** API key, sent as a bearer header. Required for direct mode only — through the Lens Agents gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
-| `OPENROUTER_BASE_URL` | **(OpenRouter, direct)** Override the endpoint (must serve the Responses API). Defaults to `https://openrouter.ai/api/v1`. |
+| `OPENROUTER_BASE_URL` | **(OpenRouter)** Override the chat/embeddings endpoint (must serve the Responses API). Defaults to `https://openrouter.ai/api/v1`. |
 | `ANTHROPIC_API_KEY` | **(Anthropic)** API key, sent as the `x-api-key` header. Always required — this platform is direct-only, so there is no gateway mode to hold the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `ANTHROPIC_BASE_URL` | **(Anthropic)** Override the chat endpoint (must end at `/v1`). |
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). Enables the Slack adapter; validated via `auth.test` on boot. |
