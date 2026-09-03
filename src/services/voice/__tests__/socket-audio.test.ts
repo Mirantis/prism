@@ -57,6 +57,23 @@ describe('audio from the client', () => {
     expect(received).toHaveLength(0);
   });
 
+  /**
+   * A second of audio is already far more than a frame carries, so anything past it is a
+   * client that is broken or hostile. Dropped here rather than by a limit on the server,
+   * which chat shares: the call stays up and a text client is not closed under it.
+   */
+  it('drops a frame over the size limit and keeps taking the next one', () => {
+    const { audio, received } = build();
+    const oversize = Buffer.alloc(REALTIME_SAMPLE_RATE * 2 + 2);
+    const ordinary = Buffer.alloc(960);
+
+    audio.push(oversize);
+    expect(received).toHaveLength(0);
+
+    audio.push(ordinary);
+    expect(received).toHaveLength(1);
+  });
+
   it('ignores an empty frame', () => {
     const { audio, received } = build();
     audio.push(Buffer.alloc(0));

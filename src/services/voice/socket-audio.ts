@@ -28,6 +28,17 @@ export const VOICE_AUDIO_FORMAT = {
   channels: 1,
 } as const;
 
+/**
+ * The largest frame of client audio this accepts: one second at the format's rate.
+ *
+ * A client sends 20 to 100 ms a frame, so a second is a wide margin and anything past it
+ * is not microphone audio. Bounded here rather than on the WebSocket server, which is
+ * shared with chat: `ws` answers an oversize frame by closing the connection with 1009,
+ * so a server-wide limit would drop a text client mid-conversation over a large paste.
+ * This drops the frame and leaves the call running.
+ */
+const MAX_FRAME_BYTES = REALTIME_SAMPLE_RATE * 2;
+
 /** What the transport needs from whoever owns the socket. */
 export interface SocketAudioChannel {
   /** Send one frame of the agent's speech. */
@@ -45,9 +56,9 @@ export interface SocketAudioEvents {
 /**
  * The client's audio in, the agent's speech out.
  *
- * No `accept`, no candidates and no connection state: a socket that is open is
- * the media path, so the session is live from the moment it is built. Its owner
- * reports that rather than waiting for a peer to say so.
+ * There is no connection state of its own: a socket that is open is the media path, so
+ * the session is live from the moment it is built, and its owner reports that rather than
+ * waiting to be told.
  */
 export class SocketAudio {
   private closed = false;
@@ -85,11 +96,18 @@ export class SocketAudio {
    * An odd byte count is dropped rather than passed on: pcm16 is two bytes a
    * sample, and half a sample would shift every sample after it by a byte and
    * turn the rest of the frame into noise.
+   *
+   * A frame past `MAX_FRAME_BYTES` is dropped too. Everything downstream is metered by
+   * the second of audio, so a frame nobody asked for is billed as if somebody had.
    */
   push(pcm: Buffer): void {
     if (this.closed || pcm.length === 0) return;
     if (pcm.length % 2 !== 0) {
       logger.warn({ bytes: pcm.length }, '[VoiceChat] Dropped an audio frame with a half sample');
+      return;
+    }
+    if (pcm.length > MAX_FRAME_BYTES) {
+      logger.warn({ bytes: pcm.length }, '[VoiceChat] Dropped an audio frame over the size limit');
       return;
     }
     this.events.onAudio(pcm);
