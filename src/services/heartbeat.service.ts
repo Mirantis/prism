@@ -6,6 +6,8 @@
  * the backend via the internal REST API.
  *
  * Key design principles:
+ * - The interval is measured from the last run, not from the timer's creation,
+ *   so a restart or a re-registration cannot defer a check
  * - Classification gate LLM (Haiku) decides DELIVER/SUPPRESS after each heartbeat
  * - 24h duplicate suppression for exact-match alerts
  * - Fail-open: if the gate call fails, deliver the message
@@ -22,16 +24,29 @@ import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { formatTimeAgo } from '../prompts/context-builder';
 import { InvokeStep, SlackTriggerMessage } from '../types';
+import { heartbeatDelayMs, heartbeatDueAt } from './heartbeat-schedule';
 
 // ============================================================================
 // Types
 // ============================================================================
 
+/**
+ * How a caller anchors the schedule.
+ *
+ * `keep-schedule` leaves the next cycle where it is, so a restart or any
+ * re-registration that is not an interval change cannot defer a check.
+ * `new-interval` starts a fresh interval from now, which is what a user
+ * changing the cadence asks for.
+ */
+export type HeartbeatSchedule = 'keep-schedule' | 'new-interval';
+
 interface HeartbeatState {
   userId: string;
   agentId: string;
-  intervalId: NodeJS.Timeout;
+  timeoutId: NodeJS.Timeout | null;
   intervalMs: number;
+  /** Absolute time the next cycle is due. */
+  dueAt: number;
   lastRun: Date | null;
   isRunning: boolean;
   consecutiveErrors: number;
@@ -44,15 +59,20 @@ interface HeartbeatResult {
   text: string;
 }
 
+/** A delay for the log line: seconds under a minute, whole minutes above it. */
+function formatDelay(delayMs: number): string {
+  if (delayMs < 60_000) return `${Math.round(delayMs / 1000)}s`;
+  return `${Math.round(delayMs / 60_000)}min`;
+}
+
 // ============================================================================
 // Heartbeat Service
 // ============================================================================
 
 class HeartbeatService {
-  // Map from agentId to heartbeat state
   private heartbeatState: HeartbeatState | null = null;
 
-  startHeartbeat(agent: AgentWorkspace): void {
+  startHeartbeat(agent: AgentWorkspace, schedule: HeartbeatSchedule): void {
     // Heartbeat enablement is persisted in the backend DB.
     // If the agent is marked STOPPED, we don't start a timer on runtime startup.
     if (agent.heartbeatStatus === 'STOPPED') {
@@ -60,38 +80,112 @@ class HeartbeatService {
       return;
     }
 
-    if (this.heartbeatState) {
-      this.clearHeartbeatTimer();
+    const intervalMs = agent.heartbeatIntervalMs || 28800000;
+    const now = Date.now();
+
+    // Re-registration keeps the live state object: a run in flight writes its
+    // own fields to it, and the alert history behind the 24h duplicate check
+    // belongs to the agent rather than to the timer.
+    const state = this.heartbeatState ?? this.registerState(agent, intervalMs, now);
+    state.intervalMs = intervalMs;
+    if (schedule === 'new-interval') {
+      state.dueAt = now + intervalMs;
     }
 
-    const intervalMs = agent.heartbeatIntervalMs || 28800000;
-
-    const intervalId = setInterval(async () => {
-      await this.executeHeartbeat();
-    }, intervalMs);
-
-    this.heartbeatState = {
-      userId: agent.userId,
-      agentId: agent.id,
-      intervalId,
-      intervalMs,
-      lastRun: null,
-      isRunning: false,
-      consecutiveErrors: 0,
-      lastAlertText: null,
-      lastAlertAt: null,
-    };
+    const delayMs = this.armTimer(state);
 
     // Fire-and-forget persistence (don't block startup/management call).
     agentStatusService.updateAgentHeartbeatStatus('ENABLED').catch((err) => {
       logger.warn(`[Heartbeat] Failed to persist ENABLED status: ${err instanceof Error ? err.message : String(err)}`);
     });
 
-    logger.info(`[Heartbeat] Started (interval: ${intervalMs / 60000}min)`);
+    logger.info(
+      `[Heartbeat] Started (interval: ${intervalMs / 60000}min, next check in ${formatDelay(delayMs)})`,
+    );
     trackEvent('heartbeat started', agent.userId, {
       'agent.id': agent.id,
       'heartbeat.interval_ms': String(intervalMs),
     });
+  }
+
+  /** First registration in this process: the schedule comes off the last run. */
+  private registerState(agent: AgentWorkspace, intervalMs: number, now: number): HeartbeatState {
+    const state: HeartbeatState = {
+      userId: agent.userId,
+      agentId: agent.id,
+      timeoutId: null,
+      intervalMs,
+      dueAt: heartbeatDueAt(agent.lastHeartbeat, intervalMs, now),
+      lastRun: agent.lastHeartbeat,
+      isRunning: false,
+      consecutiveErrors: 0,
+      lastAlertText: null,
+      lastAlertAt: null,
+    };
+
+    this.heartbeatState = state;
+    return state;
+  }
+
+  /** Arm the one timer this state may hold, and answer the delay it waits. */
+  private armTimer(state: HeartbeatState): number {
+    if (state.timeoutId) {
+      clearTimeout(state.timeoutId);
+    }
+
+    const delayMs = heartbeatDelayMs(state.dueAt, state.intervalMs, Date.now());
+    state.timeoutId = setTimeout(() => {
+      void this.onTimer();
+    }, delayMs);
+
+    return delayMs;
+  }
+
+  /**
+   * The timer fired. A cycle runs only when one is due: the delay is capped, and
+   * a run started elsewhere may have moved the due time. The chain re-arms
+   * whatever the run did, so no failure can leave the heartbeat silent for the
+   * life of the process. A stop clears the state, and the identity check then
+   * declines to arm a timer nothing owns.
+   */
+  private async onTimer(): Promise<void> {
+    const state = this.heartbeatState;
+    if (!state) return;
+
+    try {
+      if (Date.now() >= state.dueAt) {
+        await this.executeHeartbeat();
+      }
+    } catch (err) {
+      // executeHeartbeat answers for a failed run itself, so this is a failure
+      // of that handling. Logged here rather than rethrown, since a rejection
+      // out of a timer callback ends the process.
+      logger.error({ err }, '[Heartbeat] Cycle failed outside the run');
+    } finally {
+      if (this.heartbeatState === state) {
+        this.armTimer(state);
+      }
+    }
+  }
+
+  /**
+   * One cycle happened. The in-memory cursor and the persisted one move
+   * together, so the next process computes the same schedule. A write that
+   * fails logs a warning and leaves the persisted cursor behind, which reads as
+   * overdue on the next boot, so a check runs early.
+   */
+  private async recordCycle(state: HeartbeatState): Promise<void> {
+    const ranAt = new Date();
+    state.lastRun = ranAt;
+    state.dueAt = ranAt.getTime() + state.intervalMs;
+
+    try {
+      await agentStatusService.updateHeartbeatTimestamp();
+    } catch (err) {
+      logger.warn(
+        `[Heartbeat] Failed to persist the last-run timestamp: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   stopHeartbeat(): void {
@@ -115,7 +209,9 @@ class HeartbeatService {
     const state = this.heartbeatState;
 
     if (state) {
-      clearInterval(state.intervalId);
+      if (state.timeoutId) {
+        clearTimeout(state.timeoutId);
+      }
       this.heartbeatState = null;
     }
   }
@@ -158,9 +254,11 @@ class HeartbeatService {
         slackMessages: hasSlackMessages ? pendingSlackMessages : undefined,
       });
 
-      // Budget exceeded — skip and reset error streak so the timer keeps running
+      // Budget exceeded — skip and reset error streak so the timer keeps running.
+      // The cycle still happened, so the next one is a full interval away.
       if (invokeResult.error?.type === 'budget_exceeded') {
         state.consecutiveErrors = 0;
+        await this.recordCycle(state);
         logger.info(`[Heartbeat] Skipping — budget exceeded`);
         this.trackHeartbeat(state, 'timer', 'budget_exceeded', startTime);
         return { shouldSkip: true, text: 'Budget exceeded' };
@@ -189,7 +287,7 @@ class HeartbeatService {
 
       this.logSteps(responseText, invokeResult.steps);
 
-      await agentStatusService.updateHeartbeatTimestamp();
+      await this.recordCycle(state);
 
       if (shouldDeliver) {
         await messageDeliveryService.publishToLatestThread(
@@ -207,7 +305,6 @@ class HeartbeatService {
         logger.info(`[Heartbeat] Alert for agent: ${responseText.substring(0, 100)}`);
       }
 
-      state.lastRun = new Date();
       state.consecutiveErrors = 0;
 
       const result: HeartbeatResult = {
@@ -221,6 +318,10 @@ class HeartbeatService {
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[Heartbeat] Failed: ${errMsg}`);
+
+      // A failed run is still a cycle. It spaces the error streak one interval
+      // apart, which is what the auto-stop below is counting.
+      await this.recordCycle(state);
 
       this.trackHeartbeat(state, 'timer', 'error', startTime);
       state.consecutiveErrors++;
@@ -336,7 +437,7 @@ class HeartbeatService {
 
       this.logSteps(responseText, invokeResult.steps, 'slack-triggered');
 
-      await agentStatusService.updateHeartbeatTimestamp();
+      await this.recordCycle(state);
 
       logger.info(`[Heartbeat] Slack-triggered heartbeat shouldDeliver=${shouldDeliver}`);
 
@@ -356,7 +457,6 @@ class HeartbeatService {
         logger.info(`[Heartbeat] Slack-triggered alert: ${responseText.substring(0, 100)}`);
       }
 
-      state.lastRun = new Date();
       state.consecutiveErrors = 0;
 
       logger.info(`[Heartbeat] Slack-triggered heartbeat completed in ${Date.now() - startTime}ms`);

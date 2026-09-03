@@ -4,8 +4,8 @@
  * Update soul / memory / user / heartbeat / settings / vision /
  * bootstrap. A document write goes through
  * `agentWorkspaceService.writeWorkspaceDoc`, which records the revision; the
- * settings write is a direct Prisma write. Both call
- * `heartbeatService.startHeartbeat` when they change what a heartbeat run reads.
+ * settings write is a direct Prisma write, and it calls
+ * `heartbeatService.startHeartbeat` after an interval change.
  */
 
 import { Tool, tool } from 'ai';
@@ -152,22 +152,9 @@ export function getAgentConfigTools(): Record<string, Tool> {
     update_heartbeat_config: tool({
       description: 'Update heartbeat configuration. Supports full replacement (newContent) or targeted edits.',
       inputSchema: workspaceFileInputSchema,
-      execute: async (input) => {
-        const result = await resolveWorkspaceFileUpdate(agentId, 'heartbeatMd', input);
-
-        if (result.success) {
-          const agent = await prisma.agentWorkspace.findUnique({ where: { id: agentId } });
-          if (agent) {
-            try {
-              heartbeatService.startHeartbeat(agent);
-            } catch (err) {
-              logger.error({ err }, '[Tool] Failed to restart heartbeat after config change');
-            }
-          }
-        }
-
-        return result;
-      },
+      // The schedule stays as it is. Every cycle loads the checks fresh, so the
+      // timer reads no part of this document.
+      execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'heartbeatMd', input),
     }),
 
     update_settings: tool({
@@ -227,7 +214,8 @@ export function getAgentConfigTools(): Record<string, Tool> {
 
         if (setting === 'heartbeatIntervalMs' && updatedAgent) {
           try {
-            heartbeatService.startHeartbeat(updatedAgent);
+            // A new cadence starts now: the next check is one new interval away.
+            heartbeatService.startHeartbeat(updatedAgent, 'new-interval');
           } catch (err) {
             logger.error({ err }, '[Tool] Failed to restart heartbeat after interval change');
           }

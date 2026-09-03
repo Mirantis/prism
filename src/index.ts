@@ -200,7 +200,9 @@ const initialize = async () => {
       data: { status: 'IDLE' },
     });
 
-    heartbeatService.startHeartbeat(agent);
+    // Boot keeps the schedule the last run set, so a restart cannot defer a
+    // check, and an overdue one runs promptly.
+    heartbeatService.startHeartbeat(agent, 'keep-schedule');
     logger.info('Heartbeat started');
 
     const cronTasks = await cronSchedulerService.listActiveCronTasks(agent.id);
