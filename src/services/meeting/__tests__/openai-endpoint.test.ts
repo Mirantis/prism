@@ -43,6 +43,35 @@ describe('resolveRealtimeEndpoint', () => {
     );
   });
 
+  it('accepts an encrypted override to any host', () => {
+    mockConfig.openaiRealtimeUrl = 'wss://voice.internal/v1/realtime';
+    expect(resolveRealtimeEndpoint().url).toBe('wss://voice.internal/v1/realtime?model=gpt-realtime');
+  });
+
+  it('accepts a plaintext override to each loopback spelling', () => {
+    for (const host of ['localhost:3103', '127.0.0.1:3103', '[::1]:3103']) {
+      mockConfig.openaiRealtimeUrl = `ws://${host}/v1/realtime`;
+      expect(resolveRealtimeEndpoint().url).toBe(`ws://${host}/v1/realtime?model=gpt-realtime`);
+    }
+  });
+
+  it('refuses a plaintext override to any other host, which would send the key in the clear', () => {
+    mockConfig.openaiRealtimeUrl = 'ws://voice.internal/v1/realtime';
+    expect(() => resolveRealtimeEndpoint()).toThrow(/must be wss:\/\/, or ws:\/\/ to localhost/);
+  });
+
+  it('refuses an override that is not a URL', () => {
+    mockConfig.openaiRealtimeUrl = '127.0.0.1:3103/v1/realtime';
+    expect(() => resolveRealtimeEndpoint()).toThrow(/OPENAI_REALTIME_URL is not a URL/);
+  });
+
+  it('keeps a query string the override already carries', () => {
+    mockConfig.openaiRealtimeUrl = 'wss://voice.internal/v1/realtime?tenant=alpha';
+    expect(resolveRealtimeEndpoint().url).toBe(
+      'wss://voice.internal/v1/realtime?tenant=alpha&model=gpt-realtime',
+    );
+  });
+
   it('still requires a key against an overridden host', () => {
     // The host moves; nothing about authentication does, so a local voice model
     // is reached the same way the real one is.
