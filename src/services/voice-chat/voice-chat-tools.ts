@@ -42,6 +42,12 @@ export interface TextLocation {
 
 export type WindowAction = 'focus' | 'close' | 'maximize' | 'restore' | 'minimize';
 
+/** What the user is sharing from their own screen, when they are. */
+export interface VoiceChatUserScreen {
+  /** The picture into the session, plus the words on it as `text` where the host can read them. */
+  lookAtUserScreen(): Promise<DesktopActionResult & { text?: string }>;
+}
+
 /**
  * The desktop a session owns, when it owns one. Every action shows the model the result.
  * `width` and `height` are the model's picture, which its coordinates refer to.
@@ -65,6 +71,7 @@ export interface VoiceChatDesktop {
 export function createVoiceChatTools(
   browser: VoiceChatBrowser,
   desktop: VoiceChatDesktop | null,
+  userScreen: VoiceChatUserScreen,
 ): Record<string, Tool> {
   const screenDescription = desktop
     ? `See your whole screen right now — a ${desktop.width} by ${desktop.height} picture of the ` +
@@ -76,6 +83,17 @@ export function createVoiceChatTools(
       'or to answer a question about what is on screen. Takes a couple of seconds.';
 
   return {
+    see_user_screen: tool({
+      description:
+        "Look at what your user is sharing from their own screen — a window, a tab or their " +
+        'whole screen, as it looks right now. You get the picture and, read off it, the exact ' +
+        'words on it, so trust the text for an error message, a name or a number and the picture ' +
+        'for where things are. Use it when they point at something on their side: "look at ' +
+        'this", "this error", "my dashboard". Says so if they are not sharing.',
+      inputSchema: z.object({}),
+      execute: async () => userScreen.lookAtUserScreen(),
+    }),
+
     ...(desktop ? createDesktopTools(desktop) : {}),
     browse: tool({
       description:

@@ -47,9 +47,10 @@ import {
   type TextLocation,
   type VoiceChatBrowser,
   type VoiceChatDesktop,
+  type VoiceChatUserScreen,
 } from './voice-chat-tools';
 import { DesktopControl, OCR_SCALE, type MouseButton, type ScrollDirection } from './desktop-control';
-import { findText, readScreenWords } from './screen-text';
+import { findText, readLines, readScreenWords, upscaleForOcr } from './screen-text';
 import { describeElements, findElements, readScreenElements } from './screen-elements';
 import { actOnWindow, findWindows, listWindows, type WindowAction } from './desktop-windows';
 import { DesktopInput, type InputFrame } from './desktop-input';
@@ -116,6 +117,26 @@ const DESKTOP_AFTER_NOTE =
   'This is a picture of your own screen right after the desktop action you just took. ' +
   'Your user did not say this.';/** How long the desktop gets to redraw after an action before the picture is taken. */
 const ACTION_SETTLE_MS = 400;
+const USER_SCREEN_NOTE =
+  "This is a picture of your user's own screen, which they are sharing with you, in answer " +
+  'to your see_user_screen call. Your user did not say this.';
+
+/**
+ * A page frame that is about the user's shared screen rather than the desktop's input:
+ * sharing began, a picture of it, sharing ended.
+ */
+type ScreenShareFrame =
+  | { type: 'user_screen_started' }
+  | { type: 'user_screen'; data: string; width: number; height: number }
+  | { type: 'user_screen_stopped' };
+
+type PageFrame = InputFrame | ScreenShareFrame;
+
+/** A shared-screen picture larger than this is refused; a 1280-wide JPEG is far smaller. */
+const USER_SCREEN_MAX_CHARS = 6 * 1024 * 1024;
+/** How much of the words read off the user's screen goes back to the model. */
+const USER_SCREEN_TEXT_MAX_CHARS = 4_000;
+
 /** The past tense of each window action, for the message that comes back. */
 const WINDOW_ACTION_DONE: Record<WindowAction, string> = {
   focus: 'Brought to the front',
@@ -126,9 +147,13 @@ const WINDOW_ACTION_DONE: Record<WindowAction, string> = {
 };
 
 /** Everything one connection owns, released together when it ends. */
-class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop {
+class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop, VoiceChatUserScreen {
   conversation: VoiceConversation | null = null;
   browser: BrowserStack | null = null;
+  /** The newest picture of the user's shared screen, while they share one. */
+  private userScreen: { jpeg: Buffer; width: number; height: number; at: number } | null = null;
+  /** Whether ffmpeg and Tesseract are on this host, so the shared screen can be read as text. */
+  private ocrAvailable: Promise<boolean> | null = null;
   /** Mouse, keyboard and camera for the virtual display. Null where the browser is on a real one. */
   private desktopControl: DesktopControl | null = null;
   /** DISPLAY plus the session bus, for the tree dump and `wmctrl`. */
@@ -313,17 +338,93 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop {
     return this.desktopControl !== null;
   }
 
-  /** A text frame from the page: the user's pointer or keyboard, while they hold the screen. */
+  /**
+   * A text frame from the page: the user's shared screen, or their pointer and keyboard
+   * while they hold the desktop.
+   */
   handleInput(text: string): void {
-    if (!this.input) return;
-    let frame: InputFrame;
+    let frame: PageFrame;
     try {
-      frame = JSON.parse(text) as InputFrame;
+      frame = JSON.parse(text) as PageFrame;
     } catch {
       return;
     }
     if (typeof frame !== 'object' || frame === null || typeof frame.type !== 'string') return;
-    this.input.handle(frame);
+
+    switch (frame.type) {
+      case 'user_screen_started':
+        logger.info('[VoiceChat] User started sharing their screen');
+        this.conversation?.notify(
+          'Your user has just started sharing their screen with you. Call see_user_screen ' +
+            'whenever you want to look at it, and do look when they refer to something on it.',
+        );
+        return;
+      case 'user_screen':
+        if (typeof frame.data !== 'string' || frame.data.length > USER_SCREEN_MAX_CHARS) return;
+        if (!this.userScreen) {
+          logger.info(`[VoiceChat] First picture of the user's shared screen, ${frame.width} by ${frame.height}`);
+        }
+        this.userScreen = {
+          jpeg: Buffer.from(frame.data, 'base64'),
+          width: Number(frame.width) || 0,
+          height: Number(frame.height) || 0,
+          at: Date.now(),
+        };
+        return;
+      case 'user_screen_stopped':
+        logger.info('[VoiceChat] User stopped sharing their screen');
+        this.userScreen = null;
+        this.conversation?.notify('Your user has stopped sharing their screen.');
+        return;
+      default:
+        this.input?.handle(frame);
+    }
+  }
+
+  /**
+   * Show the model the user's shared screen, as last received: the picture into the
+   * session, and the words on it as text, since a model reading a picture gets the gist
+   * of a dialog but garbles an error code or a hostname, which is what people share.
+   */
+  async lookAtUserScreen(): Promise<DesktopActionResult & { text?: string }> {
+    const shared = this.userScreen;
+    if (!shared) {
+      return {
+        success: false,
+        message: 'Your user is not sharing their screen right now. Ask them to press the share button.',
+      };
+    }
+    const shown =
+      this.conversation?.showImage(`data:image/jpeg;base64,${shared.jpeg.toString('base64')}`, USER_SCREEN_NOTE) ??
+      false;
+    const ageSeconds = Math.round((Date.now() - shared.at) / 1000);
+    const text = await this.readUserScreenText(shared.jpeg);
+    return {
+      success: shown,
+      message: shown
+        ? `This is your user's shared screen, ${shared.width} by ${shared.height}, ` +
+          `${ageSeconds <= 1 ? 'as of now' : `as of ${ageSeconds} seconds ago`}.` +
+          (text ? ' The words on it are attached, read off the picture, top to bottom.' : '')
+        : "I could not get the picture of your user's screen through.",
+      ...(text ? { text } : {}),
+    };
+  }
+
+  /** The words on a shared-screen picture, or undefined where this host cannot read them. */
+  private async readUserScreenText(jpeg: Buffer): Promise<string | undefined> {
+    this.ocrAvailable ??= hasBinaries('ffmpeg', 'tesseract');
+    if (!(await this.ocrAvailable)) return undefined;
+    try {
+      const png = await upscaleForOcr(jpeg, OCR_SCALE);
+      const lines = readLines(await readScreenWords(png, OCR_SCALE));
+      const text = lines.join('\n');
+      return text.length > USER_SCREEN_TEXT_MAX_CHARS
+        ? `${text.slice(0, USER_SCREEN_TEXT_MAX_CHARS)}\n…`
+        : text || undefined;
+    } catch (err) {
+      logger.info(`[VoiceChat] Could not read the user's screen as text: ${String(err)}`);
+      return undefined;
+    }
   }
 
   /** The desktop's controls as a reading, from the accessibility tree. */
@@ -714,7 +815,7 @@ class VoiceChatService {
       const agentTools = await prepareMeetingTools({ userId, agentId, lockedIn });
       const tools = mergePreparedTools(
         agentTools,
-        prepareRealtimeTools(createVoiceChatTools(session, session.hasDesktop ? session : null)),
+        prepareRealtimeTools(createVoiceChatTools(session, session.hasDesktop ? session : null, session)),
       );
       if (closed) return;
 
