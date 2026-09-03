@@ -265,13 +265,10 @@ grants the agent's authority, over itself included. See
 ### Voice chat
 
 A client can also talk to the agent **directly**, with no meeting in between: the
-audio rides the same chat WebSocket, and the agent keeps its tools while you
-speak. It uses the same `OPENAI_API_KEY` and the same voice as a meeting, and
-shares the one-call-at-a-time rule with it. Nothing else to configure and nothing
-to provision — a voice chat works wherever chat works, including a hosted sandbox
-and the installed binary. The client contract — every frame, the audio format,
-the lifecycle and the errors — is in
-[docs/voice-chat.md](docs/voice-chat.md).
+audio rides the same chat connection, and the agent keeps its tools and its
+authority while you speak. It needs the same `OPENAI_API_KEY` as a meeting and
+nothing else, so it works wherever chat works — a hosted sandbox and the
+installed binary included. See [docs/voice-chat.md](docs/voice-chat.md).
 
 ### Sessions and idle handling
 
@@ -372,7 +369,7 @@ restarts.
 | `SLACK_EXPECTED_APP_ID` | Optional safety check on the Slack app identity | — |
 | `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) and [voice chat](docs/voice-chat.md) (OpenAI Realtime API, connected directly — not via the Lens Agents gateway); also the chat credential when `LLM_PROVIDER=openai`, and the default embedding credential when `LLM_PROVIDER=anthropic` | — (disabled) |
 | `ANTHROPIC_API_KEY` | Chat credential when `LLM_PROVIDER=anthropic` (the first-party Anthropic API; always direct — no gateway mount) | — |
-| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice (pinned snapshot) | `gpt-realtime-2.1` |
+| `OPENAI_REALTIME_MODEL` | Realtime model for the agent's voice, in a meeting and in a voice chat (pinned snapshot) | `gpt-realtime-2.1` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one meeting call | `60` |
 | `LANGFUSE_SECRET_KEY` | Enables Langfuse tracing when set | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
