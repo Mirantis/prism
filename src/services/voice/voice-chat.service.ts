@@ -45,7 +45,7 @@ export interface VoiceChatSignal extends SocketAudioChannel {
 }
 
 /**
- * Which utterances the agent answers.
+ * This mode determines if the agent will always respond or only if addressed.
  *
  * `open` is a conversation: one person is talking to the agent, so everything the
  * microphone hears is meant for it and every utterance is answered at its turn
