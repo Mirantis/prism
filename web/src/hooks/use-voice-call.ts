@@ -111,6 +111,9 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
         setError('Not connected to the agent right now.');
       })
       .catch((err: unknown) => {
+        // The one sentence below cannot say which of getUserMedia, the audio context and
+        // the worklet module failed, and an error's name and message are not speech.
+        console.error('[voice] the audio path did not open', err);
         setCallStatus('idle');
         setError(
           err instanceof Error && err.name === 'NotAllowedError'
