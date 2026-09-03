@@ -14,15 +14,13 @@ import type { PictureStream } from './picture-stream';
 
 /** How often to check which tab is in front. */
 const FOLLOW_INTERVAL_MS = 1000;
-/** Least time between two frames sent to the page: ten a second at most. */
-const MIN_FRAME_GAP_MS = 100;
+/** Least time between two frames sent to the page: thirty a second at most. */
+const MIN_FRAME_GAP_MS = 33;
 /**
- * Capture every third compositor frame. Chromium encodes a JPEG for each frame it
- * captures, and a playing video produces 30 to 60 a second; in a container with no
- * GPU that encoding competes with the audio for the CPU, and the page shows ten a
- * second at most anyway.
+ * Capture every compositor frame; the gap above is what bounds the rate. Chromium encodes
+ * a JPEG for each frame it captures, so a 60 Hz page costs twice what reaches the page.
  */
-const CAPTURE_EVERY_NTH_FRAME = 3;
+const CAPTURE_EVERY_NTH_FRAME = 1;
 const FRAME_QUALITY = 50;
 const FRAME_MAX_WIDTH = 1024;
 const FRAME_MAX_HEIGHT = 576;

@@ -19,7 +19,26 @@ interface StatusFrame {
   type: 'status';
   state: 'connecting' | 'ready' | 'ended' | 'error';
   message?: string;
+  /** With `ready`: whether the runtime takes pointer and keyboard input for its screen. */
+  desktop?: boolean;
 }
+
+/** The last picture of the screen that arrived: how many so far, when, and how big. */
+export interface FrameEvent {
+  count: number;
+  /** `performance.now()` at arrival. */
+  at: number;
+  /** Encoded size of that picture, in bytes. */
+  bytes: number;
+}
+
+/** The user's pointer and keyboard on the agent's screen, sent as JSON text frames. */
+export type InputFrame =
+  | { type: 'pointer'; x: number; y: number }
+  | { type: 'pointer_move'; dx: number; dy: number }
+  | { type: 'pointer_button'; button: 'left' | 'middle' | 'right'; down: boolean }
+  | { type: 'wheel'; dy: number }
+  | { type: 'key'; key: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean };
 
 /** One picture of the agent's screen, as base64 JPEG. */
 interface ScreenFrame {
@@ -54,8 +73,13 @@ export function useVoiceChat() {
   const [agentSpeaking, setAgentSpeaking] = useState(false);
   /** True once the first picture of the agent's screen has arrived. */
   const [hasScreen, setHasScreen] = useState(false);
+  /** True when the runtime owns the screen it shows and takes input for it. */
+  const [hasDesktop, setHasDesktop] = useState(false);
+  /** The newest screen picture's arrival, for the frame readout. */
+  const [lastFrame, setLastFrame] = useState<FrameEvent | null>(null);
   const mutedRef = useRef(false);
   const contextRef = useRef<AudioContext | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   /**
    * The image the screen pictures are drawn into. Written directly rather than
    * through state: several frames a second, each a long string, is no job for a
@@ -122,6 +146,7 @@ export function useVoiceChat() {
       worklet.connect(context.destination);
 
       ws = new WebSocket(voiceWebSocketUrl());
+      wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
       ws.onmessage = (event: MessageEvent) => {
         if (typeof event.data === 'string') {
@@ -129,11 +154,15 @@ export function useVoiceChat() {
           if (frame.type === 'screen') {
             if (screenRef.current) screenRef.current.src = `data:image/jpeg;base64,${frame.data}`;
             setHasScreen(true);
+            // Three base64 characters carry a quarter less: the JPEG is 3/4 of the text.
+            const bytes = Math.floor((frame.data.length * 3) / 4);
+            setLastFrame((f) => ({ count: (f?.count ?? 0) + 1, at: performance.now(), bytes }));
             return;
           }
           if (frame.type !== 'status') return;
           setState(frame.state);
           setMessage(frame.message ?? null);
+          if (frame.state === 'ready') setHasDesktop(frame.desktop === true);
           return;
         }
         if (!worklet) return;
@@ -154,8 +183,10 @@ export function useVoiceChat() {
         setMessage('Could not reach the voice chat endpoint.');
       };
       ws.onclose = () => {
+        wsRef.current = null;
         if (cancelled) return;
         setAgentSpeaking(false);
+        setHasDesktop(false);
         setState((s) => (s === 'error' || s === 'mic-denied' ? s : 'ended'));
       };
     };
@@ -183,5 +214,22 @@ export function useVoiceChat() {
     });
   }, []);
 
-  return { state, message, muted, agentSpeaking, hasScreen, screenRef, toggleMute };
+  /** Send the user's pointer or keyboard to the agent's screen. Dropped while not connected. */
+  const sendInput = useCallback((frame: InputFrame) => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
+  }, []);
+
+  return {
+    state,
+    message,
+    muted,
+    agentSpeaking,
+    hasScreen,
+    hasDesktop,
+    lastFrame,
+    screenRef,
+    toggleMute,
+    sendInput,
+  };
 }

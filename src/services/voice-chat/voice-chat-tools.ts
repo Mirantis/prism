@@ -31,11 +31,32 @@ export interface DesktopActionResult {
   message: string;
 }
 
-/** The desktop a session owns, when it owns one. Every action shows the model the result. */
+/** Where a control or some words were found on the screen, in picture coordinates. */
+export interface TextLocation {
+  text: string;
+  /** For a control, its role and program; for words, the line they sit in. */
+  line: string;
+  x: number;
+  y: number;
+}
+
+export type WindowAction = 'focus' | 'close' | 'maximize' | 'restore' | 'minimize';
+
+/**
+ * The desktop a session owns, when it owns one. Every action shows the model the result.
+ * `width` and `height` are the model's picture, which its coordinates refer to.
+ */
 export interface VoiceChatDesktop {
   width: number;
   height: number;
-  click(input: { x: number; y: number; button?: MouseButton; double?: boolean }): Promise<DesktopActionResult>;
+  listElements(input: { filter?: string }): Promise<DesktopActionResult>;
+  listWindows(): Promise<DesktopActionResult>;
+  windowAction(input: { title: string; action: WindowAction }): Promise<DesktopActionResult>;
+  findText(input: { text: string }): Promise<DesktopActionResult & { matches?: TextLocation[] }>;
+  clickText(input: { text: string; occurrence?: number; button?: MouseButton; double?: boolean }): Promise<DesktopActionResult>;
+  move(input: { x: number; y: number }): Promise<DesktopActionResult>;
+  click(input: { x?: number; y?: number; button?: MouseButton; double?: boolean }): Promise<DesktopActionResult>;
+  drag(input: { fromX: number; fromY: number; toX: number; toY: number; button?: MouseButton }): Promise<DesktopActionResult>;
   type(input: { text: string }): Promise<DesktopActionResult>;
   key(input: { keys: string }): Promise<DesktopActionResult>;
   scroll(input: { x: number; y: number; direction: ScrollDirection; clicks?: number }): Promise<DesktopActionResult>;
@@ -46,10 +67,10 @@ export function createVoiceChatTools(
   desktop: VoiceChatDesktop | null,
 ): Record<string, Tool> {
   const screenDescription = desktop
-    ? `See your whole screen right now — a picture of the ${desktop.width} by ${desktop.height} ` +
+    ? `See your whole screen right now — a ${desktop.width} by ${desktop.height} picture of the ` +
       'desktop with every window on it, plus the text and controls of the browser tab in front. ' +
-      'Use it to find what to click, to check what an action did, or to answer a question ' +
-      'about what is on screen. Takes a couple of seconds.'
+      'Use it to find what to click, to check what an action did, or to answer a question about ' +
+      'what is on screen. Takes a couple of seconds.'
     : 'See what your browser is showing right now — a picture of the tab in front, plus ' +
       'the text and controls of the page. Use it to check a page `browse` reported oddly, ' +
       'or to answer a question about what is on screen. Takes a couple of seconds.';
@@ -120,21 +141,112 @@ export function createVoiceChatTools(
 
 function createDesktopTools(desktop: VoiceChatDesktop): Record<string, Tool> {
   const where =
-    `Pixel coordinates on the ${desktop.width} by ${desktop.height} screen, as seen in the ` +
-    'picture from `see_screen`: x from the left edge, y from the top.';
+    `Pixel coordinates in the ${desktop.width} by ${desktop.height} picture from \`see_screen\`: ` +
+    'x from the left edge, y from the top. Aim at the middle of the button or row.';
 
   return {
-    desktop_click: tool({
+    desktop_elements: tool({
       description:
-        'Click somewhere on your desktop: a menu, a button, a window, a text field to focus. ' +
-        `${where} Answers with a fresh picture of the screen after the click.`,
+        'Read the desktop the way `browse` reads a page: every visible control by name and ' +
+        'position — menu items, buttons, tabs, fields, windows — grouped by program. Use the ' +
+        'names with `desktop_click_text`. Pass `filter` to list only names containing some ' +
+        'words. Programs that do not describe themselves, such as the card games, show nothing ' +
+        'here; use `see_screen` for those.',
+      inputSchema: z.object({
+        filter: z.string().optional().describe('Only controls whose name contains this.'),
+      }),
+      execute: async (input) => desktop.listElements(input),
+    }),
+
+    desktop_windows: tool({
+      description: 'List the open windows on your desktop by title, with their position and size.',
+      inputSchema: z.object({}),
+      execute: async () => desktop.listWindows(),
+    }),
+
+    desktop_window: tool({
+      description:
+        'Manage a window by its title: bring it to the front, close it, maximise it, restore ' +
+        'it, or minimise it. Use this instead of aiming at the small buttons in a title bar. ' +
+        'Answers with a fresh picture.',
+      inputSchema: z.object({
+        title: z.string().min(1).describe('The window title, or a distinctive part of it.'),
+        action: z.enum(['focus', 'close', 'maximize', 'restore', 'minimize']),
+      }),
+      execute: async (input) => desktop.windowAction(input),
+    }),
+
+    desktop_click_text: tool({
+      description:
+        'Click a control or some words by name — a menu row, a button, a tab, a link, a file ' +
+        'name. Give the name as it appears; the desktop\'s own controls are looked up first and ' +
+        'clicked at their exact centre, and words with no control behind them are read off the ' +
+        'screen. Prefer this over `desktop_click` with coordinates whenever the target has a ' +
+        'name, since it does not miss. If the name appears more than once, `occurrence` picks ' +
+        'which, counted from the top. Answers with a fresh picture after the click, or says the ' +
+        'name is not on screen.',
+      inputSchema: z.object({
+        text: z.string().min(1).describe('The words on the target, as they appear on screen.'),
+        occurrence: z.number().int().min(1).optional().describe('Which match to click when there are several, 1 being the topmost. Defaults to 1.'),
+        button: z.enum(['left', 'middle', 'right']).optional().describe('Defaults to left.'),
+        double: z.boolean().optional().describe('True for a double-click.'),
+      }),
+      execute: async (input) => desktop.clickText(input),
+    }),
+
+    desktop_find_text: tool({
+      description:
+        'Find a control or some words on your desktop by name and get their exact coordinates, ' +
+        'without clicking. Use it to check whether something is on screen, to tell apart several ' +
+        'places the same name appears, or to get a precise point for `desktop_move`, ' +
+        '`desktop_drag` or `desktop_scroll`.',
+      inputSchema: z.object({
+        text: z.string().min(1).describe('The words to look for, as they appear on screen.'),
+      }),
+      execute: async (input) => desktop.findText(input),
+    }),
+
+    desktop_move: tool({
+      description:
+        'Put the pointer somewhere on your desktop without clicking, and see it there. Use it ' +
+        'before clicking a small target such as a menu row: the picture that comes back shows ' +
+        'the pointer, so you can check it sits on the target and then call `desktop_click` ' +
+        `with no coordinates to click right there. ${where}`,
       inputSchema: z.object({
         x: z.number().describe('Pixels from the left edge.'),
         y: z.number().describe('Pixels from the top edge.'),
+      }),
+      execute: async (input) => desktop.move(input),
+    }),
+
+    desktop_click: tool({
+      description:
+        'Click on your desktop: a menu, a button, a window, a text field to focus. With ' +
+        'coordinates it clicks there; without, it clicks where the pointer already is, which ' +
+        `is how to commit a spot you checked with \`desktop_move\`. ${where} Answers with a ` +
+        'fresh picture of the screen after the click; the pointer in it shows where the click landed.',
+      inputSchema: z.object({
+        x: z.number().optional().describe('Pixels from the left edge. Omit to click where the pointer is.'),
+        y: z.number().optional().describe('Pixels from the top edge. Omit to click where the pointer is.'),
         button: z.enum(['left', 'middle', 'right']).optional().describe('Defaults to left.'),
         double: z.boolean().optional().describe('True for a double-click.'),
       }),
       execute: async (input) => desktop.click(input),
+    }),
+
+    desktop_drag: tool({
+      description:
+        'Drag on your desktop: press at one point, move to another, release. This is how to ' +
+        'move a card, a window or a slider, or to select text. It walks the path in steps so ' +
+        `the program sees the motion. ${where} Answers with a fresh picture after the release.`,
+      inputSchema: z.object({
+        fromX: z.number().describe('Where to press: pixels from the left edge.'),
+        fromY: z.number().describe('Where to press: pixels from the top edge.'),
+        toX: z.number().describe('Where to release: pixels from the left edge.'),
+        toY: z.number().describe('Where to release: pixels from the top edge.'),
+        button: z.enum(['left', 'middle', 'right']).optional().describe('Defaults to left.'),
+      }),
+      execute: async (input) => desktop.drag(input),
     }),
 
     desktop_type: tool({
