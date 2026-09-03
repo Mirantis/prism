@@ -40,6 +40,15 @@ export type InputFrame =
   | { type: 'wheel'; dy: number }
   | { type: 'key'; key: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean };
 
+/** The user's own shared screen, a picture a second while it lasts. */
+export type ScreenShareFrame =
+  | { type: 'user_screen_started' }
+  | { type: 'user_screen'; data: string; width: number; height: number }
+  | { type: 'user_screen_stopped' };
+
+/** Everything the page sends the runtime as JSON text. */
+export type PageFrame = InputFrame | ScreenShareFrame;
+
 /** One picture of the agent's screen, as base64 JPEG. */
 interface ScreenFrame {
   type: 'screen';
@@ -214,8 +223,8 @@ export function useVoiceChat() {
     });
   }, []);
 
-  /** Send the user's pointer or keyboard to the agent's screen. Dropped while not connected. */
-  const sendInput = useCallback((frame: InputFrame) => {
+  /** Send a page frame to the runtime: pointer, keyboard or shared screen. Dropped while not connected. */
+  const sendInput = useCallback((frame: PageFrame) => {
     const ws = wsRef.current;
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
   }, []);

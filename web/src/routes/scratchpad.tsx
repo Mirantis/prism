@@ -1,10 +1,13 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useAgent } from '@/lib/agent-context';
 import { useVoiceChat, type VoiceChatState } from '@/hooks/use-voice-chat';
+import { useScreenShare } from '@/hooks/use-screen-share';
 import { AgentTile } from '@/components/voice/agent-tile';
 import { FrameStats } from '@/components/voice/frame-stats';
 import { MuteButton } from '@/components/voice/mute-button';
 import { ScreenView } from '@/components/voice/screen-view';
+import { ShareButton } from '@/components/voice/share-button';
+import { SharePreview } from '@/components/voice/share-preview';
 
 export const Route = createFileRoute('/scratchpad')({
   component: ScratchpadPage,
@@ -33,6 +36,7 @@ function ScratchpadPage() {
     toggleMute,
     sendInput,
   } = useVoiceChat();
+  const share = useScreenShare(sendInput);
 
   return (
     <div className="space-y-6">
@@ -54,12 +58,25 @@ function ScratchpadPage() {
               <FrameStats lastFrame={lastFrame} />
             </div>
           )}
+          {share.stream && (
+            <div className="absolute left-3 top-3">
+              <SharePreview stream={share.stream} />
+            </div>
+          )}
         </ScreenView>
 
         <div className="flex flex-col items-center gap-3">
           {STATE_LABEL[state] && <p className="text-sm text-zinc-400">{STATE_LABEL[state]}</p>}
           {message && <p className="text-xs text-zinc-500">{message}</p>}
-          <MuteButton muted={muted} disabled={state !== 'ready'} onToggle={toggleMute} />
+          {share.error && <p className="text-xs text-red-400">{share.error}</p>}
+          <div className="flex items-center gap-3">
+            <MuteButton muted={muted} disabled={state !== 'ready'} onToggle={toggleMute} />
+            <ShareButton
+              sharing={share.sharing}
+              disabled={state !== 'ready'}
+              onToggle={() => (share.sharing ? share.stop() : void share.start())}
+            />
+          </div>
         </div>
       </div>
     </div>
