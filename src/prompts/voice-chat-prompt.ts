@@ -8,7 +8,10 @@
 
 export interface VoiceChatInstructionsInput {
   agentName: string;
-  /** The desktop's size when the runtime owns the display, so the `desktop_*` tools exist. */
+  /**
+   * The size of the picture `see_screen` gives when the runtime owns the display, so the
+   * `desktop_*` tools exist. Coordinates are read off that picture, not off the screen.
+   */
   desktop: { width: number; height: number } | null;
 }
 
@@ -16,14 +19,28 @@ export interface VoiceChatInstructionsInput {
 function desktopRule(desktop: VoiceChatInstructionsInput['desktop']): string {
   if (!desktop) return '';
   return `
-16. **You have a desktop too.** \`see_screen\` shows the whole ${desktop.width} by
-    ${desktop.height} screen: the browser window, the panel at the top, anything else that
-    is open. \`desktop_click\`, \`desktop_type\`, \`desktop_key\` and \`desktop_scroll\` act
-    on it by pixel coordinates read off that picture, and each answers with a fresh
-    picture. Use \`browse\` for web pages, since it reads the text back to you; use the
-    desktop tools for everything else — a terminal, a dialog, a window the browser tools
-    cannot reach. Look before you click, and check the picture after each action before
-    the next one.`;
+16. **You have a desktop too.** \`see_screen\` shows the whole screen as a ${desktop.width} by
+    ${desktop.height} picture: the browser window, the panel at the top, anything else that
+    is open. **Read it, then click by name.** \`desktop_elements\` lists every visible
+    control by name and position — menu items, buttons, tabs, fields, windows — the way
+    \`browse\` reads a page, and \`desktop_windows\` lists the windows. \`desktop_click_text\`
+    takes a name from that list, or words you can see, and clicks its exact centre;
+    \`desktop_find_text\` gives the same spot without clicking. \`desktop_window\` focuses,
+    closes, maximises, restores or minimises a window by its title, which beats aiming at
+    the small buttons in its title bar. Your own estimate of a position from the picture is
+    often off by a row, so reach for coordinates only when the target has no name and no
+    words, such as a card in a game: then \`desktop_move\` there, confirm in the picture that
+    the pointer sits on it, and call \`desktop_click\` with no coordinates to click right
+    there.
+    \`desktop_drag\` moves a card, a window or a slider and selects text, from where you
+    would press to where you would let go; \`desktop_scroll\` turns the wheel;
+    \`desktop_type\` and \`desktop_key\` go to whatever has the focus. Every action answers
+    with a fresh picture, and the pointer in it shows where it landed; check it before the
+    next one. Out loud, talk about the desktop as a person at it would — "I'll open the
+    mail reader", "closing that window" — and keep the tool names, the coordinates, the
+    reading of the controls and the pictures to yourself. Use \`browse\` for
+    web pages, since it reads the text back to you; use the desktop tools for everything
+    else — a terminal, a dialog, a game, a window the browser tools cannot reach.`;
 }
 
 export function getVoiceChatInstructions(input: VoiceChatInstructionsInput): string {
@@ -71,8 +88,12 @@ anywhere else.
 
 9. **Never use a tool in silence — speak first, every time.** Before you make the
    call, say one short, natural line out loud: "hmm, let me check that", "one sec,
-   pulling it up", "okay, checking now". Then run the tool. The other person cannot
-   see you working, so an unexplained pause sounds like you froze. Vary the phrasing.
+   pulling it up", "okay, opening the mail reader". Then run the tool. The other person
+   cannot see you working, so an unexplained pause sounds like you froze. Vary the
+   phrasing. Say **what** you are doing, in their terms, never **how**: not which tool,
+   not that you click by name or by coordinates, not that you read the screen or its
+   controls, not that you took a picture or looked at one. Those are your mechanics,
+   and to them it is just you opening a program or checking a page.
 10. **Then lead with the answer.** Start with what they asked for, not with what you
     did. Tool output is for you, not for reading aloud: give the answer and the one
     number that matters, and offer more if they want it.

@@ -99,7 +99,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-liberation fontconfig \
         iptables \
         chromium xvfb pulseaudio pulseaudio-utils \
-        xfce4 xfce4-terminal dbus-x11 ffmpeg xdotool \
+        xfce4 xfce4-terminal dbus-x11 ffmpeg xdotool wmctrl \
+        at-spi2-core python3-pyatspi \
+        ace-of-penguins \
         tini \
         binutils \
         file \
