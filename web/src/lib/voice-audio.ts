@@ -22,8 +22,6 @@ export interface VoiceAudioOptions {
   onFrame: (frame: ArrayBuffer) => void;
   /** The agent's audio started or stopped playing — the browser's own evidence of it. */
   onSpeaking?: (speaking: boolean) => void;
-  /** Defaults to the session rate; a runtime that states another one is honoured. */
-  sampleRate?: number;
 }
 
 export interface VoiceAudio {
@@ -42,15 +40,13 @@ export interface VoiceAudio {
  * nothing open when it does: a caller that failed to start has nothing to stop.
  */
 export async function startVoiceAudio(options: VoiceAudioOptions): Promise<VoiceAudio> {
-  const sampleRate = options.sampleRate ?? VOICE_SAMPLE_RATE;
-
   // The microphone first. It is the one step that asks the user, so failing here should
   // cost nothing else.
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
   let context: AudioContext | undefined;
   try {
-    context = new AudioContext({ sampleRate });
+    context = new AudioContext({ sampleRate: VOICE_SAMPLE_RATE });
     await context.audioWorklet.addModule(WORKLET_URL);
     // A tab that has not played audio yet starts suspended. The call begins in a click,
     // so this is allowed to resume.
