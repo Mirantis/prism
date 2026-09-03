@@ -33,6 +33,10 @@ Set it from the **[Web UI → Profile](web-ui.md#profile)** (an inline editor,
 1–10080 minutes), from the **[Terminal UI](terminal-ui.md#heartbeat)** with
 `/heartbeat every 2h`, or just by asking the agent.
 
+The interval counts from the last check, so a restart does not postpone the next
+one. An agent that comes back with a check already due runs it about a minute
+later. Changing the interval starts a new interval from that moment.
+
 ## The DELIVER / SUPPRESS gate
 
 Running a check is cheap; pestering you is not. So after the main check produces

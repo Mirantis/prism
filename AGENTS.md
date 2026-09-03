@@ -728,7 +728,7 @@ tools block.
 | **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, platform token management, subagent relationships. `writeWorkspaceDoc` is the one write path for an identity document — column plus revision in one transaction — and `rollbackWorkspaceDoc` the restore |
 | **DocumentRevisionService** | `services/document-revision.service.ts` | Identity-document revisions: append one per accepted write, the history of one document (with the drift verdict), one revision's content, and the seed rows a new agent gets. Bounded at `MAX_REVISIONS_PER_DOCUMENT` (500) per document, trimmed in the insert's transaction |
 | **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat timestamp, heartbeat status) |
-| **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats |
+| **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats. The interval is measured from the last run rather than from the last call to `startHeartbeat` (see **Heartbeat Design → Schedule**) |
 | **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; manages cron task state directly via Prisma (list, update run timestamps, delete); skips a tick that would overlap a still-running execution of the same task; runs each result through the instruction-aware DELIVER/SUPPRESS gate before delivering (empty results suppressed, error results bypass the gate and always deliver, in-memory per-task last-delivered baseline fed to the gate as context — cleared when a suppressed run observes a different situation so a recurrence re-alerts — fail-open) |
 | **SlackAdapterService** | `services/slack-adapter.service.ts` | Full Slack implementation: Bolt apps, Socket Mode, message handling, verification codes |
 | **SlackMappingService** | `services/slack-mapping.service.ts` | SlackMapping CRUD for user and channel mappings via Prisma |
@@ -771,6 +771,7 @@ src/
 │   ├── conversation.service.ts # Thread/message CRUD via Prisma, pluggable thread providers
 │   ├── attachment.service.ts   # All MessageAttachment DB access + media-type detection; content as files (lib/media-store.ts), metadata stubs to the model
 │   ├── heartbeat.service.ts    # Heartbeat timer management, execution, and Slack-triggered heartbeats
+│   ├── heartbeat-schedule.ts   # When the next heartbeat is due and how long to sleep for it (pure)
 │   ├── cron-scheduler.service.ts # Cron job scheduling and execution
 │   ├── slack-adapter.service.ts   # Full Slack implementation: Bolt apps, Socket Mode, message handling
 │   ├── slack-mapping.service.ts   # SlackMapping CRUD for user & channel mappings via Prisma
@@ -1139,6 +1140,24 @@ default; one serializer rather than per-call-site edits because the risk is a *f
 interpolating an error into a template string bypasses this entirely.
 
 ## Heartbeat Design
+
+### Schedule
+
+The interval is measured from the last run. Each cycle arms one `setTimeout` for
+the absolute time the next check is due, in steps of at most one interval
+(`services/heartbeat-schedule.ts` does the arithmetic). `recordCycle` moves that
+time on every terminal path of a timer run, an error included; a Slack-triggered
+run moves it once it completes. A boot computes the due time from the persisted
+`lastHeartbeat`, so a restart keeps the next check where it is: a check already
+due runs about a minute later, which is the delay floor.
+
+`startHeartbeat` takes the anchor as a required second parameter. Boot and
+`POST /agents/heartbeat/start` pass `'keep-schedule'`, which leaves the due time
+alone; that route reads the interval and the last run off the persisted row
+rather than the request body. The two writers of the cadence pass
+`'new-interval'`, which starts a fresh interval from now:
+`PATCH /agents/heartbeat/interval` and the `update_settings` tool. Editing the
+Heartbeat document changes no schedule. Every cycle loads the checks fresh.
 
 ### Prompt Contract
 
