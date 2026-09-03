@@ -63,8 +63,31 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
     isAnthropicModelId(modelId) ? anthropic(modelId) : generic(modelId);
   return Object.assign(dispatcher, {
     cachePoint: promptCacheFragment,
+    // Derived from the fragment rather than repeating the rule, so the startup
+    // line cannot disagree with what the request carries.
+    promptCacheState: (modelId: string): 'on' | 'off' =>
+      Object.keys(promptCacheFragment(modelId)).length > 0 ? 'on' : 'off',
   });
 }
+
+/**
+ * Bedrock model families known to accept a Converse prompt-cache breakpoint.
+ *
+ * Empty, which is the honest answer and not an oversight. A Bedrock model
+ * without prompt-cache support answers a request that has a `cachePoint` block
+ * with "You invoked an unsupported model or your request did not allow prompt
+ * caching", so every turn fails, and no source this runtime can read says which
+ * model supports one: AWS publishes no per-model capability,
+ * `@ai-sdk/amazon-bedrock` carries none (its one model-support module answers
+ * tool and structured-output questions), and the model catalog holds context
+ * windows only. A guess here is a dead agent.
+ *
+ * This list is the extension point. Add the family fragment — matched inside the
+ * model id, so one entry covers the `us.`/`eu.`/`global.` inference profiles and
+ * the version suffixes — once a citable source establishes that family's
+ * support.
+ */
+const CONVERSE_PROMPT_CACHE_FAMILIES: readonly string[] = [];
 
 /**
  * The prompt-cache breakpoint fragment for one Bedrock model.
@@ -74,25 +97,14 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
  * Anthropic's namespace, Converse reads Bedrock's, and a fragment in the wrong
  * one is discarded without an error.
  *
- * Claude always gets its breakpoint. A Converse model gets one only when
- * `BEDROCK_CONVERSE_PROMPT_CACHE=on`, because a Bedrock model without
- * prompt-cache support answers a request that has a `cachePoint` block with "You
- * invoked an unsupported model or your request did not allow prompt caching" —
- * every turn fails. AWS publishes no per-model capability this code can read, so
- * the operator names the exception for their own account.
+ * Claude always gets its breakpoint. A Converse model gets one only when its
+ * family is on the list above, so a model whose support is unknown runs uncached
+ * instead of failing every turn.
  */
 function promptCacheFragment(modelId: string): CachePointFragment {
   if (isAnthropicModelId(modelId)) return ANTHROPIC_CACHE_POINT;
-  return config.bedrockConversePromptCache ? BEDROCK_CACHE_POINT : NO_CACHE_POINT;
-}
-
-/**
- * Whether a Bedrock chat model gets a prompt-cache breakpoint. Reported at
- * startup, so an operator sees which of the two answers their model configuration
- * lands on.
- */
-export function hasPromptCacheBreakpoint(modelId: string): boolean {
-  return Object.keys(promptCacheFragment(modelId)).length > 0;
+  const knownToCache = CONVERSE_PROMPT_CACHE_FAMILIES.some((family) => modelId.includes(family));
+  return knownToCache ? BEDROCK_CACHE_POINT : NO_CACHE_POINT;
 }
 
 /**

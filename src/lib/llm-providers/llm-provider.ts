@@ -87,6 +87,20 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
    */
   cachePoint: (modelId: string) => CachePointFragment;
   /**
+   * Whether one model gets a prompt-cache breakpoint on this vendor, for the
+   * startup line to report; undefined when the vendor has nothing to say and
+   * the line omits the field.
+   *
+   * Only a vendor whose answer varies by model declares it, which today is
+   * Bedrock alone: it serves Claude over the Anthropic Messages API and
+   * everything else over Converse, so the same deployment caches or does not
+   * depending on `BEDROCK_MODEL_ID`. A vendor with one answer for every model
+   * it serves reports nothing, because `cachePoint` alone cannot say which
+   * answer that is — the empty fragment covers both "caching is automatic
+   * here" (OpenAI) and "this model takes no breakpoint".
+   */
+  promptCacheState?: (modelId: string) => 'on' | 'off';
+  /**
    * `providerOptions` to merge into structured-output (`generateObject`) calls
    * on this vendor, or undefined when the SDK's default path already works.
    *

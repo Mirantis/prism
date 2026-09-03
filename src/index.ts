@@ -48,7 +48,7 @@ import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
 import { ensureWorkspaceRoot } from './tools/shell/config';
 import { ensureDataDirs } from './lib/data-dir';
 import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
-import { hasPromptCacheBreakpoint } from './lib/llm-providers/bedrock/bedrock-provider';
+import { createProvider } from './lib/llm-providers/create-provider';
 import { runBackfill } from './scripts/backfill-embeddings';
 
 // What `ps` and `top` show for this process.
@@ -125,6 +125,13 @@ const initialize = async () => {
     // files, over-TTL content, legacy BLOBs) before anything can serve them.
     await reconcileAttachmentStorage(dirs.mediaDir);
 
+    // The provider answers for prompt caching, and only a vendor whose answer
+    // varies by model declares the member at all — so the field is absent for a
+    // vendor that has nothing to say, and no vendor is named here. Reported for
+    // the configured model, which a per-agent or per-invocation override can
+    // still replace.
+    const provider = createProvider();
+
     // Active LLM provider + routing, so the deployed vendor is observable in
     // logs. `routing` is 'nexus' when the selected vendor's gateway chat mount
     // is set, else 'direct'. `embeddings` surfaces the embedding vendor at boot —
@@ -138,12 +145,8 @@ const initialize = async () => {
         embeddings: config.embeddingModelId
           ? `${config.embeddingProvider}:${config.embeddingModelId}`
           : 'disabled',
-        // Bedrock is the one vendor where the breakpoint depends on the model:
-        // Claude gets one, and a Converse model only with
-        // BEDROCK_CONVERSE_PROMPT_CACHE=on. Reported for the configured model,
-        // which a per-agent or per-invocation override can still replace.
-        ...(config.llmProvider === 'bedrock'
-          ? { promptCache: hasPromptCacheBreakpoint(config.chatModelId) ? 'on' : 'off' }
+        ...(provider.promptCacheState
+          ? { promptCache: provider.promptCacheState(config.chatModelId) }
           : {}),
       },
       '[Startup] LLM provider',

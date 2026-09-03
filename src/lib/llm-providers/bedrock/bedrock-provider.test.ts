@@ -39,11 +39,7 @@ vi.mock('@aws-sdk/credential-provider-node', () => ({
   defaultProvider: mockDefaultProvider,
 }));
 
-import {
-  createBedrockProvider,
-  hasPromptCacheBreakpoint,
-  isBedrockConfigured,
-} from './bedrock-provider';
+import { createBedrockProvider, isBedrockConfigured } from './bedrock-provider';
 
 describe('isBedrockConfigured', () => {
   beforeEach(() => {
@@ -72,7 +68,6 @@ describe('createBedrockProvider', () => {
     config.awsAccessKeyId = undefined;
     config.awsSecretAccessKey = undefined;
     config.awsSessionToken = undefined;
-    config.bedrockConversePromptCache = false;
     mockCreateBedrockAnthropic.mockClear();
     mockCreateAmazonBedrock.mockClear();
     mockAnthropicModel.mockClear();
@@ -162,12 +157,12 @@ describe('createBedrockProvider', () => {
     });
   });
 
-  it('gives no Converse model a breakpoint by default — one that cannot cache rejects the request', () => {
+  it('gives no Converse model a breakpoint — one that cannot cache rejects the request', () => {
     // A Bedrock model without prompt-cache support answers a request that has a
     // `cachePoint` block with "You invoked an unsupported model or your request
-    // did not allow prompt caching", so every turn fails. AWS publishes no
-    // per-model capability this code can read, so the breakpoint is withheld
-    // until an operator opts their model in.
+    // did not allow prompt caching", so every turn fails. No source this runtime
+    // can read says which Converse model supports one, so none gets a
+    // breakpoint and every one of them still runs.
     const provider = createBedrockProvider();
 
     expect(provider.cachePoint('us.xai.grok-4.6')).toEqual({});
@@ -177,47 +172,13 @@ describe('createBedrockProvider', () => {
     expect(provider.cachePoint('meta.llama3-70b-instruct-v1:0')).toEqual({});
   });
 
-  it('gives a Converse model the Bedrock cachePoint fragment when the operator opts in', () => {
-    // `@ai-sdk/amazon-bedrock` reads `providerOptions.bedrock.cachePoint` /
-    // `.amazonBedrock.cachePoint`. An Anthropic-namespaced fragment on this
-    // branch is dropped without an error, so the breakpoint has to be the
-    // Bedrock one to reach the wire at all.
-    config.bedrockConversePromptCache = true;
+  it('reports prompt-cache state for the startup line, on for Claude and off for Converse', () => {
+    // What `index.ts` logs. It reads this member off the shared contract and
+    // names no vendor, so the answer has to come from here.
     const provider = createBedrockProvider();
 
-    expect(provider.cachePoint('us.xai.grok-4.6')).toEqual({
-      bedrock: { cachePoint: { type: 'default' } },
-    });
-    expect(provider.cachePoint('us.amazon.nova-2-lite-v1:0')).toEqual({
-      bedrock: { cachePoint: { type: 'default' } },
-    });
-  });
-
-  it('leaves Claude on its own breakpoint when the Converse opt-in is on', () => {
-    // The opt-in must not reach the Anthropic branch in either direction: that
-    // is the surface where the cache reads actually land.
-    config.bedrockConversePromptCache = true;
-
-    expect(createBedrockProvider().cachePoint('us.anthropic.claude-opus-5')).toEqual({
-      anthropic: { cacheControl: { type: 'ephemeral' } },
-    });
-  });
-});
-
-describe('hasPromptCacheBreakpoint', () => {
-  beforeEach(() => {
-    config.bedrockConversePromptCache = false;
-  });
-
-  it('is true for Claude, whatever the Converse opt-in says', () => {
-    expect(hasPromptCacheBreakpoint('global.anthropic.claude-opus-5')).toBe(true);
-    config.bedrockConversePromptCache = true;
-    expect(hasPromptCacheBreakpoint('global.anthropic.claude-opus-5')).toBe(true);
-  });
-
-  it('is false for a Converse model by default and true once opted in', () => {
-    expect(hasPromptCacheBreakpoint('us.xai.grok-4.6')).toBe(false);
-    config.bedrockConversePromptCache = true;
-    expect(hasPromptCacheBreakpoint('us.xai.grok-4.6')).toBe(true);
+    expect(provider.promptCacheState?.('global.anthropic.claude-opus-5')).toBe('on');
+    expect(provider.promptCacheState?.('us.xai.grok-4.6')).toBe('off');
+    expect(provider.promptCacheState?.('us.amazon.nova-2-lite-v1:0')).toBe('off');
   });
 });
