@@ -25,40 +25,48 @@ import { createOpenAiProvider, isOpenAiConfigured } from './openai-provider';
 describe('createOpenAiProvider', () => {
   beforeEach(() => {
     config.openaiApiKey = 'sk-test';
-    config.openaiBaseUrl = undefined;
     vi.clearAllMocks();
   });
 
-  it('direct routing: no baseURL → the SDK default (api.openai.com)', () => {
+  it('no endpoint → the SDK default (api.openai.com)', () => {
     createOpenAiProvider();
     expect(mockCreateOpenAI).toHaveBeenCalledWith({ apiKey: 'sk-test', baseURL: undefined });
   });
 
-  it('direct routing: OPENAI_BASE_URL overrides the endpoint', () => {
-    config.openaiBaseUrl = 'https://gw.example/openai/v1';
-    createOpenAiProvider();
+  it('sends requests to the endpoint it is given', () => {
+    createOpenAiProvider('https://openai.example/v1');
     expect(mockCreateOpenAI).toHaveBeenCalledWith(
-      expect.objectContaining({ baseURL: 'https://gw.example/openai/v1' }),
+      expect.objectContaining({ baseURL: 'https://openai.example/v1' }),
     );
   });
 
-  it('Gateway routing: the mount wins over OPENAI_BASE_URL', () => {
-    config.openaiBaseUrl = 'https://gw.example/openai/v1';
-    createOpenAiProvider('https://gateway.example/llm/openai/v1');
-    expect(mockCreateOpenAI).toHaveBeenCalledWith(
-      expect.objectContaining({ baseURL: 'https://gateway.example/llm/openai/v1' }),
-    );
-  });
-
-  it('Gateway routing without a local key: falls back to a decoy apiKey (gateway injects the real one)', () => {
+  it('a gateway endpoint without a local key: falls back to a decoy apiKey (the gateway injects the real one)', () => {
     config.openaiApiKey = undefined;
-    createOpenAiProvider('https://gateway.example/llm/openai/v1');
+    createOpenAiProvider('https://gateway.example.com/llm/openai/v1');
     expect(mockCreateOpenAI).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: 'nexus-managed' }),
     );
   });
 
-  it('direct routing without a key passes undefined (SDK env fallback), no decoy', () => {
+  it('an override on the gateway host also gets the decoy, mount or not', () => {
+    // The endpoint an operator names on the gateway host is still served by the
+    // gateway, which holds the vendor credential.
+    config.openaiApiKey = undefined;
+    createOpenAiProvider('https://gateway.example.com/llm/bedrock-mantle/openai/us-east-1/v1');
+    expect(mockCreateOpenAI).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: 'nexus-managed' }),
+    );
+  });
+
+  it('an endpoint off the gateway host without a key sends no decoy', () => {
+    // The decoy means "the gateway injects the real key". An endpoint the gateway
+    // does not serve gets no such promise, so the SDK reports the missing key.
+    config.openaiApiKey = undefined;
+    createOpenAiProvider('https://openai.example/v1');
+    expect(mockCreateOpenAI).toHaveBeenCalledWith(expect.objectContaining({ apiKey: undefined }));
+  });
+
+  it('no endpoint and no key passes undefined (SDK env fallback), no decoy', () => {
     config.openaiApiKey = undefined;
     createOpenAiProvider();
     expect(mockCreateOpenAI).toHaveBeenCalledWith(expect.objectContaining({ apiKey: undefined }));
@@ -114,7 +122,7 @@ describe('isOpenAiConfigured', () => {
 
   it('true with model + gateway mount and NO key (gateway holds the key)', () => {
     config.openaiApiKey = undefined;
-    config.nexusOpenAiBaseUrl = 'https://gateway.example/llm/openai/v1';
+    config.nexusOpenAiBaseUrl = 'https://gateway.example.com/llm/openai/v1';
     expect(isOpenAiConfigured()).toBe(true);
   });
 

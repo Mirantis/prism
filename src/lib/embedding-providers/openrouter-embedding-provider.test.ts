@@ -22,44 +22,47 @@ vi.mock('@ai-sdk/openai', () => ({ createOpenAI: mockCreateOpenAI }));
 import { createOpenRouterEmbeddingProvider } from './openrouter-embedding-provider';
 
 describe('createOpenRouterEmbeddingProvider', () => {
+  const OPENROUTER_DIRECT = 'https://openrouter.ai/api/v1';
+
   beforeEach(() => {
     config.openrouterApiKey = 'sk-or-test';
-    config.openrouterBaseUrl = undefined;
     vi.clearAllMocks();
   });
 
-  it('direct routing: no baseURL → openrouter.ai, not the SDK default', () => {
-    createOpenRouterEmbeddingProvider();
+  it('sends requests to the endpoint it is given', () => {
+    // OPENROUTER_BASE_URL is one variable for the whole surface, so the embedding
+    // leg follows the override the chat leg follows; config resolves
+    // openrouter.ai when nothing else applies.
+    createOpenRouterEmbeddingProvider(OPENROUTER_DIRECT);
     expect(mockCreateOpenAI).toHaveBeenCalledWith({
       apiKey: 'sk-or-test',
-      baseURL: 'https://openrouter.ai/api/v1',
+      baseURL: OPENROUTER_DIRECT,
     });
   });
 
-  it('direct routing: OPENROUTER_BASE_URL overrides the endpoint', () => {
-    config.openrouterBaseUrl = 'https://gw.example/openrouter/v1';
-    createOpenRouterEmbeddingProvider();
-    expect(mockCreateOpenAI).toHaveBeenCalledWith(
-      expect.objectContaining({ baseURL: 'https://gw.example/openrouter/v1' }),
-    );
-  });
-
-  it('gateway routing: the mount wins, and a missing key falls back to a decoy', () => {
+  it('a gateway endpoint without a local key falls back to a decoy', () => {
     config.openrouterApiKey = undefined;
-    createOpenRouterEmbeddingProvider('https://nexus.example/llm/openrouter/openai/v1');
+    createOpenRouterEmbeddingProvider('https://gateway.example.com/llm/openrouter/openai/v1');
     expect(mockCreateOpenAI).toHaveBeenCalledWith({
       apiKey: 'managed',
-      baseURL: 'https://nexus.example/llm/openrouter/openai/v1',
+      baseURL: 'https://gateway.example.com/llm/openrouter/openai/v1',
     });
+  });
+
+  it('an endpoint off the gateway host without a key sends no decoy', () => {
+    // A decoy would promise a credential injection that nothing performs.
+    config.openrouterApiKey = undefined;
+    createOpenRouterEmbeddingProvider('https://proxy.example/openrouter/v1');
+    expect(mockCreateOpenAI).toHaveBeenCalledWith(expect.objectContaining({ apiKey: undefined }));
   });
 
   it('delegates model lookup to the openai provider', () => {
-    createOpenRouterEmbeddingProvider().model('openai/text-embedding-3-small');
+    createOpenRouterEmbeddingProvider(OPENROUTER_DIRECT).model('openai/text-embedding-3-small');
     expect(mockOpenAiProvider.embedding).toHaveBeenCalledWith('openai/text-embedding-3-small');
   });
 
   it('declares the dimensions fragment under the openai key — the serving SDK', () => {
-    expect(createOpenRouterEmbeddingProvider().providerOptions).toEqual({
+    expect(createOpenRouterEmbeddingProvider(OPENROUTER_DIRECT).providerOptions).toEqual({
       openai: { dimensions: 1024 },
     });
   });

@@ -40,7 +40,7 @@
  */
 
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { config } from '../../../config';
+import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
 import { isAnthropicModelId } from '../bedrock-shared';
 import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
@@ -86,13 +86,15 @@ export function toBareBedrockModelId(modelId: string): string {
  *
  * Returns a callable `(modelId) => LanguageModel` for chat.
  *
- * `baseURL` selects chat routing: unset → direct to the AWS mantle endpoint
- * (requires the Bedrock API key); set → the Lens Agents gateway, which holds
- * the credential itself.
+ * `baseURL` is the resolved chat endpoint — `BEDROCK_MANTLE_BASE_URL`, else the
+ * Lens Agents mantle mount, else the AWS mantle host for the region.
+ * `config.bedrockMantleChatEndpoint` decides between them. An endpoint on the
+ * gateway carries the credential itself; anywhere else needs the Bedrock API key.
  */
-export function createBedrockMantleProvider(baseURL?: string): LlmProvider {
+export function createBedrockMantleProvider(baseURL: string): LlmProvider {
+  const gatewayServesIt = isGatewayEndpoint(baseURL);
   logger.info(
-    { routing: baseURL ? 'nexus' : 'direct' },
+    { routing: gatewayServesIt ? 'nexus' : 'direct' },
     'Creating Bedrock Mantle provider (Anthropic Messages surface)',
   );
 
@@ -100,13 +102,13 @@ export function createBedrockMantleProvider(baseURL?: string): LlmProvider {
   // must end at `…/anthropic/v1` (direct) or
   // `…/llm/bedrock-mantle/anthropic/{region}/v1` (gateway).
   //
-  // Through the gateway the real Bedrock credential is injected on the
-  // outbound leg, so no local key is needed — but the SDK insists on one, so
-  // fall back to a decoy (same pattern as the Azure provider).
-  const decoyableKey = config.bedrockApiKey || (baseURL ? 'nexus-managed' : undefined);
+  // On the gateway the real Bedrock credential is injected on the outbound leg,
+  // so no local key is needed — but the SDK insists on one, so fall back to a
+  // decoy (same pattern as the Azure provider).
+  const decoyableKey = config.bedrockApiKey || (gatewayServesIt ? 'nexus-managed' : undefined);
   const anthropic = createAnthropic({
     apiKey: decoyableKey,
-    baseURL: baseURL ?? config.bedrockMantleBaseUrl,
+    baseURL,
   });
 
   const dispatcher = (modelId: string) => {
@@ -145,5 +147,5 @@ export function createBedrockMantleProvider(baseURL?: string): LlmProvider {
 export function isBedrockMantleConfigured(): boolean {
   if (!config.bedrockMantleModelId) return false;
   if (config.nexusBedrockMantleBaseUrl) return true;
-  return Boolean(config.bedrockApiKey && config.bedrockMantleBaseUrl);
+  return Boolean(config.bedrockApiKey && config.bedrockMantleDirectEndpoint);
 }

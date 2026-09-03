@@ -25,59 +25,59 @@ vi.mock('@ai-sdk/openai', () => ({
 import { createOpenRouterProvider, isOpenRouterConfigured } from './openrouter-provider';
 
 describe('createOpenRouterProvider', () => {
+  const OPENROUTER_DIRECT = 'https://openrouter.ai/api/v1';
+
   beforeEach(() => {
     config.openrouterApiKey = 'sk-or-test';
-    config.openrouterBaseUrl = undefined;
     vi.clearAllMocks();
   });
 
-  it('direct routing: no mount → openrouter.ai, not the SDK default', () => {
-    // The SDK's own default is api.openai.com, where a `vendor/model` id does
-    // not resolve — so the direct endpoint has to be spelled out.
-    createOpenRouterProvider();
+  it('sends requests to the endpoint it is given', () => {
+    // Config resolves openrouter.ai when nothing else applies, because the SDK's
+    // own default is api.openai.com, where a `vendor/model` id does not resolve.
+    createOpenRouterProvider(OPENROUTER_DIRECT);
     expect(mockCreateOpenAI).toHaveBeenCalledWith({
       apiKey: 'sk-or-test',
-      baseURL: 'https://openrouter.ai/api/v1',
+      baseURL: OPENROUTER_DIRECT,
     });
-  });
-
-  it('direct routing: OPENROUTER_BASE_URL overrides the endpoint', () => {
-    config.openrouterBaseUrl = 'https://proxy.example/openrouter/v1';
-    createOpenRouterProvider();
-    expect(mockCreateOpenAI).toHaveBeenCalledWith(
-      expect.objectContaining({ baseURL: 'https://proxy.example/openrouter/v1' }),
-    );
   });
 
   it('a __nexus_cred sentinel key reaches the SDK verbatim', () => {
     config.openrouterApiKey = '__nexus_cred:00000000-0000-0000-0000-000000000000__';
-    createOpenRouterProvider();
+    createOpenRouterProvider(OPENROUTER_DIRECT);
     expect(mockCreateOpenAI).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: '__nexus_cred:00000000-0000-0000-0000-000000000000__' }),
     );
   });
 
-  it('gateway routing: the mount wins over the direct endpoint', () => {
-    config.openrouterBaseUrl = 'https://proxy.example/openrouter/v1';
-    createOpenRouterProvider('https://gateway.example/llm/openrouter/openai/v1');
-    expect(mockCreateOpenAI).toHaveBeenCalledWith(
-      expect.objectContaining({ baseURL: 'https://gateway.example/llm/openrouter/openai/v1' }),
-    );
-  });
-
-  it('gateway routing without a local key: falls back to a decoy apiKey', () => {
+  it('a gateway endpoint without a local key: falls back to a decoy apiKey', () => {
     // The gateway holds the OpenRouter credential and injects it outbound; an
     // OpenAI key in the environment is a different vendor's and is never sent.
     config.openrouterApiKey = undefined;
     config.openaiApiKey = 'sk-test';
-    createOpenRouterProvider('https://gateway.example/llm/openrouter/openai/v1');
+    createOpenRouterProvider('https://gateway.example.com/llm/openrouter/openai/v1');
     expect(mockCreateOpenAI).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: 'nexus-managed' }),
     );
   });
 
+  it('an override on the gateway host also gets the decoy, mount or not', () => {
+    config.openrouterApiKey = undefined;
+    createOpenRouterProvider('https://gateway.example.com/projects/p/llm/openrouter/openai/v1');
+    expect(mockCreateOpenAI).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: 'nexus-managed' }),
+    );
+  });
+
+  it('an endpoint off the gateway host without a key sends no decoy', () => {
+    // A decoy would promise a credential injection that nothing performs.
+    config.openrouterApiKey = undefined;
+    createOpenRouterProvider('https://proxy.example/openrouter/v1');
+    expect(mockCreateOpenAI).toHaveBeenCalledWith(expect.objectContaining({ apiKey: undefined }));
+  });
+
   it('dispatches vendor-qualified chat model IDs through the client', () => {
-    const provider = createOpenRouterProvider();
+    const provider = createOpenRouterProvider(OPENROUTER_DIRECT);
     provider('anthropic/claude-sonnet-5');
     expect(mockOpenAiModel).toHaveBeenCalledWith('anthropic/claude-sonnet-5');
   });
@@ -85,7 +85,7 @@ describe('createOpenRouterProvider', () => {
   it('carries the OpenAI surface’s gate declarations', () => {
     // The defaults are `openai/*` models, so the same GPT-5.x constraints
     // apply: reasoning off, a 16-token floor, and no explicit temperature.
-    const provider = createOpenRouterProvider();
+    const provider = createOpenRouterProvider(OPENROUTER_DIRECT);
     expect(provider.classificationProviderOptions).toEqual({
       openai: { reasoningEffort: 'none' },
     });
@@ -109,7 +109,7 @@ describe('isOpenRouterConfigured', () => {
 
   it('true with model + gateway mount and NO key (gateway holds the key)', () => {
     config.openrouterApiKey = undefined;
-    config.nexusOpenRouterBaseUrl = 'https://gateway.example/llm/openrouter/openai/v1';
+    config.nexusOpenRouterBaseUrl = 'https://gateway.example.com/llm/openrouter/openai/v1';
     expect(isOpenRouterConfigured()).toBe(true);
   });
 

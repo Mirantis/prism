@@ -301,7 +301,7 @@ describe('config', () => {
       process.env.OPENROUTER_BASE_URL = 'https://proxy.example/openrouter/v1';
       const cfg = await loadConfig();
       expect(cfg.openrouterApiKey).toBe('__nexus_cred:00000000-0000-0000-0000-000000000000__');
-      expect(cfg.openrouterBaseUrl).toBe('https://proxy.example/openrouter/v1');
+      expect(cfg.openrouterEndpoint).toBe('https://proxy.example/openrouter/v1');
     });
 
     it('disables embeddings on openrouter by default', async () => {
@@ -329,14 +329,16 @@ describe('config', () => {
       expect(cfg.embeddingModelId).toBe('');
     });
 
-    it('openaiBaseUrl is undefined by default (SDK default endpoint)', async () => {
+    it('openaiEndpoint is undefined by default (SDK default endpoint)', async () => {
       delete process.env.OPENAI_BASE_URL;
-      expect((await loadConfig()).openaiBaseUrl).toBeUndefined();
+      delete process.env.NEXUS_API_URL;
+      expect((await loadConfig()).openaiEndpoint).toBeUndefined();
     });
 
-    it('reads OPENAI_BASE_URL as the direct endpoint override', async () => {
+    it('reads OPENAI_BASE_URL as the endpoint override', async () => {
+      delete process.env.NEXUS_API_URL;
       process.env.OPENAI_BASE_URL = 'https://gw.example/openai/v1';
-      expect((await loadConfig()).openaiBaseUrl).toBe('https://gw.example/openai/v1');
+      expect((await loadConfig()).openaiEndpoint).toBe('https://gw.example/openai/v1');
     });
 
     it('selects anthropic (case-insensitive) and resolves bare first-party model IDs', async () => {
@@ -500,7 +502,7 @@ describe('config', () => {
     it('derives the direct endpoint from AWS_REGION, ending at /anthropic/v1', async () => {
       process.env.AWS_REGION = 'eu-central-1';
       const cfg = await loadConfig();
-      expect(cfg.bedrockMantleBaseUrl).toBe(
+      expect(cfg.bedrockMantleDirectEndpoint).toBe(
         'https://bedrock-mantle.eu-central-1.api.aws/anthropic/v1',
       );
     });
@@ -508,7 +510,7 @@ describe('config', () => {
     it('BEDROCK_MANTLE_BASE_URL overrides the derived endpoint', async () => {
       process.env.BEDROCK_MANTLE_BASE_URL = 'https://mantle.internal/anthropic/v1';
       const cfg = await loadConfig();
-      expect(cfg.bedrockMantleBaseUrl).toBe('https://mantle.internal/anthropic/v1');
+      expect(cfg.bedrockMantleDirectEndpoint).toBe('https://mantle.internal/anthropic/v1');
     });
 
     it('reads the Bedrock API key from AWS_BEARER_TOKEN_BEDROCK', async () => {
@@ -608,6 +610,202 @@ describe('config', () => {
       process.env.LLM_PROVIDER = 'anthropic';
       const cfg = await loadConfig();
       expect(cfg.nexusChatBaseUrl).toBeNull();
+    });
+  });
+
+  describe('endpoint precedence: override, then gateway mount, then vendor host', () => {
+    beforeEach(() => {
+      process.env.NEXUS_API_URL = 'https://gateway.example.com';
+      delete process.env.PROJECT_ID;
+      process.env.AWS_REGION = 'us-east-1';
+      delete process.env.OPENAI_BASE_URL;
+      delete process.env.OPENROUTER_BASE_URL;
+      delete process.env.AZURE_FOUNDRY_BASE_URL;
+      delete process.env.BEDROCK_MANTLE_BASE_URL;
+      delete process.env.AZURE_RESOURCE_NAME;
+    });
+
+    it('OPENAI_BASE_URL wins over the derived openai mount', async () => {
+      process.env.LLM_PROVIDER = 'openai';
+      process.env.OPENAI_BASE_URL =
+        'https://gateway.example.com/llm/bedrock-mantle/openai/us-east-1/v1';
+      const cfg = await loadConfig();
+      expect(cfg.openaiEndpoint).toBe(
+        'https://gateway.example.com/llm/bedrock-mantle/openai/us-east-1/v1',
+      );
+      expect(cfg.chatEndpointSource).toBe('override');
+    });
+
+    it('OPENROUTER_BASE_URL wins over the derived openrouter mount', async () => {
+      process.env.LLM_PROVIDER = 'openrouter';
+      process.env.OPENROUTER_BASE_URL = 'https://proxy.example/openrouter/v1';
+      const cfg = await loadConfig();
+      expect(cfg.openrouterEndpoint).toBe('https://proxy.example/openrouter/v1');
+      expect(cfg.chatEndpointSource).toBe('override');
+    });
+
+    it('AZURE_FOUNDRY_BASE_URL wins over the derived azure mount', async () => {
+      process.env.LLM_PROVIDER = 'azure';
+      process.env.AZURE_RESOURCE_NAME = 'example-resource';
+      process.env.AZURE_FOUNDRY_BASE_URL = 'https://foundry.example/anthropic/v1';
+      const cfg = await loadConfig();
+      expect(cfg.azureChatEndpoint).toBe('https://foundry.example/anthropic/v1');
+      expect(cfg.chatEndpointSource).toBe('override');
+    });
+
+    it('BEDROCK_MANTLE_BASE_URL wins over the derived mantle mount', async () => {
+      process.env.LLM_PROVIDER = 'bedrock-mantle';
+      process.env.BEDROCK_MANTLE_BASE_URL = 'https://mantle.internal/anthropic/v1';
+      const cfg = await loadConfig();
+      expect(cfg.bedrockMantleChatEndpoint).toBe('https://mantle.internal/anthropic/v1');
+      expect(cfg.chatEndpointSource).toBe('override');
+    });
+
+    it('takes the gateway mount when no override is set', async () => {
+      process.env.LLM_PROVIDER = 'openai';
+      const cfg = await loadConfig();
+      expect(cfg.openaiEndpoint).toBe('https://gateway.example.com/llm/openai/v1');
+      expect(cfg.chatEndpointSource).toBe('gateway');
+      expect(cfg.chatRouting).toBe('nexus');
+    });
+
+    it.each(['azure', 'bedrock-mantle', 'openrouter'] as const)(
+      '%s with no override takes its own gateway mount',
+      async (provider) => {
+        process.env.LLM_PROVIDER = provider;
+        process.env.AZURE_RESOURCE_NAME = 'example-resource';
+        const cfg = await loadConfig();
+        expect(cfg.chatEndpointSource).toBe('gateway');
+        expect(cfg.chatRouting).toBe('nexus');
+      },
+    );
+
+    it('takes the vendor host when neither an override nor a gateway is set', async () => {
+      delete process.env.NEXUS_API_URL;
+      process.env.LLM_PROVIDER = 'openrouter';
+      const cfg = await loadConfig();
+      expect(cfg.openrouterEndpoint).toBe('https://openrouter.ai/api/v1');
+      expect(cfg.azureChatEndpoint).toBeUndefined();
+      expect(cfg.bedrockMantleChatEndpoint).toBe(
+        'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1',
+      );
+      expect(cfg.chatEndpointSource).toBe('direct');
+      expect(cfg.chatRouting).toBe('direct');
+    });
+
+    it('an override off the gateway host routes direct, gateway or not', async () => {
+      process.env.LLM_PROVIDER = 'openai';
+      process.env.OPENAI_BASE_URL = 'https://api.openai.example/v1';
+      const cfg = await loadConfig();
+      expect(cfg.chatRouting).toBe('direct');
+      expect(cfg.chatEndpointSource).toBe('override');
+    });
+
+    it('an override on the gateway host still routes through the gateway', async () => {
+      // `override` says the operator named the endpoint, `nexus` says the
+      // gateway still holds the vendor key.
+      process.env.LLM_PROVIDER = 'openai';
+      process.env.OPENAI_BASE_URL =
+        'https://gateway.example.com/llm/bedrock-mantle/openai/us-east-1/v1';
+      const cfg = await loadConfig();
+      expect(cfg.chatRouting).toBe('nexus');
+      expect(cfg.chatEndpointSource).toBe('override');
+    });
+
+    it('anthropic ignores the gateway and reports its own endpoint', async () => {
+      process.env.LLM_PROVIDER = 'anthropic';
+      process.env.ANTHROPIC_BASE_URL = 'https://anthropic.example/v1';
+      const cfg = await loadConfig();
+      expect(cfg.chatRouting).toBe('direct');
+      expect(cfg.chatEndpointSource).toBe('override');
+    });
+
+    it('bedrock reports the gateway mount it already used', async () => {
+      process.env.LLM_PROVIDER = 'bedrock';
+      const cfg = await loadConfig();
+      expect(cfg.chatEndpointSource).toBe('gateway');
+      expect(cfg.chatRouting).toBe('nexus');
+    });
+  });
+
+  describe('isGatewayEndpoint', () => {
+    beforeEach(() => {
+      process.env.NEXUS_API_URL = 'https://gateway.example.com';
+    });
+
+    async function loadIsGatewayEndpoint() {
+      const mod = await import('./config');
+      return mod.isGatewayEndpoint;
+    }
+
+    it('matches any mount on the gateway host, whatever the path', async () => {
+      const isGatewayEndpoint = await loadIsGatewayEndpoint();
+      expect(isGatewayEndpoint('https://gateway.example.com/llm/openai/v1')).toBe(true);
+      expect(isGatewayEndpoint('https://GATEWAY.example.com/projects/p/llm/openrouter/openai/v1')).toBe(
+        true,
+      );
+      expect(isGatewayEndpoint('https://gateway.example.com:443/llm/openai/v1')).toBe(true);
+    });
+
+    it('rejects another host, another scheme and another port', async () => {
+      const isGatewayEndpoint = await loadIsGatewayEndpoint();
+      expect(isGatewayEndpoint('https://api.openai.example/v1')).toBe(false);
+      expect(isGatewayEndpoint('http://gateway.example.com/llm/openai/v1')).toBe(false);
+      expect(isGatewayEndpoint('https://gateway.example.com:8443/llm/openai/v1')).toBe(false);
+    });
+
+    it('answers false for an unset or unparseable endpoint', async () => {
+      const isGatewayEndpoint = await loadIsGatewayEndpoint();
+      expect(isGatewayEndpoint(undefined)).toBe(false);
+      expect(isGatewayEndpoint(null)).toBe(false);
+      expect(isGatewayEndpoint('')).toBe(false);
+      expect(isGatewayEndpoint('not-a-url')).toBe(false);
+    });
+
+    it('answers false for every endpoint when no gateway is configured', async () => {
+      delete process.env.NEXUS_API_URL;
+      const isGatewayEndpoint = await loadIsGatewayEndpoint();
+      expect(isGatewayEndpoint('https://gateway.example.com/llm/openai/v1')).toBe(false);
+    });
+
+    it('answers false when NEXUS_API_URL names no http scheme', async () => {
+      // Every opaque URL takes the origin "null", so two of them compare equal.
+      // Such a gateway fails in `fetch` anyway, and it must not hand a decoy key
+      // to an unrelated endpoint on the way there.
+      process.env.NEXUS_API_URL = 'gateway.example.com:8443';
+      const isGatewayEndpoint = await loadIsGatewayEndpoint();
+      expect(isGatewayEndpoint('gateway.example.com:8443')).toBe(false);
+      expect(isGatewayEndpoint('mailto:operator@endpoint.example')).toBe(false);
+    });
+  });
+
+  describe('chatEndpointForLog', () => {
+    beforeEach(() => {
+      delete process.env.NEXUS_API_URL;
+      process.env.LLM_PROVIDER = 'openai';
+    });
+
+    it('keeps origin and path only, so no credential reaches the log', async () => {
+      // Invented values: a userinfo password and a query token, both of which a
+      // full URL would print.
+      process.env.OPENAI_BASE_URL =
+        'https://operator:invented-p4ssw0rd@endpoint.example/llm/openai/v1?api_key=invented-token';
+      const cfg = await loadConfig();
+      expect(cfg.chatEndpointForLog).toBe('https://endpoint.example/llm/openai/v1');
+      expect(cfg.chatEndpointForLog).not.toContain('invented-p4ssw0rd');
+      expect(cfg.chatEndpointForLog).not.toContain('invented-token');
+    });
+
+    it('names an unparseable endpoint rather than printing it', async () => {
+      process.env.OPENAI_BASE_URL = 'endpoint.example/v1?api_key=invented-token';
+      const cfg = await loadConfig();
+      expect(cfg.chatEndpointForLog).toBe('invalid');
+    });
+
+    it('says so when the vendor default applies', async () => {
+      delete process.env.OPENAI_BASE_URL;
+      const cfg = await loadConfig();
+      expect(cfg.chatEndpointForLog).toBe('vendor default');
     });
   });
 

@@ -4,8 +4,10 @@
  * Two orthogonal choices:
  *  - Vendor: `config.llmProvider` (`bedrock` default, `azure`,
  *    `bedrock-mantle`, `openai`, `openrouter`, or `anthropic`).
- *  - Routing: each vendor's factory takes an optional gateway base URL — set →
- *    route through the Lens Agents gateway, unset → direct to the vendor.
+ *  - Endpoint: each vendor's factory takes the endpoint `config.ts` resolved for
+ *    it — the explicit `*_BASE_URL` override, else the Lens Agents gateway mount,
+ *    else the vendor's own host. The factory receives one endpoint and chooses
+ *    nothing, so the precedence is written once.
  *
  * Every underlying factory returns the same call shape — `LlmProvider`, a
  * callable `(modelId) => LanguageModel` — so callers don't have to care which
@@ -57,13 +59,13 @@ import type { LlmProvider } from './llm-provider';
 export function createProvider(): LlmProvider {
   switch (config.llmProvider) {
     case 'azure':
-      return createAzureProvider(config.nexusAzureBaseUrl ?? undefined);
+      return createAzureProvider(config.azureChatEndpoint);
     case 'bedrock-mantle':
-      return createBedrockMantleProvider(config.nexusBedrockMantleBaseUrl ?? undefined);
+      return createBedrockMantleProvider(config.bedrockMantleChatEndpoint);
     case 'openai':
-      return createOpenAiProvider(config.nexusOpenAiBaseUrl ?? undefined);
+      return createOpenAiProvider(config.openaiEndpoint);
     case 'openrouter':
-      return createOpenRouterProvider(config.nexusOpenRouterBaseUrl ?? undefined);
+      return createOpenRouterProvider(config.openrouterEndpoint);
     case 'anthropic':
       return createAnthropicProvider();
     default:

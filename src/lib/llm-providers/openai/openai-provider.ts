@@ -6,18 +6,18 @@
  * default), so a custom endpoint — direct override or gateway — must serve
  * `/responses`, not just `/chat/completions`.
  *
- * Routing: a `baseURL` argument (the Lens Agents OpenAI mount, computed from
- * `NEXUS_API_URL` as `…/llm/openai/v1`) routes everything
- * through the gateway, which appends the client path to its configured OpenAI
- * root and injects the API key on the outbound leg; unset → direct to
- * api.openai.com (or `OPENAI_BASE_URL`). The one OpenAI call that never rides
- * the gateway is the voice-meeting Realtime WebSocket — the mount routes POST
- * only — which stays pinned in `services/meeting/openai-endpoint.ts`.
+ * Routing: the `baseURL` argument is the resolved endpoint — `OPENAI_BASE_URL`,
+ * else the Lens Agents OpenAI mount (`…/llm/openai/v1`), else undefined for
+ * api.openai.com. `config.openaiEndpoint` decides between them, so nothing is
+ * chosen here. The gateway appends the client path to its configured OpenAI root
+ * and injects the API key on the outbound leg. The one OpenAI call that never
+ * rides the gateway is the voice-meeting Realtime WebSocket — the mount routes
+ * POST only — which stays pinned in `services/meeting/openai-endpoint.ts`.
  *
  * Auth: the same `OPENAI_API_KEY` the voice-meeting stack uses, sent as a
  * bearer header. It may be a `__nexus_cred:<uuid>__` sentinel the MITM proxy
- * rewrites on the wire — read verbatim, never trimmed or validated. Through
- * the gateway no local key is needed (it holds its own), but the SDK
+ * rewrites on the wire — read verbatim, never trimmed or validated. An endpoint
+ * on the gateway needs no local key (the gateway holds its own), but the SDK
  * insists on one, so fall back to a decoy like the Azure/mantle factories do.
  *
  * The provider object itself — the Responses dispatcher, the empty
@@ -28,21 +28,22 @@
  * and the bare model ids.
  */
 
-import { config } from '../../../config';
+import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
 import { createOpenAiCompatibleProvider } from '../openai-compatible';
 import type { LlmProvider } from '../llm-provider';
 
 export function createOpenAiProvider(baseURL?: string): LlmProvider {
-  logger.info({ routing: baseURL ? 'nexus' : 'direct' }, 'Creating OpenAI provider');
+  const gatewayServesIt = isGatewayEndpoint(baseURL);
+  logger.info({ routing: gatewayServesIt ? 'nexus' : 'direct' }, 'Creating OpenAI provider');
 
   return createOpenAiCompatibleProvider({
-    // Through the gateway the real key is injected on the outbound leg, so no
-    // local key is needed — but the SDK insists on one, so fall back to a
-    // decoy (the same pattern as the Azure and mantle factories).
-    apiKey: config.openaiApiKey || (baseURL ? 'nexus-managed' : undefined),
+    // On the gateway the real key is injected on the outbound leg, so no local
+    // key is needed — but the SDK insists on one, so fall back to a decoy (the
+    // same pattern as the Azure and mantle factories).
+    apiKey: config.openaiApiKey || (gatewayServesIt ? 'nexus-managed' : undefined),
     // undefined → the SDK's own default, https://api.openai.com/v1.
-    baseURL: baseURL ?? config.openaiBaseUrl,
+    baseURL,
   });
 }
 
