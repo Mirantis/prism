@@ -21,6 +21,7 @@ import { compactionService, type CompactionEvent } from './compaction.service';
 import { updateService, type UpdateEvent } from './update/update.service';
 import {
   voiceChatService,
+  type VoiceChatEndStatus,
   type VoiceChatSignal,
   type VoiceListeningMode,
 } from './voice/voice-chat.service';
@@ -114,9 +115,21 @@ function stringField(payload: Record<string, unknown>, key: string): string | un
  */
 function listeningMode(payload: Record<string, unknown>): VoiceListeningMode | undefined | null {
   const value = payload['mode'];
-  if (value === undefined || value === null) return undefined;
+  // Said nothing, which takes the default. `null` is something the client sent, so it
+  // goes to the refusal below with every other value this does not serve.
+  if (value === undefined) return undefined;
   return value === 'open' || value === 'addressed' ? value : null;
 }
+
+/**
+ * How much of the agent's speech may sit unsent on a socket before frames are dropped.
+ *
+ * Two seconds at the one rate the protocol carries. A client that cannot keep up is
+ * behind on the conversation, not merely behind on the audio: what is queued is already
+ * stale by the time it plays, and the queue grows for as long as the call runs. Dropping
+ * keeps the delay bounded, which is what a media transport would have done here.
+ */
+const MAX_BUFFERED_AUDIO_BYTES = VOICE_AUDIO_FORMAT.sampleRate * 2 * 2;
 
 // ============================================================================
 // WebSocket Gateway Service
@@ -131,14 +144,22 @@ class WebSocketGatewayService {
   // aborts it, which stops the LLM generation mid-turn (see invokeStream).
   // Single-flight per user, so one controller per userId is sufficient.
   private activeRequests: Map<string, AbortController> = new Map();
-  // The socket whose offer opened the voice session that is running, so closing
-  // it ends the call. A socket that was refused a session never becomes this
-  // one, and so cannot end somebody else's by going away.
+  // The socket whose request holds the voice session, from the moment the gateway
+  // decides to open one until it is over — so closing it ends the call. Taken
+  // before the service is asked, because the service reports `live` from inside
+  // that call and the client's first frames are dropped while this is unset. Every
+  // other request is refused while it is taken, which is also what keeps it
+  // truthful: a request that was refused never becomes this socket, and so cannot
+  // end somebody else's call by going away.
   private voiceSocket: AuthenticatedWebSocket | null = null;
-  // The socket whose offer is still being answered, and whether its client gave
-  // up while it waited. A stop or a disconnect that lands before the answer has
-  // no session to end yet, so it is honoured once the start returns.
-  private voiceStarting: { ws: AuthenticatedWebSocket; cancelled: boolean } | null = null;
+  // Whether the client of the request being answered gave up while it waited, and
+  // which way. A stop or a disconnect that lands before the answer has no session
+  // to end yet, so it is honoured once the start returns. One record, because
+  // `voiceSocket` above refuses a second request while this one is outstanding.
+  private voiceStarting: {
+    ws: AuthenticatedWebSocket;
+    cancelled: VoiceChatEndStatus | null;
+  } | null = null;
 
   constructor() {
     // Push thread-title changes (placeholder + LLM upgrade) to the user's web
@@ -249,12 +270,20 @@ class WebSocketGatewayService {
     // Handle close
     ws.on('close', (code, _reason) => {
       this.removeConnection(userId, ws);
-      // The client that was talking is gone, so the call is over: signalling is
-      // the only way it could stop the session or hear that it ended.
-      if (this.voiceStarting?.ws === ws) this.voiceStarting.cancelled = true;
-      if (this.voiceSocket === ws) {
+      // The client that was talking is gone, so the call is over: this socket is the
+      // only way it could stop the session or hear that it ended.
+      if (this.voiceStarting?.ws === ws) {
+        // Still opening. `handleVoiceStart` ends it once the start returns, since only it
+        // knows whether there is a session to end yet.
+        this.voiceStarting.cancelled = 'disconnected';
+      } else if (this.voiceSocket === ws) {
         this.voiceSocket = null;
-        void voiceChatService.stop('the client disconnected');
+        // Not awaited: a close handler is synchronous. Reported rather than dropped —
+        // this is the path that frees the runtime's one voice, and a failure here is a
+        // runtime that cannot take another call.
+        voiceChatService.stop('the client disconnected', 'disconnected').catch((err: unknown) => {
+          logger.error({ err }, 'Failed to end the voice chat of a disconnected client');
+        });
       }
       logger.info('WebSocket disconnected for user %s - code: %d', userId, code);
     });
@@ -335,9 +364,11 @@ class WebSocketGatewayService {
   /**
    * Open a voice chat for the client on this socket.
    *
-   * The session belongs to the runtime rather than to the socket, so a second
-   * client's request is refused with a `voice_error` and leaves the running call
-   * alone. See docs/voice-chat.md for the frames.
+   * The session belongs to the runtime rather than to the socket, so a request that
+   * arrives while one is running is refused with a `voice_error` and leaves the call
+   * alone. That refusal is the gateway's own rather than the voice service's, because the
+   * socket is claimed before the service is asked — a second request allowed through would
+   * take the running call's audio path with it.
    */
   private async handleVoiceStart(
     ws: AuthenticatedWebSocket,
@@ -364,31 +395,65 @@ class WebSocketGatewayService {
       return;
     }
 
-    // Answering takes a moment, and the client can give up inside it.
-    const starting = { ws, cancelled: false };
-    this.voiceStarting = starting;
-    const started = await voiceChatService.start({
-      userId,
-      agentId,
-      threadId: stringField(payload, 'threadId'),
-      mode,
-      signal: this.voiceSignal(ws),
-    });
-    if (this.voiceStarting === starting) this.voiceStarting = null;
-    if (!started) return;
-
-    // Nobody is on the other end of the session that just opened. End it here:
-    // its peer has no client to connect to, so it would hold the agent's voice
-    // until the media path times out, and a peer that never got a candidate may
-    // never report a failure at all.
-    if (starting.cancelled || ws.readyState !== WebSocket.OPEN) {
-      await voiceChatService.stop('the client left before the call started');
+    // Two different situations and two different things for the user to do: end the call
+    // on this connection, or find whoever is on the other one.
+    if (this.voiceSocket !== null) {
+      this.sendTo(ws, {
+        type: 'voice_error',
+        payload: {
+          error: this.voiceSocket === ws
+            ? 'A voice chat is already running on this connection. Stop it first.'
+            : 'There is already a voice chat running. End that one first.',
+        },
+      });
       return;
     }
 
+    // Claimed before the service is asked, for two reasons. The service reports `live`
+    // from inside `start()`, so the client can be sending audio while this is still
+    // waiting, and `handleBinary` drops every frame from a socket that is not this one.
+    // And it is what refuses a second request above, so only one start is ever
+    // outstanding and one cancel record is enough for it.
     this.voiceSocket = ws;
-    // Sent after the session is the socket's, so a client that was refused never
-    // reads a format it cannot use.
+    const starting: { ws: AuthenticatedWebSocket; cancelled: VoiceChatEndStatus | null } = {
+      ws,
+      cancelled: null,
+    };
+    this.voiceStarting = starting;
+    let started = false;
+    try {
+      started = await voiceChatService.start({
+        userId,
+        agentId,
+        threadId: stringField(payload, 'threadId'),
+        mode,
+        signal: this.voiceSignal(ws),
+      });
+    } finally {
+      if (this.voiceStarting === starting) this.voiceStarting = null;
+      // The claim only survives a session this socket still holds. A refused start, a
+      // client that gave up and a client that went away all give it back, or the field
+      // would name a socket with no session and refuse every later call.
+      const holds =
+        started && starting.cancelled === null && ws.readyState === WebSocket.OPEN;
+      if (!holds && this.voiceSocket === ws) this.voiceSocket = null;
+    }
+
+    if (!started) return;
+
+    // Nobody is on the other end of the session that just opened, so end it here: it
+    // would otherwise hold the agent's voice, and the runtime's one voice with it, until
+    // something else ended the call.
+    if (starting.cancelled !== null || ws.readyState !== WebSocket.OPEN) {
+      await voiceChatService.stop(
+        'the client left before the call started',
+        // A socket already gone when the answer arrives dropped, whether or not its close
+        // was the thing that cancelled this.
+        starting.cancelled ?? 'disconnected',
+      );
+      return;
+    }
+
     this.sendTo(ws, { type: 'voice_hello', payload: { format: VOICE_AUDIO_FORMAT } });
   }
 
@@ -406,16 +471,40 @@ class WebSocketGatewayService {
 
   /** End the session this socket opened. A stop from any other socket does nothing. */
   private async handleVoiceStop(ws: AuthenticatedWebSocket): Promise<void> {
-    if (this.voiceStarting?.ws === ws) this.voiceStarting.cancelled = true;
+    if (this.voiceStarting?.ws === ws) {
+      // Still opening, so there is nothing to end yet. `handleVoiceStart` ends it once
+      // the start returns, and reads this as the client having asked.
+      this.voiceStarting.cancelled = 'completed';
+      return;
+    }
     if (this.voiceSocket !== ws) return;
     await voiceChatService.stop();
   }
 
   /** How the voice service answers the client that asked for the session. */
   private voiceSignal(ws: AuthenticatedWebSocket): VoiceChatSignal {
+    // Whether the speech is being dropped right now, so a stalled client costs one log
+    // line rather than fifty a second. Per signal, which is per session.
+    let dropping = false;
     return {
       sendAudio: (pcm) => {
         if (ws.readyState !== WebSocket.OPEN) return;
+        // A socket that is not draining takes the speech into memory instead, and the
+        // agent talks for as long as the call lasts. Drop the frame rather than queue it:
+        // what is already queued plays later than it was meant to, and adding to it makes
+        // the lag permanent. The client hears a gap, which is what a lost packet sounds
+        // like on any other transport.
+        if (ws.bufferedAmount > MAX_BUFFERED_AUDIO_BYTES) {
+          if (!dropping) {
+            dropping = true;
+            logger.warn(
+              'Dropping voice audio: %d bytes are still unsent on the client socket',
+              ws.bufferedAmount,
+            );
+          }
+          return;
+        }
+        dropping = false;
         ws.send(pcm, { binary: true });
       },
       sendClear: () => this.sendTo(ws, { type: 'voice_clear' }),

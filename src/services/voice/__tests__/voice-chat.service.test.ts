@@ -316,6 +316,21 @@ describe('ending a session', () => {
     );
   });
 
+  /**
+   * A call the user ended and a call whose connection dropped are read differently
+   * afterwards, and only the caller knows which of the two it has.
+   */
+  it('reports the status its caller gave', async () => {
+    await startSession();
+    await voiceChatService.stop('the client disconnected', 'disconnected');
+
+    expect(trackEvent).toHaveBeenCalledWith(
+      'voice chat ended',
+      'user-1',
+      expect.objectContaining({ status: 'disconnected' }),
+    );
+  });
+
   it('ends nothing when no session is running', async () => {
     await voiceChatService.stop();
 

@@ -77,6 +77,9 @@ function createMockWebSocket() {
       (listeners[event] || []).forEach((cb) => cb(...args));
     },
     readyState: 1, // OPEN
+    // What `ws` reports as still unsent. The voice path reads it before every frame of
+    // the agent's speech, so a test that stalls a client sets it.
+    bufferedAmount: 0,
     isAlive: true,
     userId: 'test-user-id',
   };
@@ -821,6 +824,23 @@ describe('Requirement: WebSocket Gateway', () => {
       });
     });
 
+    /**
+     * `null` is a field the client sent, not a field it left out, and the two mean
+     * different things here: a client that serialized its state and got `null` asked for
+     * something, and `open` answers a whole room.
+     */
+    it('refuses a null mode rather than taking the default', async () => {
+      const ws = createMockWebSocket();
+
+      await frame(ws, { type: 'voice_start', payload: { mode: null } });
+
+      expect(mockVoice.start).not.toHaveBeenCalled();
+      expect(lastSent(ws)).toEqual({
+        type: 'voice_error',
+        payload: { error: 'mode must be "open" or "addressed"' },
+      });
+    });
+
     it('carries the session state, its errors and the clear back', async () => {
       const ws = createMockWebSocket();
       await frame(ws, { type: 'voice_start', payload: {} });
@@ -902,11 +922,70 @@ describe('Requirement: WebSocket Gateway', () => {
       await frame(owner, { type: 'voice_start', payload: {} });
 
       const other = createMockWebSocket();
-      mockVoice.start.mockResolvedValue(false);
       await frame(other, { type: 'voice_start', payload: {} });
       audio(other, Buffer.alloc(480));
 
       expect(mockVoice.pushAudio).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Refused by the gateway rather than by the voice service, and told apart from a
+     * client's own second attempt: one person has a call to end, the other has somebody
+     * to go and find.
+     */
+    it('refuses a second client and leaves the running call alone', async () => {
+      const owner = createMockWebSocket();
+      await frame(owner, { type: 'voice_start', payload: {} });
+      expect(mockVoice.start).toHaveBeenCalledTimes(1);
+
+      const other = createMockWebSocket();
+      await frame(other, { type: 'voice_start', payload: {} });
+
+      expect(mockVoice.start).toHaveBeenCalledTimes(1);
+      expect(lastSent(other)).toEqual({
+        type: 'voice_error',
+        payload: { error: 'There is already a voice chat running. End that one first.' },
+      });
+      // The refused socket did not take the field the audio path reads.
+      expect(service.voiceSocket).toBe(owner);
+    });
+
+    /**
+     * The client's first frames can arrive before `start()` returns: the service reports
+     * `live` from inside it. Audio dropped in that window is audio the model never hears.
+     */
+    it('takes the holder\'s audio from the moment the session reports live', async () => {
+      const ws = createMockWebSocket();
+      let answer: (started: boolean) => void = () => {};
+      mockVoice.start.mockReturnValue(new Promise<boolean>((resolve) => (answer = resolve)));
+
+      const opening = frame(ws, { type: 'voice_start', payload: {} });
+      const pcm = Buffer.alloc(480, 7);
+      audio(ws, pcm);
+
+      expect(mockVoice.pushAudio).toHaveBeenCalledWith(pcm);
+
+      answer(true);
+      await opening;
+    });
+
+    /**
+     * A client that is not draining gets a gap rather than a growing queue: what is
+     * already buffered plays late, and adding to it makes the lag permanent.
+     */
+    it('drops the agent speech a stalled client has not taken', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'voice_start', payload: {} });
+      const signal = signalOf();
+      ws.send.mockClear();
+
+      ws.bufferedAmount = 200_000;
+      signal.sendAudio(Buffer.alloc(960));
+      expect(ws.send).not.toHaveBeenCalled();
+
+      ws.bufferedAmount = 0;
+      signal.sendAudio(Buffer.alloc(960));
+      expect(ws.send).toHaveBeenCalledTimes(1);
     });
 
     it('drops audio when no session is running', () => {
@@ -925,9 +1004,81 @@ describe('Requirement: WebSocket Gateway', () => {
       answer(true);
       await opening;
 
-      expect(mockVoice.stop).toHaveBeenCalledWith('the client left before the call started');
-      // Nothing to end later: the session never became this socket's.
+      // The client asked, so the call is completed rather than dropped.
+      expect(mockVoice.stop).toHaveBeenCalledWith(
+        'the client left before the call started',
+        'completed',
+      );
+      // Nothing to end later, and nothing holding the next caller out: the session never
+      // became this socket's.
       expect(service.voiceSocket).toBeNull();
+    });
+
+    /**
+     * Two starts and a stop, all inside the startup window. The second start is refused
+     * before it reaches the service, so the one record the stop cancels is the session
+     * this socket is really opening. Held per socket rather than per request, since a
+     * record per request would let the stop land on the later one, which has nothing to
+     * end, while the earlier one went live behind it.
+     */
+    it('honours a stop after a second start landed inside the startup window', async () => {
+      const ws = createMockWebSocket();
+      const answers: Array<(started: boolean) => void> = [];
+      mockVoice.start.mockImplementation(
+        () => new Promise<boolean>((resolve) => answers.push(resolve)),
+      );
+
+      const opening = frame(ws, { type: 'voice_start', payload: {} });
+      const second = frame(ws, { type: 'voice_start', payload: {} });
+      await frame(ws, { type: 'voice_stop' });
+      answers.forEach((resolve) => resolve(true));
+      await Promise.all([opening, second]);
+
+      expect(mockVoice.start).toHaveBeenCalledTimes(1);
+      expect(mockVoice.stop).toHaveBeenCalledWith(
+        'the client left before the call started',
+        'completed',
+      );
+      expect(service.voiceSocket).toBeNull();
+    });
+
+    it('refuses a second start on the socket whose session is still opening', async () => {
+      const ws = createMockWebSocket();
+      let answer: (started: boolean) => void = () => {};
+      mockVoice.start.mockReturnValue(new Promise<boolean>((resolve) => (answer = resolve)));
+
+      const opening = frame(ws, { type: 'voice_start', payload: {} });
+      await frame(ws, { type: 'voice_start', payload: {} });
+
+      expect(mockVoice.start).toHaveBeenCalledTimes(1);
+      expect(lastSent(ws)).toEqual({
+        type: 'voice_error',
+        payload: { error: 'A voice chat is already running on this connection. Stop it first.' },
+      });
+
+      answer(true);
+      await opening;
+    });
+
+    /**
+     * The claim is taken before the service is asked, so a refusal — a meeting holding the
+     * agent's voice, say — has to give it back. A claim left standing would refuse every
+     * later call for the life of the process, with the gateway's own message rather than
+     * the reason the service gave.
+     */
+    it('gives the claim back when the service refuses the session', async () => {
+      const ws = createMockWebSocket();
+      mockVoice.start.mockResolvedValue(false);
+
+      await frame(ws, { type: 'voice_start', payload: {} });
+
+      expect(service.voiceSocket).toBeNull();
+
+      mockVoice.start.mockResolvedValue(true);
+      await frame(ws, { type: 'voice_start', payload: {} });
+
+      expect(mockVoice.start).toHaveBeenCalledTimes(2);
+      expect(service.voiceSocket).toBe(ws);
     });
 
     it('ends a session whose client went away before it opened', async () => {
@@ -941,7 +1092,13 @@ describe('Requirement: WebSocket Gateway', () => {
       answer(true);
       await opening;
 
-      expect(mockVoice.stop).toHaveBeenCalledWith('the client left before the call started');
+      // Nobody asked for this ending, so it is reported as the connection dropping.
+      expect(mockVoice.stop).toHaveBeenCalledWith(
+        'the client left before the call started',
+        'disconnected',
+      );
+      // Ended once, by whoever knew there was a session to end.
+      expect(mockVoice.stop).toHaveBeenCalledTimes(1);
       expect(service.voiceSocket).toBeNull();
     });
 
@@ -951,8 +1108,9 @@ describe('Requirement: WebSocket Gateway', () => {
 
       // A second client is refused the session, so its stop is not the owner's.
       const other = createMockWebSocket();
-      mockVoice.start.mockResolvedValue(false);
       await frame(other, { type: 'voice_start', payload: {} });
+      // And the refusal left the session where it was.
+      expect(service.voiceSocket).toBe(owner);
 
       await frame(other, { type: 'voice_stop' });
       expect(mockVoice.stop).not.toHaveBeenCalled();
@@ -968,7 +1126,7 @@ describe('Requirement: WebSocket Gateway', () => {
 
       ws.emit('close', 1000);
 
-      expect(mockVoice.stop).toHaveBeenCalledWith('the client disconnected');
+      expect(mockVoice.stop).toHaveBeenCalledWith('the client disconnected', 'disconnected');
       expect(service.voiceSocket).toBeNull();
     });
 
