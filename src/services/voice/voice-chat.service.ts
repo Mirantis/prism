@@ -68,8 +68,14 @@ export interface StartVoiceChatInput {
   signal: VoiceChatSignal;
 }
 
-/** How a session ended, as reported in telemetry. */
-type EndStatus = 'completed' | 'disconnected' | 'error';
+/**
+ * How a session ended, as reported in telemetry.
+ *
+ * `completed` is the client asking, or the runtime shutting down under it. `disconnected`
+ * is the client's socket going away, which its owner tells this service — from here the
+ * two are the same act. `error` is the session dying on its own.
+ */
+export type VoiceChatEndStatus = 'completed' | 'disconnected' | 'error';
 
 class VoiceChatService {
   private state: 'idle' | 'starting' | 'live' | 'ending' = 'idle';
@@ -122,7 +128,7 @@ class VoiceChatService {
 
     // Built into locals and published onto `this` only once the epoch check below says
     // the session is still wanted: a `stop()` during startup has nothing else to release,
-    // and a peer left running would hold a metered Realtime socket open.
+    // and a conversation left running would hold a metered Realtime socket open.
     let transport: SocketAudio | null = null;
     let conversation: VoiceConversation | null = null;
     const releaseLocals = async (): Promise<void> => {
@@ -139,6 +145,12 @@ class VoiceChatService {
         platform: 'voice',
         responseMode: mode,
       });
+      // The meeting tool set, unchanged, which is more than this call can use. A voice
+      // chat has no room and no browser, so the nine meeting tools answer that there is
+      // no call to act on — and the prompt still names `send_meeting_chat` as the way to
+      // hand over a link, which here reaches nobody. Splitting the two apart means a
+      // second prompt: `prompts/meeting-prompt.ts` is one numbered list whose rules cite
+      // each other by number, so the tools cannot be narrowed without rewriting it.
       const tools = await prepareMeetingTools({
         userId: input.userId,
         agentId: input.agentId,
@@ -198,11 +210,21 @@ class VoiceChatService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error({ err }, '[VoiceChat] Failed to start the session');
-      // Locals unconditionally: nothing reached the fields, so nothing else can release
-      // them. The voice goes back only if this failure belongs to the session the service
-      // still describes — a cancelled start's does not.
+      // Locals unconditionally: they are the same objects the fields hold once published,
+      // so this releases the session either way.
       await releaseLocals();
-      if (this.epoch === epoch) this.markIdle();
+      // The voice goes back only if this failure belongs to the session the service still
+      // describes — a cancelled start's does not. The fields go with it: a throw after the
+      // block above published them would otherwise leave a transport and a conversation on
+      // an `idle` service, where the next call's `stop()` finds nothing to end and this
+      // one's audio keeps arriving.
+      if (this.epoch === epoch) {
+        this.clearPublished();
+        this.markIdle();
+      }
+      // No `ended` frame: this session never reported `live`, so it has no ending to
+      // report, and `live → ended` stays the one shape a session has. The error below is
+      // the whole answer.
       input.signal.error(`Could not start the voice chat: ${message}`);
       return false;
     }
@@ -218,9 +240,18 @@ class VoiceChatService {
     this.transport?.push(pcm);
   }
 
-  /** End the session, from the client asking or from its socket closing. */
-  async stop(reason = 'the client ended the session'): Promise<void> {
-    await this.end(this.epoch, 'completed', reason);
+  /**
+   * End the session, from the client asking or from its socket closing.
+   *
+   * The status is the caller's to state, since only the caller knows which of the two it
+   * is, and a call the user ended and a call whose connection dropped are read differently
+   * afterwards.
+   */
+  async stop(
+    reason = 'the client ended the session',
+    status: VoiceChatEndStatus = 'completed',
+  ): Promise<void> {
+    await this.end(this.epoch, status, reason);
   }
 
   /** Called from the process shutdown path so a container exit ends the call. */
@@ -231,62 +262,73 @@ class VoiceChatService {
   }
 
   /**
-   * The one ending, used by the client's stop, a peer that went away, a Realtime session
+   * The one ending, used by the client's stop, a client that went away, a Realtime session
    * that died and process shutdown alike.
    */
-  private async end(epoch: number, status: EndStatus, reason: string): Promise<void> {
+  private async end(epoch: number, status: VoiceChatEndStatus, reason: string): Promise<void> {
     if (epoch !== this.epoch || this.state === 'idle' || this.state === 'ending') return;
 
     // Everything after this belongs to a session that is over: `ending` and the bumped
     // epoch together stop a teardown-triggered event, and a second `stop()` arriving
-    // while the peer closes, from becoming a second ending.
+    // while the transport closes, from becoming a second ending.
     this.state = 'ending';
     this.epoch += 1;
     const { conversation, transport, signal, userId, startedAt, mode } = this;
+    this.clearPublished();
+
+    logger.info({ status, reason }, '[VoiceChat] Session ended');
+
+    try {
+      conversation?.stop();
+      await transport?.close().catch((err: unknown) => {
+        logger.warn({ err }, '[VoiceChat] The transport would not close');
+      });
+
+      // The client is told why before it is told it is over, so a failure reads as a
+      // failure rather than as an ending it asked for.
+      if (status !== 'completed') signal?.error(reason);
+      signal?.state('ended');
+
+      if (userId && startedAt) {
+        const stats = conversation?.statistics;
+        trackEvent('voice chat ended', userId, {
+          status,
+          response_mode: mode,
+          duration_ms: String(Date.now() - startedAt),
+          responses: String(stats?.responses ?? 0),
+          tool_calls: String(stats?.toolCalls ?? 0),
+          interruptions: String(stats?.interruptions ?? 0),
+          utterances: String(stats?.utterances ?? 0),
+          // Answers the agent gave that produced no audio — silence the user cannot
+          // account for, and the one number that says the call was not what it looked like.
+          responses_failed: String(stats?.responsesFailed ?? 0),
+          // Zero throughout an `open` call, which is the point of reporting `mode` beside
+          // them. In `addressed` they are how a quiet call is read: `suppressed` is the
+          // gate doing its job, while `gate_failed` is the agent having been deaf, and the
+          // two produce identical silence in the room.
+          suppressed: String(stats?.suppressed ?? 0),
+          gate_calls: String(stats?.gateCalls ?? 0),
+          gate_failed: String(stats?.gateFailed ?? 0),
+          // The mean, which is what `meeting ended` emits under this key.
+          gate_latency_ms: String(meanGateLatencyMs(stats)),
+        });
+      }
+    } finally {
+      // The voice comes back whatever the block above did. The session is over by the time
+      // that block runs — the state and the epoch above say so — and a socket that throws
+      // on its way out would otherwise leave the runtime holding a voice with no session on
+      // it: no call, and no way to start one until the process restarts.
+      this.markIdle();
+    }
+  }
+
+  /** Drop the session's fields. The session itself is released by whoever holds its locals. */
+  private clearPublished(): void {
     this.conversation = null;
     this.transport = null;
     this.signal = null;
     this.userId = null;
     this.startedAt = null;
-
-    logger.info({ status, reason }, '[VoiceChat] Session ended');
-
-    conversation?.stop();
-    await transport?.close().catch((err: unknown) => {
-      logger.warn({ err }, '[VoiceChat] The peer would not close');
-    });
-
-    // The client is told why before it is told it is over, so a failure reads as a
-    // failure rather than as an ending it asked for.
-    if (status !== 'completed') signal?.error(reason);
-    signal?.state('ended');
-
-    if (userId && startedAt) {
-      const stats = conversation?.statistics;
-      trackEvent('voice chat ended', userId, {
-        status,
-        response_mode: mode,
-        duration_ms: String(Date.now() - startedAt),
-        responses: String(stats?.responses ?? 0),
-        tool_calls: String(stats?.toolCalls ?? 0),
-        interruptions: String(stats?.interruptions ?? 0),
-        utterances: String(stats?.utterances ?? 0),
-        // Answers the agent gave that produced no audio — silence the user cannot
-        // account for, and the one number that says the call was not what it looked like.
-        responses_failed: String(stats?.responsesFailed ?? 0),
-        // Zero throughout an `open` call, which is the point of reporting `mode` beside
-        // them. In `addressed` they are how a quiet call is read: `suppressed` is the
-        // gate doing its job, while `gate_failed` is the agent having been deaf, and the
-        // two produce identical silence in the room.
-        suppressed: String(stats?.suppressed ?? 0),
-        gate_calls: String(stats?.gateCalls ?? 0),
-        gate_failed: String(stats?.gateFailed ?? 0),
-        // The mean, which is what `meeting ended` emits under this key.
-        gate_latency_ms: String(meanGateLatencyMs(stats)),
-      });
-    }
-
-    this.markIdle();
   }
 
   /** Free the runtime's voice. The two words are one act — see the file comment. */
