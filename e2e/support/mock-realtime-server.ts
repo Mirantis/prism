@@ -64,6 +64,9 @@ wss.on('connection', (ws: WebSocket) => {
   state.sessions += 1;
   log(`session opened (${state.sessions} open)`);
   let turns = 0;
+  // Both counted for this socket only. The turn boundary is a property of one
+  // conversation, so a second session must not inherit the first one's audio.
+  let heardMs = 0;
   let announcedMs = 0;
   let responses = 0;
 
@@ -78,12 +81,14 @@ wss.on('connection', (ws: WebSocket) => {
     }
 
     if (event.type === 'input_audio_buffer.append' && typeof event.audio === 'string') {
-      state.inboundMs += speechMs(Buffer.from(event.audio, 'base64'));
+      const arrivedMs = speechMs(Buffer.from(event.audio, 'base64'));
+      heardMs += arrivedMs;
+      state.inboundMs += arrivedMs;
       // One turn per `UTTERANCE_MS` of speech. The runtime answers a turn
       // boundary, so this is what makes the agent talk back.
-      if (state.inboundMs - announcedMs >= UTTERANCE_MS) {
-        announcedMs = state.inboundMs;
-        announceTurn(ws, `item_mock_${++turns}`);
+      if (heardMs - announcedMs >= UTTERANCE_MS) {
+        announcedMs = heardMs;
+        announceTurn(ws, `item_mock_${++turns}`, heardMs);
       }
       return;
     }
@@ -111,7 +116,7 @@ function speechMs(pcm: Buffer): number {
 }
 
 /** The four frames the runtime reads as "somebody finished a sentence". */
-function announceTurn(ws: WebSocket, itemId: string): void {
+function announceTurn(ws: WebSocket, itemId: string, heardMs: number): void {
   send(ws, { type: 'input_audio_buffer.speech_started', item_id: itemId });
   send(ws, { type: 'input_audio_buffer.speech_stopped', item_id: itemId });
   send(ws, { type: 'input_audio_buffer.committed', item_id: itemId });
@@ -124,7 +129,7 @@ function announceTurn(ws: WebSocket, itemId: string): void {
       content: [{ type: 'input_audio' }],
     },
   });
-  log(`turn ${itemId} committed after ${Math.round(state.inboundMs)}ms of speech`);
+  log(`turn ${itemId} committed after ${Math.round(heardMs)}ms of speech on this session`);
 }
 
 /** Answer a `response.create` with a tone, streamed as the real API streams audio. */
