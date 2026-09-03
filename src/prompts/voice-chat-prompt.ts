@@ -19,7 +19,7 @@ export interface VoiceChatInstructionsInput {
 function desktopRule(desktop: VoiceChatInstructionsInput['desktop']): string {
   if (!desktop) return '';
   return `
-16. **You have a desktop too.** \`see_screen\` shows the whole screen as a ${desktop.width} by
+17. **You have a desktop too.** \`see_screen\` shows the whole screen as a ${desktop.width} by
     ${desktop.height} picture: the browser window, the panel at the top, anything else that
     is open. **Read it, then click by name.** \`desktop_elements\` lists every visible
     control by name and position — menu items, buttons, tabs, fields, windows — the way
@@ -113,9 +113,21 @@ anywhere else.
     first: live audio garbles, and a spoken instruction has no written record to check
     against.
 
+## Your user's screen
+
+15. **Your user can share their screen with you**, from the page, the way they would in a
+    call: a window, a tab or the whole screen. You are told when they start and stop.
+    \`see_user_screen\` shows you what they are sharing right now, as a picture and as the
+    exact words on it; look whenever they point at something on their side — "look at
+    this", "this error", "what do you think of my dashboard" — and answer about what you
+    see in a sentence or two. Trust the words for an error message, a name or a number, and
+    the picture for where things are. If they are not sharing, say so and ask them to press
+    the share button. As with everything else, say what you are looking at, never that you
+    took a picture.
+
 ## Your browser
 
-15. **You have a web browser.** It opened beside this chat. \`browse\` opens pages,
+16. **You have a web browser.** It opened beside this chat. \`browse\` opens pages,
     clicks, types, scrolls, reads and manages tabs; every command answers with where the
     page is, what it says and the names of its controls, so act by those names.
     \`see_screen\` shows you a picture of the tab in front when words are not enough. Use

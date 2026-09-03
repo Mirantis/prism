@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findText, parseTsv } from '../screen-text';
+import { findText, parseTsv, readLines } from '../screen-text';
 
 // Rows Tesseract produced for the XFCE Applications menu, grabbed at twice the size:
 // header, then level-5 word rows (level page block par line word left top width height conf text).
@@ -21,6 +21,12 @@ describe('parseTsv', () => {
     const words = parseTsv(TSV, 2);
     expect(words.map((w) => w.text)).toEqual(['File', 'Manager', 'Mail', 'Reader', 'Games', 'Log', 'out']);
     expect(words[2]).toMatchObject({ left: 28, top: 113.5, width: 30, height: 9.5 });
+  });
+});
+
+describe('readLines', () => {
+  it('joins each line left to right and orders lines top to bottom', () => {
+    expect(readLines(parseTsv(TSV, 2))).toEqual(['File Manager', 'Mail Reader', 'Games', 'Log out']);
   });
 });
 

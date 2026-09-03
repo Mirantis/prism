@@ -91,6 +91,46 @@ export function parseTsv(tsv: string, scale: number): ScreenWord[] {
   return words;
 }
 
+/**
+ * Enlarge a JPEG `scale` times into a PNG for OCR, through ffmpeg on pipes. For a picture
+ * that did not come off the display, such as the user's shared screen.
+ */
+export function upscaleForOcr(jpeg: Buffer, scale: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      'ffmpeg',
+      ['-loglevel', 'error', '-i', 'pipe:0', '-vf', `scale=iw*${scale}:ih*${scale}`, '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'],
+      { stdio: ['pipe', 'pipe', 'ignore'] },
+    );
+    const chunks: Buffer[] = [];
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      reject(new Error('upscale timed out'));
+    }, OCR_TIMEOUT_MS);
+    proc.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) return reject(new Error(`ffmpeg exited with ${code}`));
+      resolve(Buffer.concat(chunks));
+    });
+    proc.stdin.end(jpeg);
+  });
+}
+
+/** The words as lines of text, top to bottom, each line's words left to right. */
+export function readLines(words: ScreenWord[]): string[] {
+  const lines = new Map<string, ScreenWord[]>();
+  for (const word of words) lines.set(word.line, [...(lines.get(word.line) ?? []), word]);
+  return [...lines.values()]
+    .map((line) => line.sort((a, b) => a.left - b.left))
+    .sort((a, b) => a[0].top - b[0].top || a[0].left - b[0].left)
+    .map((line) => line.map((w) => w.text).join(' '));
+}
+
 /** Letters and digits only, lower case: "Run Program..." and "run program" are one thing. */
 function normalize(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '');
