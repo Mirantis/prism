@@ -1,12 +1,9 @@
 import type { VoiceCallStatus as Status } from '@/hooks/use-voice-call';
 
 /**
- * What a voice chat looks like from outside the audio: whether one is running, whether
- * the agent is speaking, and why the last one stopped.
- *
- * A call is written down nowhere, so this is the whole of it on screen. It says so in the
- * composer's own strip rather than in the transcript, where a line would read as a
- * message that never arrived.
+ * Whether a voice chat is running, whether the agent is speaking, and why the last call
+ * stopped. Rendered in the composer's strip, not in the transcript: a call adds no
+ * message to the thread.
  */
 export default function VoiceCallStatus({
   status,
