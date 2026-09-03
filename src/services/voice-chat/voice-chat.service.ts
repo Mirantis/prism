@@ -43,10 +43,15 @@ import {
   mergePreparedTools,
   prepareRealtimeTools,
   type DesktopActionResult,
+  type TextLocation,
   type VoiceChatBrowser,
   type VoiceChatDesktop,
 } from './voice-chat-tools';
-import { DesktopControl, type MouseButton, type ScrollDirection } from './desktop-control';
+import { DesktopControl, OCR_SCALE, type MouseButton, type ScrollDirection } from './desktop-control';
+import { findText, readScreenWords } from './screen-text';
+import { describeElements, findElements, readScreenElements } from './screen-elements';
+import { actOnWindow, findWindows, listWindows, type WindowAction } from './desktop-windows';
+import { DesktopInput, type InputFrame } from './desktop-input';
 import { hasBinaries } from './has-binary';
 import { ScreenStream } from './screen-stream';
 import { DisplayStream } from './display-stream';
@@ -60,6 +65,8 @@ export interface VoiceChatStatus {
   type: 'status';
   state: 'connecting' | 'ready' | 'ended' | 'error';
   message?: string;
+  /** With `ready`: whether the page may take the pointer and keyboard on the screen it shows. */
+  desktop?: boolean;
 }
 
 /** One picture of the agent's browser, as base64 JPEG. */
@@ -106,9 +113,16 @@ const SCREEN_LOOK_NOTE =
   'see_screen call. Your user did not say this.';
 const DESKTOP_AFTER_NOTE =
   'This is a picture of your own screen right after the desktop action you just took. ' +
-  'Your user did not say this.';
-/** How long the desktop gets to redraw after an action before the picture is taken. */
+  'Your user did not say this.';/** How long the desktop gets to redraw after an action before the picture is taken. */
 const ACTION_SETTLE_MS = 400;
+/** The past tense of each window action, for the message that comes back. */
+const WINDOW_ACTION_DONE: Record<WindowAction, string> = {
+  focus: 'Brought to the front',
+  close: 'Closed',
+  maximize: 'Maximised',
+  restore: 'Restored',
+  minimize: 'Minimised',
+};
 
 /** Everything one connection owns, released together when it ends. */
 class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop {
@@ -116,6 +130,10 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop {
   browser: BrowserStack | null = null;
   /** Mouse, keyboard and camera for the virtual display. Null where the browser is on a real one. */
   private desktopControl: DesktopControl | null = null;
+  /** DISPLAY plus the session bus, for the tree dump and `wmctrl`. */
+  private desktopEnv: Record<string, string> = {};
+  /** The user's own pointer and keyboard on that display, from the page. */
+  private input: DesktopInput | null = null;
   /** The first, blank tab `BrowserStack.start()` opens; `browse` works in others. */
   private mainPage: Page | null = null;
   /** A virtual display for the browser on a host without one (the container). */
@@ -153,20 +171,23 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop {
         );
         // The desktop is part of the deal here, the same as the browser: an image
         // without its packages ends the chat with a message rather than a lesser page.
-        if (!(await hasBinaries('dbus-launch', 'startxfce4', 'xdotool', 'ffmpeg'))) {
+        if (!(await hasBinaries('dbus-launch', 'startxfce4', 'xdotool', 'ffmpeg', 'wmctrl', 'tesseract'))) {
           throw new Error(
-            'this image lacks the desktop packages (xfce4, dbus-x11, ffmpeg, xdotool); ' +
-              'rebuild it with `npm run docker:build`',
+            'this image lacks the desktop packages (xfce4, dbus-x11, ffmpeg, xdotool, wmctrl, ' +
+              'tesseract-ocr, at-spi2-core, python3-pyatspi); rebuild it with `npm run docker:build`',
           );
         }
         // The desktop before the browser, so the window manager is there to place the
-        // browser's window when it opens.
+        // browser's window when it opens, and the session bus exists for it to join.
         desktop = new DesktopSession(env);
-        desktop.start();
+        await desktop.start();
+        this.desktopEnv = { ...env, ...desktop.busEnv };
         this.desktopControl = new DesktopControl(env, VIRTUAL_DISPLAY_SIZE);
+        this.input = new DesktopInput(env, this.desktopControl.width, this.desktopControl.height);
       }
       this.mainPage = await browser.start({
-        env,
+        // On the desktop's bus with accessibility on, so the browser's frame is in the tree.
+        env: desktop ? { ...env, ...desktop.busEnv } : env,
         profileDir: path.join(resolveDataDir(), 'voice-chat-browser-profile'),
       });
       // The agent's working tab, open from the start so the page has something to show
@@ -181,6 +202,8 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop {
       this.audioHandles = handles;
     } catch (err) {
       this.desktopControl = null;
+      this.input?.stop();
+      this.input = null;
       await browser.stop().catch(() => undefined);
       await desktop?.stop();
       await display?.stop().catch(() => undefined);
@@ -247,7 +270,8 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop {
         return {
           success: true,
           message: shown
-            ? `This is my whole ${control.width} by ${control.height} screen.`
+            ? `This is my whole screen, as a ${control.pictureWidth} by ${control.pictureHeight} ` +
+              'picture; the desktop tools take coordinates from it.'
             : 'Here is what the browser tab says. I could not get the picture through.',
           ...reading,
         };
@@ -274,12 +298,13 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop {
     }
   }
 
+  /** The model's picture size; its coordinates refer to this, not to the screen. */
   get width(): number {
-    return this.desktopControl?.width ?? 0;
+    return this.desktopControl?.pictureWidth ?? 0;
   }
 
   get height(): number {
-    return this.desktopControl?.height ?? 0;
+    return this.desktopControl?.pictureHeight ?? 0;
   }
 
   /** Whether `desktop_*` tools have anything to act on. */
@@ -287,11 +312,170 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop {
     return this.desktopControl !== null;
   }
 
-  click(input: { x: number; y: number; button?: MouseButton; double?: boolean }): Promise<DesktopActionResult> {
+  /** A text frame from the page: the user's pointer or keyboard, while they hold the screen. */
+  handleInput(text: string): void {
+    if (!this.input) return;
+    let frame: InputFrame;
+    try {
+      frame = JSON.parse(text) as InputFrame;
+    } catch {
+      return;
+    }
+    if (typeof frame !== 'object' || frame === null || typeof frame.type !== 'string') return;
+    this.input.handle(frame);
+  }
+
+  /** The desktop's controls as a reading, from the accessibility tree. */
+  async listElements(input: { filter?: string }): Promise<DesktopActionResult> {
+    if (!this.desktopControl) return { success: false, message: 'There is no desktop in this voice chat.' };
+    try {
+      const elements = await this.onFrontQueue(() => readScreenElements(this.desktopEnv));
+      return { success: true, message: describeElements(elements, input.filter) };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);
+      logger.info(`[VoiceChat:Desktop] list elements failed: ${detail}`);
+      return { success: false, message: `I could not read the desktop's controls: ${detail}` };
+    }
+  }
+
+  async listWindows(): Promise<DesktopActionResult> {
+    if (!this.desktopControl) return { success: false, message: 'There is no desktop in this voice chat.' };
+    try {
+      const windows = await listWindows(this.desktopEnv);
+      if (windows.length === 0) return { success: true, message: 'No windows are open.' };
+      const lines = windows.map(
+        (w) => `"${w.title}" at (${w.x}, ${w.y}), ${w.width} by ${w.height}`,
+      );
+      return { success: true, message: `${windows.length} window(s):\n${lines.join('\n')}` };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);
+      logger.info(`[VoiceChat:Desktop] list windows failed: ${detail}`);
+      return { success: false, message: `I could not list the windows: ${detail}` };
+    }
+  }
+
+  async windowAction(input: { title: string; action: WindowAction }): Promise<DesktopActionResult> {
+    if (!this.desktopControl) return { success: false, message: 'There is no desktop in this voice chat.' };
+    let windows;
+    try {
+      windows = await listWindows(this.desktopEnv);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);
+      return { success: false, message: `I could not list the windows: ${detail}` };
+    }
+    const [window] = findWindows(windows, input.title);
+    if (!window) {
+      return { success: false, message: `There is no window with "${input.title}" in its title.` };
+    }
+    return this.desktopAction(
+      () => actOnWindow(this.desktopEnv, window, input.action),
+      `${WINDOW_ACTION_DONE[input.action]} "${window.title}"`,
+    );
+  }
+
+  /** Where a control or some words are on the screen right now, in picture coordinates. */
+  async findText(input: { text: string }): Promise<DesktopActionResult & { matches?: TextLocation[] }> {
+    const control = this.desktopControl;
+    if (!control) return { success: false, message: 'There is no desktop in this voice chat.' };
+    try {
+      const matches = await this.locateText(control, input.text);
+      if (matches.length === 0) {
+        return { success: false, message: `I cannot see the text "${input.text}" on the screen right now.` };
+      }
+      return {
+        success: true,
+        message: `"${input.text}" appears ${matches.length === 1 ? 'once' : `${matches.length} times`} on the screen.`,
+        matches,
+      };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);
+      logger.info(`[VoiceChat:Desktop] find text failed: ${detail}`);
+      return { success: false, message: `I could not read the screen: ${detail}` };
+    }
+  }
+
+  /** Click the centre of some words on the screen. */
+  async clickText(input: {
+    text: string;
+    occurrence?: number;
+    button?: MouseButton;
+    double?: boolean;
+  }): Promise<DesktopActionResult> {
+    const control = this.desktopControl;
+    if (!control) return { success: false, message: 'There is no desktop in this voice chat.' };
+    let matches: TextLocation[];
+    try {
+      matches = await this.locateText(control, input.text);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);
+      logger.info(`[VoiceChat:Desktop] click text failed: ${detail}`);
+      return { success: false, message: `I could not read the screen: ${detail}` };
+    }
+    if (matches.length === 0) {
+      return { success: false, message: `I cannot see the text "${input.text}" on the screen right now.` };
+    }
+    const index = Math.min(matches.length, Math.max(1, input.occurrence ?? 1)) - 1;
+    const target = matches[index];
+    const button = input.button ?? 'left';
+    const others = matches.length > 1 ? ` (${matches.length} matches; clicked number ${index + 1}, in "${target.line}")` : '';
+    return this.desktopAction(
+      (c) => c.click({ x: target.x, y: target.y }, button, input.double ? 2 : 1),
+      `${input.double ? 'Double-clicked' : 'Clicked'} "${target.text}" at (${Math.round(target.x)}, ${Math.round(target.y)})${others}`,
+    );
+  }
+
+  /**
+   * Find `query` on the screen: a control of that name in the accessibility tree first,
+   * which is exact and quick, else words read off the screen. Queued with the other
+   * screen work.
+   */
+  private locateText(control: DesktopControl, query: string): Promise<TextLocation[]> {
+    return this.onFrontQueue(async () => {
+      const elements = await readScreenElements(this.desktopEnv).catch((err) => {
+        logger.debug(`[VoiceChat:Desktop] accessibility tree unavailable: ${String(err)}`);
+        return [];
+      });
+      const widgets = findElements(elements, query);
+      if (widgets.length > 0) {
+        return widgets.map((e) => {
+          const [x, y] = control.toPicture(e.x + e.width / 2, e.y + e.height / 2);
+          return { text: e.name, line: `${e.role} in ${e.app}`, x: Math.round(x), y: Math.round(y) };
+        });
+      }
+      const png = await control.captureForOcr();
+      const words = await readScreenWords(png, OCR_SCALE);
+      return findText(words, query).map((m) => {
+        const [x, y] = control.toPicture(m.x, m.y);
+        return { text: m.text, line: m.line, x: Math.round(x), y: Math.round(y) };
+      });
+    });
+  }
+
+  move(input: { x: number; y: number }): Promise<DesktopActionResult> {
+    return this.desktopAction(
+      (control) => control.move(input.x, input.y),
+      `Moved the pointer to (${Math.round(input.x)}, ${Math.round(input.y)})`,
+    );
+  }
+
+  click(input: { x?: number; y?: number; button?: MouseButton; double?: boolean }): Promise<DesktopActionResult> {
+    const button = input.button ?? 'left';
+    const at = input.x !== undefined && input.y !== undefined ? { x: input.x, y: input.y } : null;
+    const verb = input.double ? 'Double-clicked' : 'Clicked';
+    return this.desktopAction(
+      (control) => control.click(at, button, input.double ? 2 : 1),
+      at
+        ? `${verb} ${button} at (${Math.round(at.x)}, ${Math.round(at.y)})`
+        : `${verb} ${button} where the pointer was`,
+    );
+  }
+
+  drag(input: { fromX: number; fromY: number; toX: number; toY: number; button?: MouseButton }): Promise<DesktopActionResult> {
     const button = input.button ?? 'left';
     return this.desktopAction(
-      (control) => control.click(input.x, input.y, button, input.double ? 2 : 1),
-      `${input.double ? 'Double-clicked' : 'Clicked'} ${button} at (${Math.round(input.x)}, ${Math.round(input.y)})`,
+      (control) => control.drag({ x: input.fromX, y: input.fromY }, { x: input.toX, y: input.toY }, button),
+      `Dragged ${button} from (${Math.round(input.fromX)}, ${Math.round(input.fromY)}) to ` +
+        `(${Math.round(input.toX)}, ${Math.round(input.toY)})`,
     );
   }
 
@@ -354,6 +538,8 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop {
   async stop(): Promise<void> {
     this.conversation?.stop();
     this.conversation = null;
+    this.input?.stop();
+    this.input = null;
     const screen = this.screen;
     this.screen = null;
     await screen?.stop();
@@ -535,8 +721,11 @@ class VoiceChatService {
       if (closed) return;
 
       ws.on('message', (data, isBinary) => {
-        // Text frames are reserved for control; the page sends none today.
-        if (!isBinary) return;
+        if (!isBinary) {
+          // Text frames are the user's pointer and keyboard on the desktop.
+          session.handleInput(data.toString());
+          return;
+        }
         conversation.pushMeetingAudio(
           Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer),
         );
@@ -547,7 +736,7 @@ class VoiceChatService {
           'Greet them in one short sentence.',
       );
       conversation.speakNow();
-      send({ type: 'status', state: 'ready' });
+      send({ type: 'status', state: 'ready', desktop: session.hasDesktop });
       logger.info(`[VoiceChat] Ready with ${tools.count} tool(s) and a browser`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
