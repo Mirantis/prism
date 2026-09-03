@@ -27,50 +27,52 @@ import {
 } from './bedrock-mantle-provider';
 
 describe('createBedrockMantleProvider', () => {
+  const MANTLE = 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1';
+  const MOUNT = 'https://gateway.example.com/llm/bedrock-mantle/anthropic/us-east-1/v1';
+
   beforeEach(() => {
     config.bedrockApiKey = 'bedrock-key';
-    config.bedrockMantleBaseUrl = 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1';
     config.nexusLlmBaseUrl = null;
     vi.clearAllMocks();
   });
 
-  it('direct routing: chat provider gets the mantle Anthropic baseURL', () => {
-    createBedrockMantleProvider();
+  it('sends requests to the endpoint it is given', () => {
+    createBedrockMantleProvider(MANTLE);
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith({
       apiKey: 'bedrock-key',
-      baseURL: 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1',
+      baseURL: MANTLE,
     });
   });
 
-  it('Gateway routing: an explicit baseURL overrides the direct endpoint', () => {
-    createBedrockMantleProvider('https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1');
-
-    expect(mockCreateAnthropic).toHaveBeenCalledWith(
-      expect.objectContaining({
-        baseURL: 'https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1',
-      }),
-    );
-  });
-
-  it('Gateway routing without a local key: falls back to a decoy apiKey (gateway injects the real one)', () => {
+  it('a gateway endpoint without a local key: falls back to a decoy apiKey (the gateway injects the real one)', () => {
     config.bedrockApiKey = undefined;
-    createBedrockMantleProvider('https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1');
+    createBedrockMantleProvider(MOUNT);
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: 'nexus-managed' }),
     );
   });
 
-  it('direct routing without a key passes undefined, no decoy', () => {
+  it('an override on the gateway host also gets the decoy, mount or not', () => {
     config.bedrockApiKey = undefined;
-    createBedrockMantleProvider();
+    createBedrockMantleProvider('https://gateway.example.com/projects/p/llm/mantle/anthropic/v1');
+
+    expect(mockCreateAnthropic).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: 'nexus-managed' }),
+    );
+  });
+
+  it('an endpoint off the gateway host without a key sends no decoy', () => {
+    // A decoy would promise a credential injection that nothing performs.
+    config.bedrockApiKey = undefined;
+    createBedrockMantleProvider(MANTLE);
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith(expect.objectContaining({ apiKey: undefined }));
   });
 
   it('dispatches bare Anthropic model IDs unchanged', () => {
-    const provider = createBedrockMantleProvider();
+    const provider = createBedrockMantleProvider(MANTLE);
     provider('anthropic.claude-opus-5');
     expect(mockAnthropicModel).toHaveBeenCalledWith('anthropic.claude-opus-5');
   });
@@ -82,26 +84,26 @@ describe('createBedrockMantleProvider', () => {
     ['us-gov.anthropic.claude-opus-5', 'anthropic.claude-opus-5'],
     ['global.anthropic.claude-opus-5', 'anthropic.claude-opus-5'],
   ])('strips the cross-region inference profile prefix: %s', (configured, bare) => {
-    const provider = createBedrockMantleProvider();
+    const provider = createBedrockMantleProvider(MANTLE);
     provider(configured);
     expect(mockAnthropicModel).toHaveBeenCalledWith(bare);
   });
 
   it('leaves an inference-profile ARN alone', () => {
     const arn = 'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-5';
-    const provider = createBedrockMantleProvider();
+    const provider = createBedrockMantleProvider(MANTLE);
     provider(arn);
     expect(mockAnthropicModel).toHaveBeenCalledWith(arn);
   });
 
   it('still dispatches a non-Anthropic model ID (mantle 404s it; we only warn)', () => {
-    const provider = createBedrockMantleProvider();
+    const provider = createBedrockMantleProvider(MANTLE);
     provider('openai.gpt-oss-120b');
     expect(mockAnthropicModel).toHaveBeenCalledWith('openai.gpt-oss-120b');
   });
 
   it('asks for the tool-based JSON path — mantle rejects native structured output', () => {
-    expect(createBedrockMantleProvider().structuredOutputOptions).toEqual({
+    expect(createBedrockMantleProvider(MANTLE).structuredOutputOptions).toEqual({
       anthropic: { structuredOutputMode: 'jsonTool' },
     });
   });
@@ -129,7 +131,7 @@ describe('isBedrockMantleConfigured', () => {
   beforeEach(() => {
     config.bedrockMantleModelId = 'anthropic.claude-opus-5';
     config.bedrockApiKey = 'bedrock-key';
-    config.bedrockMantleBaseUrl = 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1';
+    config.bedrockMantleDirectEndpoint = 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1';
     config.nexusBedrockMantleBaseUrl = null;
   });
 
@@ -140,7 +142,7 @@ describe('isBedrockMantleConfigured', () => {
   it('true with model + gateway base URL and NO key (gateway holds the credential)', () => {
     config.bedrockApiKey = undefined;
     config.nexusBedrockMantleBaseUrl =
-      'https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1';
+      'https://gateway.example.com/llm/bedrock-mantle/anthropic/us-east-1/v1';
     expect(isBedrockMantleConfigured()).toBe(true);
   });
 
@@ -150,7 +152,7 @@ describe('isBedrockMantleConfigured', () => {
   });
 
   it('false without a chat endpoint', () => {
-    config.bedrockMantleBaseUrl = '';
+    config.bedrockMantleDirectEndpoint = '';
     expect(isBedrockMantleConfigured()).toBe(false);
   });
 

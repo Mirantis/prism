@@ -23,42 +23,45 @@ vi.mock('@ai-sdk/anthropic', () => ({
 import { createAzureProvider, isAzureConfigured } from './azure-provider';
 
 describe('createAzureProvider', () => {
+  const FOUNDRY = 'https://my-resource.services.ai.azure.com/anthropic/v1';
+
   beforeEach(() => {
     config.azureApiKey = 'azure-key';
     config.azureResourceName = 'my-resource';
-    config.azureFoundryBaseUrl = 'https://my-resource.services.ai.azure.com/anthropic/v1';
     vi.clearAllMocks();
   });
 
-  it('direct routing: chat provider gets the Foundry Anthropic baseURL', () => {
-    createAzureProvider();
+  it('sends requests to the endpoint it is given', () => {
+    createAzureProvider(FOUNDRY);
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith({
       apiKey: 'azure-key',
-      baseURL: 'https://my-resource.services.ai.azure.com/anthropic/v1',
+      baseURL: FOUNDRY,
     });
   });
 
-  it('Gateway routing: an explicit baseURL overrides the Foundry endpoint', () => {
-    createAzureProvider('https://gateway.example/llm/azure/anthropic/v1');
-
-    expect(mockCreateAnthropic).toHaveBeenCalledWith(
-      expect.objectContaining({ baseURL: 'https://gateway.example/llm/azure/anthropic/v1' }),
-    );
-  });
-
-  it('Gateway routing without a local key: falls back to a decoy apiKey (gateway injects the real one)', () => {
+  it('a gateway endpoint without a local key: falls back to a decoy apiKey (the gateway injects the real one)', () => {
     config.azureApiKey = undefined;
-    createAzureProvider('https://gateway.example/llm/azure/anthropic/v1');
+    createAzureProvider('https://gateway.example.com/llm/azure/anthropic/v1');
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: 'nexus-managed' }),
     );
   });
 
-  it('direct routing without a key passes undefined (SDK env fallback), no decoy', () => {
+  it('an override on the gateway host also gets the decoy, mount or not', () => {
     config.azureApiKey = undefined;
-    createAzureProvider();
+    createAzureProvider('https://gateway.example.com/projects/p/llm/azure/anthropic/v1');
+
+    expect(mockCreateAnthropic).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: 'nexus-managed' }),
+    );
+  });
+
+  it('an endpoint off the gateway host without a key sends no decoy', () => {
+    // A decoy would promise a credential injection that nothing performs.
+    config.azureApiKey = undefined;
+    createAzureProvider(FOUNDRY);
 
     expect(mockCreateAnthropic).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: undefined }),
@@ -66,13 +69,13 @@ describe('createAzureProvider', () => {
   });
 
   it('chat model IDs (deployment names) dispatch through the anthropic provider', () => {
-    const provider = createAzureProvider();
+    const provider = createAzureProvider(FOUNDRY);
     provider('claude-opus-4-8');
     expect(mockAnthropicModel).toHaveBeenCalledWith('claude-opus-4-8');
   });
 
   it('asks for the tool-based JSON path — Foundry rejects native structured output', () => {
-    expect(createAzureProvider().structuredOutputOptions).toEqual({
+    expect(createAzureProvider(FOUNDRY).structuredOutputOptions).toEqual({
       anthropic: { structuredOutputMode: 'jsonTool' },
     });
   });
@@ -82,7 +85,7 @@ describe('isAzureConfigured', () => {
   beforeEach(() => {
     config.azureModelId = 'claude-opus-4-8';
     config.azureApiKey = 'azure-key';
-    config.azureFoundryBaseUrl = 'https://my-resource.services.ai.azure.com/anthropic/v1';
+    config.azureDirectEndpoint = 'https://my-resource.services.ai.azure.com/anthropic/v1';
     config.nexusAzureBaseUrl = null;
   });
 
@@ -91,14 +94,14 @@ describe('isAzureConfigured', () => {
   });
 
   it('true with deployment + gateway base URL and NO key/resource (gateway holds the key)', () => {
-    config.azureFoundryBaseUrl = undefined;
+    config.azureDirectEndpoint = undefined;
     config.azureApiKey = undefined;
-    config.nexusAzureBaseUrl = 'https://gateway.example/llm/azure/anthropic/v1';
+    config.nexusAzureBaseUrl = 'https://gateway.example.com/llm/azure/anthropic/v1';
     expect(isAzureConfigured()).toBe(true);
   });
 
   it('false without a chat endpoint (neither Foundry URL nor gateway URL)', () => {
-    config.azureFoundryBaseUrl = undefined;
+    config.azureDirectEndpoint = undefined;
     config.nexusAzureBaseUrl = null;
     expect(isAzureConfigured()).toBe(false);
   });

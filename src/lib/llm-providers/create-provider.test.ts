@@ -62,6 +62,14 @@ vi.mock('./anthropic/anthropic-provider', () => ({
 import { createProvider, isProviderConfigured } from './create-provider';
 
 describe('createProvider', () => {
+  const MOUNT = {
+    bedrock: 'https://gateway.example.com/llm/bedrock/us-east-1',
+    azure: 'https://gateway.example.com/llm/azure/anthropic/v1',
+    mantle: 'https://gateway.example.com/llm/bedrock-mantle/anthropic/us-east-1/v1',
+    openai: 'https://gateway.example.com/llm/openai/v1',
+    openrouter: 'https://gateway.example.com/llm/openrouter/openai/v1',
+  };
+
   beforeEach(() => {
     config.llmProvider = 'bedrock';
     config.nexusLlmBaseUrl = null;
@@ -69,6 +77,10 @@ describe('createProvider', () => {
     config.nexusBedrockMantleBaseUrl = null;
     config.nexusOpenAiBaseUrl = null;
     config.nexusOpenRouterBaseUrl = null;
+    config.azureChatEndpoint = undefined;
+    config.bedrockMantleChatEndpoint = 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1';
+    config.openaiEndpoint = undefined;
+    config.openrouterEndpoint = 'https://openrouter.ai/api/v1';
     vi.clearAllMocks();
   });
 
@@ -79,51 +91,52 @@ describe('createProvider', () => {
   });
 
   it('bedrock + gateway URL → Bedrock with the gateway baseURL', () => {
-    config.nexusLlmBaseUrl = 'https://gateway.example/llm/bedrock/us-east-1';
+    config.nexusLlmBaseUrl = MOUNT.bedrock;
     expect(createProvider()).toBe('bedrock-provider');
-    expect(mockCreateBedrockProvider).toHaveBeenCalledWith('https://gateway.example/llm/bedrock/us-east-1');
+    expect(mockCreateBedrockProvider).toHaveBeenCalledWith(MOUNT.bedrock);
   });
 
-  it('azure + no gateway URL → direct Azure (undefined baseURL)', () => {
+  it('azure → the resolved azure chat endpoint', () => {
     config.llmProvider = 'azure';
+    config.azureChatEndpoint = 'https://my-resource.services.ai.azure.com/anthropic/v1';
     expect(createProvider()).toBe('azure-provider');
-    expect(mockCreateAzureProvider).toHaveBeenCalledWith(undefined);
+    expect(mockCreateAzureProvider).toHaveBeenCalledWith(
+      'https://my-resource.services.ai.azure.com/anthropic/v1',
+    );
     expect(mockCreateBedrockProvider).not.toHaveBeenCalled();
   });
 
-  it('azure + gateway Azure URL → gateway-routed Azure', () => {
+  it('azure: an AZURE_FOUNDRY_BASE_URL override reaches the factory, mount set or not', () => {
+    // The endpoint config resolved is the one that is used. Passing the mount here
+    // instead is the defect this pins: an override could never apply.
     config.llmProvider = 'azure';
-    config.nexusAzureBaseUrl = 'https://gateway.example/llm/azure/anthropic/v1';
-    expect(createProvider()).toBe('azure-provider');
-    expect(mockCreateAzureProvider).toHaveBeenCalledWith('https://gateway.example/llm/azure/anthropic/v1');
+    config.nexusAzureBaseUrl = MOUNT.azure;
+    config.azureChatEndpoint = 'https://foundry.example/anthropic/v1';
+    createProvider();
+    expect(mockCreateAzureProvider).toHaveBeenCalledWith('https://foundry.example/anthropic/v1');
   });
 
-  it('bedrock-mantle + no gateway URL → direct mantle (undefined baseURL)', () => {
+  it('bedrock-mantle → the resolved mantle chat endpoint', () => {
     config.llmProvider = 'bedrock-mantle';
     expect(createProvider()).toBe('bedrock-mantle-provider');
-    expect(mockCreateBedrockMantleProvider).toHaveBeenCalledWith(undefined);
+    expect(mockCreateBedrockMantleProvider).toHaveBeenCalledWith(
+      'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1',
+    );
     expect(mockCreateBedrockProvider).not.toHaveBeenCalled();
     expect(mockCreateAzureProvider).not.toHaveBeenCalled();
   });
 
-  it('bedrock-mantle + gateway mantle URL → gateway-routed mantle', () => {
+  it('bedrock-mantle: a BEDROCK_MANTLE_BASE_URL override reaches the factory, mount set or not', () => {
     config.llmProvider = 'bedrock-mantle';
-    config.nexusBedrockMantleBaseUrl =
-      'https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1';
-    expect(createProvider()).toBe('bedrock-mantle-provider');
+    config.nexusBedrockMantleBaseUrl = MOUNT.mantle;
+    config.bedrockMantleChatEndpoint = 'https://mantle.internal/anthropic/v1';
+    createProvider();
     expect(mockCreateBedrockMantleProvider).toHaveBeenCalledWith(
-      'https://gateway.example/llm/bedrock-mantle/anthropic/us-east-1/v1',
+      'https://mantle.internal/anthropic/v1',
     );
   });
 
-  it('bedrock-mantle ignores the bedrock-runtime gateway mount for chat', () => {
-    config.llmProvider = 'bedrock-mantle';
-    config.nexusLlmBaseUrl = 'https://gateway.example/llm/bedrock/us-east-1';
-    createProvider();
-    expect(mockCreateBedrockMantleProvider).toHaveBeenCalledWith(undefined);
-  });
-
-  it('openai + no gateway URL → direct OpenAI (undefined baseURL)', () => {
+  it('openai + nothing configured → the SDK default (undefined baseURL)', () => {
     config.llmProvider = 'openai';
     expect(createProvider()).toBe('openai-provider');
     expect(mockCreateOpenAiProvider).toHaveBeenCalledWith(undefined);
@@ -132,32 +145,44 @@ describe('createProvider', () => {
     expect(mockCreateBedrockMantleProvider).not.toHaveBeenCalled();
   });
 
-  it('openai + gateway openai URL → gateway-routed OpenAI', () => {
+  it('openai: an OPENAI_BASE_URL override reaches the factory, mount set or not', () => {
     config.llmProvider = 'openai';
-    config.nexusOpenAiBaseUrl = 'https://gateway.example/llm/openai/v1';
-    expect(createProvider()).toBe('openai-provider');
-    expect(mockCreateOpenAiProvider).toHaveBeenCalledWith('https://gateway.example/llm/openai/v1');
+    config.nexusOpenAiBaseUrl = MOUNT.openai;
+    config.openaiEndpoint = 'https://gateway.example.com/llm/bedrock-mantle/openai/us-east-1/v1';
+    createProvider();
+    expect(mockCreateOpenAiProvider).toHaveBeenCalledWith(
+      'https://gateway.example.com/llm/bedrock-mantle/openai/us-east-1/v1',
+    );
   });
 
-  it('openrouter → the OpenRouter mount, never the openai one', () => {
-    // Both speak the same OpenAI-shaped protocol, so the mount is the only
-    // thing that distinguishes them — and it is what the managed-inference gate
-    // checks: a policy selecting openrouter answers 403 on `/llm/openai/*`.
+  it('openrouter → the OpenRouter endpoint, never the openai one', () => {
+    // Both speak the same OpenAI-shaped protocol, so the endpoint is the only
+    // thing that distinguishes them — and the mount is what the
+    // managed-inference gate checks: a policy selecting openrouter answers 403
+    // on `/llm/openai/*`.
     config.llmProvider = 'openrouter';
-    config.nexusOpenRouterBaseUrl = 'https://gateway.example/llm/openrouter/openai/v1';
-    config.nexusOpenAiBaseUrl = 'https://gateway.example/llm/openai/v1';
+    config.nexusOpenRouterBaseUrl = MOUNT.openrouter;
+    config.nexusOpenAiBaseUrl = MOUNT.openai;
+    config.openrouterEndpoint = MOUNT.openrouter;
+    config.openaiEndpoint = MOUNT.openai;
 
     expect(createProvider()).toBe('openrouter-provider');
-    expect(mockCreateOpenRouterProvider).toHaveBeenCalledWith(
-      'https://gateway.example/llm/openrouter/openai/v1',
-    );
+    expect(mockCreateOpenRouterProvider).toHaveBeenCalledWith(MOUNT.openrouter);
     expect(mockCreateOpenAiProvider).not.toHaveBeenCalled();
+  });
+
+  it('openrouter: an OPENROUTER_BASE_URL override reaches the factory, mount set or not', () => {
+    config.llmProvider = 'openrouter';
+    config.nexusOpenRouterBaseUrl = MOUNT.openrouter;
+    config.openrouterEndpoint = 'https://proxy.example/openrouter/v1';
+    createProvider();
+    expect(mockCreateOpenRouterProvider).toHaveBeenCalledWith('https://proxy.example/openrouter/v1');
   });
 
   it('openai ignores the other vendors’ gateway mounts', () => {
     config.llmProvider = 'openai';
-    config.nexusLlmBaseUrl = 'https://gateway.example/llm/bedrock/us-east-1';
-    config.nexusAzureBaseUrl = 'https://gateway.example/llm/azure/anthropic/v1';
+    config.nexusLlmBaseUrl = MOUNT.bedrock;
+    config.nexusAzureBaseUrl = MOUNT.azure;
     createProvider();
     expect(mockCreateOpenAiProvider).toHaveBeenCalledWith(undefined);
   });
@@ -175,12 +200,11 @@ describe('createProvider', () => {
 
   it('anthropic stays direct even with every gateway mount set', () => {
     config.llmProvider = 'anthropic';
-    config.nexusLlmBaseUrl = 'https://nexus.example/llm/bedrock/us-east-1';
-    config.nexusAzureBaseUrl = 'https://nexus.example/llm/azure/anthropic/v1';
-    config.nexusBedrockMantleBaseUrl =
-      'https://nexus.example/llm/bedrock-mantle/anthropic/us-east-1/v1';
-    config.nexusOpenAiBaseUrl = 'https://nexus.example/llm/openai/v1';
-    config.nexusOpenRouterBaseUrl = 'https://nexus.example/llm/openrouter/openai/v1';
+    config.nexusLlmBaseUrl = MOUNT.bedrock;
+    config.nexusAzureBaseUrl = MOUNT.azure;
+    config.nexusBedrockMantleBaseUrl = MOUNT.mantle;
+    config.nexusOpenAiBaseUrl = MOUNT.openai;
+    config.nexusOpenRouterBaseUrl = MOUNT.openrouter;
     expect(createProvider()).toBe('anthropic-provider');
     expect(mockCreateAnthropicProvider).toHaveBeenCalledWith();
   });

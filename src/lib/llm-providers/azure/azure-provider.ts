@@ -9,10 +9,10 @@
  * `AZURE_FOUNDRY_BASE_URL` is the escape hatch when an operator splits the
  * resource's hosts.
  *
- * Routing: a `baseURL` argument (the Lens Agents Azure gateway chat route, computed
- * from `NEXUS_API_URL` as `…/llm/azure/anthropic/v1`, mirroring Bedrock's
- * `…/llm/bedrock/{region}`) overrides the Foundry chat endpoint; unset →
- * direct to the Foundry resource.
+ * Routing: the `baseURL` argument is the resolved chat endpoint —
+ * `AZURE_FOUNDRY_BASE_URL`, else the Lens Agents Azure gateway chat route
+ * (`…/llm/azure/anthropic/v1`, mirroring Bedrock's `…/llm/bedrock/{region}`),
+ * else the Foundry resource. `config.azureChatEndpoint` decides between them.
  *
  * Auth: the key is sent as the `x-api-key` header (Foundry accepts both
  * `api-key` and `x-api-key`); `anthropic-version: 2023-06-01` is added by the
@@ -25,13 +25,14 @@
  */
 
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { config } from '../../../config';
+import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
 import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
 
 export function createAzureProvider(baseURL?: string): LlmProvider {
+  const gatewayServesIt = isGatewayEndpoint(baseURL);
   logger.info(
-    { routing: baseURL ? 'nexus' : 'direct' },
+    { routing: gatewayServesIt ? 'nexus' : 'direct' },
     'Creating Azure provider (Claude via Microsoft Foundry)',
   );
 
@@ -39,15 +40,14 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
   // `${baseURL}/messages`, so the base must end at `…/anthropic/v1` (direct)
   // or `…/llm/azure/anthropic/v1` (gateway).
   //
-  // Through the gateway the real Foundry key (`api-key` from its
-  // NEXUS_AZURE_TOKEN) is injected on the outbound leg, so no local key is
-  // needed — but the SDKs insist on one, so fall back to a decoy (the same
-  // pattern the Lens Agents sandbox uses for its provisioned
-  // ANTHROPIC_API_KEY).
-  const decoyableKey = config.azureApiKey || (baseURL ? 'nexus-managed' : undefined);
+  // On the gateway the real Foundry key (`api-key` from its NEXUS_AZURE_TOKEN)
+  // is injected on the outbound leg, so no local key is needed — but the SDKs
+  // insist on one, so fall back to a decoy (the same pattern the Lens Agents
+  // sandbox uses for its provisioned ANTHROPIC_API_KEY).
+  const decoyableKey = config.azureApiKey || (gatewayServesIt ? 'nexus-managed' : undefined);
   const anthropic = createAnthropic({
     apiKey: decoyableKey,
-    baseURL: baseURL ?? config.azureFoundryBaseUrl,
+    baseURL,
   });
 
   const dispatcher = (modelId: string) => anthropic(modelId);
@@ -69,5 +69,5 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
 export function isAzureConfigured(): boolean {
   if (!config.azureModelId) return false;
   if (config.nexusAzureBaseUrl) return true;
-  return Boolean(config.azureApiKey && config.azureFoundryBaseUrl);
+  return Boolean(config.azureApiKey && config.azureDirectEndpoint);
 }

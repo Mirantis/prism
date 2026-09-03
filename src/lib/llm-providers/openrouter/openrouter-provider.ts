@@ -19,35 +19,35 @@
  *    `…/llm/openrouter/openai/v1`, *not* `…/llm/openai/v1`: the
  *    managed-inference gate compares the path's backend against the one the
  *    project's policy selected and answers 403 on a mismatch, so borrowing the
- *    openai mount fails every call.
+ *    openai mount fails every call. `OPENROUTER_BASE_URL` outranks both.
+ *    `config.openrouterEndpoint` resolves that order and this factory takes the
+ *    result, so the endpoint is never chosen twice.
  *  - **Model ids are `vendor/model`** (see `config.openrouterModelId`), so the
  *    bare ids that are correct against api.openai.com are not ones OpenRouter
  *    can route.
  *
  * Auth: `OPENROUTER_API_KEY`, sent as a bearer header, read verbatim so it may
- * be a `__nexus_cred:<uuid>__` sentinel the MITM proxy rewrites on the wire.
- * Through the gateway no local key is needed — it holds the OpenRouter
+ * be a `__nexus_cred:<uuid>__` sentinel the MITM proxy rewrites on the wire. An
+ * endpoint on the gateway needs no local key — the gateway holds the OpenRouter
  * credential and injects it on the outbound leg — but the SDK insists on one,
  * so fall back to a decoy like the Azure/mantle factories do.
  */
 
-import { config } from '../../../config';
+import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
 import { createOpenAiCompatibleProvider } from '../openai-compatible';
 import type { LlmProvider } from '../llm-provider';
 
-/** OpenRouter's own API root. Ends at `/v1`; the SDK appends `/responses`. */
-export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
-
-export function createOpenRouterProvider(baseURL?: string): LlmProvider {
-  logger.info({ routing: baseURL ? 'nexus' : 'direct' }, 'Creating OpenRouter provider');
+export function createOpenRouterProvider(baseURL: string): LlmProvider {
+  const gatewayServesIt = isGatewayEndpoint(baseURL);
+  logger.info({ routing: gatewayServesIt ? 'nexus' : 'direct' }, 'Creating OpenRouter provider');
 
   return createOpenAiCompatibleProvider({
-    // Through the gateway the real key is injected on the outbound leg, so no
-    // local key is needed — but the SDK insists on one, so fall back to a
-    // decoy (the same pattern as the Azure and mantle factories).
-    apiKey: config.openrouterApiKey || (baseURL ? 'nexus-managed' : undefined),
-    baseURL: baseURL ?? config.openrouterBaseUrl ?? OPENROUTER_BASE_URL,
+    // On the gateway the real key is injected on the outbound leg, so no local
+    // key is needed — but the SDK insists on one, so fall back to a decoy (the
+    // same pattern as the Azure and mantle factories).
+    apiKey: config.openrouterApiKey || (gatewayServesIt ? 'nexus-managed' : undefined),
+    baseURL,
   });
 }
 

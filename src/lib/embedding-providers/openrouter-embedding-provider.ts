@@ -7,22 +7,22 @@
  * (embeddings off) until the operator names one —
  * `openai/text-embedding-3-small` truncates to 1024 and works.
  *
- * `baseURL` selects routing: set → the gateway's `…/llm/openrouter/openai/v1`
- * mount; unset → openrouter.ai (or `OPENROUTER_BASE_URL`).
+ * `baseURL` is the resolved endpoint: `OPENROUTER_BASE_URL`, else the gateway's
+ * `…/llm/openrouter/openai/v1` mount, else openrouter.ai. That variable is one
+ * endpoint for the whole surface, so embeddings follow it wherever chat goes.
  */
 
 import { createOpenAI } from '@ai-sdk/openai';
-import { config } from '../../config';
-import { OPENROUTER_BASE_URL } from '../llm-providers/openrouter/openrouter-provider';
+import { config, isGatewayEndpoint } from '../../config';
 import { EMBEDDING_DIMENSIONS, type EmbeddingProvider } from './embedding-provider';
 
-export function createOpenRouterEmbeddingProvider(baseURL?: string): EmbeddingProvider {
-  // Through the gateway the real key is injected on the outbound leg, so no
-  // local key is needed — but the SDK insists on one, so fall back to a decoy
-  // (the same pattern as the chat factories).
+export function createOpenRouterEmbeddingProvider(baseURL: string): EmbeddingProvider {
+  // On the gateway the real key is injected on the outbound leg, so no local key
+  // is needed — but the SDK insists on one, so fall back to a decoy (the same
+  // pattern as the chat factories).
   const openai = createOpenAI({
-    apiKey: config.openrouterApiKey || (baseURL ? 'managed' : undefined),
-    baseURL: baseURL ?? config.openrouterBaseUrl ?? OPENROUTER_BASE_URL,
+    apiKey: config.openrouterApiKey || (isGatewayEndpoint(baseURL) ? 'managed' : undefined),
+    baseURL,
   });
   return {
     model: (modelId: string) => openai.embedding(modelId),

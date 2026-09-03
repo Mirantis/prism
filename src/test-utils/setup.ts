@@ -77,4 +77,16 @@ vi.mock('../config', () => ({
     // whichever branch `undefined` happens to fall into.
     meetingTranscriptLogging: 'off',
   },
+  // The real predicate compares an endpoint's origin against the gateway's. Here
+  // `gateway.example.com` is the gateway host — the same host config.test.ts
+  // gives NEXUS_API_URL — so a test names the host it means and wires nothing.
+  // config.test.ts covers the real implementation.
+  isGatewayEndpoint: (url?: string | null) => {
+    if (!url) return false;
+    try {
+      return new URL(url).hostname === 'gateway.example.com';
+    } catch {
+      return false;
+    }
+  },
 }));

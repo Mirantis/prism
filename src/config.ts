@@ -152,13 +152,49 @@ const nexusChatBaseUrl =
               null
             : nexusLlmBaseUrl;
 
-// Foundry Anthropic chat endpoint for Azure (Claude via Microsoft Foundry).
-// Explicit override wins; else derived from the resource name. Must end at
-// `/anthropic/v1` — the anthropic SDK appends `/messages`.
+// Scheme, host and port of an http(s) URL; undefined for anything else, so a
+// value that is unset, unparseable or of another scheme never matches. Two
+// opaque URLs both take the origin `"null"`, which would compare equal.
+const originOf = (url: string | undefined | null): string | undefined => {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined;
+    return parsed.origin;
+  } catch {
+    return undefined;
+  }
+};
+
+// The gateway's own origin. The credential decision turns on one question: does
+// this request reach the gateway, which injects the vendor key on the outbound
+// leg? An explicit `*_BASE_URL` may point anywhere, so the origins are compared.
+const nexusOrigin = originOf(nexusApiUrl);
+
+/**
+ * Whether the Lens Agents gateway serves `url`, and so holds the vendor
+ * credential for it. `URL.origin` lowercases the host and drops a default port,
+ * and it ignores the path, so any mount on the gateway host matches. An unset or
+ * unparseable value on either side answers false: such an endpoint fails in
+ * `fetch` regardless, and the SDK then reports the missing key itself.
+ */
+export function isGatewayEndpoint(url: string | undefined | null): boolean {
+  const origin = originOf(url);
+  return Boolean(nexusOrigin && origin === nexusOrigin);
+}
+
+// Azure's direct Foundry Anthropic endpoint: the explicit override, else the one
+// derived from the resource name. It must end at `/anthropic/v1` — the anthropic
+// SDK appends `/messages`.
+//
+// The override and the derived host each keep their own constant, since
+// `azureChatEndpoint` below puts the gateway mount between them.
 const azureResourceName = process.env.AZURE_RESOURCE_NAME;
-const azureFoundryBaseUrl =
-  process.env.AZURE_FOUNDRY_BASE_URL ||
-  (azureResourceName ? `https://${azureResourceName}.services.ai.azure.com/anthropic/v1` : undefined);
+const azureFoundryOverride = process.env.AZURE_FOUNDRY_BASE_URL || undefined;
+const azureResourceEndpoint = azureResourceName
+  ? `https://${azureResourceName}.services.ai.azure.com/anthropic/v1`
+  : undefined;
+const azureDirectEndpoint = azureFoundryOverride || azureResourceEndpoint;
 
 // The Bedrock API key. The @ai-sdk/amazon-bedrock SDK reads this straight from
 // process.env for the native Bedrock path, but mantle's Anthropic surface needs
@@ -166,11 +202,12 @@ const azureFoundryBaseUrl =
 // `__nexus_cred:<uuid>__` sentinel the MITM proxy rewrites on the wire.
 const bedrockApiKey = process.env.AWS_BEARER_TOKEN_BEDROCK;
 
-// Direct bedrock-mantle chat endpoint. Must end at `/anthropic/v1` — the
+// Bedrock Mantle's direct chat endpoint. Must end at `/anthropic/v1` — the
 // anthropic SDK appends `/messages`. The override mirrors AZURE_FOUNDRY_BASE_URL
-// and, like it, applies to direct mode only (gateway routing has its own mount).
-const bedrockMantleBaseUrl =
-  process.env.BEDROCK_MANTLE_BASE_URL || `https://bedrock-mantle.${awsRegion}.api.aws/anthropic/v1`;
+// and is split from the derived host for the same reason.
+const bedrockMantleOverride = process.env.BEDROCK_MANTLE_BASE_URL || undefined;
+const bedrockMantleRegionEndpoint = `https://bedrock-mantle.${awsRegion}.api.aws/anthropic/v1`;
+const bedrockMantleDirectEndpoint = bedrockMantleOverride || bedrockMantleRegionEndpoint;
 
 // Resolved once so the vendor-specific fields and the provider-neutral
 // `chatModelId`/`classificationModelId`/`embeddingModelId` (the last keyed
@@ -237,23 +274,23 @@ const openrouterModelId = process.env.OPENROUTER_MODEL_ID || 'openai/gpt-5.6-sol
 const openrouterClassificationModelId =
   process.env.OPENROUTER_CLASSIFICATION_MODEL_ID || 'openai/gpt-5.6-luna';
 const openrouterEmbeddingModelId = process.env.OPENROUTER_EMBEDDING_MODEL_ID ?? '';
-// Direct OpenRouter endpoint override, mirroring OPENAI_BASE_URL: applies to
-// direct mode only (gateway routing has its own mount). Must serve the
-// Responses API — the SDK appends `/responses`, which openrouter.ai serves
-// alongside `/chat/completions`.
-// undefined → openrouter.ai, resolved in the provider (the SDK's own default
-// is api.openai.com, which is not where these `vendor/model` ids resolve).
-const openrouterBaseUrl = process.env.OPENROUTER_BASE_URL || undefined;
+// OpenRouter's own endpoint, spelled out because the SDK's default is
+// api.openai.com, which is not where a `vendor/model` id resolves.
+const OPENROUTER_DIRECT_BASE_URL = 'https://openrouter.ai/api/v1';
+// OpenRouter endpoint override, mirroring OPENAI_BASE_URL. It outranks the
+// gateway mount (see `openrouterEndpoint` below). Must serve the Responses API
+// — the SDK appends `/responses`, which openrouter.ai serves alongside
+// `/chat/completions`.
+const openrouterOverride = process.env.OPENROUTER_BASE_URL || undefined;
 // The OpenRouter API key, for direct mode. Not needed through the gateway,
 // which holds its own. May be a `__nexus_cred:<uuid>__` sentinel the MITM proxy
 // rewrites on the wire, since it only ever rides a header.
 const openrouterApiKey = process.env.OPENROUTER_API_KEY;
-// Direct OpenAI endpoint override, mirroring AZURE_FOUNDRY_BASE_URL /
-// BEDROCK_MANTLE_BASE_URL: applies to direct mode only (gateway routing has its
-// own mount), and must serve the Responses API — the SDK appends `/responses`,
-// not just `/chat/completions`. Does NOT move the Realtime WebSocket.
-// undefined → the SDK's own default, https://api.openai.com/v1.
-const openaiBaseUrl = process.env.OPENAI_BASE_URL || undefined;
+// OpenAI endpoint override, mirroring AZURE_FOUNDRY_BASE_URL /
+// BEDROCK_MANTLE_BASE_URL. It outranks the gateway mount (see `openaiEndpoint`
+// below), and must serve the Responses API — the SDK appends `/responses`, not
+// just `/chat/completions`. Does NOT move the Realtime WebSocket.
+const openaiOverride = process.env.OPENAI_BASE_URL || undefined;
 
 // The OpenAI API key, serving double duty: live voice meetings (OpenAI
 // Realtime API) and, when LLM_PROVIDER=openai, the chat provider. The
@@ -285,6 +322,56 @@ const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
 // `/v1` — the anthropic SDK appends `/messages`.
 // undefined → the SDK's own default, https://api.anthropic.com/v1.
 const anthropicBaseUrl = process.env.ANTHROPIC_BASE_URL || undefined;
+
+// The endpoint each vendor's client uses, in precedence order: the explicit
+// `*_BASE_URL` override, else the gateway mount, else the vendor's own host. The
+// override comes first because the operator named a host, and because the
+// derived mount is otherwise the only one a gateway deployment can reach.
+// Resolved here so the rule is written once and a provider factory receives an
+// endpoint rather than choosing between two.
+const azureChatEndpoint = azureFoundryOverride ?? nexusAzureBaseUrl ?? azureResourceEndpoint;
+const bedrockMantleChatEndpoint =
+  bedrockMantleOverride ?? nexusBedrockMantleBaseUrl ?? bedrockMantleRegionEndpoint;
+// One endpoint per OpenAI-shaped vendor, serving chat, classification *and*
+// embeddings: OPENAI_BASE_URL and OPENROUTER_BASE_URL are each one variable for
+// the whole surface, so both legs follow the override together.
+// `openaiEndpoint` undefined → the SDK's own default, https://api.openai.com/v1.
+const openaiEndpoint = openaiOverride ?? nexusOpenAiBaseUrl ?? undefined;
+const openrouterEndpoint =
+  openrouterOverride ?? nexusOpenRouterBaseUrl ?? OPENROUTER_DIRECT_BASE_URL;
+
+// The selected vendor's chat endpoint and the override that supplied it, for the
+// startup log. Anthropic has no mount, so its override is its whole endpoint.
+const chatEndpoints: Record<LlmProviderName, { endpoint?: string; override?: string }> = {
+  bedrock: { endpoint: nexusLlmBaseUrl ?? undefined },
+  azure: { endpoint: azureChatEndpoint, override: azureFoundryOverride },
+  'bedrock-mantle': { endpoint: bedrockMantleChatEndpoint, override: bedrockMantleOverride },
+  openai: { endpoint: openaiEndpoint, override: openaiOverride },
+  openrouter: { endpoint: openrouterEndpoint, override: openrouterOverride },
+  anthropic: { endpoint: anthropicBaseUrl, override: anthropicBaseUrl },
+};
+const chatEndpoint = chatEndpoints[llmProvider];
+
+// Which of the three steps supplied the endpoint. `override` next to
+// `chatRouting: 'nexus'` is an override that replaced a derived mount.
+const chatEndpointSource: 'override' | 'gateway' | 'direct' = chatEndpoint.override
+  ? 'override'
+  : nexusChatBaseUrl && chatEndpoint.endpoint === nexusChatBaseUrl
+    ? 'gateway'
+    : 'direct';
+
+// Origin and path only. An endpoint may carry a credential in its userinfo or
+// its query string, and neither belongs in a log; a value that does not parse is
+// named rather than printed, for the same reason.
+const endpointForLog = (url: string | undefined | null): string => {
+  if (!url) return 'vendor default';
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return 'invalid';
+  }
+};
 
 // Provider-neutral model IDs, resolved once. The runtime (invoke, the
 // classification gate, the per-agent model fallback) reads these so it never
@@ -588,13 +675,18 @@ export const config = {
 
   // Azure — Claude via Microsoft Foundry (used when LLM_PROVIDER=azure).
   // Chat/classification speak the Anthropic Messages API at
-  // `azureFoundryBaseUrl`; embeddings go to Azure OpenAI (text-embedding-3
+  // `azureChatEndpoint`; embeddings go to Azure OpenAI (text-embedding-3
   // deployment) on the same resource. Model IDs are Foundry *deployment
   // names*. `azureApiKey` is sent as the `x-api-key` header; it may be a
   // `__nexus_cred:<uuid>__` sentinel the MITM proxy rewrites on the wire
   // (same mechanism as AWS_BEARER_TOKEN_BEDROCK).
   azureResourceName,
-  azureFoundryBaseUrl,
+  // Foundry without the gateway, which is the question `isAzureConfigured`
+  // asks. Never the chat client's endpoint — that is `azureChatEndpoint`.
+  azureDirectEndpoint,
+  // The endpoint the Azure chat client uses — override, else gateway mount, else
+  // the resource's own host.
+  azureChatEndpoint,
   azureApiKey: process.env.AZURE_API_KEY,
   azureApiVersion: process.env.AZURE_API_VERSION, // embeddings only; undefined → SDK default ('preview')
   azureModelId,
@@ -605,39 +697,45 @@ export const config = {
 
   // Bedrock Mantle — AWS's second inference endpoint (used when
   // LLM_PROVIDER=bedrock-mantle). Chat/classification speak the Anthropic
-  // Messages API at `bedrockMantleBaseUrl`; there is no embedding surface, so
+  // Messages API at `bedrockMantleChatEndpoint`; there is no embedding surface, so
   // embeddings stay on Titan over bedrock-runtime (`bedrockEmbeddingModelId`
   // routing, `nexusLlmBaseUrl` when proxied). Model IDs are *bare* Bedrock IDs
   // — mantle has no cross-region inference profiles. `bedrockApiKey` is the
   // same AWS_BEARER_TOKEN_BEDROCK the native Bedrock path uses, sent here as
   // the `x-api-key` header; required for direct mode (there is no SigV4 path).
   bedrockApiKey,
-  bedrockMantleBaseUrl,
+  // Mantle without the gateway, for `isBedrockMantleConfigured`. Never the chat
+  // client's endpoint — that is `bedrockMantleChatEndpoint`.
+  bedrockMantleDirectEndpoint,
+  // The endpoint the mantle chat client uses — override, else gateway mount,
+  // else the region's own host.
+  bedrockMantleChatEndpoint,
   bedrockMantleModelId,
   bedrockMantleClassificationModelId,
   bedrockMantleEmbeddingModelId,
   nexusBedrockMantleBaseUrl,
 
   // OpenAI (used when LLM_PROVIDER=openai). Chat/classification/embeddings all
-  // speak the OpenAI API on one surface — direct to api.openai.com (or
-  // `openaiBaseUrl`), or through the Lens Agents `…/llm/openai/v1` mount when
-  // NEXUS_API_URL is set. The key is `openaiApiKey` below (shared with voice
-  // meetings); through the gateway no local key is needed.
+  // speak the OpenAI API on one surface, at `openaiEndpoint`: OPENAI_BASE_URL if
+  // set, else the Lens Agents `…/llm/openai/v1` mount when NEXUS_API_URL is set,
+  // else api.openai.com. The key is `openaiApiKey` below (shared with voice
+  // meetings); on the gateway no local key is needed.
   openaiModelId,
   openaiClassificationModelId,
   openaiEmbeddingModelId,
-  openaiBaseUrl,
+  openaiEndpoint,
   nexusOpenAiBaseUrl,
 
   // OpenRouter (used when LLM_PROVIDER=openrouter). Same OpenAI surface, a
-  // different vendor behind it: direct to openrouter.ai (or
-  // `openrouterBaseUrl`) with `openrouterApiKey`, or through the Lens Agents
-  // `…/llm/openrouter/openai/v1` mount when NEXUS_API_URL is set, which holds
-  // the key for you. Model ids are `vendor/model`.
+  // different vendor behind it, at `openrouterEndpoint`: OPENROUTER_BASE_URL if
+  // set, else the Lens Agents `…/llm/openrouter/openai/v1` mount when
+  // NEXUS_API_URL is set, else openrouter.ai. Direct it needs
+  // `openrouterApiKey`; on the gateway that key is held for you. Model ids are
+  // `vendor/model`.
   openrouterModelId,
   openrouterClassificationModelId,
   openrouterEmbeddingModelId,
-  openrouterBaseUrl,
+  openrouterEndpoint,
   openrouterApiKey,
   nexusOpenRouterBaseUrl,
 
@@ -694,9 +792,15 @@ export const config = {
   // above). Also carries mantle's embedding leg, since Titan is
   // bedrock-runtime-only.
   nexusLlmBaseUrl,
-  // The selected vendor's gateway chat mount — 'routed through the gateway?'
-  // in one field, so callers don't re-derive the per-vendor branch.
+  // The selected vendor's gateway chat mount — 'is a gateway mount configured
+  // for chat?' in one field, so callers don't re-derive the per-vendor branch.
+  // An override may send chat elsewhere; `chatRouting` is where it goes.
   nexusChatBaseUrl,
+  // Where the selected vendor's chat requests go, and which of override, gateway
+  // mount or vendor host named that endpoint. For the startup log.
+  chatRouting: isGatewayEndpoint(chatEndpoint.endpoint) ? 'nexus' : 'direct',
+  chatEndpointSource,
+  chatEndpointForLog: endpointForLog(chatEndpoint.endpoint),
 
   // OpenTelemetry (optional — disabled when not set)
   otelEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || '',
