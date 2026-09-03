@@ -9,9 +9,11 @@
  * tone. Nothing here is a model — the words are never read.
  *
  * `GET /state` reports what it has seen, so a failing scenario can name the step
- * that did not complete: no `connected` means the runtime never opened the socket,
+ * that did not complete: a `sessions` of zero means the runtime has no socket open,
  * an `inboundMs` of zero means the browser's microphone did not reach it, and a
- * `deltasSent` of zero means the runtime never asked for an answer.
+ * `deltasSent` of zero means the runtime never asked for an answer. `sessions` is a
+ * count rather than a flag, so a second session opening while one is still up is
+ * visible instead of hidden behind the first one's close.
  *
  * Run by Playwright as a `webServer`; `GET /health` is what it waits for.
  */
@@ -34,7 +36,8 @@ const TONE_MS = 2_000;
 const DELTA_MS = 200;
 
 const state = {
-  connected: false,
+  /** How many sockets are open right now. */
+  sessions: 0,
   inboundMs: 0,
   responsesRequested: 0,
   deltasSent: 0,
@@ -58,8 +61,8 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server, path: '/v1/realtime' });
 
 wss.on('connection', (ws: WebSocket) => {
-  state.connected = true;
-  log('session opened');
+  state.sessions += 1;
+  log(`session opened (${state.sessions} open)`);
   let turns = 0;
   let announcedMs = 0;
   let responses = 0;
@@ -93,8 +96,8 @@ wss.on('connection', (ws: WebSocket) => {
   });
 
   ws.on('close', () => {
-    state.connected = false;
-    log('session closed');
+    state.sessions = Math.max(0, state.sessions - 1);
+    log(`session closed (${state.sessions} open)`);
   });
 });
 
