@@ -124,14 +124,19 @@ const initialize = async () => {
     await reconcileAttachmentStorage(dirs.mediaDir);
 
     // Active LLM provider + routing, so the deployed vendor is observable in
-    // logs. `routing` is 'nexus' when the selected vendor's gateway chat mount
-    // is set, else 'direct'. `embeddings` surfaces the embedding vendor at boot —
-    // it can be off (e.g. anthropic without an OpenAI key), and without this
-    // line the only signal is a per-call warn once a memory write happens.
+    // logs. `routing` is 'nexus' when the gateway serves the chat endpoint, else
+    // 'direct'; `endpoint` names that endpoint (origin and path only, so a
+    // credential in a URL cannot reach the log) and `endpointSource` says whether
+    // an explicit `*_BASE_URL` replaced a derived mount. `embeddings` surfaces
+    // the embedding vendor at boot — it can be off (e.g. anthropic without an
+    // OpenAI key), and without this line the only signal is a per-call warn once
+    // a memory write happens.
     logger.info(
       {
         provider: config.llmProvider,
-        routing: config.nexusChatBaseUrl ? 'nexus' : 'direct',
+        routing: config.chatRouting,
+        endpoint: config.chatEndpointForLog,
+        endpointSource: config.chatEndpointSource,
         chatModel: config.chatModelId,
         embeddings: config.embeddingModelId
           ? `${config.embeddingProvider}:${config.embeddingModelId}`

@@ -43,8 +43,10 @@ export async function trackAgentStarted(
     trackEvent('agent started', agent.userId, {
       'agent.id': agent.id,
       'llm.provider': config.llmProvider,
-      // Same routing expression as the `[Startup] LLM provider` log: 'nexus'
-      // when the selected vendor's gateway chat mount is set, else 'direct'.
+      // Whether the selected vendor's gateway chat mount is set. This is the
+      // deployment's shape, not where a request lands: an explicit `*_BASE_URL`
+      // can point off the gateway host, and the `[Startup] LLM provider` log
+      // reports that endpoint and its source.
       'llm.routing': config.nexusChatBaseUrl ? 'nexus' : 'direct',
       'llm.chat_model': config.chatModelId,
       'llm.classification_model': config.classificationModelId,
