@@ -18,8 +18,8 @@ export const MIN_HEARTBEAT_DELAY_MS = 60_000;
 
 /**
  * Node's timers hold a 32-bit delay. A longer one overflows and fires at once,
- * so an interval past this is armed in steps of it instead. Reachable: the tool
- * write path bounds the interval from below only.
+ * so an interval past this is armed in steps of it instead. Reachable, since the
+ * tool write path accepts any interval of 60000ms or more.
  */
 export const MAX_HEARTBEAT_DELAY_MS = 2_147_483_647;
 

@@ -342,27 +342,34 @@ describe('Management Routes', () => {
   // ==========================================================================
 
   describe('POST /heartbeat/start', () => {
-    it('starts heartbeat and forces heartbeatStatus to ENABLED', async () => {
-      const agent = {
+    it('starts from the persisted row and forces heartbeatStatus to ENABLED', async () => {
+      const lastHeartbeat = new Date('2025-01-15T04:00:00Z');
+      const persisted = {
         id: 'agent-1',
         userId: 'user-1',
         heartbeatIntervalMs: 60000,
         heartbeatStatus: 'STOPPED',
+        lastHeartbeat,
       };
+      mockGetAgent.mockResolvedValue(persisted);
 
       const res = await authedRequest(app)
         .post('/agents/heartbeat/start')
-        .send({ agent });
+        .send({
+          // A client sends JSON, so its `lastHeartbeat` is a string, and it can
+          // be stale. The schedule comes off the persisted row instead.
+          agent: { id: 'agent-1', userId: 'user-1', lastHeartbeat: '2025-01-01T00:00:00Z' },
+        });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.message).toBe('Heartbeat started');
       // The /start endpoint's whole purpose is to turn the heartbeat on,
-      // regardless of the body's persisted heartbeatStatus.
-      expect(mockStartHeartbeat).toHaveBeenCalledWith({
-        ...agent,
-        heartbeatStatus: 'ENABLED',
-      });
+      // regardless of the persisted heartbeatStatus.
+      expect(mockStartHeartbeat).toHaveBeenCalledWith(
+        { ...persisted, heartbeatStatus: 'ENABLED' },
+        'keep-schedule',
+      );
     });
 
     it('returns 400 when agent is missing from body', async () => {
@@ -372,9 +379,11 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('Missing agent in request body');
+      expect(mockStartHeartbeat).not.toHaveBeenCalled();
     });
 
     it('returns 500 when startHeartbeat throws', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1' });
       mockStartHeartbeat.mockImplementation(() => {
         throw new Error('Invalid agent');
       });
@@ -527,7 +536,8 @@ describe('Management Routes', () => {
         where: { id: 'agent-1' },
         data: { heartbeatIntervalMs: 5 * 60_000 },
       });
-      expect(mockStartHeartbeat).toHaveBeenCalledWith(updated);
+      // A new cadence starts from now, so the next check is one new interval away.
+      expect(mockStartHeartbeat).toHaveBeenCalledWith(updated, 'new-interval');
       // Must NOT call stopHeartbeat — that would race the fire-and-forget
       // status write and could leave the agent persisted as STOPPED.
       expect(mockStopHeartbeat).not.toHaveBeenCalled();

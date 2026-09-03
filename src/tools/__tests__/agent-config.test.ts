@@ -195,7 +195,7 @@ describe('getAgentConfigTools', () => {
   });
 
   describe('update_heartbeat_config', () => {
-    it('replaces heartbeatMd and triggers startHeartbeat', async () => {
+    it('replaces heartbeatMd and leaves the schedule alone', async () => {
       const newContent = '## What to Check\n- CPU usage';
       const result = (await tools.update_heartbeat_config.execute({
         newContent,
@@ -206,21 +206,10 @@ describe('getAgentConfigTools', () => {
         where: { id: agentId },
         data: { heartbeatMd: newContent },
       });
-      expect(mockPrisma.agentWorkspace.findUnique).toHaveBeenCalledWith({ where: { id: agentId } });
-      expect(mockHeartbeatService.startHeartbeat).toHaveBeenCalledWith(testAgent);
+      // The timer reads nothing from this document, so re-arming it would only
+      // push the next check one interval further out.
+      expect(mockHeartbeatService.startHeartbeat).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
-    });
-
-    it('does not throw if startHeartbeat fails', async () => {
-      mockHeartbeatService.startHeartbeat.mockImplementation(() => {
-        throw new Error('runtime down');
-      });
-      await expect(
-        tools.update_heartbeat_config.execute({
-          newContent: '# config',
-          changeDescription: 'test',
-        }),
-      ).resolves.toBeDefined();
     });
   });
 
@@ -231,9 +220,9 @@ describe('getAgentConfigTools', () => {
       ).rejects.toThrow('>= 60000ms');
     });
 
-    it('triggers startHeartbeat when heartbeatIntervalMs changes', async () => {
+    it('starts a fresh interval when heartbeatIntervalMs changes', async () => {
       await tools.update_settings.execute({ setting: 'heartbeatIntervalMs', value: 120000 });
-      expect(mockHeartbeatService.startHeartbeat).toHaveBeenCalledWith(testAgent);
+      expect(mockHeartbeatService.startHeartbeat).toHaveBeenCalledWith(testAgent, 'new-interval');
     });
 
     it('accepts string-typed heartbeatIntervalMs and coerces to number', async () => {
@@ -459,7 +448,7 @@ describe('getAgentConfigTools', () => {
       expect(result.error).toContain('Provide either');
     });
 
-    it('update_heartbeat_config with successful edit triggers startHeartbeat', async () => {
+    it('update_heartbeat_config applies an edit and leaves the schedule alone', async () => {
       const agentWithHeartbeat = createTestAgentWorkspace({
         heartbeatMd: '# Heartbeat\n- Check CPU\n- Check memory',
       });
@@ -474,10 +463,10 @@ describe('getAgentConfigTools', () => {
         where: { id: agentId },
         data: { heartbeatMd: '# Heartbeat\n- Check CPU usage > 90%\n- Check memory' },
       });
-      expect(mockHeartbeatService.startHeartbeat).toHaveBeenCalledWith(agentWithHeartbeat);
+      expect(mockHeartbeatService.startHeartbeat).not.toHaveBeenCalled();
     });
 
-    it('update_heartbeat_config with failed edit does NOT trigger startHeartbeat', async () => {
+    it('update_heartbeat_config with failed edit writes nothing', async () => {
       const result = (await tools.update_heartbeat_config.execute({
         edits: [{ oldText: 'NONEXISTENT', newText: 'replacement' }],
         changeDescription: 'bad edit',

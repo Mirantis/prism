@@ -601,7 +601,8 @@ router.delete('/attachments/:id', async (req: Request<{ id: string }>, res: Resp
 /**
  * POST /agents/heartbeat/start
  * Start or restart the heartbeat timer for an agent.
- * Body: { agent } — the agent config object
+ * Body: { agent } — kept as the request's shape; the config is read from the
+ * database.
  */
 router.post('/heartbeat/start', async (req: Request, res: Response) => {
   try {
@@ -611,10 +612,15 @@ router.post('/heartbeat/start', async (req: Request, res: Response) => {
       return;
     }
 
+    // The interval and the last run come off the persisted row, not the body: a
+    // client sends the agent as JSON, where `lastHeartbeat` is an ISO string
+    // rather than a Date, and both fields decide the schedule.
+    const persisted = await agentWorkspaceService.getAgent();
+
     // Force-enable: this endpoint's whole purpose is to turn the heartbeat on,
-    // regardless of what status the body's agent object happens to carry. The
+    // regardless of what status the persisted row happens to carry. The
     // STOPPED short-circuit in startHeartbeat is for the boot-time loader.
-    heartbeatService.startHeartbeat({ ...agent, heartbeatStatus: 'ENABLED' });
+    heartbeatService.startHeartbeat({ ...persisted, heartbeatStatus: 'ENABLED' }, 'keep-schedule');
     res.json({ success: true, message: 'Heartbeat started' });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -724,11 +730,12 @@ router.patch('/heartbeat/interval', async (req: Request, res: Response) => {
       data: { heartbeatIntervalMs: intervalMs },
     });
 
-    // Re-register the timer with the new interval. startHeartbeat already
-    // clears any existing timer and short-circuits if heartbeatStatus is
-    // STOPPED, so the user's start/stop preference is respected without
-    // us racing the persisted heartbeat-status flag.
-    heartbeatService.startHeartbeat(updated);
+    // Re-register the timer with the new interval, which starts from now:
+    // a user changing the cadence asks for the next check one new interval
+    // away. startHeartbeat short-circuits if heartbeatStatus is STOPPED, so
+    // the user's start/stop preference is respected without us racing the
+    // persisted heartbeat-status flag.
+    heartbeatService.startHeartbeat(updated, 'new-interval');
 
     res.json(
       heartbeatService.getStatus() ?? {

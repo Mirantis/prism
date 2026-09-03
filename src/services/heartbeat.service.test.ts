@@ -22,6 +22,7 @@ const {
   mockGetGateRequest,
   mockLoggerInfo,
   mockLoggerDebug,
+  mockLoggerError,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockDeliverMessage: vi.fn(),
@@ -32,6 +33,7 @@ const {
   mockGetGateRequest: vi.fn(),
   mockLoggerInfo: vi.fn(),
   mockLoggerDebug: vi.fn(),
+  mockLoggerError: vi.fn(),
 }));
 
 vi.mock('../invoke', () => ({
@@ -76,7 +78,7 @@ vi.mock('../logger', () => ({
   logger: {
     info: mockLoggerInfo,
     debug: mockLoggerDebug,
-    error: vi.fn(),
+    error: mockLoggerError,
     warn: vi.fn(),
   },
 }));
@@ -157,7 +159,7 @@ describe('HeartbeatService', () => {
   describe('startHeartbeat', () => {
     it('registers the agent and marks heartbeat as active', () => {
       const agent = createAgent();
-      heartbeatService.startHeartbeat(agent);
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
 
       const status = heartbeatService.getStatus();
       expect(status).toMatchObject({
@@ -170,13 +172,13 @@ describe('HeartbeatService', () => {
 
     it('uses default interval when heartbeatIntervalMs is falsy', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      const setIntervalSpy = vi.spyOn(global, 'setInterval');
+      const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
       const agent = createAgent({ heartbeatIntervalMs: 0 });
-      heartbeatService.startHeartbeat(agent);
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
 
-      // Verify setInterval was called with the 8-hour default (28,800,000ms)
-      expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 28_800_000);
-      setIntervalSpy.mockRestore();
+      // Verify the timer was armed for the 8-hour default (28,800,000ms)
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 28_800_000);
+      setTimeoutSpy.mockRestore();
 
       // Should NOT fire at 1 minute (old default)
       await vi.advanceTimersByTimeAsync(60_000);
@@ -189,34 +191,34 @@ describe('HeartbeatService', () => {
 
     it('skips starting when agent has heartbeatStatus STOPPED', () => {
       const agent = createAgent({ heartbeatStatus: 'STOPPED' });
-      heartbeatService.startHeartbeat(agent);
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
 
       expect(mockUpdateAgentHeartbeatStatus).not.toHaveBeenCalled();
     });
 
     it('persists ENABLED status to backend when starting', () => {
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       expect(mockUpdateAgentHeartbeatStatus).toHaveBeenCalledWith('ENABLED');
     });
 
     it('stops existing heartbeat before starting a new one (no duplicates)', () => {
       const agent = createAgent();
-      heartbeatService.startHeartbeat(agent);
-      heartbeatService.startHeartbeat(agent);
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
     });
   });
 
   describe('stopHeartbeat', () => {
     it('removes the agent from active heartbeats', () => {
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       heartbeatService.stopHeartbeat();
 
       expect(heartbeatService.getStatus()).toBeNull();
     });
 
     it('persists STOPPED status to backend when stopping', () => {
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       mockUpdateAgentHeartbeatStatus.mockClear();
 
       heartbeatService.stopHeartbeat();
@@ -232,15 +234,15 @@ describe('HeartbeatService', () => {
 
   describe('stopAll', () => {
     it('removes all active heartbeats', () => {
-      heartbeatService.startHeartbeat(createAgent({ id: 'agent-a', userId: 'user-1' }));
-      heartbeatService.startHeartbeat(createAgent({ id: 'agent-b', userId: 'user-2' }));
+      heartbeatService.startHeartbeat(createAgent({ id: 'agent-a', userId: 'user-1' }), 'keep-schedule');
+      heartbeatService.startHeartbeat(createAgent({ id: 'agent-b', userId: 'user-2' }), 'keep-schedule');
 
       heartbeatService.stopAll();
     });
 
     it('does not persist STOPPED status (graceful shutdown should not corrupt state)', () => {
-      heartbeatService.startHeartbeat(createAgent({ id: 'agent-a', userId: 'user-1' }));
-      heartbeatService.startHeartbeat(createAgent({ id: 'agent-b', userId: 'user-2' }));
+      heartbeatService.startHeartbeat(createAgent({ id: 'agent-a', userId: 'user-1' }), 'keep-schedule');
+      heartbeatService.startHeartbeat(createAgent({ id: 'agent-b', userId: 'user-2' }), 'keep-schedule');
       mockUpdateAgentHeartbeatStatus.mockClear();
 
       heartbeatService.stopAll();
@@ -260,7 +262,7 @@ describe('HeartbeatService', () => {
     });
 
     it('returns current state for registered agent', () => {
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       const status = heartbeatService.getStatus();
 
@@ -281,7 +283,7 @@ describe('HeartbeatService', () => {
   describe('triggerHeartbeat (executeHeartbeat)', () => {
     it('skips when heartbeat is already running', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       // Simulate a long-running heartbeat
       let resolveInvoke!: (v: unknown) => void;
@@ -301,7 +303,7 @@ describe('HeartbeatService', () => {
     it('invokes LLM and updates heartbeat timestamp on successful heartbeat', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       expect(mockInvoke).toHaveBeenCalledWith(
@@ -316,7 +318,7 @@ describe('HeartbeatService', () => {
     it('resets consecutiveErrors to 0 on successful run', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       const status = heartbeatService.getStatus();
@@ -342,7 +344,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       const result = await heartbeatService.triggerHeartbeat();
 
       expect(result.shouldSkip).toBe(true);
@@ -358,7 +360,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       const result = await heartbeatService.triggerHeartbeat();
 
       expect(result.shouldSkip).toBe(false);
@@ -380,7 +382,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockRejectedValue(new Error('Bedrock timeout'));
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       const result = await heartbeatService.triggerHeartbeat();
 
       expect(result.shouldSkip).toBe(false);
@@ -390,7 +392,7 @@ describe('HeartbeatService', () => {
     it('empty response → gate not called, suppressed', async () => {
       mockInvoke.mockResolvedValue({ response: '', toolCalls: [], steps: [] });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       const result = await heartbeatService.triggerHeartbeat();
 
       expect(result.shouldSkip).toBe(true);
@@ -406,7 +408,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       // First call — gate says DELIVER
       await heartbeatService.triggerHeartbeat();
@@ -427,7 +429,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       // First heartbeat — no previous alert
       await heartbeatService.triggerHeartbeat();
@@ -466,7 +468,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       expect(mockGenerateText).toHaveBeenCalledWith(
@@ -486,7 +488,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       expect(mockGenerateText).toHaveBeenCalledWith(
@@ -524,7 +526,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       // Should deliver exactly one message with the last step's text
@@ -585,7 +587,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       expect(mockDeliverMessage).toHaveBeenCalledWith(
@@ -604,7 +606,7 @@ describe('HeartbeatService', () => {
         steps: [],
       });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       const result = await heartbeatService.triggerHeartbeat();
 
       // Empty responseText means nothing to deliver
@@ -623,7 +625,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       expect(mockDeliverMessage).toHaveBeenCalledWith(
@@ -657,7 +659,7 @@ describe('HeartbeatService', () => {
         ],
       });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       const stepLogs = mockLoggerInfo.mock.calls
@@ -684,7 +686,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       heartbeatService.triggerFromSlack();
       await vi.advanceTimersByTimeAsync(0);
 
@@ -704,7 +706,7 @@ describe('HeartbeatService', () => {
         steps: [{ text: 'Alert!', toolCalls: [] }],
       });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       const summaryLogs = mockLoggerInfo.mock.calls
@@ -732,7 +734,7 @@ describe('HeartbeatService', () => {
         steps: [{ text: 'Pod crashing!', toolCalls: [] }],
       });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       // First alert should be delivered
       await heartbeatService.triggerHeartbeat();
@@ -755,6 +757,7 @@ describe('HeartbeatService', () => {
       // Use a very long interval so the timer does not fire during time advance
       heartbeatService.startHeartbeat(
         createAgent({ heartbeatIntervalMs: 100 * 60 * 60 * 1000 }),
+        'keep-schedule',
       );
 
       // First alert
@@ -771,7 +774,7 @@ describe('HeartbeatService', () => {
     });
 
     it('delivers different alerts even within 24 hours', async () => {
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       mockInvoke.mockResolvedValue({ response: 'Alert A', toolCalls: [], steps: [{ text: 'Alert A', toolCalls: [] }] });
       await heartbeatService.triggerHeartbeat();
@@ -795,7 +798,7 @@ describe('HeartbeatService', () => {
     it('increments consecutiveErrors on failure', async () => {
       mockInvoke.mockRejectedValue(new Error('Network failure'));
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       const status = heartbeatService.getStatus();
@@ -805,7 +808,7 @@ describe('HeartbeatService', () => {
     it('auto-stops heartbeat after 5 consecutive errors', async () => {
       mockInvoke.mockRejectedValue(new Error('Network failure'));
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       for (let i = 0; i < 5; i++) {
         await heartbeatService.triggerHeartbeat();
@@ -818,7 +821,7 @@ describe('HeartbeatService', () => {
     it('does not stop heartbeat before reaching 5 consecutive errors', async () => {
       mockInvoke.mockRejectedValue(new Error('Network failure'));
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       for (let i = 0; i < 4; i++) {
         await heartbeatService.triggerHeartbeat();
@@ -831,7 +834,7 @@ describe('HeartbeatService', () => {
     it('returns error message as skipped result on failure', async () => {
       mockInvoke.mockRejectedValue(new Error('Connection refused'));
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       const result = await heartbeatService.triggerHeartbeat();
 
       expect(result).toEqual({
@@ -841,7 +844,7 @@ describe('HeartbeatService', () => {
     });
 
     it('resets consecutiveErrors on a successful run after failures', async () => {
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       // First: 2 failures
       mockInvoke.mockRejectedValue(new Error('fail'));
@@ -868,7 +871,7 @@ describe('HeartbeatService', () => {
     });
 
     it('uses a single minimal prompt regardless of vision', async () => {
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       expect(mockInvoke).toHaveBeenCalledWith(
@@ -890,14 +893,236 @@ describe('HeartbeatService', () => {
   // ==========================================================================
 
   describe('interval timer', () => {
+    const NOW = new Date('2025-01-15T12:00:00Z');
+    const HOUR = 60 * 60 * 1000;
+    const EIGHT_HOURS = 8 * HOUR;
+
+    beforeEach(() => {
+      vi.setSystemTime(NOW);
+    });
+
     it('executes heartbeat on each interval tick', async () => {
-      vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+      heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 60_000 }), 'keep-schedule');
 
-      heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 60_000 }));
-
-      // Advance past one interval
+      // Each tick arms the next one, so repetition is this service's own
+      // invariant rather than the platform's.
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(mockInvoke).toHaveBeenCalled();
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockInvoke).toHaveBeenCalledTimes(3);
+    });
+
+    it('runs the remainder of the interval after a restart', async () => {
+      heartbeatService.startHeartbeat(
+        createAgent({ lastHeartbeat: new Date(NOW.getTime() - 5 * HOUR) }),
+        'keep-schedule',
+      );
+
+      await vi.advanceTimersByTimeAsync(3 * HOUR - 1000);
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs an overdue heartbeat one minute after a restart', async () => {
+      heartbeatService.startHeartbeat(
+        createAgent({ lastHeartbeat: new Date(NOW.getTime() - 9 * HOUR) }),
+        'keep-schedule',
+      );
+
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits a full interval for an agent that has never run', async () => {
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+
+      // Nothing runs at registration.
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(EIGHT_HOURS - 1000);
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the due time across a re-registration', async () => {
+      const agent = createAgent({ lastHeartbeat: new Date(NOW.getTime() - 7 * HOUR) });
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
+
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
+
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000 - 1000);
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts a fresh interval when the cadence changes', async () => {
+      const agent = createAgent();
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
+
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      heartbeatService.startHeartbeat(
+        { ...agent, heartbeatIntervalMs: 2 * HOUR } as AgentWorkspace,
+        'new-interval',
+      );
+
+      await vi.advanceTimersByTimeAsync(2 * HOUR - 1000);
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports the persisted last run as soon as it is registered', () => {
+      const lastHeartbeat = new Date(NOW.getTime() - 2 * HOUR);
+      heartbeatService.startHeartbeat(createAgent({ lastHeartbeat }), 'keep-schedule');
+
+      expect(heartbeatService.getStatus()?.lastRun).toEqual(lastHeartbeat);
+    });
+
+    it('spaces the next cycle a full interval after a budget-exceeded skip', async () => {
+      mockInvoke.mockResolvedValue({
+        response: '',
+        toolCalls: [],
+        steps: [],
+        error: { type: 'budget_exceeded', detail: 'spending limit reached' },
+      });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+
+      await vi.advanceTimersByTimeAsync(EIGHT_HOURS);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockUpdateHeartbeatTimestamp).toHaveBeenCalledTimes(1);
+
+      // A recorded cycle, so the retry is an interval away rather than a minute.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(EIGHT_HOURS);
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('spaces the next cycle a full interval after a failed run', async () => {
+      mockInvoke.mockRejectedValue(new Error('Network failure'));
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+
+      await vi.advanceTimersByTimeAsync(EIGHT_HOURS);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockUpdateHeartbeatTimestamp).toHaveBeenCalledTimes(1);
+
+      // The error streak keeps its interval spacing, so the auto-stop after five
+      // failures still takes five intervals rather than five minutes.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(EIGHT_HOURS);
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('records no cycle for a tick that lands inside a run', async () => {
+      let resolveInvoke!: (v: unknown) => void;
+      mockInvoke.mockReturnValue(new Promise((r) => { resolveInvoke = r; }));
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      const firstRun = heartbeatService.triggerHeartbeat();
+
+      // The timer fires while that run is still in flight.
+      await vi.advanceTimersByTimeAsync(EIGHT_HOURS);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockUpdateHeartbeatTimestamp).not.toHaveBeenCalled();
+
+      resolveInvoke({ response: 'All systems healthy.', toolCalls: [], steps: [] });
+      await firstRun;
+      expect(mockUpdateHeartbeatTimestamp).toHaveBeenCalledTimes(1);
+
+      // The completed run recorded the cycle, so the retry waits a full interval.
+      mockInvoke.mockResolvedValue({ response: 'All systems healthy.', toolCalls: [], steps: [] });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(EIGHT_HOURS);
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-registering during a run adds no second run and keeps the alert history', async () => {
+      let resolveInvoke!: (v: unknown) => void;
+      mockInvoke.mockReturnValue(new Promise((r) => { resolveInvoke = r; }));
+      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+
+      const agent = createAgent();
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
+      const firstRun = heartbeatService.triggerHeartbeat();
+
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
+
+      resolveInvoke({
+        response: 'Pod crashing!',
+        toolCalls: [],
+        steps: [{ text: 'Pod crashing!', toolCalls: [] }],
+      });
+      await firstRun;
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+
+      // The alert history survived the re-registration, so the same text is
+      // still a duplicate.
+      mockInvoke.mockResolvedValue({
+        response: 'Pod crashing!',
+        toolCalls: [],
+        steps: [{ text: 'Pod crashing!', toolCalls: [] }],
+      });
+      mockDeliverMessage.mockClear();
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+    });
+
+    it('re-arms after a cycle that throws out of the run', async () => {
+      mockInvoke.mockRejectedValue(new Error('Network failure'));
+      // The error path's own telemetry throws, which is the one way a cycle can
+      // escape the run. The chain must survive it, and the rejection must not
+      // reach the timer callback, where it would end the process.
+      mockTrackEvent.mockImplementation((name: string) => {
+        if (name === 'heartbeat completed') throw new Error('collector unreachable');
+      });
+
+      heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 60_000 }), 'keep-schedule');
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockLoggerError).toHaveBeenCalledWith(
+        expect.objectContaining({ err: expect.any(Error) }),
+        expect.stringContaining('Cycle failed outside the run'),
+      );
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not re-arm after a stop', async () => {
+      heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 60_000 }), 'keep-schedule');
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+      heartbeatService.stopHeartbeat();
+
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -931,7 +1156,7 @@ describe('HeartbeatService', () => {
         steps: [{ text: 'Incident detected!', toolCalls: [] }],
       });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       heartbeatService.triggerFromSlack();
 
       // Let the fire-and-forget promise resolve
@@ -952,7 +1177,7 @@ describe('HeartbeatService', () => {
       mockInvoke.mockReturnValueOnce(new Promise(r => { resolveFirst = r; }));
       mockDrainSlackMessages.mockResolvedValueOnce([slackMsg('msg-1')]);
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       // First trigger starts execution
       heartbeatService.triggerFromSlack();
@@ -984,7 +1209,7 @@ describe('HeartbeatService', () => {
         steps: [{ text: 'Incident in prod!', toolCalls: [] }],
       });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       heartbeatService.triggerFromSlack();
       await vi.advanceTimersByTimeAsync(0);
 
@@ -1005,7 +1230,7 @@ describe('HeartbeatService', () => {
         steps: [],
       });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       heartbeatService.triggerFromSlack();
       await vi.advanceTimersByTimeAsync(0);
 
@@ -1023,7 +1248,7 @@ describe('HeartbeatService', () => {
     });
 
     it('emits "heartbeat started" with the interval on start', () => {
-      heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 60_000 }));
+      heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 60_000 }), 'keep-schedule');
 
       expect(mockTrackEvent).toHaveBeenCalledWith('heartbeat started', 'user-abc-123', {
         'agent.id': 'agent-1',
@@ -1032,13 +1257,13 @@ describe('HeartbeatService', () => {
     });
 
     it('does not emit "heartbeat started" when status is STOPPED', () => {
-      heartbeatService.startHeartbeat(createAgent({ heartbeatStatus: 'STOPPED' }));
+      heartbeatService.startHeartbeat(createAgent({ heartbeatStatus: 'STOPPED' }), 'keep-schedule');
 
       expect(mockTrackEvent).not.toHaveBeenCalled();
     });
 
     it('emits "heartbeat stopped" on stop', () => {
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       mockTrackEvent.mockClear();
 
       heartbeatService.stopHeartbeat();
@@ -1062,7 +1287,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       expect(mockTrackEvent).toHaveBeenCalledWith('heartbeat completed', 'user-abc-123', {
@@ -1081,7 +1306,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       expect(mockTrackEvent).toHaveBeenCalledWith(
@@ -1099,7 +1324,7 @@ describe('HeartbeatService', () => {
         error: { type: 'budget_exceeded', detail: null },
       });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       expect(mockTrackEvent).toHaveBeenCalledWith(
@@ -1112,7 +1337,7 @@ describe('HeartbeatService', () => {
     it('emits "heartbeat completed" with result=error when invoke throws', async () => {
       mockInvoke.mockRejectedValue(new Error('Network failure'));
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
       expect(mockTrackEvent).toHaveBeenCalledWith(
@@ -1133,7 +1358,7 @@ describe('HeartbeatService', () => {
       });
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
-      heartbeatService.startHeartbeat(createAgent());
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       heartbeatService.triggerFromSlack();
       await vi.advanceTimersByTimeAsync(0);
 
