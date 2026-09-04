@@ -76,6 +76,12 @@ try {
 
   Write-Host "Installing Prism Agent into $PrismHome (from $dist)"
   New-Item -ItemType Directory -Path $PrismHome -Force | Out-Null
+  # Workspace root for the shell / claude_code tools, the directory install.sh
+  # also creates. prism-server.exe defaults the root to
+  # %USERPROFILE%\.prism\workspace and creates it at boot; creating it here and
+  # naming it below is what puts the workspace under a moved $PrismHome.
+  $workspaceRoot = Join-Path $PrismHome 'workspace'
+  New-Item -ItemType Directory -Path $workspaceRoot -Force | Out-Null
 
   # Stop the server so nothing maps prism-server.exe or the native addons under
   # node_modules\. `prism.exe` is deliberately left alone: a self-update is
@@ -187,6 +193,19 @@ AWS_BEARER_TOKEN_BEDROCK=$bearer
   if ($sessionParts -notcontains $PrismHome) {
     $env:Path = if ([string]::IsNullOrEmpty($env:Path)) { $PrismHome } else { $env:Path.TrimEnd(';') + ';' + $PrismHome }
   }
+
+  # The workspace root reaches prism-server.exe through the user environment --
+  # the store this script already writes PATH to. A scheduled task holds no
+  # environment block of its own, and $PrismHome\.env cannot carry the value:
+  # the binary sets its own default before it reads .env, and dotenv keeps a
+  # value that is already set. The installer owns this variable and rewrites it,
+  # so a re-install into a different $PrismHome takes effect.
+  if ([Environment]::GetEnvironmentVariable('SHELL_WORKSPACE_ROOT', 'User') -ne $workspaceRoot) {
+    [Environment]::SetEnvironmentVariable('SHELL_WORKSPACE_ROOT', $workspaceRoot, 'User')
+    Write-Host "Set SHELL_WORKSPACE_ROOT=$workspaceRoot for your user."
+  }
+  # This session too, so a prism-server.exe started from here agrees.
+  $env:SHELL_WORKSPACE_ROOT = $workspaceRoot
 
   # Register prism-server to run always, in the background. The S4U principal
   # ("run whether the user is logged on or not", no stored password) runs the
