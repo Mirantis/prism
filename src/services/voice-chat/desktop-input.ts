@@ -9,10 +9,12 @@
  * on the same stream, behind any movement already queued, so a click lands where the
  * pointer was last put.
  *
- * Keys arrive as the browser names them (`KeyboardEvent.key` plus modifier flags) and
- * leave as X keysyms: a printable character is its own keysym, or a Unicode one, so the
- * layout of the page's keyboard does not matter; a named key is mapped; a modifier alone
- * is ignored, since it reaches the display as part of the chord it modifies.
+ * Keys arrive as the browser names them (`KeyboardEvent.key` and `code`, plus modifier
+ * flags) and leave as X keysyms: a printable character is its own keysym, or a Unicode
+ * one, so the layout of the page's keyboard does not matter; a named key is mapped; a
+ * modifier alone is ignored, since it reaches the display as part of the chord it
+ * modifies. A text pasted on the page is typed out, character by character, into whatever
+ * has focus on the desktop.
  */
 
 import { spawn, type ChildProcess } from 'child_process';
@@ -23,7 +25,20 @@ export type InputFrame =
   | { type: 'pointer_move'; dx: number; dy: number }
   | { type: 'pointer_button'; button: 'left' | 'middle' | 'right'; down: boolean }
   | { type: 'wheel'; dy: number }
-  | { type: 'key'; key: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean };
+  | { type: 'key'; key: string; code?: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean }
+  | { type: 'text'; text: string };
+
+/**
+ * The most a paste types. xdotool types about eighty characters a second, so this is two
+ * minutes of typing; a longer paste is cut, not refused, since the start is usually what
+ * was wanted.
+ */
+export const MAX_PASTE_CHARS = 10_000;
+
+/** The part of a pasted text that gets typed. */
+export function pasteText(text: string): string {
+  return Array.from(text).slice(0, MAX_PASTE_CHARS).join('');
+}
 
 /** How long movement is gathered before one `mousemove` goes out. */
 const MOVE_FLUSH_MS = 16;
@@ -79,10 +94,43 @@ export function keysymFor(key: string): string | null {
   return `U${(key.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}`;
 }
 
+/** The character a physical key types on its own, for the `KeyboardEvent.code` values that name one. */
+const BASE_CHARACTERS: Record<string, string> = {
+  Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';',
+  Quote: "'", Backquote: '`', Comma: ',', Period: '.', Slash: '/', IntlBackslash: '<', Space: ' ',
+};
+
+function baseCharacterFor(code: string | undefined): string | null {
+  if (!code) return null;
+  const letter = /^Key([A-Z])$/.exec(code);
+  if (letter) return letter[1].toLowerCase();
+  const digit = /^Digit([0-9])$/.exec(code);
+  if (digit) return digit[1];
+  return BASE_CHARACTERS[code] ?? null;
+}
+
+/**
+ * Whether Alt was part of typing this character rather than a modifier on it. On a Mac the
+ * Option key is how a layout reaches its second set of characters — `@` is Option+2 on a
+ * Finnish keyboard — and the browser then reports the character with the Alt flag set. The
+ * physical key tells the two apart: when the key's own character is not the one reported,
+ * the Alt produced it. Without the physical key, a letter or digit keeps its Alt and any
+ * other character drops it.
+ */
+function altTypedCharacter(frame: Extract<InputFrame, { type: 'key' }>): boolean {
+  if (!frame.alt || Array.from(frame.key).length !== 1) return false;
+  const base = baseCharacterFor(frame.code);
+  if (base === null) return !/^[A-Za-z0-9]$/.test(frame.key);
+  return frame.key.toLowerCase() !== base;
+}
+
 /**
  * The `xdotool key` argument for a key event, or null for a modifier alone or a key with no
  * keysym. A printable character already carries its own shift (an `A`, an `!`), so shift is
- * spelled out only for a named key, where "shift+Tab" and "Tab" are different keys.
+ * spelled out only for a named key, where "shift+Tab" and "Tab" are different keys. Cmd on
+ * a Mac goes out as Ctrl: it is the key a Mac user presses for copy, paste and select-all,
+ * which the desktop's applications bind to Ctrl, while Super, its literal counterpart, is
+ * bound to nothing here and Chromium types the letter under it.
  */
 export function chordFor(frame: Extract<InputFrame, { type: 'key' }>): string | null {
   if (MODIFIER_KEYS.has(frame.key) || frame.key === 'Escape') return null;
@@ -90,9 +138,8 @@ export function chordFor(frame: Extract<InputFrame, { type: 'key' }>): string | 
   if (!keysym) return null;
   const named = Array.from(frame.key).length !== 1;
   const parts = [
-    frame.ctrl ? 'ctrl' : null,
-    frame.alt ? 'alt' : null,
-    frame.meta ? 'super' : null,
+    frame.ctrl || frame.meta ? 'ctrl' : null,
+    frame.alt && !altTypedCharacter(frame) ? 'alt' : null,
     frame.shift && named ? 'shift' : null,
     keysym,
   ];
@@ -142,7 +189,32 @@ export class DesktopInput {
         if (chord) this.write(`key ${chord}`);
         return;
       }
+      case 'text':
+        if (typeof frame.text === 'string') this.type(pasteText(frame.text));
+        return;
     }
+  }
+
+  /**
+   * Type a text into whatever has focus on the desktop, as a paste from the page does. A
+   * text is typed by its own `xdotool type`, fed through stdin: the command stream takes a
+   * line per command, and a text has newlines of its own.
+   */
+  private type(text: string): void {
+    if (!text) return;
+    this.flushMove();
+    // xdotool decodes the text through the locale, and the container has none set, under
+    // which anything beyond ASCII is an invalid sequence to it.
+    const proc = spawn('xdotool', ['type', '--file', '-'], {
+      stdio: ['pipe', 'ignore', 'pipe'],
+      env: { ...process.env, ...this.env, LC_ALL: 'C.UTF-8' },
+    });
+    proc.on('error', (err) => logger.warn({ err }, '[VoiceChat] Desktop typing process failed'));
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      const line = chunk.toString().trim();
+      if (line) logger.debug(`[VoiceChat:Input] ${line}`);
+    });
+    proc.stdin?.end(text);
   }
 
   private place(x: number, y: number): void {

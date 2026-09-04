@@ -28,6 +28,9 @@ const BUTTONS: Record<number, 'left' | 'middle' | 'right'> = { 0: 'left', 1: 'mi
  * The box can go fullscreen. The picture keeps its shape inside it, so on a monitor of
  * another shape there are bars beside or above it; the pointer maths works from where
  * the picture is drawn, not from the box.
+ *
+ * With the screen on the page but not under control, a paste types the clipboard text
+ * into the desktop, which is how text gets from the user's machine onto it.
  */
 export function ScreenView({ screenRef, hasScreen, controllable, onInput, children }: ScreenViewProps) {
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -103,6 +106,7 @@ export function ScreenView({ screenRef, hasScreen, controllable, onInput, childr
       onInput({
         type: 'key',
         key: e.key,
+        code: e.code,
         ctrl: e.ctrlKey,
         alt: e.altKey,
         shift: e.shiftKey,
@@ -127,6 +131,29 @@ export function ScreenView({ screenRef, hasScreen, controllable, onInput, childr
       document.removeEventListener('contextmenu', swallow);
     };
   }, [controlling, onInput, drawn]);
+
+  // Outside control, a paste on the page types the clipboard text into whatever has focus
+  // on the desktop. Inside control the keys go through as they are, so Cmd+V or Ctrl+V
+  // pastes the desktop's own clipboard.
+  useEffect(() => {
+    if (!controllable || !hasScreen || controlling) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const target = e.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      if (!text) return;
+      e.preventDefault();
+      onInput({ type: 'text', text });
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [controllable, hasScreen, controlling, onInput]);
 
   const takeControl = (e: MouseEvent<HTMLDivElement>) => {
     const box = boxRef.current;
@@ -182,7 +209,7 @@ export function ScreenView({ screenRef, hasScreen, controllable, onInput, childr
         <div className="absolute right-3 top-3 flex items-center gap-2">
           {canTake && (
             <p className="rounded-md bg-black/50 px-2 py-1 text-xs text-zinc-300">
-              Click to control the screen
+              Click to control the screen · paste types into it
             </p>
           )}
           <button
