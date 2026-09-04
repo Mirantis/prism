@@ -38,7 +38,8 @@ export type InputFrame =
   | { type: 'pointer_move'; dx: number; dy: number }
   | { type: 'pointer_button'; button: 'left' | 'middle' | 'right'; down: boolean }
   | { type: 'wheel'; dy: number }
-  | { type: 'key'; key: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean };
+  | { type: 'key'; key: string; code: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean }
+  | { type: 'text'; text: string };
 
 /** The user's own shared screen, a picture a second while it lasts. */
 export type ScreenShareFrame =
