@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Lens
+Comment=Lens - The way the world runs Kubernetes
+Exec=lens %U
+Terminal=false
+Type=Application
+Icon=lens-desktop
+StartupWMClass=lens
+MimeType=x-scheme-handler/lens;
+Categories=Development;Network;

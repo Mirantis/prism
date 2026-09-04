@@ -24,7 +24,7 @@
     "cleanup:local": "bash cleanup-local-prism.sh",
     "prestart": "npm run build",
     "start": "node dist/index.js",
-    "docker:build": "docker build --load -t prism-agent:local -f Dockerfile .",
+    "docker:build": "bash scripts/docker-build.sh",
     "docker:run": "docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK --entrypoint /bin/sh prism-agent:local -c './start.sh > /dev/null 2>&1 & exec prism'",
     "docker:dev": "bash scripts/docker-dev.sh",
     "postinstall": "npm run prisma:generate",

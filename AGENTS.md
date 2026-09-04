@@ -569,7 +569,9 @@ it and removes the container. `PRISM_IMAGE`, `PRISM_PORT`, `PRISM_CONTAINER` and
 `PRISM_VOLUME` override the defaults. The image still supplies `node_modules` and
 the generated Prisma client, so the script warns when its `package-lock.json` or
 Prisma schema differs from the checkout's; pull a newer image or build one with
-`npm run docker:build` then. This is the loop for anything that needs the image's
+`npm run docker:build` then. That build also puts Lens Desktop on the desktop when `gh`
+is logged in to an account that can read Lens' internal releases; a published image
+has no Lens. This is the loop for anything that needs the image's
 toolchain: in the container the voice chat's browser runs on an XFCE desktop on the
 virtual display, and the Scratchpad page shows that whole desktop, captured with
 `ffmpeg`. A click on it takes the desktop's pointer and keyboard through the browser's

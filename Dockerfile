@@ -264,6 +264,17 @@ COPY LICENSE NOTICE THIRD_PARTY_NOTICES ./
 COPY start.sh ./
 RUN chmod +x ./start.sh
 
+# Lens Desktop on the agent's desktop. Its arm64 build is published as a release asset of
+# an internal repository, which the `github_token` build secret reads; see the script for
+# what happens without one. The version is pinned to a release that has an arm64 asset.
+# The script then installs the launcher, which adds the two Chromium flags a container
+# needs, and a menu entry that runs it, in place of the package's own entry.
+ARG LENS_VERSION=2026.9.31634-internal
+ARG TARGETARCH
+RUN --mount=type=secret,id=github_token,required=false \
+    --mount=type=bind,source=scripts,target=/tmp/lens-scripts \
+    sh /tmp/lens-scripts/install-lens.sh "${LENS_VERSION}" "${TARGETARCH}" /tmp/lens-scripts
+
 # Set environment
 ENV NODE_ENV=production
 ENV PORT=3003
