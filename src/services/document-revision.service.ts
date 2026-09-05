@@ -6,18 +6,22 @@
  * writes a new revision instead of removing the revisions after it, so no step
  * of the history is lost.
  *
- * `record()` takes a transaction client rather than opening its own, because the
- * snapshot and the column write have to land or fail together — see
- * `agentWorkspaceService.writeWorkspaceDoc`.
+ * A method that has to join the caller's transaction takes a client as its first
+ * argument, because the snapshot and the column write have to land or fail
+ * together — see `agentWorkspaceService.writeWorkspaceDoc`. A method that owns
+ * its own read opens none.
  */
 
 import { createHash } from 'crypto';
 import { AgentWorkspace, AgentWorkspaceRevision, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import { trackEvent } from '../lib/telemetry';
+import { logger } from '../logger';
 import {
   DocumentWriteActor,
   DocumentWriteMethod,
   WORKSPACE_DOC_FIELDS,
+  WORKSPACE_DOC_LABELS,
   WorkspaceDocField,
 } from '../lib/workspace-docs';
 
@@ -51,6 +55,29 @@ export interface RecordRevisionInput {
   actor: DocumentWriteActor;
   method: DocumentWriteMethod;
   reason: string;
+}
+
+/**
+ * One row of the history. The content is left out: a list of 500 revisions
+ * carrying 500 whole documents is the wrong response, and the client reads the
+ * content of the two revisions it compares.
+ */
+export interface DocumentRevisionSummary {
+  id: string;
+  actor: string;
+  method: string;
+  reason: string;
+  contentHash: string;
+  createdAt: Date;
+}
+
+/** The history of one document, and whether the document still agrees with it. */
+export interface DocumentHistory {
+  field: WorkspaceDocField;
+  bound: number;
+  drifted: boolean;
+  liveHash: string;
+  revisions: DocumentRevisionSummary[];
 }
 
 /**
@@ -92,6 +119,49 @@ function baselineRows(agent: AgentWorkspace, fields: WorkspaceDocField[], reason
       reason,
     }),
   );
+}
+
+/**
+ * Whether a document disagrees with the newest revision of it, which is what a
+ * write that went around the write path leaves behind — a shell writing
+ * `/data/agent.db`, or an edit to the file itself.
+ *
+ * No revision at all is not a disagreement: that is a fresh database, before the
+ * boot baseline runs.
+ */
+export function documentDrift(
+  liveContent: string,
+  newest: { contentHash: string } | null,
+): boolean {
+  if (!newest) return false;
+  return documentHash(liveContent) !== newest.contentHash;
+}
+
+/**
+ * Drift already reported, keyed on the field and the content that drifted.
+ * Remembered for the life of the process, the shape `tool-risk-gate.ts` uses for
+ * its truncation warning: the Profile page polls this history, and one line per
+ * poll would bury the finding. A second out-of-band write is a new hash, so it
+ * is reported again.
+ */
+const reportedDrift = new Set<string>();
+
+function reportDrift(agentId: string, field: WorkspaceDocField, liveHash: string, revisionHash: string): void {
+  const key = `${field}:${liveHash}`;
+  if (reportedDrift.has(key)) return;
+  reportedDrift.add(key);
+
+  logger.warn(
+    { agentId, field, liveHash, revisionHash },
+    `[DocumentRevisions] ${WORKSPACE_DOC_LABELS[field]} does not agree with its newest revision; it was written outside the write path`,
+  );
+  // Hash prefixes only. The content and the reason text stay out of telemetry.
+  trackEvent('agent document drift detected', null, {
+    'agent.id': agentId,
+    'config.field': field,
+    'document.live_hash': liveHash.slice(0, 12),
+    'document.revision_hash': revisionHash.slice(0, 12),
+  });
 }
 
 class DocumentRevisionService {
@@ -147,6 +217,51 @@ class DocumentRevisionService {
       data: baselineRows(agent, missing, UPGRADE_REASON),
     });
     return missing;
+  }
+
+  /**
+   * The history of one document, newest first, with the drift verdict for the
+   * content the column holds now. Reporting the drift is part of reading it:
+   * this is the only place the two hashes meet.
+   */
+  async history(agent: AgentWorkspace, field: WorkspaceDocField): Promise<DocumentHistory> {
+    const revisions = await prisma.agentWorkspaceRevision.findMany({
+      where: { agentId: agent.id, field },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { id: true, actor: true, method: true, reason: true, contentHash: true, createdAt: true },
+    });
+
+    const liveHash = documentHash(agent[field]);
+    const drifted = documentDrift(agent[field], revisions[0] ?? null);
+    if (drifted) reportDrift(agent.id, field, liveHash, revisions[0].contentHash);
+
+    return { field, bound: MAX_REVISIONS_PER_DOCUMENT, drifted, liveHash, revisions };
+  }
+
+  /**
+   * One revision with its content. Scoped to the field as well as the agent, so
+   * an id from another document is not found rather than served under the wrong
+   * document.
+   */
+  async get(
+    client: Prisma.TransactionClient,
+    agentId: string,
+    field: WorkspaceDocField,
+    id: string,
+  ): Promise<AgentWorkspaceRevision | null> {
+    return client.agentWorkspaceRevision.findFirst({ where: { id, agentId, field } });
+  }
+
+  /** The newest revision of one document, or null while it has none. */
+  async newest(
+    client: Prisma.TransactionClient,
+    agentId: string,
+    field: WorkspaceDocField,
+  ): Promise<AgentWorkspaceRevision | null> {
+    return client.agentWorkspaceRevision.findFirst({
+      where: { agentId, field },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
   }
 
   /**

@@ -15,6 +15,7 @@ import { heartbeatService } from '../services/heartbeat.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { applyEdits } from '../lib/apply-edit';
 import { refuseLockedWrite } from '../lib/locked-in';
+import { WORKSPACE_DOC_LABELS } from '../lib/workspace-docs';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { config } from '../config';
@@ -49,9 +50,9 @@ async function resolveWorkspaceFileUpdate(
   agentId: string,
   field: WorkspaceFileField,
   input: WorkspaceFileInput,
-  label: string,
 ): Promise<{ success: boolean; message?: string; error?: string }> {
   const { newContent, edits, changeDescription } = input;
+  const label = WORKSPACE_DOC_LABELS[field];
 
   // Every markdown-writing tool funnels through here, so one live read of the
   // lock covers all of them in every invocation mode. This check enforces the
@@ -133,26 +134,26 @@ export function getAgentConfigTools(): Record<string, Tool> {
     update_soul: tool({
       description: 'Update your soul (personality, values, boundaries). Supports full replacement (newContent) or targeted edits.',
       inputSchema: workspaceFileInputSchema,
-      execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'soulMd', input, 'Soul'),
+      execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'soulMd', input),
     }),
 
     update_memory: tool({
       description: 'Update your curated memory summary (always in context). Supports full replacement (newContent) or targeted edits.',
       inputSchema: workspaceFileInputSchema,
-      execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'memoryMd', input, 'Memory summary'),
+      execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'memoryMd', input),
     }),
 
     update_user_profile: tool({
       description: 'Update the user profile with information learned from conversation. Supports full replacement (newContent) or targeted edits (preferred for small changes).',
       inputSchema: workspaceFileInputSchema,
-      execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'userMd', input, 'User profile'),
+      execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'userMd', input),
     }),
 
     update_heartbeat_config: tool({
       description: 'Update heartbeat configuration. Supports full replacement (newContent) or targeted edits.',
       inputSchema: workspaceFileInputSchema,
       execute: async (input) => {
-        const result = await resolveWorkspaceFileUpdate(agentId, 'heartbeatMd', input, 'Heartbeat config');
+        const result = await resolveWorkspaceFileUpdate(agentId, 'heartbeatMd', input);
 
         if (result.success) {
           const agent = await prisma.agentWorkspace.findUnique({ where: { id: agentId } });
@@ -245,7 +246,7 @@ export function getAgentConfigTools(): Record<string, Tool> {
     update_vision: tool({
       description: "Update the user's vision document. Supports full replacement (newContent) or targeted edits.",
       inputSchema: workspaceFileInputSchema,
-      execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'visionMd', input, 'Vision'),
+      execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'visionMd', input),
     }),
 
     clear_bootstrap: tool({
