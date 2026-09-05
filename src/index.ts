@@ -42,6 +42,7 @@ import { pluginMcpService } from './services/plugin-mcp.service';
 import { updateService } from './services/update/update.service';
 import { pluginCatalogService } from './services/plugin-catalog.service';
 import { reconcileAttachmentStorage } from './lib/attachment-boot';
+import { backfillDocumentRevisions } from './lib/document-revision-boot';
 import { startFileJanitor } from './lib/file-janitor';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
@@ -200,6 +201,10 @@ const initialize = async () => {
       where: { id: agent.id, status: 'RUNNING' },
       data: { status: 'IDLE' },
     });
+
+    // An install upgraded from a build without the revision table gains a
+    // baseline here, holding what each identity document reads now.
+    await backfillDocumentRevisions(agent);
 
     heartbeatService.startHeartbeat(agent);
     logger.info('Heartbeat started');

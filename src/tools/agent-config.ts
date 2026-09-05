@@ -2,8 +2,10 @@
  * Agent-config tools — direct AI SDK tools (no MCP round trip).
  *
  * Update soul / memory / user / heartbeat / settings / vision /
- * bootstrap. Direct Prisma writes + in-process service calls
- * (heartbeatService.startHeartbeat after config changes).
+ * bootstrap. A document write goes through
+ * `agentWorkspaceService.writeWorkspaceDoc`, which records the revision; the
+ * settings write is a direct Prisma write. Both call
+ * `heartbeatService.startHeartbeat` when they change what a heartbeat run reads.
  */
 
 import { Tool, tool } from 'ai';
@@ -84,7 +86,14 @@ async function resolveWorkspaceFileUpdate(
     finalContent = result.content;
   }
 
-  await prisma.agentWorkspace.update({ where: { id: agentId }, data: { [field]: finalContent } });
+  await agentWorkspaceService.writeWorkspaceDoc({
+    agentId,
+    field,
+    content: finalContent,
+    actor: 'agent',
+    method: newContent !== undefined ? 'replace' : 'edit',
+    reason: changeDescription,
+  });
   trackEvent('agent config updated', null, {
     'agent.id': agentId,
     'config.field': field,
@@ -251,7 +260,14 @@ export function getAgentConfigTools(): Record<string, Tool> {
         if (await agentWorkspaceService.isLockedIn()) {
           return refuseLockedWrite(agentId, 'bootstrapMd');
         }
-        await prisma.agentWorkspace.update({ where: { id: agentId }, data: { bootstrapMd: '' } });
+        await agentWorkspaceService.writeWorkspaceDoc({
+          agentId,
+          field: 'bootstrapMd',
+          content: '',
+          actor: 'agent',
+          method: 'clear',
+          reason: confirmationMessage,
+        });
         trackEvent('agent config updated', null, {
           'agent.id': agentId,
           'config.field': 'bootstrapMd',

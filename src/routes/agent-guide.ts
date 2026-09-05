@@ -20,8 +20,9 @@ const router = Router();
 
 /**
  * PATCH /agents/agent-guide
- * Body: { agentMd: string } — the whole document; an empty string clears it,
- * which drops the `# Agent Guide` section from the prompt. There is no
+ * Body: { agentMd: string, reason?: string } — the whole document; an empty
+ * string clears it, which drops the `# Agent Guide` section from the prompt.
+ * `reason` is the note the document's history shows for this write. There is no
  * concurrency control: the last write wins, so two editors open at once
  * overwrite each other instead of merging.
  */
@@ -32,7 +33,7 @@ router.patch('/agent-guide', async (req: Request, res: Response) => {
       res.status(400).json({ error: "missing required field 'agentMd'" });
       return;
     }
-    const agentMd = await agentWorkspaceService.updateAgentGuide(body.agentMd);
+    const agentMd = await agentWorkspaceService.updateAgentGuide(body.agentMd, body.reason);
     res.json({ agentMd });
   } catch (error: unknown) {
     if (error instanceof ValidationError) {
