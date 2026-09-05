@@ -114,6 +114,7 @@ model AgentWorkspace {
   goals                  Goal[]
   memoryEntries          MemoryEntry[]
   llmCalls               LlmCall[]
+  documentRevisions      AgentWorkspaceRevision[]
   slackMappings          SlackMapping[]
   slackVerificationCodes SlackVerificationCode[]
   slackHeartbeatTriggers SlackHeartbeatTrigger[]
@@ -127,6 +128,36 @@ model AgentWorkspace {
 
   @@index([userId])
   @@map("agent_workspaces")
+}
+
+// One snapshot of one identity document, written by every accepted write to
+// `soulMd`, `userMd`, `memoryMd`, `heartbeatMd`, `visionMd`, `agentMd` or
+// `bootstrapMd`. Append-only: a restore writes a new row rather than removing
+// the rows after it, so no step of the history is lost.
+//
+// `field` is the column name, `actor` is `agent` or `user`, and `method` is
+// `seed`, `replace`, `edit`, `clear`, `rest` or `rollback` — the same words
+// the `agent config updated` event already carries. `contentHash` is the
+// sha256 of `content`: a document that no longer agrees with its newest
+// revision was written outside the write path.
+//
+// Each document keeps its 500 newest revisions. The insert deletes anything
+// older in the same transaction (services/document-revision.service.ts).
+model AgentWorkspaceRevision {
+  id          String   @id @default(uuid())
+  agentId     String
+  field       String
+  content     String
+  contentHash String
+  actor       String
+  method      String
+  reason      String
+  createdAt   DateTime @default(now())
+
+  agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, field, createdAt])
+  @@map("agent_workspace_revisions")
 }
 
 // ============================================================================
