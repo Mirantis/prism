@@ -28,6 +28,7 @@ import { messagesRouter } from './routes/messages';
 import { webhookRouter } from './routes/webhook';
 import { lockedInRouter } from './routes/locked-in';
 import { agentGuideRouter } from './routes/agent-guide';
+import { documentRevisionsRouter } from './routes/document-revisions';
 import { updateRouter } from './routes/update';
 import { originGuard } from './lib/origin-guard';
 import { activityRouter } from './routes/activity';
@@ -56,6 +57,9 @@ export function createApp() {
 
   // Agent guide editing (PATCH /agents/agent-guide)
   app.use('/agents', agentGuideRouter);
+
+  // Identity-document history and restore (/agents/documents/:field/revisions)
+  app.use('/agents', documentRevisionsRouter);
 
   // Self-update (GET /agents/update/status, POST /agents/update)
   app.use('/agents', updateRouter);

@@ -24,6 +24,27 @@ export const WORKSPACE_DOC_FIELDS = [
 
 export type WorkspaceDocField = (typeof WORKSPACE_DOC_FIELDS)[number];
 
+/** Narrow a path segment or a request field to one of the seven columns. */
+export function isWorkspaceDocField(value: unknown): value is WorkspaceDocField {
+  return (
+    typeof value === 'string' && (WORKSPACE_DOC_FIELDS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * What each document is called where a person reads it: a tool's confirmation
+ * message and a log line naming the document that drifted.
+ */
+export const WORKSPACE_DOC_LABELS: Record<WorkspaceDocField, string> = {
+  agentMd: 'Agent Guide',
+  soulMd: 'Soul',
+  userMd: 'User profile',
+  heartbeatMd: 'Heartbeat config',
+  memoryMd: 'Memory summary',
+  visionMd: 'Vision',
+  bootstrapMd: 'Bootstrap',
+};
+
 /** Who wrote a revision. A heartbeat write and a chat write are both the agent. */
 export type DocumentWriteActor = 'agent' | 'user';
 

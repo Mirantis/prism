@@ -8,7 +8,7 @@
  * all agent operations here via the management API.
  */
 
-import { AgentWorkspace } from '@prisma/client';
+import { AgentWorkspace, AgentWorkspaceRevision } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../lib/prisma';
 import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
@@ -73,6 +73,15 @@ function normalizeModelOverride(model: unknown): string | null {
   throw new ValidationError('model must be a string or null');
 }
 
+/**
+ * The note a restore records when the caller supplies none. It names the
+ * revision that was restored, since the history row otherwise says only that
+ * something was restored.
+ */
+function defaultRollbackReason(restoredFrom: Date): string {
+  return `Restored the revision from ${restoredFrom.toISOString()}.`;
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -114,6 +123,28 @@ export interface WriteWorkspaceDocInput {
   method: DocumentWriteMethod;
   reason: string;
 }
+
+/**
+ * One restore of one identity document. `expectedRevisionId` is the newest
+ * revision the caller read; a write that lands in between makes it stale and the
+ * restore is refused rather than applied over the newer content.
+ */
+export interface RollbackWorkspaceDocInput {
+  agentId: string;
+  field: WorkspaceDocField;
+  revisionId: string;
+  expectedRevisionId: string;
+  reason: string;
+}
+
+/**
+ * What a restore did. A union rather than a thrown error, so the route maps each
+ * outcome to its status code and nothing else has to know the codes.
+ */
+export type RollbackWorkspaceDocResult =
+  | { status: 'restored'; content: string; revision: AgentWorkspaceRevision }
+  | { status: 'revision_not_found' }
+  | { status: 'stale'; newestRevisionId: string | null };
 
 /**
  * Thrown when caller input fails validation. Lets HTTP callers map to 400
@@ -479,6 +510,68 @@ class AgentWorkspaceService {
       });
       return updated[input.field];
     });
+  }
+
+  /**
+   * Restore an earlier revision of one identity document.
+   *
+   * Everything happens in one transaction, because a check outside it is not a
+   * check: the target revision is read, the newest revision is compared against
+   * `expectedRevisionId`, the column is replaced and the restore is recorded as a
+   * revision of its own. So the history keeps every step and a restore is itself
+   * reversible.
+   *
+   * Locked-in mode does not gate this. That lock withholds the agent's own
+   * writers, and a restore is the user acting.
+   */
+  async rollbackWorkspaceDoc(
+    input: RollbackWorkspaceDocInput,
+  ): Promise<RollbackWorkspaceDocResult> {
+    const result = await prisma.$transaction<RollbackWorkspaceDocResult>(async (tx) => {
+      const target = await documentRevisionService.get(
+        tx,
+        input.agentId,
+        input.field,
+        input.revisionId,
+      );
+      if (!target) return { status: 'revision_not_found' };
+
+      const newest = await documentRevisionService.newest(tx, input.agentId, input.field);
+      if ((newest?.id ?? null) !== input.expectedRevisionId) {
+        return { status: 'stale', newestRevisionId: newest?.id ?? null };
+      }
+
+      await tx.agentWorkspace.update({
+        where: { id: input.agentId },
+        data: { [input.field]: target.content },
+      });
+      const revision = await documentRevisionService.record(tx, {
+        agentId: input.agentId,
+        field: input.field,
+        content: target.content,
+        actor: 'user',
+        method: 'rollback',
+        reason: input.reason.trim() || defaultRollbackReason(target.createdAt),
+      });
+      return { status: 'restored', content: target.content, revision };
+    });
+
+    if (result.status === 'restored') {
+      trackEvent('agent config updated', null, {
+        'agent.id': input.agentId,
+        'config.field': input.field,
+        'config.method': 'rollback',
+      });
+    }
+    if (result.status === 'stale') {
+      // The same shape as a refused locked write: the field and why, no content.
+      trackEvent('agent document restore refused', null, {
+        'agent.id': input.agentId,
+        'config.field': input.field,
+        'restore.refusal': 'stale_revision',
+      });
+    }
+    return result;
   }
 
   /**

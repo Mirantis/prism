@@ -22,6 +22,7 @@ const { mockPrisma, mockTrackEvent } = vi.hoisted(() => {
     agentWorkspaceRevision: {
       create: vi.fn(),
       createMany: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       deleteMany: vi.fn(),
     },
@@ -469,5 +470,108 @@ describe('AgentWorkspaceService identity-document writes', () => {
 
     expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
     expect(mockPrisma.agentWorkspaceRevision.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentWorkspaceService.rollbackWorkspaceDoc', () => {
+  const target = {
+    id: 'rev-old',
+    content: '# The soul as it was',
+    createdAt: new Date('2026-09-01T08:30:00.000Z'),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma),
+    );
+    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow());
+    mockPrisma.agentWorkspaceRevision.create.mockResolvedValue({ id: 'rev-new' });
+    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([]);
+    // The target revision, then the newest one the caller expects.
+    mockPrisma.agentWorkspaceRevision.findFirst
+      .mockResolvedValueOnce(target)
+      .mockResolvedValueOnce({ id: 'rev-newest' });
+  });
+
+  function restore(overrides: Record<string, unknown> = {}) {
+    return agentWorkspaceService.rollbackWorkspaceDoc({
+      agentId,
+      field: 'soulMd',
+      revisionId: 'rev-old',
+      expectedRevisionId: 'rev-newest',
+      reason: 'Undid the edit from yesterday.',
+      ...overrides,
+    });
+  }
+
+  it('writes the restored content and appends a rollback revision in one transaction', async () => {
+    const result = await restore();
+
+    expect(result).toEqual({
+      status: 'restored',
+      content: '# The soul as it was',
+      revision: { id: 'rev-new' },
+    });
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+      where: { id: agentId },
+      data: { soulMd: '# The soul as it was' },
+    });
+    expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledWith({
+      data: {
+        agentId,
+        field: 'soulMd',
+        content: '# The soul as it was',
+        contentHash: documentHash('# The soul as it was'),
+        actor: 'user',
+        method: 'rollback',
+        reason: 'Undid the edit from yesterday.',
+      },
+    });
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent config updated', null, {
+      'agent.id': agentId,
+      'config.field': 'soulMd',
+      'config.method': 'rollback',
+    });
+  });
+
+  it('records when the restored revision was written, for a caller that gives no reason', async () => {
+    await restore({ reason: '   ' });
+
+    expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        reason: 'Restored the revision from 2026-09-01T08:30:00.000Z.',
+      }),
+    });
+  });
+
+  it('refuses a stale expected revision without writing', async () => {
+    mockPrisma.agentWorkspaceRevision.findFirst.mockReset();
+    mockPrisma.agentWorkspaceRevision.findFirst
+      .mockResolvedValueOnce(target)
+      .mockResolvedValueOnce({ id: 'rev-written-since' });
+
+    const result = await restore();
+
+    expect(result).toEqual({ status: 'stale', newestRevisionId: 'rev-written-since' });
+    expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    expect(mockPrisma.agentWorkspaceRevision.create).not.toHaveBeenCalled();
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent document restore refused', null, {
+      'agent.id': agentId,
+      'config.field': 'soulMd',
+      'restore.refusal': 'stale_revision',
+    });
+  });
+
+  it('reports a revision id that belongs to another document as not found', async () => {
+    mockPrisma.agentWorkspaceRevision.findFirst.mockReset();
+    mockPrisma.agentWorkspaceRevision.findFirst.mockResolvedValue(null);
+
+    const result = await restore();
+
+    expect(result).toEqual({ status: 'revision_not_found' });
+    expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    expect(mockTrackEvent).not.toHaveBeenCalled();
   });
 });
