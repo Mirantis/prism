@@ -15,6 +15,8 @@ import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { config } from '../config';
+import { DocumentWriteActor, DocumentWriteMethod, WorkspaceDocField } from '../lib/workspace-docs';
+import { documentRevisionService } from './document-revision.service';
 
 // Format-only validation for the per-agent model override. Letters/digits and
 // a small set of separators cover Bedrock inference-profile IDs, region-prefixed
@@ -100,6 +102,20 @@ export interface CreateAgentInput {
 }
 
 /**
+ * One write to one identity document. `reason` is what the history shows the
+ * user: the agent supplies its `changeDescription`, and a user write supplies
+ * its own note.
+ */
+export interface WriteWorkspaceDocInput {
+  agentId: string;
+  field: WorkspaceDocField;
+  content: string;
+  actor: DocumentWriteActor;
+  method: DocumentWriteMethod;
+  reason: string;
+}
+
+/**
  * Thrown when caller input fails validation. Lets HTTP callers map to 400
  * while non-HTTP callers (e.g. agent tools) just surface the message.
  */
@@ -128,26 +144,33 @@ class AgentWorkspaceService {
       .replace(/\{\{agentName\}\}/g, () => input.name)
       .replace(/\{\{teamName\}\}/g, () => input.teamName);
 
-    const agent = await prisma.agentWorkspace.create({
-      data: {
-        id: input.id,
-        userId: input.userId,
-        name: input.name,
-        agentType: input.agentType,
-        soulMd: defaults.soulMd,
-        userMd: defaults.userMd,
-        memoryMd: defaults.memoryMd,
-        heartbeatMd: defaults.heartbeatMd,
-        bootstrapMd,
-        visionMd: defaults.visionMd,
-        agentMd: defaults.agentMd,
-        currentSessionId: uuidv4(),
-        // Seed model overrides from ~/.prism/settings.json when present; null
-        // leaves the agent on the env-default model (resolveEffectiveModel).
-        model: config.agentDefaults?.model ?? null,
-        heartbeatModel: config.agentDefaults?.heartbeatModel ?? null,
-        cronModel: config.agentDefaults?.cronModel ?? null,
-      },
+    // The seed revisions land with the row, so the content the agent was
+    // created with is the oldest thing its history holds. Without them the
+    // oldest reachable state is the first edit.
+    const agent = await prisma.$transaction(async (tx) => {
+      const created = await tx.agentWorkspace.create({
+        data: {
+          id: input.id,
+          userId: input.userId,
+          name: input.name,
+          agentType: input.agentType,
+          soulMd: defaults.soulMd,
+          userMd: defaults.userMd,
+          memoryMd: defaults.memoryMd,
+          heartbeatMd: defaults.heartbeatMd,
+          bootstrapMd,
+          visionMd: defaults.visionMd,
+          agentMd: defaults.agentMd,
+          currentSessionId: uuidv4(),
+          // Seed model overrides from ~/.prism/settings.json when present; null
+          // leaves the agent on the env-default model (resolveEffectiveModel).
+          model: config.agentDefaults?.model ?? null,
+          heartbeatModel: config.agentDefaults?.heartbeatModel ?? null,
+          cronModel: config.agentDefaults?.cronModel ?? null,
+        },
+      });
+      await documentRevisionService.recordSeeds(tx, created);
+      return created;
     });
     trackEvent('agent created', input.userId, {
       'agent.id': agent.id,
@@ -432,26 +455,59 @@ class AgentWorkspaceService {
   }
 
   /**
+   * The one write path for an identity document. It replaces the column and
+   * appends a revision in one transaction, so a document and its history cannot
+   * disagree: a failed write leaves neither.
+   *
+   * It decides nothing else. The caller checks the lock, restarts the heartbeat
+   * and emits its own telemetry, because each of those differs per call site
+   * while this does not. Returns the stored content.
+   */
+  async writeWorkspaceDoc(input: WriteWorkspaceDocInput): Promise<string> {
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.agentWorkspace.update({
+        where: { id: input.agentId },
+        data: { [input.field]: input.content },
+      });
+      await documentRevisionService.record(tx, {
+        agentId: input.agentId,
+        field: input.field,
+        content: input.content,
+        actor: input.actor,
+        method: input.method,
+        reason: input.reason,
+      });
+      return updated[input.field];
+    });
+  }
+
+  /**
    * Replace the agent guide (`agentMd`), which reaches the system prompt as
    * `# Agent Guide`. The user owns this document: no tool writes it, so this is
    * the only write path, and locked-in mode does not gate it — that lock covers
    * what the agent's own tools may rewrite.
+   *
+   * `reason` is the note the history shows for this write.
    */
-  async updateAgentGuide(agentMd: unknown): Promise<string> {
+  async updateAgentGuide(agentMd: unknown, reason?: unknown): Promise<string> {
     if (typeof agentMd !== 'string') {
       throw new ValidationError('agentMd must be a string');
     }
     const agent = await this.getAgent();
-    const updated = await prisma.agentWorkspace.update({
-      where: { id: agent.id },
-      data: { agentMd },
+    const stored = await this.writeWorkspaceDoc({
+      agentId: agent.id,
+      field: 'agentMd',
+      content: agentMd,
+      actor: 'user',
+      method: 'rest',
+      reason: typeof reason === 'string' ? reason : '',
     });
     trackEvent('agent config updated', null, {
-      'agent.id': updated.id,
+      'agent.id': agent.id,
       'config.field': 'agentMd',
       'config.method': 'rest',
     });
-    return updated.agentMd;
+    return stored;
   }
 
   /** Cron equivalent of {@link updateHeartbeatModel}. */

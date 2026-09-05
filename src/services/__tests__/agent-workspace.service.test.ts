@@ -8,13 +8,22 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockPrisma, mockTrackEvent } = vi.hoisted(() => ({
-  mockPrisma: {
+const { mockPrisma, mockTrackEvent } = vi.hoisted(() => {
+  const prisma = {
+    // The transaction client is the same mock, so a write inside a transaction
+    // is asserted like any other.
+    $transaction: vi.fn(),
     agentWorkspace: {
       create: vi.fn(),
       delete: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
+    },
+    agentWorkspaceRevision: {
+      create: vi.fn(),
+      createMany: vi.fn(),
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
     },
     agentSubagent: {
       findUnique: vi.fn(),
@@ -22,9 +31,9 @@ const { mockPrisma, mockTrackEvent } = vi.hoisted(() => ({
       create: vi.fn(),
       delete: vi.fn(),
     },
-  },
-  mockTrackEvent: vi.fn(),
-}));
+  };
+  return { mockPrisma: prisma, mockTrackEvent: vi.fn() };
+});
 
 vi.mock('../../lib/prisma', () => ({
   prisma: mockPrisma,
@@ -37,6 +46,8 @@ vi.mock('../../lib/telemetry', () => ({
 }));
 
 import { agentWorkspaceService } from '../agent-workspace.service';
+import { documentHash } from '../document-revision.service';
+import { WORKSPACE_DOC_FIELDS } from '../../lib/workspace-docs';
 import { config } from '../../config';
 
 // config.agentId is mocked globally to 'test-agent-id' (test-utils/setup.ts).
@@ -49,6 +60,14 @@ function createAgentRow(overrides: Record<string, unknown> = {}) {
     name: 'Prism',
     agentType: 'AGENT',
     model: null,
+    // Every identity document, since a write to one records its content.
+    agentMd: '# Guide',
+    soulMd: '# Soul',
+    userMd: '# User',
+    heartbeatMd: '# Heartbeat',
+    memoryMd: '# Memory',
+    visionMd: '',
+    bootstrapMd: '# Bootstrap',
     ...overrides,
   };
 }
@@ -56,7 +75,12 @@ function createAgentRow(overrides: Record<string, unknown> = {}) {
 describe('AgentWorkspaceService telemetry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma),
+    );
     mockPrisma.agentWorkspace.findUnique.mockResolvedValue(createAgentRow());
+    mockPrisma.agentWorkspaceRevision.create.mockResolvedValue({ id: 'rev-1' });
+    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([]);
   });
 
   it('emits "agent created" with the agent type on createAgent', async () => {
@@ -319,5 +343,131 @@ describe('AgentWorkspaceService telemetry', () => {
 
     expect(result).toBe('link_not_found');
     expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentWorkspaceService identity-document writes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma),
+    );
+    mockPrisma.agentWorkspace.findUnique.mockResolvedValue(createAgentRow());
+    mockPrisma.agentWorkspaceRevision.create.mockResolvedValue({ id: 'rev-1' });
+    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([]);
+  });
+
+  it('writes the column and appends one revision in the same transaction', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ soulMd: '# Rewritten' }));
+
+    const stored = await agentWorkspaceService.writeWorkspaceDoc({
+      agentId,
+      field: 'soulMd',
+      content: '# Rewritten',
+      actor: 'agent',
+      method: 'replace',
+      reason: 'Sharpened the tone.',
+    });
+
+    expect(stored).toBe('# Rewritten');
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+      where: { id: agentId },
+      data: { soulMd: '# Rewritten' },
+    });
+    expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledWith({
+      data: {
+        agentId,
+        field: 'soulMd',
+        content: '# Rewritten',
+        contentHash: documentHash('# Rewritten'),
+        actor: 'agent',
+        method: 'replace',
+        reason: 'Sharpened the tone.',
+      },
+    });
+  });
+
+  it('writes no revision when the column write rejects', async () => {
+    mockPrisma.agentWorkspace.update.mockRejectedValue(new Error('database is locked'));
+
+    await expect(
+      agentWorkspaceService.writeWorkspaceDoc({
+        agentId,
+        field: 'soulMd',
+        content: '# Rewritten',
+        actor: 'agent',
+        method: 'replace',
+        reason: 'Sharpened the tone.',
+      }),
+    ).rejects.toThrow('database is locked');
+
+    expect(mockPrisma.agentWorkspaceRevision.create).not.toHaveBeenCalled();
+  });
+
+  it('records a seed revision for each of the seven documents on createAgent', async () => {
+    const created = createAgentRow({ id: 'agent-new' });
+    mockPrisma.agentWorkspace.create.mockResolvedValue(created);
+
+    await agentWorkspaceService.createAgent({
+      id: 'agent-new',
+      userId: 'user-1',
+      name: 'Helper',
+      agentType: 'AGENT',
+      teamName: 'Team',
+    });
+
+    const { data } = mockPrisma.agentWorkspaceRevision.createMany.mock.calls[0][0];
+    expect(data.map((row: Record<string, unknown>) => row.field)).toEqual([
+      ...WORKSPACE_DOC_FIELDS,
+    ]);
+    for (const row of data as Array<Record<string, unknown>>) {
+      expect(row.agentId).toBe('agent-new');
+      expect(row.actor).toBe('user');
+      expect(row.method).toBe('seed');
+      expect(row.content).toBe(created[row.field as keyof typeof created]);
+      expect(row.contentHash).toBe(documentHash(row.content as string));
+    }
+  });
+
+  it('records the agent guide as a user REST write carrying the reason', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ agentMd: '# New guide' }));
+
+    const stored = await agentWorkspaceService.updateAgentGuide('# New guide', 'Added a lint rule.');
+
+    expect(stored).toBe('# New guide');
+    expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        field: 'agentMd',
+        actor: 'user',
+        method: 'rest',
+        reason: 'Added a lint rule.',
+      }),
+    });
+    // The revision does not double the event the write already emitted.
+    expect(mockTrackEvent).toHaveBeenCalledTimes(1);
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent config updated', null, {
+      'agent.id': agentId,
+      'config.field': 'agentMd',
+      'config.method': 'rest',
+    });
+  });
+
+  it('records an empty reason when the guide write supplies none', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ agentMd: '' }));
+
+    await agentWorkspaceService.updateAgentGuide('');
+
+    expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ field: 'agentMd', content: '', reason: '' }),
+    });
+  });
+
+  it('rejects a non-string guide without writing a revision', async () => {
+    await expect(agentWorkspaceService.updateAgentGuide(42)).rejects.toThrow('must be a string');
+
+    expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    expect(mockPrisma.agentWorkspaceRevision.create).not.toHaveBeenCalled();
   });
 });

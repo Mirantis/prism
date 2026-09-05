@@ -18,8 +18,16 @@ import express from 'express';
 const { mockGetAgent, mockPrisma, mockTrackEvent } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockPrisma: {
+    // The transaction client is the same mock, so the write and its revision are
+    // asserted like any other call.
+    $transaction: vi.fn(),
     agentWorkspace: {
       update: vi.fn(),
+    },
+    agentWorkspaceRevision: {
+      create: vi.fn(),
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
     },
   },
   mockTrackEvent: vi.fn(),
@@ -71,6 +79,11 @@ const GUIDE = '# Agent Guide\n\n- Ship small changes.\n';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrisma.$transaction.mockImplementation(
+    async (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma),
+  );
+  mockPrisma.agentWorkspaceRevision.create.mockResolvedValue({ id: 'rev-1' });
+  mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([]);
   mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', agentMd: 'old guide' });
 });
 
@@ -128,6 +141,25 @@ describe('PATCH /agents/agent-guide', () => {
       'agent.id': 'agent-1',
       'config.field': 'agentMd',
       'config.method': 'rest',
+    });
+  });
+
+  it('records a revision carrying the reason from the body', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue({ id: 'agent-1', agentMd: GUIDE });
+
+    await request(createTestApp())
+      .patch('/agents/agent-guide')
+      .send({ agentMd: GUIDE, reason: 'Added the review rule.' });
+
+    expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        agentId: 'agent-1',
+        field: 'agentMd',
+        content: GUIDE,
+        actor: 'user',
+        method: 'rest',
+        reason: 'Added the review rule.',
+      }),
     });
   });
 

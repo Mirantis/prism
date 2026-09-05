@@ -2,9 +2,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockPrisma, mockHeartbeatService, mockTrackEvent } = vi.hoisted(() => ({
   mockPrisma: {
+    // The transaction client is the same mock, so a document write inside a
+    // transaction is asserted like any other.
+    $transaction: vi.fn(),
     agentWorkspace: {
       findUnique: vi.fn(),
       update: vi.fn(),
+    },
+    agentWorkspaceRevision: {
+      create: vi.fn(),
+      createMany: vi.fn(),
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
     },
   },
   mockHeartbeatService: {
@@ -28,6 +37,7 @@ vi.mock('../../lib/telemetry', () => ({
 }));
 
 import { getAgentConfigTools } from '../agent-config';
+import { documentHash } from '../../services/document-revision.service';
 
 function createTestAgentWorkspace(overrides: Record<string, unknown> = {}) {
   return {
@@ -68,8 +78,13 @@ describe('getAgentConfigTools', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma),
+    );
     mockPrisma.agentWorkspace.update.mockResolvedValue(testAgent);
     mockPrisma.agentWorkspace.findUnique.mockResolvedValue(testAgent);
+    mockPrisma.agentWorkspaceRevision.create.mockResolvedValue({ id: 'rev-1' });
+    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([]);
     tools = getAgentConfigTools() as unknown as Record<
       string,
       { execute: ToolExecute }
@@ -632,6 +647,82 @@ describe('getAgentConfigTools', () => {
         where: { id: agentId },
         data: { soulMd: '# Soul\nrewritten' },
       });
+    });
+  });
+
+  describe('document revisions', () => {
+    /** The `data` of the one revision the call recorded. */
+    function recordedRevision(): Record<string, unknown> {
+      expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledTimes(1);
+      return mockPrisma.agentWorkspaceRevision.create.mock.calls[0][0].data;
+    }
+
+    it('records a replace as an agent write carrying the change description', async () => {
+      await tools.update_soul.execute({
+        newContent: '# Soul\nrewritten',
+        changeDescription: 'Softened the greeting.',
+      });
+
+      expect(recordedRevision()).toEqual({
+        agentId,
+        field: 'soulMd',
+        content: '# Soul\nrewritten',
+        contentHash: documentHash('# Soul\nrewritten'),
+        actor: 'agent',
+        method: 'replace',
+        reason: 'Softened the greeting.',
+      });
+    });
+
+    it('records a targeted edit with the merged content and method=edit', async () => {
+      await tools.update_memory.execute({
+        edits: [{ oldText: 'No memories yet.', newText: 'One memory.' }],
+        changeDescription: 'Recorded the first memory.',
+      });
+
+      expect(recordedRevision()).toEqual({
+        agentId,
+        field: 'memoryMd',
+        content: '# Memory\nOne memory.',
+        contentHash: documentHash('# Memory\nOne memory.'),
+        actor: 'agent',
+        method: 'edit',
+        reason: 'Recorded the first memory.',
+      });
+    });
+
+    it('records clear_bootstrap as an empty document with the confirmation as the reason', async () => {
+      await tools.clear_bootstrap.execute({ confirmationMessage: 'Onboarding is complete.' });
+
+      expect(recordedRevision()).toEqual({
+        agentId,
+        field: 'bootstrapMd',
+        content: '',
+        contentHash: documentHash(''),
+        actor: 'agent',
+        method: 'clear',
+        reason: 'Onboarding is complete.',
+      });
+    });
+
+    it('records nothing when the lock refuses the write', async () => {
+      mockPrisma.agentWorkspace.findUnique.mockResolvedValue(
+        createTestAgentWorkspace({ lockedIn: true }),
+      );
+
+      await tools.update_soul.execute({ newContent: '# Soul', changeDescription: 'rewrite' });
+
+      expect(mockPrisma.agentWorkspaceRevision.create).not.toHaveBeenCalled();
+    });
+
+    it('records nothing when an edit does not match', async () => {
+      const result = (await tools.update_soul.execute({
+        edits: [{ oldText: 'not in the document', newText: 'x' }],
+        changeDescription: 'rewrite',
+      })) as AgentConfigResult;
+
+      expect(result.success).toBe(false);
+      expect(mockPrisma.agentWorkspaceRevision.create).not.toHaveBeenCalled();
     });
   });
 });
