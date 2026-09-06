@@ -24,6 +24,15 @@ function guideSaveButton(page: Page) {
 }
 
 /**
+ * The revision rows of the open document's history, newest first. Base UI keeps
+ * only the open tab's panel mounted, so this is the open document's history and
+ * no other.
+ */
+function revisionRows(page: Page) {
+  return page.locator('[data-slot="tabs-content"] [data-slot="table-body"] tr');
+}
+
+/**
  * Edit one of the inline model fields on the Profile page: click its pencil,
  * type the value, Save, and wait for the editor to close on the new value.
  * `label` matches the field's visible label / aria-labels (e.g.
@@ -156,6 +165,51 @@ Then('the stored agent guide is {string}', async ({ page }, value: string) => {
   const res = await page.request.get('/agents/details');
   expect(res.ok()).toBeTruthy();
   expect((await res.json()).agent.agentMd).toBe(value);
+});
+
+// ---------------------------------------------------------------------------
+// Document history (Profile page → the open document's tab)
+// ---------------------------------------------------------------------------
+//
+// The reason is what tells the two saves apart in the list, so each step names a
+// revision by the note its save carried. The row order is the assertion: the
+// list is newest first, so "First rewrite." is the older of the two.
+
+When('I note the change as {string}', async ({ page }, note: string) => {
+  await page.getByRole('textbox', { name: 'What changed (optional)' }).fill(note);
+});
+
+Then('the document history lists {int} revisions', async ({ page }, count: number) => {
+  await expect(revisionRows(page)).toHaveCount(count);
+});
+
+Then('the newest revision reads {string}', async ({ page }, reason: string) => {
+  await expect(revisionRows(page).first()).toContainText(reason);
+});
+
+Then(
+  'the difference removes {string} and adds {string}',
+  async ({ page }, removed: string, added: string) => {
+    const diff = page.getByLabel('Line difference');
+    await expect(diff).toContainText(`- ${removed}`);
+    await expect(diff).toContainText(`+ ${added}`);
+  },
+);
+
+When('I restore the revision that reads {string}', async ({ page }, reason: string) => {
+  await revisionRows(page)
+    .filter({ hasText: reason })
+    .getByRole('button', { name: 'Restore' })
+    .click();
+  const dialog = page.getByRole('alertdialog');
+  await dialog.getByRole('button', { name: 'Restore' }).click();
+  // The dialog closes when the restore is accepted, so waiting here reports a
+  // refused restore as a stuck dialog rather than as a stale document.
+  await expect(dialog).toBeHidden();
+});
+
+Then('the newest revision is the restore', async ({ page }) => {
+  await expect(revisionRows(page).first()).toContainText('rollback');
 });
 
 When('I open the {string} tab', async ({ page }, label: string) => {

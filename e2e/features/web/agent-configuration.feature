@@ -26,6 +26,24 @@ Feature: Agent Configuration
     And I save the agent guide
     Then the stored agent guide is "Answer with GUIDEEDIT7K."
 
+  # Each save records a revision, so the two saves below build the history the
+  # scenario then reads, compares and restores from.
+  Scenario: Read the history of a document and restore an earlier revision
+    When I navigate to the profile page
+    And I set the agent guide to "Answer with HISTORYA7K."
+    And I note the change as "First rewrite."
+    And I save the agent guide
+    And I set the agent guide to "Answer with HISTORYB7K."
+    And I note the change as "Second rewrite."
+    And I save the agent guide
+    Then the document history lists 2 revisions
+    And the newest revision reads "Second rewrite."
+    And the difference removes "Answer with HISTORYA7K." and adds "Answer with HISTORYB7K."
+    When I restore the revision that reads "First rewrite."
+    Then the stored agent guide is "Answer with HISTORYA7K."
+    And the document history lists 3 revisions
+    And the newest revision is the restore
+
   # The agent maintains the other documents through conversation, so the Profile
   # page must not offer them as editable boxes.
   Scenario: The other identity documents stay read-only
