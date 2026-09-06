@@ -196,6 +196,8 @@ Each agent is defined by a small set of markdown documents:
 | **Bootstrap** | First-run onboarding instructions, cleared once complete | Agent |
 
 Together they form the agent's identity — change them and the agent changes.
+Every write records a revision, so the Profile page lists a document's history,
+shows the difference between two revisions, and restores an earlier one.
 
 ### Heartbeat
 
