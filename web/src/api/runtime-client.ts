@@ -6,6 +6,8 @@ import type {
   ConversationMessage,
   ConversationThread,
   CronTask,
+  DocumentRevision,
+  DocumentRevisionHistory,
   HeartbeatStatus,
   SlackChannelMapping,
   SlackHeartbeatTrigger,
@@ -51,7 +53,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         message = `${message}: ${raw}`;
       }
     }
-    throw new ApiError(message, fieldErrors);
+    throw new ApiError(message, fieldErrors, res.status);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -128,11 +130,28 @@ export const runtimeApi = {
 
   // Agent guide — the one workspace document the user edits directly; no tool
   // writes it, so this is the only way it changes.
-  updateAgentGuide: (agentMd: string) =>
+  updateAgentGuide: (agentMd: string, reason?: string) =>
     request<{ agentMd: string }>('/agents/agent-guide', {
       method: 'PATCH',
-      body: JSON.stringify({ agentMd }),
+      body: JSON.stringify({ agentMd, reason }),
     }),
+
+  // Identity-document history. `expectedRevisionId` is the newest revision the
+  // list was read with, so a document written since then refuses the restore.
+  documentRevisions: (field: string) =>
+    request<DocumentRevisionHistory>(`/agents/documents/${field}/revisions`),
+  documentRevision: (field: string, id: string) =>
+    request<DocumentRevision>(`/agents/documents/${field}/revisions/${id}`),
+  restoreDocumentRevision: (
+    field: string,
+    id: string,
+    expectedRevisionId: string,
+    reason?: string,
+  ) =>
+    request<{ field: string; content: string; revision: DocumentRevision }>(
+      `/agents/documents/${field}/revisions/${id}/restore`,
+      { method: 'POST', body: JSON.stringify({ expectedRevisionId, reason }) },
+    ),
 
   // Threads
   getOrCreateLatestThread: (agentId: string, userId: string) =>

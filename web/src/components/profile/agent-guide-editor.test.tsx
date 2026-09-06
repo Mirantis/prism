@@ -40,6 +40,7 @@ function renderEditor(d: AgentDetails) {
 }
 
 const box = () => screen.getByRole('textbox', { name: 'Agent guide' });
+const note = () => screen.getByRole('textbox', { name: 'What changed (optional)' });
 const saveButton = () => screen.getByRole('button', { name: /^Save/ });
 
 /** Type into the box the way a controlled textarea sees it. */
@@ -65,7 +66,21 @@ describe('AgentGuideEditor', () => {
     edit('# Agent Guide!');
     saveButton().click();
 
-    await waitFor(() => expect(mockUpdateAgentGuide).toHaveBeenCalledWith('# Agent Guide!'));
+    await waitFor(() => expect(mockUpdateAgentGuide).toHaveBeenCalledWith('# Agent Guide!', ''));
+  });
+
+  it('sends the note about what changed and clears it after the save', async () => {
+    mockUpdateAgentGuide.mockResolvedValue({ agentMd: '# Agent Guide!' });
+    renderEditor(details('# Agent Guide'));
+
+    edit('# Agent Guide!');
+    fireEvent.change(note(), { target: { value: 'Added the review rule.' } });
+    saveButton().click();
+
+    await waitFor(() =>
+      expect(mockUpdateAgentGuide).toHaveBeenCalledWith('# Agent Guide!', 'Added the review rule.'),
+    );
+    await waitFor(() => expect(note()).toHaveValue(''));
   });
 
   it('marks unsaved changes and clears the mark on revert', async () => {

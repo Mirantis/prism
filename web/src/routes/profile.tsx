@@ -44,6 +44,7 @@ import { ModelField } from '@/components/profile/model-field';
 import { VerbosityField } from '@/components/profile/verbosity-field';
 import { LockedInField } from '@/components/profile/locked-in-field';
 import { AgentGuideEditor } from '@/components/profile/agent-guide-editor';
+import { DocumentHistory } from '@/components/profile/document-history';
 import type { AgentDetails } from '@/types';
 
 const SECTIONS = [
@@ -175,6 +176,7 @@ function ProfilePage() {
                       className="mt-3 h-64 resize-none font-mono text-xs"
                     />
                   )}
+                  <DocumentHistory field={s.key} live={details[s.key as SectionKey] ?? ''} />
                 </TabsContent>
               ))}
             </Tabs>

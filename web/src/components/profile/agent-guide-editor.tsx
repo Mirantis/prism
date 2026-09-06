@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
@@ -16,6 +17,7 @@ export function AgentGuideEditor({ details }: { details: AgentDetails }) {
   const queryClient = useQueryClient();
   const stored = details.agentMd ?? '';
   const [draft, setDraft] = useState(stored);
+  const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   // What the last accepted save wrote, so "Saved" shows only while the box
   // still holds that text — an edit right after saving is unsaved again.
@@ -34,10 +36,11 @@ export function AgentGuideEditor({ details }: { details: AgentDetails }) {
   }
 
   const mutation = useMutation({
-    mutationFn: (next: string) => runtimeApi.updateAgentGuide(next),
+    mutationFn: (next: string) => runtimeApi.updateAgentGuide(next, reason.trim()),
     onMutate: () => setError(null),
     onSuccess: (res) => {
       savedRef.current = res.agentMd;
+      setReason('');
       queryClient.setQueryData(['agent-details', agent.agentId], (old: AgentDetails | undefined) =>
         old ? { ...old, agentMd: res.agentMd } : old,
       );
@@ -45,6 +48,7 @@ export function AgentGuideEditor({ details }: { details: AgentDetails }) {
     onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Save failed'),
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['agent-details', agent.agentId] });
+      queryClient.invalidateQueries({ queryKey: ['document-revisions', 'agentMd'] });
     },
   });
 
@@ -59,6 +63,14 @@ export function AgentGuideEditor({ details }: { details: AgentDetails }) {
         aria-label="Agent guide"
         spellCheck={false}
         className="h-64 resize-y font-mono text-xs"
+      />
+      <Input
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        aria-label="What changed (optional)"
+        placeholder="What changed (optional)"
+        maxLength={200}
+        className="h-8 text-sm"
       />
       <div className="flex items-center gap-2">
         <Button onClick={() => mutation.mutate(draft)} disabled={!dirty || mutation.isPending}>
