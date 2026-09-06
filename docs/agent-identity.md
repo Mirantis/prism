@@ -75,6 +75,31 @@ script is paused. Ask a locked agent to change its soul and it tells you what it
 would have changed instead. Your own editing is unaffected — the Agent Guide
 editor keeps working while the lock is on.
 
+## Version history
+
+Every write to one of the seven documents records a revision: when it happened,
+whether you or the agent wrote it, and why. The Agent Guide editor takes an
+optional note about what changed, and the agent's own edits record the reason it
+gives for the change.
+
+The **History** panel under each Profile tab lists that document's revisions,
+newest first. Pick any two to read the difference between them as added and
+removed lines, and press **Restore** to put an earlier one back. The agent reads
+the restored document on its next turn, and the restore is itself a revision, so
+you can undo it. Restoring the Heartbeat document also restarts the heartbeat.
+Restoring is yours: the agent has no tool for it, and
+[locked-in mode](configuration.md#locked-in-mode) does not gate it.
+
+Each document keeps its 500 newest revisions and drops the oldest past that.
+
+A write from inside the container records nothing — a shell writes
+`/data/agent.db` directly, as the caveat above describes. The panel then marks
+the document as changed outside the app and shows what the change did, so you
+can see it and restore an earlier revision.
+
+Restoring a `.prism` backup replaces the whole database, so the agent then has
+the history that archive holds.
+
 ## The bootstrap flow
 
 On a brand-new agent, the Bootstrap document contains a short onboarding script.

@@ -198,8 +198,11 @@ The agent's identity and runtime controls.
   and **Bootstrap**. The **Agent** tab is an editor: change the text and press
   **Save**, and the agent picks it up on its next turn. The rest are read-only
   viewers, because the agent maintains them during conversation (you ask it to
-  update its soul, or it records something to memory). See
-  **[The agent's identity](agent-identity.md)**.
+  update its soul, or it records something to memory). Under every tab a
+  **History** panel lists that document's revisions newest first, shows the
+  difference between two of them, and restores an earlier one; the **Agent**
+  tab's editor takes an optional note about what changed, which the history
+  keeps. See **[The agent's identity](agent-identity.md#version-history)**.
 - **Heartbeat controls.** A status panel shows whether the heartbeat is Active
   or Stopped, its interval, the last run time, and a consecutive-error count.
   Buttons let you **Start**, **Stop**, or **Trigger now**, and you can edit the

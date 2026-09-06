@@ -279,6 +279,10 @@ The **Agent Guide** is in neither column: no tool writes it, so the lock has
 nothing to take away. You edit it yourself, and that keeps working while the lock
 is on — see [The agent's identity](agent-identity.md#how-editing-works).
 
+Restoring an earlier [revision](agent-identity.md#version-history) of any of
+these documents keeps working too. The lock withholds the agent's own writers,
+and a restore is you acting.
+
 The lock works in two layers. The writing tools (`update_soul`, `update_memory`,
 `update_user_profile`, `update_vision`, `update_heartbeat_config`,
 `clear_bootstrap`, `memory_write`, `memory_delete`) are withheld from the tool
@@ -301,7 +305,9 @@ known holes:
 
 - **The [shell](tools.md#shell) is never withheld.** Every agent has `shell_exec`,
   in every mode. The lock takes away the document tools, not the shell, and a
-  shell writes the documents straight into `/data/agent.db`.
+  shell writes the documents straight into `/data/agent.db`. Such a write records
+  no revision, so the document's [history](agent-identity.md#version-history)
+  marks it as changed outside the app.
 - **The Management API takes no credential from inside the container.** Auth is
   terminated in front of the container, so a shell can `PATCH
   localhost:3003/agents/locked-in` and turn the lock off. "The agent cannot unlock

@@ -700,7 +700,8 @@ tools block.
 | **ThreadTurnService** | `services/thread-turn.service.ts` | The one per-thread primitive: every model invocation on a thread serializes on its mutex (FIFO — chat turns and goal turns alike), and a chat turn *claims* the thread, so a message arriving from the claim until the exchange ends is handed to that turn instead of starting a second one. Channel-agnostic — transports go through the engine, never here directly |
 | **ContextService** | `services/context.service.ts` | Builds agent context from local database: agent data via `agentWorkspaceService.getAgentById()` and conversation history via Prisma |
 | **ConversationService** | `services/conversation.service.ts` | Thread and message CRUD via Prisma, pluggable thread providers (database + Slack) |
-| **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, platform token management, subagent relationships |
+| **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, platform token management, subagent relationships. `writeWorkspaceDoc` is the one write path for an identity document — column plus revision in one transaction — and `rollbackWorkspaceDoc` the restore |
+| **DocumentRevisionService** | `services/document-revision.service.ts` | Identity-document revisions: append one per accepted write, the history of one document (with the drift verdict), one revision's content, the seed rows a new agent gets, and the boot baseline an upgraded install gets. Bounded at `MAX_REVISIONS_PER_DOCUMENT` (500) per document, trimmed in the insert's transaction |
 | **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat timestamp, heartbeat status) |
 | **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats |
 | **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; manages cron task state directly via Prisma (list, update run timestamps, delete); skips a tick that would overlap a still-running execution of the same task; runs each result through the instruction-aware DELIVER/SUPPRESS gate before delivering (empty results suppressed, error results bypass the gate and always deliver, in-memory per-task last-delivered baseline fed to the gate as context — cleared when a suppressed run observes a different situation so a recurrence re-alerts — fail-open) |
@@ -732,7 +733,8 @@ src/
 │   ├── conversation-engine.service.ts # Chat flow orchestration: thread mgmt, iterates invokeStream() with per-step publish, local message delivery
 │   ├── message-delivery.service.ts # Unified message publish: store + channel-scoped or broadcast delivery
 │   ├── thread-turn.service.ts  # Per-thread mutex + mid-turn inbox (turn steering, coalesced follow-ups)
-│   ├── agent-workspace.service.ts # Agent CRUD, ownership validation, platform tokens, subagents
+│   ├── agent-workspace.service.ts # Agent CRUD, ownership validation, platform tokens, subagents; `writeWorkspaceDoc` / `rollbackWorkspaceDoc`, the one write path for an identity document
+│   ├── document-revision.service.ts # Identity-document revisions: record, history (with drift), read one, restore, 500-per-document bound
 │   ├── agent-status.service.ts  # Direct Prisma writes for agent fields (heartbeat timestamp/status)
 │   ├── websocket-gateway.service.ts # WebSocket server: JWT decode (backend verifies), connection mgmt, message queuing
 │   ├── websocket-adapter.service.ts # ChannelAdapter for WebSocket, calls local gateway
@@ -797,13 +799,16 @@ src/
 │   └── skills/                 # The `skill` tool (loads a SKILL.md body on demand)
 ├── routes/
 │   ├── management.ts           # Management API for backend to push heartbeat/cron/slack-heartbeat-trigger events
-│   └── activity.ts             # Activity page reads: token totals, paged tool calls
+│   ├── activity.ts             # Activity page reads: token totals, paged tool calls
+│   └── document-revisions.ts   # History, one revision with its content, and the restore, per identity document
 ├── utils/
 │   ├── async-channel.ts        # Bridges SDK push-based onStepFinish into async iteration (used by invokeStream)
 │   └── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
 ├── lib/
 │   ├── attachment-boot.ts      # Boot-time attachment storage reconciliation, in order: missing media files → content expiry → legacy BLOB backfill
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
+│   ├── document-revision-boot.ts # Boot-time baseline revision for every identity document that has none (idempotent, catches its own failure)
+│   ├── workspace-docs.ts       # The seven identity-document columns, their labels, and the actor/method words a revision is described with
 │   ├── llm-providers/          # One folder per chat vendor, plus the shared contract and the selector
 │   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (the Anthropic breakpoint, Converse's own `BEDROCK_CACHE_POINT`, or the empty `NO_CACHE_POINT` — which covers both a vendor that caches without breakpoints and a model whose support is unknown) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares. The startup log reads this contract for the configured model, so no caller names a vendor to report prompt caching
 │   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai/openrouter/anthropic), passes each its optional gateway baseURL (anthropic is direct-only, no argument); `isProviderConfigured()`
@@ -1250,8 +1255,11 @@ memory usage, safety, and Slack channel etiquette. It is included in the
 drift from the agent's own edits. The user owns it, through one write path:
 
 - `PATCH /agents/agent-guide` (`routes/agent-guide.ts` →
-  `agentWorkspaceService.updateAgentGuide`), body `{ agentMd }`, the whole
-  document. An empty string clears it, which drops the section from the prompt.
+  `agentWorkspaceService.updateAgentGuide`), body `{ agentMd, reason? }`, the
+  whole document. An empty string clears it, which drops the section from the
+  prompt. The write goes through `writeWorkspaceDoc`, so it records a revision
+  with `actor: 'user'`, `method: 'rest'` and the caller's `reason` — the editor's
+  optional note about what changed.
 - The web Profile page's **Agent** tab (`web/src/components/profile/agent-guide-editor.tsx`)
   and the TUI's `/agent-guide` (`cli/src/commands/agent-guide.ts`, which opens
   `$EDITOR` via `cli/src/editor.ts`) both call that endpoint.
@@ -1276,8 +1284,11 @@ sub-agent's own commands never reach this gate at all. Withholding the ordinary
 path — a tool the model reaches for while working — is what this buys, and with
 allow-authority on a writable document that makes the control a one-way ratchet:
 one landed guide write removes a refusal for every later turn on every channel.
-`gate.policy_hash` is the detection signal, since a shell write emits no `agent
-config updated` event. Keep the docs and this paragraph honest about it; the
+`gate.policy_hash` is one detection signal, since a shell write emits no `agent
+config updated` event; the document's own history is the other — a write that
+skips `writeWorkspaceDoc` records no revision, so the stored content hash no
+longer agrees with the column and the history reports `drifted`. Keep the docs
+and this paragraph honest about it; the
 alternative design (narrowing from the guide, widening from a boot-time root) was
 weighed and declined.
 
@@ -1297,6 +1308,45 @@ section early. Bounded at 8,000 characters cut on whole lines — a character cu
 can invert a rule ("Force-pushing is fine, except on main") — and a longer guide
 warns once per digest per process. Billed on every gated call, since the gate runs
 no prompt cache. The guide text itself never leaves the prompt.
+
+## Identity-document revisions
+
+Every accepted write to one of the seven identity documents appends one snapshot
+to `agent_workspace_revisions`. A revision is the **post-image** of the write, so
+the newest revision is what the document reads now.
+
+- **One write path.** `agentWorkspaceService.writeWorkspaceDoc` replaces the
+  column and records the revision in one `prisma.$transaction`, so a document and
+  its history cannot disagree. Three call sites reach it: the agent's own
+  document tools (`tools/agent-config.ts`), `updateAgentGuide`, and the restore.
+  Add a fourth rather than a second write path. `lib/workspace-docs.ts` owns the
+  field list and the actor (`agent` | `user`) and method (`seed` | `replace` |
+  `edit` | `clear` | `rest` | `rollback`) words.
+- **Append-only.** A restore writes a `rollback` revision instead of removing the
+  revisions after it, so every step is kept and a restore is itself reversible.
+  `rollbackWorkspaceDoc` reads the target, compares the newest revision against
+  the caller's `expectedRevisionId`, replaces the column and records the restore
+  in one transaction — a check outside the transaction is not a check. A newer
+  write answers `stale`, which the route reports as 409.
+- **Bounded at 500 revisions per document**
+  (`MAX_REVISIONS_PER_DOCUMENT`), trimmed inside the insert's transaction. A
+  constant, not a setting.
+- **Three routes**, `routes/document-revisions.ts`: the history without the
+  content (`GET /agents/documents/:field/revisions`), one revision with it
+  (`…/:id`), and the restore (`POST …/:id/restore`). The route owns what the
+  service does not — the heartbeat restart after a `heartbeatMd` restore, and the
+  status codes.
+- **Locked-in mode does not gate a restore.** That lock withholds the agent's own
+  writers, and a restore is the user acting.
+- **Every document has a history from the first boot.** A new agent gets seven
+  `seed` revisions in the creating transaction; an install created before the
+  table gets a baseline for each document that has none, from
+  `lib/document-revision-boot.ts` (idempotent, and it catches its own failure
+  because a container that will not boot is worse than a history that starts at
+  the next edit).
+- **Drift is detectable, not prevented.** Each revision stores the sha256 of its
+  content, so a document written straight into `/data/agent.db` no longer agrees
+  with its newest revision and the history reports `drifted`.
 
 ## Agent Skills
 
