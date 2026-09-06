@@ -158,6 +158,33 @@ export interface AgentDetails {
   updatedAt: string;
 }
 
+/** One entry in an identity document's history. The content is read on demand. */
+export interface DocumentRevisionSummary {
+  id: string;
+  /** Who wrote it. A heartbeat write and a chat write are both the agent. */
+  actor: 'agent' | 'user';
+  method: 'seed' | 'replace' | 'edit' | 'clear' | 'rest' | 'rollback';
+  /** The note the writer left, empty when it left none. */
+  reason: string;
+  contentHash: string;
+  createdAt: string;
+}
+
+export interface DocumentRevision extends DocumentRevisionSummary {
+  content: string;
+}
+
+export interface DocumentRevisionHistory {
+  field: string;
+  /** How many revisions one document keeps before its oldest is dropped. */
+  bound: number;
+  /** True while the document differs from its newest revision. */
+  drifted: boolean;
+  liveHash: string;
+  /** Newest first. */
+  revisions: DocumentRevisionSummary[];
+}
+
 export interface ModelInfo {
   model: string;
 }
