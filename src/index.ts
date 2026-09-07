@@ -114,12 +114,6 @@ const initialize = async () => {
       { agent: codingAgent.id, configDir: home.configDir, skillsLinked: home.skillsLinked },
       '[Startup] coding agent',
     );
-    if (config.invalidCodingAgent) {
-      logger.warn(
-        { configuredAgent: config.invalidCodingAgent, effectiveAgent: config.codingAgent },
-        '[Startup] invalid CODING_AGENT; using the default',
-      );
-    }
     // Scanning here also surfaces any malformed plugin's warning at boot rather
     // than on whichever turn first happens to build a system prompt.
     logger.info(
