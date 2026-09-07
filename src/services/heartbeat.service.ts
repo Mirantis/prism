@@ -12,6 +12,7 @@
  */
 
 import { invoke } from '../invoke';
+import { lastResponseText } from '../lib/last-response-text';
 import { AgentWorkspace } from '@prisma/client';
 import { messageDeliveryService } from './message-delivery.service';
 import { runClassificationGate, isRecentDuplicate } from '../lib/classification-gate';
@@ -165,9 +166,7 @@ class HeartbeatService {
         return { shouldSkip: true, text: 'Budget exceeded' };
       }
 
-      // Use only the last step's text (the final summary), not intermediate step texts
-      const lastStep = invokeResult.steps[invokeResult.steps.length - 1];
-      const responseText = (lastStep?.text ?? '').trim();
+      const responseText = lastResponseText(invokeResult.steps);
 
       // Determine if we should deliver
       let shouldDeliver = false;
@@ -317,9 +316,7 @@ class HeartbeatService {
         return;
       }
 
-      // Use only the last step's text (the final summary), not intermediate step texts
-      const lastStep = invokeResult.steps[invokeResult.steps.length - 1];
-      const responseText = (lastStep?.text ?? '').trim();
+      const responseText = lastResponseText(invokeResult.steps);
 
       // Determine if we should deliver (same gate logic as regular heartbeats)
       let shouldDeliver = false;

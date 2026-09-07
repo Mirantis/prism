@@ -540,6 +540,37 @@ describe('HeartbeatService', () => {
       );
     });
 
+    it.each(['timer', 'slack'])('%s delivers an alert before an empty final step', async (trigger) => {
+      // The Slack e2e run wrote an alert with memory_write, then ended with an empty step.
+      const alert = '**⚠️ ALERT: Production Deployment Failure**';
+      mockInvoke.mockResolvedValue({
+        response: `Checking the deployment.\n\n${alert}`,
+        toolCalls: [],
+        steps: [
+          { text: 'Checking the deployment.', toolCalls: [] },
+          { text: alert, toolCalls: [{ tool: 'memory_write' }] },
+          { text: '', toolCalls: [] },
+        ],
+      });
+      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+      heartbeatService.startHeartbeat(createAgent());
+
+      if (trigger === 'slack') {
+        mockDrainSlackMessages.mockResolvedValueOnce([{
+          sender: 'Test Operator', text: 'deployment failed', timestamp: '2025-01-15T12:00:00Z',
+        }]);
+        heartbeatService.triggerFromSlack();
+        await vi.advanceTimersByTimeAsync(0);
+      } else {
+        await heartbeatService.triggerHeartbeat();
+      }
+
+      expect(mockGenerateText).toHaveBeenCalled();
+      expect(mockDeliverMessage).toHaveBeenCalledExactlyOnceWith(
+        'agent-1', 'user-abc-123', alert, 'HEARTBEAT', expect.anything(),
+      );
+    });
+
     it('passes all toolCalls from invokeResult (not per-step accumulated)', async () => {
       const toolCall1 = { tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: '2025-01-15T12:00:00Z' };
       const toolCall2 = { tool: 'aws', input: '{}', output: 'ok', success: true, timestamp: '2025-01-15T12:00:01Z' };
