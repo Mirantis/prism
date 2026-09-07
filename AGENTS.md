@@ -1317,7 +1317,7 @@ frontmatter with required `name` + `description`, optional `scripts/`/
     runs have none, so they see global skills only. `getCatalog`/`find`/
     `getSkillBody` take an optional `workspaceRoot`; the `# Skills` section labels
     workspace vs installed groups. `<workspaceRoot>/.claude/skills` is also seen
-    natively by the coding sub-agent (its cwd = workspaceRoot).
+    natively by Claude Code (its cwd = workspaceRoot).
 - **Shared with the coding sub-agent.** At startup the configured
   `CodingAgent`'s `prepareHome()` gives it a home inside the data dir that reads
   the same skills. For Claude Code that is `CLAUDE_CONFIG_DIR=<DATA>/.claude` with
