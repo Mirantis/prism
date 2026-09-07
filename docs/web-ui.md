@@ -198,9 +198,9 @@ The agent's identity and runtime controls.
   and **Bootstrap**. The **Agent** tab is an editor: change the text and press
   **Save**, and the agent picks it up on its next turn. The rest are read-only
   viewers, because the agent maintains them during conversation (you ask it to
-  update its soul, or it records something to memory). Under every tab a
-  **History** panel lists that document's revisions newest first, shows the
-  difference between two of them, and restores an earlier one; the **Agent**
+  update its soul, or it records something to memory). The **Version history**
+  sidebar compares a selected version with the current document and lets you
+  restore it; the **Agent**
   tab's editor takes an optional note about what changed, which the history
   keeps. See **[The agent's identity](agent-identity.md#version-history)**.
 - **Heartbeat controls.** A status panel shows whether the heartbeat is Active

@@ -38,11 +38,15 @@ Feature: Agent Configuration
     And I save the agent guide
     Then the document history lists 2 revisions
     And the newest revision reads "Second rewrite."
-    And the difference removes "Answer with HISTORYA7K." and adds "Answer with HISTORYB7K."
+    When I set the agent guide to "An unsaved draft."
+    Then the difference removes "Answer with HISTORYA7K." and adds "Answer with HISTORYB7K."
+    When I return to the current document
+    Then the agent guide draft is "An unsaved draft."
     When I restore the revision that reads "First rewrite."
     Then the stored agent guide is "Answer with HISTORYA7K."
     And the document history lists 3 revisions
     And the newest revision is the restore
+    And the restored version matches the current document
 
   # The agent maintains the other documents through conversation, so the Profile
   # page must not offer them as editable boxes.

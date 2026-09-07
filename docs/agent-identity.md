@@ -82,9 +82,9 @@ whether you or the agent wrote it, and why. The Agent Guide editor takes an
 optional note about what changed, and the agent's own edits record the reason it
 gives for the change.
 
-The **History** panel under each Profile tab lists that document's revisions,
-newest first. Pick any two to read the difference between them as added and
-removed lines, and press **Restore** to put an earlier one back. The agent reads
+The **Version history** sidebar lists saved versions, newest first. Select a version
+to compare it with the current document, or choose **Compare versions** for another
+comparison. Press **Restore this version** to bring it back. The agent reads
 the restored document on its next turn, and the restore is itself a revision, so
 you can undo it. Restoring the Heartbeat document also restarts the heartbeat.
 Restoring is yours: the agent has no tool for it, and
