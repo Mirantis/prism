@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
+import { hasAuthenticatedClaudeHome } from './authenticated-home';
+vi.mock('./authenticated-home', () => ({ hasAuthenticatedClaudeHome: vi.fn(() => false) }));
+afterEach(() => vi.mocked(hasAuthenticatedClaudeHome).mockReturnValue(false));
+
 import { claudeCodeEnvironment, hasClaudeCodeCredentials } from './credentials';
 
 describe('coding agent credentials', () => {
@@ -29,6 +33,21 @@ describe('coding agent credentials', () => {
   ])('sets the Bedrock region for explicit backend selection: %j', (env, region) => {
     expect(claudeCodeEnvironment({ ...env, CLAUDE_CODE_USE_BEDROCK: '1' }).AWS_REGION).toBe(region);
   });
+
+  it('detects a saved CLI login without environment credentials', () => {
+    vi.mocked(hasAuthenticatedClaudeHome).mockReturnValue(true);
+    expect(hasClaudeCodeCredentials({})).toBe(true);
+  });
+
+  it.each(['ANTHROPIC_FOUNDRY_API_KEY', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN', 'AZURE_API_KEY'])(
+    'requires a Foundry resource or endpoint with %s', (key) => {
+      const env = { [key]: 'test-key' };
+      expect(hasClaudeCodeCredentials(env)).toBe(false);
+      expect(claudeCodeEnvironment(env)).toEqual(env);
+      expect(hasClaudeCodeCredentials({ ...env, ANTHROPIC_FOUNDRY_RESOURCE: 'test-resource' })).toBe(true);
+      expect(hasClaudeCodeCredentials({ ...env, ANTHROPIC_FOUNDRY_BASE_URL: 'https://test.example/anthropic' })).toBe(true);
+    },
+  );
 
   it('maps runtime Foundry credentials to CLI settings', () => {
     expect(claudeCodeEnvironment({ AZURE_API_KEY: 'test-key', AZURE_RESOURCE_NAME: 'test-resource' }))

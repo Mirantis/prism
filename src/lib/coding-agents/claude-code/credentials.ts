@@ -1,3 +1,4 @@
+import { hasAuthenticatedClaudeHome } from './authenticated-home';
 import { bedrockRegion, hasBedrockCredentials } from '../bedrock-credentials';
 
 export function claudeCodeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -14,6 +15,7 @@ export function claudeCodeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv
   }
   if (usesOtherCredentials) return env;
   if ((foundry.ANTHROPIC_FOUNDRY_API_KEY || env.ANTHROPIC_FOUNDRY_AUTH_TOKEN) &&
+      (foundry.ANTHROPIC_FOUNDRY_RESOURCE || env.ANTHROPIC_FOUNDRY_BASE_URL) &&
       env.CLAUDE_CODE_USE_FOUNDRY !== '0') {
     return { ...env, ...foundry, CLAUDE_CODE_USE_FOUNDRY: '1' };
   }
@@ -24,5 +26,6 @@ export function hasClaudeCodeCredentials(env: NodeJS.ProcessEnv): boolean {
   const resolved = claudeCodeEnvironment(env);
   return Boolean(resolved.ANTHROPIC_API_KEY || resolved.ANTHROPIC_AUTH_TOKEN ||
     resolved.CLAUDE_CODE_OAUTH_TOKEN || resolved.CLAUDE_CODE_USE_BEDROCK === '1' ||
-    resolved.CLAUDE_CODE_USE_VERTEX === '1' || resolved.CLAUDE_CODE_USE_FOUNDRY === '1');
+    resolved.CLAUDE_CODE_USE_VERTEX === '1' || resolved.CLAUDE_CODE_USE_FOUNDRY === '1') ||
+    hasAuthenticatedClaudeHome(env);
 }

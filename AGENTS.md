@@ -829,6 +829,7 @@ src/
 │   │   ├── codex/
 │   │   │   └── codex-agent.ts             # Codex CLI adapter
 │   │   └── claude-code/
+│   │       ├── authenticated-home.ts # Saved CLI login detection
 │   │       ├── credentials.ts # Claude CLI authentication settings
 │   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (gate mode → permission flags, plan-only instruction), the stream-json parser, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink
 │   ├── embedding-providers/    # Memory-embedding vendors, a feature of their own decoupled from the chat provider (`EMBEDDING_PROVIDER`)

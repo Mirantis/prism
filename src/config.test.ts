@@ -9,6 +9,9 @@ import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 // Undo the global mock from setup.ts
 vi.unmock('./config');
+vi.mock('./lib/coding-agents/claude-code/authenticated-home', () => ({
+  hasAuthenticatedClaudeHome: vi.fn(() => false),
+}));
 
 // Prevent dotenv from loading .env file during tests
 vi.mock('dotenv', () => ({ default: { config: vi.fn() } }));
@@ -230,7 +233,8 @@ describe('config', () => {
       'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
     ];
     beforeEach(() => {
-      for (const name of [...claudeEnv, 'OPENAI_API_KEY', 'CODING_AGENT']) delete process.env[name];
+      for (const name of [...claudeEnv, 'OPENAI_API_KEY', 'CODING_AGENT', 'AWS_ROLE_ARN',
+        'AZURE_RESOURCE_NAME', 'ANTHROPIC_FOUNDRY_RESOURCE', 'ANTHROPIC_FOUNDRY_BASE_URL']) delete process.env[name];
     });
 
     it('uses Claude Code without credentials', async () => {
@@ -246,6 +250,10 @@ describe('config', () => {
       'prefers Claude Code when %s is available', async (name) => {
         process.env.OPENAI_API_KEY = 'test-openai-key';
         process.env[name] = name.startsWith('CLAUDE_CODE_USE_') ? '1' : 'test-credential';
+        if (name === 'AWS_WEB_IDENTITY_TOKEN_FILE') process.env.AWS_ROLE_ARN = 'arn:aws:iam::123456789012:role/test';
+        if (name === 'AZURE_API_KEY' || name.startsWith('ANTHROPIC_FOUNDRY_')) {
+          process.env.AZURE_RESOURCE_NAME = 'test-resource';
+        }
         expect((await loadConfig()).codingAgent).toBe('claude-code');
       },
     );
@@ -254,9 +262,21 @@ describe('config', () => {
       'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI', 'AWS_CONTAINER_CREDENTIALS_FULL_URI'])(
       'detects both coding agents from %s without an OpenAI key', async (name) => {
         process.env[name] = 'test-credential';
+        if (name === 'AWS_WEB_IDENTITY_TOKEN_FILE') process.env.AWS_ROLE_ARN = 'arn:aws:iam::123456789012:role/test';
         const cfg = await loadConfig();
         expect(cfg.availableCodingAgents).toEqual(['claude-code', 'codex']);
         expect(cfg.codingAgent).toBe('claude-code');
+      },
+    );
+
+    it.each(['AWS_WEB_IDENTITY_TOKEN_FILE', 'AWS_ROLE_ARN', 'AZURE_API_KEY',
+      'ANTHROPIC_FOUNDRY_API_KEY', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN'])(
+      'ignores incomplete credentials: %s', async (name) => {
+        process.env[name] = 'test-credential';
+        process.env.OPENAI_API_KEY = 'test-openai-key';
+        const cfg = await loadConfig();
+        expect(cfg.availableCodingAgents).toEqual(['codex']);
+        expect(cfg.codingAgent).toBe('codex');
       },
     );
 
@@ -303,7 +323,11 @@ describe('config', () => {
       process.env.CODING_AGENT = 'unknown';
       const cfg = await loadConfig();
       expect(cfg.codingAgent).toBe('codex');
-      expect(cfg.invalidCodingAgent).toBe('unknown');
+      expect(mockWarn).toHaveBeenCalledExactlyOnceWith(
+        { configuredAgent: 'unknown', effectiveAgent: 'codex' },
+        '[Startup] invalid CODING_AGENT; using the default',
+      );
+      expect(cfg).not.toHaveProperty('invalidCodingAgent');
     });
 
     it('detects only Codex with an OpenAI key', async () => {
