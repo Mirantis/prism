@@ -1,6 +1,13 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, History, RotateCcw } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Check,
+  GitCompareArrows,
+  History,
+  RotateCcw,
+} from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -11,246 +18,407 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { ApiError } from '@/api/errors';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
-import { RevisionDiff } from '@/components/profile/revision-diff';
-import type { DocumentRevisionSummary } from '@/types';
+import { cn } from '@/lib/utils';
+import { revisionTitle } from '@/lib/revision-labels';
+import { RevisionDiff } from './revision-diff';
+import { RevisionListItem } from './revision-list-item';
+import type { AgentDetails, DocumentRevisionSummary } from '@/types';
 
-/** The comparable side that is the document as it stands now. */
 const LIVE = 'live';
 
-const STALE_MESSAGE = 'Someone else changed this document; reload the history.';
-
-function revisionLabel(revision: DocumentRevisionSummary): string {
-  return `${new Date(revision.createdAt).toLocaleString()} — ${revision.actor}, ${revision.method}`;
-}
-
-/** The two sides a reader most likely wants: the newest change and what preceded it. */
-function defaultSides(revisions: DocumentRevisionSummary[]): { older: string; newer: string } {
-  if (revisions.length >= 2) return { older: revisions[1].id, newer: revisions[0].id };
-  if (revisions.length === 1) return { older: revisions[0].id, newer: LIVE };
-  return { older: LIVE, newer: LIVE };
-}
-
-/** The text of one comparable side. The live document is already in the page. */
-function useSideContent(field: string, side: string, live: string): { content: string; read: boolean } {
+function useSideContent(field: string, side: string, live: string) {
   const query = useQuery({
     queryKey: ['document-revision', field, side],
     queryFn: () => runtimeApi.documentRevision(field, side),
     enabled: side !== LIVE,
   });
-  if (side === LIVE) return { content: live, read: true };
-  if (query.isSuccess) return { content: query.data.content, read: true };
-  return { content: '', read: false };
+  return side === LIVE
+    ? { content: live, ready: true, error: null }
+    : {
+        content: query.data?.content ?? '',
+        ready: query.isSuccess,
+        error: query.error,
+      };
 }
 
-/**
- * The history of one identity document under its tab on the Profile page: what
- * was written and by whom, the difference between two versions, and the restore
- * of an earlier one.
- */
-export function DocumentHistory({ field, live }: { field: string; live: string }) {
+export function DocumentHistory({
+  field,
+  live,
+  children,
+  hasUnsavedChanges = false,
+  onRestored,
+}: {
+  field: string;
+  live: string;
+  children?: ReactNode;
+  hasUnsavedChanges?: boolean;
+  onRestored?: () => void;
+}) {
   const agent = useAgent();
   const queryClient = useQueryClient();
-  const [pickedOlder, setPickedOlder] = useState<string | null>(null);
-  const [pickedNewer, setPickedNewer] = useState<string | null>(null);
-  const [pending, setPending] = useState<DocumentRevisionSummary | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [compareWith, setCompareWith] = useState(LIVE);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [pending, setPending] = useState<{
+    revision: DocumentRevisionSummary;
+    expectedId: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const {
-    data: history,
-    isLoading,
-    error: historyError,
-  } = useQuery({
+  const [restoredId, setRestoredId] = useState<string | null>(null);
+  const historyQuery = useQuery({
     queryKey: ['document-revisions', field],
     queryFn: () => runtimeApi.documentRevisions(field),
   });
-
+  const history = historyQuery.data;
   const revisions = history?.revisions ?? [];
-  const defaults = defaultSides(revisions);
-  const older = pickedOlder ?? defaults.older;
-  const newer = pickedNewer ?? defaults.newer;
-  const olderContent = useSideContent(field, older, live);
-  const newerContent = useSideContent(field, newer, live);
+  const selected = revisions.find((revision) => revision.id === picked);
+  const driftComparison = Boolean(
+    history?.drifted && !selected && revisions.length,
+  );
+  const fromId = selected?.id ?? (driftComparison ? revisions[0].id : LIVE);
+  const toId = selected ? compareWith : LIVE;
+  const older = useSideContent(field, fromId, live);
+  const newer = useSideContent(field, toId, live);
+  const showDiff = Boolean(selected || driftComparison);
+  const matchesCurrent = older.ready && older.content === live;
+  const comparisonTitle = revisions.find((revision) => revision.id === toId);
 
   const restore = useMutation({
-    mutationFn: (revisionId: string) =>
-      runtimeApi.restoreDocumentRevision(field, revisionId, revisions[0]?.id ?? ''),
-    onMutate: () => setError(null),
-    onSuccess: () => {
+    mutationFn: (input: NonNullable<typeof pending>) =>
+      runtimeApi.restoreDocumentRevision(
+        field,
+        input.revision.id,
+        input.expectedId,
+      ),
+    onMutate: () => {
+      setError(null);
+      setRestoredId(null);
+    },
+    onSuccess: (result) => {
+      queryClient.setQueryData(
+        ['agent-details', agent.agentId],
+        (old: AgentDetails | undefined) =>
+          old ? { ...old, [field]: result.content } : old,
+      );
       setPending(null);
-      setPickedOlder(null);
-      setPickedNewer(null);
-      queryClient.invalidateQueries({ queryKey: ['document-revisions', field] });
-      queryClient.invalidateQueries({ queryKey: ['document-revision', field] });
-      queryClient.invalidateQueries({ queryKey: ['agent-details', agent.agentId] });
+      setPicked(result.revision.id);
+      setCompareWith(LIVE);
+      setCompareOpen(false);
+      setRestoredId(result.revision.id);
+      onRestored?.();
+      queryClient.invalidateQueries({
+        queryKey: ['document-revisions', field],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['agent-details', agent.agentId],
+      });
     },
     onError: (e: unknown) => {
       setPending(null);
-      if (e instanceof ApiError && e.status === 409) {
-        setError(STALE_MESSAGE);
-        return;
-      }
-      setError(e instanceof Error ? e.message : 'Restore failed');
+      setError(
+        e instanceof ApiError && e.status === 409
+          ? 'This document changed. Refresh the history before restoring.'
+          : e instanceof Error
+            ? e.message
+            : 'Restore failed',
+      );
     },
   });
 
-  if (isLoading) {
-    return <Skeleton className="mt-4 h-24" />;
+  function pick(id: string | null) {
+    setPicked(id);
+    setCompareWith(LIVE);
+    setCompareOpen(false);
+    setError(null);
+    setRestoredId(null);
   }
-
-  if (historyError) {
-    return (
-      <p className="mt-4 text-xs text-destructive">
-        The history could not be read: {historyError.message}
-      </p>
-    );
-  }
-
-  const sides = [
-    { value: LIVE, label: 'Current document' },
-    ...revisions.map((revision) => ({ value: revision.id, label: revisionLabel(revision) })),
-  ];
-  const labelOf = (value: string) => sides.find((side) => side.value === value)?.label ?? value;
 
   return (
-    <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
-      <div className="flex items-center gap-2 text-sm font-medium">
-        <History className="size-4 text-muted-foreground" />
-        History
-      </div>
-
-      {history?.drifted && (
-        <Alert variant="destructive">
-          <AlertTriangle />
-          <AlertTitle>This document was changed outside the app</AlertTitle>
-          <AlertDescription>
-            It no longer matches its newest revision, so the difference below shows what the change
-            did. Restore a revision to put a known version back.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {error && <p className="text-xs text-destructive">{error}</p>}
-
-      {revisions.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          No revisions yet. The next write to this document records one.
-        </p>
-      ) : (
-        <>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">Compare</span>
-            <Select value={older} onValueChange={(value) => value && setPickedOlder(value)}>
-              <SelectTrigger aria-label="Older version" className="max-w-72">
-                <SelectValue>{labelOf(older)}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {sides.map((side) => (
-                  <SelectItem key={side.value} value={side.value}>
-                    {side.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <span className="text-xs text-muted-foreground">with</span>
-            <Select value={newer} onValueChange={(value) => value && setPickedNewer(value)}>
-              <SelectTrigger aria-label="Newer version" className="max-w-72">
-                <SelectValue>{labelOf(newer)}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {sides.map((side) => (
-                  <SelectItem key={side.value} value={side.value}>
-                    {side.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+    <div className="mt-4 grid min-w-0 gap-0 overflow-hidden rounded-xl border border-border lg:grid-cols-[minmax(0,1fr)_280px]">
+      <section aria-label="Document workspace" className="min-w-0 p-4 sm:p-5">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="mb-1 text-[11px] font-medium uppercase tracking-widest text-foreground/65">
+              {showDiff ? 'Version comparison' : 'Your agent’s instructions'}
+            </p>
+            <h3 className="break-words text-base font-semibold">
+              {selected
+                ? revisionTitle(selected)
+                : driftComparison
+                  ? 'Unrecorded changes'
+                  : 'Current document'}
+            </h3>
+            <p className="mt-1 text-xs text-foreground/70">
+              {selected
+                ? new Date(selected.createdAt).toLocaleString()
+                : showDiff
+                  ? 'Latest saved version compared with the current document.'
+                  : field === 'agentMd'
+                    ? 'Written by you · Used on the next turn'
+                    : 'Maintained by your agent'}
+            </p>
           </div>
-
-          {olderContent.read && newerContent.read ? (
-            <RevisionDiff older={olderContent.content} newer={newerContent.content} />
-          ) : (
-            <Skeleton className="mt-3 h-24" />
+          {selected && (
+            <Button variant="ghost" size="sm" onClick={() => pick(null)}>
+              <ArrowLeft /> Current document
+            </Button>
           )}
+        </div>
 
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>When</TableHead>
-                <TableHead>Who</TableHead>
-                <TableHead>How</TableHead>
-                <TableHead>Why</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {revisions.map((revision) => (
-                <TableRow key={revision.id}>
-                  <TableCell className="whitespace-nowrap">
-                    {new Date(revision.createdAt).toLocaleString()}
-                  </TableCell>
-                  <TableCell>{revision.actor}</TableCell>
-                  <TableCell>
-                    <Badge variant="secondary">{revision.method}</Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{revision.reason}</TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setError(null);
-                        setPending(revision);
-                      }}
-                      disabled={restore.isPending}
-                    >
-                      <RotateCcw className="size-3.5" />
-                      Restore
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        {restoredId && (
+          <p
+            role="status"
+            className="mb-4 flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-400"
+          >
+            <Check className="size-4" /> Version restored. Your agent will use
+            it on the next turn.
+          </p>
+        )}
+        {error && (
+          <div
+            role="alert"
+            className="mb-4 flex flex-wrap items-center gap-2 text-sm text-destructive"
+          >
+            {error}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                historyQuery.refetch();
+                queryClient.invalidateQueries({
+                  queryKey: ['agent-details', agent.agentId],
+                });
+                setError(null);
+              }}
+            >
+              Refresh history
+            </Button>
+          </div>
+        )}
 
-          <span className="text-xs text-muted-foreground">
-            This document keeps its newest {history?.bound} revisions.
+        {history?.drifted && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 text-amber-200">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <div>
+              <p className="text-sm font-medium">
+                Current document has unrecorded changes
+              </p>
+              <p className="mt-1 text-xs leading-5">
+                These changes are not in a saved version.
+              </p>
+              {selected && (
+                <Button
+                  variant="link"
+                  className="h-auto p-0 text-amber-200"
+                  onClick={() => pick(null)}
+                >
+                  View unrecorded changes
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div hidden={showDiff && !driftComparison}>{children}</div>
+
+        {showDiff && (
+          <div className={cn(driftComparison && 'mt-5')}>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-sm font-medium">
+                Changes to the{' '}
+                {toId === LIVE ? 'current document' : 'compared version'}
+              </h4>
+              {selected && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={compareOpen}
+                  onClick={() => {
+                    setCompareOpen(!compareOpen);
+                    setCompareWith(LIVE);
+                  }}
+                >
+                  <GitCompareArrows /> Compare versions
+                </Button>
+              )}
+            </div>
+            {compareOpen && (
+              <div className="mb-3 flex items-center gap-2 text-xs text-foreground/75">
+                Compare with
+                <Select
+                  value={compareWith}
+                  onValueChange={(value) => value && setCompareWith(value)}
+                >
+                  <SelectTrigger
+                    aria-label="Compare with"
+                    className="min-w-0 max-w-80"
+                  >
+                    <SelectValue>
+                      {comparisonTitle
+                        ? revisionTitle(comparisonTitle)
+                        : 'Current document'}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={LIVE}>Current document</SelectItem>
+                    {revisions.map((revision) => (
+                      <SelectItem key={revision.id} value={revision.id}>
+                        {revisionTitle(revision)} ·{' '}
+                        {new Date(revision.createdAt).toLocaleString()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {older.error || newer.error ? (
+              <p role="alert" className="text-sm text-destructive">
+                This version could not be loaded. Select another version or
+                refresh the page.
+              </p>
+            ) : older.ready && newer.ready ? (
+              <RevisionDiff
+                older={older.content}
+                newer={newer.content}
+                olderLabel={
+                  selected ? revisionTitle(selected) : 'Latest saved version'
+                }
+                newerLabel={
+                  comparisonTitle
+                    ? revisionTitle(comparisonTitle)
+                    : 'Current document'
+                }
+              />
+            ) : (
+              <Skeleton className="h-40" />
+            )}
+            {selected && (
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+                <p className="text-xs text-foreground/70">
+                  {matchesCurrent
+                    ? 'This version matches the current document.'
+                    : 'Restoring saves a new version. You can undo it later.'}
+                </p>
+                <Button
+                  disabled={!older.ready || matchesCurrent || restore.isPending}
+                  onClick={() =>
+                    setPending({
+                      revision: selected,
+                      expectedId: revisions[0].id,
+                    })
+                  }
+                >
+                  <RotateCcw /> Restore this version
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <aside
+        aria-label="Version history"
+        className="min-w-0 border-t border-border bg-background/25 lg:border-t-0 lg:border-l"
+      >
+        <div className="flex items-center justify-between px-4 pt-5 pb-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
+            <History className="size-4 text-foreground/70" /> Version history
+          </h3>
+          <span className="rounded-full bg-accent px-2 py-0.5 text-xs text-foreground/75">
+            {revisions.length}
           </span>
-        </>
-      )}
+        </div>
+        <div className="px-3 pb-3">
+          <button
+            type="button"
+            aria-pressed={!selected}
+            onClick={() => pick(null)}
+            className={cn(
+              'w-full rounded-lg border px-3 py-3 text-left text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring',
+              !selected
+                ? 'border-primary/50 bg-primary/10'
+                : 'border-transparent hover:bg-accent',
+            )}
+          >
+            <span className="flex items-center justify-between">
+              Current document
+              <span className="size-2 rounded-full bg-emerald-400" />
+            </span>
+            <span className="mt-1 block text-xs font-normal text-foreground/70">
+              {hasUnsavedChanges
+                ? 'You have an unsaved draft'
+                : 'The version your agent uses'}
+            </span>
+          </button>
+        </div>
+        <div className="max-h-80 space-y-1 overflow-y-auto border-t border-border px-3 py-3 lg:max-h-[420px]">
+          {historyQuery.isLoading && <Skeleton className="h-24" />}
+          {historyQuery.error && (
+            <p role="alert" className="p-2 text-sm text-destructive">
+              History could not be loaded.
+            </p>
+          )}
+          {revisions.map((revision) => (
+            <RevisionListItem
+              key={revision.id}
+              revision={revision}
+              selected={selected?.id === revision.id}
+              current={revision.contentHash === history?.liveHash}
+              onSelect={() => pick(revision.id)}
+            />
+          ))}
+          {!historyQuery.isLoading &&
+            !historyQuery.error &&
+            !revisions.length && (
+              <p className="p-2 text-xs leading-5 text-foreground/70">
+                No saved versions yet. Your next edit starts the history.
+              </p>
+            )}
+        </div>
+        <p className="border-t border-border px-5 py-3 text-[11px] text-foreground/65">
+          Keeps the latest {history?.bound ?? 500} versions.
+        </p>
+      </aside>
 
-      <AlertDialog open={pending !== null} onOpenChange={(open) => !open && setPending(null)}>
+      <AlertDialog
+        open={pending !== null}
+        onOpenChange={(open) => {
+          if (!open && !restore.isPending) setPending(null);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Restore this version?</AlertDialogTitle>
             <AlertDialogDescription>
-              The document goes back to the version from{' '}
-              {pending ? new Date(pending.createdAt).toLocaleString() : ''}, and the history gains a
-              revision for the restore. The agent reads the restored document on its next turn.
+              Restore “{pending ? revisionTitle(pending.revision) : ''}” from{' '}
+              {pending
+                ? new Date(pending.revision.createdAt).toLocaleString()
+                : ''}
+              . This saves a new version and takes effect on the next turn.
+              {hasUnsavedChanges && ' Your unsaved draft will be replaced.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={restore.isPending}>
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => pending && restore.mutate(pending.id)}
               disabled={restore.isPending}
+              onClick={() => pending && restore.mutate(pending)}
             >
-              Restore
+              {restore.isPending ? 'Restoring…' : 'Restore version'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

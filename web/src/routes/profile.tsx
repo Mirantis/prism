@@ -11,7 +11,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import {
   DropdownMenu,
@@ -43,8 +42,7 @@ import { RestoreBackupDialog } from '@/components/profile/restore-backup-dialog'
 import { ModelField } from '@/components/profile/model-field';
 import { VerbosityField } from '@/components/profile/verbosity-field';
 import { LockedInField } from '@/components/profile/locked-in-field';
-import { AgentGuideEditor } from '@/components/profile/agent-guide-editor';
-import { DocumentHistory } from '@/components/profile/document-history';
+import { DocumentWorkspace } from '@/components/profile/document-workspace';
 import type { AgentDetails } from '@/types';
 
 const SECTIONS = [
@@ -56,8 +54,6 @@ const SECTIONS = [
   { key: 'visionMd', label: 'Vision', icon: Eye },
   { key: 'bootstrapMd', label: 'Bootstrap', icon: Wrench },
 ] as const;
-
-type SectionKey = (typeof SECTIONS)[number]['key'];
 
 export const Route = createFileRoute('/profile')({
   component: ProfilePage,
@@ -89,7 +85,7 @@ function ProfilePage() {
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Profile</h2>
           <p className="text-sm text-muted-foreground">
-            Agent identity, heartbeat status, and workspace markdown files.
+            Shape how your agent thinks, works, and remembers.
           </p>
         </div>
         <DropdownMenu>
@@ -125,10 +121,8 @@ function ProfilePage() {
       />
 
       <Card>
-        <CardHeader>
-          <CardTitle>Identity</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+        <CardHeader><CardTitle>Agent settings</CardTitle></CardHeader>
+        <CardContent className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
           <AgentNameField />
           <ModelField
             label="Model"
@@ -153,9 +147,18 @@ function ProfilePage() {
           />
           {details && <VerbosityField details={details} />}
           {details && <LockedInField details={details} />}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Identity documents</CardTitle>
+          <p className="text-sm text-foreground/70">Manage your agent’s instructions and saved versions.</p>
+        </CardHeader>
+        <CardContent className="space-y-4">
           {details ? (
             <Tabs defaultValue="agentMd">
-              <TabsList variant="line">
+              <TabsList variant="line" className="min-h-10 max-w-full justify-start overflow-x-auto overflow-y-hidden pb-2">
                 {SECTIONS.map((s) => (
                   <TabsTrigger key={s.key} value={s.key}>
                     <s.icon className="size-4" />
@@ -165,18 +168,7 @@ function ProfilePage() {
               </TabsList>
               {SECTIONS.map((s) => (
                 <TabsContent key={s.key} value={s.key}>
-                  {/* The Agent guide is the user's document — no tool writes it,
-                      so this is where it gets edited. The rest stay viewers. */}
-                  {s.key === 'agentMd' ? (
-                    <AgentGuideEditor details={details} />
-                  ) : (
-                    <Textarea
-                      value={details[s.key as SectionKey] ?? ''}
-                      readOnly
-                      className="mt-3 h-64 resize-none font-mono text-xs"
-                    />
-                  )}
-                  <DocumentHistory field={s.key} live={details[s.key as SectionKey] ?? ''} />
+                  <DocumentWorkspace field={s.key} label={s.label} details={details} />
                 </TabsContent>
               ))}
             </Tabs>

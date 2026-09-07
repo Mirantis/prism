@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,7 @@ import type { AgentDetails } from '@/types';
  * here. The others are read-only viewers because the agent maintains them
  * through conversation; nothing writes this one but the user.
  */
-export function AgentGuideEditor({ details }: { details: AgentDetails }) {
+export function AgentGuideEditor({ details, onDirtyChange }: { details: AgentDetails; onDirtyChange?: (dirty: boolean) => void }) {
   const agent = useAgent();
   const queryClient = useQueryClient();
   const stored = details.agentMd ?? '';
@@ -54,15 +54,16 @@ export function AgentGuideEditor({ details }: { details: AgentDetails }) {
 
   const dirty = draft !== stored;
   const justSaved = !dirty && savedRef.current === draft;
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
 
   return (
-    <div className="mt-3 flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
       <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         aria-label="Agent guide"
         spellCheck={false}
-        className="h-64 resize-y font-mono text-xs"
+        className="h-72 resize-y bg-background/40 p-4 font-mono text-sm leading-6"
       />
       <Input
         value={reason}
@@ -70,7 +71,7 @@ export function AgentGuideEditor({ details }: { details: AgentDetails }) {
         aria-label="What changed (optional)"
         placeholder="What changed (optional)"
         maxLength={200}
-        className="h-8 text-sm"
+        className="h-9 text-sm"
       />
       <div className="flex items-center gap-2">
         <Button onClick={() => mutation.mutate(draft)} disabled={!dirty || mutation.isPending}>
@@ -87,10 +88,8 @@ export function AgentGuideEditor({ details }: { details: AgentDetails }) {
         {justSaved && <span className="text-xs text-muted-foreground">Saved</span>}
         {error && <span className="text-xs text-destructive">{error}</span>}
       </div>
-      <span className="text-xs text-muted-foreground">
-        The agent's operating manual — how it works, when to reach out, safety norms, channel
-        etiquette. It reaches the agent on its next turn. This document is yours: the agent has no
-        tool to change it.
+      <span className="text-xs text-foreground/70">
+        Your instructions take effect on the agent's next turn. Each save keeps a version in history.
       </span>
     </div>
   );

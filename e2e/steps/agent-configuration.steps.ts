@@ -20,7 +20,7 @@ function guideBox(page: Page) {
 
 /** The guide editor's own Save, told apart from the inline model editors'. */
 function guideSaveButton(page: Page) {
-  return page.locator('[data-slot="tabs-content"]').getByRole('button', { name: 'Save' });
+  return page.locator('[data-slot="tabs-content"]').getByRole('button', { name: 'Save', exact: true });
 }
 
 /**
@@ -29,7 +29,7 @@ function guideSaveButton(page: Page) {
  * no other.
  */
 function revisionRows(page: Page) {
-  return page.locator('[data-slot="tabs-content"] [data-slot="table-body"] tr');
+  return page.locator('[data-slot="tabs-content"] [data-revision-id]');
 }
 
 /**
@@ -51,10 +51,8 @@ async function setModelField(page: Page, label: string, value: string): Promise<
 }
 
 Then('I should see the agent stat cards', async ({ page }) => {
-  // Profile page exposes identity + heartbeat status cards. Use exact:true
-  // because the page intro paragraph ("Agent identity, heartbeat status,
-  // and workspace markdown files.") substring-matches several of these.
-  await expect(page.getByText('Identity', { exact: true })).toBeVisible();
+  await expect(page.getByText('Agent settings', { exact: true })).toBeVisible();
+  await expect(page.getByText('Identity documents', { exact: true })).toBeVisible();
   await expect(page.getByText('Heartbeat Status', { exact: true })).toBeVisible();
   await expect(page.getByText('Last heartbeat', { exact: true })).toBeVisible();
 });
@@ -190,6 +188,7 @@ Then('the newest revision reads {string}', async ({ page }, reason: string) => {
 Then(
   'the difference removes {string} and adds {string}',
   async ({ page }, removed: string, added: string) => {
+    await revisionRows(page).nth(1).click();
     const diff = page.getByLabel('Line difference');
     await expect(diff).toContainText(`- ${removed}`);
     await expect(diff).toContainText(`+ ${added}`);
@@ -199,17 +198,32 @@ Then(
 When('I restore the revision that reads {string}', async ({ page }, reason: string) => {
   await revisionRows(page)
     .filter({ hasText: reason })
-    .getByRole('button', { name: 'Restore' })
     .click();
+  await page.getByRole('button', { name: 'Restore this version', exact: true }).click();
   const dialog = page.getByRole('alertdialog');
-  await dialog.getByRole('button', { name: 'Restore' }).click();
+  await expect(dialog).toContainText('Your unsaved draft will be replaced.');
+  await dialog.getByRole('button', { name: 'Restore version', exact: true }).click();
   // The dialog closes when the restore is accepted, so waiting here reports a
   // refused restore as a stuck dialog rather than as a stale document.
   await expect(dialog).toBeHidden();
 });
 
 Then('the newest revision is the restore', async ({ page }) => {
-  await expect(revisionRows(page).first()).toContainText('rollback');
+  await expect(revisionRows(page).first()).toContainText('Restored');
+});
+
+When('I return to the current document', async ({ page }) => {
+  await page.getByRole('button', { name: 'Current document', exact: true }).click();
+});
+
+Then('the agent guide draft is {string}', async ({ page }, value: string) => {
+  await expect(guideBox(page)).toHaveValue(value);
+});
+
+Then('the restored version matches the current document', async ({ page }) => {
+  await expect(page.getByRole('status')).toContainText('Version restored.');
+  await expect(page.getByRole('button', { name: 'Restore this version', exact: true })).toBeDisabled();
+  await expect(revisionRows(page).first()).toHaveAttribute('aria-pressed', 'true');
 });
 
 When('I open the {string} tab', async ({ page }, label: string) => {
