@@ -270,6 +270,66 @@ describe('useVoiceCall', () => {
     expect(sendVoiceStop).not.toHaveBeenCalled();
   });
 
+  describe('muting the microphone', () => {
+    it('stops the frames leaving while the call runs on', async () => {
+      const { result } = await renderLive();
+
+      act(() => result.current.toggleMute());
+
+      captured.onFrame(new Int16Array([1, 2]).buffer);
+      expect(sendVoiceAudio).not.toHaveBeenCalled();
+      expect(result.current.isMuted).toBe(true);
+      // The session, the claim on it and the microphone all stay as they were: the
+      // runtime is told nothing, so there is nothing for it to end.
+      expect(result.current.status).toBe('live');
+      expect(sendVoiceStop).not.toHaveBeenCalled();
+      expect(audio.stop).not.toHaveBeenCalled();
+    });
+
+    it('lets the frames out again, on the session that was already open', async () => {
+      const { result } = await renderLive();
+      act(() => result.current.toggleMute());
+      captured.onFrame(new Int16Array([1, 2]).buffer);
+
+      act(() => result.current.toggleMute());
+
+      const frame = new Int16Array([3, 4]).buffer;
+      captured.onFrame(frame);
+      expect(sendVoiceAudio).toHaveBeenCalledTimes(1);
+      expect(sendVoiceAudio).toHaveBeenCalledWith(frame);
+      expect(result.current.isMuted).toBe(false);
+      // The microphone was never released and no second session was asked for, so
+      // unmuting costs neither a permission prompt nor a new call.
+      expect(startVoiceAudio).toHaveBeenCalledTimes(1);
+      expect(sendVoiceStart).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps playing the agent while the microphone is muted', async () => {
+      const { result } = await renderLive();
+      act(() => result.current.toggleMute());
+
+      const frame = new Int16Array([5, 6]).buffer;
+      act(() => result.current.handleAudio(frame));
+
+      // Only one direction is muted.
+      expect(audio.enqueue).toHaveBeenCalledWith(frame);
+    });
+
+    it('does not outlive the call it was made in', async () => {
+      const { result } = await renderLive();
+      act(() => result.current.toggleMute());
+
+      act(() => result.current.stop());
+      expect(result.current.isMuted).toBe(false);
+
+      act(() => result.current.start());
+      await waitFor(() => expect(sendVoiceStart).toHaveBeenCalledTimes(2));
+      captured.onFrame(new Int16Array([7, 8]).buffer);
+
+      expect(sendVoiceAudio).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('refuses a second start while a call is running', async () => {
     const { result } = await renderLive();
 

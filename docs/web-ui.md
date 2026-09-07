@@ -54,7 +54,8 @@ The main conversation surface.
 - **Voice chat.** Press the microphone next to the paperclip to talk to the agent
   out loud; the browser asks for the microphone the first time. The same button
   ends the call and releases the microphone, and nothing said in a call is
-  written down — see **[Voice chat](voice-chat.md)**.
+  written down — see **[Voice chat](voice-chat.md)**. While the call runs, a mute
+  button appears beside it and shows whether the microphone is open or muted.
 - **Attachments.** Attach files with the paperclip button or by drag-and-drop.
   Pending attachments show as chips (with a progress spinner, name, and size)
   and can be removed before sending (up to 100 per message). Attached files are

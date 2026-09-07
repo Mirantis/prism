@@ -6,13 +6,17 @@ Feature: Voice chat in the browser
     Given I am logged in
     And I have a personal agent
 
-  Scenario: A call carries audio both ways and gives the voice back when it ends
+  Scenario: A call carries audio both ways, mutes on request, and gives the voice back when it ends
     Given I open a fresh chat
     And the voice model has heard nothing yet
     When I start a voice chat from the composer
     Then the composer says a voice chat is live
     And the voice model hears at least half a second of my microphone
     And the agent's voice is playing in the browser
+    When I mute the microphone
+    Then the voice model hears no more of my microphone
+    When I unmute the microphone
+    Then the voice model hears my microphone again
     When I end the voice chat
     Then the composer offers a new voice chat
     And the voice model has no session open

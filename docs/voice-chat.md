@@ -28,7 +28,9 @@ a Meet call is live, and a Meet call is refused while a voice chat is live.
 
 Press the microphone in the chat composer of the [Web UI](web-ui.md#chat). The
 browser asks for the microphone the first time, and the same button ends the
-call.
+call. While a call runs, a second button beside it mutes the microphone: the
+agent hears nothing until you press it again, and keeps talking to you in the
+meantime.
 
 The terminal UI has no voice control. Another client starts a call by speaking
 the runtime's voice frames on the chat connection —

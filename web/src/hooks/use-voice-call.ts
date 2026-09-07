@@ -6,8 +6,9 @@ import type { VoiceEvent, VoiceFormat } from './use-websocket';
  * A voice call with the agent: the microphone, the playback, and the call's state.
  *
  * Takes the three senders from the chat socket and returns what a control renders —
- * whether a call is running, whether the agent is speaking, and the last refusal in
- * words. The state is held here only; a call writes nothing to the thread.
+ * whether a call is running, whether the microphone is muted, whether the agent is
+ * speaking, and the last refusal in words. The state is held here only; a call writes
+ * nothing to the thread.
  */
 
 export type VoiceCallStatus = 'idle' | 'starting' | 'live';
@@ -27,10 +28,14 @@ export interface VoiceCall {
   status: VoiceCallStatus;
   /** The agent's audio is playing right now. */
   isSpeaking: boolean;
+  /** The microphone is muted: the call runs on, and the agent hears nothing. */
+  isMuted: boolean;
   /** Why the last call could not start, or could not continue. Cleared by the next one. */
   error: string | null;
   start: () => void;
   stop: () => void;
+  /** Mute the microphone, or open it again. The session and the playback are untouched. */
+  toggleMute: () => void;
   /** Feed a voice frame in. Wired to `onVoiceEvent` on the chat socket. */
   handleEvent: (event: VoiceEvent) => void;
   /** Feed a frame of the agent's speech in. Wired to `onVoiceAudio`. */
@@ -51,6 +56,7 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
 
   const [status, setStatus] = useState<VoiceCallStatus>('idle');
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const audioRef = useRef<VoiceAudio | null>(null);
@@ -68,15 +74,29 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
     setStatus(next);
   }, []);
 
+  // Mirrored for the same reason: `onFrame` is bound when the audio path opens and
+  // reads the flag on every frame after that.
+  const isMutedRef = useRef(false);
+  const setMuted = useCallback((next: boolean) => {
+    isMutedRef.current = next;
+    setIsMuted(next);
+  }, []);
+
   /** Release the microphone and the playback. Safe to call when there is nothing open. */
   const releaseAudio = useCallback(() => {
     const audio = audioRef.current;
     audioRef.current = null;
     setIsSpeaking(false);
+    // Nothing about a mute outlives the call it was made in.
+    setMuted(false);
     // The stop is asynchronous but nothing waits on it: the call is over either way,
     // and a failure to close a context is not something to tell the user about.
     void audio?.stop().catch(() => {});
-  }, []);
+  }, [setMuted]);
+
+  const toggleMute = useCallback(() => {
+    setMuted(!isMutedRef.current);
+  }, [setMuted]);
 
   const start = useCallback(() => {
     if (statusRef.current !== 'idle') return;
@@ -92,7 +112,12 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
     // leave the runtime holding a call nobody can talk to. This is the one refusal the
     // client owns, since the runtime never hears about it.
     void startVoiceAudio({
-      onFrame: (frame) => sendAudioRef.current(frame),
+      // Mute is a frame the client does not send. The microphone stays open, so
+      // unmuting is silence ending rather than a second permission prompt.
+      onFrame: (frame) => {
+        if (isMutedRef.current) return;
+        sendAudioRef.current(frame);
+      },
       onSpeaking: setIsSpeaking,
     })
       .then((audio) => {
@@ -182,5 +207,5 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
   // A tab that navigates away releases the microphone too.
   useEffect(() => releaseAudio, [releaseAudio]);
 
-  return { status, isSpeaking, error, start, stop, handleEvent, handleAudio };
+  return { status, isSpeaking, isMuted, error, start, stop, toggleMute, handleEvent, handleAudio };
 }

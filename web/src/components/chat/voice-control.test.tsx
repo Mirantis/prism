@@ -29,9 +29,11 @@ function fakeVoice(overrides: Partial<VoiceCall> = {}): VoiceCall {
   return {
     status: 'idle' as VoiceCallStatus,
     isSpeaking: false,
+    isMuted: false,
     error: null,
     start: vi.fn(),
     stop: vi.fn(),
+    toggleMute: vi.fn(),
     handleEvent: vi.fn(),
     handleAudio: vi.fn(),
     ...overrides,
@@ -74,6 +76,48 @@ describe('the voice chat control', () => {
 
     expect(voice.stop).toHaveBeenCalledTimes(1);
     expect(voice.start).not.toHaveBeenCalled();
+  });
+
+  describe('the mute control', () => {
+    it('is offered only while a call runs', () => {
+      renderComposer(fakeVoice());
+      expect(screen.queryByTestId('voice-mute-button')).toBeNull();
+
+      cleanup();
+      renderComposer(fakeVoice({ status: 'live' }));
+      expect(screen.getByTestId('voice-mute-button')).toBeEnabled();
+    });
+
+    it('mutes the microphone and leaves the call alone', () => {
+      const voice = fakeVoice({ status: 'live' });
+      renderComposer(voice);
+
+      const button = screen.getByTestId('voice-mute-button');
+      expect(button).toHaveAttribute('aria-label', 'Mute microphone');
+      expect(button).toHaveAttribute('aria-pressed', 'false');
+      fireEvent.click(button);
+
+      expect(voice.toggleMute).toHaveBeenCalledTimes(1);
+      expect(voice.stop).not.toHaveBeenCalled();
+    });
+
+    it('shows a muted microphone as muted, and offers to open it again', () => {
+      const voice = fakeVoice({ status: 'live', isMuted: true });
+      renderComposer(voice);
+
+      const button = screen.getByTestId('voice-mute-button');
+      expect(button).toHaveAttribute('aria-label', 'Unmute microphone');
+      expect(button).toHaveAttribute('aria-pressed', 'true');
+      // The call is still live, and the control that ends it is still the other one.
+      expect(screen.getByTestId('voice-call-indicator')).toHaveTextContent('Voice chat live');
+      expect(screen.getByTestId('voice-call-button')).toHaveAttribute(
+        'aria-label',
+        'End voice chat',
+      );
+
+      fireEvent.click(button);
+      expect(voice.toggleMute).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('says the call is being set up before it is live', () => {

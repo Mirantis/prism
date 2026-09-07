@@ -10,7 +10,8 @@
  * comes from the DOM — the live indicator, the speaking cue, the button going
  * back to a startable state. What crossed the wire comes from the mock's
  * `/state`: `inboundMs` grows only if the browser's microphone reached the model,
- * and `deltasSent` grows only if the runtime asked for an answer.
+ * and `deltasSent` grows only if the runtime asked for an answer. A mute is that
+ * same `inboundMs` standing still while the session stays open.
  *
  * Every wait here reports `/state` when it gives up, so a failure names the step
  * of the exchange that did not complete instead of only the assertion that ran.
@@ -28,6 +29,10 @@ const MOCK_STATE_URL = `http://127.0.0.1:${MOCK_REALTIME_PORT}/state`;
 const MICROPHONE_MS = 500;
 /** Long enough for a slow runner to open a socket and pass audio through it. */
 const EXCHANGE_TIMEOUT_MS = 30_000;
+/** A frame already on the wire when the mute landed still arrives, so the count settles first. */
+const MUTE_SETTLE_MS = 750;
+/** The window that must stay still. A frame is 20ms of audio, so an open microphone fills it. */
+const MUTED_WINDOW_MS = 2_000;
 
 interface MockState {
   /** How many voice sessions the model has open right now. */
@@ -46,6 +51,9 @@ interface MockState {
  * module variable.
  */
 let baseline: MockState = { sessions: 0, inboundMs: 0, responsesRequested: 0, deltasSent: 0 };
+
+/** What the model had heard when the microphone was muted, so the unmute is growth on it. */
+let mutedInboundMs = 0;
 
 async function readState(): Promise<MockState> {
   const response = await fetch(MOCK_STATE_URL);
@@ -94,10 +102,16 @@ async function describeScreen(page: Page): Promise<string> {
   const indicator = await read('voice-call-indicator');
   const error = await read('voice-call-error');
   const button = await read('voice-call-button');
+  // The label is the mute's whole state, and it is absent while no call runs.
+  const mute =
+    (await muteButton(page).count()) > 0
+      ? await muteButton(page).getAttribute('aria-label')
+      : null;
   return (
     `screen: indicator=${indicator === null ? 'absent' : JSON.stringify(indicator)}, ` +
     `refusal=${error === null ? 'none' : JSON.stringify(error)}, ` +
-    `control=${button === null ? 'absent' : 'present'}. ` +
+    `control=${button === null ? 'absent' : 'present'}, ` +
+    `mute=${mute ?? 'absent'}. ` +
     `browser: ${pageProblems.length === 0 ? 'nothing on the console' : pageProblems.join(' | ')}`
   );
 }
@@ -137,13 +151,16 @@ async function waitForScreen(what: string, locator: Locator, page: Page): Promis
 }
 
 const voiceButton = (page: Page) => page.getByTestId('voice-call-button');
+const muteButton = (page: Page) => page.getByTestId('voice-mute-button');
 const voiceIndicator = (page: Page) => page.getByTestId('voice-call-indicator');
 const voiceSpeaking = (page: Page) => page.getByTestId('voice-call-speaking');
+const liveIndicator = (page: Page) => voiceIndicator(page).filter({ hasText: 'Voice chat live' });
 
 Given('the voice model has heard nothing yet', async ({ page }) => {
   // The page outlives the reload later in the scenario, so one attach covers both calls.
   watchPage(page);
   pageProblems = [];
+  mutedInboundMs = 0;
   baseline = await readState();
   expect(baseline.sessions, `a session was still open: ${describeExchange(baseline)}`).toBe(0);
 });
@@ -158,11 +175,7 @@ Then('the composer says a voice chat is live', async ({ page }) => {
   // Filtered on the live wording rather than on the indicator alone: the same
   // element says "Starting…" first, so the whole session-open budget belongs to
   // this wait and a runtime that never went live is reported with the exchange.
-  await waitForScreen(
-    'the live indicator',
-    voiceIndicator(page).filter({ hasText: 'Voice chat live' }),
-    page,
-  );
+  await waitForScreen('the live indicator', liveIndicator(page), page);
   // One control, and while a call runs it is the one that ends it.
   await expect(voiceButton(page)).toHaveAttribute('aria-label', 'End voice chat');
 });
@@ -187,6 +200,45 @@ Then(`the agent's voice is playing in the browser`, async ({ page }) => {
   // worklet actually played, so it is the page's own evidence that the answer
   // arrived as sound rather than only as frames on the socket.
   await waitForScreen('the speaking cue', voiceSpeaking(page), page);
+});
+
+When('I mute the microphone', async ({ page }) => {
+  await muteButton(page).click();
+  // The label is the state, so this is also the evidence that the click landed.
+  await expect(muteButton(page)).toHaveAttribute('aria-label', 'Unmute microphone');
+});
+
+Then('the voice model hears no more of my microphone', async ({ page }) => {
+  await new Promise((resolve) => setTimeout(resolve, MUTE_SETTLE_MS));
+  const settled = await readState();
+  await new Promise((resolve) => setTimeout(resolve, MUTED_WINDOW_MS));
+  const after = await readState();
+
+  expect(
+    Math.round(after.inboundMs - settled.inboundMs),
+    `the muted microphone still reached the voice model. ` +
+      `${describeExchange(after)}. ${await describeScreen(page)}`,
+  ).toBe(0);
+  mutedInboundMs = after.inboundMs;
+
+  // A mute is not an ending: the session the call opened is still the one that is open,
+  // and the composer still reports a live call.
+  expect(after.sessions, `the mute ended the session: ${describeExchange(after)}`).toBe(1);
+  await expect(liveIndicator(page)).toBeVisible();
+});
+
+When('I unmute the microphone', async ({ page }) => {
+  await muteButton(page).click();
+  await expect(muteButton(page)).toHaveAttribute('aria-label', 'Mute microphone');
+});
+
+Then('the voice model hears my microphone again', async ({ page }) => {
+  // On the same session, since nothing here opened a second one.
+  await waitForModel(
+    'the unmuted microphone reaching the voice model',
+    (state) => state.inboundMs > mutedInboundMs && state.sessions === 1,
+    page,
+  );
 });
 
 When('I end the voice chat', async ({ page }) => {
