@@ -3,7 +3,7 @@
  * attachment.
  *
  * The agent already CREATES files on disk via the shell tools
- * (`shell_write_file`, `shell_exec`, `claude_code`, …) inside its workspace
+ * (`shell_write_file`, `shell_exec`, `coding_agent`, …) inside its workspace
  * (`SHELL_WORKSPACE_ROOT`, default `/home/node`). This tool is the OUTBOUND
  * half: it reads such a file, stores it as a `MessageAttachment`
  * (`source: 'agent'`, unlinked), and returns its `attachmentId`. The invoke
@@ -146,7 +146,7 @@ export async function runShareFile(
 
   // Read, then confirm the file did not move under the read. The barrier covers
   // the writers whose path we can see; this catches the rest (`shell_exec`,
-  // `claude_code`) in the one window where they are observable at all. One retry:
+  // `coding_agent`) in the one window where they are observable at all. One retry:
   // a second change means something is still writing, and guessing which revision
   // the reply describes is exactly the mistake being fixed.
   let data: Buffer;

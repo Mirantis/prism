@@ -10,9 +10,9 @@ describe('getShellTools', () => {
     const names = Object.keys(getShellTools()).sort();
     expect(names).toEqual(
       [
-        'claude_code',
-        'claude_code_status',
-        'claude_code_stop',
+        'coding_agent',
+        'coding_agent_status',
+        'coding_agent_stop',
         'shell_edit_file',
         'shell_exec',
         'shell_kill',

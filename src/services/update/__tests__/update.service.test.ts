@@ -286,7 +286,7 @@ describe('check loop', () => {
 
   it.each([
     ['a shell_spawn child', 'shellProcs'],
-    ['a claude_code task', 'agentTasks'],
+    ['a coding_agent task', 'agentTasks'],
   ])('defers while %s is still running', async (_label, key) => {
     vi.useFakeTimers();
     mockFetchLatest.mockResolvedValue(NEWER);

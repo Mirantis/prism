@@ -43,6 +43,11 @@ to clear.
   `messageDeliveryService`. Behavior that every channel needs belongs in a
   service; the WebSocket gateway and the Slack adapter subscribe to it and own
   none of it.
+- **Coding agents stay generic.** The `coding_agent` tools hand a task to a
+  `CodingAgent` (`lib/coding-agents/`, chosen by `create-coding-agent.ts` from
+  `CODING_AGENT`), and the adapter runs it end to end: how the agent is
+  launched, read and given a home is its business alone. A new agent is one
+  folder plus one entry in the selector.
 - **Prove an option is needed before you add it.** A flag, a setting or an env
   var has to show that no existing product behavior, no provider selection and
   no better default can cover the case. Each one is a fork in the code and a
@@ -653,7 +658,7 @@ locally.
 ### Tools
 
 1. **Built-ins** — direct AI SDK tools in `src/tools/` (memory, agent config, cron,
-   goals, shell/Claude Code, share-file, skills, meetings), assembled by
+   goals, shell, the coding sub-agent, share-file, skills, meetings), assembled by
    `lib/tool-collection.ts#collectTools` and filtered per invocation mode. There is
    **no internal MCP server** — these are in-process closures, not an HTTP surface.
 2. **Lens Agents MCP** — kubectl, GitHub, AWS tools (external, via `NEXUS_MCP_URL`).
@@ -785,7 +790,7 @@ src/
 │   ├── attachments.ts          # hydrate_attachment (stored bytes → workspace file) + view_attachment (image/PDF into the turn) + `reapScratchDirs`
 │   ├── share-file.ts           # Deliver a workspace file to the user as an attachment
 │   ├── meeting.ts              # Voice meetings (join, leave, set the microphone, status, speaker, chat)
-│   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, claude_code
+│   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, coding_agent (+ the task manager behind it)
 │   └── skills/                 # The `skill` tool (loads a SKILL.md body on demand)
 ├── routes/
 │   ├── management.ts           # Management API for backend to push heartbeat/cron/slack-heartbeat-trigger events
@@ -813,6 +818,12 @@ src/
 │   │   │   └── openrouter-provider.ts # OpenRouter factory (same OpenAI surface; direct at openrouter.ai or the gateway mount, `vendor/model` ids): `createOpenRouterProvider(baseURL?)`
 │   │   └── anthropic/
 │   │       └── anthropic-provider.ts # First-party Anthropic API factory (api.anthropic.com; direct-only, bare model IDs): `createAnthropicProvider()`
+│   ├── coding-agents/          # One folder per coding agent, plus the shared contract and the selector (`CODING_AGENT`)
+│   │   ├── coding-agent.ts     # The `CodingAgent` contract: `id`, `displayName`, `prepareHome()` and `run(task)`, which returns a `CodingAgentRun` (an event stream of `text` / `session` / `result`, `exited`, `stop()`). States what the runtime needs and nothing about how an agent is launched
+│   │   ├── cli-run.ts          # `runCli()`: the process plumbing a CLI-shaped adapter calls — spawn, stdout lines through the adapter's parser, exit wait, the closing `result` when the agent reported none, SIGTERM→SIGKILL stop
+│   │   ├── create-coding-agent.ts # Selector: `config.codingAgent` → adapter factory, a `Record` so a config name without an adapter fails to compile
+│   │   └── claude-code/
+│   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (gate mode → permission flags, plan-only instruction), the stream-json parser, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink
 │   ├── embedding-providers/    # Memory-embedding vendors, a feature of their own decoupled from the chat provider (`EMBEDDING_PROVIDER`)
 │   │   ├── embedding-provider.ts # Shared `EmbeddingProvider` type: `model(modelId)` + the vendor's `providerOptions` fragment carrying the 1024-dim truncation target; `EMBEDDING_DIMENSIONS`
 │   │   ├── create-embedding-provider.ts # Embedding selector: picks vendor (bedrock/azure-openai/openai/openrouter) off `config.embeddingProvider`, passes each its own gateway mount; `none` → null
@@ -869,6 +880,7 @@ What the operator sets on `docker run`:
 | `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
 | `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
 | `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, or `anthropic` (one per container) | `bedrock` |
+| `CODING_AGENT` | Coding agent the `coding_agent` tools delegate to: `claude-code` (one per container). Unset or empty is the default; an unrecognized value falls back to it and `index.ts` warns once at startup | `claude-code` |
 | `EMBEDDING_PROVIDER` | Memory-embedding vendor, decoupled from the chat vendor: `bedrock`, `azure-openai`, `openai`, `openrouter`, or `none` (embeddings off). Unset or unrecognized derives the chat vendor's default. The model still comes from the selected vendor's `*_EMBEDDING_MODEL_ID` var | derived from `LLM_PROVIDER` (anthropic: `openai` with `OPENAI_API_KEY` or `NEXUS_API_URL`, else `none`) |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key; on Bedrock selected over SigV4 when set, on mantle sent as `x-api-key` and **required** direct | — |
 | `AWS_REGION` | AWS region for Bedrock and for the mantle host | `us-east-1` |
@@ -1250,7 +1262,7 @@ container and hold the credentials.
 longer claims otherwise.** `routes/agent-guide.ts` takes no credential from
 inside the container and `tools/shell/workspace.ts` is explicit that its check is
 not a security boundary, so `shell_exec` reaches both `PATCH
-localhost:3003/agents/agent-guide` and `/data/agent.db`, and a `claude_code`
+localhost:3003/agents/agent-guide` and `/data/agent.db`, and a `coding_agent`
 sub-agent's own commands never reach this gate at all. Withholding the ordinary
 path — a tool the model reaches for while working — is what this buys, and with
 allow-authority on a writable document that makes the control a one-way ratchet:
@@ -1296,10 +1308,11 @@ frontmatter with required `name` + `description`, optional `scripts/`/
     runs have none, so they see global skills only. `getCatalog`/`find`/
     `getSkillBody` take an optional `workspaceRoot`; the `# Skills` section labels
     workspace vs installed groups. `<workspaceRoot>/.claude/skills` is also seen
-    natively by the embedded `claude_code` (its cwd = workspaceRoot).
-- **Shared with `claude_code`.** At startup `ensureDataDirs()` points Claude
-  Code at our own config dir (`CLAUDE_CONFIG_DIR=<DATA>/.claude`) and symlinks
-  `<DATA>/.claude/skills` → `<DATA>/skills`, so the embedded `claude_code` tool
+    natively by the coding sub-agent (its cwd = workspaceRoot).
+- **Shared with the coding sub-agent.** At startup the configured
+  `CodingAgent`'s `prepareHome()` gives it a home inside the data dir that reads
+  the same skills. For Claude Code that is `CLAUDE_CONFIG_DIR=<DATA>/.claude` with
+  `<DATA>/.claude/skills` → `<DATA>/skills` symlinked, so the `coding_agent` tool
   discovers the same skills — without touching the user's real `~/.claude`.
 - **Progressive disclosure.** `skillCatalogService` (mtime-cached) parses only
   `name` + `description` for the `# Skills` system-prompt section; the `skill`

@@ -1,5 +1,5 @@
 // The agent-runtime container doubles as the shell sandbox: shell tools
-// (shell_exec, shell_spawn, claude_code) spawn /bin/bash as children of this
+// (shell_exec, shell_spawn, coding_agent) spawn /bin/bash as children of this
 // server process, so anything in the server's env leaks into every repo the
 // agent clones. Two container-baked vars are actively harmful there and are
 // stripped here:
@@ -13,7 +13,7 @@
 //
 // We strip server-runtime-only vars rather than allowlisting because the
 // sandbox legitimately needs inherited PATH, HOME, AWS_*, GH_*, and token vars
-// for gh/aws/kubectl/claude auth.
+// for gh/aws/kubectl and coding-agent auth.
 
 const SERVER_ONLY_VARS = ['NODE_ENV', 'HUSKY'] as const;
 

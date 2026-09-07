@@ -8,16 +8,11 @@ import {
   resolvePluginsDir,
   resolvePluginDataDir,
   resolveMediaDir,
-  resolveClaudeConfigDir,
   ensureDataDirs,
+  ensureSymlink,
 } from './data-dir';
 
-const ENV_KEYS = [
-  'PRISM_DATA_DIR',
-  'PRISM_SKILLS_DIR',
-  'PRISM_PLUGINS_DIR',
-  'CLAUDE_CONFIG_DIR',
-] as const;
+const ENV_KEYS = ['PRISM_DATA_DIR', 'PRISM_SKILLS_DIR', 'PRISM_PLUGINS_DIR'] as const;
 let saved: Record<string, string | undefined>;
 let tmp: string;
 
@@ -48,12 +43,11 @@ describe('resolveDataDir', () => {
   });
 });
 
-describe('resolveSkillsDir / resolveClaudeConfigDir', () => {
+describe('resolveSkillsDir / resolveMediaDir', () => {
   it('derive from the data dir', () => {
     process.env.PRISM_DATA_DIR = tmp;
     expect(resolveSkillsDir()).toBe(path.join(tmp, 'skills'));
     expect(resolveMediaDir()).toBe(path.join(tmp, 'media'));
-    expect(resolveClaudeConfigDir()).toBe(path.join(tmp, '.claude'));
   });
 
   it('honors PRISM_SKILLS_DIR override', () => {
@@ -91,52 +85,54 @@ describe('resolvePluginsDir / resolvePluginDataDir', () => {
 });
 
 describe('ensureDataDirs', () => {
-  it('creates the skills + claude dirs, symlinks skills, and sets CLAUDE_CONFIG_DIR', () => {
+  it('creates the skills, plugins, media and tool-output dirs', () => {
     process.env.PRISM_DATA_DIR = tmp;
     const r = ensureDataDirs();
 
     expect(r.fellBackFrom).toBeNull();
+    expect(r.dataDir).toBe(path.resolve(tmp));
     expect(r.skillsDir).toBe(path.join(tmp, 'skills'));
     expect(r.pluginsDir).toBe(path.join(tmp, 'plugins'));
     expect(r.mediaDir).toBe(path.join(tmp, 'media'));
-    expect(fs.statSync(r.skillsDir).isDirectory()).toBe(true);
-    expect(fs.statSync(r.pluginsDir).isDirectory()).toBe(true);
-    expect(fs.statSync(r.mediaDir).isDirectory()).toBe(true);
-    expect(fs.statSync(r.claudeConfigDir).isDirectory()).toBe(true);
+    expect(r.toolOutputDir).toBe(path.join(tmp, 'tool-outputs'));
+    for (const dir of [r.skillsDir, r.pluginsDir, r.mediaDir, r.toolOutputDir]) {
+      expect(fs.statSync(dir).isDirectory()).toBe(true);
+    }
+  });
+});
 
-    // Only skills are exposed to Claude Code — its plugin layout differs from
-    // the Agent Plugins one, so we deliberately do not link plugins across.
-    expect(fs.existsSync(path.join(r.claudeConfigDir, 'plugins'))).toBe(false);
+describe('ensureSymlink', () => {
+  it('creates the link and reports it in place', () => {
+    const target = path.join(tmp, 'target');
+    const link = path.join(tmp, 'link');
+    fs.mkdirSync(target);
 
-    // The claude config dir's skills child is a symlink to the canonical dir.
-    const link = path.join(r.claudeConfigDir, 'skills');
-    expect(r.symlinkOk).toBe(true);
+    expect(ensureSymlink(target, link)).toBe(true);
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
-    expect(fs.realpathSync(link)).toBe(fs.realpathSync(r.skillsDir));
-
-    expect(process.env.CLAUDE_CONFIG_DIR).toBe(r.claudeConfigDir);
+    expect(fs.realpathSync(link)).toBe(fs.realpathSync(target));
   });
 
-  it('is idempotent — a second run keeps the symlink', () => {
-    process.env.PRISM_DATA_DIR = tmp;
-    ensureDataDirs();
-    const r = ensureDataDirs();
-    const link = path.join(r.claudeConfigDir, 'skills');
+  it('is idempotent — a second run keeps the link', () => {
+    const target = path.join(tmp, 'target');
+    const link = path.join(tmp, 'link');
+    fs.mkdirSync(target);
+
+    ensureSymlink(target, link);
+    expect(ensureSymlink(target, link)).toBe(true);
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
-    expect(fs.realpathSync(link)).toBe(fs.realpathSync(r.skillsDir));
+    expect(fs.realpathSync(link)).toBe(fs.realpathSync(target));
   });
 
-  it('does not clobber a populated real directory at the symlink path', () => {
-    process.env.PRISM_DATA_DIR = tmp;
-    // Pre-create <claude>/skills as a real dir with content.
-    const claudeSkills = path.join(tmp, '.claude', 'skills');
-    fs.mkdirSync(claudeSkills, { recursive: true });
-    fs.writeFileSync(path.join(claudeSkills, 'keep.txt'), 'x');
+  it('does not clobber a populated real directory at the link path', () => {
+    const target = path.join(tmp, 'target');
+    const link = path.join(tmp, 'link');
+    fs.mkdirSync(target);
+    fs.mkdirSync(link);
+    fs.writeFileSync(path.join(link, 'keep.txt'), 'x');
 
-    const r = ensureDataDirs();
-    expect(r.symlinkOk).toBe(false);
+    expect(ensureSymlink(target, link)).toBe(false);
     // The pre-existing content survives — we never delete a dir we didn't make.
-    expect(fs.existsSync(path.join(claudeSkills, 'keep.txt'))).toBe(true);
-    expect(fs.lstatSync(claudeSkills).isSymbolicLink()).toBe(false);
+    expect(fs.existsSync(path.join(link, 'keep.txt'))).toBe(true);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(false);
   });
 });

@@ -45,7 +45,7 @@ const MAX_AGENT_GUIDE_CHARS = 8_000;
  * status checks and note-taking. Unknown tools, including Nexus MCP tools, are
  * evaluated by default.
  *
- * The two terminators — `claude_code_stop` and `shell_kill` — are here for a
+ * The two terminators — `coding_agent_stop` and `shell_kill` — are here for a
  * blunter reason than latency: a gate that can refuse "stop the runaway task"
  * is worse than no gate at that moment. They end work the agent itself started
  * and can cause none of the harms this list guards against, and they are the
@@ -66,8 +66,8 @@ const ALWAYS_ALLOWED_TOOL_NAMES = new Set([
   'list_scheduled_tasks',
   'get_goal',
   'skill',
-  'claude_code_status',
-  'claude_code_stop',
+  'coding_agent_status',
+  'coding_agent_stop',
   'shell_stdout',
   'shell_kill',
 ]);
@@ -419,7 +419,7 @@ Judge what the call DOES, not what its text is ABOUT. Content that mentions, des
 
 Names are not values. Enumerating or checking existence is metadata, not exposure: listing a credentials directory, listing profile or account names, printing a tool version, resolving the identity a session already has, or testing whether a file exists reveals no secret material. Block the call that reads, prints, copies, decrypts, or transmits the secret itself. Filtering output that carries values still exposes values: env, printenv, and set emit NAME=value pairs, so grepping or paging them prints the secrets themselves rather than listing which variables exist.
 
-Capability is not harm. Running code IS this agent's ordinary work: shell commands, builds, tests, scripts, and delegating a multi-step task to a coding sub-agent are the job, not evidence against it. Judge the effect of what will actually run. Delegating to a coding sub-agent (the claude_code tool) is a first-class, expected part of this agent's work, and it runs under its own per-action permission gate. So judge the BRIEF, not the ceiling of what the sub-agent could go on to do: block when the brief itself directs harm — destroy data, exfiltrate secrets, disable safeguards, act on production without authorization. A vague, exploratory, or open-ended brief is not a reason to refuse; neither is the size of what the sub-agent might go on to do. The exception is fetching and executing unreviewed remote code (piping a downloaded script to a shell, say), which is not ordinary work.
+Capability is not harm. Running code IS this agent's ordinary work: shell commands, builds, tests, scripts, and delegating a multi-step task to a coding sub-agent are the job, not evidence against it. Judge the effect of what will actually run. Delegating to a coding sub-agent (the coding_agent tool) is a first-class, expected part of this agent's work, and it runs under its own per-action permission gate. So judge the BRIEF, not the ceiling of what the sub-agent could go on to do: block when the brief itself directs harm — destroy data, exfiltrate secrets, disable safeguards, act on production without authorization. A vague, exploratory, or open-ended brief is not a reason to refuse; neither is the size of what the sub-agent might go on to do. The exception is fetching and executing unreviewed remote code (piping a downloaded script to a shell, say), which is not ordinary work.
 
 No category is a verdict. Pick the label that fits, then decide from the effect: if the effect is benign, allow it whatever the label reads. Relabelling a harmless call as delegation, code_execution, or other does not make it blockable.
 

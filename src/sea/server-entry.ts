@@ -39,7 +39,7 @@ process.env.DATABASE_URL ??= `file:${path.join(dataDir, 'agent.db')}`;
 // Sidecars (web/, node_modules/) live next to the executable.
 process.env.PRISM_WEB_DIR ??= path.join(path.dirname(process.execPath), 'web');
 
-// Workspace root for the shell/claude_code tools. The runtime default is the
+// Workspace root for the shell/coding_agent tools. The runtime default is the
 // Docker sandbox path /home/node, which doesn't exist on a standalone install
 // — a non-existent cwd makes child spawns fail with a misleading
 // `spawn <cmd> ENOENT`. Default it to a real dir under ~/.prism (created in
@@ -47,7 +47,7 @@ process.env.PRISM_WEB_DIR ??= path.join(path.dirname(process.execPath), 'web');
 process.env.SHELL_WORKSPACE_ROOT ??= path.join(dataDir, 'workspace');
 
 async function main(): Promise<void> {
-  // 0. Ensure the shell/claude_code workspace root exists before the runtime
+  // 0. Ensure the shell/coding_agent workspace root exists before the runtime
   //    boots — a missing cwd makes tool subprocess spawns fail with ENOENT.
   if (!process.env.SHELL_WORKSPACE_ROOT) {
     process.env.SHELL_WORKSPACE_ROOT = path.join(dataDir, 'workspace');

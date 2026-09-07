@@ -142,7 +142,7 @@ RUN npm ci --workspace=prism-cli --include-workspace-root --omit=dev --ignore-sc
 # package so the SQLite + sqlite-vec path works.
 RUN npm rebuild better-sqlite3
 
-# Claude Code CLI: the `claude_code` / `claude_code_status` MCP tools spawn
+# Claude Code CLI, the default coding agent: the `coding_agent` tools spawn
 # this binary as a sub-agent. Installed globally so a child
 # `spawn('claude', …)` finds it on PATH. Auth piggybacks on the parent's
 # inherited env (AWS_BEARER_TOKEN_BEDROCK, CLAUDE_CODE_USE_BEDROCK).
@@ -299,7 +299,7 @@ EXPOSE 3003
 RUN mkdir -p /data/skills && chown -R node:node /data
 VOLUME ["/data"]
 
-# The persistent data dir for the runtime (skills, Claude Code config). The
+# The persistent data dir for the runtime (skills, the coding agent's config). The
 # resolver (src/lib/data-dir.ts) uses PRISM_DATA_DIR when set, else ~/.prism —
 # so the container points it at the mounted /data volume here.
 ENV PRISM_DATA_DIR=/data

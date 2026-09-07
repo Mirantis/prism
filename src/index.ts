@@ -48,6 +48,7 @@ import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
 import { ensureWorkspaceRoot } from './tools/shell/config';
 import { ensureDataDirs } from './lib/data-dir';
+import { createCodingAgent } from './lib/coding-agents/create-coding-agent';
 import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
 import { createProvider } from './lib/llm-providers/create-provider';
 import { runBackfill } from './scripts/backfill-embeddings';
@@ -96,10 +97,9 @@ const initialize = async () => {
       logger.info('[Startup] shell workspace: %s', ws.root);
     }
 
-    // Ensure the persistent skills dir exists and point Claude Code
-    // (CLAUDE_CONFIG_DIR + a symlink inside our own data dir) at the same
-    // canonical skills folder, so the prism loop and the embedded claude_code
-    // tool see one shared set of skills without touching the user's ~/.claude.
+    // Ensure the persistent data dirs exist, then give the configured coding
+    // agent its home inside them, pointed at the same canonical skills folder,
+    // so the prism loop and the coding sub-agent see one shared set of skills.
     const dirs = ensureDataDirs();
     if (dirs.fellBackFrom) {
       logger.warn(
@@ -108,12 +108,19 @@ const initialize = async () => {
         dirs.dataDir,
       );
     }
+    logger.info('[Startup] skills dir: %s', dirs.skillsDir);
+    const codingAgent = createCodingAgent();
+    const home = codingAgent.prepareHome({ dataDir: dirs.dataDir, skillsDir: dirs.skillsDir });
     logger.info(
-      '[Startup] skills dir: %s (claude config: %s, symlink %s)',
-      dirs.skillsDir,
-      dirs.claudeConfigDir,
-      dirs.symlinkOk ? 'ok' : 'unavailable',
+      { agent: codingAgent.id, configDir: home.configDir, skillsLinked: home.skillsLinked },
+      '[Startup] coding agent',
     );
+    if (config.invalidCodingAgent) {
+      logger.warn(
+        { configuredAgent: config.invalidCodingAgent, effectiveAgent: config.codingAgent },
+        '[Startup] invalid CODING_AGENT; using the default',
+      );
+    }
     // Scanning here also surfaces any malformed plugin's warning at boot rather
     // than on whichever turn first happens to build a system prompt.
     logger.info(

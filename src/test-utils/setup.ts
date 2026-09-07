@@ -54,6 +54,8 @@ vi.mock('../config', () => ({
     classificationModelId: 'anthropic.claude-3-haiku-20240307-v1:0',
     toolRiskGateMode: 'off',
     invalidToolRiskGateMode: null,
+    codingAgent: 'claude-code',
+    invalidCodingAgent: null,
     awsRegion: 'us-east-1',
     awsAccessKeyId: undefined,
     awsSecretAccessKey: undefined,

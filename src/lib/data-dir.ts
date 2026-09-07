@@ -4,15 +4,8 @@
  * state. Today that location is implicit in `DATABASE_URL` (set per context:
  * `/data` in the container via start.sh, `~/.prism` for the SEA binary via
  * server-entry.ts). This module makes it explicit so anything that needs a
- * persistent home (skills, plugins, Claude Code's config dir) derives from one
- * place.
- *
- * It also owns the Claude Code interop: the embedded `claude_code` tool spawns
- * the real `claude` CLI, which discovers skills under `$CLAUDE_CONFIG_DIR/skills`.
- * We point `CLAUDE_CONFIG_DIR` at a dir *inside* our data dir and symlink its
- * `skills` child to the canonical skills dir — so both the prism loop and
- * `claude_code` read the same bytes, and we never touch the user's real
- * `~/.claude`.
+ * persistent home (skills, plugins, the coding agent's config dir) derives
+ * from one place.
  */
 
 import fs from 'fs';
@@ -81,27 +74,14 @@ export function resolveToolOutputDir(): string {
   return path.join(resolveDataDir(), 'tool-outputs');
 }
 
-/**
- * The config dir we point Claude Code at via `CLAUDE_CONFIG_DIR`. Lives inside
- * our data dir so Claude Code's own state (sessions, `.claude.json`) is isolated
- * there rather than polluting the data-dir root next to `agent.db` — and so we
- * never touch the user's real `~/.claude`.
- */
-export function resolveClaudeConfigDir(): string {
-  return path.join(resolveDataDir(), '.claude');
-}
-
 export interface DataDirsSetup {
   dataDir: string;
   skillsDir: string;
   pluginsDir: string;
   mediaDir: string;
   toolOutputDir: string;
-  claudeConfigDir: string;
   /** The intended data dir we couldn't create (so the caller can warn), else null. */
   fellBackFrom: string | null;
-  /** Whether the Claude Code skills symlink is in place. */
-  symlinkOk: boolean;
 }
 
 /**
@@ -110,7 +90,7 @@ export interface DataDirsSetup {
  * `linkPath` is only replaced when empty — we never delete a populated dir we
  * didn't create.
  */
-function ensureSymlink(target: string, linkPath: string): boolean {
+export function ensureSymlink(target: string, linkPath: string): boolean {
   try {
     const st = fs.lstatSync(linkPath, { throwIfNoEntry: false });
     if (st) {
@@ -134,12 +114,9 @@ function ensureSymlink(target: string, linkPath: string): boolean {
 }
 
 /**
- * Ensure the data dir, the canonical skills, plugins, media and tool-output dirs,
- * and the
- * Claude Code config dir exist; (re)create the `<claudeConfigDir>/skills` →
- * `<skillsDir>` symlink; and
- * default `CLAUDE_CONFIG_DIR` so the spawned `claude_code` CLI discovers the
- * same skills.
+ * Ensure the data dir and the canonical skills, plugins, media and tool-output
+ * dirs exist. The coding agent's own home inside the data dir is the adapter's
+ * business (`CodingAgent.prepareHome`), run by `index.ts` right after this.
  *
  * Mirrors `ensureWorkspaceRoot()`'s temp-dir fallback: when the intended data
  * dir can't be created (e.g. `/data` on a local macOS run), fall back to a
@@ -164,22 +141,10 @@ export function ensureDataDirs(): DataDirsSetup {
   const pluginsDir = resolvePluginsDir();
   const mediaDir = resolveMediaDir();
   const toolOutputDir = resolveToolOutputDir();
-  const claudeConfigDir = resolveClaudeConfigDir();
   fs.mkdirSync(skillsDir, { recursive: true });
   fs.mkdirSync(pluginsDir, { recursive: true });
   fs.mkdirSync(mediaDir, { recursive: true });
   fs.mkdirSync(toolOutputDir, { recursive: true });
-  fs.mkdirSync(claudeConfigDir, { recursive: true });
-
-  // Only the skills dir is symlinked into the Claude Code config. Claude Code's
-  // own plugin layout is `plugins/repos/…` plus a `config.json`, so linking our
-  // Agent Plugins dir there would present it a tree it can't read — and a
-  // plugin's skills already reach `claude_code` through the skills catalog.
-  const symlinkOk = ensureSymlink(skillsDir, path.join(claudeConfigDir, 'skills'));
-
-  // Default (don't override an operator-set value) so the spawned `claude` CLI
-  // — which inherits process.env — reads skills from our shared dir.
-  process.env.CLAUDE_CONFIG_DIR ??= claudeConfigDir;
 
   return {
     dataDir,
@@ -187,8 +152,6 @@ export function ensureDataDirs(): DataDirsSetup {
     pluginsDir,
     mediaDir,
     toolOutputDir,
-    claudeConfigDir,
     fellBackFrom,
-    symlinkOk,
   };
 }

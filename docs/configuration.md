@@ -126,11 +126,12 @@ See **[Slack](slack.md)** for how the tokens are used.
 | `TEAM_NAME` | Team name on first boot | `Local` |
 | `OWNER_USER_ID` | Owner user ID on first boot | local sentinel UUID |
 | `SHELL_WORKSPACE_ROOT` | Working directory for the agent's [shell tools](tools.md#shell) | install `workspace` dir (Docker: `/home/node`) |
-| `PRISM_DATA_DIR` | Persistent data dir for [skills](skills.md), [plugins](plugins.md), attachment media (`<data dir>/media`) and the Claude Code config. The Docker image sets this to the `/data` volume. | `/data` (Docker), else `~/.prism` |
+| `PRISM_DATA_DIR` | Persistent data dir for [skills](skills.md), [plugins](plugins.md), attachment media (`<data dir>/media`) and the coding agent's config. The Docker image sets this to the `/data` volume. | `/data` (Docker), else `~/.prism` |
 | `PRISM_SKILLS_DIR` | Override the [skills](skills.md) directory specifically. | `<data dir>/skills` |
 | `PRISM_PLUGINS_DIR` | Override the [plugins](plugins.md) directory specifically. | `<data dir>/plugins` |
 | `ATTACHMENT_TTL_HOURS` | How long shared-file content is kept before the hourly sweep deletes it. The conversation keeps a *content expired* stub. See [Tools](tools.md#attachments). | `168` (7 days) |
 | `TOOL_RISK_GATE_MODE` | Fast-model pre-execution evaluation for sensitive [tool calls](tools.md#risk-gate): `off`, `observe`, or `enforce`. | `off` |
+| `CODING_AGENT` | Which coding agent the agent delegates larger coding tasks to (see the [coding sub-agent](tools.md#coding-sub-agent)). `claude-code` is the only value; any other falls back to it with a startup warning. | `claude-code` |
 | `TOOL_OUTPUT_TTL_HOURS` | How long the saved copy of an oversized tool result is kept before the hourly sweep deletes it, so the agent can search the part it wasn't shown. Copies are also deleted once the conversation they belong to has been compacted away. See [Tools](tools.md#large-tool-outputs). | `168` (7 days) |
 
 `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID` only matter on the **first** boot
@@ -224,10 +225,10 @@ returned to the agent as a failed tool call, so it can explain the refusal or
 choose a safer approach. Tool arguments and user text are not included in
 product telemetry.
 
-The outer gate can evaluate the initial `claude_code` delegation, but not every
-shell command or file edit the resulting Claude Code process proposes. In
-`enforce` mode, Prism Agent therefore removes `--dangerously-skip-permissions` from
-Claude Code and launches edit tasks with its
+The outer gate can evaluate the initial coding sub-agent delegation, but not every
+shell command or file edit the resulting process proposes. With Claude Code, the
+default coding agent, `enforce` mode therefore removes
+`--dangerously-skip-permissions` and launches edit tasks with its
 [auto permission mode](https://code.claude.com/docs/en/permission-modes).
 Plan tasks remain in `plan` mode without bypass permissions. Auto mode has its
 own Claude Code model and platform requirements; if it is unavailable, the task

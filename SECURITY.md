@@ -37,7 +37,7 @@ disclosure.
 Security-sensitive areas include:
 
 - **The built-in tool surface** — the tools the runtime registers in-process: shell execution and
-  file editing (`shell_exec`, `shell_write_file`, `shell_edit_file`, `claude_code`), memory, agent
+  file editing (`shell_exec`, `shell_write_file`, `shell_edit_file`, `coding_agent`), memory, agent
   configuration, cron, goals, skills, attachments, file sharing, and meetings. The shell tools run
   with the runtime's own privileges, so anything that can steer the agent can reach them.
 - **The MCP tool surface** — the external Lens Agents MCP server (kubectl, GitHub, AWS) and the MCP
