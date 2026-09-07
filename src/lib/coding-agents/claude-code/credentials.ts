@@ -1,4 +1,4 @@
-import { hasBedrockCredentials } from '../bedrock-credentials';
+import { bedrockRegion, hasBedrockCredentials } from '../bedrock-credentials';
 
 export function claudeCodeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const foundry = {
@@ -6,11 +6,13 @@ export function claudeCodeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv
     ANTHROPIC_FOUNDRY_RESOURCE: env.ANTHROPIC_FOUNDRY_RESOURCE || env.AZURE_RESOURCE_NAME,
   };
   if (env.CLAUDE_CODE_USE_FOUNDRY === '1') return { ...env, ...foundry };
-  if (env.CLAUDE_CODE_USE_BEDROCK === '1' || env.CLAUDE_CODE_USE_VERTEX === '1' ||
-      env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.CLAUDE_CODE_OAUTH_TOKEN) return env;
-  if (hasBedrockCredentials(env) && env.CLAUDE_CODE_USE_BEDROCK !== '0') {
-    return { ...env, CLAUDE_CODE_USE_BEDROCK: '1' };
+  const usesOtherCredentials = env.CLAUDE_CODE_USE_VERTEX === '1' ||
+    env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.CLAUDE_CODE_OAUTH_TOKEN;
+  if (env.CLAUDE_CODE_USE_BEDROCK === '1' ||
+      (!usesOtherCredentials && hasBedrockCredentials(env) && env.CLAUDE_CODE_USE_BEDROCK !== '0')) {
+    return { ...env, CLAUDE_CODE_USE_BEDROCK: '1', AWS_REGION: bedrockRegion(env) };
   }
+  if (usesOtherCredentials) return env;
   if ((foundry.ANTHROPIC_FOUNDRY_API_KEY || env.ANTHROPIC_FOUNDRY_AUTH_TOKEN) &&
       env.CLAUDE_CODE_USE_FOUNDRY !== '0') {
     return { ...env, ...foundry, CLAUDE_CODE_USE_FOUNDRY: '1' };

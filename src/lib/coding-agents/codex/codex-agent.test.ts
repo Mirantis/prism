@@ -53,6 +53,17 @@ describe('Codex adapter', () => {
     await Array.fromAsync(run.events);
   });
 
+  it('passes the default region with IAM credentials', async () => {
+    const child = new FakeChild();
+    const spawner = vi.fn(() => child.asChildProcess());
+    const run = createCodexAgent(spawner).run({ ...task, env: { AWS_PROFILE: 'test-profile' } });
+    expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
+      'model_providers.amazon-bedrock.aws.region="us-east-1"',
+    ]), expect.anything());
+    child.finish(0);
+    await Array.fromAsync(run.events);
+  });
+
   it('prefers a direct OpenAI key when AWS credentials are also present', async () => {
     const child = new FakeChild();
     const spawner = vi.fn(() => child.asChildProcess());

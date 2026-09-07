@@ -8,3 +8,7 @@ export function hasBedrockCredentials(env: NodeJS.ProcessEnv): boolean {
     env.CLAUDE_CODE_USE_BEDROCK === '1'
   );
 }
+
+export function bedrockRegion(env: NodeJS.ProcessEnv): string {
+  return env.AWS_REGION || env.AWS_DEFAULT_REGION || 'us-east-1';
+}
