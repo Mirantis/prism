@@ -121,6 +121,9 @@ For larger coding tasks, the agent can hand work to a **coding agent** running a
 an autonomous sub-agent in the workspace. Claude Code is the default and, today,
 the only choice; `CODING_AGENT` in the [configuration](configuration.md) selects it.
 
+If you set `CLAUDE_CONFIG_DIR`, Claude Code uses that directory; link its `skills`
+directory to your Prism skills directory to share installed skills.
+
 - **Start** a coding task with a prompt, in `edit` or `plan` mode, with a
   turn budget.
 - **Poll** the running task for output and completion.

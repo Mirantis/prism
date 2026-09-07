@@ -8,7 +8,13 @@ import {
   FailedSpawnChild,
   SigkillOnlyChild,
 } from '../../test-utils/fake-child';
-import { runCli, STOP_GRACE_MS, type CliRunSpec, type Spawner } from './cli-run';
+import {
+  runCli,
+  STDERR_KEEP_BYTES,
+  STOP_GRACE_MS,
+  type CliRunSpec,
+  type Spawner,
+} from './cli-run';
 import type { CodingAgentEvent, CodingAgentRun } from './coding-agent';
 
 /** Lines are the JSON of an event; `{ "skip": true }` is a line of no interest. */
@@ -97,6 +103,18 @@ describe('runCli', () => {
     expect((events[0] as { message: string }).message).toBe(
       'Fake Agent exited with code 1: something went wrong',
     );
+  });
+
+  it('caps the stderr it keeps, a single long line included', async () => {
+    const { run, child } = start(new FakeChild());
+    child.stderr.write('x'.repeat(STDERR_KEEP_BYTES * 3) + '\n');
+    child.stderr.write('tail line\n');
+    child.finish(1);
+
+    const [result] = await collect(run);
+    const message = (result as { message: string }).message;
+    expect(message.length).toBeLessThanOrEqual(STDERR_KEEP_BYTES + 64);
+    expect(message).not.toContain('tail line');
   });
 
   it('names a silent exit as such', async () => {

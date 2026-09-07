@@ -48,7 +48,7 @@ import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
 import { ensureWorkspaceRoot } from './tools/shell/config';
 import { ensureDataDirs } from './lib/data-dir';
-import { createCodingAgent } from './lib/coding-agents/create-coding-agent';
+import { getCodingAgent } from './lib/coding-agents/get-coding-agent';
 import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
 import { createProvider } from './lib/llm-providers/create-provider';
 import { runBackfill } from './scripts/backfill-embeddings';
@@ -109,7 +109,7 @@ const initialize = async () => {
       );
     }
     logger.info('[Startup] skills dir: %s', dirs.skillsDir);
-    const codingAgent = createCodingAgent();
+    const codingAgent = getCodingAgent();
     const home = codingAgent.prepareHome({ dataDir: dirs.dataDir, skillsDir: dirs.skillsDir });
     logger.info(
       { agent: codingAgent.id, configDir: home.configDir, skillsLinked: home.skillsLinked },

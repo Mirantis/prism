@@ -42,6 +42,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, AfterEachScen
       // command. Without it Enter only accepts the highlighted row — the
       // Enter-completes path is slash-commands.test.ts's subject.
       session.send('/update ');
+      await session.waitForFrame(/›\s*\/update/, 5_000);
       session.send(KEYS.ENTER);
     });
     Then('I see the "updates by other means" notice', async () => {

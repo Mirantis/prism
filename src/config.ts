@@ -643,7 +643,7 @@ const invalidToolRiskGateMode = isValidToolRiskGateMode ? null : rawToolRiskGate
 // startup warning.
 export const CODING_AGENTS = ['claude-code'] as const;
 export type CodingAgentName = (typeof CODING_AGENTS)[number];
-const rawCodingAgent = (process.env.CODING_AGENT || 'claude-code').trim().toLowerCase();
+const rawCodingAgent = (process.env.CODING_AGENT ?? '').trim().toLowerCase() || 'claude-code';
 const isValidCodingAgent = (CODING_AGENTS as readonly string[]).includes(rawCodingAgent);
 const codingAgent: CodingAgentName = isValidCodingAgent
   ? (rawCodingAgent as CodingAgentName)

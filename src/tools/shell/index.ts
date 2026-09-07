@@ -28,7 +28,7 @@ import {
   codingAgentStatusInput,
   codingAgentStopInput,
 } from './coding-agent';
-import { createCodingAgent } from '../../lib/coding-agents/create-coding-agent';
+import { getCodingAgent } from '../../lib/coding-agents/get-coding-agent';
 import {
   runShellSpawn,
   runShellStdin,
@@ -59,7 +59,7 @@ export function getShellTools(
   const workspace = resolveWorkspace(workspaceRoot);
   // Named in the tool description so the model knows what it is delegating
   // to. Fixed per process, so the description is byte-identical every turn.
-  const codingAgent = createCodingAgent();
+  const codingAgent = getCodingAgent();
 
   /**
    * Announce the path before the step's tools start, and release it once the

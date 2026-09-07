@@ -18,7 +18,7 @@ import type { CodingAgentEvent, CodingAgentRun } from './coding-agent';
 export const STOP_GRACE_MS = 2_000;
 
 /** How much of stderr is kept for the closing message of a run that reports nothing. */
-const STDERR_KEEP_BYTES = 4096;
+export const STDERR_KEEP_BYTES = 4096;
 
 export interface CliRunSpec {
   taskId: string;
@@ -65,8 +65,9 @@ export function runCli(spec: CliRunSpec, spawner: Spawner = spawn): CodingAgentR
       stderrReader.on('line', (line) => {
         logger.debug({ taskId, line }, '[AgentTask] stderr');
         if (stderrBytes < STDERR_KEEP_BYTES) {
-          stderrChunks.push(line);
-          stderrBytes += line.length + 1;
+          const kept = line.slice(0, STDERR_KEEP_BYTES - stderrBytes);
+          stderrChunks.push(kept);
+          stderrBytes += kept.length + 1;
         }
       });
     }

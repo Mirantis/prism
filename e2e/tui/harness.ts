@@ -10,18 +10,18 @@
 
 import http from 'node:http';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as pty from 'node-pty';
 import stripAnsi from 'strip-ansi';
 
 const AGENT_RUNTIME_DIR = path.resolve(import.meta.dirname, '../..');
 export const PRISM_CLI_DIR = path.resolve(import.meta.dirname, '../../cli');
-const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '../..');
 // Spawn `node <tsx-cli.mjs> <entry>` instead of the .bin/tsx shim.
 // macOS's posix_spawnp doesn't follow `#!/usr/bin/env node` reliably from
 // node-pty when the env's PATH has been substituted, so we point at
 // the node binary that's already running this process.
-const TSX_CLI = path.join(WORKSPACE_ROOT, 'node_modules/tsx/dist/cli.mjs');
+const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
 
 /**
  * Budget for a CLI's *first* frame — the `waitForFrame(/Prism/, …)` every spec

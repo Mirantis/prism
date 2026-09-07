@@ -15,7 +15,7 @@
 import { randomUUID } from 'crypto';
 import { config } from '../../config';
 import { logger } from '../../logger';
-import { createCodingAgent } from '../../lib/coding-agents/create-coding-agent';
+import { getCodingAgent } from '../../lib/coding-agents/get-coding-agent';
 import type {
   CodingAgent,
   CodingAgentRun,
@@ -356,7 +356,7 @@ function drainTask(state: TaskState): AgentTaskStatus {
 // Singleton for the tools to share across tool calls.
 let singleton: AgentTaskManager | null = null;
 export function getAgentTaskManager(): AgentTaskManager {
-  if (!singleton) singleton = new AgentTaskManager(createCodingAgent());
+  if (!singleton) singleton = new AgentTaskManager(getCodingAgent());
   return singleton;
 }
 
