@@ -24,6 +24,7 @@ import CommandPopup from './CommandPopup';
 import ContextMeter from './context-meter';
 import VoiceCallButton from './voice-call-button';
 import VoiceCallStatus from './voice-call-status';
+import VoiceMuteButton from './voice-mute-button';
 import { filterByPrefix, isSlashMode, type SlashCommand } from './commands';
 
 interface ChatInputProps {
@@ -291,6 +292,9 @@ export default function ChatInput({
                   onStart={voice.start}
                   onStop={voice.stop}
                 />
+              )}
+              {voice && voice.status !== 'idle' && (
+                <VoiceMuteButton isMuted={voice.isMuted} onToggle={voice.toggleMute} />
               )}
             </InputGroupAddon>
             <InputGroupTextarea
