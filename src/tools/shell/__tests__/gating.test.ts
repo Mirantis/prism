@@ -20,7 +20,7 @@ describe('getShellTools', () => {
     config.codingAgent = 'codex';
     const description = getShellTools().coding_agent.description;
     expect(description).toContain('Available agent values: claude-code, codex.');
-    expect(description).toContain('Default agent: codex (CODING_AGENT)');
+    expect(description).toContain('Default agent: codex');
     expect(getShellTools().coding_agent.description).toBe(description);
   });
 

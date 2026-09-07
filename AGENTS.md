@@ -825,7 +825,11 @@ src/
 │   │   ├── coding-agent.ts     # The `CodingAgent` contract: `id`, `displayName`, `prepareHome()` and `run(task)`, which returns a `CodingAgentRun` (an event stream of `text` / `session` / `result`, `exited`, `stop()`). States what the runtime needs and nothing about how an agent is launched
 │   │   ├── cli-run.ts          # `runCli()`: the process plumbing a CLI-shaped adapter calls — spawn, stdout lines through the adapter's parser, exit wait, the closing `result` when the agent reported none, SIGTERM→SIGKILL stop
 │   │   ├── get-coding-agent.ts # Selector: `config.codingAgent` → adapter, one instance per agent so the adapter that prepared the home runs every task; a `Record` so a config name without an adapter fails to compile
+│   │   ├── bedrock-credentials.ts # Shared AWS credential detection
+│   │   ├── codex/
+│   │   │   └── codex-agent.ts             # Codex CLI adapter
 │   │   └── claude-code/
+│   │       ├── credentials.ts # Claude CLI authentication settings
 │   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (gate mode → permission flags, plan-only instruction), the stream-json parser, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink
 │   ├── embedding-providers/    # Memory-embedding vendors, a feature of their own decoupled from the chat provider (`EMBEDDING_PROVIDER`)
 │   │   ├── embedding-provider.ts # Shared `EmbeddingProvider` type: `model(modelId)` + the vendor's `providerOptions` fragment carrying the 1024-dim truncation target; `EMBEDDING_DIMENSIONS`

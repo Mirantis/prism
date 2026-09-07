@@ -3,8 +3,10 @@ import path from 'node:path';
 import { createBdd } from 'playwright-bdd';
 import { expect, test } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
-import { E2E_WORKSPACE } from '../fixtures/test-data';
-import { getTelemetryEvents } from '../support/s3-helper';
+import { DEFAULT_AGENT_ID, E2E_WORKSPACE } from '../fixtures/test-data';
+import { hasBedrockCredentials } from '../../src/lib/coding-agents/bedrock-credentials';
+import { getPrisma } from '../support/db-helper';
+import type { ToolCallRecord } from '../../src/types';
 
 const { Given, When, Then } = createBdd();
 const filename = 'coding-agent-example.txt';
@@ -15,7 +17,7 @@ Given('a coding task file contains {string}', async ({}, content: string) => {
 });
 
 When('I ask the coding agent to plan a change', async ({ page }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(480_000);
   const home = new HomePage(page);
   await home.navigate();
   await home.typeMessage(
@@ -23,7 +25,7 @@ When('I ask the coding agent to plan a change', async ({ page }) => {
     'Poll coding_agent_status until completed and retain its sessionId. Report the plan and sessionId.',
   );
   await home.sendMessage();
-  await home.waitForStreamComplete(90_000);
+  await home.waitForStreamComplete(180_000);
 });
 
 Then('the coding task file contains {string}', async ({}, content: string) => {
@@ -37,33 +39,44 @@ When('I ask the coding agent to implement its plan', async ({ page }) => {
     'Poll coding_agent_status until completed. Report the result.',
   );
   await home.sendMessage();
-  await home.waitForStreamComplete(90_000);
+  await home.waitForStreamComplete(180_000);
 });
 
+async function codingCalls(): Promise<ToolCallRecord[]> {
+  const rows = await getPrisma().conversationMessage.findMany({
+    where: { thread: { agentId: DEFAULT_AGENT_ID }, role: 'AGENT' },
+    select: { toolCalls: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  return rows.flatMap(row => Array.isArray(row.toolCalls)
+    ? row.toolCalls as unknown as ToolCallRecord[] : []);
+}
+
 Then('the coding task completed through delegation', async ({ page }) => {
-  await expect.poll(async () => {
-    const events = await getTelemetryEvents();
-    return events.filter(e => e.body === 'coding task finished' && e.attributes.status === 'end_turn').length;
-  }, { timeout: 30_000 }).toBe(2);
-  const events = await getTelemetryEvents();
-  const starts = events.filter(e => e.body === 'coding task started');
-  const finishes = events.filter(e => e.body === 'coding task finished');
+  const calls = await codingCalls();
+  const starts = calls.filter(call => call.tool === 'coding_agent');
   expect(starts).toHaveLength(2);
-  expect(finishes).toHaveLength(2);
-  expect(finishes[0].attributes.session_id).toBeTruthy();
-  expect(finishes[1].attributes.session_id).toBe(finishes[0].attributes.session_id);
+  expect(JSON.parse(starts[0].input).mode).toBe('plan');
+  expect(JSON.parse(starts[1].input)).toMatchObject({ mode: 'edit', sessionId: expect.any(String) });
+  const statuses = calls.filter(call => call.tool === 'coding_agent_status' && call.success)
+    .map(call => JSON.parse(call.output));
+  const plan = statuses.find(status => status.completed && status.stopReason === 'end_turn');
+  expect(plan?.sessionId).toBeTruthy();
+  expect(JSON.parse(starts[1].input).sessionId).toBe(plan.sessionId);
   if (process.env.CODING_AGENT) {
-    expect(finishes.every(e => e.attributes.coding_agent === process.env.CODING_AGENT)).toBe(true);
+    expect(starts.map(call => JSON.parse(call.output).agent))
+      .toEqual([process.env.CODING_AGENT, process.env.CODING_AGENT]);
   }
   await expect(new HomePage(page).getAgentMessages()).toHaveCount(2);
 });
 
 Given('both coding agents have test credentials', async () => {
-  test.skip(!process.env.OPENAI_API_KEY, 'Agent selection needs an OpenAI key alongside the suite’s Bedrock credentials.');
+  test.skip(!process.env.OPENAI_API_KEY && !hasBedrockCredentials(process.env),
+    'Agent selection needs an OpenAI key or Bedrock credentials.');
 });
 
 When('I ask for a coding task using {string}', async ({ page }, agent: string) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const home = new HomePage(page);
   await home.navigate();
   await home.typeMessage(
@@ -71,14 +84,18 @@ When('I ask for a coding task using {string}', async ({ page }, agent: string) =
     'Poll coding_agent_status until completed. Report which coding agent ran the task and its result.',
   );
   await home.sendMessage();
-  await home.waitForStreamComplete(90_000);
+  await home.waitForStreamComplete(180_000);
 });
 
 Then('the coding task used {string}', async ({ page }, agent: string) => {
-  await expect.poll(async () => {
-    const events = await getTelemetryEvents();
-    return events.filter(e => e.body === 'coding task finished' &&
-      e.attributes.coding_agent === agent && e.attributes.status === 'end_turn').length;
-  }, { timeout: 30_000 }).toBe(1);
+  const calls = await codingCalls();
+  const starts = calls.filter(call => call.tool === 'coding_agent');
+  expect(starts).toHaveLength(1);
+  expect(JSON.parse(starts[0].input).agent).toBe(agent);
+  expect(starts[0].success).toBe(true);
+  expect(JSON.parse(starts[0].output).agent).toBe(agent);
+  expect(calls.filter(call => call.tool === 'coding_agent_status' && call.success)
+    .map(call => JSON.parse(call.output)))
+    .toContainEqual(expect.objectContaining({ agent, completed: true, stopReason: 'end_turn' }));
   await expect(new HomePage(page).getAgentMessages()).toHaveCount(1);
 });

@@ -37,6 +37,34 @@ describe('Codex adapter', () => {
     await Array.fromAsync(run.events);
   });
 
+  it.each([
+    { AWS_BEARER_TOKEN_BEDROCK: 'test-key', AWS_REGION: 'us-west-2' },
+    { AWS_ACCESS_KEY_ID: 'test-id', AWS_SECRET_ACCESS_KEY: 'test-secret', AWS_REGION: 'us-west-2' },
+    { AWS_PROFILE: 'test-profile', AWS_DEFAULT_REGION: 'us-west-2' },
+  ])('configures Bedrock authentication: %j', async (env) => {
+    const child = new FakeChild();
+    const spawner = vi.fn(() => child.asChildProcess());
+    const run = createCodexAgent(spawner).run({ ...task, env });
+    expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
+      'model_provider="amazon-bedrock"', 'model="openai.gpt-5.6-terra"',
+      'model_providers.amazon-bedrock.aws.region="us-west-2"',
+    ]), expect.objectContaining({ env: expect.objectContaining(env) }));
+    child.finish(0);
+    await Array.fromAsync(run.events);
+  });
+
+  it('prefers a direct OpenAI key when AWS credentials are also present', async () => {
+    const child = new FakeChild();
+    const spawner = vi.fn(() => child.asChildProcess());
+    const run = createCodexAgent(spawner).run({ ...task,
+      env: { ...task.env, AWS_BEARER_TOKEN_BEDROCK: 'test-bedrock-key' } });
+    expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
+      'model_provider="openai"', 'forced_login_method="api"',
+    ]), expect.anything());
+    child.finish(0);
+    await Array.fromAsync(run.events);
+  });
+
   it('resumes with the requested permissions and preserves prompt text', async () => {
     const child = new FakeChild();
     const spawner = vi.fn(() => child.asChildProcess());
