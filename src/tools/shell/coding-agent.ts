@@ -18,7 +18,7 @@ import { AgentTaskParams, getAgentTaskManager } from './agent-task-manager';
 
 export const codingAgentInput = z.object({
   agent: z.enum(CODING_AGENTS).optional().describe(
-    `Coding agent to use. Available values: ${config.availableCodingAgents.join(', ') || 'none detected'}. Default: ${config.codingAgent} (CODING_AGENT). Use the same agent when resuming a session.`,
+    `Coding agent to use. Available values: ${config.availableCodingAgents.join(', ') || 'none detected'}. Default: ${config.codingAgent}. Use the same agent when resuming a session.`,
   ),
   prompt: z.string().describe('The task for the sub-agent to perform'),
   workdir: z

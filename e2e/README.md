@@ -8,7 +8,7 @@ Playwright BDD tests for the agent runtime + web SPA (and related integrations l
 - Docker (for the OTEL Collector + MinIO test stack)
 - Playwright browsers installed (`npx playwright install chromium`)
 
-Coding delegation scenarios need the CLIs on `PATH`: `npm install -g @anthropic-ai/claude-code @openai/codex`. For Bedrock credentials, set `CLAUDE_CODE_USE_BEDROCK=1`.
+Coding delegation scenarios need the CLIs on `PATH`: `npm install -g @anthropic-ai/claude-code @openai/codex`.
 
 ## Environment Variables
 
@@ -26,7 +26,7 @@ export AWS_SECRET_ACCESS_KEY=
 export AWS_SESSION_TOKEN=
 ```
 
-Set `OPENAI_API_KEY` alongside the Bedrock credentials to run the coding-agent selection scenarios.
+Coding-agent selection scenarios use `OPENAI_API_KEY` when set, otherwise Bedrock credentials with access to OpenAI models.
 
 ## Running Tests
 

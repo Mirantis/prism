@@ -250,11 +250,23 @@ describe('config', () => {
       },
     );
 
+    it.each(['AWS_BEARER_TOKEN_BEDROCK', 'AWS_PROFILE', 'AWS_WEB_IDENTITY_TOKEN_FILE',
+      'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI', 'AWS_CONTAINER_CREDENTIALS_FULL_URI'])(
+      'detects both coding agents from %s without an OpenAI key', async (name) => {
+        process.env[name] = 'test-credential';
+        const cfg = await loadConfig();
+        expect(cfg.availableCodingAgents).toEqual(['claude-code', 'codex']);
+        expect(cfg.codingAgent).toBe('claude-code');
+      },
+    );
+
     it('prefers an AWS credential pair', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
       process.env.AWS_ACCESS_KEY_ID = 'test-access-key';
       process.env.AWS_SECRET_ACCESS_KEY = 'test-secret-key';
-      expect((await loadConfig()).codingAgent).toBe('claude-code');
+      const cfg = await loadConfig();
+      expect(cfg.codingAgent).toBe('claude-code');
+      expect(cfg.availableCodingAgents).toEqual(['claude-code', 'codex']);
     });
 
     it('ignores empty credentials and disabled provider switches', async () => {

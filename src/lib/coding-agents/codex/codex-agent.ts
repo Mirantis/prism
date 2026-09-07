@@ -1,3 +1,4 @@
+import { hasBedrockCredentials } from '../bedrock-credentials';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -48,8 +49,16 @@ function buildArgs(task: CodingAgentTask): string[] {
     'exec', '--json', '--skip-git-repo-check',
     '-c', 'approval_policy="never"',
     '-c', `sandbox_mode="${sandbox}"`,
-    '-c', 'forced_login_method="api"',
   ];
+  if (!task.env.OPENAI_API_KEY && hasBedrockCredentials(task.env)) {
+    args.push('-c', 'model_provider="amazon-bedrock"', '-c', 'model="openai.gpt-5.6-terra"');
+    const region = task.env.AWS_REGION || task.env.AWS_DEFAULT_REGION;
+    if (region || task.env.AWS_BEARER_TOKEN_BEDROCK) {
+      args.push('-c', `model_providers.amazon-bedrock.aws.region=${JSON.stringify(region || 'us-east-1')}`);
+    }
+  } else {
+    args.push('-c', 'model_provider="openai"', '-c', 'forced_login_method="api"');
+  }
   if (task.appendSystemPrompt) {
     args.push('-c', `developer_instructions=${JSON.stringify(task.appendSystemPrompt)}`);
   }

@@ -13,6 +13,7 @@
  * dir: both read the same bytes.
  */
 
+import { claudeCodeEnvironment } from './credentials';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -64,7 +65,7 @@ export function createClaudeCodeAgent(spawner: Spawner = spawn): CodingAgent {
           command: COMMAND,
           args: buildArgs(task),
           cwd: task.workdir,
-          env: task.env,
+          env: claudeCodeEnvironment(task.env),
           parseLine,
         },
         spawner,
