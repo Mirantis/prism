@@ -25,6 +25,8 @@ const { mockChat, mockConfig, mockTitleEvents, mockVoice } = vi.hoisted(() => {
     },
     mockConfig: {
       agentId: undefined as string | undefined,
+      codingAgent: 'claude-code',
+      availableCodingAgents: ['claude-code'],
       ownerUserId: '00000000-0000-0000-0000-000000000001',
     },
     // Minimal EventEmitter stub. The gateway subscribes via `.on('change', cb)`
@@ -51,6 +53,7 @@ vi.mock('../thread-title.service', () => ({
 }));
 
 vi.mock('../../config', () => ({
+  CODING_AGENTS: ['claude-code', 'codex'],
   config: mockConfig,
 }));
 

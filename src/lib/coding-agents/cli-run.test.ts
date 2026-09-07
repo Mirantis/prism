@@ -3,6 +3,7 @@
  * adapter shares — parsing, the closing result, spawn failures, stop.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { PassThrough } from 'stream';
 import {
   FakeChild,
   FailedSpawnChild,
@@ -48,6 +49,26 @@ afterEach(() => {
 });
 
 describe('runCli', () => {
+  it('closes stdin after passing the prompt in argv', async () => {
+    const child = Object.assign(new FakeChild(), { stdin: new PassThrough() });
+    const { run } = start(child);
+    expect(child.stdin.writableEnded).toBe(true);
+    child.finish(1);
+    await collect(run);
+  });
+
+  it('finishes when a signal exit precedes stdout closing', async () => {
+    const child = new FakeChild();
+    const { run } = start(child);
+    child.signalCode = 'SIGTERM';
+    child.emit('exit', null, 'SIGTERM');
+    child.stdout.end();
+    child.stderr.end();
+    expect(await collect(run)).toEqual([
+      { type: 'result', stopReason: 'error', turns: 0,
+        message: 'Fake Agent exited with code 1 and no result' },
+    ]);
+  });
   it('passes the command, args, cwd and env to the spawn', () => {
     let captured: Parameters<Spawner> | undefined;
     const spawner: Spawner = (...spawnArgs) => {

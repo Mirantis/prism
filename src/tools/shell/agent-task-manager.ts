@@ -13,8 +13,9 @@
  * `stopTask()` from `coding_agent_stop`.
  */
 import { randomUUID } from 'crypto';
-import { config } from '../../config';
+import { config, type CodingAgentName } from '../../config';
 import { logger } from '../../logger';
+import { trackEvent } from '../../lib/telemetry';
 import { getCodingAgent } from '../../lib/coding-agents/get-coding-agent';
 import type {
   CodingAgent,
@@ -35,6 +36,7 @@ export const MAX_BUFFER_SIZE = 1024 * 1024; // 1 MiB
 export const STOP_WAIT_MS = 2_500;
 
 export interface AgentTaskParams {
+  agent?: CodingAgentName;
   prompt: string;
   workdir?: string;
   appendSystemPrompt?: string;
@@ -45,6 +47,7 @@ export interface AgentTaskParams {
 }
 
 export interface AgentTaskStatus {
+  agent: CodingAgentName;
   output: string;
   completed: boolean;
   result?: string;
@@ -56,6 +59,7 @@ export interface AgentTaskStatus {
 type TaskStopReason = CodingAgentStopReason | 'stopped';
 
 interface TaskState {
+  agent: CodingAgentName;
   outputBuffer: string;
   completed: boolean;
   result?: string;
@@ -65,6 +69,9 @@ interface TaskState {
 }
 
 interface TaskEntry {
+  agent: CodingAgent;
+  startedAt: number;
+  terminalTracked?: boolean;
   state: TaskState;
   waiters: Array<() => void>;
   reading: boolean;
@@ -79,7 +86,10 @@ export class AgentTaskManager {
   private tasks = new Map<string, TaskEntry>();
   private reaped = new Set<string>();
 
-  constructor(private readonly agent: CodingAgent) {}
+  constructor(
+    private readonly defaultAgent?: CodingAgent,
+    private readonly resolveAgent: (name: CodingAgentName) => CodingAgent = getCodingAgent,
+  ) {}
 
   /** Number of tasks that haven't completed yet. */
   runningCount(): number {
@@ -93,6 +103,9 @@ export class AgentTaskManager {
       throw new Error(`Max concurrent agent tasks (${MAX_CONCURRENT}) reached`);
     }
 
+    const agent = params.agent
+      ? this.resolveAgent(params.agent)
+      : this.defaultAgent ?? this.resolveAgent(config.codingAgent);
     const taskId = randomUUID();
     const task: CodingAgentTask = {
       taskId,
@@ -107,15 +120,18 @@ export class AgentTaskManager {
       gateMode: config.toolRiskGateMode,
     };
 
-    const state: TaskState = { outputBuffer: '', completed: false };
-    const run = this.agent.run(task);
-    const entry: TaskEntry = { state, waiters: [], reading: false, run };
+    const state: TaskState = { agent: agent.id, outputBuffer: '', completed: false };
+    const run = agent.run(task);
+    const entry: TaskEntry = { agent, state, waiters: [], reading: false, run, startedAt: Date.now() };
     this.tasks.set(taskId, entry);
+    trackEvent('coding task started', config.ownerUserId, {
+      task_id: taskId, coding_agent: entry.agent.id, mode: task.mode,
+    });
 
     logger.info(
       {
         taskId,
-        agent: this.agent.id,
+        agent: agent.id,
         promptLen: task.prompt.length,
         maxTurns: task.maxTurns,
         mode: task.mode,
@@ -128,6 +144,11 @@ export class AgentTaskManager {
     // the normal path.
     entry.driver = this.drive(taskId, entry).catch((err) => {
       logger.error({ err, taskId }, '[AgentTask] driver failed');
+      entry.state.completed = true;
+      entry.state.stopReason = 'error';
+      entry.state.result = 'Coding task failed while reading output.';
+      this.trackFinished(taskId, entry);
+      this.notify(entry);
     });
     return taskId;
   }
@@ -226,6 +247,7 @@ export class AgentTaskManager {
       }
     }
 
+    this.trackFinished(taskId, entry);
     const status = drainTask(entry.state);
     this.reap(taskId);
     logger.info({ taskId, stopReason: status.stopReason }, '[AgentTask] stopped');
@@ -243,6 +265,7 @@ export class AgentTaskManager {
         entry.state.completed = true;
         entry.state.stopReason = 'error';
       }
+      this.trackFinished(taskId, entry);
       for (const w of entry.waiters) w();
       entry.waiters = [];
     }
@@ -268,6 +291,19 @@ export class AgentTaskManager {
       const first = this.reaped.values().next().value;
       if (first !== undefined) this.reaped.delete(first);
     }
+  }
+
+  private trackFinished(taskId: string, entry: TaskEntry): void {
+    if (entry.terminalTracked) return;
+    entry.terminalTracked = true;
+    trackEvent('coding task finished', config.ownerUserId, {
+      task_id: taskId,
+      coding_agent: entry.agent.id,
+      status: entry.state.stopReason ?? 'error',
+      turns: String(entry.state.turns ?? 0),
+      ...(entry.state.sessionId ? { session_id: entry.state.sessionId } : {}),
+      elapsed_ms: String(Date.now() - entry.startedAt),
+    });
   }
 
   private notify(entry: TaskEntry): void {
@@ -304,7 +340,7 @@ export class AgentTaskManager {
     outcome ??= {
       stopReason: 'error',
       turns: 0,
-      message: `${this.agent.displayName} ended without reporting a result`,
+      message: `${entry.agent.displayName} ended without reporting a result`,
     };
 
     let stopReason: TaskStopReason = outcome.stopReason;
@@ -327,6 +363,7 @@ export class AgentTaskManager {
     state.turns = outcome.turns;
     state.stopReason = stopReason;
 
+    this.trackFinished(taskId, entry);
     this.notify(entry);
     logger.info({ taskId, stopReason, turns: outcome.turns }, '[AgentTask] completed');
   }
@@ -344,6 +381,7 @@ function drainTask(state: TaskState): AgentTaskStatus {
   const output = state.outputBuffer;
   state.outputBuffer = '';
   return {
+    agent: state.agent,
     output,
     completed: state.completed,
     result: state.completed ? state.result : undefined,
@@ -356,7 +394,7 @@ function drainTask(state: TaskState): AgentTaskStatus {
 // Singleton for the tools to share across tool calls.
 let singleton: AgentTaskManager | null = null;
 export function getAgentTaskManager(): AgentTaskManager {
-  if (!singleton) singleton = new AgentTaskManager(getCodingAgent());
+  if (!singleton) singleton = new AgentTaskManager();
   return singleton;
 }
 

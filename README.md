@@ -166,8 +166,7 @@ Out of the box, the agent has tools for:
   natural language (`"in 5 minutes"`, `"every weekday at 9am"`) or raw
   cron expressions.
 - **Shell** — run commands, read/write/edit files, spawn long-running
-  processes, manage their I/O, and invoke a coding agent (Claude Code by
-  default) as a sub-agent.
+  processes, manage their I/O, and delegate coding tasks to Claude Code or Codex.
 
 ### Memory
 

@@ -37,6 +37,7 @@ beforeEach(() => {
 });
 
 vi.mock('../config', () => ({
+  CODING_AGENTS: ['claude-code', 'codex'],
   config: {
     port: 3003,
     host: '127.0.0.1',
@@ -55,6 +56,7 @@ vi.mock('../config', () => ({
     toolRiskGateMode: 'off',
     invalidToolRiskGateMode: null,
     codingAgent: 'claude-code',
+    availableCodingAgents: ['claude-code'],
     awsRegion: 'us-east-1',
     awsAccessKeyId: undefined,
     awsSecretAccessKey: undefined,

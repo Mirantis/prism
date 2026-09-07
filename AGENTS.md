@@ -45,8 +45,8 @@ to clear.
   none of it.
 - **Coding agents stay generic.** The `coding_agent` tools hand a task to a
   `CodingAgent` (`lib/coding-agents/`, chosen by `get-coding-agent.ts` from
-  `CODING_AGENT`), and the adapter runs it end to end: how the agent is
-  launched, read and given a home is its business alone. A new agent is one
+  `CODING_AGENT` or the task's `agent` parameter), and the adapter runs it end to end:
+  how the agent is launched, read and given a home is its business alone. A new agent is one
   folder plus one entry in the selector.
 - **Prove an option is needed before you add it.** A flag, a setting or an env
   var has to show that no existing product behavior, no provider selection and
@@ -821,10 +821,10 @@ src/
 │   │   │   └── openrouter-provider.ts # OpenRouter factory (same OpenAI surface; direct at openrouter.ai or the gateway mount, `vendor/model` ids): `createOpenRouterProvider(baseURL?)`
 │   │   └── anthropic/
 │   │       └── anthropic-provider.ts # First-party Anthropic API factory (api.anthropic.com; direct-only, bare model IDs): `createAnthropicProvider()`
-│   ├── coding-agents/          # One folder per coding agent, plus the shared contract and the selector (`CODING_AGENT`)
+│   ├── coding-agents/          # One folder per coding agent, plus the shared contract and the selector (`CODING_AGENT` and per-task `agent`)
 │   │   ├── coding-agent.ts     # The `CodingAgent` contract: `id`, `displayName`, `prepareHome()` and `run(task)`, which returns a `CodingAgentRun` (an event stream of `text` / `session` / `result`, `exited`, `stop()`). States what the runtime needs and nothing about how an agent is launched
 │   │   ├── cli-run.ts          # `runCli()`: the process plumbing a CLI-shaped adapter calls — spawn, stdout lines through the adapter's parser, exit wait, the closing `result` when the agent reported none, SIGTERM→SIGKILL stop
-│   │   ├── get-coding-agent.ts # Selector: `config.codingAgent` → adapter, one instance per process so the adapter that prepared the home runs every task; a `Record` so a config name without an adapter fails to compile
+│   │   ├── get-coding-agent.ts # Selector: `config.codingAgent` → adapter, one instance per agent so the adapter that prepared the home runs every task; a `Record` so a config name without an adapter fails to compile
 │   │   └── claude-code/
 │   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (gate mode → permission flags, plan-only instruction), the stream-json parser, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink
 │   ├── embedding-providers/    # Memory-embedding vendors, a feature of their own decoupled from the chat provider (`EMBEDDING_PROVIDER`)
@@ -883,7 +883,7 @@ What the operator sets on `docker run`:
 | `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
 | `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
 | `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, or `anthropic` (one per container) | `bedrock` |
-| `CODING_AGENT` | Coding agent the `coding_agent` tools delegate to: `claude-code` (one per container). Unset or empty is the default; an unrecognized value falls back to it and `index.ts` warns once at startup | `claude-code` |
+| `CODING_AGENT` | Default coding agent: `claude-code` or `codex`. Each task may override it with `agent`. | Claude credentials first, then an OpenAI key, else `claude-code` |
 | `EMBEDDING_PROVIDER` | Memory-embedding vendor, decoupled from the chat vendor: `bedrock`, `azure-openai`, `openai`, `openrouter`, or `none` (embeddings off). Unset or unrecognized derives the chat vendor's default. The model still comes from the selected vendor's `*_EMBEDDING_MODEL_ID` var | derived from `LLM_PROVIDER` (anthropic: `openai` with `OPENAI_API_KEY` or `NEXUS_API_URL`, else `none`) |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key; on Bedrock selected over SigV4 when set, on mantle sent as `x-api-key` and **required** direct | — |
 | `AWS_REGION` | AWS region for Bedrock and for the mantle host | `us-east-1` |

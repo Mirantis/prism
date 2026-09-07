@@ -109,12 +109,14 @@ const initialize = async () => {
       );
     }
     logger.info('[Startup] skills dir: %s', dirs.skillsDir);
-    const codingAgent = getCodingAgent();
-    const home = codingAgent.prepareHome({ dataDir: dirs.dataDir, skillsDir: dirs.skillsDir });
-    logger.info(
-      { agent: codingAgent.id, configDir: home.configDir, skillsLinked: home.skillsLinked },
-      '[Startup] coding agent',
-    );
+    for (const name of config.availableCodingAgents) {
+      const codingAgent = getCodingAgent(name);
+      const home = codingAgent.prepareHome({ dataDir: dirs.dataDir, skillsDir: dirs.skillsDir });
+      logger.info(
+        { agent: name, default: name === config.codingAgent, configDir: home.configDir, skillsLinked: home.skillsLinked },
+        '[Startup] coding agent',
+      );
+    }
     // Scanning here also surfaces any malformed plugin's warning at boot rather
     // than on whichever turn first happens to build a system prompt.
     logger.info(
