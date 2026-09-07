@@ -13,6 +13,9 @@ vi.unmock('./config');
 // Prevent dotenv from loading .env file during tests
 vi.mock('dotenv', () => ({ default: { config: vi.fn() } }));
 
+const { mockWarn } = vi.hoisted(() => ({ mockWarn: vi.fn() }));
+vi.mock('./logger', () => ({ logger: { warn: mockWarn } }));
+
 describe('config', () => {
   const originalEnv = { ...process.env };
 
@@ -222,28 +225,32 @@ describe('config', () => {
       delete process.env.CODING_AGENT;
       const cfg = await loadConfig();
       expect(cfg.codingAgent).toBe('claude-code');
-      expect(cfg.invalidCodingAgent).toBeNull();
+      expect(mockWarn).not.toHaveBeenCalled();
     });
 
     it.each(['', '   '])('treats a blank value (%j) as unset', async (value) => {
       process.env.CODING_AGENT = value;
       const cfg = await loadConfig();
       expect(cfg.codingAgent).toBe('claude-code');
-      expect(cfg.invalidCodingAgent).toBeNull();
+      expect(mockWarn).not.toHaveBeenCalled();
     });
 
     it('is case-insensitive and trims whitespace', async () => {
       process.env.CODING_AGENT = '  Claude-Code  ';
       const cfg = await loadConfig();
       expect(cfg.codingAgent).toBe('claude-code');
-      expect(cfg.invalidCodingAgent).toBeNull();
+      expect(mockWarn).not.toHaveBeenCalled();
     });
 
-    it('falls back to claude-code and preserves an invalid value for the startup warning', async () => {
+    it('logs an invalid value and falls back to claude-code', async () => {
       process.env.CODING_AGENT = 'codex';
       const cfg = await loadConfig();
       expect(cfg.codingAgent).toBe('claude-code');
-      expect(cfg.invalidCodingAgent).toBe('codex');
+      expect(mockWarn).toHaveBeenCalledExactlyOnceWith(
+        { configuredAgent: 'codex', effectiveAgent: 'claude-code' },
+        '[Startup] invalid CODING_AGENT; using the default',
+      );
+      expect(cfg).not.toHaveProperty('invalidCodingAgent');
     });
   });
 

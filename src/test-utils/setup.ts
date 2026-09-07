@@ -55,7 +55,6 @@ vi.mock('../config', () => ({
     toolRiskGateMode: 'off',
     invalidToolRiskGateMode: null,
     codingAgent: 'claude-code',
-    invalidCodingAgent: null,
     awsRegion: 'us-east-1',
     awsAccessKeyId: undefined,
     awsSecretAccessKey: undefined,
