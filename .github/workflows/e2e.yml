@@ -71,9 +71,8 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: e2e
 
-      # The coding sub-agent scenario spawns this binary, as the image does.
-      - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code
+      - name: Install coding agents
+        run: npm install -g @anthropic-ai/claude-code @openai/codex
 
       # No SLACK_* env, and `--grep-invert @slack` so a token added here later
       # still cannot make those scenarios run. They belong to `e2e-slack`.
@@ -81,6 +80,7 @@ jobs:
         run: npm run test:e2e:web --workspace=prism-agent-e2e
         env:
           CI: true
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
 
       - name: Run TUI E2E tests

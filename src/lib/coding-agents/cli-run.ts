@@ -45,6 +45,8 @@ export type Spawner = (
 export function runCli(spec: CliRunSpec, spawner: Spawner = spawn): CodingAgentRun {
   const { taskId } = spec;
   const child = spawner(spec.command, spec.args, { cwd: spec.cwd, env: spec.env });
+  // Prompts are argv inputs; Codex also reads piped stdin until EOF.
+  child.stdin?.end();
   const events = new AsyncChannel<CodingAgentEvent>();
 
   // A spawn failure — a missing binary, a workdir that doesn't exist — emits
@@ -55,6 +57,12 @@ export function runCli(spec: CliRunSpec, spawner: Spawner = spawn): CodingAgentR
   child.once('error', (err: Error) => {
     spawnError = err;
     logger.error({ err, taskId }, '[AgentTask] child process error');
+  });
+
+  // Attach before reading stdout: a signal exit can precede the last pipe close.
+  const exited = new Promise<number | null>((resolve) => {
+    child.once('exit', (code) => resolve(typeof code === 'number' ? code : null));
+    child.once('error', () => resolve(null));
   });
 
   const pump = async (): Promise<void> => {
@@ -93,15 +101,7 @@ export function runCli(spec: CliRunSpec, spawner: Spawner = spawn): CodingAgentR
 
     // Wait for the process to actually exit (stdout closing doesn't always
     // mean the child is fully reaped).
-    const exitCode: number | null = await new Promise((resolve) => {
-      if (child.exitCode !== null) return resolve(child.exitCode);
-      // A child that failed to spawn has already emitted its one 'error' event,
-      // and will never emit 'exit' — without this the wait never settles and
-      // the run holds a concurrency slot for the life of the process.
-      if (spawnError) return resolve(null);
-      child.once('exit', (code) => resolve(typeof code === 'number' ? code : null));
-      child.once('error', () => resolve(null));
-    });
+    const exitCode = await exited;
 
     if (!reported) {
       events.push({

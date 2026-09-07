@@ -1,23 +1,25 @@
-/**
- * Coding-agent selector: `config.codingAgent` (`CODING_AGENT`) names the
- * adapter, and the adapter owns everything about running that agent. One
- * instance per process, so the adapter that prepared the home at boot is the
- * one that runs every task. Adding an agent is one folder beside `claude-code/`
- * plus one entry here; the `Record` makes a name in the config enum without an
- * adapter a compile error.
- */
+/** One adapter instance per available agent, shared by startup and task execution. */
 
 import { config, type CodingAgentName } from '../../config';
 import { createClaudeCodeAgent } from './claude-code/claude-code-agent';
+import { createCodexAgent } from './codex/codex-agent';
 import type { CodingAgent } from './coding-agent';
 
 const FACTORIES: Record<CodingAgentName, () => CodingAgent> = {
   'claude-code': createClaudeCodeAgent,
+  codex: createCodexAgent,
 };
 
-let instance: CodingAgent | null = null;
+const instances = new Map<CodingAgentName, CodingAgent>();
 
-export function getCodingAgent(): CodingAgent {
-  instance ??= FACTORIES[config.codingAgent]();
-  return instance;
+export function getCodingAgent(name: CodingAgentName = config.codingAgent): CodingAgent {
+  if (!config.availableCodingAgents.includes(name)) {
+    throw new Error(`Coding agent "${name}" is unavailable. Available agents: ${config.availableCodingAgents.join(', ') || 'none'}. Configure its credentials or select an available agent.`);
+  }
+  let agent = instances.get(name);
+  if (!agent) {
+    agent = FACTORIES[name]();
+    instances.set(name, agent);
+  }
+  return agent;
 }

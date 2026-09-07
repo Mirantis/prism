@@ -118,14 +118,18 @@ tools.
 ## Coding sub-agent
 
 For larger coding tasks, the agent can hand work to a **coding agent** running as
-an autonomous sub-agent in the workspace. Claude Code is the default and, today,
-the only choice; `CODING_AGENT` in the [configuration](configuration.md) selects it.
+an autonomous sub-agent in the workspace. The tool lists available agents;
+pass `agent: "claude-code"` or `agent: "codex"` to choose one for a task, or omit
+`agent` to use the `CODING_AGENT` default. Use the same `agent` with a returned
+`sessionId` to resume a task.
+The Docker image includes both CLIs; for a local installation, run
+`npm install -g @anthropic-ai/claude-code @openai/codex`.
 
 If you set `CLAUDE_CONFIG_DIR`, Claude Code uses that directory; link its `skills`
 directory to your Prism skills directory to share installed skills.
 
 - **Start** a coding task with a prompt, in `edit` or `plan` mode, with a
-  turn budget.
+  turn budget for Claude Code.
 - **Poll** the running task for output and completion.
 - **Stop** a task that is heading the wrong way, looping, or no longer needed.
   The agent gets back whatever output the task produced before it was
@@ -139,7 +143,8 @@ When the [risk gate](#risk-gate) is in `enforce` mode, Claude Code edit sub-agen
 run with its `auto` permission mode and without the permissions-bypass flag.
 Plan sub-agents stay in `plan` mode without bypass. This gives nested shell and
 file actions their own Claude Code policy check after Prism Agent approves the initial
-delegation.
+delegation. Codex plan tasks are read-only; with `enforce`, edit tasks can write
+inside their workspace and commands that need additional permission fail.
 
 ## Sharing files
 

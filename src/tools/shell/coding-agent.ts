@@ -7,15 +7,19 @@
  * output + completion. `coding_agent_stop({ taskId })` abandons a task that is
  * no longer worth waiting out.
  *
- * Which coding agent runs the task is `CODING_AGENT`'s choice
+ * The available credentials select the coding agent
  * (`lib/coding-agents/`); the sub-agent inherits the runtime's environment, so
  * it authenticates the same way the agent itself does.
  */
 import { z } from 'zod';
+import { config, CODING_AGENTS } from '../../config';
 import { resolvePath } from './workspace';
 import { AgentTaskParams, getAgentTaskManager } from './agent-task-manager';
 
 export const codingAgentInput = z.object({
+  agent: z.enum(CODING_AGENTS).optional().describe(
+    `Coding agent to use. Available values: ${config.availableCodingAgents.join(', ') || 'none detected'}. Default: ${config.codingAgent} (CODING_AGENT). Use the same agent when resuming a session.`,
+  ),
   prompt: z.string().describe('The task for the sub-agent to perform'),
   workdir: z
     .string()
@@ -41,7 +45,7 @@ export const codingAgentInput = z.object({
     .min(1)
     .max(200)
     .optional()
-    .describe('Maximum agent turns before stopping (default: 100, max: 200)'),
+    .describe('Claude Code turn limit (default: 100, max: 200). Codex runs one task to completion; use coding_agent_stop to cancel.'),
   sessionId: z
     .string()
     .optional()
@@ -72,6 +76,7 @@ export async function runCodingAgent(
 ) {
   const workdir = input.workdir ? resolvePath(workspace, input.workdir) : workspace;
   const params: AgentTaskParams = {
+    agent: input.agent,
     prompt: input.prompt,
     workdir,
     appendSystemPrompt: input.appendSystemPrompt,
@@ -81,7 +86,7 @@ export async function runCodingAgent(
     debug: input.debug,
   };
   const taskId = getAgentTaskManager().startTask(params);
-  return { taskId };
+  return { taskId, agent: input.agent ?? config.codingAgent };
 }
 
 export async function runCodingAgentStatus(input: z.infer<typeof codingAgentStatusInput>) {

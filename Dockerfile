@@ -142,11 +142,8 @@ RUN npm ci --workspace=prism-cli --include-workspace-root --omit=dev --ignore-sc
 # package so the SQLite + sqlite-vec path works.
 RUN npm rebuild better-sqlite3
 
-# Claude Code CLI, the default coding agent: the `coding_agent` tools spawn
-# this binary as a sub-agent. Installed globally so a child
-# `spawn('claude', …)` finds it on PATH. Auth piggybacks on the parent's
-# inherited env (AWS_BEARER_TOKEN_BEDROCK, CLAUDE_CODE_USE_BEDROCK).
-RUN npm install -g @anthropic-ai/claude-code
+# Coding-agent CLIs inherit credentials from the runtime environment.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
 # Operator CLIs via mise — parity with the upstream Lens Agents shell
 # sandbox image.

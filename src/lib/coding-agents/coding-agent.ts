@@ -3,7 +3,7 @@
  * delegate a task to it, and nothing about how the agent is run.
  *
  * An adapter (one folder per agent, `get-coding-agent.ts` selects it from
- * `CODING_AGENT`) gives the agent a home at boot and runs each task end to end:
+ * credentials) gives the agent a home at boot and runs each task end to end:
  * it launches the agent however that agent is launched, reads whatever the
  * agent emits, and reports it as the neutral events below. The task manager in
  * `tools/shell/agent-task-manager.ts` buffers those events for the model's
@@ -13,7 +13,7 @@
 import type { CodingAgentName, ToolRiskGateMode } from '../../config';
 
 export interface CodingAgent {
-  /** The `CODING_AGENT` value that selects this adapter. */
+  /** The adapter identifier. */
   readonly id: CodingAgentName;
   /** The name shown to the model in the tool description and in the startup log. */
   readonly displayName: string;

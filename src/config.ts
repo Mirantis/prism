@@ -637,17 +637,38 @@ const toolRiskGateMode = isValidToolRiskGateMode
   : 'off';
 const invalidToolRiskGateMode = isValidToolRiskGateMode ? null : rawToolRiskGateMode;
 
-// Which coding agent the `coding_agent` tools delegate to. One per container,
-// like the LLM vendor. The name selects an adapter in `lib/coding-agents/`,
-// and that adapter owns everything about running the agent. Blank values use
-// the default; unrecognized values log a warning and use the default.
-const CODING_AGENTS = ['claude-code'] as const;
+// Prefer Claude credentials even when an OpenAI key is also available.
+export const CODING_AGENTS = ['claude-code', 'codex'] as const;
 export type CodingAgentName = (typeof CODING_AGENTS)[number];
-const rawCodingAgent = (process.env.CODING_AGENT ?? '').trim().toLowerCase() || 'claude-code';
-const isValidCodingAgent = (CODING_AGENTS as readonly string[]).includes(rawCodingAgent);
-const codingAgent: CodingAgentName = isValidCodingAgent
-  ? (rawCodingAgent as CodingAgentName)
-  : 'claude-code';
+const hasClaudeCredentials = Boolean(
+  anthropicApiKey ||
+  process.env.ANTHROPIC_AUTH_TOKEN ||
+  process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+  process.env.AWS_BEARER_TOKEN_BEDROCK ||
+  (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) ||
+  process.env.AWS_PROFILE ||
+  process.env.AWS_WEB_IDENTITY_TOKEN_FILE ||
+  process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
+  process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI ||
+  process.env.AZURE_API_KEY ||
+  process.env.ANTHROPIC_FOUNDRY_API_KEY ||
+  process.env.ANTHROPIC_FOUNDRY_AUTH_TOKEN ||
+  process.env.CLAUDE_CODE_USE_BEDROCK === '1' ||
+  process.env.CLAUDE_CODE_USE_VERTEX === '1' ||
+  process.env.CLAUDE_CODE_USE_FOUNDRY === '1'
+);
+const availableCodingAgents: CodingAgentName[] = [
+  ...(hasClaudeCredentials ? ['claude-code' as const] : []),
+  ...(openaiApiKey ? ['codex' as const] : []),
+];
+const defaultCodingAgent: CodingAgentName = hasClaudeCredentials || !openaiApiKey
+  ? 'claude-code'
+  : 'codex';
+const rawCodingAgent = process.env.CODING_AGENT?.trim().toLowerCase();
+const isValidCodingAgent = !rawCodingAgent || (CODING_AGENTS as readonly string[]).includes(rawCodingAgent);
+const codingAgent: CodingAgentName = isValidCodingAgent && rawCodingAgent
+  ? rawCodingAgent as CodingAgentName
+  : defaultCodingAgent;
 if (!isValidCodingAgent) {
   logger.warn(
     { configuredAgent: rawCodingAgent, effectiveAgent: codingAgent },
@@ -884,6 +905,7 @@ export const config = {
   invalidToolRiskGateMode,
 
   codingAgent,
+  availableCodingAgents,
 
   // Overrides the input-context window used by the context-window indicator.
   // Normally derived from the model ID via the models.dev catalog

@@ -28,7 +28,7 @@ import {
   codingAgentStatusInput,
   codingAgentStopInput,
 } from './coding-agent';
-import { getCodingAgent } from '../../lib/coding-agents/get-coding-agent';
+import { config } from '../../config';
 import {
   runShellSpawn,
   runShellStdin,
@@ -59,7 +59,7 @@ export function getShellTools(
   const workspace = resolveWorkspace(workspaceRoot);
   // Named in the tool description so the model knows what it is delegating
   // to. Fixed per process, so the description is byte-identical every turn.
-  const codingAgent = getCodingAgent();
+  const availableAgents = config.availableCodingAgents.join(', ') || 'none detected';
 
   /**
    * Announce the path before the step's tools start, and release it once the
@@ -117,21 +117,21 @@ export function getShellTools(
     }),
 
     coding_agent: tool({
-      description: `Start ${codingAgent.displayName} as an autonomous coding sub-agent. Returns { taskId } immediately; poll with coding_agent_status to stream output and check completion, or coding_agent_stop to abandon it. Use for multi-step code workflows, debugging, exploration, builds, and anything where the next step depends on the previous result. Plan-then-edit: call once with mode="plan" to produce a plan, then call again with mode="edit" and the sessionId from the plan response to implement it. If a plan comes back with open questions, settle them (asking the user if you cannot) and resume the same session — mode="plan" with its sessionId — putting your answers in the prompt, rather than abandoning the sub-agent or moving on to mode="edit"; switch to edit only once the plan has no open questions left. Max 3 concurrent tasks.`,
+      description: `Start an autonomous coding sub-agent. Available agent values: ${availableAgents}. Default agent: ${config.codingAgent} (CODING_AGENT); pass the optional agent parameter to override it. Use the same agent when resuming a session. Returns { taskId, agent } immediately; poll with coding_agent_status to stream output and check completion, or coding_agent_stop to abandon it. Use for multi-step code workflows, debugging, exploration, builds, and anything where the next step depends on the previous result. Plan-then-edit: call once with mode="plan" to produce a plan, then call again with mode="edit" and the sessionId from the plan response to implement it. If a plan comes back with open questions, settle them (asking the user if you cannot) and resume the same session — mode="plan" with its sessionId — putting your answers in the prompt, rather than abandoning the sub-agent or moving on to mode="edit"; switch to edit only once the plan has no open questions left. Max 3 concurrent tasks.`,
       inputSchema: codingAgentInput,
       execute: async (input) => runCodingAgent(input, workspace),
     }),
 
     coding_agent_status: tool({
       description:
-        'Poll a running coding_agent task. Returns { output, completed, result, turns, stopReason, sessionId } — output is drained on read, so subsequent calls return only new output. When completed is true, result/turns/stopReason/sessionId are populated.',
+        'Poll a running coding_agent task. Returns { agent, output, completed, result, turns, stopReason, sessionId } — output is drained on read, so subsequent calls return only new output. When completed is true, result/turns/stopReason/sessionId are populated.',
       inputSchema: codingAgentStatusInput,
       execute: async (input) => runCodingAgentStatus(input),
     }),
 
     coding_agent_stop: tool({
       description:
-        'Terminate a running coding_agent task. Use when it is heading the wrong way, looping, stuck, or no longer needed, rather than waiting out its turn budget. Returns the same shape as coding_agent_status: any output produced before termination, completed:true, and stopReason:"stopped". sessionId comes back whenever the sub-agent got far enough to report one — pass it to coding_agent({ prompt, sessionId }) to resume the abandoned work with its context instead of starting over. The taskId is invalid afterwards and its concurrency slot is freed immediately.',
+        'Terminate a running coding_agent task. Use when it is heading the wrong way, looping, stuck, or no longer needed, rather than waiting out its turn budget. Returns the same shape as coding_agent_status: any output produced before termination, completed:true, and stopReason:"stopped". sessionId comes back whenever the sub-agent got far enough to report one — pass it to coding_agent({ prompt, agent, sessionId }) to resume the abandoned work with its context instead of starting over. The taskId is invalid afterwards and its concurrency slot is freed immediately.',
       inputSchema: codingAgentStopInput,
       execute: async (input) => runCodingAgentStop(input),
     }),

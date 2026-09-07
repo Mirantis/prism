@@ -105,7 +105,7 @@ useful when re-creating a container against an existing data volume — set
 
 The image bundles the tools the agent's shell can reach (`git`, `gh`, `kubectl`,
 `aws`, `jq`, `yq`, `ripgrep`, `python` + `pip`, `pandoc`, `poppler-utils`, and
-`tesseract`, plus Claude Code, the default coding agent) so the agent can do real
+`tesseract`, plus Claude Code and Codex) so the agent can do real
 work out of the box. It
 runs as a non-root `node` user and drops privileges after setup.
 

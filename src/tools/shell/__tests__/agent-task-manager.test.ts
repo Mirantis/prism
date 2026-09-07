@@ -3,8 +3,11 @@
  * for the real adapter, so these exercise the buffer/drain/complete/stop state
  * machine on the neutral events every adapter emits, without a child process.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { config } from '../../../config';
+import { trackEvent } from '../../../lib/telemetry';
+
+vi.mock('../../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
 import { AsyncChannel } from '../../../utils/async-channel';
 import type {
   CodingAgent,
@@ -128,10 +131,65 @@ describe('AgentTaskManager', () => {
   let getTask: () => CodingAgentTask;
 
   beforeEach(() => {
+    vi.mocked(trackEvent).mockClear();
     const m = makeManager();
     manager = m.manager;
     getRun = m.getRun;
     getTask = m.getTask;
+  });
+
+  it.each(['end_turn', 'error'] as const)('emits one terminal event for %s', async (stopReason) => {
+    const taskId = manager.startTask(sampleParams);
+    getRun().finish({ stopReason, turns: 1, message: 'Result' });
+    await flush();
+    await manager.stopTask(taskId);
+    expect(trackEvent).toHaveBeenCalledTimes(2);
+    expect(trackEvent).toHaveBeenNthCalledWith(1, 'coding task started', config.ownerUserId, {
+      task_id: taskId, coding_agent: 'claude-code', mode: 'edit',
+    });
+    expect(trackEvent).toHaveBeenNthCalledWith(2, 'coding task finished', config.ownerUserId, {
+      task_id: taskId, coding_agent: 'claude-code', status: stopReason,
+      turns: '1', elapsed_ms: expect.any(String),
+    });
+  });
+
+  it('emits one terminal event when cancelled', async () => {
+    const taskId = manager.startTask(sampleParams);
+    await manager.stopTask(taskId);
+    await flush();
+    expect(trackEvent).toHaveBeenCalledTimes(2);
+    expect(trackEvent).toHaveBeenLastCalledWith('coding task finished', config.ownerUserId,
+      expect.objectContaining({ status: 'stopped' }));
+  });
+
+  it('routes mixed agents through one task manager and one concurrency limit', async () => {
+    const runs: FakeRun[] = [];
+    const resolve = vi.fn((id: 'claude-code' | 'codex'): CodingAgent => ({
+      id, displayName: id, prepareHome: () => ({ configDir: '', skillsLinked: true }),
+      run: () => { const run = new FakeRun(); runs.push(run); return run; },
+    }));
+    const tasks = new AgentTaskManager(undefined, resolve);
+    const original = config.codingAgent;
+    config.codingAgent = 'codex';
+    try {
+      const defaultTask = tasks.startTask(sampleParams);
+      const explicitTask = tasks.startTask({ ...sampleParams, agent: 'claude-code' });
+      const thirdTask = tasks.startTask({ ...sampleParams, agent: 'codex' });
+      expect(resolve.mock.calls.map(([id]) => id)).toEqual(['codex', 'claude-code', 'codex']);
+      expect(() => tasks.startTask({ ...sampleParams, agent: 'claude-code' }))
+        .toThrow('Max concurrent agent tasks');
+      runs[0].finish({ stopReason: 'end_turn', turns: 1, message: 'Codex finished' });
+      await flush();
+      expect(await tasks.readStatus(defaultTask, 0)).toMatchObject({ agent: 'codex', result: 'Codex finished' });
+      expect(await tasks.stopTask(explicitTask)).toMatchObject({ agent: 'claude-code', stopReason: 'stopped' });
+      expect(runs[2].stopped).toBe(false);
+      await tasks.stopTask(thirdTask);
+      expect(vi.mocked(trackEvent).mock.calls.filter(([event]) => event === 'coding task finished')
+        .map(([, , props]) => props?.coding_agent)).toEqual(['codex', 'claude-code', 'codex']);
+    } finally {
+      config.codingAgent = original;
+      tasks.killAll();
+    }
   });
 
   it('startTask returns a taskId and tracks the task', () => {

@@ -220,37 +220,88 @@ describe('config', () => {
     });
   });
 
-  describe('CODING_AGENT', () => {
-    it('defaults to claude-code when unset', async () => {
-      delete process.env.CODING_AGENT;
-      const cfg = await loadConfig();
-      expect(cfg.codingAgent).toBe('claude-code');
-      expect(mockWarn).not.toHaveBeenCalled();
+  describe('coding agent selection', () => {
+    const claudeEnv = [
+      'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN',
+      'AWS_BEARER_TOKEN_BEDROCK', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
+      'AWS_PROFILE', 'AWS_WEB_IDENTITY_TOKEN_FILE',
+      'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI', 'AWS_CONTAINER_CREDENTIALS_FULL_URI',
+      'AZURE_API_KEY', 'ANTHROPIC_FOUNDRY_API_KEY', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN',
+      'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
+    ];
+    beforeEach(() => {
+      for (const name of [...claudeEnv, 'OPENAI_API_KEY', 'CODING_AGENT']) delete process.env[name];
     });
 
-    it.each(['', '   '])('treats a blank value (%j) as unset', async (value) => {
-      process.env.CODING_AGENT = value;
-      const cfg = await loadConfig();
-      expect(cfg.codingAgent).toBe('claude-code');
-      expect(mockWarn).not.toHaveBeenCalled();
+    it('uses Claude Code without credentials', async () => {
+      expect((await loadConfig()).codingAgent).toBe('claude-code');
     });
 
-    it('is case-insensitive and trims whitespace', async () => {
-      process.env.CODING_AGENT = '  Claude-Code  ';
-      const cfg = await loadConfig();
-      expect(cfg.codingAgent).toBe('claude-code');
-      expect(mockWarn).not.toHaveBeenCalled();
+    it('uses Codex with only an OpenAI key', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      expect((await loadConfig()).codingAgent).toBe('codex');
     });
 
-    it('logs an invalid value and falls back to claude-code', async () => {
+    it.each(claudeEnv.filter(name => !['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'].includes(name)))(
+      'prefers Claude Code when %s is available', async (name) => {
+        process.env.OPENAI_API_KEY = 'test-openai-key';
+        process.env[name] = name.startsWith('CLAUDE_CODE_USE_') ? '1' : 'test-credential';
+        expect((await loadConfig()).codingAgent).toBe('claude-code');
+      },
+    );
+
+    it('prefers an AWS credential pair', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.AWS_ACCESS_KEY_ID = 'test-access-key';
+      process.env.AWS_SECRET_ACCESS_KEY = 'test-secret-key';
+      expect((await loadConfig()).codingAgent).toBe('claude-code');
+    });
+
+    it('ignores empty credentials and disabled provider switches', async () => {
+      for (const name of claudeEnv) process.env[name] = '';
+      process.env.CLAUDE_CODE_USE_BEDROCK = '0';
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      expect((await loadConfig()).codingAgent).toBe('codex');
+    });
+
+    it('detects both agents and prefers Claude Code when no default is configured', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+      const cfg = await loadConfig();
+      expect(cfg.availableCodingAgents).toEqual(['claude-code', 'codex']);
+      expect(cfg.codingAgent).toBe('claude-code');
+    });
+
+    it.each(['claude-code', 'codex'] as const)('uses CODING_AGENT=%s as the default', async (agent) => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+      process.env.CODING_AGENT = `  ${agent.toUpperCase()}  `;
+      expect((await loadConfig()).codingAgent).toBe(agent);
+    });
+
+    it('keeps a configured default so unavailable credentials produce an explicit error', async () => {
       process.env.CODING_AGENT = 'codex';
       const cfg = await loadConfig();
-      expect(cfg.codingAgent).toBe('claude-code');
-      expect(mockWarn).toHaveBeenCalledExactlyOnceWith(
-        { configuredAgent: 'codex', effectiveAgent: 'claude-code' },
-        '[Startup] invalid CODING_AGENT; using the default',
-      );
-      expect(cfg).not.toHaveProperty('invalidCodingAgent');
+      expect(cfg.codingAgent).toBe('codex');
+      expect(cfg.availableCodingAgents).toEqual([]);
+    });
+
+    it('reports an invalid default and uses credential selection', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.CODING_AGENT = 'unknown';
+      const cfg = await loadConfig();
+      expect(cfg.codingAgent).toBe('codex');
+      expect(cfg.invalidCodingAgent).toBe('unknown');
+    });
+
+    it('detects only Codex with an OpenAI key', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      expect((await loadConfig()).availableCodingAgents).toEqual(['codex']);
+    });
+
+    it('detects only Claude Code with an Anthropic key', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+      expect((await loadConfig()).availableCodingAgents).toEqual(['claude-code']);
     });
   });
 

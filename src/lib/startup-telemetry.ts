@@ -70,7 +70,7 @@ export async function trackAgentStarted(
         ? { 'llm.region': config.awsRegion }
         : {}),
       'tool_risk_gate.mode': config.toolRiskGateMode,
-      // Which coding agent the coding_agent tools delegate to (CODING_AGENT).
+      // Which coding agent the coding_agent tools delegate to.
       'coding_agent': config.codingAgent,
       'slack.enabled': String(Boolean(config.slackBotToken)),
       'nexus.enabled': String(Boolean(config.nexusApiUrl)),
