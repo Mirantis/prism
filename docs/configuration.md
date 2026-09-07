@@ -231,8 +231,7 @@ choose a safer approach. Tool arguments and user text are not included in
 product telemetry.
 
 The outer gate can evaluate the initial coding sub-agent delegation, but not every
-shell command or file edit the resulting process proposes. With Claude Code, the
-default coding agent, `enforce` mode therefore removes
+shell command or file edit the resulting process proposes. With Claude Code, `enforce` mode removes
 `--dangerously-skip-permissions` and launches edit tasks with its
 [auto permission mode](https://code.claude.com/docs/en/permission-modes).
 Plan tasks remain in `plan` mode without bypass permissions. Auto mode has its

@@ -1,4 +1,4 @@
-import { hasBedrockCredentials } from '../bedrock-credentials';
+import { bedrockRegion, hasBedrockCredentials } from '../bedrock-credentials';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -52,10 +52,7 @@ function buildArgs(task: CodingAgentTask): string[] {
   ];
   if (!task.env.OPENAI_API_KEY && hasBedrockCredentials(task.env)) {
     args.push('-c', 'model_provider="amazon-bedrock"', '-c', 'model="openai.gpt-5.6-terra"');
-    const region = task.env.AWS_REGION || task.env.AWS_DEFAULT_REGION;
-    if (region || task.env.AWS_BEARER_TOKEN_BEDROCK) {
-      args.push('-c', `model_providers.amazon-bedrock.aws.region=${JSON.stringify(region || 'us-east-1')}`);
-    }
+    args.push('-c', `model_providers.amazon-bedrock.aws.region=${JSON.stringify(bedrockRegion(task.env))}`);
   } else {
     args.push('-c', 'model_provider="openai"', '-c', 'forced_login_method="api"');
   }

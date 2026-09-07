@@ -86,6 +86,6 @@ whenever a task matches its description.
 ## Shared with the coding sub-agent
 
 The same skills are visible to the **[coding sub-agent](tools.md#coding-sub-agent)**
-(Claude Code by default): the runtime points it at the agent's skills directory,
+(selected with `CODING_AGENT` or the task’s `agent` parameter): the runtime points it at the agent's skills directory,
 and a repo's `.claude/skills/` are discovered there natively. So whether the agent
 handles a task itself or delegates it, it works from the same set of skills.
