@@ -69,7 +69,7 @@ What the agent can do.
 - **[Plugins](plugins.md)** — installable folders (the agent-plugins.org
   standard) that bundle skills together with the MCP tool servers they need.
 - **[Tools](tools.md)** — everything the agent can call: memory, self-management,
-  scheduling, skills, shell, file sharing, and the Claude Code sub-agent.
+  scheduling, skills, shell, file sharing, and the coding sub-agent.
 
 ## Reference
 

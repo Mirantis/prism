@@ -520,9 +520,9 @@ describe('evaluateToolRisk', () => {
     });
 
     const { system } = mockGenerateObject.mock.calls[0][0] as { system: string };
-    expect(system).toHaveLength(8_136);
+    expect(system).toHaveLength(8_137);
     expect(createHash('sha256').update(system).digest('hex').slice(0, 16)).toBe(
-      '20f28578874cb59f',
+      'b6f10ccf184af0de',
     );
   });
 

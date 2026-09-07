@@ -21,13 +21,14 @@ import {
 import { resolvePath } from './workspace';
 import type { PendingFileWrites } from '../../lib/pending-file-writes';
 import {
-  runClaudeCode,
-  runClaudeCodeStatus,
-  runClaudeCodeStop,
-  claudeCodeInput,
-  claudeCodeStatusInput,
-  claudeCodeStopInput,
-} from './claude-code';
+  runCodingAgent,
+  runCodingAgentStatus,
+  runCodingAgentStop,
+  codingAgentInput,
+  codingAgentStatusInput,
+  codingAgentStopInput,
+} from './coding-agent';
+import { createCodingAgent } from '../../lib/coding-agents/create-coding-agent';
 import {
   runShellSpawn,
   runShellStdin,
@@ -47,7 +48,7 @@ import {
  *
  * `pendingWrites` lets a reader in the same step wait for a write to the file it
  * is about to read — see `lib/pending-file-writes.ts`. Only the two tools whose
- * target path is in their input can take part: `shell_exec` and `claude_code`
+ * target path is in their input can take part: `shell_exec` and `coding_agent`
  * write files too, but nothing here can know which. Optional, because a caller
  * that passes none (the meeting tool bridge, tests) must keep today's behaviour.
  */
@@ -56,6 +57,9 @@ export function getShellTools(
   pendingWrites?: PendingFileWrites,
 ): Record<string, Tool> {
   const workspace = resolveWorkspace(workspaceRoot);
+  // Named in the tool description so the model knows what it is delegating
+  // to. Fixed per process, so the description is byte-identical every turn.
+  const codingAgent = createCodingAgent();
 
   /**
    * Announce the path before the step's tools start, and release it once the
@@ -80,7 +84,7 @@ export function getShellTools(
 
   return {
     shell_exec: tool({
-      description: `Run a single shell command. Returns { stdout, stderr, exitCode }. Each stream is capped (default ${DEFAULT_EXEC_OUTPUT_LIMIT_BYTES} bytes per stream; pass \`limit\` up to ${MAX_EXEC_OUTPUT_LIMIT} to read more). Truncated output ends with "... (truncated; exceeded N bytes)". For multi-step workflows or interactive tasks use claude_code instead.`,
+      description: `Run a single shell command. Returns { stdout, stderr, exitCode }. Each stream is capped (default ${DEFAULT_EXEC_OUTPUT_LIMIT_BYTES} bytes per stream; pass \`limit\` up to ${MAX_EXEC_OUTPUT_LIMIT} to read more). Truncated output ends with "... (truncated; exceeded N bytes)". For multi-step workflows or interactive tasks use coding_agent instead.`,
       inputSchema: shellExecInput,
       // Forward the per-turn AbortSignal so a canceled turn kills the child
       // process instead of leaving it to run on to its own timeout.
@@ -112,25 +116,24 @@ export function getShellTools(
       ),
     }),
 
-    claude_code: tool({
-      description:
-        'Start Claude Code as an autonomous sub-agent. Returns { taskId } immediately; poll with claude_code_status to stream output and check completion, or claude_code_stop to abandon it. Use for multi-step code workflows, debugging, exploration, builds, and anything where the next step depends on the previous result. Plan-then-edit: call once with mode="plan" to produce a plan, then call again with mode="edit" and the sessionId from the plan response to implement it. If a plan comes back with open questions, settle them (asking the user if you cannot) and resume the same session — mode="plan" with its sessionId — putting your answers in the prompt, rather than abandoning the sub-agent or moving on to mode="edit"; switch to edit only once the plan has no open questions left. Max 3 concurrent tasks.',
-      inputSchema: claudeCodeInput,
-      execute: async (input) => runClaudeCode(input, workspace),
+    coding_agent: tool({
+      description: `Start ${codingAgent.displayName} as an autonomous coding sub-agent. Returns { taskId } immediately; poll with coding_agent_status to stream output and check completion, or coding_agent_stop to abandon it. Use for multi-step code workflows, debugging, exploration, builds, and anything where the next step depends on the previous result. Plan-then-edit: call once with mode="plan" to produce a plan, then call again with mode="edit" and the sessionId from the plan response to implement it. If a plan comes back with open questions, settle them (asking the user if you cannot) and resume the same session — mode="plan" with its sessionId — putting your answers in the prompt, rather than abandoning the sub-agent or moving on to mode="edit"; switch to edit only once the plan has no open questions left. Max 3 concurrent tasks.`,
+      inputSchema: codingAgentInput,
+      execute: async (input) => runCodingAgent(input, workspace),
     }),
 
-    claude_code_status: tool({
+    coding_agent_status: tool({
       description:
-        'Poll a running claude_code task. Returns { output, completed, result, turns, stopReason, sessionId } — output is drained on read, so subsequent calls return only new output. When completed is true, result/turns/stopReason/sessionId are populated.',
-      inputSchema: claudeCodeStatusInput,
-      execute: async (input) => runClaudeCodeStatus(input),
+        'Poll a running coding_agent task. Returns { output, completed, result, turns, stopReason, sessionId } — output is drained on read, so subsequent calls return only new output. When completed is true, result/turns/stopReason/sessionId are populated.',
+      inputSchema: codingAgentStatusInput,
+      execute: async (input) => runCodingAgentStatus(input),
     }),
 
-    claude_code_stop: tool({
+    coding_agent_stop: tool({
       description:
-        'Terminate a running claude_code task. Use when it is heading the wrong way, looping, stuck, or no longer needed, rather than waiting out its turn budget. Returns the same shape as claude_code_status: any output produced before termination, completed:true, and stopReason:"stopped". sessionId comes back whenever the sub-agent got far enough to report one — pass it to claude_code({ prompt, sessionId }) to resume the abandoned work with its context instead of starting over. The taskId is invalid afterwards and its concurrency slot is freed immediately.',
-      inputSchema: claudeCodeStopInput,
-      execute: async (input) => runClaudeCodeStop(input),
+        'Terminate a running coding_agent task. Use when it is heading the wrong way, looping, stuck, or no longer needed, rather than waiting out its turn budget. Returns the same shape as coding_agent_status: any output produced before termination, completed:true, and stopReason:"stopped". sessionId comes back whenever the sub-agent got far enough to report one — pass it to coding_agent({ prompt, sessionId }) to resume the abandoned work with its context instead of starting over. The taskId is invalid afterwards and its concurrency slot is freed immediately.',
+      inputSchema: codingAgentStopInput,
+      execute: async (input) => runCodingAgentStop(input),
     }),
 
     shell_spawn: tool({

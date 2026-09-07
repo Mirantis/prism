@@ -1,0 +1,155 @@
+/**
+ * `runCli` against fake children: the process mechanics every CLI-shaped
+ * adapter shares — parsing, the closing result, spawn failures, stop.
+ */
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  FakeChild,
+  FailedSpawnChild,
+  SigkillOnlyChild,
+} from '../../test-utils/fake-child';
+import { runCli, STOP_GRACE_MS, type CliRunSpec, type Spawner } from './cli-run';
+import type { CodingAgentEvent, CodingAgentRun } from './coding-agent';
+
+/** Lines are the JSON of an event; `{ "skip": true }` is a line of no interest. */
+function parseLine(line: string): CodingAgentEvent[] {
+  const parsed = JSON.parse(line) as CodingAgentEvent & { skip?: boolean };
+  return parsed.skip ? [] : [parsed];
+}
+
+const spec: CliRunSpec = {
+  taskId: 't1',
+  displayName: 'Fake Agent',
+  command: 'fake',
+  args: ['--go'],
+  env: {},
+  parseLine,
+};
+
+function start<T extends FakeChild>(child: T): { run: CodingAgentRun; child: T } {
+  const spawner: Spawner = () => child.asChildProcess();
+  return { run: runCli(spec, spawner), child };
+}
+
+async function collect(run: CodingAgentRun): Promise<CodingAgentEvent[]> {
+  const events: CodingAgentEvent[] = [];
+  for await (const event of run.events) events.push(event);
+  return events;
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('runCli', () => {
+  it('passes the command, args, cwd and env to the spawn', () => {
+    let captured: Parameters<Spawner> | undefined;
+    const spawner: Spawner = (...spawnArgs) => {
+      captured = spawnArgs;
+      return new FakeChild().asChildProcess();
+    };
+    runCli({ ...spec, cwd: '/work', env: { PATH: '/bin' } }, spawner);
+
+    expect(captured?.[0]).toBe('fake');
+    expect(captured?.[1]).toEqual(['--go']);
+    expect(captured?.[2]).toEqual({ cwd: '/work', env: { PATH: '/bin' } });
+  });
+
+  it('streams parsed events in order and closes after the agent reports', async () => {
+    const { run, child } = start(new FakeChild());
+    child.emitLine(JSON.stringify({ type: 'text', text: 'hello ' }));
+    child.emitLine(JSON.stringify({ skip: true }));
+    child.emitLine(JSON.stringify({ type: 'text', text: 'world' }));
+    child.emitLine(
+      JSON.stringify({ type: 'result', stopReason: 'end_turn', turns: 2, message: 'done' }),
+    );
+    child.finish(0);
+
+    expect(await collect(run)).toEqual([
+      { type: 'text', text: 'hello ' },
+      { type: 'text', text: 'world' },
+      { type: 'result', stopReason: 'end_turn', turns: 2, message: 'done' },
+    ]);
+  });
+
+  it('skips a line the parser cannot read', async () => {
+    const { run, child } = start(new FakeChild());
+    child.emitLine('not json at all');
+    child.emitLine(JSON.stringify({ type: 'text', text: 'still here' }));
+    child.emitLine(
+      JSON.stringify({ type: 'result', stopReason: 'end_turn', turns: 1, message: 'ok' }),
+    );
+    child.finish(0);
+
+    const events = await collect(run);
+    expect(events[0]).toEqual({ type: 'text', text: 'still here' });
+    expect(events).toHaveLength(2);
+  });
+
+  it('closes with the exit code and stderr when the agent exits without reporting', async () => {
+    const { run, child } = start(new FakeChild());
+    child.stderr.write('something went wrong\n');
+    child.finish(1);
+
+    const events = await collect(run);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'result', stopReason: 'error', turns: 0 });
+    expect((events[0] as { message: string }).message).toBe(
+      'Fake Agent exited with code 1: something went wrong',
+    );
+  });
+
+  it('names a silent exit as such', async () => {
+    const { run, child } = start(new FakeChild());
+    child.finish(2);
+
+    const [result] = await collect(run);
+    expect(result).toMatchObject({
+      type: 'result',
+      stopReason: 'error',
+      message: 'Fake Agent exited with code 2 and no result',
+    });
+  });
+
+  it('reports a spawn failure as the closing result instead of crashing', async () => {
+    const { run, child } = start(new FailedSpawnChild());
+    child.fail('spawn fake ENOENT');
+
+    const [result] = await collect(run);
+    expect(result).toMatchObject({
+      type: 'result',
+      stopReason: 'error',
+      message: 'Fake Agent failed to start: spawn fake ENOENT',
+    });
+  });
+
+  it('reports exited once the child is gone', async () => {
+    const { run, child } = start(new FakeChild());
+    expect(run.exited).toBe(false);
+    child.finish(0);
+    await collect(run);
+    expect(run.exited).toBe(true);
+  });
+
+  it('stop sends SIGTERM and escalates to SIGKILL after the grace period', () => {
+    vi.useFakeTimers();
+    const { run, child } = start(new SigkillOnlyChild());
+
+    run.stop();
+    expect(child.signals).toEqual(['SIGTERM']);
+    expect(run.exited).toBe(false);
+
+    vi.advanceTimersByTime(STOP_GRACE_MS);
+    expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(run.exited).toBe(true);
+  });
+
+  it('stop does not escalate on a child that honoured SIGTERM', () => {
+    vi.useFakeTimers();
+    const { run, child } = start(new FakeChild());
+
+    run.stop();
+    vi.advanceTimersByTime(STOP_GRACE_MS);
+    expect(child.signals).toEqual(['SIGTERM']);
+  });
+});

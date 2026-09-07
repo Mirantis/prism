@@ -290,7 +290,7 @@ describe('isMeetingSupported', () => {
 describe('meeting tool mode', () => {
   const EVERYTHING = [
     'memory_search', 'memory_write', 'memory_delete',
-    'shell_exec', 'shell_write_file', 'claude_code', 'shell_spawn',
+    'shell_exec', 'shell_write_file', 'coding_agent', 'shell_spawn',
     'schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task',
     'create_goal', 'get_goal', 'share_file', 'skill',
     'leave_meeting', 'join_meeting', 'set_microphone', 'meeting_status', 'meeting_speaker',

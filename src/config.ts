@@ -636,6 +636,20 @@ const toolRiskGateMode = isValidToolRiskGateMode
   : 'off';
 const invalidToolRiskGateMode = isValidToolRiskGateMode ? null : rawToolRiskGateMode;
 
+// Which coding agent the `coding_agent` tools delegate to. One per container,
+// like the LLM vendor. The name selects an adapter in `lib/coding-agents/`,
+// and that adapter owns everything about running the agent. Unset or empty is
+// the default; an unrecognized value falls back to it and is kept for a
+// startup warning.
+export const CODING_AGENTS = ['claude-code'] as const;
+export type CodingAgentName = (typeof CODING_AGENTS)[number];
+const rawCodingAgent = (process.env.CODING_AGENT || 'claude-code').trim().toLowerCase();
+const isValidCodingAgent = (CODING_AGENTS as readonly string[]).includes(rawCodingAgent);
+const codingAgent: CodingAgentName = isValidCodingAgent
+  ? (rawCodingAgent as CodingAgentName)
+  : 'claude-code';
+const invalidCodingAgent = isValidCodingAgent ? null : rawCodingAgent;
+
 /** Same shape, for the saved copies of oversized tool results. */
 function resolveToolOutputTtlHours(): number {
   const raw = Number.parseFloat(process.env.TOOL_OUTPUT_TTL_HOURS ?? '');
@@ -863,6 +877,12 @@ export const config = {
   // field so a typo never silently enables enforcement or changes behavior.
   toolRiskGateMode,
   invalidToolRiskGateMode,
+
+  // Coding agent selection (CODING_AGENT): `claude-code`. Same companion
+  // pattern as the gate mode: an invalid value resolves to the default and
+  // index.ts warns once at startup.
+  codingAgent,
+  invalidCodingAgent,
 
   // Overrides the input-context window used by the context-window indicator.
   // Normally derived from the model ID via the models.dev catalog

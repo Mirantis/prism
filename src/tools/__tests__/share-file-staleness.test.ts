@@ -8,7 +8,7 @@
  * main suite would obscure the guards it covers.
  *
  * The barrier in `pending-file-writes.ts` only covers writers whose target path
- * is in their input. `shell_exec` and `claude_code` write files too, and the
+ * is in their input. `shell_exec` and `coding_agent` write files too, and the
  * read-then-confirm here is the one window where those are observable at all.
  */
 

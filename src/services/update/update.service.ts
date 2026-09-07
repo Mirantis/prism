@@ -354,7 +354,7 @@ class UpdateService {
    *
    * - a chat exchange, which spans the gap between a turn and the follow-up
    *   coalesced after it, and holds its claim across that gap;
-   * - a `shell_spawn` child or a `claude_code` task, started by one tool call
+   * - a `shell_spawn` child or a `coding_agent` task, started by one tool call
    *   and polled from later turns — killing one leaves the agent's next status
    *   poll with nothing to report.
    */

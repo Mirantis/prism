@@ -83,9 +83,9 @@ a `/skills` slash command (type `/` in the chat input):
 Automatic (agent-chosen) use needs no command — the agent reaches for a skill
 whenever a task matches its description.
 
-## Shared with the Claude Code sub-agent
+## Shared with the coding sub-agent
 
-The same skills are visible to the **[Claude Code sub-agent](tools.md#claude-code-sub-agent)**:
-the runtime points Claude Code at the agent's skills directory, and a repo's
-`.claude/skills/` are discovered there natively. So whether the agent handles a
-task itself or delegates it to Claude Code, it works from the same set of skills.
+The same skills are visible to the **[coding sub-agent](tools.md#coding-sub-agent)**
+(Claude Code by default): the runtime points it at the agent's skills directory,
+and a repo's `.claude/skills/` are discovered there natively. So whether the agent
+handles a task itself or delegates it, it works from the same set of skills.

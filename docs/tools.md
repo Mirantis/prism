@@ -115,12 +115,13 @@ their tools join the agent's tool set alongside the built-ins. They are named
 tool came from, and they are subject to the same per-mode gating as built-in
 tools.
 
-## Claude Code sub-agent
+## Coding sub-agent
 
-For larger coding tasks, the agent can hand work to **Claude Code** running as an
-autonomous sub-agent in the workspace:
+For larger coding tasks, the agent can hand work to a **coding agent** running as
+an autonomous sub-agent in the workspace. Claude Code is the default and, today,
+the only choice; `CODING_AGENT` in the [configuration](configuration.md) selects it.
 
-- **Start** a Claude Code task with a prompt, in `edit` or `plan` mode, with a
+- **Start** a coding task with a prompt, in `edit` or `plan` mode, with a
   turn budget.
 - **Poll** the running task for output and completion.
 - **Stop** a task that is heading the wrong way, looping, or no longer needed.
@@ -131,8 +132,8 @@ This lets the agent delegate a self-contained engineering job — "refactor this
 module," "investigate this failing test" — and check back on the result, rather
 than doing everything in its own turn-by-turn loop.
 
-When the [risk gate](#risk-gate) is in `enforce` mode, edit sub-agents run with
-Claude Code's `auto` permission mode and without the permissions-bypass flag.
+When the [risk gate](#risk-gate) is in `enforce` mode, Claude Code edit sub-agents
+run with its `auto` permission mode and without the permissions-bypass flag.
 Plan sub-agents stay in `plan` mode without bypass. This gives nested shell and
 file actions their own Claude Code policy check after Prism Agent approves the initial
 delegation.

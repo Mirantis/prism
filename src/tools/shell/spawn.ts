@@ -1,6 +1,6 @@
 /**
  * `shell_spawn` family — generic background-process control for the
- * agent. Distinct from `claude_code` (which is its own dedicated tool
+ * agent. Distinct from `coding_agent` (which is its own dedicated tool
  * over a fixed CLI surface): this set lets the agent start arbitrary
  * long-running shell tasks (e.g. `npm run test`), feed them stdin,
  * drain accumulated stdout/stderr, and kill them — all without

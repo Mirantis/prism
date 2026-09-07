@@ -85,7 +85,7 @@ export interface PreparedMeetingTools {
  * Collect the agent's tools in `meeting` mode and adapt them for the Realtime API.
  *
  * Everything executable is offered, Task included. Be aware of what that means for
- * pacing: `shell_spawn` and `claude_code` do hand back a handle immediately, but
+ * pacing: `shell_spawn` and `coding_agent` do hand back a handle immediately, but
  * `Task` awaits the whole subagent run, so its result can take minutes. The session
  * stays alive and interruptible throughout — but the model is waiting on that
  * result, so the prompt's instruction to say something before a tool call is what

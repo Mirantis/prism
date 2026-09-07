@@ -217,6 +217,36 @@ describe('config', () => {
     });
   });
 
+  describe('CODING_AGENT', () => {
+    it('defaults to claude-code when unset', async () => {
+      delete process.env.CODING_AGENT;
+      const cfg = await loadConfig();
+      expect(cfg.codingAgent).toBe('claude-code');
+      expect(cfg.invalidCodingAgent).toBeNull();
+    });
+
+    it('treats an empty value as unset', async () => {
+      process.env.CODING_AGENT = '';
+      const cfg = await loadConfig();
+      expect(cfg.codingAgent).toBe('claude-code');
+      expect(cfg.invalidCodingAgent).toBeNull();
+    });
+
+    it('is case-insensitive and trims whitespace', async () => {
+      process.env.CODING_AGENT = '  Claude-Code  ';
+      const cfg = await loadConfig();
+      expect(cfg.codingAgent).toBe('claude-code');
+      expect(cfg.invalidCodingAgent).toBeNull();
+    });
+
+    it('falls back to claude-code and preserves an invalid value for the startup warning', async () => {
+      process.env.CODING_AGENT = 'codex';
+      const cfg = await loadConfig();
+      expect(cfg.codingAgent).toBe('claude-code');
+      expect(cfg.invalidCodingAgent).toBe('codex');
+    });
+  });
+
   describe('LLM_PROVIDER selection', () => {
     // These assert built-in defaults, so any model-id var the developer happens
     // to have exported would otherwise leak in through `originalEnv` — and the
