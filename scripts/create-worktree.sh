@@ -1,12 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ $# -eq 0 ]; then
-  echo "Usage: $0 <worktree-name>"
+NAME=""
+USE_CODEX=false
+for arg in "$@"; do
+  case "$arg" in
+    --codex) USE_CODEX=true ;;
+    -*)
+      echo "Error: unknown option $arg" >&2
+      exit 1
+      ;;
+    *)
+      if [ -n "$NAME" ]; then
+        echo "Error: expected one worktree name" >&2
+        exit 1
+      fi
+      NAME="$arg"
+      ;;
+  esac
+done
+
+if [ -z "$NAME" ]; then
+  echo "Usage: $0 [--codex] <worktree-name>"
   exit 1
 fi
 
-NAME="$1"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 WORKTREE_DIR="$REPO_ROOT/.claude/worktrees/$NAME"
 
@@ -144,5 +162,10 @@ fi
 
 echo ""
 echo "Worktree ready at $WORKTREE_DIR"
+if [ "$USE_CODEX" = true ]; then
+  echo "Starting Codex..."
+  exec codex --cd "$WORKTREE_DIR"
+fi
+
 echo "Starting Claude Code..."
 exec claude --worktree "$NAME"

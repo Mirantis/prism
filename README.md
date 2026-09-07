@@ -405,6 +405,8 @@ Prism Agent exposes the following surfaces:
 |---------|--------------|
 | `npm install` | Install dependencies and generate the database client |
 | `npm run dev` | Start in watch mode (auto-restart on changes) |
+| `npm run worktree -- <name>` | Create a worktree and launch Claude Code (requires `claude` on PATH) |
+| `npm run worktree -- --codex <name>` | Create a worktree and launch Codex (requires `codex` on PATH) |
 | `npm run build` | TypeScript compile to `dist/` |
 | `npm start` | Run the compiled build |
 | `npm test` | Run the test suite in watch mode |
