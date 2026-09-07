@@ -76,12 +76,10 @@ try {
 
   Write-Host "Installing Prism Agent into $PrismHome (from $dist)"
   New-Item -ItemType Directory -Path $PrismHome -Force | Out-Null
-  # Workspace root for the shell / claude_code tools, the directory install.sh
-  # also creates. prism-server.exe defaults the root to
-  # %USERPROFILE%\.prism\workspace and creates it at boot; creating it here and
-  # naming it below is what puts the workspace under a moved $PrismHome.
+  # Default workspace root for the shell / claude_code tools, the directory
+  # install.sh also creates. The block that registers the scheduled task decides
+  # whether this install uses it, then creates the root it settled on.
   $workspaceRoot = Join-Path $PrismHome 'workspace'
-  New-Item -ItemType Directory -Path $workspaceRoot -Force | Out-Null
 
   # Stop the server so nothing maps prism-server.exe or the native addons under
   # node_modules\. `prism.exe` is deliberately left alone: a self-update is
@@ -198,14 +196,53 @@ AWS_BEARER_TOKEN_BEDROCK=$bearer
   # the store this script already writes PATH to. A scheduled task holds no
   # environment block of its own, and $PrismHome\.env cannot carry the value:
   # the binary sets its own default before it reads .env, and dotenv keeps a
-  # value that is already set. The installer owns this variable and rewrites it,
-  # so a re-install into a different $PrismHome takes effect.
-  if ([Environment]::GetEnvironmentVariable('SHELL_WORKSPACE_ROOT', 'User') -ne $workspaceRoot) {
-    [Environment]::SetEnvironmentVariable('SHELL_WORKSPACE_ROOT', $workspaceRoot, 'User')
-    Write-Host "Set SHELL_WORKSPACE_ROOT=$workspaceRoot for your user."
+  # value that is already set.
+  #
+  # SHELL_WORKSPACE_ROOT is documented configuration, so a value the operator
+  # chose stays. This script writes the variable when nothing is set, and it
+  # replaces a value a previous install wrote -- a `workspace` directory under
+  # the current $PrismHome, under a previous one, or under the default
+  # %USERPROFILE%\.prism. For any other value the script keeps it and prints the
+  # default this install uses.
+  $userRoot = [Environment]::GetEnvironmentVariable('SHELL_WORKSPACE_ROOT', 'User')
+  $currentRoot = if ($userRoot) { $userRoot.TrimEnd('\') } else { '' }
+  # Split as text. Split-Path and Join-Path resolve the drive, and this value is
+  # the operator's: an absent D: writes an error, which $ErrorActionPreference
+  # turns into an install that stops with the server already down. `-and`
+  # short-circuits left to right, and the parentheses around `-or` are required
+  # because `-and` and `-or` share one precedence level.
+  $cut = $currentRoot.LastIndexOf('\')
+  $currentParent = if ($cut -gt 0) { $currentRoot.Substring(0, $cut) } else { '' }
+  $currentLeaf = if ($cut -ge 0) { $currentRoot.Substring($cut + 1) } else { $currentRoot }
+  $installerWritten = $currentParent -and ($currentLeaf -eq 'workspace') -and (
+    $currentParent -eq "$env:USERPROFILE\.prism" -or
+    (Test-Path -LiteralPath "$currentParent\prism-server.exe" -PathType Leaf -ErrorAction SilentlyContinue))
+
+  $sessionRoot = $workspaceRoot
+  if ($currentRoot -ne $workspaceRoot.TrimEnd('\')) {
+    if (-not $currentRoot) {
+      [Environment]::SetEnvironmentVariable('SHELL_WORKSPACE_ROOT', $workspaceRoot, 'User')
+      Write-Host "Set SHELL_WORKSPACE_ROOT=$workspaceRoot for your user."
+    } elseif ($installerWritten) {
+      [Environment]::SetEnvironmentVariable('SHELL_WORKSPACE_ROOT', $workspaceRoot, 'User')
+      Write-Host "Updated SHELL_WORKSPACE_ROOT from $userRoot to $workspaceRoot."
+    } else {
+      $sessionRoot = $userRoot
+      Write-Host "Keeping SHELL_WORKSPACE_ROOT=$userRoot. The default for this install is $workspaceRoot."
+    }
   }
-  # This session too, so a prism-server.exe started from here agrees.
-  $env:SHELL_WORKSPACE_ROOT = $workspaceRoot
+  # This session too, so a prism-server.exe started from here uses the same root
+  # as the scheduled task.
+  $env:SHELL_WORKSPACE_ROOT = $sessionRoot
+
+  # Create the root the agent uses, which is the operator's value when the block
+  # above kept one. The binary creates its own default at boot; this covers a
+  # root under a moved $PrismHome, and it means the directory exists before the
+  # first run rather than after it.
+  New-Item -ItemType Directory -Path $sessionRoot -Force -ErrorAction SilentlyContinue | Out-Null
+  if (-not (Test-Path -LiteralPath $sessionRoot -ErrorAction SilentlyContinue)) {
+    Write-Warning "Could not create $sessionRoot. prism-server falls back to a temp directory."
+  }
 
   # Register prism-server to run always, in the background. The S4U principal
   # ("run whether the user is logged on or not", no stored password) runs the
