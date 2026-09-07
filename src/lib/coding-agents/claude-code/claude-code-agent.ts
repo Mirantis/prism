@@ -73,6 +73,12 @@ export function createClaudeCodeAgent(spawner: Spawner = spawn): CodingAgent {
 }
 
 function prepareHome(dirs: { dataDir: string; skillsDir: string }): CodingAgentHome {
+  // Report the operator's home and whether it links to the shared skills.
+  const override = process.env.CLAUDE_CONFIG_DIR;
+  if (override) {
+    return { configDir: override, skillsLinked: pointsAt(path.join(override, 'skills'), dirs.skillsDir) };
+  }
+
   const configDir = path.join(dirs.dataDir, '.claude');
   fs.mkdirSync(configDir, { recursive: true });
 
@@ -82,11 +88,19 @@ function prepareHome(dirs: { dataDir: string; skillsDir: string }): CodingAgentH
   // plugin's skills already reach the CLI through the skills catalog.
   const skillsLinked = ensureSymlink(dirs.skillsDir, path.join(configDir, 'skills'));
 
-  // Default (don't override an operator-set value) so the spawned CLI — which
-  // inherits process.env — reads skills from the shared dir.
-  process.env.CLAUDE_CONFIG_DIR ??= configDir;
+  // The spawned CLI inherits process.env, so this is how it finds the home.
+  process.env.CLAUDE_CONFIG_DIR = configDir;
 
   return { configDir, skillsLinked };
+}
+
+/** Whether `candidate` resolves to the same directory as `target`. */
+function pointsAt(candidate: string, target: string): boolean {
+  try {
+    return fs.realpathSync(candidate) === fs.realpathSync(target);
+  } catch {
+    return false;
+  }
 }
 
 function buildArgs(task: CodingAgentTask): string[] {

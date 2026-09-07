@@ -212,6 +212,9 @@ export default defineConfig({
         SLACK_APP_TOKEN: process.env.SLACK_APP_TOKEN || '',
         SLACK_EXPECTED_APP_ID: process.env.SLACK_E2E_EXPECTED_APP_ID || '',
         SLACK_SKIP_BOT_ID_CHECK: 'true',
+        // The coding sub-agent scenario spawns the `claude` CLI, which runs on
+        // the same Bedrock token as the runtime rather than on an Anthropic login.
+        CLAUDE_CODE_USE_BEDROCK: '1',
         // Off by default, but pinned explicitly because this block inherits
         // process.env: a developer who opts in via the repo-root .env would
         // otherwise leak the refresh in here. The context-window scenarios compute

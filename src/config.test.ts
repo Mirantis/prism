@@ -225,8 +225,8 @@ describe('config', () => {
       expect(cfg.invalidCodingAgent).toBeNull();
     });
 
-    it('treats an empty value as unset', async () => {
-      process.env.CODING_AGENT = '';
+    it.each(['', '   '])('treats a blank value (%j) as unset', async (value) => {
+      process.env.CODING_AGENT = value;
       const cfg = await loadConfig();
       expect(cfg.codingAgent).toBe('claude-code');
       expect(cfg.invalidCodingAgent).toBeNull();

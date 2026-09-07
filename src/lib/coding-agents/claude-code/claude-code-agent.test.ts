@@ -269,10 +269,27 @@ describe('prepareHome', () => {
     expect(fs.existsSync(path.join(home.configDir, 'plugins'))).toBe(false);
   });
 
-  it('keeps an operator-set CLAUDE_CONFIG_DIR', () => {
-    process.env.CLAUDE_CONFIG_DIR = '/elsewhere';
-    agent.prepareHome({ dataDir: tmp, skillsDir: path.join(tmp, 'skills') });
-    expect(process.env.CLAUDE_CONFIG_DIR).toBe('/elsewhere');
+  it.each(['theirs', 'theirs '])('reports the operator-set home %j', (directory) => {
+    const theirs = path.join(tmp, directory);
+    fs.mkdirSync(theirs);
+    process.env.CLAUDE_CONFIG_DIR = theirs;
+
+    const home = agent.prepareHome({ dataDir: tmp, skillsDir: path.join(tmp, 'skills') });
+
+    expect(process.env.CLAUDE_CONFIG_DIR).toBe(theirs);
+    expect(home).toEqual({ configDir: theirs, skillsLinked: false });
+    expect(fs.readdirSync(theirs)).toEqual([]);
+    expect(fs.existsSync(path.join(tmp, '.claude'))).toBe(false);
+  });
+
+  it('reports skills as linked when the operator-set home already points at them', () => {
+    const theirs = path.join(tmp, 'theirs');
+    fs.mkdirSync(theirs);
+    fs.symlinkSync(path.join(tmp, 'skills'), path.join(theirs, 'skills'));
+    process.env.CLAUDE_CONFIG_DIR = theirs;
+
+    const home = agent.prepareHome({ dataDir: tmp, skillsDir: path.join(tmp, 'skills') });
+    expect(home).toEqual({ configDir: theirs, skillsLinked: true });
   });
 
   it('reports the skills as unlinked when a populated dir sits at the link path', () => {

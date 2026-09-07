@@ -44,7 +44,7 @@ to clear.
   service; the WebSocket gateway and the Slack adapter subscribe to it and own
   none of it.
 - **Coding agents stay generic.** The `coding_agent` tools hand a task to a
-  `CodingAgent` (`lib/coding-agents/`, chosen by `create-coding-agent.ts` from
+  `CodingAgent` (`lib/coding-agents/`, chosen by `get-coding-agent.ts` from
   `CODING_AGENT`), and the adapter runs it end to end: how the agent is
   launched, read and given a home is its business alone. A new agent is one
   folder plus one entry in the selector.
@@ -164,6 +164,9 @@ line holding the url alone.
 Report every public write. When you post or edit a comment, a review or a PR
 body, say so in chat with the URL. The user must never discover a GitHub
 comment they were not told about.
+
+When addressing GitHub review comments, reply to each comment with an explanation
+of the fix, then resolve its review thread after the fix is complete.
 
 ## Validation
 
@@ -814,7 +817,7 @@ src/
 │   ├── coding-agents/          # One folder per coding agent, plus the shared contract and the selector (`CODING_AGENT`)
 │   │   ├── coding-agent.ts     # The `CodingAgent` contract: `id`, `displayName`, `prepareHome()` and `run(task)`, which returns a `CodingAgentRun` (an event stream of `text` / `session` / `result`, `exited`, `stop()`). States what the runtime needs and nothing about how an agent is launched
 │   │   ├── cli-run.ts          # `runCli()`: the process plumbing a CLI-shaped adapter calls — spawn, stdout lines through the adapter's parser, exit wait, the closing `result` when the agent reported none, SIGTERM→SIGKILL stop
-│   │   ├── create-coding-agent.ts # Selector: `config.codingAgent` → adapter factory, a `Record` so a config name without an adapter fails to compile
+│   │   ├── get-coding-agent.ts # Selector: `config.codingAgent` → adapter, one instance per process so the adapter that prepared the home runs every task; a `Record` so a config name without an adapter fails to compile
 │   │   └── claude-code/
 │   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (gate mode → permission flags, plan-only instruction), the stream-json parser, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink
 │   ├── embedding-providers/    # Memory-embedding vendors, a feature of their own decoupled from the chat provider (`EMBEDDING_PROVIDER`)

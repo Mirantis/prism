@@ -24,6 +24,9 @@ export AWS_SECRET_ACCESS_KEY=
 export AWS_SESSION_TOKEN=
 ```
 
+The coding sub-agent scenario also runs the `claude` CLI, so install it
+(`npm install -g @anthropic-ai/claude-code`); it uses the same Bedrock token.
+
 ## Running Tests
 
 From the repo root:

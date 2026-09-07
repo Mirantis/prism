@@ -2,7 +2,7 @@
  * The coding-agent contract: what the runtime needs from a coding agent to
  * delegate a task to it, and nothing about how the agent is run.
  *
- * An adapter (one folder per agent, `create-coding-agent.ts` selects it from
+ * An adapter (one folder per agent, `get-coding-agent.ts` selects it from
  * `CODING_AGENT`) gives the agent a home at boot and runs each task end to end:
  * it launches the agent however that agent is launched, reads whatever the
  * agent emits, and reports it as the neutral events below. The task manager in
