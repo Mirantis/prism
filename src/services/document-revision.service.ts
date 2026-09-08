@@ -41,12 +41,6 @@ const REASON_MAX_CHARS = 500;
 /** The reason recorded for the revisions a new agent is created with. */
 export const SEED_REASON = 'Created from the default template.';
 
-/**
- * The reason recorded for the baseline an existing install gains on the first
- * boot after upgrading.
- */
-export const UPGRADE_REASON = 'Recorded on upgrade. Earlier revisions were not kept.';
-
 export interface RecordRevisionInput {
   agentId: string;
   field: WorkspaceDocField;
@@ -89,26 +83,6 @@ function revisionRow(input: RecordRevisionInput) {
     method: input.method,
     reason: input.reason.slice(0, REASON_MAX_CHARS),
   };
-}
-
-/**
- * Rows holding what the named documents read now: the seed of a new agent, and
- * the baseline of an upgraded one.
- *
- * A baseline is attributed to the user, because the content either came from the
- * template or predates the history. The reason tells the two cases apart.
- */
-function baselineRows(agent: AgentWorkspace, fields: WorkspaceDocField[], reason: string) {
-  return fields.map((field) =>
-    revisionRow({
-      agentId: agent.id,
-      field,
-      content: agent[field],
-      actor: 'user',
-      method: 'seed',
-      reason,
-    }),
-  );
 }
 
 /**
@@ -164,39 +138,25 @@ class DocumentRevisionService {
    * Record the seed revision of every document of a new agent. One insert, and
    * no retention pass, because each field is gaining its first revision.
    *
+   * Attributed to the user, because the content came from the template rather
+   * than from anything the agent decided.
+   *
    * @param tx Transaction client — the caller's, so the agent row and its
    *   history land together.
    */
   async recordSeeds(tx: Prisma.TransactionClient, agent: AgentWorkspace): Promise<void> {
     await tx.agentWorkspaceRevision.createMany({
-      data: baselineRows(agent, [...WORKSPACE_DOC_FIELDS], SEED_REASON),
+      data: WORKSPACE_DOC_FIELDS.map((field) =>
+        revisionRow({
+          agentId: agent.id,
+          field,
+          content: agent[field],
+          actor: 'user',
+          method: 'seed',
+          reason: SEED_REASON,
+        }),
+      ),
     });
-  }
-
-  /**
-   * Record a baseline for every document of this agent that has no revision
-   * yet, holding what the column reads now. This is what an install upgraded
-   * from a build without the table gains on its first boot; without it the
-   * oldest reachable content is the first edit after the upgrade, and drift is
-   * undetectable until then.
-   *
-   * Idempotent: an agent whose documents all have a revision matches nothing.
-   * Returns the fields it wrote a baseline for.
-   */
-  async recordMissingBaselines(agent: AgentWorkspace): Promise<WorkspaceDocField[]> {
-    const present = await prisma.agentWorkspaceRevision.findMany({
-      where: { agentId: agent.id },
-      distinct: ['field'],
-      select: { field: true },
-    });
-    const recorded = new Set(present.map((row) => row.field));
-    const missing = WORKSPACE_DOC_FIELDS.filter((field) => !recorded.has(field));
-    if (missing.length === 0) return [];
-
-    await prisma.agentWorkspaceRevision.createMany({
-      data: baselineRows(agent, missing, UPGRADE_REASON),
-    });
-    return missing;
   }
 
   /**
