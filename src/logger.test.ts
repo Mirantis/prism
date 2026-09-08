@@ -12,7 +12,6 @@ beforeAll(() => {
   entry = path.join(root, 'src/lib/probe.cjs');
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });
   fs.writeFileSync(path.join(root, '.env'), 'LOG_LEVEL=debug\n');
-  fs.writeFileSync(path.join(root, 'src/.env'), 'LOG_LEVEL=debug\n');
   buildSync({
     stdin: { contents: `import './config'; import { logger } from './logger'; console.log(logger.level);`,
       resolveDir: __dirname },
