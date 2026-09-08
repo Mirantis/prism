@@ -241,6 +241,13 @@ describe('config', () => {
       expect((await loadConfig()).codingAgent).toBe('claude-code');
     });
 
+    it('detects only Claude Code from its Bedrock switch', async () => {
+      process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+      const cfg = await loadConfig();
+      expect(cfg.availableCodingAgents).toEqual(['claude-code']);
+      expect(cfg.codingAgent).toBe('claude-code');
+    });
+
     it('uses Codex with only an OpenAI key', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
       expect((await loadConfig()).codingAgent).toBe('codex');
