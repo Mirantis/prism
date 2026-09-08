@@ -12,7 +12,6 @@
  * its own read opens none.
  */
 
-import { createHash } from 'crypto';
 import { AgentWorkspace, AgentWorkspaceRevision, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
@@ -67,7 +66,8 @@ export interface DocumentRevisionSummary {
   actor: string;
   method: string;
   reason: string;
-  contentHash: string;
+  /** True while this revision holds exactly what the document reads now. */
+  matchesCurrent: boolean;
   createdAt: Date;
 }
 
@@ -76,16 +76,7 @@ export interface DocumentHistory {
   field: WorkspaceDocField;
   bound: number;
   drifted: boolean;
-  liveHash: string;
   revisions: DocumentRevisionSummary[];
-}
-
-/**
- * The sha256 of a document, stored with every revision. A document whose hash
- * no longer agrees with its newest revision was written outside the write path.
- */
-export function documentHash(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
 }
 
 /** The one builder for a revision row, so every insert stores the same shape. */
@@ -94,7 +85,6 @@ function revisionRow(input: RecordRevisionInput) {
     agentId: input.agentId,
     field: input.field,
     content: input.content,
-    contentHash: documentHash(input.content),
     actor: input.actor,
     method: input.method,
     reason: input.reason.slice(0, REASON_MAX_CHARS),
@@ -122,45 +112,35 @@ function baselineRows(agent: AgentWorkspace, fields: WorkspaceDocField[], reason
 }
 
 /**
- * Whether a document disagrees with the newest revision of it, which is what a
- * write that went around the write path leaves behind — a shell writing
- * `/data/agent.db`, or an edit to the file itself.
- *
- * No revision at all is not a disagreement: that is a fresh database, before the
- * boot baseline runs.
+ * The content last reported as drifted, per document. Remembered for the life of
+ * the process, the shape `tool-risk-gate.ts` uses for its truncation warning:
+ * the Profile page polls this history, and one line per poll would bury the
+ * finding. A second out-of-band write is different content, so it is reported
+ * again. At most one entry per document, dropped when the document agrees again.
  */
-export function documentDrift(
+const reportedDrift = new Map<WorkspaceDocField, string>();
+
+function noteDrift(
+  agentId: string,
+  field: WorkspaceDocField,
   liveContent: string,
-  newest: { contentHash: string } | null,
-): boolean {
-  if (!newest) return false;
-  return documentHash(liveContent) !== newest.contentHash;
-}
-
-/**
- * Drift already reported, keyed on the field and the content that drifted.
- * Remembered for the life of the process, the shape `tool-risk-gate.ts` uses for
- * its truncation warning: the Profile page polls this history, and one line per
- * poll would bury the finding. A second out-of-band write is a new hash, so it
- * is reported again.
- */
-const reportedDrift = new Set<string>();
-
-function reportDrift(agentId: string, field: WorkspaceDocField, liveHash: string, revisionHash: string): void {
-  const key = `${field}:${liveHash}`;
-  if (reportedDrift.has(key)) return;
-  reportedDrift.add(key);
+  drifted: boolean,
+): void {
+  if (!drifted) {
+    reportedDrift.delete(field);
+    return;
+  }
+  if (reportedDrift.get(field) === liveContent) return;
+  reportedDrift.set(field, liveContent);
 
   logger.warn(
-    { agentId, field, liveHash, revisionHash },
+    { agentId, field },
     `[DocumentRevisions] ${WORKSPACE_DOC_LABELS[field]} does not agree with its newest revision; it was written outside the write path`,
   );
-  // Hash prefixes only. The content and the reason text stay out of telemetry.
+  // The agent and the field only. The content and the reason text stay out of telemetry.
   trackEvent('agent document drift detected', null, {
     'agent.id': agentId,
     'config.field': field,
-    'document.live_hash': liveHash.slice(0, 12),
-    'document.revision_hash': revisionHash.slice(0, 12),
   });
 }
 
@@ -222,20 +202,30 @@ class DocumentRevisionService {
   /**
    * The history of one document, newest first, with the drift verdict for the
    * content the column holds now. Reporting the drift is part of reading it:
-   * this is the only place the two hashes meet.
+   * this is the only place the column and its revisions meet.
+   *
+   * Which revisions hold the current content is a second query for their ids
+   * alone, because the summaries carry no content and reading 500 whole
+   * documents to compare them is the response this history avoids. A document
+   * that matches no revision was written outside the write path.
    */
   async history(agent: AgentWorkspace, field: WorkspaceDocField): Promise<DocumentHistory> {
-    const revisions = await prisma.agentWorkspaceRevision.findMany({
+    const rows = await prisma.agentWorkspaceRevision.findMany({
       where: { agentId: agent.id, field },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      select: { id: true, actor: true, method: true, reason: true, contentHash: true, createdAt: true },
+      select: { id: true, actor: true, method: true, reason: true, createdAt: true },
+    });
+    const matching = await prisma.agentWorkspaceRevision.findMany({
+      where: { agentId: agent.id, field, content: agent[field] },
+      select: { id: true },
     });
 
-    const liveHash = documentHash(agent[field]);
-    const drifted = documentDrift(agent[field], revisions[0] ?? null);
-    if (drifted) reportDrift(agent.id, field, liveHash, revisions[0].contentHash);
+    const current = new Set(matching.map((row) => row.id));
+    const revisions = rows.map((row) => ({ ...row, matchesCurrent: current.has(row.id) }));
+    const drifted = revisions.length > 0 && !revisions[0].matchesCurrent;
+    noteDrift(agent.id, field, agent[field], drifted);
 
-    return { field, bound: MAX_REVISIONS_PER_DOCUMENT, drifted, liveHash, revisions };
+    return { field, bound: MAX_REVISIONS_PER_DOCUMENT, drifted, revisions };
   }
 
   /**

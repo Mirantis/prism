@@ -92,7 +92,7 @@ export function DocumentHistory({
   const older = useSideContent(field, fromId, live);
   const newer = useSideContent(field, toId, live);
   const showDiff = Boolean(selected || driftComparison);
-  const matchesCurrent = older.ready && older.content === live;
+  const matchesCurrent = selected?.matchesCurrent ?? false;
   const comparisonTitle = revisions.find((revision) => revision.id === toId);
 
   const restore = useMutation({
@@ -375,7 +375,7 @@ export function DocumentHistory({
               key={revision.id}
               revision={revision}
               selected={selected?.id === revision.id}
-              current={revision.contentHash === history?.liveHash}
+              current={revision.matchesCurrent}
               onSelect={() => pick(revision.id)}
             />
           ))}

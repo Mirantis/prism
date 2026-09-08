@@ -38,7 +38,7 @@ function revision(overrides: Partial<DocumentRevisionSummary> = {}): DocumentRev
     actor: 'agent',
     method: 'replace',
     reason: 'Sharpened the tone.',
-    contentHash: 'aaaa',
+    matchesCurrent: true,
     createdAt: '2026-09-05T10:00:00.000Z',
     ...overrides,
   };
@@ -51,9 +51,15 @@ const TWO_REVISIONS = [
     actor: 'user',
     method: 'seed',
     reason: 'Created with the agent.',
-    contentHash: 'bbbb',
+    matchesCurrent: false,
     createdAt: '2026-09-01T08:30:00.000Z',
   }),
+];
+
+/** The same two, with the newest no longer holding what the document reads. */
+const DRIFTED_REVISIONS = [
+  { ...TWO_REVISIONS[0], matchesCurrent: false },
+  TWO_REVISIONS[1],
 ];
 
 function history(overrides: Partial<DocumentRevisionHistory> = {}): DocumentRevisionHistory {
@@ -61,7 +67,6 @@ function history(overrides: Partial<DocumentRevisionHistory> = {}): DocumentRevi
     field: 'soulMd',
     bound: 500,
     drifted: false,
-    liveHash: 'aaaa',
     revisions: TWO_REVISIONS,
     ...overrides,
   };
@@ -103,8 +108,18 @@ describe('DocumentHistory', () => {
     expect(screen.getByRole('button', { name: 'Restore this version' })).toBeDisabled();
   });
 
+  it('marks the revisions that hold what the document reads now', async () => {
+    mockDocumentRevisions.mockResolvedValue(history());
+    mockDocumentRevision.mockResolvedValue({ ...revision(), content: NEWER });
+    renderHistory();
+
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(rows()[0]).toHaveTextContent('Matches current document');
+    expect(rows()[1]).not.toHaveTextContent('Matches current document');
+  });
+
   it('compares unrecorded content against the newest saved revision', async () => {
-    mockDocumentRevisions.mockResolvedValue(history({ drifted: true }));
+    mockDocumentRevisions.mockResolvedValue(history({ drifted: true, revisions: DRIFTED_REVISIONS }));
     mockDocumentRevision.mockResolvedValue({ ...revision(), content: NEWER });
     renderHistory('# Soul\n\nAn unrecorded edit.\n');
     await screen.findByText('+ An unrecorded edit.');
@@ -169,7 +184,7 @@ describe('DocumentHistory', () => {
   });
 
   it('warns about a change made outside the app only while the document has drifted', async () => {
-    mockDocumentRevisions.mockResolvedValue(history({ drifted: true }));
+    mockDocumentRevisions.mockResolvedValue(history({ drifted: true, revisions: DRIFTED_REVISIONS }));
     mockDocumentRevision.mockResolvedValue({ ...revision(), content: OLDER });
     renderHistory();
 
@@ -200,7 +215,7 @@ describe('DocumentHistory', () => {
   });
 
   it('says so when the document has no revision yet', async () => {
-    mockDocumentRevisions.mockResolvedValue(history({ revisions: [], liveHash: 'cccc' }));
+    mockDocumentRevisions.mockResolvedValue(history({ revisions: [] }));
     renderHistory();
 
     await waitFor(() =>

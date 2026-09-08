@@ -137,9 +137,7 @@ model AgentWorkspace {
 //
 // `field` is the column name, `actor` is `agent` or `user`, and `method` is
 // `seed`, `replace`, `edit`, `clear`, `rest` or `rollback` — the same words
-// the `agent config updated` event already carries. `contentHash` is the
-// sha256 of `content`: a document that no longer agrees with its newest
-// revision was written outside the write path.
+// the `agent config updated` event already carries.
 //
 // Each document keeps its 500 newest revisions. The insert deletes anything
 // older in the same transaction (services/document-revision.service.ts).
@@ -148,7 +146,6 @@ model AgentWorkspaceRevision {
   agentId     String
   field       String
   content     String
-  contentHash String
   actor       String
   method      String
   reason      String

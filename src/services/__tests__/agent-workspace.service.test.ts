@@ -47,7 +47,6 @@ vi.mock('../../lib/telemetry', () => ({
 }));
 
 import { agentWorkspaceService } from '../agent-workspace.service';
-import { documentHash } from '../document-revision.service';
 import { WORKSPACE_DOC_FIELDS } from '../../lib/workspace-docs';
 import { config } from '../../config';
 
@@ -382,7 +381,6 @@ describe('AgentWorkspaceService identity-document writes', () => {
         agentId,
         field: 'soulMd',
         content: '# Rewritten',
-        contentHash: documentHash('# Rewritten'),
         actor: 'agent',
         method: 'replace',
         reason: 'Sharpened the tone.',
@@ -428,7 +426,6 @@ describe('AgentWorkspaceService identity-document writes', () => {
       expect(row.actor).toBe('user');
       expect(row.method).toBe('seed');
       expect(row.content).toBe(created[row.field as keyof typeof created]);
-      expect(row.contentHash).toBe(documentHash(row.content as string));
     }
   });
 
@@ -523,7 +520,6 @@ describe('AgentWorkspaceService.rollbackWorkspaceDoc', () => {
         agentId,
         field: 'soulMd',
         content: '# The soul as it was',
-        contentHash: documentHash('# The soul as it was'),
         actor: 'user',
         method: 'rollback',
         reason: 'Undid the edit from yesterday.',
