@@ -701,7 +701,7 @@ tools block.
 | **ContextService** | `services/context.service.ts` | Builds agent context from local database: agent data via `agentWorkspaceService.getAgentById()` and conversation history via Prisma |
 | **ConversationService** | `services/conversation.service.ts` | Thread and message CRUD via Prisma, pluggable thread providers (database + Slack) |
 | **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, platform token management, subagent relationships. `writeWorkspaceDoc` is the one write path for an identity document — column plus revision in one transaction — and `rollbackWorkspaceDoc` the restore |
-| **DocumentRevisionService** | `services/document-revision.service.ts` | Identity-document revisions: append one per accepted write, the history of one document (with the drift verdict), one revision's content, the seed rows a new agent gets, and the boot baseline an upgraded install gets. Bounded at `MAX_REVISIONS_PER_DOCUMENT` (500) per document, trimmed in the insert's transaction |
+| **DocumentRevisionService** | `services/document-revision.service.ts` | Identity-document revisions: append one per accepted write, the history of one document (with the drift verdict), one revision's content, and the seed rows a new agent gets. Bounded at `MAX_REVISIONS_PER_DOCUMENT` (500) per document, trimmed in the insert's transaction |
 | **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat timestamp, heartbeat status) |
 | **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats |
 | **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; manages cron task state directly via Prisma (list, update run timestamps, delete); skips a tick that would overlap a still-running execution of the same task; runs each result through the instruction-aware DELIVER/SUPPRESS gate before delivering (empty results suppressed, error results bypass the gate and always deliver, in-memory per-task last-delivered baseline fed to the gate as context — cleared when a suppressed run observes a different situation so a recurrence re-alerts — fail-open) |
@@ -807,7 +807,6 @@ src/
 ├── lib/
 │   ├── attachment-boot.ts      # Boot-time attachment storage reconciliation, in order: missing media files → content expiry → legacy BLOB backfill
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
-│   ├── document-revision-boot.ts # Boot-time baseline revision for every identity document that has none (idempotent, catches its own failure)
 │   ├── workspace-docs.ts       # The seven identity-document columns, their labels, and the actor/method words a revision is described with
 │   ├── llm-providers/          # One folder per chat vendor, plus the shared contract and the selector
 │   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (the Anthropic breakpoint, Converse's own `BEDROCK_CACHE_POINT`, or the empty `NO_CACHE_POINT` — which covers both a vendor that caches without breakpoints and a model whose support is unknown) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares. The startup log reads this contract for the configured model, so no caller names a vendor to report prompt caching
@@ -1332,12 +1331,10 @@ the newest revision is what the document reads now.
   status codes.
 - **Locked-in mode does not gate a restore.** That lock withholds the agent's own
   writers, and a restore is the user acting.
-- **Every document has a history from the first boot.** A new agent gets seven
-  `seed` revisions in the creating transaction; an install created before the
-  table gets a baseline for each document that has none, from
-  `lib/document-revision-boot.ts` (idempotent, and it catches its own failure
-  because a container that will not boot is worse than a history that starts at
-  the next edit).
+- **Every document has a history from the moment the table exists.** A new agent
+  gets seven `seed` revisions in the creating transaction; an install created
+  before the table gets a baseline for each document from the migration that adds
+  it, holding what the column read at the upgrade.
 - **Drift is detectable, not prevented.** Each revision stores the content it
   wrote, so a document written straight into `/data/agent.db` no longer matches
   its newest revision and the history reports `drifted`.

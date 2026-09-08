@@ -2,8 +2,8 @@
  * Document Revision Service Tests
  *
  * The revision row itself: the reason cap, the retention delete that runs in
- * the caller's transaction, the boot baseline, and the history read with its
- * drift verdict.
+ * the caller's transaction, the seed rows a new agent gets, and the history read
+ * with its drift verdict.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -38,7 +38,6 @@ import {
   documentRevisionService,
   MAX_REVISIONS_PER_DOCUMENT,
   SEED_REASON,
-  UPGRADE_REASON,
 } from '../document-revision.service';
 import { WORKSPACE_DOC_FIELDS, WorkspaceDocField } from '../../lib/workspace-docs';
 import { AgentWorkspace } from '@prisma/client';
@@ -184,67 +183,6 @@ describe('documentRevisionService.recordSeeds', () => {
 
     expect(mockPrisma.agentWorkspaceRevision.findMany).not.toHaveBeenCalled();
     expect(mockPrisma.agentWorkspaceRevision.deleteMany).not.toHaveBeenCalled();
-  });
-});
-
-describe('documentRevisionService.recordMissingBaselines', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockPrisma.agentWorkspaceRevision.createMany.mockResolvedValue({ count: 0 });
-  });
-
-  it('records every document of an agent whose history is empty', async () => {
-    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([]);
-    const agent = createAgentRow();
-
-    const recorded = await documentRevisionService.recordMissingBaselines(agent);
-
-    expect(recorded).toEqual([...WORKSPACE_DOC_FIELDS]);
-    const { data } = mockPrisma.agentWorkspaceRevision.createMany.mock.calls[0][0];
-    expect(data).toHaveLength(WORKSPACE_DOC_FIELDS.length);
-    for (const row of data as Array<Record<string, unknown>>) {
-      const field = row.field as WorkspaceDocField;
-      expect(row.agentId).toBe(agentId);
-      expect(row.content).toBe(agent[field]);
-      expect(row.actor).toBe('user');
-      expect(row.method).toBe('seed');
-      expect(row.reason).toBe(UPGRADE_REASON);
-    }
-  });
-
-  it('records only the documents that have no revision yet', async () => {
-    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue(
-      WORKSPACE_DOC_FIELDS.filter((field) => field !== 'visionMd').map((field) => ({ field })),
-    );
-
-    const recorded = await documentRevisionService.recordMissingBaselines(createAgentRow());
-
-    expect(recorded).toEqual(['visionMd']);
-    const { data } = mockPrisma.agentWorkspaceRevision.createMany.mock.calls[0][0];
-    expect(data).toHaveLength(1);
-  });
-
-  it('writes nothing on the second boot', async () => {
-    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue(
-      WORKSPACE_DOC_FIELDS.map((field) => ({ field })),
-    );
-
-    const recorded = await documentRevisionService.recordMissingBaselines(createAgentRow());
-
-    expect(recorded).toEqual([]);
-    expect(mockPrisma.agentWorkspaceRevision.createMany).not.toHaveBeenCalled();
-  });
-
-  it('reads one row per field rather than the whole history', async () => {
-    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([]);
-
-    await documentRevisionService.recordMissingBaselines(createAgentRow());
-
-    expect(mockPrisma.agentWorkspaceRevision.findMany).toHaveBeenCalledWith({
-      where: { agentId },
-      distinct: ['field'],
-      select: { field: true },
-    });
   });
 });
 
