@@ -517,8 +517,8 @@ class AgentWorkspaceService {
    *
    * One transaction reads the target revision, compares the newest revision
    * against `expectedRevisionId`, replaces the column and records the restore as
-   * a revision of its own — a check outside it is not a check. The history keeps
-   * every step, so a restore is itself reversible.
+   * a revision of its own. The history keeps every step, so a restore is itself
+   * reversible.
    *
    * Locked-in mode does not gate this. That lock withholds the agent's own
    * writers, and a restore is the user acting.
