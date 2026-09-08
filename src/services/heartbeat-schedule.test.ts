@@ -17,20 +17,40 @@ const HOUR = 60 * 60 * 1000;
 const EIGHT_HOURS = 8 * HOUR;
 
 describe('heartbeatDueAt', () => {
-  it('is one interval after the last run', () => {
+  it('is the persisted deadline when there is one', () => {
+    const nextDue = new Date(NOW + 2 * HOUR);
+    const lastRun = new Date(NOW - 7 * HOUR);
+
+    expect(heartbeatDueAt(nextDue, lastRun, EIGHT_HOURS, NOW)).toBe(NOW + 2 * HOUR);
+  });
+
+  it('is the persisted deadline even when it is already past', () => {
+    const nextDue = new Date(NOW - HOUR);
+
+    expect(heartbeatDueAt(nextDue, new Date(NOW), EIGHT_HOURS, NOW)).toBe(NOW - HOUR);
+  });
+
+  it('trims a persisted deadline further out than one interval', () => {
+    // A deadline written under the eight-hour cadence, read under a one-hour one.
+    const nextDue = new Date(NOW + EIGHT_HOURS);
+
+    expect(heartbeatDueAt(nextDue, new Date(NOW), HOUR, NOW)).toBe(NOW + HOUR);
+  });
+
+  it('is one interval after the last run when no deadline is persisted', () => {
     const lastRun = new Date(NOW - 5 * HOUR);
 
-    expect(heartbeatDueAt(lastRun, EIGHT_HOURS, NOW)).toBe(NOW + 3 * HOUR);
+    expect(heartbeatDueAt(null, lastRun, EIGHT_HOURS, NOW)).toBe(NOW + 3 * HOUR);
   });
 
   it('is already past when the last run is older than the interval', () => {
     const lastRun = new Date(NOW - 9 * HOUR);
 
-    expect(heartbeatDueAt(lastRun, EIGHT_HOURS, NOW)).toBe(NOW - HOUR);
+    expect(heartbeatDueAt(null, lastRun, EIGHT_HOURS, NOW)).toBe(NOW - HOUR);
   });
 
   it('is one interval from now for an agent that has never run', () => {
-    expect(heartbeatDueAt(null, EIGHT_HOURS, NOW)).toBe(NOW + EIGHT_HOURS);
+    expect(heartbeatDueAt(null, null, EIGHT_HOURS, NOW)).toBe(NOW + EIGHT_HOURS);
   });
 });
 
@@ -62,8 +82,15 @@ describe('heartbeatDelayMs', () => {
   });
 
   it('arms one full interval for an agent that has never run', () => {
-    const dueAt = heartbeatDueAt(null, EIGHT_HOURS, NOW);
+    const dueAt = heartbeatDueAt(null, null, EIGHT_HOURS, NOW);
 
     expect(heartbeatDelayMs(dueAt, EIGHT_HOURS, NOW)).toBe(EIGHT_HOURS);
+  });
+
+  it('arms the remainder of a persisted deadline a cadence change shortened', () => {
+    // Last run 05:00 on an eight-hour cadence, shortened to two hours at 12:00.
+    const dueAt = heartbeatDueAt(new Date(NOW + 2 * HOUR), new Date(NOW - 7 * HOUR), 2 * HOUR, NOW);
+
+    expect(heartbeatDelayMs(dueAt, 2 * HOUR, NOW)).toBe(2 * HOUR);
   });
 });

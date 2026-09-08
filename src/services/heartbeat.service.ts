@@ -90,6 +90,7 @@ class HeartbeatService {
     state.intervalMs = intervalMs;
     if (schedule === 'new-interval') {
       state.dueAt = now + intervalMs;
+      this.persistSchedule(state);
     }
 
     const delayMs = this.armTimer(state);
@@ -108,14 +109,14 @@ class HeartbeatService {
     });
   }
 
-  /** First registration in this process: the schedule comes off the last run. */
+  /** First registration in this process: the schedule comes off the stored row. */
   private registerState(agent: AgentWorkspace, intervalMs: number, now: number): HeartbeatState {
     const state: HeartbeatState = {
       userId: agent.userId,
       agentId: agent.id,
       timeoutId: null,
       intervalMs,
-      dueAt: heartbeatDueAt(agent.lastHeartbeat, intervalMs, now),
+      dueAt: heartbeatDueAt(agent.nextHeartbeatAt, agent.lastHeartbeat, intervalMs, now),
       lastRun: agent.lastHeartbeat,
       isRunning: false,
       consecutiveErrors: 0,
@@ -169,21 +170,41 @@ class HeartbeatService {
   }
 
   /**
-   * One cycle happened. The in-memory cursor and the persisted one move
-   * together, so the next process computes the same schedule. A write that
-   * fails logs a warning and leaves the persisted cursor behind, which reads as
-   * overdue on the next boot, so a check runs early.
+   * One cycle happened. The in-memory deadline and the persisted one move
+   * together, so the next process arms the same one. A write that fails logs a
+   * warning and leaves the persisted deadline behind, which reads as overdue on
+   * the next boot, so a check runs early.
    */
   private async recordCycle(state: HeartbeatState): Promise<void> {
     const ranAt = new Date();
     state.lastRun = ranAt;
     state.dueAt = ranAt.getTime() + state.intervalMs;
 
+    await this.writeSchedule(state, ranAt);
+  }
+
+  /**
+   * Persist a deadline no run produced, so a cadence change survives a restart.
+   * Fire-and-forget: the caller is `startHeartbeat`, which a boot and a
+   * management route both call and neither waits on a write for.
+   */
+  private persistSchedule(state: HeartbeatState): void {
+    void this.writeSchedule(state);
+  }
+
+  /**
+   * The one write of the schedule columns. `ranAt` moves the last-run column
+   * too, and only a cycle passes it, so a cadence change reports no heartbeat.
+   */
+  private async writeSchedule(state: HeartbeatState, ranAt?: Date): Promise<void> {
     try {
-      await agentStatusService.updateHeartbeatTimestamp();
+      await agentStatusService.updateHeartbeatSchedule({
+        nextHeartbeatAt: new Date(state.dueAt),
+        ...(ranAt ? { lastHeartbeat: ranAt } : {}),
+      });
     } catch (err) {
       logger.warn(
-        `[Heartbeat] Failed to persist the last-run timestamp: ${err instanceof Error ? err.message : String(err)}`,
+        `[Heartbeat] Failed to persist the schedule: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }

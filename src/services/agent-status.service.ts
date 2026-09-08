@@ -55,10 +55,20 @@ class AgentStatusService {
     });
   }
 
-  async updateHeartbeatTimestamp(): Promise<void> {
+  /**
+   * Persist the heartbeat schedule. `nextHeartbeatAt` is the deadline the next
+   * process arms, and `lastHeartbeat` the check that really ran — passed only by
+   * a recorded cycle, so a cadence change moves the deadline without reporting a
+   * heartbeat. Both columns move in one write, so no boot can read one of them
+   * from an older event than the other.
+   */
+  async updateHeartbeatSchedule(schedule: { lastHeartbeat?: Date; nextHeartbeatAt: Date }): Promise<void> {
     const agent = await prisma.agentWorkspace.findFirstOrThrow();
 
-    await this.updateAgentById(agent.id, { lastHeartbeat: new Date() });
+    await this.updateAgentById(agent.id, {
+      nextHeartbeatAt: schedule.nextHeartbeatAt,
+      ...(schedule.lastHeartbeat ? { lastHeartbeat: schedule.lastHeartbeat } : {}),
+    });
   }
 
   async updateAgentHeartbeatStatus(heartbeatStatus: AgentHeartbeatStatus): Promise<void> {

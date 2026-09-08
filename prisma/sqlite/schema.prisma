@@ -105,8 +105,16 @@ model AgentWorkspace {
   nexusMcpAgentToken String?
   nexusAgentTokenId  String?
 
-  status           AgentStatus @default(IDLE)
-  lastHeartbeat    DateTime?
+  status        AgentStatus @default(IDLE)
+  lastHeartbeat DateTime?
+
+  // When the next heartbeat check is due. Written by every recorded cycle and
+  // by a cadence change, and read at boot so the next process arms the same
+  // deadline. Distinct from lastHeartbeat, which is the last check that really
+  // ran: a cadence change moves the deadline without claiming a run. Null on a
+  // row that predates the column, and then the deadline comes off lastHeartbeat.
+  nextHeartbeatAt DateTime?
+
   currentSessionId String?
 
   threads                ConversationThread[]

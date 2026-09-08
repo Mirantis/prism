@@ -605,9 +605,9 @@ router.post('/heartbeat/start', async (req: Request, res: Response) => {
       return;
     }
 
-    // The interval and the last run come off the persisted row, not the body: a
-    // client sends the agent as JSON, where `lastHeartbeat` is an ISO string
-    // rather than a Date, and both fields decide the schedule.
+    // The schedule comes off the persisted row, not the body: a client sends the
+    // agent as JSON, where a timestamp is an ISO string rather than a Date, and
+    // the interval, the last run and the stored deadline all decide it.
     const persisted = await agentWorkspaceService.getAgent();
 
     // Force-enable: this endpoint's whole purpose is to turn the heartbeat on,
