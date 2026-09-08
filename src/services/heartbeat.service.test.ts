@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const {
   mockInvoke,
   mockDeliverMessage,
-  mockUpdateHeartbeatTimestamp,
+  mockUpdateHeartbeatSchedule,
   mockUpdateAgentHeartbeatStatus,
   mockDrainSlackMessages,
   mockGenerateText,
@@ -26,7 +26,7 @@ const {
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockDeliverMessage: vi.fn(),
-  mockUpdateHeartbeatTimestamp: vi.fn(),
+  mockUpdateHeartbeatSchedule: vi.fn(),
   mockUpdateAgentHeartbeatStatus: vi.fn(),
   mockDrainSlackMessages: vi.fn(),
   mockGenerateText: vi.fn(),
@@ -54,7 +54,7 @@ vi.mock('./slack-message-queue.service', () => ({
 
 vi.mock('./agent-status.service', () => ({
   agentStatusService: {
-    updateHeartbeatTimestamp: mockUpdateHeartbeatTimestamp,
+    updateHeartbeatSchedule: mockUpdateHeartbeatSchedule,
     updateAgentHeartbeatStatus: mockUpdateAgentHeartbeatStatus,
   },
 }));
@@ -115,6 +115,7 @@ function createAgent(overrides: Record<string, unknown> = {}): AgentWorkspace {
     idleTimeoutMins: null,
     status: 'IDLE' as const,
     lastHeartbeat: null,
+    nextHeartbeatAt: null,
     currentSessionId: null,
     nexusMcpAgentToken: null,
     nexusAgentTokenId: null,
@@ -122,6 +123,27 @@ function createAgent(overrides: Record<string, unknown> = {}): AgentWorkspace {
     updatedAt: new Date(),
     ...overrides,
   } as AgentWorkspace;
+}
+
+/** The two schedule columns a write may carry. */
+type ScheduleWrite = { lastHeartbeat?: Date; nextHeartbeatAt?: Date };
+
+/**
+ * The row a boot reads. Built by replaying the writes the service made onto the
+ * starting row, so a deadline the service never persists cannot survive a
+ * restart by being restated here.
+ */
+function persistedRow(agent: AgentWorkspace): AgentWorkspace {
+  let lastHeartbeat = agent.lastHeartbeat;
+  let nextHeartbeatAt: Date | null = null;
+
+  for (const call of mockUpdateHeartbeatSchedule.mock.calls) {
+    const write = call[0] as ScheduleWrite;
+    if (write.lastHeartbeat) lastHeartbeat = write.lastHeartbeat;
+    if (write.nextHeartbeatAt) nextHeartbeatAt = write.nextHeartbeatAt;
+  }
+
+  return createAgent({ ...agent, lastHeartbeat, nextHeartbeatAt });
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +163,7 @@ describe('HeartbeatService', () => {
     });
     // Sensible defaults
     mockInvoke.mockResolvedValue({ response: 'All systems healthy.', toolCalls: [], steps: [] });
-    mockUpdateHeartbeatTimestamp.mockResolvedValue(undefined);
+    mockUpdateHeartbeatSchedule.mockResolvedValue(undefined);
     mockUpdateAgentHeartbeatStatus.mockResolvedValue(undefined);
     mockDeliverMessage.mockResolvedValue({ messageId: 'msg-1', threadId: 'thr-1' });
     mockDrainSlackMessages.mockResolvedValue([]);
@@ -312,7 +334,7 @@ describe('HeartbeatService', () => {
           mode: 'heartbeat',
         }),
       );
-      expect(mockUpdateHeartbeatTimestamp).toHaveBeenCalled();
+      expect(mockUpdateHeartbeatSchedule).toHaveBeenCalled();
     });
 
     it('resets consecutiveErrors to 0 on successful run', async () => {
@@ -986,6 +1008,130 @@ describe('HeartbeatService', () => {
       expect(mockInvoke).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps a changed cadence across a restart', async () => {
+      // 05:00, on the eight-hour cadence.
+      const lastHeartbeat = new Date(NOW.getTime() - 7 * HOUR);
+      const agent = createAgent({ lastHeartbeat });
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
+
+      // 12:00 — the user shortens the cadence to two hours, so the next check
+      // is due at 14:00.
+      const shortened = createAgent({ lastHeartbeat, heartbeatIntervalMs: 2 * HOUR });
+      heartbeatService.startHeartbeat(shortened, 'new-interval');
+
+      // 12:10 — the process stops and boots again from the persisted row.
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      heartbeatService.stopAll();
+      heartbeatService.startHeartbeat(persistedRow(shortened), 'keep-schedule');
+
+      // Not at 12:11, which is where the delay floor would put a check the boot
+      // read as overdue.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      // And not late either: still 14:00, as the running process had it.
+      await vi.advanceTimersByTimeAsync(2 * HOUR - 10 * 60_000 - 60_000 - 1000);
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('persists the deadline a cadence change sets, and no run with it', () => {
+      const lastHeartbeat = new Date(NOW.getTime() - 7 * HOUR);
+      heartbeatService.startHeartbeat(
+        createAgent({ lastHeartbeat, heartbeatIntervalMs: 2 * HOUR }),
+        'new-interval',
+      );
+
+      expect(mockUpdateHeartbeatSchedule).toHaveBeenCalledWith({
+        nextHeartbeatAt: new Date(NOW.getTime() + 2 * HOUR),
+      });
+      // No lastHeartbeat in that write: nothing ran, so the row must keep
+      // reporting 05:00 as the last check.
+      expect(mockUpdateHeartbeatSchedule.mock.calls[0][0]).not.toHaveProperty('lastHeartbeat');
+    });
+
+    it('keeps an unchanged cadence across a restart', async () => {
+      const agent = createAgent({ lastHeartbeat: new Date(NOW.getTime() - 5 * HOUR) });
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
+
+      // A restart that changes nothing leaves the check at 20:00, three hours out.
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      heartbeatService.stopAll();
+      heartbeatService.startHeartbeat(persistedRow(agent), 'keep-schedule');
+
+      await vi.advanceTimersByTimeAsync(3 * HOUR - 10 * 60_000 - 1000);
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the deadline a completed run set across a restart', async () => {
+      const agent = createAgent({ heartbeatIntervalMs: 2 * HOUR });
+      heartbeatService.startHeartbeat(agent, 'keep-schedule');
+
+      // The run at 14:00 puts the next check at 16:00.
+      await vi.advanceTimersByTimeAsync(2 * HOUR);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+      heartbeatService.stopAll();
+      heartbeatService.startHeartbeat(persistedRow(agent), 'keep-schedule');
+
+      await vi.advanceTimersByTimeAsync(2 * HOUR - 1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('takes the deadline off the last run for a row that carries no deadline', async () => {
+      // What a database written before the deadline column holds.
+      heartbeatService.startHeartbeat(
+        createAgent({ lastHeartbeat: new Date(NOW.getTime() - 5 * HOUR), nextHeartbeatAt: null }),
+        'keep-schedule',
+      );
+
+      await vi.advanceTimersByTimeAsync(3 * HOUR - 1000);
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('trims a deadline left behind by a cadence change made while stopped', async () => {
+      // A stopped heartbeat arms no timer, so it writes no deadline, and the row
+      // keeps the one the last run set: 20:00, on the eight-hour cadence. The
+      // user then shortens the cadence to an hour and starts the heartbeat.
+      const stopped = createAgent({
+        lastHeartbeat: NOW,
+        nextHeartbeatAt: new Date(NOW.getTime() + EIGHT_HOURS),
+        heartbeatIntervalMs: HOUR,
+      });
+      heartbeatService.startHeartbeat(stopped, 'keep-schedule');
+
+      // 13:00, one interval out — not the 20:00 the row still holds.
+      await vi.advanceTimersByTimeAsync(HOUR - 1000);
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs an overdue check one minute after a restart with no deadline stored', async () => {
+      heartbeatService.startHeartbeat(
+        createAgent({ lastHeartbeat: new Date(NOW.getTime() - 9 * HOUR), nextHeartbeatAt: null }),
+        'keep-schedule',
+      );
+
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(mockInvoke).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+
     it('reports the persisted last run as soon as it is registered', () => {
       const lastHeartbeat = new Date(NOW.getTime() - 2 * HOUR);
       heartbeatService.startHeartbeat(createAgent({ lastHeartbeat }), 'keep-schedule');
@@ -1005,7 +1151,7 @@ describe('HeartbeatService', () => {
 
       await vi.advanceTimersByTimeAsync(EIGHT_HOURS);
       expect(mockInvoke).toHaveBeenCalledTimes(1);
-      expect(mockUpdateHeartbeatTimestamp).toHaveBeenCalledTimes(1);
+      expect(mockUpdateHeartbeatSchedule).toHaveBeenCalledTimes(1);
 
       // A recorded cycle, so the retry is an interval away rather than a minute.
       await vi.advanceTimersByTimeAsync(60_000);
@@ -1022,7 +1168,7 @@ describe('HeartbeatService', () => {
 
       await vi.advanceTimersByTimeAsync(EIGHT_HOURS);
       expect(mockInvoke).toHaveBeenCalledTimes(1);
-      expect(mockUpdateHeartbeatTimestamp).toHaveBeenCalledTimes(1);
+      expect(mockUpdateHeartbeatSchedule).toHaveBeenCalledTimes(1);
 
       // The error streak keeps its interval spacing, so the auto-stop after five
       // failures still takes five intervals rather than five minutes.
@@ -1043,11 +1189,11 @@ describe('HeartbeatService', () => {
       // The timer fires while that run is still in flight.
       await vi.advanceTimersByTimeAsync(EIGHT_HOURS);
       expect(mockInvoke).toHaveBeenCalledTimes(1);
-      expect(mockUpdateHeartbeatTimestamp).not.toHaveBeenCalled();
+      expect(mockUpdateHeartbeatSchedule).not.toHaveBeenCalled();
 
       resolveInvoke({ response: 'All systems healthy.', toolCalls: [], steps: [] });
       await firstRun;
-      expect(mockUpdateHeartbeatTimestamp).toHaveBeenCalledTimes(1);
+      expect(mockUpdateHeartbeatSchedule).toHaveBeenCalledTimes(1);
 
       // The completed run recorded the cycle, so the retry waits a full interval.
       mockInvoke.mockResolvedValue({ response: 'All systems healthy.', toolCalls: [], steps: [] });

@@ -727,7 +727,7 @@ tools block.
 | **ConversationService** | `services/conversation.service.ts` | Thread and message CRUD via Prisma, pluggable thread providers (database + Slack) |
 | **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, platform token management, subagent relationships. `writeWorkspaceDoc` is the one write path for an identity document — column plus revision in one transaction — and `rollbackWorkspaceDoc` the restore |
 | **DocumentRevisionService** | `services/document-revision.service.ts` | Identity-document revisions: append one per accepted write, the history of one document (with the drift verdict), one revision's content, and the seed rows a new agent gets. Bounded at `MAX_REVISIONS_PER_DOCUMENT` (500) per document, trimmed in the insert's transaction |
-| **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat timestamp, heartbeat status) |
+| **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat schedule, heartbeat status) |
 | **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats. The interval is measured from the last run rather than from the last call to `startHeartbeat` (see **Heartbeat Design → Schedule**) |
 | **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; manages cron task state directly via Prisma (list, update run timestamps, delete); skips a tick that would overlap a still-running execution of the same task; runs each result through the instruction-aware DELIVER/SUPPRESS gate before delivering (empty results suppressed, error results bypass the gate and always deliver, in-memory per-task last-delivered baseline fed to the gate as context — cleared when a suppressed run observes a different situation so a recurrence re-alerts — fail-open) |
 | **SlackAdapterService** | `services/slack-adapter.service.ts` | Full Slack implementation: Bolt apps, Socket Mode, message handling, verification codes |
@@ -760,7 +760,7 @@ src/
 │   ├── thread-turn.service.ts  # Per-thread mutex + mid-turn inbox (turn steering, coalesced follow-ups)
 │   ├── agent-workspace.service.ts # Agent CRUD, ownership validation, platform tokens, subagents; `writeWorkspaceDoc` / `rollbackWorkspaceDoc`, the one write path for an identity document
 │   ├── document-revision.service.ts # Identity-document revisions: record, history (with drift), read one, restore, 500-per-document bound
-│   ├── agent-status.service.ts  # Direct Prisma writes for agent fields (heartbeat timestamp/status)
+│   ├── agent-status.service.ts  # Direct Prisma writes for agent fields (heartbeat schedule/status)
 │   ├── websocket-gateway.service.ts # WebSocket server: JWT decode (backend verifies), connection mgmt, message queuing
 │   ├── websocket-adapter.service.ts # ChannelAdapter for WebSocket, calls local gateway
 │   ├── channel-adapter.interface.ts # Channel adapter contract (ChannelAdapter interface)
@@ -1147,15 +1147,26 @@ The interval is measured from the last run. Each cycle arms one `setTimeout` for
 the absolute time the next check is due, in steps of at most one interval
 (`services/heartbeat-schedule.ts` does the arithmetic). `recordCycle` moves that
 time on every terminal path of a timer run, an error included; a Slack-triggered
-run moves it once it completes. A boot computes the due time from the persisted
-`lastHeartbeat`, so a restart keeps the next check where it is: a check already
-due runs about a minute later, which is the delay floor.
+run moves it once it completes. A check already due runs about a minute later,
+which is the delay floor.
+
+**Two columns hold the schedule, and they are two different facts.**
+`AgentWorkspace.nextHeartbeatAt` is the deadline, and a boot arms it, so the next
+process keeps the check where the last one had it.
+`AgentWorkspace.lastHeartbeat` is the check that really ran, which the prompt and
+the API report. A cadence change writes the deadline alone, so it moves the
+schedule without claiming a run. Both columns move in one write
+(`agentStatusService.updateHeartbeatSchedule`), so no boot reads one of them from
+an older event than the other. A row written before the deadline column holds
+null, and then the deadline is one interval after the last run. A stored deadline
+further out than one interval is trimmed to one interval from now, since a stopped
+heartbeat writes no deadline and its row can hold one a longer cadence set.
 
 `startHeartbeat` takes the anchor as a required second parameter. Boot and
-`POST /agents/heartbeat/start` pass `'keep-schedule'`, which leaves the due time
-alone; that route reads the interval and the last run off the persisted row
-rather than the request body. The two writers of the cadence pass
-`'new-interval'`, which starts a fresh interval from now:
+`POST /agents/heartbeat/start` pass `'keep-schedule'`, which leaves the deadline
+alone; that route reads the schedule off the persisted row rather than the request
+body. The two writers of the cadence pass `'new-interval'`, which starts a fresh
+interval from now and persists the deadline it sets:
 `PATCH /agents/heartbeat/interval` and the `update_settings` tool. Editing the
 Heartbeat document changes no schedule. Every cycle loads the checks fresh.
 
