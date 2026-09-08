@@ -85,8 +85,7 @@ export async function runCodingAgent(
     sessionId: input.sessionId,
     debug: input.debug,
   };
-  const taskId = getAgentTaskManager().startTask(params);
-  return { taskId, agent: input.agent ?? config.codingAgent };
+  return getAgentTaskManager().startTask(params);
 }
 
 export async function runCodingAgentStatus(input: z.infer<typeof codingAgentStatusInput>) {

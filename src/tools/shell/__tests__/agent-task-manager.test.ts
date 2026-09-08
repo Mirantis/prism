@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { config } from '../../../config';
+import { runCodingAgent } from '../coding-agent';
 
 import { AsyncChannel } from '../../../utils/async-channel';
 import type {
@@ -15,6 +16,7 @@ import type {
 } from '../../../lib/coding-agents/coding-agent';
 import {
   AgentTaskManager,
+  __setAgentTaskManagerForTests,
   AgentTaskParams,
   DEFAULT_MAX_TURNS,
   MAX_BUFFER_SIZE,
@@ -79,7 +81,7 @@ function makeManager({ stubborn = false } = {}): {
     },
   };
   return {
-    manager: new AgentTaskManager(agent),
+    manager: new AgentTaskManager(() => agent),
     getRun: () => {
       if (!lastRun) throw new Error('run not started yet');
       return lastRun;
@@ -141,22 +143,23 @@ describe('AgentTaskManager', () => {
       id, displayName: id, prepareHome: () => ({ configDir: '', skillsLinked: true }),
       run: () => { const run = new FakeRun(); runs.push(run); return run; },
     }));
-    const tasks = new AgentTaskManager(undefined, resolve);
+    const tasks = new AgentTaskManager(resolve);
     const original = config.codingAgent;
     config.codingAgent = 'codex';
     try {
       const defaultTask = tasks.startTask(sampleParams);
       const explicitTask = tasks.startTask({ ...sampleParams, agent: 'claude-code' });
       const thirdTask = tasks.startTask({ ...sampleParams, agent: 'codex' });
+      expect([defaultTask.agent, explicitTask.agent, thirdTask.agent]).toEqual(['codex', 'claude-code', 'codex']);
       expect(resolve.mock.calls.map(([id]) => id)).toEqual(['codex', 'claude-code', 'codex']);
       expect(() => tasks.startTask({ ...sampleParams, agent: 'claude-code' }))
         .toThrow('Max concurrent agent tasks');
       runs[0].finish({ stopReason: 'end_turn', turns: 1, message: 'Codex finished' });
       await flush();
-      expect(await tasks.readStatus(defaultTask, 0)).toMatchObject({ agent: 'codex', result: 'Codex finished' });
-      expect(await tasks.stopTask(explicitTask)).toMatchObject({ agent: 'claude-code', stopReason: 'stopped' });
+      expect(await tasks.readStatus(defaultTask.taskId, 0)).toMatchObject({ agent: 'codex', result: 'Codex finished' });
+      expect(await tasks.stopTask(explicitTask.taskId)).toMatchObject({ agent: 'claude-code', stopReason: 'stopped' });
       expect(runs[2].stopped).toBe(false);
-      await tasks.stopTask(thirdTask);
+      await tasks.stopTask(thirdTask.taskId);
 
     } finally {
       config.codingAgent = original;
@@ -164,8 +167,25 @@ describe('AgentTaskManager', () => {
     }
   });
 
+  it('returns the selected adapter from the coding tool', async () => {
+    const original = config.codingAgent;
+    config.codingAgent = 'codex';
+    __setAgentTaskManagerForTests(manager);
+    try {
+      const result = await runCodingAgent(sampleParams, '/work');
+      expect(result).toEqual({ taskId: expect.any(String), agent: 'claude-code' });
+      getRun().finish(SUCCESS);
+      await flush();
+      expect((await manager.readStatus(result.taskId, 0)).agent).toBe(result.agent);
+    } finally {
+      config.codingAgent = original;
+      __setAgentTaskManagerForTests(null);
+      manager.killAll();
+    }
+  });
+
   it('startTask returns a taskId and tracks the task', () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     expect(typeof taskId).toBe('string');
     expect(taskId.length).toBeGreaterThan(0);
     expect(manager.runningCount()).toBe(1);
@@ -177,7 +197,7 @@ describe('AgentTaskManager', () => {
     process.env.HUSKY = '0';
     let taskId: string;
     try {
-      taskId = manager.startTask({
+      ({ taskId } = manager.startTask({
         ...sampleParams,
         workdir: '/work',
         mode: 'plan',
@@ -185,7 +205,7 @@ describe('AgentTaskManager', () => {
         appendSystemPrompt: 'framing',
         sessionId: 'sess-prev',
         debug: true,
-      });
+      }));
     } finally {
       for (const [k, v] of Object.entries(saved)) {
         if (v === undefined) delete process.env[k];
@@ -216,7 +236,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('buffers text and delivers it on readStatus (drain-on-read)', async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'hello ' });
     run.emit({ type: 'text', text: 'world' });
@@ -228,7 +248,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('reports completion + result fields once the run ends', async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'final answer' });
     run.emit({ type: 'session', sessionId: 'sess-42' });
@@ -248,14 +268,14 @@ describe('AgentTaskManager', () => {
   });
 
   it("uses the agent's message as the result when it produced no text", async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     getRun().finish({ stopReason: 'end_turn', turns: 2, message: 'summary' });
     const { status } = await pollUntilComplete(manager, taskId);
     expect(status.result).toBe('summary');
   });
 
   it('appends a non-success outcome to the text it produced', async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'partial' });
     run.finish({ stopReason: 'max_turns', turns: 100, message: 'hit max' });
@@ -266,7 +286,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('reports a non-success outcome with no text as an error', async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     getRun().finish({ stopReason: 'error', turns: 0, message: 'boom' });
 
     const { status } = await pollUntilComplete(manager, taskId);
@@ -275,7 +295,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('fails a task whose run ends without reporting a result', async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     getRun().end();
 
     const { status } = await pollUntilComplete(manager, taskId);
@@ -284,7 +304,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('truncates the output buffer when it exceeds MAX_BUFFER_SIZE', async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'x'.repeat(MAX_BUFFER_SIZE + 1000) });
     run.finish(SUCCESS);
@@ -305,7 +325,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('stopTask terminates a running task and returns the output so far', async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'partial work' });
 
@@ -319,7 +339,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('stopTask reports the session id so the abandoned work can be resumed', async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     // The agent announces its session early — the only place a killed task's
     // session id appears, since it never reaches a final result.
     getRun().emit({ type: 'session', sessionId: 'sess-init' });
@@ -331,7 +351,7 @@ describe('AgentTaskManager', () => {
 
   it('stopTask frees the concurrency slot', async () => {
     const ids: string[] = [];
-    for (let i = 0; i < MAX_CONCURRENT; i++) ids.push(manager.startTask(sampleParams));
+    for (let i = 0; i < MAX_CONCURRENT; i++) ids.push(manager.startTask(sampleParams).taskId);
     expect(() => manager.startTask(sampleParams)).toThrow(/Max concurrent/);
 
     await manager.stopTask(ids[0]);
@@ -341,14 +361,14 @@ describe('AgentTaskManager', () => {
   it('stopTask rejects an unknown or already-stopped taskId', async () => {
     await expect(manager.stopTask('no-such-id')).rejects.toThrow(/Unknown task/);
 
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     await manager.stopTask(taskId);
     await expect(manager.stopTask(taskId)).rejects.toThrow(/cleaned up/);
     await expect(manager.readStatus(taskId)).rejects.toThrow(/cleaned up/);
   });
 
   it('stopTask on a task that already finished keeps its real outcome', async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'done text' });
     run.finish({ stopReason: 'end_turn', turns: 3, message: 'done' });
@@ -362,7 +382,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('stopTask does not relabel a run that ended just before the stop', async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'session', sessionId: 'sess-real' });
     // Ends, but stop *before* drive() gets to its finalize — the window between
@@ -379,7 +399,7 @@ describe('AgentTaskManager', () => {
 
   it('stopTask still reports output and a session id when the run never ends', async () => {
     const { manager: m, getRun: get } = makeManager({ stubborn: true });
-    const taskId = m.startTask(sampleParams);
+    const { taskId } = m.startTask(sampleParams);
     const run = get();
     run.emit({ type: 'session', sessionId: 'sess-stubborn' });
     run.emit({ type: 'text', text: 'half-done work' });
@@ -396,7 +416,7 @@ describe('AgentTaskManager', () => {
 
   it('stopTask wakes a parked poll instead of leaving it to time out', async () => {
     const { manager: m, getRun: get } = makeManager({ stubborn: true });
-    const taskId = m.startTask(sampleParams);
+    const { taskId } = m.startTask(sampleParams);
     // Only the session, so there is nothing to drain and the poll really parks.
     get().emit({ type: 'session', sessionId: 'sess-stubborn' });
 
@@ -412,7 +432,7 @@ describe('AgentTaskManager', () => {
   }, 15_000);
 
   it('killAll stops running tasks and forgets them', async () => {
-    const taskId = manager.startTask(sampleParams);
+    const { taskId } = manager.startTask(sampleParams);
     manager.killAll();
     expect(getRun().stopped).toBe(true);
     // The task has been reaped, so the next readStatus should error.

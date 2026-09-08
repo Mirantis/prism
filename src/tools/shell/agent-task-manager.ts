@@ -84,7 +84,6 @@ export class AgentTaskManager {
   private reaped = new Set<string>();
 
   constructor(
-    private readonly defaultAgent?: CodingAgent,
     private readonly resolveAgent: (name: CodingAgentName) => CodingAgent = getCodingAgent,
   ) {}
 
@@ -95,14 +94,12 @@ export class AgentTaskManager {
     return n;
   }
 
-  startTask(params: AgentTaskParams): string {
+  startTask(params: AgentTaskParams): { taskId: string; agent: CodingAgentName } {
     if (this.runningCount() >= MAX_CONCURRENT) {
       throw new Error(`Max concurrent agent tasks (${MAX_CONCURRENT}) reached`);
     }
 
-    const agent = params.agent
-      ? this.resolveAgent(params.agent)
-      : this.defaultAgent ?? this.resolveAgent(config.codingAgent);
+    const agent = this.resolveAgent(params.agent ?? config.codingAgent);
     const taskId = randomUUID();
     const task: CodingAgentTask = {
       taskId,
@@ -143,7 +140,7 @@ export class AgentTaskManager {
       entry.state.result = 'Coding task failed while reading output.';
       this.notify(entry);
     });
-    return taskId;
+    return { taskId, agent: agent.id };
   }
 
   async readStatus(taskId: string, waitMs?: number): Promise<AgentTaskStatus> {
