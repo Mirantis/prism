@@ -1,6 +1,5 @@
 /**
- * The seven identity documents, and the words a revision of one is described
- * with.
+ * The seven identity documents, and the actor and method words a revision uses.
  *
  * One owner for the list, so the write path, the revision table and the
  * templates agree on what an identity document is. `src/lib/locked-in.ts` keeps

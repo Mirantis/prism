@@ -490,9 +490,9 @@ class AgentWorkspaceService {
    * appends a revision in one transaction, so a document and its history cannot
    * disagree: a failed write leaves neither.
    *
-   * It decides nothing else. The caller checks the lock, restarts the heartbeat
-   * and emits its own telemetry, because each of those differs per call site
-   * while this does not. Returns the stored content.
+   * The caller checks the lock, restarts the heartbeat and emits its own
+   * telemetry, because each of those differs per call site while this does not.
+   * Returns the stored content.
    */
   async writeWorkspaceDoc(input: WriteWorkspaceDocInput): Promise<string> {
     return prisma.$transaction(async (tx) => {
@@ -515,11 +515,10 @@ class AgentWorkspaceService {
   /**
    * Restore an earlier revision of one identity document.
    *
-   * Everything happens in one transaction, because a check outside it is not a
-   * check: the target revision is read, the newest revision is compared against
-   * `expectedRevisionId`, the column is replaced and the restore is recorded as a
-   * revision of its own. So the history keeps every step and a restore is itself
-   * reversible.
+   * One transaction reads the target revision, compares the newest revision
+   * against `expectedRevisionId`, replaces the column and records the restore as
+   * a revision of its own — a check outside it is not a check. The history keeps
+   * every step, so a restore is itself reversible.
    *
    * Locked-in mode does not gate this. That lock withholds the agent's own
    * writers, and a restore is the user acting.

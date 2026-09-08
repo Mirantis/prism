@@ -92,14 +92,6 @@ Restoring is yours: the agent has no tool for it, and
 
 Each document keeps its 500 newest revisions and drops the oldest past that.
 
-A write from inside the container records nothing — a shell writes
-`/data/agent.db` directly, as the caveat above describes. The panel then marks
-the document as changed outside the app and shows what the change did, so you
-can see it and restore an earlier revision.
-
-Restoring a `.prism` backup replaces the whole database, so the agent then has
-the history that archive holds.
-
 ## The bootstrap flow
 
 On a brand-new agent, the Bootstrap document contains a short onboarding script.
