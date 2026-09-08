@@ -1,9 +1,9 @@
 /**
  * Document Revision Service Tests
  *
- * The revision row itself: the content hash, the reason cap, the retention
- * delete that runs in the caller's transaction, the boot baseline, and the
- * history read with its drift verdict.
+ * The revision row itself: the reason cap, the retention delete that runs in
+ * the caller's transaction, the boot baseline, and the history read with its
+ * drift verdict.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -35,8 +35,6 @@ vi.mock('../../lib/telemetry', () => ({
 vi.mock('../../logger', () => ({ logger: mockLogger }));
 
 import {
-  documentDrift,
-  documentHash,
   documentRevisionService,
   MAX_REVISIONS_PER_DOCUMENT,
   SEED_REASON,
@@ -57,14 +55,6 @@ function createAgentRow(overrides: Record<string, unknown> = {}): AgentWorkspace
   return { id: agentId, userId: 'user-1', ...documents, ...overrides } as unknown as AgentWorkspace;
 }
 
-describe('documentHash', () => {
-  it('is the sha256 of the content, so equal documents hash equally', () => {
-    expect(documentHash('# Soul')).toBe(documentHash('# Soul'));
-    expect(documentHash('# Soul')).not.toBe(documentHash('# Soul '));
-    expect(documentHash('')).toHaveLength(64);
-  });
-});
-
 describe('documentRevisionService.record', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -72,7 +62,7 @@ describe('documentRevisionService.record', () => {
     mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([]);
   });
 
-  it('stores the content, its hash, and the actor and method it was given', async () => {
+  it('stores the content, and the actor and method it was given', async () => {
     await documentRevisionService.record(tx, {
       agentId,
       field: 'soulMd',
@@ -87,7 +77,6 @@ describe('documentRevisionService.record', () => {
         agentId,
         field: 'soulMd',
         content: '# Soul',
-        contentHash: documentHash('# Soul'),
         actor: 'agent',
         method: 'replace',
         reason: 'Rewrote the tone.',
@@ -184,7 +173,6 @@ describe('documentRevisionService.recordSeeds', () => {
     for (const row of data as Array<Record<string, unknown>>) {
       const field = row.field as WorkspaceDocField;
       expect(row.content).toBe(agent[field]);
-      expect(row.contentHash).toBe(documentHash(agent[field]));
       expect(row.actor).toBe('user');
       expect(row.method).toBe('seed');
       expect(row.reason).toBe(SEED_REASON);
@@ -218,7 +206,6 @@ describe('documentRevisionService.recordMissingBaselines', () => {
       const field = row.field as WorkspaceDocField;
       expect(row.agentId).toBe(agentId);
       expect(row.content).toBe(agent[field]);
-      expect(row.contentHash).toBe(documentHash(agent[field]));
       expect(row.actor).toBe('user');
       expect(row.method).toBe('seed');
       expect(row.reason).toBe(UPGRADE_REASON);
@@ -261,47 +248,44 @@ describe('documentRevisionService.recordMissingBaselines', () => {
   });
 });
 
-describe('documentDrift', () => {
-  it('reports no drift while the document matches its newest revision', () => {
-    expect(documentDrift('# Soul', { contentHash: documentHash('# Soul') })).toBe(false);
-  });
-
-  it('reports drift when the document was written outside the write path', () => {
-    expect(documentDrift('# Edited by a shell', { contentHash: documentHash('# Soul') })).toBe(
-      true,
-    );
-  });
-
-  it('reports no drift for a document with no revision yet', () => {
-    expect(documentDrift('# Soul', null)).toBe(false);
-  });
-});
-
 describe('documentRevisionService.history', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  function summaryOf(content: string, id = 'rev-1') {
+  function summaryOf(id = 'rev-1') {
     return {
       id,
       actor: 'agent',
       method: 'replace',
       reason: 'Rewrote the tone.',
-      contentHash: documentHash(content),
       createdAt: new Date('2026-09-05T10:00:00.000Z'),
     };
   }
 
+  /**
+   * The two reads `history` makes: the summaries, and then the ids of the
+   * revisions holding what the column reads now. The second is the one filtered
+   * on `content`.
+   */
+  function historyReads(summaries: Array<{ id: string }>, matchingIds: string[]): void {
+    mockPrisma.agentWorkspaceRevision.findMany.mockImplementation(
+      (args: { where: { content?: string } }) =>
+        Promise.resolve(
+          args.where.content === undefined ? summaries : matchingIds.map((id) => ({ id })),
+        ),
+    );
+  }
+
   it('reads the revisions newest first, without their content', async () => {
-    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([summaryOf('# Soul')]);
+    historyReads([summaryOf()], ['rev-1']);
 
     const history = await documentRevisionService.history(
       createAgentRow({ soulMd: '# Soul' }),
       'soulMd',
     );
 
-    expect(mockPrisma.agentWorkspaceRevision.findMany).toHaveBeenCalledWith({
+    expect(mockPrisma.agentWorkspaceRevision.findMany).toHaveBeenNthCalledWith(1, {
       where: { agentId, field: 'soulMd' },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: {
@@ -309,21 +293,33 @@ describe('documentRevisionService.history', () => {
         actor: true,
         method: true,
         reason: true,
-        contentHash: true,
         createdAt: true,
       },
+    });
+    expect(mockPrisma.agentWorkspaceRevision.findMany).toHaveBeenNthCalledWith(2, {
+      where: { agentId, field: 'soulMd', content: '# Soul' },
+      select: { id: true },
     });
     expect(history).toEqual({
       field: 'soulMd',
       bound: MAX_REVISIONS_PER_DOCUMENT,
       drifted: false,
-      liveHash: documentHash('# Soul'),
-      revisions: [summaryOf('# Soul')],
+      revisions: [{ ...summaryOf(), matchesCurrent: true }],
     });
   });
 
+  it('marks every revision holding the current content, not only the newest', async () => {
+    // What a restore leaves behind: the rollback and its target read the same.
+    historyReads([summaryOf('rev-3'), summaryOf('rev-2'), summaryOf('rev-1')], ['rev-3', 'rev-1']);
+
+    const history = await documentRevisionService.history(createAgentRow(), 'soulMd');
+
+    expect(history.revisions.map((row) => row.matchesCurrent)).toEqual([true, false, true]);
+    expect(history.drifted).toBe(false);
+  });
+
   it('reports no drift for a document with no revision yet', async () => {
-    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([]);
+    historyReads([], []);
 
     const history = await documentRevisionService.history(createAgentRow(), 'visionMd');
 
@@ -334,7 +330,7 @@ describe('documentRevisionService.history', () => {
 
   it('reports drift once per drifted content, however often the page polls', async () => {
     const agent = createAgentRow({ userMd: '# Written by a shell' });
-    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([summaryOf('# User')]);
+    historyReads([summaryOf()], []);
 
     const first = await documentRevisionService.history(agent, 'userMd');
     const second = await documentRevisionService.history(agent, 'userMd');
@@ -347,16 +343,34 @@ describe('documentRevisionService.history', () => {
     expect(mockTrackEvent).toHaveBeenCalledWith('agent document drift detected', null, {
       'agent.id': agentId,
       'config.field': 'userMd',
-      'document.live_hash': documentHash('# Written by a shell').slice(0, 12),
-      'document.revision_hash': documentHash('# User').slice(0, 12),
     });
   });
 
-  it('reports a second out-of-band write, since the content is a new hash', async () => {
-    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([summaryOf('# Memory')]);
+  it('reports a second out-of-band write, since the content is different', async () => {
+    historyReads([summaryOf()], []);
 
-    await documentRevisionService.history(createAgentRow({ memoryMd: '# First shell write' }), 'memoryMd');
-    await documentRevisionService.history(createAgentRow({ memoryMd: '# Second shell write' }), 'memoryMd');
+    await documentRevisionService.history(
+      createAgentRow({ memoryMd: '# First shell write' }),
+      'memoryMd',
+    );
+    await documentRevisionService.history(
+      createAgentRow({ memoryMd: '# Second shell write' }),
+      'memoryMd',
+    );
+
+    expect(mockTrackEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports the same content again once the document has agreed in between', async () => {
+    const agent = createAgentRow({ heartbeatMd: '# Written by a shell' });
+    historyReads([summaryOf()], []);
+    await documentRevisionService.history(agent, 'heartbeatMd');
+
+    historyReads([summaryOf()], ['rev-1']);
+    await documentRevisionService.history(agent, 'heartbeatMd');
+
+    historyReads([summaryOf()], []);
+    await documentRevisionService.history(agent, 'heartbeatMd');
 
     expect(mockTrackEvent).toHaveBeenCalledTimes(2);
   });

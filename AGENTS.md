@@ -1286,8 +1286,8 @@ allow-authority on a writable document that makes the control a one-way ratchet:
 one landed guide write removes a refusal for every later turn on every channel.
 `gate.policy_hash` is one detection signal, since a shell write emits no `agent
 config updated` event; the document's own history is the other — a write that
-skips `writeWorkspaceDoc` records no revision, so the stored content hash no
-longer agrees with the column and the history reports `drifted`. Keep the docs
+skips `writeWorkspaceDoc` records no revision, so the newest revision no longer
+matches the column and the history reports `drifted`. Keep the docs
 and this paragraph honest about it; the
 alternative design (narrowing from the guide, widening from a boot-time root) was
 weighed and declined.
@@ -1344,9 +1344,9 @@ the newest revision is what the document reads now.
   `lib/document-revision-boot.ts` (idempotent, and it catches its own failure
   because a container that will not boot is worse than a history that starts at
   the next edit).
-- **Drift is detectable, not prevented.** Each revision stores the sha256 of its
-  content, so a document written straight into `/data/agent.db` no longer agrees
-  with its newest revision and the history reports `drifted`.
+- **Drift is detectable, not prevented.** Each revision stores the content it
+  wrote, so a document written straight into `/data/agent.db` no longer matches
+  its newest revision and the history reports `drifted`.
 
 ## Agent Skills
 

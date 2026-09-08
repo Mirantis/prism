@@ -166,11 +166,14 @@ export interface DocumentRevisionSummary {
   method: 'seed' | 'replace' | 'edit' | 'clear' | 'rest' | 'rollback';
   /** The note the writer left, empty when it left none. */
   reason: string;
-  contentHash: string;
+  /** True while this revision holds exactly what the document reads now. */
+  matchesCurrent: boolean;
   createdAt: string;
 }
 
-export interface DocumentRevision extends DocumentRevisionSummary {
+/** One revision with its content. A single read carries no history flag. */
+export interface DocumentRevision
+  extends Omit<DocumentRevisionSummary, 'matchesCurrent'> {
   content: string;
 }
 
@@ -180,7 +183,6 @@ export interface DocumentRevisionHistory {
   bound: number;
   /** True while the document differs from its newest revision. */
   drifted: boolean;
-  liveHash: string;
   /** Newest first. */
   revisions: DocumentRevisionSummary[];
 }

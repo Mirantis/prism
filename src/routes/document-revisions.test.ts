@@ -76,7 +76,7 @@ vi.mock('../services/agent-workspace.service', async () => {
 // ---------------------------------------------------------------------------
 
 import { documentRevisionsRouter } from './document-revisions';
-import { documentHash, MAX_REVISIONS_PER_DOCUMENT } from '../services/document-revision.service';
+import { MAX_REVISIONS_PER_DOCUMENT } from '../services/document-revision.service';
 
 function createTestApp() {
   const app = express();
@@ -102,15 +102,28 @@ function createAgentRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function summaryRow(content: string, id = 'rev-2') {
+function summaryRow(id = 'rev-2') {
   return {
     id,
     actor: 'agent',
     method: 'replace',
     reason: 'Sharpened the tone.',
-    contentHash: documentHash(content),
     createdAt: new Date('2026-09-04T09:00:00.000Z'),
   };
+}
+
+/**
+ * The two reads the history makes: the summaries, and then the ids of the
+ * revisions holding what the document reads now. The second is the one filtered
+ * on `content`.
+ */
+function historyReads(summaries: Array<{ id: string }>, matchingIds: string[]): void {
+  mockPrisma.agentWorkspaceRevision.findMany.mockImplementation(
+    (args: { where: { content?: string } }) =>
+      Promise.resolve(
+        args.where.content === undefined ? summaries : matchingIds.map((id) => ({ id })),
+      ),
+  );
 }
 
 beforeEach(() => {
@@ -126,23 +139,22 @@ beforeEach(() => {
 
 describe('GET /agents/documents/:field/revisions', () => {
   it('answers the history newest first, with the retention bound and no content', async () => {
-    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([
-      summaryRow(SOUL, 'rev-2'),
-      summaryRow('# Older soul', 'rev-1'),
-    ]);
+    historyReads([summaryRow('rev-2'), summaryRow('rev-1')], ['rev-2']);
 
     const res = await request(createTestApp()).get('/agents/documents/soulMd/revisions');
 
     expect(res.status).toBe(200);
     expect(res.body.field).toBe('soulMd');
     expect(res.body.bound).toBe(MAX_REVISIONS_PER_DOCUMENT);
-    expect(res.body.liveHash).toBe(documentHash(SOUL));
     expect(res.body.revisions.map((row: { id: string }) => row.id)).toEqual(['rev-2', 'rev-1']);
     expect(res.body.revisions[0]).not.toHaveProperty('content');
+    expect(res.body.revisions.map((row: { matchesCurrent: boolean }) => row.matchesCurrent)).toEqual(
+      [true, false],
+    );
   });
 
   it('reports no drift while the document agrees with its newest revision', async () => {
-    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([summaryRow(SOUL)]);
+    historyReads([summaryRow()], ['rev-2']);
 
     const res = await request(createTestApp()).get('/agents/documents/soulMd/revisions');
 
@@ -151,7 +163,7 @@ describe('GET /agents/documents/:field/revisions', () => {
 
   it('reports drift for a document written outside the write path', async () => {
     mockGetAgent.mockResolvedValue(createAgentRow({ visionMd: '# Written straight into the file' }));
-    mockPrisma.agentWorkspaceRevision.findMany.mockResolvedValue([summaryRow('# Vision', 'rev-5')]);
+    historyReads([summaryRow('rev-5')], []);
 
     const res = await request(createTestApp()).get('/agents/documents/visionMd/revisions');
 
@@ -192,7 +204,7 @@ describe('GET /agents/documents/:field/revisions', () => {
 describe('GET /agents/documents/:field/revisions/:id', () => {
   it('answers one revision with its content', async () => {
     mockPrisma.agentWorkspaceRevision.findFirst.mockResolvedValue({
-      ...summaryRow(SOUL),
+      ...summaryRow(),
       content: SOUL,
     });
 

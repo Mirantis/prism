@@ -4,7 +4,6 @@ CREATE TABLE "agent_workspace_revisions" (
     "agentId" TEXT NOT NULL,
     "field" TEXT NOT NULL,
     "content" TEXT NOT NULL,
-    "contentHash" TEXT NOT NULL,
     "actor" TEXT NOT NULL,
     "method" TEXT NOT NULL,
     "reason" TEXT NOT NULL,

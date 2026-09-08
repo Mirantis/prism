@@ -37,7 +37,6 @@ vi.mock('../../lib/telemetry', () => ({
 }));
 
 import { getAgentConfigTools } from '../agent-config';
-import { documentHash } from '../../services/document-revision.service';
 
 function createTestAgentWorkspace(overrides: Record<string, unknown> = {}) {
   return {
@@ -667,7 +666,6 @@ describe('getAgentConfigTools', () => {
         agentId,
         field: 'soulMd',
         content: '# Soul\nrewritten',
-        contentHash: documentHash('# Soul\nrewritten'),
         actor: 'agent',
         method: 'replace',
         reason: 'Softened the greeting.',
@@ -684,7 +682,6 @@ describe('getAgentConfigTools', () => {
         agentId,
         field: 'memoryMd',
         content: '# Memory\nOne memory.',
-        contentHash: documentHash('# Memory\nOne memory.'),
         actor: 'agent',
         method: 'edit',
         reason: 'Recorded the first memory.',
@@ -698,7 +695,6 @@ describe('getAgentConfigTools', () => {
         agentId,
         field: 'bootstrapMd',
         content: '',
-        contentHash: documentHash(''),
         actor: 'agent',
         method: 'clear',
         reason: 'Onboarding is complete.',
