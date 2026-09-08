@@ -198,50 +198,98 @@ AWS_BEARER_TOKEN_BEDROCK=$bearer
   # the binary sets its own default before it reads .env, and dotenv keeps a
   # value that is already set.
   #
-  # SHELL_WORKSPACE_ROOT is documented configuration, so a value the operator
-  # chose stays. This script writes the variable when nothing is set, and it
-  # replaces a value a previous install wrote -- a `workspace` directory under
-  # the current $PrismHome, under a previous one, or under the default
-  # %USERPROFILE%\.prism. For any other value the script keeps it and prints the
-  # default this install uses.
-  $userRoot = [Environment]::GetEnvironmentVariable('SHELL_WORKSPACE_ROOT', 'User')
-  $currentRoot = if ($userRoot) { $userRoot.TrimEnd('\') } else { '' }
-  # Split as text. Split-Path and Join-Path resolve the drive, and this value is
-  # the operator's: an absent D: writes an error, which $ErrorActionPreference
-  # turns into an install that stops with the server already down. `-and`
-  # short-circuits left to right, and the parentheses around `-or` are required
-  # because `-and` and `-or` share one precedence level.
-  $cut = $currentRoot.LastIndexOf('\')
-  $currentParent = if ($cut -gt 0) { $currentRoot.Substring(0, $cut) } else { '' }
-  $currentLeaf = if ($cut -ge 0) { $currentRoot.Substring($cut + 1) } else { $currentRoot }
-  $installerWritten = $currentParent -and ($currentLeaf -eq 'workspace') -and (
-    $currentParent -eq "$env:USERPROFILE\.prism" -or
-    (Test-Path -LiteralPath "$currentParent\prism-server.exe" -PathType Leaf -ErrorAction SilentlyContinue))
+  # SHELL_WORKSPACE_ROOT is documented configuration. Windows reads it from the
+  # process environment first, then the user store, then the machine store, so
+  # this script reads all three. It writes one of them, the user store: a root
+  # when neither store holds a value, and a replacement for a user value a
+  # previous install wrote. It changes nothing else: a machine value and a root set
+  # in this shell both stay as they are. It reports a machine value the agent does
+  # not get.
 
-  $sessionRoot = $workspaceRoot
-  if ($currentRoot -ne $workspaceRoot.TrimEnd('\')) {
-    if (-not $currentRoot) {
-      [Environment]::SetEnvironmentVariable('SHELL_WORKSPACE_ROOT', $workspaceRoot, 'User')
-      Write-Host "Set SHELL_WORKSPACE_ROOT=$workspaceRoot for your user."
-    } elseif ($installerWritten) {
-      [Environment]::SetEnvironmentVariable('SHELL_WORKSPACE_ROOT', $workspaceRoot, 'User')
-      Write-Host "Updated SHELL_WORKSPACE_ROOT from $userRoot to $workspaceRoot."
-    } else {
-      $sessionRoot = $userRoot
-      Write-Host "Keeping SHELL_WORKSPACE_ROOT=$userRoot. The default for this install is $workspaceRoot."
-    }
+  # Did an install write this value? The test is a `workspace` directory whose
+  # parent is the default data directory, or whose parent holds a
+  # prism-server.exe. Split as text, because Split-Path and Join-Path resolve the
+  # drive. These values are the operator's, and an absent D: writes an error,
+  # which $ErrorActionPreference turns into an install that stops with the server
+  # already down. -LiteralPath keeps a `[` in the path from reading as a
+  # wildcard, and SilentlyContinue keeps an absent drive non-fatal.
+  function Test-PrismWorkspaceRoot([string] $value) {
+    $cut = $value.LastIndexOf([char]'\')
+    if ($cut -lt 1) { return $false }
+    if ($value.Substring($cut + 1) -ne 'workspace') { return $false }
+    $parent = $value.Substring(0, $cut)
+    return ($parent -eq "$env:USERPROFILE\.prism" -or
+      (Test-Path -LiteralPath "$parent\prism-server.exe" -PathType Leaf -ErrorAction SilentlyContinue))
   }
-  # This session too, so a prism-server.exe started from here uses the same root
-  # as the scheduled task.
-  $env:SHELL_WORKSPACE_ROOT = $sessionRoot
 
-  # Create the root the agent uses, which is the operator's value when the block
-  # above kept one. The binary creates its own default at boot; this covers a
-  # root under a moved $PrismHome, and it means the directory exists before the
-  # first run rather than after it.
-  New-Item -ItemType Directory -Path $sessionRoot -Force -ErrorAction SilentlyContinue | Out-Null
-  if (-not (Test-Path -LiteralPath $sessionRoot -ErrorAction SilentlyContinue)) {
-    Write-Warning "Could not create $sessionRoot. prism-server falls back to a temp directory."
+  $processRoot = $env:SHELL_WORKSPACE_ROOT
+  $userRoot = [Environment]::GetEnvironmentVariable('SHELL_WORKSPACE_ROOT', 'User')
+  $machineRoot = [Environment]::GetEnvironmentVariable('SHELL_WORKSPACE_ROOT', 'Machine')
+  # Compare as text, trailing separator off.
+  $defaultValue = $workspaceRoot.TrimEnd('\')
+  $processValue = if ($processRoot) { $processRoot.TrimEnd('\') } else { '' }
+  $userValue = if ($userRoot) { $userRoot.TrimEnd('\') } else { '' }
+  $machineValue = if ($machineRoot) { $machineRoot.TrimEnd('\') } else { '' }
+  $installerWritten = Test-PrismWorkspaceRoot $userValue
+  # A root set in this shell: a value neither store holds, and no install wrote.
+  # prism-server sets its own default before it spawns this script on a self
+  # update, so a process value on its own is not an operator override.
+  $processOverride = $processValue -and $processValue -ne $userValue -and
+    $processValue -ne $machineValue -and -not (Test-PrismWorkspaceRoot $processValue)
+
+  # $taskRoot is the root the scheduled task gets. $taskSource names the store it
+  # comes from, and stays empty when the value was printed already or is this
+  # install's default.
+  $taskSource = ''
+  if (-not $userValue -and -not $machineValue) {
+    # Neither store holds a value, so the task would get none and the binary
+    # would use its own default under %USERPROFILE%. A root set in this shell
+    # goes in as it stands, the way the .env template above takes
+    # AWS_BEARER_TOKEN_BEDROCK from this shell.
+    $taskRoot = if ($processOverride) { $processRoot } else { $workspaceRoot }
+    [Environment]::SetEnvironmentVariable('SHELL_WORKSPACE_ROOT', $taskRoot, 'User')
+    Write-Host "Set SHELL_WORKSPACE_ROOT=$taskRoot for your user."
+  } elseif ($installerWritten -and $userValue -ne $defaultValue) {
+    # A stale root points into a previous install, so it is replaced rather than
+    # left. A machine value is untouched, as everywhere else here.
+    $taskRoot = $workspaceRoot
+    [Environment]::SetEnvironmentVariable('SHELL_WORKSPACE_ROOT', $workspaceRoot, 'User')
+    Write-Host "Updated SHELL_WORKSPACE_ROOT from $userRoot to $workspaceRoot."
+  } elseif ($userValue) {
+    $taskRoot = $userRoot
+    if ($userValue -ne $defaultValue) { $taskSource = 'your user environment' }
+  } else {
+    $taskRoot = $machineRoot
+    $taskSource = 'the machine environment'
+  }
+  if ($taskSource) {
+    Write-Host "Keeping SHELL_WORKSPACE_ROOT=$taskRoot from $taskSource. The default for this install is $workspaceRoot."
+  }
+  if ($machineValue -and $machineValue -ne $taskRoot.TrimEnd('\')) {
+    # Windows reads the user store before the machine store. Say which value the
+    # agent gets, and leave the choice to the operator.
+    Write-Host "The machine value $machineRoot has no effect while a user value is set. Remove the user value to use it."
+  }
+
+  # Point this shell at the task's root, so a prism-server.exe started from here
+  # agrees with the service. A root the operator set in this shell stays until the
+  # shell closes: Windows reads the process environment first for every process
+  # that shell starts.
+  if ($processOverride -and $processValue -ne $taskRoot.TrimEnd('\')) {
+    Write-Host "prism-server uses $taskRoot. This shell keeps SHELL_WORKSPACE_ROOT=$processRoot until you close it."
+  } else {
+    $env:SHELL_WORKSPACE_ROOT = $taskRoot
+  }
+
+  # Create the root the scheduled task gets. The binary creates its own default at
+  # boot; this covers a root under a moved $PrismHome, and it means the directory
+  # exists before the first run rather than after it. .NET rather than New-Item,
+  # so a path on an absent drive raises a catchable exception instead of a
+  # provider error that $ErrorActionPreference turns into a failed install.
+  try {
+    [System.IO.Directory]::CreateDirectory($taskRoot) | Out-Null
+  } catch {
+    Write-Warning "Could not create $taskRoot ($($_.Exception.Message)). prism-server falls back to a temp directory."
   }
 
   # Register prism-server to run always, in the background. The S4U principal
