@@ -42,8 +42,13 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, AfterEachScen
       // command. Without it Enter only accepts the highlighted row — the
       // Enter-completes path is slash-commands.test.ts's subject.
       session.send('/update ');
+      // Enter has to be a write of its own: Ink's input parser splits text on
+      // backspace bytes and never on CR, so a coalesced `/update \r` read is
+      // inserted into the composer as text and no submit happens. Waiting for
+      // the typed line proves the first write was consumed; `sendUntilFrame`
+      // then covers a keystroke lost at mount.
       await session.waitForFrame(/›\s*\/update/, 5_000);
-      session.send(KEYS.ENTER);
+      await session.sendUntilFrame(KEYS.ENTER, OTHER_MEANS_NOTICE, { timeoutMs: 10_000 });
     });
     Then('I see the "updates by other means" notice', async () => {
       await session!.waitForFrame(OTHER_MEANS_NOTICE, 10_000);
