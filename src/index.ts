@@ -111,7 +111,8 @@ const initialize = async () => {
     logger.info('[Startup] skills dir: %s', dirs.skillsDir);
     for (const name of config.availableCodingAgents) {
       const codingAgent = getCodingAgent(name);
-      codingAgent.prepareHome({ dataDir: dirs.dataDir, skillsDir: dirs.skillsDir });
+      const home = codingAgent.prepareHome({ dataDir: dirs.dataDir, skillsDir: dirs.skillsDir });
+      logger.info({ agent: name, ...home }, '[Startup] coding agent');
     }
     // Scanning here also surfaces any malformed plugin's warning at boot rather
     // than on whichever turn first happens to build a system prompt.
