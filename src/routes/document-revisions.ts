@@ -9,10 +9,6 @@
  *
  * A restore is the user acting, so locked-in mode does not gate it — that lock
  * withholds the agent's own writers.
- *
- * Auth is terminated by the platform in front of the container, as for every
- * other route, so this one takes no credential from inside it. A shell can
- * therefore reach it — see the known holes in `docs/configuration.md`.
  */
 
 import { Router, Request, Response } from 'express';
