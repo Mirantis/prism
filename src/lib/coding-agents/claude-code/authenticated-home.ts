@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveDataDir } from '../../data-dir';
 
-/** Let the CLI check its saved login, including platform credential stores. */
+/** Startup probe: the CLI can block for up to five seconds while checking its saved login. */
 export function hasAuthenticatedClaudeHome(env: NodeJS.ProcessEnv): boolean {
   const configDir = env.CLAUDE_CONFIG_DIR || path.join(resolveDataDir(), '.claude');
   if (!fs.existsSync(configDir)) return false;

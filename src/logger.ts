@@ -1,3 +1,4 @@
+import './lib/environment';
 import pino from 'pino';
 import { serializeError } from './lib/log-redaction';
 
