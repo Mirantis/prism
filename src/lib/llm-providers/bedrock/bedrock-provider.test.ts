@@ -47,6 +47,16 @@ describe('isBedrockConfigured', () => {
     config.bedrockModelId = 'anthropic.claude-3-sonnet';
   });
 
+  it('gates tool changes by model and protocol', () => {
+    const provider = createBedrockProvider();
+    expect(provider.supportsToolChanges('anthropic.claude-opus-4-8')).toBe(true);
+    expect(provider.supportsToolChanges('global.anthropic.claude-fable-5-1')).toBe(true);
+    expect(provider.supportsToolChanges('us.anthropic.claude-fable-5-1')).toBe(true);
+    expect(provider.supportsToolChanges('claude-opus-5')).toBe(false);
+    expect(provider.supportsToolChanges('us.amazon.nova-2-lite-v1:0')).toBe(false);
+    expect(provider.supportsToolChanges('anthropic.claude-fable-5-10')).toBe(false);
+  });
+
   it('returns true when both awsRegion and bedrockModelId are set', () => {
     expect(isBedrockConfigured()).toBe(true);
   });

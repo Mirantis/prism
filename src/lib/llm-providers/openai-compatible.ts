@@ -47,6 +47,7 @@ export function createOpenAiCompatibleProvider({
 
   const dispatcher = (modelId: string) => openai(modelId);
   return Object.assign(dispatcher, {
+    supportsToolChanges: () => false,
     // No breakpoints: OpenAI caches long prompts automatically, so there is
     // nothing to mark and the empty fragment spreads into `providerOptions` as
     // a no-op. Same on OpenRouter for the openai models it routes; a vendor

@@ -1,3 +1,4 @@
+import { supportsToolChanges } from '../tool-changes';
 /**
  * Anthropic Provider for Vercel AI SDK — the first-party Anthropic API
  *
@@ -80,6 +81,7 @@ export function createAnthropicProvider(): LlmProvider {
 
   const dispatcher = (modelId: string) => anthropic(toFirstPartyModelId(modelId));
   return Object.assign(dispatcher, {
+    supportsToolChanges,
     cachePoint: () => ANTHROPIC_CACHE_POINT,
   });
 }

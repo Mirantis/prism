@@ -1,3 +1,4 @@
+import { supportsToolChanges } from '../tool-changes';
 /**
  * Bedrock Mantle Provider for Vercel AI SDK
  *
@@ -129,6 +130,7 @@ export function createBedrockMantleProvider(baseURL: string): LlmProvider {
   };
 
   return Object.assign(dispatcher, {
+    supportsToolChanges,
     // Mantle rejects Anthropic's native structured-output path with a 400
     // ("output_config.format: Extra inputs are not permitted"), so ask the SDK
     // for the tool-based JSON path instead.

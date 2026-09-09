@@ -36,6 +36,16 @@ describe('createBedrockMantleProvider', () => {
     vi.clearAllMocks();
   });
 
+  it('gates tool changes by model and protocol', () => {
+    const provider = createBedrockMantleProvider(MANTLE);
+    expect(provider.supportsToolChanges('claude-opus-4-8')).toBe(true);
+    expect(provider.supportsToolChanges('global.anthropic.claude-fable-5-1')).toBe(true);
+    expect(provider.supportsToolChanges('us.anthropic.claude-fable-5-1')).toBe(true);
+    expect(provider.supportsToolChanges('claude-opus-5')).toBe(false);
+    expect(provider.supportsToolChanges('us.amazon.nova-2-lite-v1:0')).toBe(false);
+    expect(provider.supportsToolChanges('anthropic.claude-fable-5-10')).toBe(false);
+  });
+
   it('sends requests to the endpoint it is given', () => {
     createBedrockMantleProvider(MANTLE);
 

@@ -28,6 +28,16 @@ describe('createOpenAiProvider', () => {
     vi.clearAllMocks();
   });
 
+  it('gates tool changes by model and protocol', () => {
+    const provider = createOpenAiProvider();
+    expect(provider.supportsToolChanges('claude-opus-4-8')).toBe(false);
+    expect(provider.supportsToolChanges('global.anthropic.claude-fable-5-1')).toBe(false);
+    expect(provider.supportsToolChanges('us.anthropic.claude-fable-5-1')).toBe(false);
+    expect(provider.supportsToolChanges('claude-opus-5')).toBe(false);
+    expect(provider.supportsToolChanges('us.amazon.nova-2-lite-v1:0')).toBe(false);
+    expect(provider.supportsToolChanges('anthropic.claude-fable-5-10')).toBe(false);
+  });
+
   it('no endpoint → the SDK default (api.openai.com)', () => {
     createOpenAiProvider();
     expect(mockCreateOpenAI).toHaveBeenCalledWith({ apiKey: 'sk-test', baseURL: undefined });

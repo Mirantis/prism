@@ -86,6 +86,7 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
    * beside the dispatcher that picks the protocol, not at the call site.
    */
   cachePoint: (modelId: string) => CachePointFragment;
+  supportsToolChanges: (modelId: string) => boolean;
   /**
    * Whether one model gets a prompt-cache breakpoint on this vendor, for the
    * startup line to report; undefined when the vendor has nothing to say and

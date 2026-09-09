@@ -1,3 +1,4 @@
+import { supportsToolChanges } from '../tool-changes';
 /**
  * Azure Provider for Vercel AI SDK — Claude via Microsoft Foundry
  *
@@ -52,6 +53,7 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
 
   const dispatcher = (modelId: string) => anthropic(modelId);
   return Object.assign(dispatcher, {
+    supportsToolChanges,
     // Foundry-hosted deployments reject structured outputs (see the feature
     // caveat above), so ask the SDK for the tool-based JSON path rather than
     // Anthropic's native `output_config.format`.

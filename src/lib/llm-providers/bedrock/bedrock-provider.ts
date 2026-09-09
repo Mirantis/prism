@@ -1,3 +1,4 @@
+import { supportsToolChanges } from '../tool-changes';
 /**
  * Bedrock Provider for Vercel AI SDK
  *
@@ -62,6 +63,7 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
   const dispatcher = (modelId: string) =>
     isAnthropicModelId(modelId) ? anthropic(modelId) : generic(modelId);
   return Object.assign(dispatcher, {
+    supportsToolChanges: (modelId: string) => isAnthropicModelId(modelId) && supportsToolChanges(modelId),
     cachePoint: promptCacheFragment,
     // Derived from the fragment rather than repeating the rule, so the startup
     // line cannot disagree with what the request carries.
