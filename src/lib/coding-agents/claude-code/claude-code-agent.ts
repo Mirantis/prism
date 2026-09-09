@@ -41,6 +41,8 @@ export const PLAN_ONLY_INSTRUCTION =
 
 const DISPLAY_NAME = 'Claude Code';
 const COMMAND = 'claude';
+// CLI aliases let Claude Code resolve each model family for its configured
+// provider. Full model ids would tie these defaults to a provider and release.
 const MODEL_TIERS = { small: 'haiku', medium: 'sonnet', large: 'opus' };
 
 /** One line of `--output-format stream-json`. */
@@ -143,6 +145,9 @@ function buildArgs(task: CodingAgentTask): string[] {
   if (appended) {
     args.push('--append-system-prompt', appended);
   }
+  // An omitted tier or effort must emit no selection flag: the deployment's
+  // configured model and effort stay in force. Keep both optional, including
+  // on resume; a default tier would silently override that configuration.
   if (task.modelTier) {
     args.push('--model', config.codingAgentModelOverrides['claude-code'][task.modelTier] ?? MODEL_TIERS[task.modelTier]);
   }

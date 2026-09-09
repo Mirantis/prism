@@ -9,6 +9,8 @@ import { runCli, type Spawner } from '../cli-run';
 import type { CodingAgent, CodingAgentEvent, CodingAgentTask } from '../coding-agent';
 import { codexApiKey, codexAuthMethod, resolveCodexHome } from './credentials';
 
+// Reuse the repository's model choices: luna is the fast classification model,
+// sol is the main model, and terra is this adapter's existing Bedrock default.
 const MODEL_TIERS = { small: 'gpt-5.6-luna', medium: 'gpt-5.6-terra', large: 'gpt-5.6-sol' };
 
 interface StreamLine {
@@ -84,6 +86,8 @@ function buildArgs(task: CodingAgentTask, authMethod: ReturnType<typeof codexAut
   ];
   const useBedrock = authMethod === 'bedrock';
   if (useBedrock) {
+    // Bedrock identifies these models with the vendor prefix `openai.`; the
+    // OpenAI endpoint uses bare ids. Tier defaults below follow the same rule.
     args.push('-c', 'model_provider="amazon-bedrock"');
     if (!task.modelTier) args.push('-c', 'model="openai.gpt-5.6-terra"');
     args.push('-c', `model_providers.amazon-bedrock.aws.region=${JSON.stringify(bedrockRegion(task.env))}`);
@@ -92,6 +96,9 @@ function buildArgs(task: CodingAgentTask, authMethod: ReturnType<typeof codexAut
     if (authMethod === 'api') args.push('-c', 'forced_login_method="api"');
     if (authMethod === 'saved') args.push('-c', 'cli_auth_credentials_store="file"');
   }
+  // An omitted tier or effort must emit no selection flag here, preserving
+  // deployment configuration and the existing Bedrock default above. Keep
+  // both optional on resume too; a default tier would silently replace it.
   if (task.modelTier) {
     const defaultModel = `${useBedrock ? 'openai.' : ''}${MODEL_TIERS[task.modelTier]}`;
     args.push('--model', config.codingAgentModelOverrides.codex[task.modelTier] ?? defaultModel);
