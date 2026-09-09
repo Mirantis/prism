@@ -94,6 +94,7 @@ export interface CompactionFork {
   modelId: string;
   /** The exact model instance the turn used. */
   model: LanguageModel;
+  supportsToolChanges: boolean;
   /** The provider's prompt-cache breakpoint fragment. */
   cachePoint: CachePointFragment;
   /** cachedSystem — cache breakpoints included. */
@@ -390,17 +391,19 @@ class CompactionService {
       // re-prefilled at full price. Budget: 1 system + 1 tools + this = 3, inside
       // Bedrock's limit of 4.
       const messages: ModelMessage[] = [
-        ...fork.messages,
+        ...fork.messages.filter((message) => message.role !== 'system'),
         ...fork.injections,
         // An empty assistant block would be rejected by the provider; a turn
         // can end with no visible text (rare), in which case the last real
         // message already closes the exchange.
         ...(assistantText ? [{ role: 'assistant' as const, content: assistantText }] : []),
         { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: fork.cachePoint },
+        ...fork.messages.filter((message) => message.role === 'system'),
       ];
 
       const result = await callModel({ purpose: 'compaction', threadId }, {
         model: fork.model,
+        ...(fork.supportsToolChanges ? { allowSystemInMessages: true } : {}),
         system: fork.system,
         messages,
         tools: Object.keys(fork.tools).length > 0 ? fork.tools : undefined,
@@ -455,7 +458,10 @@ class CompactionService {
     try {
       this.start(userId, agentId, threadId, 'auto');
 
-      let history: ModelMessage[] = [...fork.messages, ...fork.injections];
+      let history: ModelMessage[] = [
+        ...fork.messages.filter((message) => message.role !== 'system'),
+        ...fork.injections,
+      ];
       let summary = '';
       // Each shrink drops a quarter, so the reachable floor is 0.75^(n-1) of
       // the original: 5 attempts bottom out at ~32%, which still overflows a
@@ -469,10 +475,12 @@ class CompactionService {
         try {
           const result = await callModel({ purpose: 'compaction', threadId }, {
             model: fork.model,
+            ...(fork.supportsToolChanges ? { allowSystemInMessages: true } : {}),
             system: fork.system,
             messages: [
               ...history,
               { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: fork.cachePoint },
+              ...fork.messages.filter((message) => message.role === 'system'),
             ],
             tools: Object.keys(fork.tools).length > 0 ? fork.tools : undefined,
             toolChoice: 'none',

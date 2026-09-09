@@ -147,6 +147,7 @@ function makeFork(overrides: Partial<AutoCompactFork> = {}): AutoCompactFork {
     agentId: 'agent-1',
     threadId: THREAD,
     modelId: 'model-x',
+    supportsToolChanges: true,
     model: { modelId: 'model-x' } as never,
     cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' as const } } },
     system: [{ role: 'system', content: 'system prompt' }] as never,
@@ -268,6 +269,30 @@ describe('maybeAutoCompact guards', () => {
 });
 
 describe('the forked summarize request', () => {
+  it.each(['threshold', 'overflow'])('preserves tool changes in the %s request', async (trigger) => {
+    const announcement: ModelMessage = {
+      role: 'system', content: '',
+      providerOptions: { anthropic: { toolChanges: [{ type: 'tool_addition', toolName: 'shell' }] } },
+    };
+    const fork = makeFork({ injections: [{ role: 'user', content: 'steer' }] });
+    fork.messages.push(announcement);
+    if (trigger === 'threshold') compactionService.maybeAutoCompact(fork);
+    else compactionService.maybeCompactAfterOverflow(fork);
+    await flushAuto();
+    const request = mockGenerateText.mock.calls[0][0];
+    expect(request.allowSystemInMessages).toBe(true);
+    expect(request.messages.at(-1)).toEqual(announcement);
+    expect(request.tools).toHaveProperty('shell');
+  });
+
+  it.each(['threshold', 'overflow'])('omits the system flag for unsupported %s requests', async (trigger) => {
+    const fork = makeFork({ supportsToolChanges: false });
+    if (trigger === 'threshold') compactionService.maybeAutoCompact(fork);
+    else compactionService.maybeCompactAfterOverflow(fork);
+    await flushAuto();
+    expect(mockGenerateText.mock.calls[0][0].allowSystemInMessages).toBeUndefined();
+  });
+
   it('reuses the turn ingredients: system, tools with toolChoice none, history + prompt', async () => {
     const fork = makeFork({
       injections: [{ role: 'user', content: 'mid-turn steer' }],
@@ -277,6 +302,7 @@ describe('the forked summarize request', () => {
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
     const request = mockGenerateText.mock.calls[0][0];
+    expect(request.allowSystemInMessages).toBe(true);
     expect(request.system).toBe(fork.system);
     expect(request.tools).toBe(fork.tools);
     expect(request.toolChoice).toBe('none');

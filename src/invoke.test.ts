@@ -283,7 +283,7 @@ describe('invoke', () => {
     mockWithToolRiskGate.mockImplementation((tools) => tools);
 
     mockIsBedrockConfigured.mockReturnValue(true);
-    mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', { cachePoint: () => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }) }));
+    mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', { supportsToolChanges: () => false, cachePoint: () => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }) }));
     mockGetMCPTools.mockResolvedValue({});
     mockGetPluginTools.mockResolvedValue({});
     mockBuildSystemPromptParts.mockResolvedValue([
@@ -525,12 +525,126 @@ describe('invoke', () => {
     });
   });
 
+  describe('mid-conversation tool changes', () => {
+    let thread = 0;
+    let request: ReturnType<typeof createTestInvokeRequest>;
+    beforeEach(() => {
+      request = createTestInvokeRequest({ threadId: 'tool-changes-' + ++thread });
+      mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', {
+        supportsToolChanges: () => true,
+        cachePoint: () => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }),
+      }));
+    });
+
+    it('announces an addition last, with the added tool declared', async () => {
+      await invoke(request);
+      mockGetMCPTools.mockResolvedValue({ added: { description: 'added tool' } });
+      await invoke(request);
+      const call = mockGenerateText.mock.calls[1][0];
+      expect(call.allowSystemInMessages).toBe(true);
+      expect(call.messages.at(-1)).toEqual({
+        role: 'system', content: '',
+        providerOptions: { anthropic: { toolChanges: [{ type: 'tool_addition', toolName: 'added' }] } },
+      });
+      expect(call.tools).toHaveProperty('added');
+    });
+
+    it('announces a removal and preserves replayed calls for the removed tool', async () => {
+      mockGetMCPTools.mockResolvedValue({ removed: { description: 'removed tool' } });
+      await invoke(request);
+      mockGetMCPTools.mockResolvedValue({});
+      const history = [
+        { role: 'user', content: 'Use the tool' },
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call-1', toolName: 'removed', input: {} }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call-1', toolName: 'removed', output: { type: 'text', value: 'done' } }] },
+        { role: 'user', content: 'Continue' },
+      ];
+      mockBuildConversationMessages.mockReturnValue(history);
+      await invoke(request);
+      const call = mockGenerateText.mock.calls[1][0];
+      expect(call.messages.slice(0, 4)).toEqual(history.slice(0, 4));
+      expect(call.messages.at(-1).providerOptions.anthropic.toolChanges)
+        .toEqual([{ type: 'tool_removal', toolName: 'removed' }]);
+      expect(call.tools ?? {}).not.toHaveProperty('removed');
+    });
+
+    it('sends no announcement on the first turn or with unchanged tools', async () => {
+      await invoke(request);
+      await invoke(request);
+      for (const [call] of mockGenerateText.mock.calls) {
+        expect(call.allowSystemInMessages).toBe(true);
+        expect(call.messages.some((m: StepMessage) => m.role === 'system')).toBe(false);
+      }
+    });
+
+    it('records changes without announcements on unsupported models', async () => {
+      const provider = mockCreateBedrockProvider();
+      provider.supportsToolChanges = () => false;
+      await invoke(request);
+      mockGetMCPTools.mockResolvedValue({ added: { description: 'added tool' } });
+      await invoke(request);
+      for (const [call] of mockGenerateText.mock.calls) {
+        expect(call.allowSystemInMessages).toBeUndefined();
+        expect(call.messages.some((m: StepMessage) => m.role === 'system')).toBe(false);
+      }
+      provider.supportsToolChanges = () => true;
+      await invoke(request);
+      expect(mockGenerateText.mock.calls[2][0].messages.some((m: StepMessage) => m.role === 'system')).toBe(false);
+    });
+
+    it('merges the first-step cache point with the announcement and keeps later placement valid', async () => {
+      await invoke(request);
+      mockGetMCPTools.mockResolvedValue({ added: { description: 'added tool' } });
+      await invoke(request);
+      const call = mockGenerateText.mock.calls[1][0];
+      const first = await call.prepareStep(firstStep(call.messages));
+      expect(first.messages.at(-1).providerOptions).toEqual({
+        anthropic: {
+          toolChanges: [{ type: 'tool_addition', toolName: 'added' }],
+          cacheControl: { type: 'ephemeral' },
+        },
+      });
+      const later = await call.prepareStep({
+        initialMessages: call.messages,
+        responseMessages: [{ role: 'assistant', content: 'done' }],
+      });
+      expect(later.messages.at(-2).role).toBe('system');
+      expect(later.messages.at(-1).role).toBe('assistant');
+      expect(later.messages.at(-2).providerOptions.anthropic.cacheControl).toBeUndefined();
+    });
+
+    it('places first-step steering before the announcement', async () => {
+      await invoke(request);
+      mockGetMCPTools.mockResolvedValue({ added: { description: 'added tool' } });
+      await invoke({ ...request, steering: async () => [{ text: 'Also check this' }] });
+      const call = mockGenerateText.mock.calls[1][0];
+      const first = await call.prepareStep(firstStep(call.messages));
+      expect(first.messages.at(-1).role).toBe('system');
+      expect(first.messages.at(-2).role).toBe('user');
+    });
+
+    it('declares added tools and permits the announcement in the early-stop summary', async () => {
+      await invoke(request);
+      mockGetMCPTools.mockResolvedValue({ added: { description: 'added tool' } });
+      mockGenerateText.mockResolvedValueOnce({
+        text: 'working',
+        steps: Array.from({ length: 100 }, () => ({ text: 'working', toolCalls: [], toolResults: [] })),
+      });
+      await invoke(request);
+      const summary = mockGenerateText.mock.calls[2][0];
+      expect(summary.allowSystemInMessages).toBe(true);
+      expect(summary.tools).toHaveProperty('added');
+      expect(summary.toolChoice).toBe('none');
+      expect(summary.messages.at(-1).role).toBe('system');
+    });
+  });
+
   describe('model selection by mode', () => {
     // The mocked provider is `(modelId) => LanguageModel`; capture the modelId
     // it's called with to assert which model each mode resolves to.
     function captureModelId() {
       const cachePoint = vi.fn(() => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }));
-      const modelFn = Object.assign(vi.fn(() => 'model-instance'), { cachePoint });
+      const modelFn = Object.assign(vi.fn(() => 'model-instance'), { cachePoint, supportsToolChanges: () => false });
       mockCreateBedrockProvider.mockReturnValue(modelFn);
       return modelFn;
     }

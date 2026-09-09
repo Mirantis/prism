@@ -8,6 +8,7 @@
 
 import { ModelMessage, SystemModelMessage, stepCountIs } from 'ai';
 import { callModel } from './lib/model-call';
+import { toolSetTracker } from './services/tool-set-tracker.service';
 import { config } from './config';
 import { logger } from './logger';
 import { createProvider, isProviderConfigured } from './lib/llm-providers/create-provider';
@@ -139,6 +140,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     const provider = createProvider();
     const model = provider(modelId);
     const cachePoint = provider.cachePoint(modelId);
+    const supportsToolChanges = provider.supportsToolChanges(modelId);
 
     // Queue for messages a tool asks to append to the running conversation,
     // for content a tool result cannot carry and that must arrive as a user
@@ -267,6 +269,14 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       }
     }
 
+    const toolChanges = request.threadId
+      ? toolSetTracker.record(request.threadId, modelId, Object.keys(cachedTools))
+      : [];
+    const toolChangeMessages: SystemModelMessage[] = supportsToolChanges && toolChanges.length > 0
+      ? [{ role: 'system', content: '', providerOptions: { anthropic: { toolChanges } } }]
+      : [];
+    messages.push(...toolChangeMessages);
+
     // Prompt caching: system prompt parts marked cacheable get cache breakpoints.
     // [0] stable prefix — identity, soul, important memories, instructions. The one
     // system breakpoint: the dynamic part behind it carries only the date, and a
@@ -323,6 +333,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       modelId,
       model,
       cachePoint,
+      supportsToolChanges,
       system: cachedSystem,
       tools: cachedTools,
       messages,
@@ -339,6 +350,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     callModel({ purpose: request.mode, threadId: request.threadId, agentId: request.agentId }, {
       model,
       system: cachedSystem,
+      ...(supportsToolChanges ? { allowSystemInMessages: true } : {}),
       messages,
       tools: Object.keys(cachedTools).length > 0 ? cachedTools : undefined,
       toolChoice: 'auto',
@@ -366,7 +378,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
             `Steering the in-flight turn with a mid-turn message (${pending.text.length} chars${files})`,
           );
           injections.push({
-            at: base.length,
+            at: base.at(-1)?.role === 'system' ? base.length - 1 : base.length,
             message: buildSteeringMessage(pending),
           });
         }
@@ -376,7 +388,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         // result that attached it, then re-spliced every later step like any
         // other injection.
         for (const message of pendingAttachmentInjections.splice(0)) {
-          injections.push({ at: base.length, message });
+          injections.push({ at: base.at(-1)?.role === 'system' ? base.length - 1 : base.length, message });
         }
 
         // A step boundary is the exact scope: the previous step's tools have all
@@ -395,7 +407,12 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           const lastIdx = merged.length - 1;
           merged[lastIdx] = {
             ...merged[lastIdx],
-            providerOptions: cachePoint,
+            providerOptions: {
+              ...merged[lastIdx].providerOptions,
+              ...Object.fromEntries(Object.entries(cachePoint).map(([key, value]) => [
+                key, { ...merged[lastIdx].providerOptions?.[key], ...value },
+              ])),
+            },
           } as ModelMessage;
         }
 
@@ -519,11 +536,12 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         // that hit the limit — no prepareStep ran after it, so it would
         // otherwise vanish from the summary call.
         const summaryMessages: ModelMessage[] = [
-          ...messages,
+          ...messages.filter((message) => message.role !== 'system'),
           ...injections.map((i) => i.message),
           ...pendingAttachmentInjections.splice(0),
           { role: 'assistant' as const, content: assistantText },
           { role: 'user' as const, content: EARLY_STOPPING_PROMPT },
+          ...toolChangeMessages,
         ];
         warnOnTrailingAssistant(summaryMessages, { ...guardContext, stage: 'early-stopping' });
 
@@ -533,6 +551,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           model,
           system: cachedSystem,
           messages: summaryMessages,
+          ...(supportsToolChanges ? {
+            allowSystemInMessages: true,
+            tools: cachedTools,
+            toolChoice: 'none' as const,
+          } : {}),
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           abortSignal: request.abortSignal,
           ...turnTelemetry('invoke-early-stopping'),
