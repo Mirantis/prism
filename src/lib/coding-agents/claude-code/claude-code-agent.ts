@@ -14,6 +14,7 @@
  */
 
 import { claudeCodeEnvironment } from './credentials';
+import { config } from '../../../config';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -40,6 +41,7 @@ export const PLAN_ONLY_INSTRUCTION =
 
 const DISPLAY_NAME = 'Claude Code';
 const COMMAND = 'claude';
+const MODEL_TIERS = { small: 'haiku', medium: 'sonnet', large: 'opus' };
 
 /** One line of `--output-format stream-json`. */
 interface StreamLine {
@@ -141,6 +143,10 @@ function buildArgs(task: CodingAgentTask): string[] {
   if (appended) {
     args.push('--append-system-prompt', appended);
   }
+  if (task.modelTier) {
+    args.push('--model', config.codingAgentModelOverrides['claude-code'][task.modelTier] ?? MODEL_TIERS[task.modelTier]);
+  }
+  if (task.effort) args.push('--effort', task.effort);
   if (task.sessionId) {
     args.push('--resume', task.sessionId);
   }

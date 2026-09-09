@@ -143,6 +143,22 @@ Codex uses `CODEX_API_KEY` or `OPENAI_API_KEY` first, then a saved `auth.json` l
 then Bedrock credentials. To reuse a Codex login, set `CODEX_HOME` to its writable
 configuration directory before starting Prism; the default is `<data dir>/.codex`.
 
+Coding tasks can select a `model` tier (`small`, `medium`, `large`) and
+`effort` (`low`, `medium`, `high`), including when resuming a session.
+Omitted parameters keep the deployment's model and effort behavior.
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` |
+| `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` |
+| `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
+| `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
+| `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
+| `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
+
+Set each tier to a model your account can serve; set all three overrides to keep a model
+out of every tier. Blank overrides log a warning and use the default.
+
 `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID` only matter on the **first** boot
 with an empty database; later boots reuse the stored workspace.
 

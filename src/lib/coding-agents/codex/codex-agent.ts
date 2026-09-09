@@ -9,6 +9,8 @@ import { runCli, type Spawner } from '../cli-run';
 import type { CodingAgent, CodingAgentEvent, CodingAgentTask } from '../coding-agent';
 import { codexApiKey, codexAuthMethod, resolveCodexHome } from './credentials';
 
+const MODEL_TIERS = { small: 'gpt-5.6-luna', medium: 'gpt-5.6-terra', large: 'gpt-5.6-sol' };
+
 interface StreamLine {
   type: string;
   thread_id?: string;
@@ -80,14 +82,21 @@ function buildArgs(task: CodingAgentTask, authMethod: ReturnType<typeof codexAut
     '-c', 'approval_policy="never"',
     '-c', `sandbox_mode="${sandbox}"`,
   ];
-  if (authMethod === 'bedrock') {
-    args.push('-c', 'model_provider="amazon-bedrock"', '-c', 'model="openai.gpt-5.6-terra"');
+  const useBedrock = authMethod === 'bedrock';
+  if (useBedrock) {
+    args.push('-c', 'model_provider="amazon-bedrock"');
+    if (!task.modelTier) args.push('-c', 'model="openai.gpt-5.6-terra"');
     args.push('-c', `model_providers.amazon-bedrock.aws.region=${JSON.stringify(bedrockRegion(task.env))}`);
   } else {
     args.push('-c', 'model_provider="openai"');
     if (authMethod === 'api') args.push('-c', 'forced_login_method="api"');
     if (authMethod === 'saved') args.push('-c', 'cli_auth_credentials_store="file"');
   }
+  if (task.modelTier) {
+    const defaultModel = `${useBedrock ? 'openai.' : ''}${MODEL_TIERS[task.modelTier]}`;
+    args.push('--model', config.codingAgentModelOverrides.codex[task.modelTier] ?? defaultModel);
+  }
+  if (task.effort) args.push('-c', `model_reasoning_effort="${task.effort}"`);
   if (task.appendSystemPrompt) {
     args.push('-c', `developer_instructions=${JSON.stringify(task.appendSystemPrompt)}`);
   }
