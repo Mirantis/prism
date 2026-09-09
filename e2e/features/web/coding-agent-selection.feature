@@ -1,5 +1,5 @@
 Feature: Coding agent delegation
-  Scenario: Plan and resume a coding task
+  Scenario: Plan and resume a coding task with model and effort selection
     Given I am logged in
     And I have a personal agent
     And a coding task file contains "before"

@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { config } from '../../../config';
-import { runCodingAgent } from '../coding-agent';
+import { codingAgentInput, runCodingAgent } from '../coding-agent';
 
 import { AsyncChannel } from '../../../utils/async-channel';
 import type {
@@ -164,6 +164,43 @@ describe('AgentTaskManager', () => {
     } finally {
       config.codingAgent = original;
       tasks.killAll();
+    }
+  });
+
+  it.each([undefined, 'session-1'])('passes model and effort through the tool for session %s', async (sessionId) => {
+    __setAgentTaskManagerForTests(manager);
+    try {
+      const input = codingAgentInput.parse({ prompt: 'do X', model: 'small', effort: 'low', sessionId });
+      await runCodingAgent(input, '/work');
+      expect(getTask()).toMatchObject({ modelTier: 'small', effort: 'low', sessionId });
+    } finally {
+      __setAgentTaskManagerForTests(null);
+      manager.killAll();
+    }
+  });
+
+  it('keeps omitted model and effort undefined through the tool', async () => {
+    __setAgentTaskManagerForTests(manager);
+    try {
+      await runCodingAgent(codingAgentInput.parse({ prompt: 'do X' }), '/work');
+      expect(getTask().modelTier).toBeUndefined();
+      expect(getTask().effort).toBeUndefined();
+    } finally {
+      __setAgentTaskManagerForTests(null);
+      manager.killAll();
+    }
+  });
+
+  it.each([
+    { model: 'opus' }, { model: 'SMALL' }, { model: '' }, { model: null },
+    { effort: 'max' }, { effort: 'LOW' }, { effort: '' }, { effort: null },
+  ])('rejects invalid tier or effort %j', (params) => {
+    expect(codingAgentInput.safeParse({ prompt: 'do X', ...params }).success).toBe(false);
+  });
+
+  it.each(['small', 'medium', 'large'])('accepts %s with every effort', (model) => {
+    for (const effort of ['low', 'medium', 'high']) {
+      expect(codingAgentInput.parse({ prompt: 'do X', model, effort })).toMatchObject({ model, effort });
     }
   });
 
