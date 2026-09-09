@@ -601,25 +601,29 @@ describe('invoke', () => {
       expect(mockGenerateText.mock.calls[2][0].messages.some((m: StepMessage) => m.role === 'system')).toBe(false);
     });
 
-    it('merges the first-step cache point with the announcement and keeps later placement valid', async () => {
+    it('keeps the first-step cache point off the announcement and keeps later placement valid', async () => {
       await invoke(request);
       mockGetMCPTools.mockResolvedValue({ added: { description: 'added tool' } });
       await invoke(request);
       const call = mockGenerateText.mock.calls[1][0];
       const first = await call.prepareStep(firstStep(call.messages));
+      // The provider builds the announcement's wire blocks from the tool changes
+      // alone and drops the empty text block a breakpoint would ride on, so the
+      // breakpoint goes on the message before it.
       expect(first.messages.at(-1).providerOptions).toEqual({
-        anthropic: {
-          toolChanges: [{ type: 'tool_addition', toolName: 'added' }],
-          cacheControl: { type: 'ephemeral' },
-        },
+        anthropic: { toolChanges: [{ type: 'tool_addition', toolName: 'added' }] },
       });
+      expect(first.messages.at(-2).providerOptions.anthropic.cacheControl).toEqual({ type: 'ephemeral' });
       const later = await call.prepareStep({
         initialMessages: call.messages,
         responseMessages: [{ role: 'assistant', content: 'done' }],
       });
+      // The announcement is now second to last, which the provider accepts, and
+      // the breakpoint moves with the tail rather than staying behind on it.
       expect(later.messages.at(-2).role).toBe('system');
       expect(later.messages.at(-1).role).toBe('assistant');
       expect(later.messages.at(-2).providerOptions.anthropic.cacheControl).toBeUndefined();
+      expect(later.messages.at(-1).providerOptions.anthropic.cacheControl).toEqual({ type: 'ephemeral' });
     });
 
     it('places first-step steering before the announcement', async () => {

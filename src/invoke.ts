@@ -57,6 +57,17 @@ import { trackEvent, langfuseTelemetry } from './lib/telemetry';
 import { AsyncChannel } from './utils/async-channel';
 
 /**
+ * Whether one message is this turn's tool-change announcement. The steering and
+ * attachment injections have to land in front of it, and the cache breakpoint on
+ * the message before it, so each of those three sites asks this rather than
+ * reading a bare `role === 'system'` as the announcement.
+ */
+function isToolChangeAnnouncement(message?: ModelMessage): boolean {
+  return message?.role === 'system'
+    && Array.isArray(message.providerOptions?.anthropic?.toolChanges);
+}
+
+/**
  * Stream agent execution as a sequence of InvokeSteps.
  *
  * Owns preflight (Bedrock + agentId), agent-context fetch, tool collection,
@@ -397,7 +408,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
             `Steering the in-flight turn with a mid-turn message (${pending.text.length} chars${files})`,
           );
           injections.push({
-            at: base.at(-1)?.role === 'system' ? base.length - 1 : base.length,
+            at: isToolChangeAnnouncement(base.at(-1)) ? base.length - 1 : base.length,
             message: buildSteeringMessage(pending),
           });
         }
@@ -407,7 +418,10 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         // result that attached it, then re-spliced every later step like any
         // other injection.
         for (const message of pendingAttachmentInjections.splice(0)) {
-          injections.push({ at: base.at(-1)?.role === 'system' ? base.length - 1 : base.length, message });
+          injections.push({
+            at: isToolChangeAnnouncement(base.at(-1)) ? base.length - 1 : base.length,
+            message,
+          });
         }
 
         // A step boundary is the exact scope: the previous step's tools have all
@@ -422,14 +436,23 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           merged.splice(injections[i].at, 0, injections[i].message);
         }
 
-        if (merged.length > 0) {
-          const lastIdx = merged.length - 1;
-          merged[lastIdx] = {
-            ...merged[lastIdx],
+        // On the first step of a turn that announces a tool change, the last
+        // message is that announcement, and the provider builds its blocks from
+        // the tool changes alone — the empty text block that would carry a
+        // breakpoint is dropped. So the breakpoint goes on the message before
+        // it, where the conversation prefix actually ends. The announcement
+        // keeps its own providerOptions either way.
+        const stampIdx = isToolChangeAnnouncement(merged.at(-1))
+          ? merged.length - 2
+          : merged.length - 1;
+        if (stampIdx >= 0) {
+          const stamped = merged[stampIdx];
+          merged[stampIdx] = {
+            ...stamped,
             providerOptions: {
-              ...merged[lastIdx].providerOptions,
+              ...stamped.providerOptions,
               ...Object.fromEntries(Object.entries(cachePoint).map(([key, value]) => [
-                key, { ...merged[lastIdx].providerOptions?.[key], ...value },
+                key, { ...stamped.providerOptions?.[key], ...value },
               ])),
             },
           } as ModelMessage;
