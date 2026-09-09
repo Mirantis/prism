@@ -1,4 +1,3 @@
-import { supportsToolChanges } from '../tool-changes';
 /**
  * Anthropic Provider for Vercel AI SDK — the first-party Anthropic API
  *
@@ -32,6 +31,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
+import { supportsToolChanges } from '../tool-changes';
 
 /**
  * A Bedrock spelling of a Claude id: an optional cross-region

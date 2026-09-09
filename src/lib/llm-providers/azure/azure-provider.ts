@@ -1,4 +1,3 @@
-import { supportsToolChanges } from '../tool-changes';
 /**
  * Azure Provider for Vercel AI SDK — Claude via Microsoft Foundry
  *
@@ -29,6 +28,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
 import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
+import { supportsToolChanges } from '../tool-changes';
 
 export function createAzureProvider(baseURL?: string): LlmProvider {
   const gatewayServesIt = isGatewayEndpoint(baseURL);

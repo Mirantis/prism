@@ -86,6 +86,17 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
    * beside the dispatcher that picks the protocol, not at the call site.
    */
   cachePoint: (modelId: string) => CachePointFragment;
+  /**
+   * Whether one model accepts a mid-conversation tool change: a system message
+   * inside `messages` whose `toolChanges` name the tools added and removed
+   * since the previous turn.
+   *
+   * An allowlist, not a protocol fact. The Anthropic provider sends the betas
+   * whenever `toolChanges` is present and checks no model id, so a model that
+   * does not accept them fails the whole request. Keyed on the model for the
+   * same reason as `cachePoint`: one vendor can serve two protocols, and only
+   * the Anthropic Messages path carries `providerOptions` on a message.
+   */
   supportsToolChanges: (modelId: string) => boolean;
   /**
    * Whether one model gets a prompt-cache breakpoint on this vendor, for the

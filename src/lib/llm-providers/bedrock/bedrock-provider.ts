@@ -1,4 +1,3 @@
-import { supportsToolChanges } from '../tool-changes';
 /**
  * Bedrock Provider for Vercel AI SDK
  *
@@ -34,6 +33,7 @@ import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { createSharedBedrockOptions, isAnthropicModelId } from '../bedrock-shared';
+import { supportsToolChanges } from '../tool-changes';
 import {
   ANTHROPIC_CACHE_POINT,
   BEDROCK_CACHE_POINT,

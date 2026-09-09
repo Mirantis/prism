@@ -1,4 +1,3 @@
-import { supportsToolChanges } from '../tool-changes';
 /**
  * Bedrock Mantle Provider for Vercel AI SDK
  *
@@ -45,6 +44,7 @@ import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
 import { isAnthropicModelId } from '../bedrock-shared';
 import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
+import { supportsToolChanges } from '../tool-changes';
 
 /**
  * Cross-region inference profile prefixes (`us.`, `eu.`, `global.`, …). These
