@@ -154,6 +154,10 @@ const initialize = async () => {
         ...(provider.promptCacheState
           ? { promptCache: provider.promptCacheState(config.chatModelId) }
           : {}),
+        // Whether a mid-conversation tool change is announced to this model.
+        // The allowlist matches a model id, so an id it does not hold leaves the
+        // feature off, and the only other signal is reading that list.
+        toolChanges: provider.supportsToolChanges(config.chatModelId),
       },
       '[Startup] LLM provider',
     );
