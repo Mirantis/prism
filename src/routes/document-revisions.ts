@@ -39,14 +39,15 @@ function readField(req: Request<{ field: string }>, res: Response): WorkspaceDoc
 /**
  * A write or a restore of the heartbeat config changes what a heartbeat run
  * reads, so the timer is restarted from the stored row, the same as a tool write
- * does (`src/tools/agent-config.ts`). It happens here rather than in the service,
- * because the heartbeat service imports the invoke path, which builds context
- * through the workspace service.
+ * does (`src/tools/agent-config.ts`). `keep-schedule` leaves the next check where
+ * it is, since the document holds the checks and not the cadence. It happens here
+ * rather than in the service, because the heartbeat service imports the invoke
+ * path, which builds context through the workspace service.
  */
 async function restartHeartbeat(): Promise<void> {
   try {
     const agent = await agentWorkspaceService.getAgent();
-    heartbeatService.startHeartbeat(agent);
+    heartbeatService.startHeartbeat(agent, 'keep-schedule');
   } catch (err) {
     logger.error({ err }, '[DocumentRevisions] Failed to restart the heartbeat');
   }

@@ -1142,7 +1142,9 @@ alone; that route reads the schedule off the persisted row rather than the reque
 body. The two writers of the cadence pass `'new-interval'`, which starts a fresh
 interval from now and persists the deadline it sets:
 `PATCH /agents/heartbeat/interval` and the `update_settings` tool. Editing the
-Heartbeat document changes no schedule. Every cycle loads the checks fresh.
+Heartbeat document changes no schedule, and neither does restoring a revision of
+it, which restarts the timer on `'keep-schedule'`. Every cycle loads the checks
+fresh.
 
 ### Prompt Contract
 
