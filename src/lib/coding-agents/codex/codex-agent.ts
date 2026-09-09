@@ -1,10 +1,13 @@
-import { bedrockRegion, hasBedrockCredentials } from '../bedrock-credentials';
+import { bedrockRegion } from '../bedrock-credentials';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
+import { config } from '../../../config';
+import { trackEvent } from '../../telemetry';
 import { ensureSymlink } from '../../data-dir';
 import { runCli, type Spawner } from '../cli-run';
 import type { CodingAgent, CodingAgentEvent, CodingAgentTask } from '../coding-agent';
+import { codexApiKey, codexAuthMethod, resolveCodexHome } from './credentials';
 
 interface StreamLine {
   type: string;
@@ -19,29 +22,56 @@ export function createCodexAgent(spawner: Spawner = spawn): CodingAgent {
     id: 'codex',
     displayName: 'Codex',
     prepareHome: ({ dataDir, skillsDir }) => {
-      const configDir = process.env.CODEX_HOME || path.join(dataDir, '.codex');
+      const configDir = resolveCodexHome(process.env, dataDir);
       fs.mkdirSync(configDir, { recursive: true });
       const skillsLinked = ensureSymlink(skillsDir, path.join(configDir, 'skills'));
       process.env.CODEX_HOME = configDir;
       return { configDir, skillsLinked };
     },
-    run: (task) => runCli({
-      taskId: task.taskId,
-      displayName: 'Codex',
-      command: 'codex',
-      args: buildArgs(task),
-      cwd: task.workdir,
-      env: {
-        ...task.env,
-        CODEX_API_KEY: task.env.OPENAI_API_KEY,
-        ...(task.debug ? { RUST_LOG: 'debug' } : {}),
-      },
-      parseLine: createParser(),
-    }, spawner),
+    run: (task) => {
+      const authMethod = codexAuthMethod(task.env);
+      const startedAt = Date.now();
+      const props = { 'task.id': task.taskId, 'auth.method': authMethod ?? 'none' };
+      trackEvent('codex task started', config.ownerUserId, props);
+      const run = runCli({
+        taskId: task.taskId,
+        displayName: 'Codex',
+        command: 'codex',
+        args: buildArgs(task, authMethod),
+        cwd: task.workdir,
+        env: {
+          ...task.env,
+          CODEX_HOME: resolveCodexHome(task.env),
+          CODEX_API_KEY: codexApiKey(task.env),
+          ...(task.debug ? { RUST_LOG: 'debug' } : {}),
+        },
+        parseLine: createParser(),
+      }, spawner);
+      let stopped = false;
+      async function* events(): AsyncGenerator<CodingAgentEvent> {
+        let status = 'error';
+        try {
+          for await (const event of run.events) {
+            if (event.type === 'result') status = event.stopReason;
+            yield event;
+          }
+        } finally {
+          trackEvent('codex task finished', config.ownerUserId, {
+            ...props, status: stopped ? 'stopped' : status,
+            elapsed_ms: String(Date.now() - startedAt),
+          });
+        }
+      }
+      return {
+        events: events(),
+        get exited() { return run.exited; },
+        stop: () => { stopped = true; run.stop(); },
+      };
+    },
   };
 }
 
-function buildArgs(task: CodingAgentTask): string[] {
+function buildArgs(task: CodingAgentTask, authMethod: ReturnType<typeof codexAuthMethod>): string[] {
   const sandbox = task.mode === 'plan'
     ? 'read-only'
     : task.gateMode === 'enforce' ? 'workspace-write' : 'danger-full-access';
@@ -50,11 +80,13 @@ function buildArgs(task: CodingAgentTask): string[] {
     '-c', 'approval_policy="never"',
     '-c', `sandbox_mode="${sandbox}"`,
   ];
-  if (!task.env.OPENAI_API_KEY && hasBedrockCredentials(task.env)) {
+  if (authMethod === 'bedrock') {
     args.push('-c', 'model_provider="amazon-bedrock"', '-c', 'model="openai.gpt-5.6-terra"');
     args.push('-c', `model_providers.amazon-bedrock.aws.region=${JSON.stringify(bedrockRegion(task.env))}`);
   } else {
-    args.push('-c', 'model_provider="openai"', '-c', 'forced_login_method="api"');
+    args.push('-c', 'model_provider="openai"');
+    if (authMethod === 'api') args.push('-c', 'forced_login_method="api"');
+    if (authMethod === 'saved') args.push('-c', 'cli_auth_credentials_store="file"');
   }
   if (task.appendSystemPrompt) {
     args.push('-c', `developer_instructions=${JSON.stringify(task.appendSystemPrompt)}`);

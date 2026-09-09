@@ -1,17 +1,30 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FakeChild } from '../../../test-utils/fake-child';
 import type { CodingAgentEvent, CodingAgentTask } from '../coding-agent';
 import { createCodexAgent } from './codex-agent';
+import type { Spawner } from '../cli-run';
+import { resolveCodexHome } from './credentials';
+import { trackEvent } from '../../telemetry';
+
+vi.mock('../../telemetry', () => ({ trackEvent: vi.fn() }));
 
 const task: CodingAgentTask = {
   taskId: 'task-1', prompt: 'Inspect the project', workdir: '/work',
   env: { OPENAI_API_KEY: 'test-key' }, mode: 'edit', maxTurns: 100, gateMode: 'off',
 };
 
-afterEach(() => vi.unstubAllEnvs());
+let authHome: string;
+beforeEach(() => {
+  authHome = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-codex-auth-'));
+  vi.stubEnv('CODEX_HOME', authHome);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  fs.rmSync(authHome, { recursive: true, force: true });
+});
 
 async function collect(lines: object[]) {
   const child = new FakeChild();
@@ -28,11 +41,11 @@ describe('Codex adapter', () => {
     ['edit', 'enforce', 'workspace-write'],
   ] as const)('uses %s mode with the %s gate', async (mode, gateMode, sandbox) => {
     const child = new FakeChild();
-    const spawner = vi.fn(() => child.asChildProcess());
+    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
     const run = createCodexAgent(spawner).run({ ...task, mode, gateMode });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
       'exec', '--json', 'approval_policy="never"', `sandbox_mode="${sandbox}"`,
-    ]), { cwd: '/work', env: { OPENAI_API_KEY: 'test-key', CODEX_API_KEY: 'test-key' } });
+    ]), { cwd: '/work', env: { OPENAI_API_KEY: 'test-key', CODEX_API_KEY: 'test-key', CODEX_HOME: resolveCodexHome(task.env) } });
     child.finish(1);
     await Array.fromAsync(run.events);
   });
@@ -43,7 +56,7 @@ describe('Codex adapter', () => {
     { AWS_PROFILE: 'test-profile', AWS_DEFAULT_REGION: 'us-west-2' },
   ])('configures Bedrock authentication: %j', async (env) => {
     const child = new FakeChild();
-    const spawner = vi.fn(() => child.asChildProcess());
+    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
     const run = createCodexAgent(spawner).run({ ...task, env });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
       'model_provider="amazon-bedrock"', 'model="openai.gpt-5.6-terra"',
@@ -55,7 +68,7 @@ describe('Codex adapter', () => {
 
   it('passes the default region with IAM credentials', async () => {
     const child = new FakeChild();
-    const spawner = vi.fn(() => child.asChildProcess());
+    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
     const run = createCodexAgent(spawner).run({ ...task, env: { AWS_PROFILE: 'test-profile' } });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
       'model_providers.amazon-bedrock.aws.region="us-east-1"',
@@ -66,7 +79,7 @@ describe('Codex adapter', () => {
 
   it('prefers a direct OpenAI key when AWS credentials are also present', async () => {
     const child = new FakeChild();
-    const spawner = vi.fn(() => child.asChildProcess());
+    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
     const run = createCodexAgent(spawner).run({ ...task,
       env: { ...task.env, AWS_BEARER_TOKEN_BEDROCK: 'test-bedrock-key' } });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
@@ -76,9 +89,82 @@ describe('Codex adapter', () => {
     await Array.fromAsync(run.events);
   });
 
+  it.each([undefined, 'test-openai-key'])('uses saved login unless an API key is set: %s', async (apiKey) => {
+    fs.writeFileSync(path.join(authHome, 'auth.json'), JSON.stringify({
+      auth_mode: 'chatgpt', tokens: { access_token: 'test-access', refresh_token: 'test-refresh' },
+    }));
+    const child = new FakeChild();
+    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
+    const run = createCodexAgent(spawner).run({ ...task, env: {
+      CODEX_HOME: authHome, OPENAI_API_KEY: apiKey, AWS_PROFILE: 'test-profile',
+    } });
+    const args = spawner.mock.calls[0][1] as string[];
+    expect(args).toContain('model_provider="openai"');
+    expect(args.includes('forced_login_method="api"')).toBe(Boolean(apiKey));
+    expect(args.includes('cli_auth_credentials_store="file"')).toBe(!apiKey);
+    expect(spawner.mock.calls[0][2]).toMatchObject({ env: { CODEX_HOME: authHome } });
+    child.emitLine(JSON.stringify({ type: 'turn.completed' }));
+    child.finish(0);
+    await Array.fromAsync(run.events);
+    expect(trackEvent).toHaveBeenCalledWith('codex task started', 'test-owner-id', {
+      'task.id': task.taskId, 'auth.method': apiKey ? 'api' : 'saved',
+    });
+    expect(trackEvent).toHaveBeenCalledWith('codex task finished', 'test-owner-id', {
+      'task.id': task.taskId, 'auth.method': apiKey ? 'api' : 'saved',
+      status: 'end_turn', elapsed_ms: expect.any(String),
+    });
+    expect(trackEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves an explicit Codex API key', async () => {
+    const child = new FakeChild();
+    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
+    const run = createCodexAgent(spawner).run({ ...task,
+      env: { ...task.env, CODEX_API_KEY: 'test-codex-key' } });
+    expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
+      'forced_login_method="api"',
+    ]), expect.objectContaining({ env: expect.objectContaining({ CODEX_API_KEY: 'test-codex-key' }) }));
+    child.finish(1);
+    await Array.fromAsync(run.events);
+    expect(trackEvent).toHaveBeenCalledWith('codex task finished', 'test-owner-id', {
+      'task.id': task.taskId, 'auth.method': 'api', status: 'error', elapsed_ms: expect.any(String),
+    });
+    expect(trackEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a saved-login failure once', async () => {
+    fs.writeFileSync(path.join(authHome, 'auth.json'), '{}');
+    const child = new FakeChild();
+    const run = createCodexAgent(() => child.asChildProcess()).run({ ...task,
+      env: { CODEX_HOME: authHome } });
+    child.emitLine(JSON.stringify({ type: 'turn.failed', error: { message: 'Login required' } }));
+    child.finish(1);
+    expect((await Array.fromAsync(run.events)).at(-1)).toMatchObject({ stopReason: 'error' });
+    expect(trackEvent).toHaveBeenCalledWith('codex task finished', 'test-owner-id', {
+      'task.id': task.taskId, 'auth.method': 'saved', status: 'error', elapsed_ms: expect.any(String),
+    });
+    expect(trackEvent).toHaveBeenCalledTimes(2);
+    expect(run.exited).toBe(true);
+  });
+
+  it('reports cancellation separately from a failed saved login', async () => {
+    fs.writeFileSync(path.join(authHome, 'auth.json'), '{}');
+    const child = new FakeChild();
+    const run = createCodexAgent(() => child.asChildProcess()).run({ ...task,
+      env: { CODEX_HOME: authHome } });
+    expect(run.exited).toBe(false);
+    run.stop();
+    child.finish(1);
+    await Array.fromAsync(run.events);
+    expect(trackEvent).toHaveBeenCalledWith('codex task finished', 'test-owner-id', {
+      'task.id': task.taskId, 'auth.method': 'saved', status: 'stopped', elapsed_ms: expect.any(String),
+    });
+    expect(trackEvent).toHaveBeenCalledTimes(2);
+  });
+
   it('resumes with the requested permissions and preserves prompt text', async () => {
     const child = new FakeChild();
-    const spawner = vi.fn(() => child.asChildProcess());
+    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
     const run = createCodexAgent(spawner).run({ ...task, sessionId: 'session-1',
       prompt: '--inspect', appendSystemPrompt: 'Use "examples".\nKeep it short.' });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
