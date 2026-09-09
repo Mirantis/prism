@@ -205,7 +205,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       agentId: request.agentId,
     });
     const toolChanges = request.threadId
-      ? toolSetTracker.record(request.threadId, modelId, Object.keys(gatedTools))
+      ? toolSetTracker.record(request.threadId, request.mode, modelId, Object.keys(gatedTools))
       : [];
     const requestTools = { ...gatedTools };
     if (supportsToolChanges) {
