@@ -6,7 +6,7 @@
  * generateText(), and returns the response.
  */
 
-import { ModelMessage, SystemModelMessage, stepCountIs } from 'ai';
+import { ModelMessage, SystemModelMessage, jsonSchema, stepCountIs } from 'ai';
 import { callModel } from './lib/model-call';
 import { toolSetTracker } from './services/tool-set-tracker.service';
 import { config } from './config';
@@ -193,7 +193,21 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       userId: request.userId,
       agentId: request.agentId,
     });
-    const cachedTools = withToolsCacheControl(gatedTools, cachePoint);
+    const toolChanges = request.threadId
+      ? toolSetTracker.record(request.threadId, modelId, Object.keys(gatedTools))
+      : [];
+    const requestTools = { ...gatedTools };
+    if (supportsToolChanges) {
+      // The API resolves removal references against this request's declarations.
+      for (const change of toolChanges) {
+        if (change.type !== 'tool_removal') continue;
+        requestTools[change.toolName] = {
+          description: 'No longer available.',
+          inputSchema: jsonSchema({ type: 'object', properties: {} }),
+        };
+      }
+    }
+    const cachedTools = withToolsCacheControl(requestTools, cachePoint);
 
     // 6. Build system prompt parts (stable vs dynamic for granular caching)
     const systemParts = await buildSystemPromptParts(
@@ -269,9 +283,6 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       }
     }
 
-    const toolChanges = request.threadId
-      ? toolSetTracker.record(request.threadId, modelId, Object.keys(cachedTools))
-      : [];
     const toolChangeMessages: SystemModelMessage[] = supportsToolChanges && toolChanges.length > 0
       ? [{ role: 'system', content: '', providerOptions: { anthropic: { toolChanges } } }]
       : [];

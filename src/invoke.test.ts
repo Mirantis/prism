@@ -549,7 +549,7 @@ describe('invoke', () => {
       expect(call.tools).toHaveProperty('added');
     });
 
-    it('announces a removal and preserves replayed calls for the removed tool', async () => {
+    it('declares a removal without an executor and preserves replayed calls', async () => {
       mockGetMCPTools.mockResolvedValue({ removed: { description: 'removed tool' } });
       await invoke(request);
       mockGetMCPTools.mockResolvedValue({});
@@ -565,7 +565,13 @@ describe('invoke', () => {
       expect(call.messages.slice(0, 4)).toEqual(history.slice(0, 4));
       expect(call.messages.at(-1).providerOptions.anthropic.toolChanges)
         .toEqual([{ type: 'tool_removal', toolName: 'removed' }]);
-      expect(call.tools ?? {}).not.toHaveProperty('removed');
+      expect(call.tools.removed.description).toBe('No longer available.');
+      expect(call.tools.removed.execute).toBeUndefined();
+      mockBuildConversationMessages.mockReturnValue(history.slice(0, 4));
+      await invoke(request);
+      const next = mockGenerateText.mock.calls[2][0];
+      expect(next.tools ?? {}).not.toHaveProperty('removed');
+      expect(next.messages.some((m: StepMessage) => m.role === 'system')).toBe(false);
     });
 
     it('sends no announcement on the first turn or with unchanged tools', async () => {
