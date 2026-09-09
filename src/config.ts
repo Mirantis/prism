@@ -1,6 +1,6 @@
 import './lib/environment';
 export { dotenvLoadInfo } from './lib/environment';
-import { hasBedrockCredentials } from './lib/coding-agents/bedrock-credentials';
+import { codexAuthMethod } from './lib/coding-agents/codex/credentials';
 import { hasClaudeCodeCredentials } from './lib/coding-agents/claude-code/credentials';
 import sea from 'node:sea';
 import {
@@ -630,7 +630,7 @@ const invalidToolRiskGateMode = isValidToolRiskGateMode ? null : rawToolRiskGate
 export const CODING_AGENTS = ['claude-code', 'codex'] as const;
 export type CodingAgentName = (typeof CODING_AGENTS)[number];
 const hasClaudeCredentials = hasClaudeCodeCredentials(process.env);
-const hasCodexCredentials = Boolean(openaiApiKey) || hasBedrockCredentials(process.env);
+const hasCodexCredentials = Boolean(codexAuthMethod(process.env));
 const availableCodingAgents: CodingAgentName[] = [
   ...(hasClaudeCredentials ? ['claude-code' as const] : []),
   ...(hasCodexCredentials ? ['codex' as const] : []),

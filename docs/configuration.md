@@ -136,8 +136,12 @@ See **[Slack](slack.md)** for how the tokens are used.
 Set `CODING_AGENT` to `claude-code` or `codex` to choose the default coding agent.
 Each coding task can override it with the optional `agent` parameter; the tool lists
 agents available from your credentials. When unset, the default is Claude Code,
-or Codex when only an OpenAI key is available. Codex also supports Bedrock credentials;
+or Codex when only Codex credentials are available. Codex also supports Bedrock credentials;
 set `AWS_REGION` to a region with access to `openai.gpt-5.6-terra`.
+
+Codex uses `CODEX_API_KEY` or `OPENAI_API_KEY` first, then a saved `auth.json` login,
+then Bedrock credentials. To reuse a Codex login, set `CODEX_HOME` to its writable
+configuration directory before starting Prism; the default is `<data dir>/.codex`.
 
 `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID` only matter on the **first** boot
 with an empty database; later boots reuse the stored workspace.

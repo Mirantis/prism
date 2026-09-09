@@ -245,10 +245,10 @@ export default defineConfig({
         // their expected percentage from the bundled catalog, so a fresher remote
         // window would make them flaky by design.
         MODELS_DEV_URL: '',
-        // Voice chat, pointed at the mock below. The key is required even against
-        // a local server, and is invented: nothing authenticates it.
+        // Voice tests default to an invented key for the local mock. An explicit
+        // empty key lets coding tests use a saved login or Bedrock credentials.
         OPENAI_REALTIME_URL: `ws://127.0.0.1:${MOCK_REALTIME_PORT}/v1/realtime`,
-        OPENAI_API_KEY: 'sk-e2e-not-a-real-key',
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? 'sk-e2e-not-a-real-key',
       },
     },
     {

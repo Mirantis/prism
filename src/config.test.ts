@@ -5,7 +5,11 @@
  * from setup.ts so we test the real implementation.
  */
 
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 // Undo the global mock from setup.ts
 vi.unmock('./config');
@@ -21,11 +25,17 @@ vi.mock('./logger', () => ({ logger: { warn: mockWarn } }));
 
 describe('config', () => {
   const originalEnv = { ...process.env };
+  let codexHome: string;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-config-codex-'));
+    process.env.CODEX_HOME = codexHome;
+    delete process.env.CODEX_API_KEY;
     vi.resetModules();
   });
+
+  afterEach(() => fs.rmSync(codexHome, { recursive: true, force: true }));
 
   afterAll(() => {
     process.env = originalEnv;
@@ -239,6 +249,22 @@ describe('config', () => {
 
     it('uses Claude Code without credentials', async () => {
       expect((await loadConfig()).codingAgent).toBe('claude-code');
+    });
+
+    it('enables Codex from a saved login without environment credentials', async () => {
+      fs.writeFileSync(path.join(codexHome, 'auth.json'), JSON.stringify({
+        auth_mode: 'chatgpt', tokens: { access_token: 'test-access', refresh_token: 'test-refresh' },
+      }));
+      const cfg = await loadConfig();
+      expect(cfg.availableCodingAgents).toEqual(['codex']);
+      expect(cfg.codingAgent).toBe('codex');
+    });
+
+    it('enables Codex from its explicit API key', async () => {
+      process.env.CODEX_API_KEY = 'test-codex-key';
+      const cfg = await loadConfig();
+      expect(cfg.availableCodingAgents).toEqual(['codex']);
+      expect(cfg.codingAgent).toBe('codex');
     });
 
     it('detects only Claude Code from its Bedrock switch', async () => {

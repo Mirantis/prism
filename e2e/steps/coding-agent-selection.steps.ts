@@ -5,7 +5,7 @@ import { expect, test } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
 import { DEFAULT_AGENT_ID, E2E_WORKSPACE } from '../fixtures/test-data';
 import { hasClaudeCodeCredentials } from '../../src/lib/coding-agents/claude-code/credentials';
-import { hasBedrockCredentials } from '../../src/lib/coding-agents/bedrock-credentials';
+import { codexAuthMethod } from '../../src/lib/coding-agents/codex/credentials';
 import { getPrisma } from '../support/db-helper';
 import type { ToolCallRecord } from '../../src/types';
 
@@ -73,8 +73,15 @@ Then('the coding task completed through delegation', async ({ page }) => {
 
 Given('both coding agents have test credentials', async () => {
   const hasBoth = hasClaudeCodeCredentials(process.env) &&
-    (process.env.OPENAI_API_KEY || hasBedrockCredentials(process.env));
+    codexAuthMethod(process.env);
   test.skip(!hasBoth, 'Agent selection needs credentials for both Claude Code and Codex.');
+});
+
+Given('Codex has a saved test login', async () => {
+  test.skip(!process.env.CODEX_HOME || codexAuthMethod(process.env) !== 'saved',
+    'Saved-login coverage needs CODEX_HOME with auth.json and empty API key environment variables.');
+  expect(process.env.OPENAI_API_KEY).toBe('');
+  expect(process.env.CODEX_API_KEY || '').toBe('');
 });
 
 When('I ask for a coding task using {string}', async ({ page }, agent: string) => {
