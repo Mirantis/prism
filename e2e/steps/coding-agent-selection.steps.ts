@@ -22,7 +22,7 @@ When('I ask the coding agent to plan a change', async ({ page }) => {
   const home = new HomePage(page);
   await home.navigate();
   await home.typeMessage(
-    `Use coding_agent in plan mode to read ${filename} and plan changing its contents to exactly after. ` +
+    `Use coding_agent with model="small" and effort="low" in plan mode to read ${filename} and plan changing its contents to exactly after. ` +
     'Poll coding_agent_status until completed and retain its sessionId. Report the plan and sessionId.',
   );
   await home.sendMessage();
@@ -36,7 +36,7 @@ Then('the coding task file contains {string}', async ({}, content: string) => {
 When('I ask the coding agent to implement its plan', async ({ page }) => {
   const home = new HomePage(page);
   await home.typeMessage(
-    'Resume that coding_agent sessionId in edit mode to implement the plan. ' +
+    'Resume that coding_agent sessionId with model="medium" and effort="high" in edit mode to implement the plan. ' +
     'Poll coding_agent_status until completed. Report the result.',
   );
   await home.sendMessage();
@@ -57,8 +57,8 @@ Then('the coding task completed through delegation', async ({ page }) => {
   const calls = await codingCalls();
   const starts = calls.filter(call => call.tool === 'coding_agent');
   expect(starts).toHaveLength(2);
-  expect(JSON.parse(starts[0].input).mode).toBe('plan');
-  expect(JSON.parse(starts[1].input)).toMatchObject({ mode: 'edit', sessionId: expect.any(String) });
+  expect(JSON.parse(starts[0].input)).toMatchObject({ mode: 'plan', model: 'small', effort: 'low' });
+  expect(JSON.parse(starts[1].input)).toMatchObject({ mode: 'edit', model: 'medium', effort: 'high', sessionId: expect.any(String) });
   const statuses = calls.filter(call => call.tool === 'coding_agent_status' && call.success)
     .map(call => JSON.parse(call.output));
   const plan = statuses.find(status => status.completed && status.stopReason === 'end_turn');

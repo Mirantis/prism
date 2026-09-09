@@ -21,6 +21,12 @@ export const codingAgentInput = z.object({
     `Coding agent to use. Available values: ${config.availableCodingAgents.join(', ') || 'none detected'}. Default: ${config.codingAgent}. Use the same agent when resuming a session.`,
   ),
   prompt: z.string().describe('The task for the sub-agent to perform'),
+  model: z.enum(['small', 'medium', 'large']).optional().describe(
+    'Model tier for this task. Small is for mechanical edits and focused reads. Medium is for routine implementation and debugging. Large is for cross-file analysis and design changes. Omit to keep the deployment model.',
+  ),
+  effort: z.enum(['low', 'medium', 'high']).optional().describe(
+    'Reasoning effort for this task. Low is for straightforward tasks with clear steps. Medium is for tasks that need some investigation. High is for difficult reasoning and complex tradeoffs. Omit to keep the deployment effort.',
+  ),
   workdir: z
     .string()
     .optional()
@@ -81,6 +87,8 @@ export async function runCodingAgent(
     workdir,
     appendSystemPrompt: input.appendSystemPrompt,
     mode: input.mode,
+    modelTier: input.model,
+    effort: input.effort,
     maxTurns: input.maxTurns,
     sessionId: input.sessionId,
     debug: input.debug,

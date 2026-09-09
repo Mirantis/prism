@@ -40,6 +40,8 @@ export interface AgentTaskParams {
   workdir?: string;
   appendSystemPrompt?: string;
   mode?: 'edit' | 'plan';
+  modelTier?: CodingAgentTask['modelTier'];
+  effort?: CodingAgentTask['effort'];
   maxTurns?: number;
   sessionId?: string;
   debug?: boolean;
@@ -107,6 +109,8 @@ export class AgentTaskManager {
       workdir: params.workdir,
       env: sandboxEnv(),
       mode: params.mode ?? 'edit',
+      modelTier: params.modelTier,
+      effort: params.effort,
       maxTurns: params.maxTurns ?? DEFAULT_MAX_TURNS,
       appendSystemPrompt: params.appendSystemPrompt,
       sessionId: params.sessionId,
