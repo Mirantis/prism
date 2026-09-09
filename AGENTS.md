@@ -689,6 +689,38 @@ the name the *server* gave it and the call still goes out under that name.
 same deterministic, idempotent function, so replayed history agrees with the
 tools block.
 
+#### Mid-conversation tool changes
+
+A thread's tool set moves between turns — a plugin MCP server connects, a mode
+gate opens, a skill appears — and a changed tools block invalidates the whole
+cached prefix. On a model that accepts it, `invoke.ts` names the change instead:
+one `{ role: 'system', content: '' }` message with a `toolChanges` entry per
+added and removed tool, appended to `messages` with `allowSystemInMessages: true`.
+`services/tool-set-tracker.service.ts` holds each thread's previous set and
+answers what changed. One record per thread **and invocation mode**: a goal turn
+and a thread-bound cron run share a thread with chat and each declares its
+mode's own set, so per mode a turn diffs against the previous turn in the same
+mode.
+
+Four rules hold it together. The announcement is **last in `messages`, or
+directly before an assistant message** — the initial system prompt is the one
+place it must not be, where the provider drops it with a warning. A removed tool
+is **declared once more on its removal turn**, since the API resolves a
+`tool_removal` against that request's own declarations and rejects the whole
+request otherwise; the extra declaration carries a stub executor, because a tool
+the SDK's loop cannot resolve ends the turn. The **breakpoint moves to the
+message before the announcement**, whose own `cache_control` the provider drops.
+And the model is checked against an allowlist through `supportsToolChanges` on
+the `LlmProvider` seam (`lib/llm-providers/tool-changes.ts`), because the
+provider sends the betas whenever `toolChanges` is present and a model that does
+not accept them fails every request. The startup log reports that answer for the
+configured model, since an id the allowlist does not hold leaves the feature off.
+
+On a supporting model the early-stopping summary call declares the turn's tools
+with `toolChoice: 'none'`: an announcement it carries names a tool the API
+resolves against that request's own declarations, and the declared block keeps
+the summary's prefix identical to the main call's, so it reads that cache entry.
+
 ## Key Services
 
 | Service | File | Purpose |
@@ -733,6 +765,7 @@ src/
 │   ├── conversation-engine.service.ts # Chat flow orchestration: thread mgmt, iterates invokeStream() with per-step publish, local message delivery
 │   ├── message-delivery.service.ts # Unified message publish: store + channel-scoped or broadcast delivery
 │   ├── thread-turn.service.ts  # Per-thread mutex + mid-turn inbox (turn steering, coalesced follow-ups)
+│   ├── tool-set-tracker.service.ts # The tool set a thread's previous turn declared, so the next turn can name what changed. One record per thread and invocation mode; in memory, bounded at 200 records
 │   ├── agent-workspace.service.ts # Agent CRUD, ownership validation, platform tokens, subagents; `writeWorkspaceDoc` / `rollbackWorkspaceDoc`, the one write path for an identity document
 │   ├── document-revision.service.ts # Identity-document revisions: record, history (with drift), read one, restore, 500-per-document bound
 │   ├── agent-status.service.ts  # Direct Prisma writes for agent fields (heartbeat timestamp/status)
@@ -809,7 +842,7 @@ src/
 │   ├── backend-client.ts       # HTTP client for backend internal REST API
 │   ├── workspace-docs.ts       # The seven identity-document columns, their labels, and the actor/method words a revision is described with
 │   ├── llm-providers/          # One folder per chat vendor, plus the shared contract and the selector
-│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (the Anthropic breakpoint, Converse's own `BEDROCK_CACHE_POINT`, or the empty `NO_CACHE_POINT` — which covers both a vendor that caches without breakpoints and a model whose support is unknown) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares. The startup log reads this contract for the configured model, so no caller names a vendor to report prompt caching
+│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (the Anthropic breakpoint, Converse's own `BEDROCK_CACHE_POINT`, or the empty `NO_CACHE_POINT` — which covers both a vendor that caches without breakpoints and a model whose support is unknown) its `supportsToolChanges` answer for one model (see **Mid-conversation tool changes**), and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares. The startup log reads this contract for the configured model, so no caller names a vendor to report prompt caching
 │   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai/openrouter/anthropic), passes each its optional gateway baseURL (anthropic is direct-only, no argument); `isProviderConfigured()`
 │   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors (and the bedrock embedding provider) need: AWS credential resolution, `isAnthropicModelId()`
 │   │   ├── bedrock/
