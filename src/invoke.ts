@@ -593,11 +593,17 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           model,
           system: cachedSystem,
           messages: summaryMessages,
-          ...(supportsToolChanges ? {
-            allowSystemInMessages: true,
-            tools: cachedTools,
-            toolChoice: 'none' as const,
-          } : {}),
+          // On a supporting model the summary call declares this turn's tools and
+          // forbids calling them, rather than sending none. Two reasons: an
+          // announcement it carries names a tool the API resolves against this
+          // request's own declarations, and the declared block keeps the
+          // `[tools, system]` prefix identical to the main call's, so the summary
+          // reads that cache entry instead of billing the system prompt again.
+          // `toolChoice: 'none'` is what asks for prose, which is all the
+          // early-stopping prompt wants.
+          ...(supportsToolChanges
+            ? { allowSystemInMessages: true, tools: cachedTools, toolChoice: 'none' as const }
+            : {}),
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           abortSignal: request.abortSignal,
           ...turnTelemetry('invoke-early-stopping'),

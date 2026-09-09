@@ -649,6 +649,19 @@ describe('invoke', () => {
       expect(summary.tools).toHaveProperty('added');
       expect(summary.toolChoice).toBe('none');
       expect(summary.messages.at(-1).role).toBe('system');
+
+      // A summary that carries no announcement still declares the turn's tools
+      // and forbids them, so its [tools, system] prefix stays the one the main
+      // call cached. `toolChoice` is what asks for prose.
+      mockGenerateText.mockResolvedValueOnce({
+        text: 'working',
+        steps: Array.from({ length: 100 }, () => ({ text: 'working', toolCalls: [], toolResults: [] })),
+      });
+      await invoke(request);
+      const unchanged = mockGenerateText.mock.calls[4][0];
+      expect(unchanged.messages.some((m: StepMessage) => m.role === 'system')).toBe(false);
+      expect(unchanged.tools).toHaveProperty('added');
+      expect(unchanged.toolChoice).toBe('none');
     });
   });
 
