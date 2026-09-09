@@ -549,7 +549,7 @@ describe('invoke', () => {
       expect(call.tools).toHaveProperty('added');
     });
 
-    it('declares a removal without an executor and preserves replayed calls', async () => {
+    it('declares a removed tool once more, with a stub executor, and preserves replayed calls', async () => {
       mockGetMCPTools.mockResolvedValue({ removed: { description: 'removed tool' } });
       await invoke(request);
       mockGetMCPTools.mockResolvedValue({});
@@ -559,15 +559,18 @@ describe('invoke', () => {
         { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call-1', toolName: 'removed', output: { type: 'text', value: 'done' } }] },
         { role: 'user', content: 'Continue' },
       ];
-      mockBuildConversationMessages.mockReturnValue(history);
+      // A copy per call, because `invoke` appends to the array it is given.
+      mockBuildConversationMessages.mockImplementation(() => [...history]);
       await invoke(request);
       const call = mockGenerateText.mock.calls[1][0];
-      expect(call.messages.slice(0, 4)).toEqual(history.slice(0, 4));
+      expect(call.messages.slice(0, history.length)).toEqual(history);
       expect(call.messages.at(-1).providerOptions.anthropic.toolChanges)
         .toEqual([{ type: 'tool_removal', toolName: 'removed' }]);
       expect(call.tools.removed.description).toBe('No longer available.');
-      expect(call.tools.removed.execute).toBeUndefined();
-      mockBuildConversationMessages.mockReturnValue(history.slice(0, 4));
+      // The stub answers: a tool declared without an executor ends the turn the
+      // moment the model calls it.
+      await expect(call.tools.removed.execute({}, {})).resolves.toBe('This tool is no longer available.');
+      // The turn after that replays the same call with the tool gone.
       await invoke(request);
       const next = mockGenerateText.mock.calls[2][0];
       expect(next.tools ?? {}).not.toHaveProperty('removed');

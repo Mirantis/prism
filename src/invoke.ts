@@ -198,12 +198,20 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       : [];
     const requestTools = { ...gatedTools };
     if (supportsToolChanges) {
-      // The API resolves removal references against this request's declarations.
+      // The API resolves removal references against this request's declarations,
+      // and rejects the whole request when a tool_removal names a tool the
+      // request does not declare. So a removed tool is declared once more, on
+      // the turn that announces its removal, and is gone from the next turn.
+      //
+      // It keeps an executor: a tool declared without one ends the turn the
+      // moment the model calls it, because the step then has a tool call the
+      // SDK's loop cannot resolve.
       for (const change of toolChanges) {
         if (change.type !== 'tool_removal') continue;
         requestTools[change.toolName] = {
           description: 'No longer available.',
           inputSchema: jsonSchema({ type: 'object', properties: {} }),
+          execute: async () => 'This tool is no longer available.',
         };
       }
     }
