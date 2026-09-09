@@ -650,6 +650,28 @@ if (!isValidCodingAgent) {
   );
 }
 
+function codingAgentModelOverride(name: string): string | undefined {
+  const raw = process.env[name];
+  if (raw === undefined) return undefined;
+  const model = raw.trim();
+  if (model) return model;
+  logger.warn({ variable: name }, '[Startup] empty coding agent model override; using the default');
+  return undefined;
+}
+
+const codingAgentModelOverrides = {
+  'claude-code': {
+    small: codingAgentModelOverride('CLAUDE_CODE_MODEL_SMALL'),
+    medium: codingAgentModelOverride('CLAUDE_CODE_MODEL_MEDIUM'),
+    large: codingAgentModelOverride('CLAUDE_CODE_MODEL_LARGE'),
+  },
+  codex: {
+    small: codingAgentModelOverride('CODEX_MODEL_SMALL'),
+    medium: codingAgentModelOverride('CODEX_MODEL_MEDIUM'),
+    large: codingAgentModelOverride('CODEX_MODEL_LARGE'),
+  },
+};
+
 /** Same shape, for the saved copies of oversized tool results. */
 function resolveToolOutputTtlHours(): number {
   const raw = Number.parseFloat(process.env.TOOL_OUTPUT_TTL_HOURS ?? '');
@@ -879,6 +901,7 @@ export const config = {
   invalidToolRiskGateMode,
 
   codingAgent,
+  codingAgentModelOverrides,
   availableCodingAgents,
 
   // Overrides the input-context window used by the context-window indicator.

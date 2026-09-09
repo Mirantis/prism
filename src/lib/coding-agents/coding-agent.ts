@@ -38,6 +38,8 @@ export interface CodingAgentTask {
   env: NodeJS.ProcessEnv;
   /** `plan` analyzes only; `edit` may change files and run commands. */
   mode: 'edit' | 'plan';
+  modelTier?: 'small' | 'medium' | 'large';
+  effort?: 'low' | 'medium' | 'high';
   maxTurns: number;
   /** Extra instructions for the agent, kept alongside its own defaults. */
   appendSystemPrompt?: string;

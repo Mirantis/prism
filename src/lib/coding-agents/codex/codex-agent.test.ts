@@ -1,3 +1,4 @@
+import { config } from '../../../config';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -235,4 +236,86 @@ describe('Codex adapter', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+describe('model tier and effort', () => {
+  const tiers = ['small', 'medium', 'large'] as const;
+  const models = ["gpt-5.6-luna","gpt-5.6-terra","gpt-5.6-sol"];
+  for (const sessionId of [undefined, 'session-1']) {
+    it.each(tiers)('maps %s for session ' + sessionId, async (modelTier) => {
+      const child = new FakeChild();
+      let args: readonly string[] = [];
+      const run = createCodexAgent((_command, argv) => {
+        args = argv;
+        return child.asChildProcess();
+      }).run({ ...task, modelTier, sessionId });
+      expect(args[args.indexOf('--model') + 1]).toBe(models[tiers.indexOf(modelTier)]);
+      child.finish(0);
+      await Array.fromAsync(run.events);
+    });
+
+    it.each(['low', 'medium', 'high'] as const)('passes %s effort for session ' + sessionId, async (effort) => {
+      const child = new FakeChild();
+      let args: readonly string[] = [];
+      const run = createCodexAgent((_command, argv) => {
+        args = argv;
+        return child.asChildProcess();
+      }).run({ ...task, effort, sessionId });
+      expect(args).toContain('model_reasoning_effort="' + effort + '"');
+      expect(args).not.toContain('--model');
+      child.finish(0);
+      await Array.fromAsync(run.events);
+    });
+  }
+
+  it.each(tiers)('uses the override for %s', async (modelTier) => {
+    const overrides = config.codingAgentModelOverrides['codex'];
+    const previous = overrides[modelTier];
+    overrides[modelTier] = 'custom-model';
+    try {
+      const child = new FakeChild();
+      let args: readonly string[] = [];
+      const run = createCodexAgent((_command, argv) => {
+        args = argv;
+        return child.asChildProcess();
+      }).run({ ...task, modelTier, effort: 'high', sessionId: 'session-1' });
+      expect(args[args.indexOf('--model') + 1]).toBe('custom-model');
+      child.finish(0);
+      await Array.fromAsync(run.events);
+    } finally {
+      overrides[modelTier] = previous;
+    }
+  });
+
+  it('preserves deployment defaults when both parameters are omitted', async () => {
+    const child = new FakeChild();
+    let args: readonly string[] = [];
+    const run = createCodexAgent((_command, argv) => {
+      args = argv;
+      return child.asChildProcess();
+    }).run(task);
+    expect(args).not.toContain('--model');
+    expect(args).not.toContain('--effort');
+    expect(args.some(arg => arg.startsWith('model_reasoning_effort='))).toBe(false);
+    child.finish(0);
+    await Array.fromAsync(run.events);
+  });
+});
+
+it.each([
+  ['small', 'openai.gpt-5.6-luna'],
+  ['medium', 'openai.gpt-5.6-terra'],
+  ['large', 'openai.gpt-5.6-sol'],
+] as const)('uses the Bedrock model for %s', async (modelTier, model) => {
+  const child = new FakeChild();
+  let args: readonly string[] = [];
+  const run = createCodexAgent((_command, argv) => {
+    args = argv;
+    return child.asChildProcess();
+  }).run({ ...task, env: { AWS_PROFILE: 'test-profile' }, modelTier, effort: 'low', sessionId: 'session-1' });
+  expect(args[args.indexOf('--model') + 1]).toBe(model);
+  expect(args.some(arg => arg.startsWith('model='))).toBe(false);
+  expect(args).toContain('model_reasoning_effort="low"');
+  child.finish(0);
+  await Array.fromAsync(run.events);
 });

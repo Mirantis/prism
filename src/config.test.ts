@@ -46,6 +46,23 @@ describe('config', () => {
     return mod.config;
   }
 
+  for (const [agent, prefix] of [['claude-code', 'CLAUDE_CODE'], ['codex', 'CODEX']] as const) {
+    it.each(['small', 'medium', 'large'] as const)('reads ' + agent + ' %s model override', async (tier) => {
+      const name = prefix + '_MODEL_' + tier.toUpperCase();
+      delete process.env[name];
+      expect((await loadConfig()).codingAgentModelOverrides[agent][tier]).toBeUndefined();
+      process.env[name] = '  custom-model  ';
+      vi.resetModules();
+      expect((await loadConfig()).codingAgentModelOverrides[agent][tier]).toBe('custom-model');
+      process.env[name] = '   ';
+      vi.resetModules();
+      expect((await loadConfig()).codingAgentModelOverrides[agent][tier]).toBeUndefined();
+      expect(mockWarn).toHaveBeenCalledWith(
+        { variable: name }, '[Startup] empty coding agent model override; using the default',
+      );
+    });
+  }
+
   it('reads PORT with default 3003', async () => {
     delete process.env.PORT;
     const cfg = await loadConfig();

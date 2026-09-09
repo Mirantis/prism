@@ -1,3 +1,4 @@
+import { config } from '../../../config';
 /**
  * The Claude Code adapter against a fake `claude`: the argv it builds for each
  * mode and gate setting, the events it reads out of the stream-json output, and
@@ -300,5 +301,69 @@ describe('prepareHome', () => {
     const home = agent.prepareHome({ dataDir: tmp, skillsDir: path.join(tmp, 'skills') });
     expect(home.skillsLinked).toBe(false);
     expect(fs.existsSync(path.join(claudeSkills, 'keep.txt'))).toBe(true);
+  });
+});
+
+describe('model tier and effort', () => {
+  const tiers = ['small', 'medium', 'large'] as const;
+  const models = ["haiku","sonnet","opus"];
+  for (const sessionId of [undefined, 'session-1']) {
+    it.each(tiers)('maps %s for session ' + sessionId, async (modelTier) => {
+      const child = new FakeChild();
+      let args: readonly string[] = [];
+      const run = createClaudeCodeAgent((_command, argv) => {
+        args = argv;
+        return child.asChildProcess();
+      }).run({ ...baseTask, modelTier, sessionId });
+      expect(args[args.indexOf('--model') + 1]).toBe(models[tiers.indexOf(modelTier)]);
+      child.finish(0);
+      await Array.fromAsync(run.events);
+    });
+
+    it.each(['low', 'medium', 'high'] as const)('passes %s effort for session ' + sessionId, async (effort) => {
+      const child = new FakeChild();
+      let args: readonly string[] = [];
+      const run = createClaudeCodeAgent((_command, argv) => {
+        args = argv;
+        return child.asChildProcess();
+      }).run({ ...baseTask, effort, sessionId });
+      expect(args[args.indexOf('--effort') + 1]).toBe(effort);
+      expect(args).not.toContain('--model');
+      child.finish(0);
+      await Array.fromAsync(run.events);
+    });
+  }
+
+  it.each(tiers)('uses the override for %s', async (modelTier) => {
+    const overrides = config.codingAgentModelOverrides['claude-code'];
+    const previous = overrides[modelTier];
+    overrides[modelTier] = 'custom-model';
+    try {
+      const child = new FakeChild();
+      let args: readonly string[] = [];
+      const run = createClaudeCodeAgent((_command, argv) => {
+        args = argv;
+        return child.asChildProcess();
+      }).run({ ...baseTask, modelTier, effort: 'high', sessionId: 'session-1' });
+      expect(args[args.indexOf('--model') + 1]).toBe('custom-model');
+      child.finish(0);
+      await Array.fromAsync(run.events);
+    } finally {
+      overrides[modelTier] = previous;
+    }
+  });
+
+  it('preserves deployment defaults when both parameters are omitted', async () => {
+    const child = new FakeChild();
+    let args: readonly string[] = [];
+    const run = createClaudeCodeAgent((_command, argv) => {
+      args = argv;
+      return child.asChildProcess();
+    }).run(baseTask);
+    expect(args).not.toContain('--model');
+    expect(args).not.toContain('--effort');
+    expect(args.some(arg => arg.startsWith('model_reasoning_effort='))).toBe(false);
+    child.finish(0);
+    await Array.fromAsync(run.events);
   });
 });
