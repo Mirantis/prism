@@ -7,7 +7,7 @@
  * the lock is released.
  *
  * Two surfaces reach it and the session is the same either way. The chat composer sends
- * its audio on the socket it already has. The Scratchpad page has a socket of its own,
+ * its audio on the socket it already has. The Computer page has a socket of its own,
  * because it also carries a computer's screen, and asks for that computer here.
  *
  * The session is the whole of what a call is here — nothing is persisted. No transcript,
