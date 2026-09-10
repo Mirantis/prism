@@ -15,6 +15,10 @@ import { IncomingMessage } from 'http';
 import { logger } from '../logger';
 import { config } from '../config';
 import { isAllowedOrigin } from '../lib/origin-guard';
+import { serveUpgrades } from './websocket-upgrades';
+
+/** Where the Web UI's chat connects. The voice chat's own path is in `voice-endpoint.ts`. */
+const CHAT_PATH = '/api/ws';
 import { conversationEngineService } from './conversation-engine.service';
 import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
@@ -198,12 +202,7 @@ class WebSocketGatewayService {
 
     // The handshake is checked here, ahead of `handleUpgrade` — the shape ws
     // supports, rather than `verifyClient`.
-    server.on('upgrade', (req, socket, head) => {
-      const { pathname } = new URL(req.url ?? '', 'http://localhost');
-      // Another endpoint's upgrade: the voice chat's `/api/voice` shares this server
-      // and picks its own off the same event.
-      if (pathname !== '/api/ws') return;
-
+    serveUpgrades(server, CHAT_PATH, (req, socket, head) => {
       // A WebSocket handshake is exempt from the same-origin policy, so the
       // same rules the HTTP routes get are applied to it here.
       if (

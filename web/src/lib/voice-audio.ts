@@ -30,6 +30,13 @@ export interface VoiceAudioOptions {
 }
 
 export interface VoiceAudio {
+  /**
+   * Let the browser start the speakers, if it was holding them until a gesture.
+   *
+   * Called from a click the page already handles. Playback is the half that needs
+   * permission; the microphone was granted when the call opened.
+   */
+  resume: () => void;
   /** Play a frame of the agent's speech, pcm16 at the session's rate. */
   enqueue: (frame: ArrayBuffer) => void;
   /**
@@ -69,9 +76,12 @@ export async function startVoiceAudio(options: VoiceAudioOptions): Promise<Voice
   try {
     context = new AudioContext({ sampleRate: options.sampleRate });
     await context.audioWorklet.addModule(WORKLET_URL);
-    // A tab that has not played audio yet starts suspended. The call begins in a click,
-    // so this is allowed to resume.
-    if (context.state === 'suspended') await context.resume();
+    // A tab that has not played audio yet starts suspended. Asked to resume, and never
+    // awaited: a page that opens a call on mount has no user activation behind it, and
+    // there the promise is held until the browser allows audio rather than rejected. The
+    // call itself does not need the speakers, so it goes on without them and `resume()`
+    // is asked again on the next click the page sees.
+    if (context.state === 'suspended') void context.resume().catch(() => undefined);
 
     const source = context.createMediaStreamSource(stream);
     // One node for both directions: its input is the microphone and its output is what
@@ -98,13 +108,20 @@ export async function startVoiceAudio(options: VoiceAudioOptions): Promise<Voice
     const ctx = context;
     const play = (stream_: 'voice' | 'computer') => (frame: ArrayBuffer) =>
       io.port.postMessage({ stream: stream_, pcm: frame }, [frame]);
+    let stopped = false;
     return {
+      resume: () => {
+        if (ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
+      },
       enqueue: play('voice'),
       enqueueComputer: play('computer'),
       // The same port as the audio, so a barge-in cannot be applied before the frames
       // it is meant to drop.
       clear: () => io.port.postMessage({ clear: true }),
+      // Single-shot: closing a context twice rejects, and every caller ends a call once.
       stop: async () => {
+        if (stopped) return;
+        stopped = true;
         io.port.onmessage = null;
         source.disconnect();
         io.disconnect();

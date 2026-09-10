@@ -11,10 +11,11 @@
  * out, the user's pointer, keyboard and shared screen in.
  */
 
-import type { Server as HttpServer, IncomingMessage } from 'http';
+import type { Server as HttpServer } from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { logger } from '../../logger';
 import { isAllowedOrigin } from '../../lib/origin-guard';
+import { serveUpgrades } from '../websocket-upgrades';
 import { config } from '../../config';
 import { isRealtimeConfigured } from '../meeting/openai-endpoint';
 import { MEETING_SAMPLE_RATE } from '../meeting/resampler';
@@ -61,9 +62,15 @@ function tagged(tag: number, pcm: Buffer): Buffer {
   return Buffer.concat([Buffer.from([tag, 0]), pcm]);
 }
 
-function pathnameOf(req: IncomingMessage): string {
-  return new URL(req.url ?? '/', 'http://localhost').pathname;
-}
+/**
+ * How much unsent data the socket may hold before a screen picture is dropped.
+ *
+ * The call's audio and the agent's screen share one socket, and the screen is the half
+ * that can be skipped: a dropped picture costs one frame of a stream that sends another
+ * within the tick, while a late frame of speech is heard. Roughly two pictures' worth, so
+ * an ordinary burst is buffered and a client that has stopped draining is not fed.
+ */
+const SCREEN_BACKLOG_BYTES = 256 * 1024;
 
 /** The greeting the agent opens with, since the client opened a page rather than pressed a button. */
 const GREETING =
@@ -72,19 +79,18 @@ const GREETING =
 
 class VoiceEndpoint {
   private wss: WebSocketServer | null = null;
-  /** The socket whose request holds the session, so only it can end one. */
-  private holder: WebSocket | null = null;
   /**
-   * Connections are served one at a time.
+   * The socket that holds this endpoint, or is in the middle of taking it.
    *
-   * Opening a session takes seconds, most of it the computer booting, and the decision
-   * below reads state a concurrent start would be in the middle of changing. Two pages
-   * opening at once is a real case: a reload is two sockets whose lifetimes overlap.
+   * Claimed the moment a connection arrives, before anything is awaited, because that is
+   * the only moment nothing else can be running. Everything a socket does afterwards is
+   * conditional on still being the holder: a session takes seconds to open, mostly the
+   * computer booting, and a page that reloads is two sockets whose lifetimes overlap.
    */
-  private tail: Promise<void> = Promise.resolve();
+  private holder: WebSocket | null = null;
 
   /**
-   * Pick this endpoint's upgrades off the shared HTTP server.
+   * Serve this endpoint's upgrades on the shared HTTP server.
    *
    * `noServer` because a `ws` server bound with `path` answers every other path's
    * upgrade with a 400, and `/api/ws` already lives on the same server.
@@ -92,8 +98,7 @@ class VoiceEndpoint {
   initialize(server: HttpServer): void {
     const wss = new WebSocketServer({ noServer: true });
     this.wss = wss;
-    server.on('upgrade', (req, socket, head) => {
-      if (pathnameOf(req) !== VOICE_CHAT_PATH) return;
+    serveUpgrades(server, VOICE_CHAT_PATH, (req, socket, head) => {
       // A WebSocket handshake is exempt from the same-origin policy, so the rules the
       // HTTP routes and `/api/ws` get are applied to it here.
       if (
@@ -110,7 +115,10 @@ class VoiceEndpoint {
         return;
       }
       wss.handleUpgrade(req, socket, head, (ws) => {
-        this.tail = this.tail.then(() => this.serve(ws)).catch((err: unknown) => {
+        // Before anything is awaited: `ws` emits `error` for a malformed frame, and an
+        // `error` with no listener is an uncaught exception that takes the process down.
+        ws.on('error', (err) => logger.warn({ err }, '[VoiceChat] Socket error'));
+        void this.serve(ws).catch((err: unknown) => {
           logger.error({ err }, '[VoiceChat] The endpoint failed to serve a connection');
         });
       });
@@ -137,30 +145,56 @@ class VoiceEndpoint {
       return;
     }
     if (ws.readyState !== WebSocket.OPEN) return;
-    send({ type: 'status', state: 'connecting' });
 
-    // A page that reloaded is a second socket for the same surface, so it takes the
-    // session over rather than being refused. A meeting or a call from the chat composer
-    // is somebody else's, and `start()` refuses this one in words.
-    if (voiceChatService.surface === 'computer') {
+    // The claim, taken here so that two pages opening at once cannot both believe they
+    // have it. Whoever held it is displaced: a page that reloaded is a second socket for
+    // the same surface, and taking the call over is what it wants. A meeting or a call
+    // from the chat composer is somebody else's, and `start()` refuses this one in words.
+    const displaced = this.holder;
+    this.holder = ws;
+    send({ type: 'status', state: 'connecting' });
+    if (displaced) {
+      // Ends its session, which also cancels one still starting, and closes its socket so
+      // its page stops holding a microphone for a call it no longer has.
       await voiceChatService.stop('another page took over the voice chat', 'disconnected');
+      displaced.close(1000, 'another page took over the voice chat');
     }
+    if (this.holder !== ws) return;
 
     // The service says why before it says the session is over, and the page renders one
     // status at a time, so the reason is carried into the ending rather than replaced
     // by it.
     let reason: string | undefined;
+    /** Pictures skipped since the last one that went out, for one log line rather than many. */
+    let dropped = 0;
     const signal: VoiceChatSignal = {
       sendAudio: (pcm) => sendTagged(VOICE_FRAME, pcm),
       sendClear: () => send({ type: 'clear' }),
-      screen: (data) => send({ type: 'screen', data }),
+      screen: (data) => {
+        if (ws.bufferedAmount > SCREEN_BACKLOG_BYTES) {
+          dropped += 1;
+          return;
+        }
+        if (dropped > 0) {
+          logger.debug(`[VoiceChat] Dropped ${dropped} screen picture(s) to a slow client`);
+          dropped = 0;
+        }
+        send({ type: 'screen', data });
+      },
       computerAudio: (pcm) => sendTagged(BROWSER_AUDIO_FRAME, pcm),
-      state: (state, info) =>
-        send(
-          state === 'live'
-            ? { type: 'status', state: 'ready', desktop: info?.desktop ?? false }
-            : { type: 'status', state: 'ended', message: reason },
-        ),
+      state: (state, info) => {
+        if (state === 'live') {
+          send({ type: 'status', state: 'ready', desktop: info?.desktop ?? false });
+          return;
+        }
+        send({ type: 'status', state: 'ended', message: reason });
+        // The session ended without this socket asking — the model's own session closed,
+        // or the runtime is shutting down. The socket holds nothing now, and a client
+        // that does not hang up must not go on feeding audio into whatever session comes
+        // next.
+        if (this.holder === ws) this.holder = null;
+        ws.close(1000, 'the voice chat ended');
+      },
       error: (message) => {
         reason = message;
         send({ type: 'status', state: 'error', message });
@@ -182,11 +216,6 @@ class VoiceEndpoint {
         logger.error({ err }, '[VoiceChat] Failed to end the session of a disconnected client');
       });
     });
-    ws.on('error', (err) => logger.warn({ err }, '[VoiceChat] Socket error'));
-
-    // Claimed before the service is asked: the service reports `live` from inside
-    // `start()`, so the client can be sending audio while this is still waiting.
-    this.holder = ws;
     const started = await voiceChatService.start({
       userId: config.ownerUserId,
       agentId,
@@ -198,15 +227,15 @@ class VoiceEndpoint {
       sampleRate: MEETING_SAMPLE_RATE,
       greeting: GREETING,
     });
-    // The claim only survives a session this socket really holds. A refused start gives
-    // it back; a client that went away during the start takes the session with it, which
-    // its own close handler could not do while the claim was still being taken.
+    // A refused start gives the claim back. So does a client that went away while the
+    // start ran, and that one takes the session with it, since its close handler ran
+    // before there was a session to end.
     if (!started) {
       if (this.holder === ws) this.holder = null;
       if (ws.readyState === WebSocket.OPEN) ws.close(1011, 'voice chat refused');
       return;
     }
-    if (ws.readyState !== WebSocket.OPEN && this.holder === ws) {
+    if (this.holder === ws && ws.readyState !== WebSocket.OPEN) {
       this.holder = null;
       await voiceChatService.stop('the client disconnected', 'disconnected');
     }
@@ -216,6 +245,7 @@ class VoiceEndpoint {
   close(): void {
     this.holder = null;
     this.wss?.close();
+    this.wss = null;
   }
 }
 

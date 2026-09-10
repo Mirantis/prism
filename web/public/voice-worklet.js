@@ -53,6 +53,18 @@ const SPEAKING_HANGOVER_S = 0.3;
 const BACKLOG_LIMIT_S = 0.4;
 const BACKLOG_TARGET_S = 0.15;
 
+/**
+ * The same for the agent's voice, but far looser and for a rarer cause.
+ *
+ * The runtime paces speech against its own clock, a lead of about 150 ms, and cannot see
+ * this one. A drift of a fraction of a percent is nothing inside a sentence and grows
+ * through a long one, so the bound is set where the delay would be heard as a delay
+ * rather than where the drift begins. Between turns the queue empties and none of this
+ * applies.
+ */
+const VOICE_BACKLOG_LIMIT_S = 1;
+const VOICE_BACKLOG_TARGET_S = 0.4;
+
 /** Chunks of pcm16 played as one continuous stream, mixed into the output. */
 class StreamQueue {
   constructor(prerollSeconds) {
@@ -141,9 +153,11 @@ class VoiceIoProcessor extends AudioWorkletProcessor {
       const message = event.data;
       if (message.clear) {
         this.voice.clear();
-        // An interruption stops the agent now, so the next block reports it rather than
-        // waiting out the gap a burst between frames gets.
+        // An interruption stops the agent now rather than after the gap a burst between
+        // frames is given, and the cue says so at once: without this the latch stays set,
+        // and the next utterance mixes audio while the page still shows silence.
         this.silence = SPEAKING_HANGOVER_S * sampleRate;
+        this.setSpeaking(false);
         return;
       }
       const samples = new Int16Array(message.pcm);
@@ -155,6 +169,9 @@ class VoiceIoProcessor extends AudioWorkletProcessor {
         return;
       }
       this.voice.push(samples);
+      if (this.voice.frames > VOICE_BACKLOG_LIMIT_S * sampleRate) {
+        this.voice.trimTo(VOICE_BACKLOG_TARGET_S * sampleRate);
+      }
     };
   }
 

@@ -11,6 +11,8 @@ import type { PageFrame } from './use-voice-chat';
  */
 
 const FRAME_INTERVAL_MS = 1000;
+/** How long the video gets to report a size before the first picture is taken. */
+const FIRST_FRAME_MS = 300;
 const MAX_WIDTH = 1280;
 const JPEG_QUALITY = 0.6;
 
@@ -19,6 +21,8 @@ interface ShareSession {
   video: HTMLVideoElement;
   canvas: HTMLCanvasElement;
   timer: number;
+  /** The first picture, taken sooner than the timer's first tick. */
+  firstFrame: number;
 }
 
 export function useScreenShare(send: (frame: PageFrame) => void) {
@@ -31,6 +35,7 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
     if (!session) return;
     sessionRef.current = null;
     clearInterval(session.timer);
+    clearTimeout(session.firstFrame);
     session.stream.getTracks().forEach((t) => t.stop());
     session.video.srcObject = null;
     setStream(null);
@@ -76,13 +81,15 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
     };
 
     const timer = window.setInterval(capture, FRAME_INTERVAL_MS);
-    sessionRef.current = { stream: media, video, canvas, timer };
+    // The first frame as soon as the video has a size, rather than a second from now.
+    // Held so that a share ending inside those milliseconds does not send a picture after
+    // saying it stopped, which would leave the agent holding a screen nobody is sharing.
+    const firstFrame = window.setTimeout(capture, FIRST_FRAME_MS);
+    sessionRef.current = { stream: media, video, canvas, timer, firstFrame };
     media.getVideoTracks()[0]?.addEventListener('ended', stop);
     setStream(media);
     setError(null);
     send({ type: 'user_screen_started' });
-    // The first frame as soon as the video has a size, rather than a second from now.
-    window.setTimeout(capture, 300);
   }, [send, stop]);
 
   useEffect(
@@ -90,6 +97,7 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
       const session = sessionRef.current;
       if (!session) return;
       clearInterval(session.timer);
+      clearTimeout(session.firstFrame);
       session.stream.getTracks().forEach((t) => t.stop());
     },
     [],

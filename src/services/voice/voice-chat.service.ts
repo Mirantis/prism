@@ -148,11 +148,6 @@ class VoiceChatService {
     return this.state === 'live';
   }
 
-  /** Which client holds the voice, or null when nothing does. */
-  get surface(): VoiceChatSurface | null {
-    return this.state === 'idle' ? null : this.startedFrom;
-  }
-
   /**
    * Open a session for the client that asked for one.
    *
@@ -190,10 +185,21 @@ class VoiceChatService {
     let transport: SocketAudio | null = null;
     let conversation: VoiceConversation | null = null;
     let computer: AgentComputer | null = null;
+    // Each step is guarded: this runs on the way out of a failure, and a throw here would
+    // skip the lines below that free the runtime's voice, leaving it held with no session
+    // on it for the life of the process.
     const releaseLocals = async (): Promise<void> => {
-      conversation?.stop();
-      await transport?.close();
-      await computer?.stop();
+      try {
+        conversation?.stop();
+      } catch (err) {
+        logger.warn({ err }, '[VoiceChat] The conversation would not stop');
+      }
+      await transport?.close().catch((err: unknown) => {
+        logger.warn({ err }, '[VoiceChat] The transport would not close');
+      });
+      await computer?.stop().catch((err: unknown) => {
+        logger.warn({ err }, '[VoiceChat] The computer would not close');
+      });
     };
 
     try {

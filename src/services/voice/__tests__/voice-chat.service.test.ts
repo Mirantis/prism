@@ -42,6 +42,8 @@ class FakeConversation {
   readonly pushAudio = vi.fn();
   readonly stop = vi.fn();
   readonly start = vi.fn(async () => {});
+  readonly notify = vi.fn();
+  readonly speakNow = vi.fn();
   readonly sink: PlaybackSink;
   readonly sampleRate?: number;
   readonly responseMode?: string;
@@ -74,13 +76,57 @@ class FakeConversation {
 
 vi.mock('../../meeting/voice-conversation', () => ({ VoiceConversation: FakeConversation }));
 
+/** Every `AgentComputer` the service built, newest last. */
+const computers: FakeComputer[] = [];
+
+/**
+ * The agent's computer, without the browser, the desktop or the display it opens.
+ *
+ * `openBrowser` is what fails on a host that cannot carry one, so a test can make it
+ * reject and watch what the service does with the rest of the session.
+ */
+class FakeComputer {
+  static failToOpen: Error | null = null;
+  static hasDesktop = true;
+
+  readonly attach = vi.fn();
+  readonly stop = vi.fn(async () => {});
+  readonly startScreenStream = vi.fn();
+  readonly startBrowserAudio = vi.fn(() => true);
+  readonly handleInput = vi.fn();
+  readonly width = 1280;
+  readonly height = 720;
+
+  constructor() {
+    computers.push(this);
+  }
+
+  get hasDesktop(): boolean {
+    return FakeComputer.hasDesktop;
+  }
+
+  async openBrowser(): Promise<void> {
+    if (FakeComputer.failToOpen) throw FakeComputer.failToOpen;
+  }
+}
+
+vi.mock('../../computer/agent-computer', () => ({ AgentComputer: FakeComputer }));
+vi.mock('../../computer/computer-tools', () => ({ createComputerTools: vi.fn(() => ({})) }));
+
 const { voiceChatService } = await import('../voice-chat.service');
 const { voiceSessionLock } = await import('../voice-session-lock');
 const { buildVoiceInstructions } = await import('../voice-instructions');
 
 /** A signal that records everything the service says and sends to the client. */
 function fakeSignal() {
-  return { sendAudio: vi.fn(), sendClear: vi.fn(), state: vi.fn(), error: vi.fn() };
+  return {
+    sendAudio: vi.fn(),
+    sendClear: vi.fn(),
+    state: vi.fn(),
+    error: vi.fn(),
+    screen: vi.fn(),
+    computerAudio: vi.fn(),
+  };
 }
 
 type Signal = ReturnType<typeof fakeSignal>;
@@ -100,8 +146,26 @@ async function startSession(
   return { signal, conversation: conversations[conversations.length - 1]! };
 }
 
+/** Start a session with a computer on it, the way the `/api/voice` endpoint does. */
+async function startWithComputer(): Promise<{ signal: Signal; computer: FakeComputer | undefined }> {
+  const signal = fakeSignal();
+  await voiceChatService.start({
+    userId: 'user-1',
+    agentId: 'agent-1',
+    signal,
+    surface: 'computer',
+    computer: true,
+    sampleRate: 48_000,
+    greeting: 'say hello',
+  });
+  return { signal, computer: computers[computers.length - 1] };
+}
+
 beforeEach(() => {
   conversations.length = 0;
+  computers.length = 0;
+  FakeComputer.failToOpen = null;
+  FakeComputer.hasDesktop = true;
   trackEvent.mockClear();
   vi.mocked(buildVoiceInstructions).mockClear();
 });
@@ -351,5 +415,131 @@ describe('ending a session', () => {
 
     expect(trackEvent).not.toHaveBeenCalled();
     expect(voiceSessionLock.holder).toBeNull();
+  });
+});
+
+/**
+ * The session the Scratchpad's endpoint asks for. Everything here is a second branch
+ * through `start()`, and the computer is a set of processes, so what it costs to get one
+ * of these wrong is a desktop left running for the life of the container.
+ */
+describe('a session with a computer', () => {
+  it('opens one, tells the client it has a desktop, and streams its screen', async () => {
+    const { signal, computer } = await startWithComputer();
+
+    expect(computer).toBeDefined();
+    expect(signal.state).toHaveBeenCalledWith('live', { desktop: true });
+    expect(computer!.startScreenStream).toHaveBeenCalled();
+    expect(computer!.startBrowserAudio).toHaveBeenCalled();
+    // Attached before the model's session opens, so the first tool call has somewhere to
+    // put its picture.
+    expect(computer!.attach).toHaveBeenCalledWith(conversations[conversations.length - 1]);
+  });
+
+  it('describes the computer to the prompt, so it only names tools the session has', async () => {
+    await startWithComputer();
+
+    expect(buildVoiceInstructions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        call: { kind: 'voice-chat', computer: { desktop: { width: 1280, height: 720 } }, userScreen: true },
+      }),
+    );
+  });
+
+  it('says there is no desktop on a host that owns its own display', async () => {
+    FakeComputer.hasDesktop = false;
+    const { signal } = await startWithComputer();
+
+    // The browser opened in the operator's own session, so nothing here may take its
+    // pointer, and the prompt is not given the desktop rules.
+    expect(signal.state).toHaveBeenCalledWith('live', { desktop: false });
+    expect(buildVoiceInstructions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        call: { kind: 'voice-chat', computer: { desktop: null }, userScreen: true },
+      }),
+    );
+  });
+
+  it("speaks the rate the client asked for rather than the model's own", async () => {
+    await startWithComputer();
+    expect(conversations[conversations.length - 1]!.sampleRate).toBe(48_000);
+  });
+
+  it('greets the client, since it opened a page rather than pressed a button', async () => {
+    await startWithComputer();
+    const conversation = conversations[conversations.length - 1]!;
+    expect(conversation.notify).toHaveBeenCalledWith('say hello');
+    expect(conversation.speakNow).toHaveBeenCalled();
+  });
+
+  it('refuses in words when the computer will not open, and holds no voice after', async () => {
+    FakeComputer.failToOpen = new Error('this image lacks the desktop packages');
+    const { signal, computer } = await startWithComputer();
+
+    expect(signal.error).toHaveBeenCalledWith(
+      expect.stringContaining('this image lacks the desktop packages'),
+    );
+    expect(signal.state).not.toHaveBeenCalled();
+    expect(voiceChatService.isLive).toBe(false);
+    expect(voiceSessionLock.holder).toBeNull();
+    // Nothing was built beyond the computer, and the computer itself is released: it may
+    // have got a display up before the browser failed.
+    expect(computer!.stop).toHaveBeenCalled();
+    expect(conversations).toHaveLength(0);
+  });
+
+  it('stops the computer with the session, so no desktop outlives the call', async () => {
+    const { computer } = await startWithComputer();
+    expect(computer!.stop).not.toHaveBeenCalled();
+
+    await voiceChatService.stop();
+
+    expect(computer!.stop).toHaveBeenCalled();
+    expect(voiceSessionLock.holder).toBeNull();
+  });
+
+  it('releases the computer when the client goes away mid-startup', async () => {
+    const signal = fakeSignal();
+    const starting = voiceChatService.start({
+      userId: 'user-1',
+      agentId: 'agent-1',
+      signal,
+      surface: 'computer',
+      computer: true,
+    });
+    // The page closed while the computer was still coming up. Nothing is waiting for the
+    // session, and a computer left running would cost the host a whole desktop.
+    await voiceChatService.stop('the client disconnected', 'disconnected');
+    await starting;
+
+    expect(computers[0]!.stop).toHaveBeenCalled();
+    expect(voiceChatService.isLive).toBe(false);
+    expect(voiceSessionLock.holder).toBeNull();
+  });
+
+  it('reports the surface and the computer in telemetry', async () => {
+    await startWithComputer();
+    await voiceChatService.stop();
+
+    expect(trackEvent).toHaveBeenCalledWith(
+      'voice chat started',
+      'user-1',
+      expect.objectContaining({ surface: 'computer', computer: 'true' }),
+    );
+    expect(trackEvent).toHaveBeenCalledWith(
+      'voice chat ended',
+      'user-1',
+      expect.objectContaining({ surface: 'computer', computer: 'true' }),
+    );
+  });
+
+  it('hands a text frame from the client to the computer, and drops one with no session', async () => {
+    const { computer } = await startWithComputer();
+    voiceChatService.handleComputerInput('{"type":"pointer","x":1,"y":2}');
+    expect(computer!.handleInput).toHaveBeenCalledWith('{"type":"pointer","x":1,"y":2}');
+
+    await voiceChatService.stop();
+    // A frame in flight when a call ends is ordinary, and there is nothing to hand it to.
+    expect(() => voiceChatService.handleComputerInput('{"type":"wheel","dy":1}')).not.toThrow();
   });
 });
