@@ -7,8 +7,8 @@
  * function tools and executed in this process when called. `filterToolsByMode` makes two
  * changes for `meeting`: it drops `share_file`, because a meeting runs neither the invoke
  * loop nor the conversation engine that deliver what it stores, and it adds
- * `send_meeting_chat`, which posts one short line into the call's own chat and which chat
- * mode does not get.
+ * `read_meeting_chat`, which reads what people have typed in the call and which no other
+ * mode gets, since every other mode stores its tool results.
  *
  * Executing them here (rather than via OpenAI's remote-MCP feature) is not a
  * choice: the tools are in-process closures over service singletons and a
