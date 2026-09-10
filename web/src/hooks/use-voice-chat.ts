@@ -103,15 +103,23 @@ export function useVoiceChat() {
     let ws: WebSocket | null = null;
     let audio: VoiceAudio | null = null;
 
-    /** Let go of the microphone and the socket. Safe to call more than once. */
+    /**
+     * Let go of the microphone and the socket.
+     *
+     * Both are dropped before either is closed, so the close that follows cannot come
+     * back through here: the runtime ends a session and closes the socket in one go, and
+     * the two paths that answer that both land on this.
+     */
     const release = (): void => {
-      const open = audio;
+      const openAudio = audio;
+      const socket = ws;
       audio = null;
+      ws = null;
       audioRef.current = null;
       setAgentSpeaking(false);
       setHasDesktop(false);
-      void open?.stop().catch(() => undefined);
-      ws?.close();
+      void openAudio?.stop().catch(() => undefined);
+      socket?.close();
     };
 
     const start = async (): Promise<void> => {

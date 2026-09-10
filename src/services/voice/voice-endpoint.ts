@@ -72,13 +72,29 @@ function tagged(tag: number, pcm: Buffer): Buffer {
  */
 const SCREEN_BACKLOG_BYTES = 256 * 1024;
 
+/**
+ * How often a live socket is pinged, and so how long a client that went away silently
+ * holds what its session owns.
+ *
+ * A voice chat with a computer holds more than a chat connection does: a metered Realtime
+ * session, a browser, a desktop, and the runtime's one voice, which is why the check
+ * matters here rather than being left to TCP. The chat gateway uses the same interval.
+ */
+const LIVENESS_INTERVAL_MS = 30_000;
+
 /** The greeting the agent opens with, since the client opened a page rather than pressed a button. */
 const GREETING =
   'Your user just opened the voice chat in the web UI and can hear you. ' +
   'Greet them in one short sentence.';
 
+/** A client socket, with the answer to the last ping sent to it. */
+interface VoiceSocket extends WebSocket {
+  isAlive?: boolean;
+}
+
 class VoiceEndpoint {
   private wss: WebSocketServer | null = null;
+  private liveness: NodeJS.Timeout | null = null;
   /**
    * The socket that holds this endpoint, or is in the middle of taking it.
    *
@@ -123,10 +139,31 @@ class VoiceEndpoint {
         });
       });
     });
+    // A socket that does not answer a ping is gone, whatever TCP still believes. Ending
+    // it here is what returns the voice, and the desktop behind it, to the next caller.
+    this.liveness = setInterval(() => {
+      for (const client of wss.clients as Set<VoiceSocket>) {
+        if (client.isAlive === false) {
+          logger.info('[VoiceChat] Ending a client that stopped answering');
+          client.terminate();
+          continue;
+        }
+        client.isAlive = false;
+        client.ping();
+      }
+    }, LIVENESS_INTERVAL_MS);
+    // Unref'd: a timer is not a reason for the process to stay up.
+    this.liveness.unref();
+
     logger.info(`Voice chat gateway initialized on ${VOICE_CHAT_PATH}`);
   }
 
-  private async serve(ws: WebSocket): Promise<void> {
+  private async serve(ws: VoiceSocket): Promise<void> {
+    ws.isAlive = true;
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
+
     const send = (frame: VoiceChatFrame): void => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
     };
@@ -244,6 +281,8 @@ class VoiceEndpoint {
   /** Stop taking connections; called from the process shutdown path. */
   close(): void {
     this.holder = null;
+    if (this.liveness) clearInterval(this.liveness);
+    this.liveness = null;
     this.wss?.close();
     this.wss = null;
   }
