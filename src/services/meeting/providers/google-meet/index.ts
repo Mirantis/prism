@@ -982,7 +982,7 @@ export class GoogleMeetProvider implements MeetingProvider {
       // Closed on this path too: `openChatPanel` reports `composer` after clicking the
       // panel open, so this is the failure that leaves a panel over the participant tiles.
       await this.closeChatPanel(toggle);
-      return opened.failure;
+      return { sent: false, ...opened.failure };
     }
     const { composer } = opened;
 
@@ -1062,11 +1062,14 @@ export class GoogleMeetProvider implements MeetingProvider {
    * Resolves the failure rather than a boolean, so the two reasons stay apart: a panel that
    * would not open is `panel`, a panel that painted no input is `composer`, and those are
    * different problems for whoever reads the telemetry.
+   *
+   * The failure carries the step and the reason alone, since a send and a read both open
+   * the panel this way and each spreads it into its own result shape.
    */
   private async openChatPanel(
     page: Page,
     toggle: Locator,
-  ): Promise<{ composer: Locator } | { failure: ChatSendResult }> {
+  ): Promise<{ composer: Locator } | { failure: { step: 'panel' | 'composer'; reason: string } }> {
     if ((await this.panelIsOpen(toggle)) !== true) {
       // Same reason the unmute does this: a modal's scrim eats the click, and the
       // click reports success on the scrim rather than on the button underneath.
@@ -1076,7 +1079,6 @@ export class GoogleMeetProvider implements MeetingProvider {
       } catch (err) {
         return {
           failure: {
-            sent: false,
             step: 'panel',
             reason: `the chat control would not open: ${err instanceof Error ? err.message : String(err)}`,
           },
@@ -1089,7 +1091,7 @@ export class GoogleMeetProvider implements MeetingProvider {
     const composer = await firstThatAppears(chatComposerCandidates(page), CHAT_PANEL_TIMEOUT_MS);
     if (!composer) {
       return {
-        failure: { sent: false, step: 'composer', reason: 'the chat panel did not paint an input' },
+        failure: { step: 'composer', reason: 'the chat panel did not paint an input' },
       };
     }
     return { composer };
