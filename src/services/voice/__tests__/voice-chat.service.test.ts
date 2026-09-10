@@ -419,7 +419,7 @@ describe('ending a session', () => {
 });
 
 /**
- * The session the Scratchpad's endpoint asks for. Everything here is a second branch
+ * The session the Computer page's endpoint asks for. Everything here is a second branch
  * through `start()`, and the computer is a set of processes, so what it costs to get one
  * of these wrong is a desktop left running for the life of the container.
  */
