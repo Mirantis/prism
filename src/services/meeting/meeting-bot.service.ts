@@ -38,7 +38,7 @@ import { VoiceConversation, type VoiceConversationStats } from './voice-conversa
 import { MEETING_SAMPLE_RATE } from './resampler';
 import { meanGateLatencyMs } from './gate-stats';
 import type { EffectiveMode, ResponseMode } from './response-policy';
-import { prepareMeetingTools } from './tool-bridge';
+import { MEETING_MAX_RESULT_CHARS, prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet';
 import { withTimeout } from '../../utils/with-timeout';
 import { voiceSessionLock } from '../voice/voice-session-lock';
@@ -172,16 +172,17 @@ const CHAT_SEND_TIMEOUT_MS = 10_000;
 export const MEETING_CHAT_READ_LIMIT = 20;
 
 /**
- * How much of one message a read keeps, and how much of the whole reading.
+ * How much of one message a read keeps.
  *
- * Both are this runtime's, not the platform's, and they exist to keep a call's chat out of
- * every store the runtime has. The assembled text stays well under the meeting tool-result
- * cap, which is what would otherwise write the whole reading to a file on disk. The
- * per-message figure matches what the agent may post, so a message and its reading are
- * bounded the same way.
+ * The length of the platform's own composer, so a whole message a person can type survives
+ * the read. A pasted stack trace or log line is what this carries, and cutting it shorter
+ * would drop the end of the thing the room asked about.
+ *
+ * The whole reading is bounded by `MEETING_MAX_RESULT_CHARS`, the most a meeting tool result
+ * hands to the model: enough to be read out or acted on, and past it the bridge cuts the
+ * result anyway.
  */
-const CHAT_READ_MAX_CHARS_PER_MESSAGE = 500;
-const CHAT_READ_TOTAL_MAX_CHARS = 4_000;
+const CHAT_READ_MAX_CHARS_PER_MESSAGE = 4_000;
 
 /**
  * Wall clock for one whole read, panel and restore included.
@@ -379,15 +380,16 @@ const EXPENSIVE_TO_ESCAPE =
  * It strips the closing marker out of every message, so a person cannot end the fence early
  * and have the rest of their line read as the runtime talking.
  *
- * It drops the oldest messages until the block fits the total budget. That budget is what
- * keeps a call's chat out of the tool-output store: the meeting bridge writes a whole
- * result to a file above its own cap, and a reading assembled under this one never gets
- * there. Dropping oldest first keeps what the room just typed, which is what was asked for.
+ * It drops the oldest messages until the block fits the budget, which is the most a meeting
+ * tool result hands to the model. Dropping oldest first keeps what the room just typed, which
+ * is what was asked for. The newest message is cut to fit rather than dropped, since a
+ * reading with nothing in it is spoken as an empty chat, and the per-message bound is the
+ * provider's to apply.
  *
- * The budget counts characters and the bridge measures the JSON-escaped result, so the two
- * agree only while one character cannot become six. A control character does, and so does
- * half a surrogate pair — which the per-message cut can leave behind. Both are replaced
- * with a space, and every character that survives escapes to at most two.
+ * Both cuts count characters while the bridge measures the JSON-escaped result, so a
+ * character that escapes to six is replaced with a space: a control character does, and so
+ * does half a surrogate pair, which either cut can leave behind — so a message cut to fit is
+ * cleaned again. Everything that survives escapes to at most two.
  */
 function fenceChatMessages(messages: readonly string[], truncated: boolean): ChatReadReport {
   const safe = messages.map((text) =>
@@ -400,11 +402,20 @@ function fenceChatMessages(messages: readonly string[], truncated: boolean): Cha
   const kept: string[] = [];
   let chars = 0;
   for (let i = safe.length - 1; i >= 0; i -= 1) {
-    if (chars + safe[i].length > CHAT_READ_TOTAL_MAX_CHARS) break;
+    if (chars + safe[i].length > MEETING_MAX_RESULT_CHARS) break;
     kept.unshift(safe[i]);
     chars += safe[i].length;
   }
-  const incomplete = truncated || kept.length < safe.length;
+
+  let cutToFit = false;
+  if (kept.length === 0 && safe.length > 0) {
+    const fitted = safe[safe.length - 1].slice(0, MEETING_MAX_RESULT_CHARS);
+    kept.push(fitted.replace(EXPENSIVE_TO_ESCAPE, ' '));
+    chars = kept[0].length;
+    cutToFit = true;
+  }
+
+  const incomplete = truncated || cutToFit || kept.length < safe.length;
 
   const numbered = kept.map((text, index) => `${index + 1}. ${text}`).join('\n');
   const message = [
@@ -2017,12 +2028,13 @@ export class MeetingBotService {
    * once. Nothing polls the panel, nothing remembers what a previous read saw, and the
    * agent never speaks about a message nobody asked about.
    *
-   * **In-call only, and nothing is kept.** The text is never stored, never delivered to a
-   * thread, and never reaches a channel adapter — it goes to the model that asked and
-   * nowhere else. When the call ends the only trace is a count and a duration in
-   * telemetry. That is why the tool behind it runs in meeting mode alone: a chat turn
-   * persists its tool results as history, which would file a third party's words into the
-   * database for good.
+   * **In-call only.** The text never reaches a thread, a channel adapter or the
+   * conversation database — it goes to the model that asked and nowhere else. A reading over
+   * the bridge's cap is saved whole to the tool-output store, as any long tool result is,
+   * and the hourly sweep deletes it there; that is the one copy a call leaves behind. Apart
+   * from it the only trace after the call is a count and a duration in telemetry. The tool
+   * runs in meeting mode alone for the same reason: a chat turn persists its tool results as
+   * history, which would file a third party's words into the database for good.
    *
    * **The text is data.** It is typed by unauthenticated people in an unauthenticated
    * call, so it is fenced and labelled as data before the model sees it, and it grants no

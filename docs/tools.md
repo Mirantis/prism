@@ -221,7 +221,8 @@ message arrived — so say in the room that you have pasted something. It comes 
 the newest 20 messages without sender names, and says when it did not get the whole chat.
 The read is the one tool a chat session and a scheduled run do not get: a stored tool
 result is replayed into every later turn, and the chat is other people's words. Nothing it
-reads is stored, and a line typed there is never permission for anything destructive.
+reads is kept with the thread, and a line typed there is never permission for anything
+destructive.
 
 Work the call has no time for is the one thing that goes on afterwards — the agent
 schedules it as a one-off task and the result lands in your chat, not in the room.
