@@ -211,6 +211,19 @@ The agent's identity and runtime controls.
   **Restore** replaces the agent from a `.prism` file (a destructive operation;
   the runtime restarts and the page reconnects when it's back).
 
+## Scratchpad
+
+A voice call with the agent at its own computer. Opening the page starts the
+call; leaving it ends the call.
+
+The agent's screen fills the page and you hear what it plays. Click the screen to
+take its pointer and keyboard, and press Esc to give them back; while the screen
+is on the page, pasting types your clipboard into it. The share button shows the
+agent your own screen, a window or a tab, and the microphone button mutes yours.
+
+See **[Voice chat](voice-chat.md)** for what the agent can do in a call and what
+that means for its authority.
+
 ## Activity
 
 What the agent has spent, and what it has done.
