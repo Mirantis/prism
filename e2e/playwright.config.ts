@@ -188,7 +188,7 @@ export default defineConfig({
       // Run the runtime via tsx directly (not `npm run dev`) so it inherits
       // DATABASE_URL=file:./e2e.db from this config instead of the dev
       // script's hard-coded `file:./agent.db` prefix.
-      command: 'npx tsx src/index.ts',
+      command: 'npx tsx e2e/support/runtime-entry.ts',
       cwd: REPO_ROOT,
       // `url` rather than `port`: a bare port is satisfied by anything holding
       // the socket, and this runtime binds *after* `initialize()` — Slack
@@ -245,10 +245,7 @@ export default defineConfig({
         // their expected percentage from the bundled catalog, so a fresher remote
         // window would make them flaky by design.
         MODELS_DEV_URL: '',
-        // Voice tests default to an invented key for the local mock. An explicit
-        // empty key lets coding tests use a saved login or Bedrock credentials.
-        OPENAI_REALTIME_URL: `ws://127.0.0.1:${MOCK_REALTIME_PORT}/v1/realtime`,
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? 'sk-e2e-not-a-real-key',
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
       },
     },
     {
