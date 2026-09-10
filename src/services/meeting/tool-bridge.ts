@@ -27,6 +27,7 @@
 import { asSchema, type Tool } from 'ai';
 import { logger } from '../../logger';
 import { collectTools } from '../../lib/tool-collection';
+import { MEETING_TOOL_NAMES } from '../../tools/meeting';
 import { renderAndSpill } from '../../lib/tool-output-limiter';
 import type { RealtimeFunctionTool } from './realtime-session';
 
@@ -113,12 +114,28 @@ export async function prepareMeetingTools(
     },
   });
 
+  const prepared = prepareRealtimeTools(tools, 'Meeting');
+  logger.info(`[Meeting] Offering ${prepared.count} tool(s) to the Realtime model`);
+  return prepared;
+}
+
+/**
+ * Adapt a set of AI SDK tools for the Realtime API.
+ *
+ * `label` names the owner in the log lines, since a session offers two sets: the agent's
+ * own, and the tools of the computer it is working on.
+ *
+ * A tool with no local implementation is left out rather than declared: offering one
+ * produces a call the bridge cannot answer.
+ */
+export function prepareRealtimeTools(
+  tools: Record<string, Tool>,
+  label: string,
+): PreparedMeetingTools {
   const usable: Record<string, Tool> = {};
   for (const [name, tool] of Object.entries(tools)) {
     if (typeof tool.execute !== 'function') {
-      // Provider-executed or client-side tools have no local implementation to
-      // call; offering them would produce a call the bridge can't answer.
-      logger.debug(`[Meeting] Skipping non-executable tool ${name}`);
+      logger.debug(`[${label}] Skipping non-executable tool ${name}`);
       continue;
     }
     usable[name] = tool;
@@ -132,12 +149,36 @@ export async function prepareMeetingTools(
     parameters: asSchema(tool.inputSchema).jsonSchema as Record<string, unknown>,
   }));
 
-  logger.info(`[Meeting] Offering ${declarations.length} tool(s) to the Realtime model`);
-
   return {
     declarations,
     count: declarations.length,
-    execute: (name, argumentsJson) => executeTool(usable, name, argumentsJson),
+    execute: (name, argumentsJson) => executeTool(usable, name, argumentsJson, label),
+  };
+}
+
+/**
+ * The agent's set as a voice chat gets it: the meeting's own tools dropped, and the
+ * computer's laid over the gap when the session has one.
+ *
+ * The meeting tools go whether or not there is a replacement, since each of them acts on
+ * a call this session is not in. `browse` and `see_screen` come back pointed at the
+ * computer, under the same names, so the prompt text written for a call still reads true.
+ */
+export function prepareVoiceChatTools(
+  base: PreparedMeetingTools,
+  computer: PreparedMeetingTools | null,
+): PreparedMeetingTools {
+  const extra = computer?.declarations ?? [];
+  const dropped = new Set<string>([...MEETING_TOOL_NAMES, ...extra.map((d) => d.name)]);
+  const declarations = [...base.declarations.filter((d) => !dropped.has(d.name)), ...extra];
+  const extraNames = new Set(extra.map((d) => d.name));
+  return {
+    declarations,
+    count: declarations.length,
+    execute: (name, argumentsJson) =>
+      computer && extraNames.has(name)
+        ? computer.execute(name, argumentsJson)
+        : base.execute(name, argumentsJson),
   };
 }
 
@@ -166,6 +207,7 @@ async function executeTool(
   tools: Record<string, Tool>,
   name: string,
   argumentsJson: string,
+  label: string,
 ): Promise<string> {
   const tool = tools[name];
   if (!tool || typeof tool.execute !== 'function') {
@@ -180,14 +222,14 @@ async function executeTool(
   }
 
   try {
-    logger.info(`[Meeting] Executing tool ${name}`);
+    logger.info(`[${label}] Executing tool ${name}`);
     // The AI SDK passes a call context (toolCallId, messages) that built-in tools
     // ignore; MCP tools only read `abortSignal`. A fresh signal keeps the shape
     // valid without giving the bridge a cancellation story it doesn't have yet.
     // `context` carries per-tool state a caller can pass through `generateText`;
     // no tool here declares one, so it stays undefined.
     const result = await tool.execute(args, {
-      toolCallId: `meeting-${Date.now()}`,
+      toolCallId: `${label.toLowerCase()}-${Date.now()}`,
       messages: [],
       abortSignal: new AbortController().signal,
       context: undefined,
@@ -202,7 +244,7 @@ async function executeTool(
     return rendered.text;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.warn(`[Meeting] Tool ${name} failed: ${message}`);
+    logger.warn(`[${label}] Tool ${name} failed: ${message}`);
     return JSON.stringify({ error: message });
   }
 }

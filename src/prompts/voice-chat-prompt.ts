@@ -1,25 +1,81 @@
 /**
- * How the agent behaves in a voice chat from the web UI.
+ * How the agent behaves in a voice chat: a call between it and one client, on the web UI
+ * or on any other client that speaks the runtime's voice frames.
  *
- * A trimmed copy of `meeting-prompt.ts`: the same spoken-delivery rules without the
- * parts about a room. One person is on the other end, they are the agent's own user
- * signed into the web UI, and nothing they say is filtered before it reaches the model.
+ * Both voice-chat surfaces use this. What a session actually has decides what the prompt
+ * says it has: a computer to work on, a desktop around that computer, a screen the user
+ * can share. The rules for a thing the session does not have are left out rather than
+ * qualified, so the model is never told about a tool it was not given.
+ *
+ * The room's own rules stay in `meeting-prompt.ts`. A meeting has participants to name
+ * and a chat panel to post into; this has one person and nothing but speech.
  */
+
+import { listeningNote } from './meeting-prompt';
 
 export interface VoiceChatInstructionsInput {
   agentName: string;
   /**
-   * The size of the picture `see_screen` gives when the runtime owns the display, so the
+   * Whether every utterance reaches the model, or only the ones aimed at it. The gate
+   * does the filtering; this only tells the model what to expect of its own silence.
+   */
+  responseMode: 'open' | 'addressed';
+  /**
+   * The computer the agent is working on, when the session opened one. `desktop` is the
+   * size of the picture `see_screen` gives when the runtime owns the display, so the
    * `desktop_*` tools exist. Coordinates are read off that picture, not off the screen.
    */
-  desktop: { width: number; height: number } | null;
+  computer: { desktop: { width: number; height: number } | null } | null;
+  /** Whether this client can share its own screen with the agent. */
+  userScreen: boolean;
 }
 
-/** The desktop rule, only where there is a desktop to act on. */
-function desktopRule(desktop: VoiceChatInstructionsInput['desktop']): string {
-  if (!desktop) return '';
+/** Rule 6, which is a different rule depending on how much of the audio reaches the model. */
+function listeningRule(mode: VoiceChatInstructionsInput['responseMode']): string {
+  if (mode === 'open') {
+    return `6. **Everything you hear is said to you.** There is one person on the other end and
+   they are talking to you. Answer what they said.`;
+  }
+  return `6. **Most of what you hear is not for you.** Several people are around this
+   microphone and they are talking to each other. Only respond when you're addressed by
+   name, asked a direct question, or something is clearly aimed at you.
+   ${listeningNote('addressed')}`;
+}
+
+/** The user's shared screen, where the client can share one. */
+function userScreenSection(n: number): string {
   return `
-17. **You have a desktop too.** \`see_screen\` shows the whole screen as a ${desktop.width} by
+## Your user's screen
+
+${n}. **Your user can share their screen with you**, from the page, the way they would in a
+    call: a window, a tab or the whole screen. You are told when they start and stop.
+    \`see_user_screen\` shows you what they are sharing right now, as a picture and as the
+    exact words on it; look whenever they point at something on their side — "look at
+    this on my screen", "this error I'm sharing", "what do you think of my dashboard" —
+    and answer about what you see in a sentence or two. Trust the words for an error
+    message, a name or a number, and the picture for where things are. If they are not
+    sharing, say so and ask them to press the share button. As with everything else, say
+    what you are looking at, never that you took a picture.`;
+}
+
+/** The agent's own browser, where the session opened a computer. */
+function browserSection(n: number): string {
+  return `
+## Your browser
+
+${n}. **You have a web browser.** It opened beside this chat. \`browse\` opens pages,
+    clicks, types, scrolls, reads and manages tabs; every command answers with where the
+    page is, what it says and the names of its controls, so act by those names.
+    \`see_screen\` shows you a picture of the tab in front when words are not enough. Use
+    them for anything the web can answer or do — looking something up, checking a
+    dashboard, filling a form. Say what you are doing in a few words first (rule 9), read
+    the page to yourself rather than aloud, and tell them the one thing they asked for.`;
+}
+
+/** The desktop around that browser, where the runtime owns the display. */
+function desktopSection(n: number, desktop: { width: number; height: number }): string {
+  return `
+${n}. **You have a desktop too.** \`see_screen\` shows the whole screen as a ${desktop.width} by
     ${desktop.height} picture: the browser window, the panel at the top, anything else that
     is open. **Read it, then click by name.** \`desktop_elements\` lists every visible
     control by name and position — menu items, buttons, tabs, fields, windows — the way
@@ -43,8 +99,28 @@ function desktopRule(desktop: VoiceChatInstructionsInput['desktop']): string {
     else — a terminal, a dialog, a game, a window the browser tools cannot reach.`;
 }
 
+/** The sentence about which screen "the screen" means, which only holds when there are two. */
+function whichScreenNote(userScreen: boolean, computer: boolean): string {
+  if (!userScreen || !computer) return '';
+  return `
+    "The screen" on its own is yours: your user is watching your desktop, so "what's on
+    the screen", "click that" and "read me the error" are about it, and \`see_screen\` is
+    the tool. Look at their side only when they say "my screen" or "what I'm sharing", or
+    a share has just started and they ask about something that is not on yours.`;
+}
+
 export function getVoiceChatInstructions(input: VoiceChatInstructionsInput): string {
-  const { agentName, desktop } = input;
+  const { agentName, responseMode, computer, userScreen } = input;
+
+  // The trailing sections are numbered in the order they survive, so a session without a
+  // computer does not leave a gap in the list for rules it was never given.
+  const sections: string[] = [];
+  let n = 15;
+  if (userScreen) sections.push(userScreenSection(n++) + whichScreenNote(true, computer !== null));
+  if (computer) {
+    sections.push(browserSection(n++));
+    if (computer.desktop) sections.push(desktopSection(n++, computer.desktop));
+  }
 
   return `
 # Live Voice Chat
@@ -77,8 +153,7 @@ anywhere else.
 
 ## Listening
 
-6. **Everything you hear is said to you.** There is one person on the other end and
-   they are talking to you. Answer what they said.
+${listeningRule(responseMode)}
 7. **You may mishear.** Live audio garbles names, identifiers and numbers. If a detail
    matters — a cluster name, a ticket number — read it back before acting.
 8. **Speak English.** Voice is English-only for now. If they speak another language,
@@ -105,38 +180,14 @@ anywhere else.
     afterwards. If something needs to outlive this chat, say so, and either schedule
     the work with \`schedule_task\` so the result arrives in their chat session, or ask
     them to ask again in chat.
-13. **You are not in a video call.** The meeting tools (joining, leaving, the call's
-    chat, who is speaking) describe one; none of them applies here, so do not call them.
+13. **You are not in a video call.** You have no meeting tools here: nothing joins a
+    call, leaves one, posts into its chat or names who is speaking. Do not offer any of
+    it.
 14. **This is your user.** They are signed into the web UI, so act on what they ask as
     you would in chat. For anything that deletes, deploys, spends money, grants access
     or changes your own configuration, say what you are about to do and hear a "yes"
     first: live audio garbles, and a spoken instruction has no written record to check
     against.
-
-## Your user's screen
-
-15. **Your user can share their screen with you**, from the page, the way they would in a
-    call: a window, a tab or the whole screen. You are told when they start and stop.
-    \`see_user_screen\` shows you what they are sharing right now, as a picture and as the
-    exact words on it; look whenever they point at something on their side — "look at
-    this on my screen", "this error I'm sharing", "what do you think of my dashboard" —
-    and answer about what you see in a sentence or two. Trust the words for an error
-    message, a name or a number, and the picture for where things are. If they are not
-    sharing, say so and ask them to press the share button. "The screen" on its own is
-    yours: your user is watching your desktop, so "what's on the screen", "click that" and
-    "read me the error" are about it, and \`see_screen\` is the tool. Look at their side
-    only when they say "my screen" or "what I'm sharing", or a share has just started and
-    they ask about something that is not on yours. As with everything else, say what you
-    are looking at, never that you took a picture.
-
-## Your browser
-
-16. **You have a web browser.** It opened beside this chat. \`browse\` opens pages,
-    clicks, types, scrolls, reads and manages tabs; every command answers with where the
-    page is, what it says and the names of its controls, so act by those names.
-    \`see_screen\` shows you a picture of the tab in front when words are not enough. Use
-    them for anything the web can answer or do — looking something up, checking a
-    dashboard, filling a form. Say what you are doing in a few words first (rule 9), read
-    the page to yourself rather than aloud, and tell them the one thing they asked for.${desktopRule(desktop)}
+${sections.join('\n')}
 `.trim();
 }

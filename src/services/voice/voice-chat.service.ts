@@ -6,6 +6,10 @@
  * long as this service is not `idle`, so the places that word is written are the places
  * the lock is released.
  *
+ * Two surfaces reach it and the session is the same either way. The chat composer sends
+ * its audio on the socket it already has. The Scratchpad page has a socket of its own,
+ * because it also carries a computer's screen, and asks for that computer here.
+ *
  * The session is the whole of what a call is here — nothing is persisted. No transcript,
  * no thread message, no tool-call row: what the user hears is what the call produced.
  *
@@ -23,7 +27,13 @@ import { config } from '../../config';
 import { trackEvent } from '../../lib/telemetry';
 import { VoiceConversation } from '../meeting/voice-conversation';
 import { meanGateLatencyMs } from '../meeting/gate-stats';
-import { prepareMeetingTools } from '../meeting/tool-bridge';
+import {
+  prepareMeetingTools,
+  prepareRealtimeTools,
+  prepareVoiceChatTools,
+} from '../meeting/tool-bridge';
+import { AgentComputer } from '../computer/agent-computer';
+import { createComputerTools } from '../computer/computer-tools';
 import { buildVoiceInstructions } from './voice-instructions';
 import { voiceSessionLock } from './voice-session-lock';
 import { SocketAudio, VOICE_AUDIO_FORMAT, type SocketAudioChannel } from './socket-audio';
@@ -32,16 +42,39 @@ import { SocketAudio, VOICE_AUDIO_FORMAT, type SocketAudioChannel } from './sock
 export type VoiceChatState = 'live' | 'ended';
 
 /**
+ * Which client asked for the session.
+ *
+ * The two are the same call. This says which one holds the voice, so a second request
+ * from the same surface can take it over — a reloaded page is the ordinary case — while
+ * a request from the other one is refused and told why.
+ */
+export type VoiceChatSurface = 'chat' | 'computer';
+
+/** What a live session has, told to the client alongside `live`. */
+export interface VoiceChatLiveInfo {
+  /**
+   * Whether the runtime owns the screen it is streaming, so the client may take the
+   * pointer and keyboard on it. False on a host with a display of its own, where the
+   * agent's browser is a window among the operator's.
+   */
+  desktop: boolean;
+}
+
+/**
  * How the service answers the client, and how the agent's audio reaches it.
  *
- * `sendAudio` and `sendClear` are the audio half; the rest is the session's state. One
- * implementation, in the gateway that owns the socket.
+ * `sendAudio` and `sendClear` are the audio half; the rest is the session's state. The
+ * last two are the computer's, and a client that cannot show one leaves them out.
  */
 export interface VoiceChatSignal extends SocketAudioChannel {
   /** The session is up, or it is over. */
-  state(state: VoiceChatState): void;
+  state(state: VoiceChatState, info?: VoiceChatLiveInfo): void;
   /** Why the session could not start, or could not continue. */
   error(message: string): void;
+  /** One picture of the agent's screen, as base64 JPEG. */
+  screen?(jpegBase64: string): void;
+  /** What the agent's browser is playing, pcm16 at the session's rate. */
+  computerAudio?(pcm: Buffer): void;
 }
 
 /**
@@ -66,6 +99,21 @@ export interface StartVoiceChatInput {
   /** Defaults to `open` — a client that says nothing is holding a phone to its ear. */
   mode?: VoiceListeningMode;
   signal: VoiceChatSignal;
+  /** Which client asked. Defaults to the chat composer, the one that came first. */
+  surface?: VoiceChatSurface;
+  /**
+   * Open a computer for the agent to work on, and give it the tools that act on it.
+   *
+   * The computer comes up before anything else is built: it is the slow part, and a
+   * client that asked for one and cannot have it should be told before the session costs
+   * anything. Its screen starts streaming as soon as it opens, so the client has a
+   * picture while the model is still connecting.
+   */
+  computer?: boolean;
+  /** What the client speaks, in and out. Defaults to the model's own rate. */
+  sampleRate?: number;
+  /** Said as soon as the session is live. Left out, the agent waits to be spoken to. */
+  greeting?: string;
 }
 
 /**
@@ -86,15 +134,23 @@ class VoiceChatService {
   private epoch = 0;
   private transport: SocketAudio | null = null;
   private conversation: VoiceConversation | null = null;
+  private computer: AgentComputer | null = null;
   private signal: VoiceChatSignal | null = null;
   private userId: string | null = null;
   private startedAt: number | null = null;
   /** Held for the ending event: the gate numbers below mean nothing without it. */
   private mode: VoiceListeningMode = 'open';
+  /** Held for the same reason, and read by a second client deciding whether to take over. */
+  private startedFrom: VoiceChatSurface = 'chat';
 
   /** Whether a session is running, for a caller that wants to know before it offers. */
   get isLive(): boolean {
     return this.state === 'live';
+  }
+
+  /** Which client holds the voice, or null when nothing does. */
+  get surface(): VoiceChatSurface | null {
+    return this.state === 'idle' ? null : this.startedFrom;
   }
 
   /**
@@ -125,57 +181,101 @@ class VoiceChatService {
     // explains gaps in a conversation that has none, or waits to be named in a room that
     // will not name it.
     const mode: VoiceListeningMode = input.mode ?? 'open';
+    const surface: VoiceChatSurface = input.surface ?? 'chat';
+    const sampleRate = input.sampleRate ?? VOICE_AUDIO_FORMAT.sampleRate;
 
     // Built into locals and published onto `this` only once the epoch check below says
     // the session is still wanted: a `stop()` during startup has nothing else to release,
     // and a conversation left running would hold a metered Realtime socket open.
     let transport: SocketAudio | null = null;
     let conversation: VoiceConversation | null = null;
+    let computer: AgentComputer | null = null;
     const releaseLocals = async (): Promise<void> => {
       conversation?.stop();
       await transport?.close();
+      await computer?.stop();
     };
 
     try {
-      // Instructions and tools first: they need the database, and failing here should cost
-      // nothing but a message.
+      // The computer first, where one was asked for. It is the slow part and the one that
+      // can fail on the host it runs on, so a client that cannot have it hears why before
+      // a Realtime session is opened and billed.
+      if (input.computer) {
+        computer = new AgentComputer();
+        await computer.openBrowser();
+        if (this.epoch !== epoch) {
+          await releaseLocals();
+          return false;
+        }
+        if (input.signal.screen) {
+          computer.startScreenStream((data) => input.signal.screen?.(data));
+        }
+        if (input.signal.computerAudio) {
+          const streamed = computer.startBrowserAudio((pcm) => input.signal.computerAudio?.(pcm));
+          logger.info(
+            streamed
+              ? '[VoiceChat] The browser is heard through the client'
+              : '[VoiceChat] The browser plays on this host, not through the client',
+          );
+        }
+      }
+
       const { instructions, agentName, lockedIn } = await buildVoiceInstructions({
         userId: input.userId,
         agentId: input.agentId,
-        platform: 'voice',
         responseMode: mode,
+        call: {
+          kind: 'voice-chat',
+          computer: computer
+            ? { desktop: computer.hasDesktop ? { width: computer.width, height: computer.height } : null }
+            : null,
+          // Only a client that sends pictures of the user's screen can be asked to share
+          // one, and that is the same client that shows the computer.
+          userScreen: computer !== null,
+        },
       });
-      // The meeting tool set, unchanged, which is more than this call can use. A voice
-      // chat has no room and no browser, so the nine meeting tools answer that there is
-      // no call to act on — and the prompt still names `send_meeting_chat` as the way to
-      // hand over a link, which here reaches nobody. Splitting the two apart means a
-      // second prompt: `prompts/meeting-prompt.ts` is one numbered list whose rules cite
-      // each other by number, so the tools cannot be narrowed without rewriting it.
-      const tools = await prepareMeetingTools({
+      // The agent's own set without the meeting's tools, which act on a call this session
+      // is not in, and with the computer's real `browse` and `see_screen` where there is
+      // one to act on.
+      const agentTools = await prepareMeetingTools({
         userId: input.userId,
         agentId: input.agentId,
         threadId: input.threadId,
         lockedIn,
       });
+      const tools = prepareVoiceChatTools(
+        agentTools,
+        computer
+          ? prepareRealtimeTools(
+              createComputerTools(computer, computer.hasDesktop ? computer : null, computer),
+              'Computer',
+            )
+          : null,
+      );
 
-      transport = new SocketAudio(input.signal, {
-        onAudio: (pcm) => {
-          if (this.epoch === epoch) this.conversation?.pushAudio(pcm);
+      transport = new SocketAudio(
+        input.signal,
+        {
+          onAudio: (pcm) => {
+            if (this.epoch === epoch) this.conversation?.pushAudio(pcm);
+          },
         },
-      });
+        sampleRate,
+      );
 
       conversation = new VoiceConversation({
         instructions,
         tools,
         sink: transport.sink,
-        // The transport speaks the model's own rate, so nothing resamples between the
-        // client's microphone and the model.
-        sampleRate: VOICE_AUDIO_FORMAT.sampleRate,
+        sampleRate,
         responseMode: mode,
         agentName,
         voice: config.openaiRealtimeVoice,
         onSessionLost: (reason) => void this.end(epoch, 'error', reason),
       });
+      // Attached before the session opens, so the first tool call has somewhere to put its
+      // picture. Nothing reaches it until the model asks for something.
+      computer?.attach(conversation);
       await conversation.start();
 
       // Startup is several awaits long, and a `stop()` in any of them ended this session
@@ -190,21 +290,33 @@ class VoiceChatService {
 
       this.transport = transport;
       this.conversation = conversation;
+      this.computer = computer;
       this.signal = input.signal;
       this.userId = input.userId;
       this.startedAt = Date.now();
       this.mode = mode;
+      this.startedFrom = surface;
       this.state = 'live';
 
       // Live immediately: the socket that asked is the socket the audio travels on, so
       // there is no media path still to come up and nothing to wait for.
-      input.signal.state('live');
+      input.signal.state('live', { desktop: computer?.hasDesktop ?? false });
 
-      logger.info({ tools: tools.count, mode }, '[VoiceChat] Session is live');
+      if (input.greeting) {
+        conversation.notify(input.greeting);
+        conversation.speakNow();
+      }
+
+      logger.info(
+        { tools: tools.count, mode, surface, computer: computer !== null },
+        '[VoiceChat] Session is live',
+      );
       trackEvent('voice chat started', input.userId, {
         tools: String(tools.count),
         locked_in: String(lockedIn),
         response_mode: mode,
+        surface,
+        computer: String(computer !== null),
       });
       return true;
     } catch (err) {
@@ -241,6 +353,15 @@ class VoiceChatService {
   }
 
   /**
+   * A text frame from the client about the computer: the user's own pointer and keyboard
+   * on its screen, or a picture of the screen they are sharing. Dropped when there is no
+   * computer, for the same reason a stray audio frame is.
+   */
+  handleComputerInput(text: string): void {
+    this.computer?.handleInput(text);
+  }
+
+  /**
    * End the session, from the client asking or from its socket closing.
    *
    * The status is the caller's to state, since only the caller knows which of the two it
@@ -273,7 +394,7 @@ class VoiceChatService {
     // while the transport closes, from becoming a second ending.
     this.state = 'ending';
     this.epoch += 1;
-    const { conversation, transport, signal, userId, startedAt, mode } = this;
+    const { conversation, transport, computer, signal, userId, startedAt, mode, startedFrom } = this;
     this.clearPublished();
 
     logger.info({ status, reason }, '[VoiceChat] Session ended');
@@ -282,6 +403,12 @@ class VoiceChatService {
       conversation?.stop();
       await transport?.close().catch((err: unknown) => {
         logger.warn({ err }, '[VoiceChat] The transport would not close');
+      });
+      // The browser, the desktop and the virtual display go with the call. They are
+      // processes, so a session that left them behind would cost the host a whole
+      // desktop for every call it ever carried.
+      await computer?.stop().catch((err: unknown) => {
+        logger.warn({ err }, '[VoiceChat] The computer would not close');
       });
 
       // The client is told why before it is told it is over, so a failure reads as a
@@ -293,6 +420,8 @@ class VoiceChatService {
         const stats = conversation?.statistics;
         trackEvent('voice chat ended', userId, {
           status,
+          surface: startedFrom,
+          computer: String(computer !== null),
           response_mode: mode,
           duration_ms: String(Date.now() - startedAt),
           responses: String(stats?.responses ?? 0),
@@ -326,6 +455,7 @@ class VoiceChatService {
   private clearPublished(): void {
     this.conversation = null;
     this.transport = null;
+    this.computer = null;
     this.signal = null;
     this.userId = null;
     this.startedAt = null;
