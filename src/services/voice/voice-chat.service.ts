@@ -185,6 +185,9 @@ class VoiceChatService {
     let transport: SocketAudio | null = null;
     let conversation: VoiceConversation | null = null;
     let computer: AgentComputer | null = null;
+    // Where a failure happened, for the event below. An operator reads this to tell an
+    // image that cannot carry a computer from a Realtime session that would not open.
+    let stage: 'computer' | 'session' = 'session';
     // Each step is guarded: this runs on the way out of a failure, and a throw here would
     // skip the lines below that free the runtime's voice, leaving it held with no session
     // on it for the life of the process.
@@ -207,6 +210,7 @@ class VoiceChatService {
       // can fail on the host it runs on, so a client that cannot have it hears why before
       // a Realtime session is opened and billed.
       if (input.computer) {
+        stage = 'computer';
         computer = new AgentComputer();
         await computer.openBrowser();
         if (this.epoch !== epoch) {
@@ -224,6 +228,7 @@ class VoiceChatService {
               : '[VoiceChat] The browser plays on this host, not through the client',
           );
         }
+        stage = 'session';
       }
 
       const { instructions, agentName, lockedIn } = await buildVoiceInstructions({
@@ -340,6 +345,15 @@ class VoiceChatService {
         this.clearPublished();
         this.markIdle();
       }
+      // A start that failed emits neither `voice chat started` nor `voice chat ended`, so
+      // without this a runtime that can never open a computer looks like a runtime nobody
+      // called. The stage is the whole of what is reported: the message is an error's
+      // prose, which telemetry does not carry.
+      trackEvent('voice chat start failed', input.userId, {
+        surface,
+        computer: String(input.computer === true),
+        stage,
+      });
       // No `ended` frame: this session never reported `live`, so it has no ending to
       // report, and `live → ended` stays the one shape a session has. The error below is
       // the whole answer.
