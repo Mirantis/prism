@@ -37,6 +37,27 @@ the runtime's voice frames on the chat connection —
 `src/services/voice/socket-audio.ts` and
 `src/services/websocket-gateway.service.ts` define them.
 
+## Talking to the agent at its computer
+
+The Web UI's **Scratchpad** page is the same call with a computer in it. Opening
+the page starts the call, and the agent greets you; leaving it ends the call.
+
+The page shows the agent's screen while it works, and you hear what it plays. In
+the container that screen is a whole desktop, so the agent can use a terminal, a
+file manager or anything else installed, not only the browser. Click the screen
+to take the pointer and keyboard yourself, and press Esc to give them back. While
+you hold them, pasting types your clipboard into whatever has the focus there; a
+paste with the screen on the page but not under your control types it too.
+
+Press the share button to show the agent your own screen, a window or a tab, the
+way you would in a video call. Ask it to look and it reads what is there. "The
+screen" on its own means the agent's own, since that is the one you are both
+watching.
+
+One call at a time, here too. Opening the Scratchpad while a call from the chat
+composer is running is refused, and so is the reverse. Opening the page twice
+moves the call to the newer page, which is what a reload does.
+
 ## Who the agent answers
 
 A voice chat is either a conversation or a room, and the client says which when
@@ -85,6 +106,10 @@ do. For a real restriction, start the agent with a narrower tool surface.
 - **The call is refused.** The text says why: a Meet call holds the agent's
   voice, another client already has the session, or the runtime is still loading
   its agent and the call can be retried.
+- **The Scratchpad page says the screen would not start.** Its computer needs
+  packages a published image carries and an older one does not. Build the image
+  with `npm run docker:build`, or run the call from the chat composer, which
+  needs none of them.
 - **The call ends on its own.** The agent's model session closed. Start another.
 - **The agent talks over you, or answers nothing.** Both are the client's audio
   handling: it has to send your microphone continuously, silence included, since
