@@ -129,6 +129,30 @@ export type ChatSendResult =
   | { sent: false; step: ChatSendStep; reason: string };
 
 /**
+ * Where a chat read stopped.
+ *
+ * Bounded for the same reason as `ChatSendStep`: it is emitted as telemetry, and no
+ * message body may ever be. `panel` is no chat control on the page, `composer` is a
+ * panel that painted no input, and `read` is a panel the reader could not parse.
+ */
+export type ChatReadStep = 'panel' | 'composer' | 'read';
+
+/**
+ * Outcome of reading the messages already in the call's own chat.
+ *
+ * `read: true` with an empty list is a real answer — the panel opened and holds
+ * nothing. A reader that cannot tell an empty panel from one it failed to parse says
+ * `read: false`, so a rotted selector never reports the chat as empty.
+ *
+ * `truncated` says the panel held more than the caller asked for, or one message was
+ * longer than the per-message bound.
+ */
+export type ChatReadResult =
+  | { read: true; messages: readonly string[]; truncated: boolean }
+  /** `step` is what telemetry gets; `reason` is what a human reads in a log. */
+  | { read: false; step: ChatReadStep; reason: string };
+
+/**
  * What became of a request to start or stop presenting.
  *
  * One type for both directions. Both answer the same question: what the room sees now.
@@ -277,6 +301,32 @@ export interface MeetingProvider {
    * Optional: a platform with no chat panel, or none a browser can drive, omits it.
    */
   sendChatMessage?(page: Page, text: string): Promise<ChatSendResult>;
+
+  /**
+   * Read the messages already in the call's own chat, newest last.
+   *
+   * A pull, and only a pull: it is called when somebody in the room asks the agent to
+   * look, so it does one reading and reports what was there. Nothing about it runs on a
+   * timer, and it keeps no record between calls.
+   *
+   * **Must not report an empty chat it is not sure about.** A panel holding messages the
+   * reader cannot parse resolves `read: false` with step `read`, since "nobody has typed
+   * anything" and "the selector moved" are the same picture otherwise.
+   *
+   * The panel shares the side rail with the participant list, so this leaves the rail as
+   * it found it: a panel a person had open stays open, and one this call opened is closed
+   * again.
+   *
+   * `limit` caps how many of the newest messages come back and `maxCharsPerMessage` how
+   * much of each one; both are the caller's, since the bounds exist to keep the result
+   * out of any store.
+   *
+   * Optional: a platform with no chat panel, or none a browser can read, omits it.
+   */
+  readChatMessages?(
+    page: Page,
+    options: { limit: number; maxCharsPerMessage: number },
+  ): Promise<ChatReadResult>;
 
   /**
    * Names of the people in the call, best effort, empty when unavailable.
