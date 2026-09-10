@@ -203,19 +203,25 @@ and once anyone else is present it waits to be called by name — every time, in
 follow-ups. That switches as people come and go, so there is nothing to set — see
 [Voice meetings](voice-meetings.md#in-the-call) to override it for a given call.
 
-Inside the call it keeps **every tool above except `share_file`**, so it can look
-something up and say the answer. `share_file` is out because it only stores a file for
-the chat machinery to deliver, and a meeting doesn't run that machinery — in a call it
-could only store a file that reached nobody.
+Inside the call it keeps **every tool above except `share_file`**, plus one only the
+model in the call has: reading the call's chat. `share_file` is out because it only
+stores a file for the chat machinery to deliver, and a meeting doesn't run that
+machinery — in a call it could only store a file that reached nobody.
 
 The agent can post a short plain-text message, up to 500 characters, into the chat panel
-of the call it is in. Nothing reads the chat back, so a message typed there never reaches
-the agent. It can post from inside the call, from a chat session, or from a scheduled run
-reporting back on work the call kicked off; with no call live it posts nothing and says
-so.
+of the call it is in. It can post from inside the call, from a chat session, or from a
+scheduled run reporting back on work the call kicked off; with no call live it posts
+nothing and says so.
 
 A line it posts from a chat session or a scheduled run is stored with the thread like any
 other tool argument. Posted from inside the call, nothing is stored.
+
+It reads that panel only when somebody in the call asks it to look, and nothing tells it a
+message arrived — so say in the room that you have pasted something. It comes back with
+the newest 20 messages without sender names, and says when it did not get the whole chat.
+The read is the one tool a chat session and a scheduled run do not get: a stored tool
+result is replayed into every later turn, and the chat is other people's words. Nothing it
+reads is stored, and a line typed there is never permission for anything destructive.
 
 Work the call has no time for is the one thing that goes on afterwards — the agent
 schedules it as a one-off task and the result lands in your chat, not in the room.

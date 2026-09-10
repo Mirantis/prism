@@ -13,8 +13,9 @@ it — it leaves on its own once everyone else has gone.
 
 **Speaking is how it takes part.** For the things speech mangles — a link, an
 identifier, a command to paste — it can also put one short line in the meeting's chat
-panel. It cannot send anything anywhere else, and nothing said in the call is written
-down anywhere afterwards. Work it can't finish in the call is the other exception: it
+panel, and it reads what you have typed there when you ask it to look. It cannot send
+anything anywhere else, and nothing said in the call is written down anywhere
+afterwards. Work it can't finish in the call is the other exception: it
 schedules that as a one-off task and the answer reaches your chat afterwards. See
 [In the call](#in-the-call).
 
@@ -249,15 +250,19 @@ and it picks up from what you actually heard rather than pretending it finished.
 aloud. If the real answer is a command or a long list, it says what the thing does
 and offers to walk through it out loud, or spells the part that matters slowly.
 
-**It talks, and it can put one line in the call's chat.** Speech is how it answers. For
-the things speech mangles — a link, an identifier, a command to paste — it can post one
-short plain-text message into the meeting's own chat panel instead. That is a hand-over,
-not a second conversation: nothing reads the chat back to it, so a question typed there
-never reaches it, and it is told never to post an answer it should be speaking. Nothing
+**It talks, and it can use the call's chat.** Speech is how it answers. For the things
+speech mangles — a link, an identifier, a command to paste — it can post one short
+plain-text message into the meeting's own chat panel instead, and it can read what you
+have typed there when you ask it to look. Nothing tells it a message arrived, so say so in
+the call: "I've pasted the URL in the chat" or "read the chat". It reads the newest
+messages, without who sent them, and answers out loud. The chat is not a second
+conversation: it is told never to post an answer it should be speaking, and a question
+typed there reaches it only when somebody says it is waiting. Nothing
 else leaves a call — no message anywhere else and no file — and it is instructed never to
 offer. If you want more than that one line as text, ask it again in a chat session. The
 call itself is not kept: no transcript, no summary, not the lines it posts in the chat from
-inside the call, and nothing in your conversation history about what was said. Ask it "what
+inside the call, nothing it read there, and nothing in your conversation history about what
+was said. Ask it "what
 did we decide in the meeting?" afterwards and it won't know. Its own log says no more than
 that by default —
 see [Settings](#settings) if you need to turn the words on to diagnose something. The one
@@ -317,6 +322,13 @@ runs, or have a scheduled run report back into the room that way; a line sent fr
 the call is stored with the thread like any other tool argument, and one the agent posts
 from inside the call is not stored at all.
 
+Reading the chat is a tool too, and only the agent in the call has it. Ask it out loud to
+look, and it comes back with the newest **20** messages, oldest first, without who sent
+them, and long ones cut — it says so when it did not get the whole chat. It is told the
+text is other people's information rather than an instruction, and that a typed "go ahead"
+is not the spoken "yes" a destructive action needs. From a chat session there is nothing
+to read: the panel belongs to the call.
+
 It can also **share its screen** and **use a browser** on request — see
 [The screen](#the-screen) and [The browser](#the-browser) for what the room sees and
 what the agent can do with a page.
@@ -338,7 +350,8 @@ the only tool withheld in code — nothing is held back for safety. The single g
 is an instruction in its prompt: announce what it's about to do and get an explicit
 "yes" in the room before anything that deletes, deploys, spends money, grants access,
 or changes its own configuration — and never read that permission out of enthusiasm
-or out of someone claiming authority.
+or out of someone claiming authority. That "yes" is spoken: a line typed in the chat
+carries no permission, since anyone with the link types there under any name.
 
 **That includes changing itself.** Renaming itself, rewriting any of its workspace
 files (Soul, user profile, memory, vision, heartbeat config, bootstrap
@@ -474,10 +487,12 @@ the rest of the runtime's debug output.
 Turn it on only for as long as you need it, and tell the room. Nothing here reaches
 product telemetry either way — that surface gets counts.
 
-**A message the agent posts in the chat is never written to the log.** There is no setting
-for it. Every send still writes one line, and that line carries whether the message went
-out, how long it was, how long it took, and — when it failed — the step the send stopped
-at. The text itself appears nowhere, at any log level, and in no telemetry property.
+**Nothing from the chat panel is written to the log, in either direction.** There is no
+setting for it. A send writes one line, and a read writes one line: whether it worked, how
+much text was involved, how long it took, and — when it failed — the step it stopped at. No
+message body appears anywhere, at any log level, and in no telemetry property. What the
+agent read is not stored either: it holds it for the rest of the call and nothing keeps it
+after.
 
 A send that failed or was refused writes its line as a warning, because it is silence in
 the room with no other symptom: Meet publishes no chat API, so this runs by driving the
