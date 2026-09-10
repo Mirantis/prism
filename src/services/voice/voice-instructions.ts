@@ -7,20 +7,36 @@
  * its name. Conversation history is left out: a call is its own context, and a whole
  * thread would bloat a session that pays per audio token.
  *
- * Both session owners build their instructions here, so a meeting and a browser voice
- * chat differ in the two values they pass and nowhere else.
+ * Every session owner builds its instructions here, so a meeting and a voice chat differ
+ * in what they pass and nowhere else.
  */
 
 import { contextService } from '../context.service';
 import { buildSystemPromptParts } from '../../prompts/context-builder';
 import { getMeetingInstructions } from '../../prompts/meeting-prompt';
+import { getVoiceChatInstructions } from '../../prompts/voice-chat-prompt';
 import type { ResponseMode } from '../meeting/response-policy';
+
+/**
+ * Which call the prompt describes.
+ *
+ * A meeting is a room on a platform. A voice chat is the agent and one client, and what
+ * that client gave it decides what its prompt says it has.
+ */
+export type VoiceCall =
+  | { kind: 'meeting'; platform: string }
+  | {
+      kind: 'voice-chat';
+      /** The computer the session opened, and the desktop around it where there is one. */
+      computer: { desktop: { width: number; height: number } | null } | null;
+      /** Whether this client can share its own screen with the agent. */
+      userScreen: boolean;
+    };
 
 export interface VoiceInstructionsInput {
   userId: string;
   agentId: string;
-  /** How the prompt names the call: the meeting platform, or plain voice. */
-  platform: string;
+  call: VoiceCall;
   responseMode: ResponseMode;
 }
 
@@ -42,13 +58,24 @@ export async function buildVoiceInstructions(input: VoiceInstructionsInput): Pro
     includeConversation: false,
   });
   const parts = await buildSystemPromptParts(context, 'meeting');
-  const instructions = [
-    parts.map((p) => p.text).join('\n\n---\n\n'),
-    getMeetingInstructions({
-      agentName: context.agentName,
-      platform: input.platform,
-      responseMode: input.responseMode,
-    }),
-  ].join('\n\n---\n\n');
-  return { instructions, agentName: context.agentName, lockedIn: context.lockedIn };
+  const call =
+    input.call.kind === 'meeting'
+      ? getMeetingInstructions({
+          agentName: context.agentName,
+          platform: input.call.platform,
+          responseMode: input.responseMode,
+        })
+      : getVoiceChatInstructions({
+          agentName: context.agentName,
+          // A voice chat is never `auto`: that mode resolves from a participant count,
+          // and one mixed microphone yields none.
+          responseMode: input.responseMode === 'addressed' ? 'addressed' : 'open',
+          computer: input.call.computer,
+          userScreen: input.call.userScreen,
+        });
+  return {
+    instructions: [parts.map((p) => p.text).join('\n\n---\n\n'), call].join('\n\n---\n\n'),
+    agentName: context.agentName,
+    lockedIn: context.lockedIn,
+  };
 }

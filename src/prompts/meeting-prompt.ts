@@ -61,7 +61,7 @@ export interface MeetingInstructionsInput {
  * own silence, re-introduces itself every time it is let through, or asks whether
  * a follow-up was meant for it — all of which read as broken in a live room.
  */
-function listeningNote(mode: MeetingInstructionsInput['responseMode']): string {
+export function listeningNote(mode: MeetingInstructionsInput['responseMode']): string {
   const gated = `You are not prompted to speak for every utterance in this call — someone has to
    call you by name first, every time, including for follow-ups. So when you are
    prompted, answer the thing that was said: don't re-introduce yourself, don't ask

@@ -28,6 +28,8 @@ vi.mock('../voice-instructions', () => ({
 
 vi.mock('../../meeting/tool-bridge', () => ({
   prepareMeetingTools: vi.fn(async () => ({ declarations: [], execute: vi.fn(), count: 3 })),
+  prepareRealtimeTools: vi.fn(() => ({ declarations: [], execute: vi.fn(), count: 0 })),
+  prepareVoiceChatTools: vi.fn((base: unknown) => base),
 }));
 
 const trackEvent = vi.fn();
@@ -121,7 +123,9 @@ describe('starting a session', () => {
   it('reports the session live straight away', async () => {
     const { signal } = await startSession();
 
-    expect(signal.state).toHaveBeenCalledWith('live');
+    // A session with no computer says so, since the client uses it to decide whether
+    // clicking the screen takes the pointer.
+    expect(signal.state).toHaveBeenCalledWith('live', { desktop: false });
     expect(voiceChatService.isLive).toBe(true);
   });
 
@@ -308,11 +312,22 @@ describe('ending a session', () => {
       tools: '3',
       locked_in: 'false',
       response_mode: 'open',
+      surface: 'chat',
+      computer: 'false',
     });
     expect(trackEvent).toHaveBeenCalledWith(
       'voice chat ended',
       'user-1',
-      expect.objectContaining({ status: 'completed', responses: '2', tool_calls: '1', utterances: '4' }),
+      expect.objectContaining({
+        status: 'completed',
+        // Which client had the call, and whether it had a computer: the two numbers below
+        // read differently for a call spent working on one.
+        surface: 'chat',
+        computer: 'false',
+        responses: '2',
+        tool_calls: '1',
+        utterances: '4',
+      }),
     );
   });
 
