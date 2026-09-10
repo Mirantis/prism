@@ -112,6 +112,7 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
     // leave the runtime holding a call nobody can talk to. This is the one refusal the
     // client owns, since the runtime never hears about it.
     void startVoiceAudio({
+      sampleRate: VOICE_SAMPLE_RATE,
       // Mute is a frame the client does not send. The microphone stays open, so
       // unmuting is silence ending rather than a second permission prompt.
       onFrame: (frame) => {
