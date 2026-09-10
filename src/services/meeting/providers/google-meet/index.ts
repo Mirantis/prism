@@ -1089,11 +1089,12 @@ export class GoogleMeetProvider implements MeetingProvider {
    * One `evaluate` over the rows already painted, for the same reason the count is one:
    * a locator per message is a round trip per message, and the room is waiting.
    *
-   * Two readings decide the outcome. `total` is how many rows parsed into text, and
-   * `idNodes` how many nodes carry a message id at all. A page with ids but nothing
-   * parsed is a selector that has rotted, and it reports `read: false` — an empty chat
-   * and a chat the reader cannot see are the same picture, and only one of them is safe
-   * to say out loud.
+   * Three readings decide the outcome. `total` is how many rows parsed into text, and
+   * `idNodes` how many nodes carry a message id at all: a page with ids but nothing parsed
+   * is a selector that has rotted. Nothing parsed and no ids either asks the toggle again,
+   * because a panel that is no longer open lost the rail to the participants poll. Both
+   * report `read: false` — an empty chat and a chat the reader cannot see are the same
+   * picture, and only one of them is safe to say out loud.
    *
    * The panel is left as it was found: a person who had chat open keeps it, and a panel
    * this read opened is closed again, because People shares that rail and the empty-room
@@ -1162,12 +1163,19 @@ export class GoogleMeetProvider implements MeetingProvider {
         CHAT_LIST_READ_TIMEOUT_MS,
       );
 
-      if (harvest.total === 0 && harvest.idNodes > 0) {
-        return {
-          read: false,
-          step: 'read',
-          reason: 'the panel had messages the reader could not parse',
-        };
+      // Nothing parsed is an empty chat only when no ids are on the page and the panel is
+      // still open. A toggle that will not say is not a failure.
+      if (harvest.total === 0) {
+        if (harvest.idNodes > 0) {
+          return {
+            read: false,
+            step: 'read',
+            reason: 'the panel had messages the reader could not parse',
+          };
+        }
+        if ((await this.panelIsOpen(toggle)) === false) {
+          return { read: false, step: 'read', reason: 'the chat panel closed during the read' };
+        }
       }
 
       return {

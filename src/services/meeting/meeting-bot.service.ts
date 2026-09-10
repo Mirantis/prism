@@ -349,6 +349,10 @@ function attributionRate(stats: VoiceConversationStats | undefined): number {
 const CHAT_FENCE_OPEN = '<chat>';
 const CHAT_FENCE_CLOSE = '</chat>';
 
+/** A control character, and each half of a surrogate pair whose other half is missing. */
+const EXPENSIVE_TO_ESCAPE =
+  /[\u0000-\u001F]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 /**
  * Turn the messages into the one block the model reads.
  *
@@ -365,9 +369,19 @@ const CHAT_FENCE_CLOSE = '</chat>';
  * keeps a call's chat out of the tool-output store: the meeting bridge writes a whole
  * result to a file above its own cap, and a reading assembled under this one never gets
  * there. Dropping oldest first keeps what the room just typed, which is what was asked for.
+ *
+ * The budget counts characters and the bridge measures the JSON-escaped result, so the two
+ * agree only while one character cannot become six. A control character does, and so does
+ * half a surrogate pair — which the per-message cut can leave behind. Both are replaced
+ * with a space, and every character that survives escapes to at most two.
  */
 function fenceChatMessages(messages: readonly string[], truncated: boolean): ChatReadReport {
-  const safe = messages.map((text) => text.split(CHAT_FENCE_CLOSE).join(' '));
+  const safe = messages.map((text) =>
+    text
+      .replace(EXPENSIVE_TO_ESCAPE, ' ')
+      .split(CHAT_FENCE_CLOSE)
+      .join(' '),
+  );
 
   const kept: string[] = [];
   let chars = 0;

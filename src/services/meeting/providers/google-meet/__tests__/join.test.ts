@@ -137,6 +137,8 @@ interface FakePageOptions {
   chatHtml?: string;
   /** Make `evaluate` never settle, i.e. a page too busy to answer the read. */
   evaluateWedged?: boolean;
+  /** Close the panel as the probe runs, i.e. something else took the side rail. */
+  chatClosesDuringRead?: boolean;
 }
 
 interface FakeState {
@@ -349,6 +351,7 @@ function fakePage(options: FakePageOptions) {
     // selectors are exercised rather than stubbed out.
     evaluate: async <T, A>(fn: (arg: A) => T, arg: A): Promise<T> => {
       if (options.evaluateWedged) return new Promise<T>(() => {});
+      if (options.chatClosesDuringRead) state.chatOpen = false;
       const { JSDOM } = await import('jsdom');
       const dom = new JSDOM(`<body>${options.chatHtml ?? ''}</body>`);
       const previous = globalThis.document;
@@ -1497,6 +1500,26 @@ describe('reading the chat panel', () => {
     const result = await provider.readChatMessages(harness.page, bounds);
 
     expect(result).toEqual({ read: false, step: 'read', reason: expect.any(String) });
+  });
+
+  it('reports the read step when the panel closed under the read', async () => {
+    // Something else took the side rail mid-read, so the page holds no chat at all. That
+    // reads exactly like an empty chat, and saying "nobody typed anything" would be wrong.
+    const harness = inCall({ chatClosesDuringRead: true });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toEqual({ read: false, step: 'read', reason: expect.any(String) });
+  });
+
+  it('answers an empty chat when the toggle will not say and nothing is there', async () => {
+    // A toggle that reports nothing is not evidence the panel closed, and the composer
+    // already proved it opened.
+    const harness = inCall({ chatExpanded: 'missing', chatHtml: '' });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toEqual({ read: true, messages: [], truncated: false });
   });
 
   it('keeps the newest messages and says the reading is short', async () => {
