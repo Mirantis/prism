@@ -253,21 +253,19 @@ and offers to walk through it out loud, or spells the part that matters slowly.
 **It talks, and it can use the call's chat.** Speech is how it answers. For the things
 speech mangles — a link, an identifier, a command to paste — it can post one short
 plain-text message into the meeting's own chat panel instead, and it can read what you
-have typed there when you ask it to look. Nothing tells it a message arrived, so say so in
-the call: "I've pasted the URL in the chat" or "read the chat". It reads the newest
+have typed there when you ask it to look. Nothing tells it a message arrived, so say so
+in the call: "I've pasted the URL in the chat", or "read the chat". It reads the newest
 messages, without who sent them, and answers out loud. The chat is not a second
 conversation: it is told never to post an answer it should be speaking, and a question
-typed there reaches it only when somebody says it is waiting. Nothing
-else leaves a call — no message anywhere else and no file — and it is instructed never to
-offer. If you want more than that one line as text, ask it again in a chat session. The
-call itself is not kept: no transcript, no summary, not the lines it posts in the chat from
-inside the call, nothing it read there, and nothing in your conversation history about what
-was said. Ask it "what
-did we decide in the meeting?" afterwards and it won't know. Its own log says no more than
-that by default —
-see [Settings](#settings) if you need to turn the words on to diagnose something. The one
-thing that outlives a call is work you asked for and it could not finish in the call: it
-schedules that, and the result appears in your chat — see
+typed there reaches it only when somebody says it is waiting. Nothing else leaves a call
+— no message anywhere else and no file — and it is instructed never to offer. If you want
+more than that one line as text, ask it again in a chat session. The call itself is not
+kept: no transcript, no summary, not the lines it posts in the chat from inside the call,
+nothing it read there, and nothing in your conversation history about what was said. Ask
+it "what did we decide in the meeting?" afterwards and it won't know. Its own log says no
+more than that by default — see [Settings](#settings) if you need to turn the words on to
+diagnose something. The one thing that outlives a call is work you asked for and it could
+not finish in the call: it schedules that, and the result appears in your chat — see
 [Tools](#tools-and-what-it-wont-do-on-a-spoken-request).
 
 **It can't hear who is speaking, but it can look.** The meeting audio arrives as one
