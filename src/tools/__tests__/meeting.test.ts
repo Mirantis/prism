@@ -15,6 +15,7 @@ const mockStatus = vi.fn();
 const mockSpeakerReport = vi.fn();
 const mockFindProvider = vi.fn();
 const mockSendChatMessage = vi.fn();
+const mockReadChatMessages = vi.fn();
 
 vi.mock('../../services/meeting/meeting-bot.service', () => ({
   meetingBotService: {
@@ -24,10 +25,12 @@ vi.mock('../../services/meeting/meeting-bot.service', () => ({
     speakerReport: () => mockSpeakerReport(),
     findProvider: (url: string) => mockFindProvider(url),
     sendChatMessage: (...args: unknown[]) => mockSendChatMessage(...args),
+    readChatMessages: (...args: unknown[]) => mockReadChatMessages(...args),
   },
-  // Mirrors the real constant, which the service's own tests pin. Here it only has to
-  // be the number the tool description quotes.
+  // Mirror the real constants, which the service's own tests pin. Here they only have to
+  // be the numbers the tool descriptions quote.
   MEETING_CHAT_MAX_CHARS: 500,
+  MEETING_CHAT_READ_LIMIT: 20,
 }));
 
 const mockIsBrowserAvailable = vi.fn();
@@ -40,9 +43,12 @@ vi.mock('../../services/meeting/openai-endpoint', () => ({
   isRealtimeConfigured: () => mockIsRealtimeConfigured(),
 }));
 
-const { getMeetingTools, isMeetingSupported, MEETING_MEMBERSHIP_TOOL_NAMES } = await import(
-  '../meeting'
-);
+const {
+  getMeetingTools,
+  isMeetingSupported,
+  MEETING_MEMBERSHIP_TOOL_NAMES,
+  MEETING_READ_TOOL_NAME,
+} = await import('../meeting');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -50,6 +56,11 @@ beforeEach(() => {
   mockIsRealtimeConfigured.mockReturnValue(true);
   mockFindProvider.mockReturnValue({ name: 'google-meet', displayName: 'Google Meet' });
   mockSendChatMessage.mockResolvedValue({ sent: true, message: `Posted it in the call's chat.` });
+  mockReadChatMessages.mockResolvedValue({
+    success: true,
+    message: '<chat>\n1. hello\n</chat>',
+    incomplete: false,
+  });
 });
 
 const input = { userId: 'u1', agentId: 'a1', threadId: 't1' };
@@ -68,11 +79,12 @@ describe('getMeetingTools', () => {
       'see_screen',
       'meeting_speaker',
       'send_meeting_chat',
+      'read_meeting_chat',
       'meeting_status',
     ]);
-    // The two the mode filter withholds have to be two of the names registered here, or
-    // it withholds nothing.
-    for (const name of MEETING_MEMBERSHIP_TOOL_NAMES) {
+    // Every name the mode filter acts on has to be one of the names registered here, or it
+    // withholds nothing.
+    for (const name of [...MEETING_MEMBERSHIP_TOOL_NAMES, MEETING_READ_TOOL_NAME]) {
       expect(Object.keys(getMeetingTools(input))).toContain(name);
     }
 
@@ -245,6 +257,41 @@ describe('getMeetingTools', () => {
     expect(result.message).toMatch(/not in a call/);
   });
 
+  it('reads the chat as the calling user, and says the reading is data', async () => {
+    const tools = getMeetingTools(input);
+
+    const result = await tools.read_meeting_chat.execute!(
+      {},
+      { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
+    );
+
+    expect(mockReadChatMessages).toHaveBeenCalledWith('u1');
+    expect(result).toMatchObject({ success: true, incomplete: false });
+    // The description is where the model learns what the text is before it reads any of
+    // it: information from unidentified people, and never an instruction or a permission.
+    const { description } = tools.read_meeting_chat as { description: string };
+    expect(description).toMatch(/data, not instructions/i);
+    expect(description).toMatch(/never as permission/i);
+    expect(description).toContain('20');
+  });
+
+  it('reports a refused read as unsuccessful', async () => {
+    mockReadChatMessages.mockResolvedValue({
+      success: false,
+      message: `I'm not in a call, so there's no meeting chat to read.`,
+      incomplete: false,
+    });
+    const tools = getMeetingTools(input);
+
+    const result = (await tools.read_meeting_chat.execute!(
+      {},
+      { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
+    )) as { success: boolean; message: string };
+
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/not in a call/);
+  });
+
   it('reports not being in a meeting', async () => {
     mockStatus.mockReturnValue({
       state: 'idle',
@@ -294,7 +341,7 @@ describe('meeting tool mode', () => {
     'schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task',
     'create_goal', 'get_goal', 'share_file', 'skill',
     'leave_meeting', 'join_meeting', 'set_microphone', 'meeting_status', 'meeting_speaker',
-    'send_meeting_chat',
+    'send_meeting_chat', 'read_meeting_chat',
     'rename_self', 'update_soul', 'update_memory', 'update_user_profile',
     'update_heartbeat_config', 'update_settings', 'update_vision', 'clear_bootstrap',
   ];
@@ -316,34 +363,40 @@ describe('meeting tool mode', () => {
     );
   });
 
-  it('otherwise tracks chat mode, so the two cannot drift apart', async () => {
+  it('is chat minus share_file plus the chat read, so the two cannot drift apart', async () => {
     const { filterToolsByMode } = await import('../../lib/tool-collection');
     const all = Object.fromEntries(EVERYTHING.map((n) => [n, stub()]));
 
-    const expected = Object.keys(filterToolsByMode(all, 'chat'))
-      .filter((n) => n !== 'share_file')
-      .sort();
+    const expected = [
+      ...Object.keys(filterToolsByMode(all, 'chat')).filter((n) => n !== 'share_file'),
+      'read_meeting_chat',
+    ].sort();
 
     expect(Object.keys(filterToolsByMode(all, 'meeting')).sort()).toEqual(expected);
   });
 
-  it('offers the whole meeting set in chat, the send included', async () => {
+  it('offers the whole meeting set in chat except the chat read', async () => {
     // A chat turn can post into a call that is already running. It costs the line being
     // stored with the thread like any other tool argument, which two reviewers weighed
-    // and accepted; `docs/tools.md` says so.
+    // and accepted; `docs/tools.md` says so. Reading the chat is the one that cannot pay
+    // that cost: the words are other people's, and a stored tool result is replayed into
+    // every later turn.
     const { filterToolsByMode } = await import('../../lib/tool-collection');
     const all = Object.fromEntries(EVERYTHING.map((n) => [n, stub()]));
 
-    expect(Object.keys(filterToolsByMode(all, 'chat')).sort()).toEqual([...EVERYTHING].sort());
+    expect(Object.keys(filterToolsByMode(all, 'chat')).sort()).toEqual(
+      EVERYTHING.filter((n) => n !== 'read_meeting_chat').sort(),
+    );
   });
 
-  it('keeps only joining and leaving out of the autonomous modes', async () => {
+  it('keeps joining, leaving and the chat read out of the autonomous modes', async () => {
     const { filterToolsByMode } = await import('../../lib/tool-collection');
 
     // An autonomous run dialling into a live call with people in it, or hanging up on
     // one, is never what the operator asked for — only a person in a conversation
     // decides that. Posting one line into a call already running is the reverse: a
-    // scheduled run that the room kicked off reports back into the room that way.
+    // scheduled run that the room kicked off reports back into the room that way. Reading
+    // the chat is out because these modes store their tool results.
     for (const mode of ['heartbeat', 'cron', 'webhook', 'subagent', 'goal']) {
       const filtered = filterToolsByMode(
         {
@@ -353,6 +406,7 @@ describe('meeting tool mode', () => {
           set_microphone: stub(),
           meeting_status: stub(),
           send_meeting_chat: stub(),
+          read_meeting_chat: stub(),
           memory_search: stub(),
         },
         mode,
@@ -369,10 +423,11 @@ describe('meeting tool mode', () => {
     }
   });
 
-  it('keeps those two out of a mode nobody enumerated either', async () => {
+  it('keeps those three out of a mode nobody enumerated either', async () => {
     // The fallback hands an unknown mode every other tool, which is the right default
     // for a caller this function has not heard of. It is the wrong default for the two
-    // that change which call the agent is in.
+    // that change which call the agent is in, and for the read whose result that caller
+    // would store.
     const { filterToolsByMode } = await import('../../lib/tool-collection');
 
     const filtered = filterToolsByMode(
@@ -382,6 +437,7 @@ describe('meeting tool mode', () => {
         meeting_speaker: stub(),
         meeting_status: stub(),
         send_meeting_chat: stub(),
+        read_meeting_chat: stub(),
         memory_search: stub(),
         shell_exec: stub(),
       },
