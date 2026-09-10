@@ -29,6 +29,14 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const sessionRef = useRef<ShareSession | null>(null);
+  /**
+   * False once the page is gone.
+   *
+   * The picker is the user's own dialog and stays open for as long as they take over it,
+   * which is long enough to leave the page. The stream then arrives with nothing left to
+   * clean it up, and the browser goes on capturing their screen.
+   */
+  const mountedRef = useRef(true);
 
   const stop = useCallback(() => {
     const session = sessionRef.current;
@@ -55,6 +63,11 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
       if (!(err instanceof DOMException && err.name === 'NotAllowedError')) {
         setError(err instanceof Error ? err.message : 'Could not share the screen.');
       }
+      return;
+    }
+
+    if (!mountedRef.current) {
+      media.getTracks().forEach((t) => t.stop());
       return;
     }
 
@@ -94,6 +107,7 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
 
   useEffect(
     () => () => {
+      mountedRef.current = false;
       const session = sessionRef.current;
       if (!session) return;
       clearInterval(session.timer);
