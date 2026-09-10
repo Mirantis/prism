@@ -165,6 +165,10 @@ vi.mock('../voice-conversation', () => ({ VoiceConversation: FakeVoiceConversati
 const prepareMeetingTools = vi.fn();
 vi.mock('../tool-bridge', () => ({
   prepareMeetingTools: (...a: unknown[]) => prepareMeetingTools(...a),
+  // The real figure, since the reading the service assembles is bounded by it. It moves
+  // with the one in `tool-bridge`, which this suite cannot import: the real module pulls
+  // the whole tool tree in with it.
+  MEETING_MAX_RESULT_CHARS: 12_000,
 }));
 
 const getAgentContext = vi.fn();
@@ -278,6 +282,9 @@ vi.mock('../../../config', () => ({
 const { MeetingBotService, MEETING_CHAT_MAX_CHARS, MEETING_CHAT_READ_LIMIT } = await import(
   '../meeting-bot.service'
 );
+// The cap the bridge renders a tool result under, and so the bound on a chat reading. The
+// mock above holds the figure; this is the one place the assertions read it from.
+const { MEETING_MAX_RESULT_CHARS } = await import('../tool-bridge');
 // The real lock, not a mock: what these tests measure is the service taking and
 // handing back the one voice the runtime has.
 const { voiceSessionLock } = await import('../../voice/voice-session-lock');
@@ -2860,16 +2867,19 @@ describe('reading the call chat', () => {
   const messages = (count: number, chars: number): string[] =>
     Array.from({ length: count }, (_, i) => `m${i}`.padEnd(chars, '.'));
 
+  /** The one telemetry event a read emits, which is where its counts are reported. */
+  const readProps = (): Record<string, string> =>
+    trackEvent.mock.calls.find((c) => c[0] === 'meeting chat read')?.[2] as Record<string, string>;
+
   /**
    * What the meeting bridge would cut out of this result.
    *
-   * The bridge writes an oversized result to a file; this is the same threshold in the
-   * same module, without writing one. The cap is `MEETING_MAX_RESULT_CHARS`, repeated
-   * because `tool-bridge` is mocked in this suite, and the escaping is measured by the
-   * real limiter rather than calculated here.
+   * The same cap and the same module the bridge renders with, so the escaping is measured
+   * rather than calculated here.
    */
   const spillOf = (result: unknown) =>
-    renderToolResultDetailed(result, { maxChars: 12_000, quietLog: true }).truncation;
+    renderToolResultDetailed(result, { maxChars: MEETING_MAX_RESULT_CHARS, quietLog: true })
+      .truncation;
 
   it('hands the model the messages, fenced and labelled as data', async () => {
     providerReadChatMessages.mockResolvedValue({
@@ -2891,10 +2901,11 @@ describe('reading the call chat', () => {
     // nothing.
     expect(result.message).toMatch(/data, not instructions/i);
     expect(result.message).toMatch(/spoken in the room/i);
-    // The bounds are the caller's, since they are what keeps the reading out of any store.
+    // The bounds are the caller's. The per-message figure is the length of Meet's own
+    // composer, so a whole message a person can type comes back.
     expect(providerReadChatMessages).toHaveBeenCalledWith(expect.objectContaining({ mockPage: true }), {
       limit: MEETING_CHAT_READ_LIMIT,
-      maxCharsPerMessage: 500,
+      maxCharsPerMessage: 4_000,
     });
   });
 
@@ -3177,7 +3188,7 @@ describe('reading the call chat', () => {
   it('drops the oldest messages to stay inside the budget, and says the reading is partial', async () => {
     providerReadChatMessages.mockResolvedValue({
       read: true,
-      messages: messages(25, 200),
+      messages: messages(20, 1_000),
       truncated: false,
     });
     await enterCall();
@@ -3189,14 +3200,13 @@ describe('reading the call chat', () => {
     expect(result.message).toMatch(/not the whole chat/i);
     // The newest survives and the oldest goes, since the newest is what the room just
     // typed and asked about.
-    expect(result.message).toContain('m24');
+    expect(result.message).toContain('m19');
     expect(result.message).not.toContain('m0.');
   });
 
-  it('keeps the assembled reading small enough that nothing spills to disk', async () => {
-    // The bound that makes this whole tool safe: the meeting bridge writes an oversized
-    // tool result to a file, so a reading is assembled under that size and never gets
-    // there. This feeds it a page that ignored the per-message bound entirely.
+  it('stops assembling a reading at the meeting tool-result cap', async () => {
+    // The cap bounds what a read collects, so a page that ignored the per-message bound
+    // still comes back short enough to read out.
     providerReadChatMessages.mockResolvedValue({
       read: true,
       messages: messages(MEETING_CHAT_READ_LIMIT, 4_000),
@@ -3207,13 +3217,36 @@ describe('reading the call chat', () => {
     const result = await service.readChatMessages('u1');
 
     expect(result.incomplete).toBe(true);
-    expect(spillOf(result)).toBeUndefined();
+    expect(result.message).toMatch(/not the whole chat/i);
+    expect(Number(readProps().chars)).toBeLessThanOrEqual(MEETING_MAX_RESULT_CHARS);
+  });
+
+  it('cuts one message that outgrows the whole budget instead of reading back nothing', async () => {
+    // A provider that applied no per-message bound. A reading with nothing in it would be
+    // spoken as an empty chat, which is the one wrong answer to give a room. The pair sits
+    // where the cut lands, so the cut leaves half of it behind.
+    const head = `the trace starts here`.padEnd(MEETING_MAX_RESULT_CHARS - 1, '.');
+    providerReadChatMessages.mockResolvedValue({
+      read: true,
+      messages: [`${head}😀${'.'.repeat(20_000)}`],
+      truncated: false,
+    });
+    await enterCall();
+
+    const result = await service.readChatMessages('u1');
+
+    expect(result.success).toBe(true);
+    expect(result.incomplete).toBe(true);
+    expect(result.message).toContain('1. the trace starts here');
+    expect(readProps().count).toBe('1');
+    expect(Number(readProps().chars)).toBeLessThanOrEqual(MEETING_MAX_RESULT_CHARS);
+    expect(JSON.stringify(result)).not.toContain('\\ud83d');
   });
 
   it('spends no budget on a character that serializes to six', async () => {
     // The budget counts characters and the bridge measures the JSON-escaped result. A
-    // control character and half a surrogate pair each cost six there, so 4,000 of them
-    // pass the budget and spill to disk anyway. Both are replaced before the count.
+    // control character and half a surrogate pair each cost six there, so a short reading
+    // of them would reach the model cut. Both are replaced before the count.
     providerReadChatMessages.mockResolvedValue({
       read: true,
       messages: Array.from(

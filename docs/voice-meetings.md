@@ -260,7 +260,7 @@ typed there reaches it only when somebody says it is waiting. Nothing else leave
 — no message anywhere else and no file — and it is instructed never to offer. If you want
 more than that one line as text, ask it again in a chat session. The call itself is not
 kept: no transcript, no summary, not the lines it posts in the chat from inside the call,
-nothing it read there, and nothing in your conversation history about what was said. Ask
+and nothing in your conversation history about what was said. Ask
 it "what did we decide in the meeting?" afterwards and it won't know. Its own log says no
 more than that by default — see [Settings](#settings) if you need to turn the words on to
 diagnose something. The one thing that outlives a call is work you asked for and it could
@@ -487,8 +487,10 @@ product telemetry either way — that surface gets counts.
 setting for it. A send writes one line, and a read writes one line: whether it worked, how
 much text was involved, how long it took, and — when it failed — the step it stopped at. No
 message body appears anywhere, at any log level, and in no telemetry property. What the
-agent read is not stored either: it holds it for the rest of the call and nothing keeps it
-after.
+agent read stays out of your conversation too — it holds a reading for the rest of the call
+and nothing keeps it after. A reading long enough to pass the size of one tool result is
+saved to a file like any other long result, and expires with them. See
+[Large tool outputs](tools.md#large-tool-outputs).
 
 A send that failed or was refused writes its line as a warning, because it is silence in
 the room with no other symptom: Meet publishes no chat API, so this runs by driving the
