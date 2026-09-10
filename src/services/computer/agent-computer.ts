@@ -1,33 +1,21 @@
 /**
- * A voice chat from the web UI: the browser's microphone in, the agent's speech out,
- * and a web browser the agent works in beside the conversation.
+ * The computer the agent works on: a browser, and on a host without a display of its
+ * own, a whole desktop around it.
  *
- * The same conversation loop the meeting bot runs (`VoiceConversation`), with the
- * user's browser in place of the meeting platform. One WebSocket on `/api/voice`
- * carries 48 kHz pcm16 mono both ways as binary frames; JSON text frames carry status
- * to the page. There is one person on the other end and the channel is the web UI, so
- * every utterance is answered (`responseMode: 'open'`) and nothing is gated.
+ * One of these belongs to one voice session. It opens a browser on a virtual display
+ * with an XFCE desktop, streams pictures of that screen, hands on the sound the browser
+ * plays, and carries out the `browse` and `desktop_*` tools. On a host that already has
+ * a display the browser opens there, and there is no desktop to act on: the tools that
+ * need one say so.
  *
- * Each connection is its own session: a Realtime session, and a browser of its own
- * (`BrowserStack`, on its own profile) that `browse` and `see_screen` act on. The page
- * closing the socket ends it; the Realtime session dying ends the socket.
+ * What it shows the model goes through `ModelChannel`, so the computer knows nothing
+ * about the session it belongs to beyond those two methods.
  */
 
-import type { Server as HttpServer, IncomingMessage } from 'http';
 import path from 'path';
 import type { Page } from 'playwright-core';
-import WebSocket, { WebSocketServer } from 'ws';
 import { logger } from '../../logger';
-import { isAllowedOrigin } from '../../lib/origin-guard';
-import { config } from '../../config';
 import { resolveDataDir } from '../../lib/data-dir';
-import { contextService } from '../context.service';
-import { buildSystemPromptParts } from '../../prompts/context-builder';
-import { getVoiceChatInstructions } from '../../prompts/voice-chat-prompt';
-import { VoiceConversation } from '../meeting/voice-conversation';
-import { MEETING_SAMPLE_RATE } from '../meeting/resampler';
-import { prepareMeetingTools } from '../meeting/tool-bridge';
-import { isRealtimeConfigured } from '../meeting/openai-endpoint';
 import { AudioStack, VIRTUAL_DISPLAY_SIZE, type AudioStackHandles } from '../meeting/audio-stack';
 import { BrowserStack } from '../meeting/browser-stack';
 import {
@@ -41,15 +29,12 @@ import {
   type BrowserResult,
 } from '../meeting/browser-control';
 import {
-  createVoiceChatTools,
-  mergePreparedTools,
-  prepareRealtimeTools,
   type DesktopActionResult,
   type TextLocation,
-  type VoiceChatBrowser,
-  type VoiceChatDesktop,
-  type VoiceChatUserScreen,
-} from './voice-chat-tools';
+  type ComputerBrowser,
+  type ComputerDesktop,
+  type ComputerUserScreen,
+} from './computer-tools';
 import { DesktopControl, OCR_SCALE, type MouseButton, type ScrollDirection } from './desktop-control';
 import { findText, readLines, readScreenWords, upscaleForOcr } from './screen-text';
 import { describeElements, findElements, readScreenElements } from './screen-elements';
@@ -61,34 +46,18 @@ import { DisplayStream } from './display-stream';
 import { DesktopSession } from './desktop-session';
 import type { PictureStream } from './picture-stream';
 
-export const VOICE_CHAT_PATH = '/api/voice';
-
-/** Sent to the page as a JSON text frame. Audio goes as binary frames. */
-export interface VoiceChatStatus {
-  type: 'status';
-  state: 'connecting' | 'ready' | 'ended' | 'error';
-  message?: string;
-  /** With `ready`: whether the page may take the pointer and keyboard on the screen it shows. */
-  desktop?: boolean;
-}
-
-/** One picture of the agent's browser, as base64 JPEG. */
-export interface VoiceChatScreenFrame {
-  type: 'screen';
-  data: string;
-}
-
-export type VoiceChatFrame = VoiceChatStatus | VoiceChatScreenFrame;
-
 /**
- * The first byte of a binary frame to the page says what the pcm16 after it is. The
- * second byte is padding, so the samples start on a 2-byte boundary.
+ * How the computer shows the model what it did: a picture into the live session, and a
+ * line of narration when something changed that nobody asked about.
+ *
+ * The note on a picture says the picture is a tool's answer rather than something the
+ * user said, since a session takes both on the same conversation.
  */
-export const VOICE_FRAME = 0x01;
-export const BROWSER_AUDIO_FRAME = 0x02;
-
-function tagged(tag: number, pcm48k: Buffer): Buffer {
-  return Buffer.concat([Buffer.from([tag, 0]), pcm48k]);
+export interface ModelChannel {
+  /** Put a picture in front of the model. False when it did not get through. */
+  showImage(imageUrl: string, note: string): boolean;
+  /** Tell the model something in words, without asking it to answer. */
+  notify(text: string): void;
 }
 
 /** Whether a capture chunk is nothing but silence, which is most of them. */
@@ -147,10 +116,11 @@ const WINDOW_ACTION_DONE: Record<WindowAction, string> = {
   minimize: 'Minimised',
 };
 
-/** Everything one connection owns, released together when it ends. */
-class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop, VoiceChatUserScreen {
-  conversation: VoiceConversation | null = null;
-  browser: BrowserStack | null = null;
+/** Everything one voice session's computer owns, released together when it ends. */
+export class AgentComputer implements ComputerBrowser, ComputerDesktop, ComputerUserScreen {
+  /** Where pictures and narration go once the session has a model to show them to. */
+  private channel: ModelChannel | null = null;
+  private browser: BrowserStack | null = null;
   /** The newest picture of the user's shared screen, while they share one. */
   private userScreen: { jpeg: Buffer; width: number; height: number; at: number } | null = null;
   /** Whether ffmpeg and Tesseract are on this host, so the shared screen can be read as text. */
@@ -176,6 +146,11 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop, VoiceChatU
   private screen: PictureStream | null = null;
   /** Everything that moves the front tab runs in arrival order; see the meeting service. */
   private frontTail: Promise<void> = Promise.resolve();
+
+  /** Where pictures and narration go. Called once the session has a model to send to. */
+  attach(channel: ModelChannel): void {
+    this.channel = channel;
+  }
 
   /**
    * Open the browser. Every voice chat has one, so a browser that cannot start ends
@@ -311,7 +286,7 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop, VoiceChatU
     if (!page) return { success: false, message: 'There is no browser window open.' };
     try {
       const { imageUrl, reading } = await capture(page);
-      const shown = this.conversation?.showImage(imageUrl, SCREEN_LOOK_NOTE) ?? false;
+      const shown = this.channel?.showImage(imageUrl, SCREEN_LOOK_NOTE) ?? false;
       return {
         success: true,
         message: shown
@@ -355,7 +330,7 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop, VoiceChatU
     switch (frame.type) {
       case 'user_screen_started':
         logger.info('[VoiceChat] User started sharing their screen');
-        this.conversation?.notify(
+        this.channel?.notify(
           'Your user has just started sharing their screen with you. Call see_user_screen ' +
             'whenever you want to look at it, and do look when they refer to something on it.',
         );
@@ -375,7 +350,7 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop, VoiceChatU
       case 'user_screen_stopped':
         logger.info('[VoiceChat] User stopped sharing their screen');
         this.userScreen = null;
-        this.conversation?.notify('Your user has stopped sharing their screen.');
+        this.channel?.notify('Your user has stopped sharing their screen.');
         return;
       default:
         this.input?.handle(frame);
@@ -396,7 +371,7 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop, VoiceChatU
       };
     }
     const shown =
-      this.conversation?.showImage(`data:image/jpeg;base64,${shared.jpeg.toString('base64')}`, USER_SCREEN_NOTE) ??
+      this.channel?.showImage(`data:image/jpeg;base64,${shared.jpeg.toString('base64')}`, USER_SCREEN_NOTE) ??
       false;
     const ageSeconds = Math.round((Date.now() - shared.at) / 1000);
     const text = await this.readUserScreenText(shared.jpeg);
@@ -634,13 +609,12 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop, VoiceChatU
   /** One picture of the desktop into the session. Returns whether the model got it. */
   private async showDesktop(control: DesktopControl, note: string): Promise<boolean> {
     const jpeg = await control.capture();
-    return this.conversation?.showImage(`data:image/jpeg;base64,${jpeg.toString('base64')}`, note) ?? false;
+    return this.channel?.showImage(`data:image/jpeg;base64,${jpeg.toString('base64')}`, note) ?? false;
   }
 
   /** Release everything. Safe to call more than once. */
   async stop(): Promise<void> {
-    this.conversation?.stop();
-    this.conversation = null;
+    this.channel = null;
     this.input?.stop();
     this.input = null;
     const screen = this.screen;
@@ -711,192 +685,3 @@ class VoiceChatSession implements VoiceChatBrowser, VoiceChatDesktop, VoiceChatU
     }
   }
 }
-
-class VoiceChatService {
-  private wss: WebSocketServer | null = null;
-  private readonly live = new Set<VoiceChatSession>();
-
-  /**
-   * Pick this endpoint's upgrades off the shared HTTP server.
-   *
-   * `noServer` because a `ws` server bound with `path` answers every other path's
-   * upgrade with a 400, and `/api/ws` already lives on the same server.
-   */
-  initialize(server: HttpServer): void {
-    const wss = new WebSocketServer({ noServer: true });
-    this.wss = wss;
-    server.on('upgrade', (req, socket, head) => {
-      if (pathnameOf(req) !== VOICE_CHAT_PATH) return;
-      // A WebSocket handshake is exempt from the same-origin policy, so the rules the
-      // HTTP routes and `/api/ws` get are applied to it here.
-      if (
-        !isAllowedOrigin(req.headers.origin, req.headers.host, req.headers['x-forwarded-host'])
-      ) {
-        logger.warn(
-          '[OriginGuard] refused a voice chat handshake (origin %s, host %s, x-forwarded-host %s)',
-          req.headers.origin,
-          req.headers.host,
-          req.headers['x-forwarded-host'],
-        );
-        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-        socket.destroy();
-        return;
-      }
-      wss.handleUpgrade(req, socket, head, (ws) => void this.handleConnection(ws));
-    });
-    logger.info(`Voice chat gateway initialized on ${VOICE_CHAT_PATH}`);
-  }
-
-  private async handleConnection(ws: WebSocket): Promise<void> {
-    const send = (frame: VoiceChatFrame): void => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
-    };
-    const sendAudio = (tag: number, pcm48k: Buffer): void => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(tagged(tag, pcm48k), { binary: true });
-    };
-
-    const agentId = config.agentId;
-    if (!isRealtimeConfigured() || !agentId) {
-      send({
-        type: 'status',
-        state: 'error',
-        message: 'Voice chat needs OPENAI_API_KEY set in the runtime environment.',
-      });
-      ws.close(1011, 'voice chat not configured');
-      return;
-    }
-    send({ type: 'status', state: 'connecting' });
-
-    // The runtime serves one agent and trusts the inbound network, the same as the
-    // chat gateway: the connection is the owner's.
-    const userId = config.ownerUserId;
-    const session = new VoiceChatSession();
-    this.live.add(session);
-    let closed = false;
-
-    const end = (reason: string): void => {
-      if (closed) return;
-      closed = true;
-      logger.info(`[VoiceChat] Ended: ${reason}`);
-      this.live.delete(session);
-      void session.stop();
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close(1000, reason);
-      }
-    };
-
-    ws.on('close', () => end('page closed the socket'));
-    ws.on('error', (err) => {
-      logger.warn({ err }, '[VoiceChat] Socket error');
-      end('socket error');
-    });
-
-    try {
-      // The browser first: a voice chat always has one, and its absence is the one
-      // failure worth reporting before anything else is built.
-      await session.openBrowser();
-      if (closed) return;
-      // The page sees and hears the browser from the start, before the model is ready.
-      session.startScreenStream((data) => send({ type: 'screen', data }));
-      const browserAudio = session.startBrowserAudio((pcm) => sendAudio(BROWSER_AUDIO_FRAME, pcm));
-      logger.info(
-        browserAudio
-          ? '[VoiceChat] Browser audio streams to the page'
-          : '[VoiceChat] Browser audio plays on this host, not through the page',
-      );
-
-      const desktopSize = session.hasDesktop
-        ? { width: session.width, height: session.height }
-        : null;
-      const { instructions, agentName, lockedIn } = await this.buildInstructions(
-        userId,
-        agentId,
-        desktopSize,
-      );
-      const agentTools = await prepareMeetingTools({ userId, agentId, lockedIn });
-      const tools = mergePreparedTools(
-        agentTools,
-        prepareRealtimeTools(createVoiceChatTools(session, session.hasDesktop ? session : null, session)),
-      );
-      if (closed) return;
-
-      const conversation = new VoiceConversation({
-        instructions,
-        tools,
-        // 48 kHz pcm16 both ways, the rate the page captures and plays at: straight to
-        // the page, paced by `AudioPlayback` exactly as it would be into `pacat`, so an
-        // interruption drops what it always dropped.
-        sink: { write: (chunk) => sendAudio(VOICE_FRAME, chunk) },
-        sampleRate: MEETING_SAMPLE_RATE,
-        responseMode: 'open',
-        agentName,
-        voice: config.openaiRealtimeVoice,
-        onSessionLost: (reason) => {
-          send({ type: 'status', state: 'ended', message: `Voice session lost: ${reason}` });
-          end(`realtime session lost: ${reason}`);
-        },
-      });
-      session.conversation = conversation;
-      await conversation.start();
-      if (closed) return;
-
-      ws.on('message', (data, isBinary) => {
-        if (!isBinary) {
-          // Text frames are the user's pointer and keyboard on the desktop.
-          session.handleInput(data.toString());
-          return;
-        }
-        conversation.pushAudio(
-          Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer),
-        );
-      });
-
-      conversation.notify(
-        'Your user just opened the voice chat in the web UI and can hear you. ' +
-          'Greet them in one short sentence.',
-      );
-      conversation.speakNow();
-      send({ type: 'status', state: 'ready', desktop: session.hasDesktop });
-      logger.info(`[VoiceChat] Ready with ${tools.count} tool(s) and a browser`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.error({ err }, '[VoiceChat] Failed to start');
-      send({ type: 'status', state: 'error', message });
-      end('start failed');
-    }
-  }
-
-  /**
-   * The agent's own system prompt plus how to behave on voice — the meeting bot's
-   * recipe with the voice-chat prompt in place of the meeting one.
-   */
-  private async buildInstructions(
-    userId: string,
-    agentId: string,
-    desktop: { width: number; height: number } | null,
-  ): Promise<{ instructions: string; agentName: string; lockedIn: boolean }> {
-    const context = await contextService.getAgentContext(userId, {
-      agentId,
-      includeConversation: false,
-    });
-    const parts = await buildSystemPromptParts(context, 'meeting');
-    const instructions = [
-      parts.map((p) => p.text).join('\n\n---\n\n'),
-      getVoiceChatInstructions({ agentName: context.agentName, desktop }),
-    ].join('\n\n---\n\n');
-    return { instructions, agentName: context.agentName, lockedIn: context.lockedIn };
-  }
-
-  /** Stop every live session; called from the process shutdown path. */
-  closeAll(): void {
-    for (const session of this.live) void session.stop();
-    this.live.clear();
-    this.wss?.close();
-  }
-}
-
-function pathnameOf(req: IncomingMessage): string {
-  return new URL(req.url ?? '/', 'http://localhost').pathname;
-}
-
-export const voiceChatService = new VoiceChatService();

@@ -1,27 +1,24 @@
 /**
- * The browser and desktop tools of a voice chat, and how they reach the Realtime model.
+ * The tools of the computer the agent is working on.
  *
  * `browse` and `see_screen` are the meeting's tools (`tools/meeting.ts`) bound to this
- * session's browser instead of the meeting bot's: same names, same schemas, so the
- * prompt text written for a call reads the same here. The meeting's copies, which
- * answer "I am not in a meeting", are dropped from the agent's set in their favour.
+ * computer instead of the meeting bot's: same names, same schemas, so the prompt text
+ * written for a call reads the same here. The meeting's copies, which answer "I am not
+ * in a meeting", are dropped from the agent's set in their favour by
+ * `prepareVoiceChatTools`.
  *
  * The `desktop_*` tools exist only where the runtime owns the display: they move the
  * mouse and press keys on it by pixel coordinates read off the picture `see_screen`
  * gives, and each answers with a fresh picture.
  */
 
-import { asSchema, tool, type Tool } from 'ai';
+import { tool, type Tool } from 'ai';
 import { z } from 'zod';
-import { logger } from '../../logger';
-import { MEETING_SCREEN_TOOL_NAMES } from '../../tools/meeting';
 import type { BrowserCommand, BrowserReading, BrowserResult } from '../meeting/browser-control';
-import type { RealtimeFunctionTool } from '../meeting/realtime-session';
-import type { PreparedMeetingTools } from '../meeting/tool-bridge';
 import type { MouseButton, ScrollDirection } from './desktop-control';
 
 /** What a session offers the tools: its browser, and the model to show a picture to. */
-export interface VoiceChatBrowser {
+export interface ComputerBrowser {
   browse(command: BrowserCommand): Promise<BrowserResult>;
   lookAtScreen(): Promise<{ success: boolean; message: string } & Partial<BrowserReading>>;
 }
@@ -43,7 +40,7 @@ export interface TextLocation {
 export type WindowAction = 'focus' | 'close' | 'maximize' | 'restore' | 'minimize';
 
 /** What the user is sharing from their own screen, when they are. */
-export interface VoiceChatUserScreen {
+export interface ComputerUserScreen {
   /** The picture into the session, plus the words on it as `text` where the host can read them. */
   lookAtUserScreen(): Promise<DesktopActionResult & { text?: string }>;
 }
@@ -52,7 +49,7 @@ export interface VoiceChatUserScreen {
  * The desktop a session owns, when it owns one. Every action shows the model the result.
  * `width` and `height` are the model's picture, which its coordinates refer to.
  */
-export interface VoiceChatDesktop {
+export interface ComputerDesktop {
   width: number;
   height: number;
   listElements(input: { filter?: string }): Promise<DesktopActionResult>;
@@ -68,10 +65,10 @@ export interface VoiceChatDesktop {
   scroll(input: { x: number; y: number; direction: ScrollDirection; clicks?: number }): Promise<DesktopActionResult>;
 }
 
-export function createVoiceChatTools(
-  browser: VoiceChatBrowser,
-  desktop: VoiceChatDesktop | null,
-  userScreen: VoiceChatUserScreen,
+export function createComputerTools(
+  browser: ComputerBrowser,
+  desktop: ComputerDesktop | null,
+  userScreen: ComputerUserScreen,
 ): Record<string, Tool> {
   const screenDescription = desktop
     ? `See your whole screen right now — a ${desktop.width} by ${desktop.height} picture of the ` +
@@ -157,7 +154,7 @@ export function createVoiceChatTools(
   };
 }
 
-function createDesktopTools(desktop: VoiceChatDesktop): Record<string, Tool> {
+function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
   const where =
     `Pixel coordinates in the ${desktop.width} by ${desktop.height} picture from \`see_screen\`: ` +
     'x from the left edge, y from the top. Aim at the middle of the button or row.';
@@ -297,74 +294,5 @@ function createDesktopTools(desktop: VoiceChatDesktop): Record<string, Tool> {
       }),
       execute: async (input) => desktop.scroll(input),
     }),
-  };
-}
-
-/**
- * Adapt AI SDK tools for the Realtime API, the way `prepareMeetingTools` does for the
- * agent's own set. Results are rendered as JSON; a rejected tool comes back as text.
- */
-export function prepareRealtimeTools(tools: Record<string, Tool>): PreparedMeetingTools {
-  const declarations: RealtimeFunctionTool[] = Object.entries(tools).map(([name, t]) => ({
-    name,
-    description: (typeof t.description === 'function'
-      ? t.description({ context: undefined })
-      : t.description) ?? name,
-    parameters: asSchema(t.inputSchema).jsonSchema as Record<string, unknown>,
-  }));
-
-  const execute = async (name: string, argumentsJson: string): Promise<string> => {
-    const t = tools[name];
-    if (!t || typeof t.execute !== 'function') {
-      return JSON.stringify({ error: `Unknown tool: ${name}` });
-    }
-    let args: unknown;
-    try {
-      args = argumentsJson.trim() ? JSON.parse(argumentsJson) : {};
-    } catch {
-      return JSON.stringify({ error: `Invalid JSON arguments for ${name}` });
-    }
-    try {
-      logger.info(`[VoiceChat] Executing tool ${name}`);
-      const result = await t.execute(args, {
-        toolCallId: `voice-${Date.now()}`,
-        messages: [],
-        abortSignal: new AbortController().signal,
-        context: undefined,
-      });
-      return typeof result === 'string' ? result : JSON.stringify(result);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.warn(`[VoiceChat] Tool ${name} failed: ${message}`);
-      return JSON.stringify({ error: message });
-    }
-  };
-
-  return { declarations, execute, count: declarations.length };
-}
-
-/**
- * The agent's set with this session's browser tools in place of the meeting's screen
- * tools. A name in `extra` wins; the meeting's screen tools go even when `extra` has
- * no replacement, since sharing a screen into a call has no meaning here.
- */
-export function mergePreparedTools(
-  base: PreparedMeetingTools,
-  extra: PreparedMeetingTools,
-): PreparedMeetingTools {
-  const replaced = new Set<string>([
-    ...MEETING_SCREEN_TOOL_NAMES,
-    ...extra.declarations.map((d) => d.name),
-  ]);
-  const declarations = [
-    ...base.declarations.filter((d) => !replaced.has(d.name)),
-    ...extra.declarations,
-  ];
-  const extraNames = new Set(extra.declarations.map((d) => d.name));
-  return {
-    declarations,
-    count: declarations.length,
-    execute: (name, argumentsJson) =>
-      extraNames.has(name) ? extra.execute(name, argumentsJson) : base.execute(name, argumentsJson),
   };
 }

@@ -11,10 +11,10 @@
  * concealment and no congestion control. Those were WebRTC's, and on a poor
  * cellular link they are missed.
  *
- * One rate throughout, `REALTIME_SAMPLE_RATE`, which is the model's own. So
- * nothing here resamples, and `VoiceConversation` skips both of its resamplers
- * too: the bytes the client captured reach the model unchanged, and the model's
- * speech reaches the client the same way.
+ * The rate is the client's, and every session states it: a client on the model's own
+ * `REALTIME_SAMPLE_RATE` resamples nowhere at all, since `VoiceConversation` skips both
+ * of its resamplers too. A client that carries the agent's screen as well speaks 48 kHz,
+ * where dropping the program audio to the model's rate would dull it.
  */
 
 import { logger } from '../../logger';
@@ -29,7 +29,7 @@ export const VOICE_AUDIO_FORMAT = {
 } as const;
 
 /**
- * The largest frame of client audio this accepts: one second at the format's rate.
+ * The largest frame of client audio this accepts: one second at the session's rate.
  *
  * A client sends 20 to 100 ms a frame, so a second is a wide margin and anything past it
  * is not microphone audio. Bounded here rather than on the WebSocket server, which is
@@ -37,7 +37,9 @@ export const VOICE_AUDIO_FORMAT = {
  * so a server-wide limit would drop a text client mid-conversation over a large paste.
  * This drops the frame and leaves the call running.
  */
-const MAX_FRAME_BYTES = REALTIME_SAMPLE_RATE * 2;
+function maxFrameBytes(sampleRate: number): number {
+  return sampleRate * 2;
+}
 
 /** What the transport needs from whoever owns the socket. */
 export interface SocketAudioChannel {
@@ -62,11 +64,16 @@ export interface SocketAudioEvents {
  */
 export class SocketAudio {
   private closed = false;
+  private readonly maxFrameBytes: number;
 
   constructor(
     private readonly channel: SocketAudioChannel,
     private readonly events: SocketAudioEvents,
-  ) {}
+    /** What the client speaks; defaults to the model's own rate. */
+    sampleRate: number = REALTIME_SAMPLE_RATE,
+  ) {
+    this.maxFrameBytes = maxFrameBytes(sampleRate);
+  }
 
   /**
    * Where the voice core writes the agent's speech.
@@ -106,7 +113,7 @@ export class SocketAudio {
       logger.warn({ bytes: pcm.length }, '[VoiceChat] Dropped an audio frame with a half sample');
       return;
     }
-    if (pcm.length > MAX_FRAME_BYTES) {
+    if (pcm.length > this.maxFrameBytes) {
       logger.warn({ bytes: pcm.length }, '[VoiceChat] Dropped an audio frame over the size limit');
       return;
     }

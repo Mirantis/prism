@@ -53,6 +53,24 @@ export const MEETING_SCREEN_TOOL_NAMES = [
   'see_screen',
 ] as const;
 
+/**
+ * Every tool here, which is what a voice chat drops.
+ *
+ * A voice chat is a call between the agent and one client, not a room: it has no
+ * participants to name, no chat panel to post into, and its microphone is the client's
+ * own to mute. Each of these would answer that there is no call to act on, so declaring
+ * them costs tokens and invites the model to offer what it cannot do. A session with a
+ * computer gets real tools under the two names worth keeping, `browse` and `see_screen`.
+ */
+export const MEETING_TOOL_NAMES = [
+  ...MEETING_MEMBERSHIP_TOOL_NAMES,
+  ...MEETING_SCREEN_TOOL_NAMES,
+  'set_microphone',
+  'meeting_speaker',
+  'send_meeting_chat',
+  'meeting_status',
+] as const;
+
 export interface MeetingToolsInput {
   userId: string;
   agentId: string;

@@ -2023,7 +2023,7 @@ export class MeetingBotService {
     return buildVoiceInstructions({
       userId: input.userId,
       agentId: input.agentId,
-      platform: this.provider?.displayName ?? 'video call',
+      call: { kind: 'meeting', platform: this.provider?.displayName ?? 'video call' },
       responseMode: this.responseMode,
     });
   }
