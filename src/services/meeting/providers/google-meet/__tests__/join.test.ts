@@ -131,6 +131,15 @@ interface FakePageOptions {
   submit?: 'sends' | 'clears-only' | 'ignores';
   /** Whether Enter submits at all. */
   enterSends?: boolean;
+  /**
+   * Markup the page's `evaluate` runs against, i.e. the messages in the open panel.
+   *
+   * A real DOM rather than a canned answer, because the read is one `evaluate` and what
+   * is under test is the selector work inside it.
+   */
+  chatHtml?: string;
+  /** Make `evaluate` never settle, i.e. a page too busy to answer the read. */
+  evaluateWedged?: boolean;
 }
 
 interface FakeState {
@@ -338,6 +347,20 @@ function fakePage(options: FakePageOptions) {
       ticks += 1;
       options.onTick?.(ticks);
       await new Promise((r) => setTimeout(r, 1));
+    },
+    // Runs the in-page probe against a real DOM built from `chatHtml`, so the read's
+    // selectors are exercised rather than stubbed out.
+    evaluate: async <T, A>(fn: (arg: A) => T, arg: A): Promise<T> => {
+      if (options.evaluateWedged) return new Promise<T>(() => {});
+      const { JSDOM } = await import('jsdom');
+      const dom = new JSDOM(`<body>${options.chatHtml ?? ''}</body>`);
+      const previous = globalThis.document;
+      (globalThis as { document?: Document }).document = dom.window.document;
+      try {
+        return fn(arg);
+      } finally {
+        (globalThis as { document?: Document }).document = previous;
+      }
     },
     on: () => {},
   };
@@ -1401,6 +1424,159 @@ describe('the chat panel', () => {
     const result = await provider.sendChatMessage(harness.page, 'anyone there');
 
     expect(result.sent).toBe(false);
+    expect(harness.state.chatOpen).toBe(false);
+  });
+});
+
+/**
+ * Reading the panel back.
+ *
+ * Two directions matter here. A read that cannot see the messages must never answer
+ * "the chat is empty" — the agent would say so in the room, and the person who typed
+ * would be told their message does not exist. And the read borrows the side rail from
+ * People, so it has to give it back: a rail left on chat reads the participant count
+ * down, which is what makes the runtime leave a call that is still going.
+ */
+describe('reading the chat panel', () => {
+  /** In a call, with a chat control on screen and the panel shut. */
+  const inCall = (extra: Partial<FakePageOptions> = {}) =>
+    fakePage({
+      visibleSelectors: ['button[aria-label*="Leave call" i]'],
+      ...extra,
+    });
+
+  /** One message row as Meet renders it: an id on the row, the text in the body node. */
+  const row = (id: string, text: string) =>
+    `<div class="RLrADb" data-message-id="${id}"><div class="poVWob">Iris</div><div jsname="dTKtvb">${text}</div></div>`;
+
+  const bounds = { limit: 20, maxCharsPerMessage: 500 };
+
+  it('reads the messages oldest first and puts the panel back', async () => {
+    const harness = inCall({ chatHtml: `${row('m1', 'deploy is stuck')}${row('m2', 'on it')}` });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toEqual({ read: true, messages: ['deploy is stuck', 'on it'], truncated: false });
+    // Opened, then closed again.
+    expect(harness.clicks.filter((c) => /^chat/i.test(c))).toHaveLength(2);
+    expect(harness.state.chatOpen).toBe(false);
+  });
+
+  it('leaves a panel somebody else had open exactly as it was', async () => {
+    // The one place the read differs from the send: a person reading the chat mid-call
+    // keeps it. The send closes it either way, which is its own decision.
+    const harness = inCall({ chat: 'open', chatHtml: row('m1', 'anyone else seeing this') });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toMatchObject({ read: true, messages: ['anyone else seeing this'] });
+    expect(harness.clicks.filter((c) => /^chat/i.test(c))).toHaveLength(0);
+    expect(harness.state.chatOpen).toBe(true);
+  });
+
+  it('takes one message per id when the row repeats it', async () => {
+    // Measured on a live call: the row's pin control carries the same `data-message-id`,
+    // so twelve messages produced twenty-two nodes.
+    const harness = inCall({
+      chatHtml:
+        row('m1', 'deploy is stuck') +
+        `<button class="RLrADb" data-message-id="m1" aria-label="Pin"><div jsname="dTKtvb">Pin</div></button>`,
+    });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toMatchObject({ read: true, messages: ['deploy is stuck'] });
+  });
+
+  it('reads the body node, so no sender name reaches the text', async () => {
+    const harness = inCall({ chatHtml: row('m1', 'the staging cluster is back') });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toMatchObject({ read: true, messages: ['the staging cluster is back'] });
+    expect(JSON.stringify(result)).not.toContain('Iris');
+  });
+
+  it('answers an empty chat when the panel painted and holds nothing', async () => {
+    const harness = inCall({ chatHtml: '' });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toEqual({ read: true, messages: [], truncated: false });
+  });
+
+  it('reports the panel step when there is no chat control', async () => {
+    const harness = inCall({ chat: 'absent' });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toEqual({ read: false, step: 'panel', reason: expect.any(String) });
+    expect(harness.clicks).toEqual([]);
+  });
+
+  it('reports the composer step, and still closes the panel, when no input paints', async () => {
+    // The composer is the proof the panel is open, so a panel without one is a panel
+    // whose emptiness means nothing.
+    const harness = inCall({ composer: 'absent' });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toEqual({ read: false, step: 'composer', reason: expect.any(String) });
+    expect(harness.state.chatOpen).toBe(false);
+  });
+
+  it('reports the read step, and restores the panel, when the page will not answer', async () => {
+    const harness = inCall({ evaluateWedged: true });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toEqual({ read: false, step: 'read', reason: expect.any(String) });
+    expect(harness.state.chatOpen).toBe(false);
+  }, 10_000);
+
+  it('reports the read step when the panel has messages it cannot parse', async () => {
+    // A rotted row class with the ids still there. Answering "empty" here tells the room
+    // nobody typed anything, which is the one wrong thing to say.
+    const harness = inCall({
+      chatHtml: `<div class="Xq7Yz" data-message-id="m1"><div jsname="dTKtvb">deploy is stuck</div></div>`,
+    });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toEqual({ read: false, step: 'read', reason: expect.any(String) });
+  });
+
+  it('keeps the newest messages and says the reading is short', async () => {
+    const harness = inCall({
+      chatHtml: Array.from({ length: 5 }, (_, i) => row(`m${i}`, `message ${i}`)).join(''),
+    });
+
+    const result = await provider.readChatMessages(harness.page, {
+      limit: 2,
+      maxCharsPerMessage: 500,
+    });
+
+    expect(result).toEqual({ read: true, messages: ['message 3', 'message 4'], truncated: true });
+  });
+
+  it('cuts a message longer than the per-message bound and says so', async () => {
+    const harness = inCall({ chatHtml: row('m1', 'x'.repeat(40)) });
+
+    const result = await provider.readChatMessages(harness.page, {
+      limit: 20,
+      maxCharsPerMessage: 10,
+    });
+
+    expect(result).toEqual({ read: true, messages: ['x'.repeat(10)], truncated: true });
+  });
+
+  it('reads anyway when the toggle will not say whether the panel is open', async () => {
+    const harness = inCall({ chatExpanded: 'missing', chatHtml: row('m1', 'ready when you are') });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toMatchObject({ read: true, messages: ['ready when you are'] });
+    // Unreadable counts as ours to close: a rail left on chat costs the call.
     expect(harness.state.chatOpen).toBe(false);
   });
 });

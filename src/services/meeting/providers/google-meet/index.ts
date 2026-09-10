@@ -27,6 +27,7 @@ import { isAuthenticated, quiesce, sessionEvidence, signInFailureReason, signInT
 import { judgeSpeaker, namesFrom, openParticipants, readRoom } from './participants';
 import { withTimeout } from '../../../../utils/with-timeout';
 import type {
+  ChatReadResult,
   ChatSendResult,
   JoinOptions,
   JoinOutcome,
@@ -242,6 +243,21 @@ export const CHAT_TOGGLE_SELECTOR = 'button[aria-label*="chat" i]';
 export const CHAT_COMPOSER_SELECTOR = 'textarea[aria-label*="Send a message" i]';
 export const CHAT_SEND_SELECTOR = 'button[aria-label*="Send a message" i]';
 
+/**
+ * One message in the open panel, and the text inside it.
+ *
+ * A row is pinned by the `data-message-id` attribute as well as the class, because the
+ * class is a generated hash: the attribute is what says the node is a message, and a live
+ * call showed a second node repeating the same id for the row's pin control. So the reader
+ * takes one row per id.
+ *
+ * The body selector is Meet's own `jsname`, which excludes the sender name and the
+ * timestamp beside it. Reading the whole row instead would put a participant's name into
+ * the text handed to the model, which the read deliberately does not carry.
+ */
+export const CHAT_MESSAGE_ROW_SELECTOR = 'div.RLrADb[data-message-id]';
+export const CHAT_MESSAGE_BODY_SELECTOR = '[jsname="dTKtvb"]';
+
 /** How long to wait for the chat control, and then the composer, to paint. */
 const CHAT_PANEL_TIMEOUT_MS = 5_000;
 
@@ -409,22 +425,23 @@ interface MicOutcome {
 }
 
 /**
- * The slice of the DOM the participant-count probe touches.
+ * The slice of the DOM the in-page probes touch — the participant count and the chat read.
  *
  * Structural rather than the real `Document`, because this runtime compiles
  * against Node's libs only: adding `dom` to get one type would put `document`,
  * `fetch`, `Response` and the rest of the browser surface in scope for every
  * server module, where they are a source of confusion rather than help.
  */
-interface CountElement {
+interface ProbeElement {
   getAttribute(name: string): string | null;
   readonly textContent: string | null;
-  querySelectorAll(selectors: string): ArrayLike<CountElement>;
+  querySelector(selectors: string): ProbeElement | null;
+  querySelectorAll(selectors: string): ArrayLike<ProbeElement>;
 }
 
-interface CountDocument {
-  querySelector(selectors: string): CountElement | null;
-  querySelectorAll(selectors: string): ArrayLike<CountElement>;
+interface ProbeDocument {
+  querySelector(selectors: string): ProbeElement | null;
+  querySelectorAll(selectors: string): ArrayLike<ProbeElement>;
 }
 
 /**
@@ -447,6 +464,16 @@ function plausibleName(name: string): boolean {
  * freezing both the response mode and the empty-room check.
  */
 const COUNT_READ_TIMEOUT_MS = 2_000;
+
+/**
+ * Cap on the one read that harvests the chat panel.
+ *
+ * Same reason as the count above — `page.evaluate` has no timeout of its own — and the
+ * same number, since it is the same kind of read: one pass over nodes already painted.
+ * The service holds a deadline over the whole read as well, because the clicks around
+ * this one have their own waits.
+ */
+const CHAT_LIST_READ_TIMEOUT_MS = 2_000;
 
 /**
  * The guest name field.
@@ -1062,6 +1089,119 @@ export class GoogleMeetProvider implements MeetingProvider {
   }
 
   /**
+   * Read the messages in the panel, newest last.
+   *
+   * One `evaluate` over the rows already painted, for the same reason the count is one:
+   * a locator per message is a round trip per message, and the room is waiting.
+   *
+   * Two readings decide the outcome. `total` is how many rows parsed into text, and
+   * `idNodes` how many nodes carry a message id at all. A page with ids but nothing
+   * parsed is a selector that has rotted, and it reports `read: false` — an empty chat
+   * and a chat the reader cannot see are the same picture, and only one of them is safe
+   * to say out loud.
+   *
+   * The panel is left as it was found: a person who had chat open keeps it, and a panel
+   * this read opened is closed again, because People shares that rail and the empty-room
+   * check reads participant tiles through it.
+   */
+  async readChatMessages(
+    page: Page,
+    options: { limit: number; maxCharsPerMessage: number },
+  ): Promise<ChatReadResult> {
+    const toggle = await firstThatAppears(chatToggleCandidates(page), CHAT_PANEL_TIMEOUT_MS);
+    if (!toggle) {
+      return { read: false, step: 'panel', reason: 'no chat control on the call page' };
+    }
+
+    // Read before the click, so the restore can tell a panel somebody else opened from
+    // one this read opened. A toggle that will not say is treated as ours to close.
+    const wasOpen = await this.panelIsOpen(toggle);
+
+    const opened = await this.openChatPanel(page, toggle);
+    if ('failure' in opened) {
+      await this.restoreChatPanel(toggle, wasOpen);
+      return { read: false, ...opened.failure };
+    }
+
+    try {
+      const harvest = await withTimeout(
+        page.evaluate(
+          ({ rowSelector, bodySelector, limit, maxChars }) => {
+            const doc = (globalThis as unknown as { document: ProbeDocument }).document;
+
+            const texts: string[] = [];
+            const seen = new Set<string>();
+            let cut = false;
+            for (const row of Array.from(doc.querySelectorAll(rowSelector))) {
+              // One row per id: the row's own pin control repeats the id, so the same
+              // message is in the list twice.
+              const id = row.getAttribute('data-message-id');
+              if (!id || seen.has(id)) continue;
+              seen.add(id);
+
+              // The body node only. A row read whole carries the sender's name and the
+              // timestamp, and the read hands neither to the model. A row with no body
+              // node counts as unparsed rather than falling back to the row.
+              const body = row.querySelector(bodySelector);
+              if (!body) continue;
+              const text = (body.textContent ?? '').replace(/\s+/g, ' ').trim();
+              if (!text) continue;
+              if (text.length > maxChars) cut = true;
+              texts.push(text.slice(0, maxChars));
+            }
+
+            return {
+              texts: texts.slice(-limit),
+              total: texts.length,
+              cut,
+              idNodes: doc.querySelectorAll('[data-message-id]').length,
+            };
+          },
+          {
+            rowSelector: CHAT_MESSAGE_ROW_SELECTOR,
+            bodySelector: CHAT_MESSAGE_BODY_SELECTOR,
+            limit: options.limit,
+            maxChars: options.maxCharsPerMessage,
+          },
+        ),
+        CHAT_LIST_READ_TIMEOUT_MS,
+      );
+
+      if (harvest.total === 0 && harvest.idNodes > 0) {
+        return {
+          read: false,
+          step: 'read',
+          reason: 'the panel had messages the reader could not parse',
+        };
+      }
+
+      return {
+        read: true,
+        messages: harvest.texts,
+        truncated: harvest.cut || harvest.total > harvest.texts.length,
+      };
+    } catch {
+      // A closed page, a navigation mid-read, or a page too busy to answer.
+      return { read: false, step: 'read', reason: 'the page did not answer the chat read' };
+    } finally {
+      await this.restoreChatPanel(toggle, wasOpen);
+    }
+  }
+
+  /**
+   * Put the side rail back the way the read found it.
+   *
+   * A panel that read as open before the click belongs to a person in the call, and
+   * closing it would take the chat away from them mid-conversation. Everything else is
+   * closed: a panel this read opened, and a toggle that would not say, since the reading
+   * that costs the call is a rail left on chat while the empty-room check counts tiles.
+   */
+  private async restoreChatPanel(toggle: Locator, wasOpen: boolean | null): Promise<void> {
+    if (wasOpen === true) return;
+    await this.closeChatPanel(toggle);
+  }
+
+  /**
    * Get the panel open, and hand back the composer in it.
    *
    * Resolves the failure rather than a boolean, so the two reasons stay apart: a panel that
@@ -1663,7 +1803,7 @@ export class GoogleMeetProvider implements MeetingProvider {
       // work to repeat every ten seconds.
       readings = await withTimeout(
         page.evaluate(() => {
-          const doc = (globalThis as unknown as { document: CountDocument }).document;
+          const doc = (globalThis as unknown as { document: ProbeDocument }).document;
 
           const found: number[] = [];
           const add = (value: number) => {
