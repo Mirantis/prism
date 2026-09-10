@@ -12,6 +12,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // `tsc` never sees this file — a field added to the real stats has to be added here
 // by hand or the telemetry assertions quietly read a default.
 import type { VoiceConversationStats } from '../voice-conversation';
+// The real limiter, so a test measures what the meeting bridge would do to a tool result
+// rather than counting characters itself.
+import { renderToolResultDetailed } from '../../../lib/tool-output-limiter';
 
 const audioStop = vi.fn();
 const audioStart = vi.fn();
@@ -2974,6 +2977,17 @@ describe('reading the call chat', () => {
   const messages = (count: number, chars: number): string[] =>
     Array.from({ length: count }, (_, i) => `m${i}`.padEnd(chars, '.'));
 
+  /**
+   * What the meeting bridge would cut out of this result.
+   *
+   * The bridge writes an oversized result to a file; this is the same threshold in the
+   * same module, without writing one. The cap is `MEETING_MAX_RESULT_CHARS`, repeated
+   * because `tool-bridge` is mocked in this suite, and the escaping is measured by the
+   * real limiter rather than calculated here.
+   */
+  const spillOf = (result: unknown) =>
+    renderToolResultDetailed(result, { maxChars: 12_000, quietLog: true }).truncation;
+
   it('hands the model the messages, fenced and labelled as data', async () => {
     providerReadChatMessages.mockResolvedValue({
       read: true,
@@ -3310,6 +3324,28 @@ describe('reading the call chat', () => {
     const result = await service.readChatMessages('u1');
 
     expect(result.incomplete).toBe(true);
-    expect(result.message.length).toBeLessThan(5_000);
+    expect(spillOf(result)).toBeUndefined();
+  });
+
+  it('spends no budget on a character that serializes to six', async () => {
+    // The budget counts characters and the bridge measures the JSON-escaped result. A
+    // control character and half a surrogate pair each cost six there, so 4,000 of them
+    // pass the budget and spill to disk anyway. Both are replaced before the count.
+    providerReadChatMessages.mockResolvedValue({
+      read: true,
+      messages: Array.from(
+        { length: MEETING_CHAT_READ_LIMIT },
+        () => `${'\u0007'.repeat(100)}${'\ud800'.repeat(100)}`,
+      ),
+      truncated: false,
+    });
+    await enterCall();
+
+    const result = await service.readChatMessages('u1');
+
+    expect(spillOf(result)).toBeUndefined();
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain('\\u0007');
+    expect(serialized).not.toContain('\\ud800');
   });
 });
