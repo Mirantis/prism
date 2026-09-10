@@ -5,7 +5,7 @@ import {
   MessagesSquare,
   Clock,
   Webhook,
-  NotebookPen,
+  MonitorPlay,
   Bot,
   Activity,
 } from 'lucide-react';
@@ -28,7 +28,7 @@ const NAV_ITEMS = [
   { to: '/channels' as const, label: 'Channels', icon: MessagesSquare },
   { to: '/cron' as const, label: 'Scheduled Tasks', icon: Clock },
   { to: '/webhooks' as const, label: 'Webhooks', icon: Webhook },
-  { to: '/scratchpad' as const, label: 'Scratchpad', icon: NotebookPen },
+  { to: '/computer' as const, label: 'Computer', icon: MonitorPlay },
   { to: '/profile' as const, label: 'Profile', icon: Bot },
   { to: '/activity' as const, label: 'Activity', icon: Activity },
 ];

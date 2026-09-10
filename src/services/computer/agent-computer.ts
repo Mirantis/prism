@@ -207,7 +207,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
       this.input?.stop();
       this.input = null;
       await browser.stop().catch(() => undefined);
-      await desktop?.stop();
+      await desktop?.stop().catch(() => undefined);
       await display?.stop().catch(() => undefined);
       const reason = err instanceof Error ? err.message : String(err);
       throw new Error(`Could not open the browser: ${reason}`);
@@ -630,7 +630,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
     this.mainPage = null;
     this.audioHandles = null;
     await browser?.stop().catch(() => undefined);
-    await desktop?.stop();
+    await desktop?.stop().catch(() => undefined);
     await display?.stop().catch(() => undefined);
   }
 

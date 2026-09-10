@@ -57,6 +57,8 @@ class FakeAudioContext {
   static instances: FakeAudioContext[] = [];
   /** Set to make the worklet module fail to load. */
   static moduleError: Error | null = null;
+  /** Set when the browser will not start audio yet, so `resume()` is never settled. */
+  static holdResume = false;
 
   sampleRate: number;
   state = 'suspended';
@@ -79,6 +81,9 @@ class FakeAudioContext {
   }
   async resume() {
     this.didResume = true;
+    // A context the browser is holding until a gesture never settles this promise: it is
+    // appended to a pending list and left there, rather than rejected.
+    if (FakeAudioContext.holdResume) return new Promise<void>(() => {});
     this.state = 'running';
   }
   async close() {
@@ -103,6 +108,7 @@ describe('startVoiceAudio', () => {
   beforeEach(() => {
     FakeAudioContext.instances = [];
     FakeAudioContext.moduleError = null;
+    FakeAudioContext.holdResume = false;
     FakeWorkletNode.instances = [];
     stream = fakeStream();
     getUserMedia = vi.fn(async () => stream);
@@ -139,6 +145,20 @@ describe('startVoiceAudio', () => {
     expect(context.didResume).toBe(true);
 
     await audio.stop();
+  });
+
+  it('opens the call even where the browser will not start the speakers yet', async () => {
+    // A page that opens a call on mount has no user activation behind it. Waiting on
+    // `resume()` there never returns, and the call is never connected at all: no audio,
+    // no socket, and a page that says "connecting" forever.
+    FakeAudioContext.holdResume = true;
+
+    const audio = await open();
+
+    expect(FakeAudioContext.instances[0]!.didResume).toBe(true);
+    // And the click the page does see is what starts the speakers.
+    audio.resume();
+    expect(FakeWorkletNode.byName('voice-io')).toBeDefined();
   });
 
   it('sits between the microphone and the speakers', async () => {

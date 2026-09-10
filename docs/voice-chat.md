@@ -39,7 +39,7 @@ the runtime's voice frames on the chat connection —
 
 ## Talking to the agent at its computer
 
-The Web UI's **Scratchpad** page is the same call with a computer in it. Opening
+The Web UI's **Computer** page is the same call with a computer in it. Opening
 the page starts the call, and the agent greets you; leaving it ends the call.
 
 The page shows the agent's screen while it works, and you hear what it plays. In
@@ -54,7 +54,7 @@ way you would in a video call. Ask it to look and it reads what is there. "The
 screen" on its own means the agent's own, since that is the one you are both
 watching.
 
-One call at a time, here too. Opening the Scratchpad while a call from the chat
+One call at a time, here too. Opening the Computer page while a call from the chat
 composer is running is refused, and so is the reverse. Opening the page twice
 moves the call to the newer page, which is what a reload does.
 
@@ -106,7 +106,7 @@ do. For a real restriction, start the agent with a narrower tool surface.
 - **The call is refused.** The text says why: a Meet call holds the agent's
   voice, another client already has the session, or the runtime is still loading
   its agent and the call can be retried.
-- **The Scratchpad page says the screen would not start.** Its computer needs
+- **The Computer page says the screen would not start.** It needs
   packages a published image carries and an older one does not. Build the image
   with `npm run docker:build`, or run the call from the chat composer, which
   needs none of them.

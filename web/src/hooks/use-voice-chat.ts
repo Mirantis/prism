@@ -103,6 +103,17 @@ export function useVoiceChat() {
     let ws: WebSocket | null = null;
     let audio: VoiceAudio | null = null;
 
+    /** Let go of the microphone and the socket. Safe to call more than once. */
+    const release = (): void => {
+      const open = audio;
+      audio = null;
+      audioRef.current = null;
+      setAgentSpeaking(false);
+      setHasDesktop(false);
+      void open?.stop().catch(() => undefined);
+      ws?.close();
+    };
+
     const start = async (): Promise<void> => {
       try {
         audio = await startVoiceAudio({
@@ -115,13 +126,16 @@ export function useVoiceChat() {
         });
       } catch (err) {
         // The microphone is the one refusal worth naming on its own: it is the user's to
-        // give back, and the page can tell them how.
+        // give back, and the page can tell them how. Anything else is the audio path
+        // failing to open, which the user cannot act on, so the message says what
+        // happened and the console carries the rest.
         const denied = err instanceof Error && err.name === 'NotAllowedError';
+        if (!denied) console.error('[voice] the audio path did not open', err);
         setState(denied ? 'mic-denied' : 'error');
         setMessage(
           denied
             ? 'The microphone is blocked. Allow it in the browser, then reload the page.'
-            : 'Could not open the microphone.',
+            : 'Could not start the audio for this call.',
         );
         return;
       }
@@ -155,13 +169,20 @@ export function useVoiceChat() {
           setState(frame.state);
           setMessage(frame.message ?? null);
           if (frame.state === 'ready') setHasDesktop(frame.desktop === true);
+          // The call is over: another page took it, the model's session died, or the
+          // runtime refused it. Nothing more is coming, and the browser goes on showing
+          // this tab as recording until the microphone is let go.
+          if (frame.state === 'ended' || frame.state === 'error') release();
           return;
         }
         const data = event.data as ArrayBuffer;
         if (data.byteLength <= AUDIO_HEADER_BYTES) return;
         const tag = new Uint8Array(data, 0, 1)[0];
         if (tag !== VOICE_FRAME && tag !== COMPUTER_AUDIO_FRAME) return;
-        const pcm = data.slice(AUDIO_HEADER_BYTES);
+        // Cut to whole samples: pcm16 is two bytes each, and a trailing half sample would
+        // throw on the audio thread rather than play as one bad sample.
+        const samples = (data.byteLength - AUDIO_HEADER_BYTES) >> 1;
+        const pcm = data.slice(AUDIO_HEADER_BYTES, AUDIO_HEADER_BYTES + samples * 2);
         if (tag === COMPUTER_AUDIO_FRAME) audioRef.current?.enqueueComputer(pcm);
         else audioRef.current?.enqueue(pcm);
       };
@@ -172,8 +193,7 @@ export function useVoiceChat() {
       ws.onclose = () => {
         wsRef.current = null;
         if (cancelled) return;
-        setAgentSpeaking(false);
-        setHasDesktop(false);
+        release();
         setState((s) => (s === 'error' || s === 'mic-denied' ? s : 'ended'));
       };
     };
@@ -182,13 +202,13 @@ export function useVoiceChat() {
 
     return () => {
       cancelled = true;
-      ws?.close();
-      audioRef.current = null;
-      void audio?.stop().catch(() => undefined);
+      release();
     };
   }, []);
 
   const toggleMute = useCallback(() => {
+    // Also the gesture an autoplay-blocked context was waiting for.
+    audioRef.current?.resume();
     setMuted((m) => {
       mutedRef.current = !m;
       return !m;

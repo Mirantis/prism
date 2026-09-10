@@ -62,11 +62,11 @@ const computer = (samples: number[]) => ({
 /**
  * A chunk long enough to clear a stream's pre-roll, so the next block plays it.
  *
- * The pre-roll is 40 ms of voice and 120 ms of the computer's sound, and a whole second
- * clears either. A test that wants playback queues one of these; a test about the
- * pre-roll itself queues less.
+ * The pre-roll is 40 ms of voice and 120 ms of the computer's sound, and 200 ms clears
+ * either while staying under both backlog limits, which would otherwise drop the head of
+ * what a test just queued. A test about the pre-roll or the backlog sets its own size.
  */
-const second = (value: number) => Array.from({ length: SAMPLE_RATE }, () => value);
+const enough = (value: number) => Array.from({ length: SAMPLE_RATE * 0.2 }, () => value);
 
 describe('voice-worklet', () => {
   let processors: Map<string, ProcessorClass>;
@@ -118,7 +118,7 @@ describe('voice-worklet', () => {
 
   describe('playback', () => {
     it('plays what it was given and reports the agent as heard', () => {
-      io.port.onmessage!({ data: voice([32_767, -32_768, 0, ...second(0)]) });
+      io.port.onmessage!({ data: voice([32_767, -32_768, 0, ...enough(0)]) });
 
       const out = output(3);
       io.process([], out);
@@ -190,7 +190,7 @@ describe('voice-worklet', () => {
     });
 
     it('carries one chunk across blocks rather than truncating it', () => {
-      io.port.onmessage!({ data: voice([1, 2, 3, 4, 5, 6, ...second(0)]) });
+      io.port.onmessage!({ data: voice([1, 2, 3, 4, 5, 6, ...enough(0)]) });
 
       io.process([], output(2));
       const next = output(2);
@@ -202,7 +202,7 @@ describe('voice-worklet', () => {
 
   describe("the computer's sound", () => {
     it('mixes under the voice without counting as the agent speaking', () => {
-      io.port.onmessage!({ data: computer(second(16_384)) });
+      io.port.onmessage!({ data: computer(enough(16_384)) });
 
       const out = output(2);
       io.process([], out);
@@ -214,8 +214,8 @@ describe('voice-worklet', () => {
     });
 
     it('clamps a mix that would overflow', () => {
-      io.port.onmessage!({ data: voice(second(32_767)) });
-      io.port.onmessage!({ data: computer(second(32_767)) });
+      io.port.onmessage!({ data: voice(enough(32_767)) });
+      io.port.onmessage!({ data: computer(enough(32_767)) });
 
       const out = output(2);
       io.process([], out);
@@ -238,7 +238,7 @@ describe('voice-worklet', () => {
     });
 
     it('is left alone by a barge-in, which is about the voice', () => {
-      io.port.onmessage!({ data: computer(second(16_384)) });
+      io.port.onmessage!({ data: computer(enough(16_384)) });
       io.port.onmessage!({ data: { clear: true } });
 
       const out = output(2);

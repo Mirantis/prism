@@ -54,11 +54,11 @@ export const MEETING_MAX_RESULT_CHARS = 12_000;
  * subset instead of handing the rest over.
  */
 const VOICE_TRUNCATION_GUIDANCE =
-  'You cannot send the rest anywhere — the call chat takes one short line, not a result ' +
-  'this size, so say the part that answers the question and offer to go into more of it ' +
-  'out loud. If the answer needs something from the omitted middle, search the saved ' +
-  'output with a pattern — never read it through, because everything you pull back stays ' +
-  "in this call's context for the rest of it, and this session's context is small.";
+  'You cannot hand the rest over — speech is what leaves this call, not a result of this ' +
+  'size — so say the part that answers the question and offer to go into more of it out ' +
+  'loud. If the answer needs something from the omitted middle, search the saved output ' +
+  'with a pattern — never read it through, because everything you pull back stays in ' +
+  "this call's context for the rest of it, and this session's context is small.";
 
 export interface MeetingToolBridgeInput {
   userId: string;
@@ -115,7 +115,7 @@ export async function prepareMeetingTools(
   });
 
   const prepared = prepareRealtimeTools(tools, 'Meeting');
-  logger.info(`[Meeting] Offering ${prepared.count} tool(s) to the Realtime model`);
+  logger.info(`[Meeting] Collected ${prepared.count} tool(s) for a live session`);
   return prepared;
 }
 
