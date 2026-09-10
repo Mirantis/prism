@@ -152,6 +152,10 @@ export class DesktopInput {
   private y: number;
   private moveTimer: NodeJS.Timeout | null = null;
   private stopped = false;
+  /** Pastes run one at a time; this is the tail of that queue. */
+  private typing: Promise<void> = Promise.resolve();
+  /** The paste being typed right now, so that stopping the session stops it. */
+  private typer: ChildProcess | null = null;
 
   /** `env` is the display's; `width` and `height` its geometry in pixels. */
   constructor(
@@ -196,25 +200,44 @@ export class DesktopInput {
   }
 
   /**
-   * Type a text into whatever has focus on the desktop, as a paste from the page does. A
-   * text is typed by its own `xdotool type`, fed through stdin: the command stream takes a
-   * line per command, and a text has newlines of its own.
+   * Type a text into whatever has focus on the desktop, as a paste from the page does.
+   *
+   * A text is typed by its own `xdotool type`, fed through stdin: the command stream takes
+   * a line per command, and a text has newlines of its own. Pastes queue behind each
+   * other, since two typing at once interleave their characters, and the one running is
+   * held so that ending the session ends it.
    */
   private type(text: string): void {
     if (!text) return;
     this.flushMove();
-    // xdotool decodes the text through the locale, and the container has none set, under
-    // which anything beyond ASCII is an invalid sequence to it.
-    const proc = spawn('xdotool', ['type', '--file', '-'], {
-      stdio: ['pipe', 'ignore', 'pipe'],
-      env: { ...process.env, ...this.env, LC_ALL: 'C.UTF-8' },
+    this.typing = this.typing.then(() => this.runType(text));
+  }
+
+  private runType(text: string): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    return new Promise((resolve) => {
+      // xdotool decodes the text through the locale, and the container has none set, under
+      // which anything beyond ASCII is an invalid sequence to it.
+      const proc = spawn('xdotool', ['type', '--file', '-'], {
+        stdio: ['pipe', 'ignore', 'pipe'],
+        env: { ...process.env, ...this.env, LC_ALL: 'C.UTF-8' },
+      });
+      this.typer = proc;
+      const done = (): void => {
+        if (this.typer === proc) this.typer = null;
+        resolve();
+      };
+      proc.on('error', (err) => {
+        logger.warn({ err }, '[VoiceChat] Desktop typing process failed');
+        done();
+      });
+      proc.on('exit', done);
+      proc.stderr?.on('data', (chunk: Buffer) => {
+        const line = chunk.toString().trim();
+        if (line) logger.debug(`[VoiceChat:Input] ${line}`);
+      });
+      proc.stdin?.end(text);
     });
-    proc.on('error', (err) => logger.warn({ err }, '[VoiceChat] Desktop typing process failed'));
-    proc.stderr?.on('data', (chunk: Buffer) => {
-      const line = chunk.toString().trim();
-      if (line) logger.debug(`[VoiceChat:Input] ${line}`);
-    });
-    proc.stdin?.end(text);
   }
 
   private place(x: number, y: number): void {
@@ -263,11 +286,16 @@ export class DesktopInput {
     return proc;
   }
 
-  /** Release the pointer and the process. Safe to call more than once. */
+  /** Release the pointer and the processes. Safe to call more than once. */
   stop(): void {
     this.stopped = true;
     if (this.moveTimer) clearTimeout(this.moveTimer);
     this.moveTimer = null;
+    // A long paste types for as long as its text lasts, and the desktop it types into is
+    // about to go.
+    const typer = this.typer;
+    this.typer = null;
+    if (typer && typer.exitCode === null) typer.kill('SIGTERM');
     const proc = this.proc;
     this.proc = null;
     if (!proc || proc.exitCode !== null) return;

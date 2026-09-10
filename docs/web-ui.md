@@ -212,7 +212,7 @@ The agent's identity and runtime controls.
   **Restore** replaces the agent from a `.prism` file (a destructive operation;
   the runtime restarts and the page reconnects when it's back).
 
-## Scratchpad
+## Computer
 
 A voice call with the agent at its own computer. Opening the page starts the
 call; leaving it ends the call.

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useAgent } from '@/lib/agent-context';
 import { useVoiceChat, type VoiceChatState } from '@/hooks/use-voice-chat';
@@ -9,8 +10,8 @@ import { ScreenView } from '@/components/voice/screen-view';
 import { ShareButton } from '@/components/voice/share-button';
 import { SharePreview } from '@/components/voice/share-preview';
 
-export const Route = createFileRoute('/scratchpad')({
-  component: ScratchpadPage,
+export const Route = createFileRoute('/computer')({
+  component: ComputerPage,
 });
 
 /** What to say about the connection. Nothing while it is live: the controls speak for it. */
@@ -22,7 +23,7 @@ const STATE_LABEL: Record<VoiceChatState, string> = {
   'mic-denied': 'Microphone access is needed for voice chat.',
 };
 
-function ScratchpadPage() {
+function ComputerPage() {
   const agent = useAgent();
   const {
     state,
@@ -38,10 +39,17 @@ function ScratchpadPage() {
   } = useVoiceChat();
   const share = useScreenShare(sendInput);
 
+  // A share outlives the call that had a use for it: the browser goes on capturing the
+  // user's screen, and the agent it was being shown to is gone. The button is disabled by
+  // then, so nothing else would stop it.
+  const live = state === 'ready';
+  const { sharing, stop: stopSharing } = share;
+  useEffect(() => {
+    if (!live && sharing) stopSharing();
+  }, [live, sharing, stopSharing]);
+
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold tracking-tight">Scratchpad</h2>
-
       <div className="flex flex-col items-center gap-4 rounded-xl bg-zinc-900 p-4">
         {/* The agent's screen, live, with the agent's own tile laid over one corner. */}
         <ScreenView
