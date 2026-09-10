@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { voiceWebSocketUrl } from '@/api/runtime-client';
+import { startVoiceAudio, type VoiceAudio } from '@/lib/voice-audio';
 
 /**
- * A live voice chat with the agent over `/api/voice`.
+ * A live voice chat with the agent over `/api/voice`, the session that comes with a
+ * computer the agent works on.
  *
- * The microphone is captured at 48 kHz mono and sent as pcm16 binary frames. The
- * agent's speech and the sound of the agent's browser arrive as tagged 48 kHz pcm16
- * binary frames. Both directions run through one AudioWorklet
- * (`/voice-chat-processor.js`), which plays the two incoming streams mixed and
- * reports when the agent's voice is producing sound. JSON text frames carry the
- * runtime's status and pictures of the agent's screen. Mute stops sending frames; the
- * socket and the session stay up.
+ * The microphone and the playback are `lib/voice-audio.ts`, the same pair the call from
+ * the chat composer uses. This hook is the socket: binary frames are audio, tagged with
+ * whose sound they are, and JSON text frames carry the runtime's status and pictures of
+ * the agent's screen. Mute stops sending frames; the socket and the session stay up.
  */
 
 export type VoiceChatState = 'connecting' | 'ready' | 'ended' | 'error' | 'mic-denied';
@@ -56,14 +55,18 @@ interface ScreenFrame {
   data: string;
 }
 
-type ServerFrame = StatusFrame | ScreenFrame;
+/** Drop the agent's speech that has not been played yet, because it was interrupted. */
+interface ClearFrame {
+  type: 'clear';
+}
 
-type WorkletMessage =
-  | { type: 'capture'; pcm: ArrayBuffer }
-  | { type: 'playing'; value: boolean };
+type ServerFrame = StatusFrame | ScreenFrame | ClearFrame;
 
-/** Matches the runtime's `MEETING_SAMPLE_RATE`, so no resampling happens here. */
-const SAMPLE_RATE = 48000;
+/**
+ * The rate this session speaks, both ways. It is the rate the agent's screen is recorded
+ * at, so the sound of a video playing on it arrives unresampled.
+ */
+const SAMPLE_RATE = 48_000;
 /**
  * A binary frame from the runtime starts with a tag byte and a padding byte, then
  * pcm16. The tag says whose sound it is. A tag this build does not know is dropped:
@@ -71,10 +74,8 @@ const SAMPLE_RATE = 48000;
  * the bundle do not always update together.
  */
 const VOICE_FRAME = 0x01;
-const BROWSER_AUDIO_FRAME = 0x02;
+const COMPUTER_AUDIO_FRAME = 0x02;
 const AUDIO_HEADER_BYTES = 2;
-const WORKLET_URL = '/voice-chat-processor.js';
-const WORKLET_NAME = 'voice-chat-processor';
 
 export function useVoiceChat() {
   const [state, setState] = useState<VoiceChatState>('connecting');
@@ -88,7 +89,7 @@ export function useVoiceChat() {
   /** The newest screen picture's arrival, for the frame readout. */
   const [lastFrame, setLastFrame] = useState<FrameEvent | null>(null);
   const mutedRef = useRef(false);
-  const contextRef = useRef<AudioContext | null>(null);
+  const audioRef = useRef<VoiceAudio | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   /**
    * The image the screen pictures are drawn into. Written directly rather than
@@ -100,60 +101,36 @@ export function useVoiceChat() {
   useEffect(() => {
     let cancelled = false;
     let ws: WebSocket | null = null;
-    let stream: MediaStream | null = null;
-    let context: AudioContext | null = null;
-    let source: MediaStreamAudioSourceNode | null = null;
-    let worklet: AudioWorkletNode | null = null;
+    let audio: VoiceAudio | null = null;
 
     const start = async (): Promise<void> => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
+        audio = await startVoiceAudio({
+          sampleRate: SAMPLE_RATE,
+          onFrame: (frame) => {
+            if (mutedRef.current || !ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(frame);
           },
+          onSpeaking: setAgentSpeaking,
         });
       } catch (err) {
-        setState('mic-denied');
-        setMessage(err instanceof Error ? err.message : 'Microphone access was denied.');
+        // The microphone is the one refusal worth naming on its own: it is the user's to
+        // give back, and the page can tell them how.
+        const denied = err instanceof Error && err.name === 'NotAllowedError';
+        setState(denied ? 'mic-denied' : 'error');
+        setMessage(
+          denied
+            ? 'The microphone is blocked. Allow it in the browser, then reload the page.'
+            : 'Could not open the microphone.',
+        );
         return;
       }
       if (cancelled) {
-        stream.getTracks().forEach((t) => t.stop());
+        void audio.stop().catch(() => undefined);
+        audio = null;
         return;
       }
-
-      context = new AudioContext({ sampleRate: SAMPLE_RATE });
-      contextRef.current = context;
-      void context.resume().catch(() => undefined);
-      try {
-        await context.audioWorklet.addModule(WORKLET_URL);
-      } catch (err) {
-        setState('error');
-        setMessage(err instanceof Error ? err.message : 'Could not start audio processing.');
-        return;
-      }
-      if (cancelled) return;
-
-      worklet = new AudioWorkletNode(context, WORKLET_NAME, {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        outputChannelCount: [1],
-      });
-      worklet.port.onmessage = (event: MessageEvent<WorkletMessage>) => {
-        const msg = event.data;
-        if (msg.type === 'playing') {
-          setAgentSpeaking(msg.value);
-          return;
-        }
-        if (mutedRef.current || !ws || ws.readyState !== WebSocket.OPEN) return;
-        ws.send(msg.pcm);
-      };
-      source = context.createMediaStreamSource(stream);
-      source.connect(worklet);
-      worklet.connect(context.destination);
+      audioRef.current = audio;
 
       ws = new WebSocket(voiceWebSocketUrl());
       wsRef.current = ws;
@@ -169,24 +146,24 @@ export function useVoiceChat() {
             setLastFrame((f) => ({ count: (f?.count ?? 0) + 1, at: performance.now(), bytes }));
             return;
           }
+          if (frame.type === 'clear') {
+            audioRef.current?.clear();
+            setAgentSpeaking(false);
+            return;
+          }
           if (frame.type !== 'status') return;
           setState(frame.state);
           setMessage(frame.message ?? null);
           if (frame.state === 'ready') setHasDesktop(frame.desktop === true);
           return;
         }
-        if (!worklet) return;
         const data = event.data as ArrayBuffer;
         if (data.byteLength <= AUDIO_HEADER_BYTES) return;
         const tag = new Uint8Array(data, 0, 1)[0];
-        if (tag !== VOICE_FRAME && tag !== BROWSER_AUDIO_FRAME) return;
-        const pcm = new Int16Array(data, AUDIO_HEADER_BYTES, (data.byteLength - AUDIO_HEADER_BYTES) >> 1);
-        const samples = new Float32Array(pcm.length);
-        for (let i = 0; i < pcm.length; i++) samples[i] = pcm[i] / 0x8000;
-        worklet.port.postMessage(
-          { type: tag === BROWSER_AUDIO_FRAME ? 'play-screen' : 'play', samples },
-          [samples.buffer],
-        );
+        if (tag !== VOICE_FRAME && tag !== COMPUTER_AUDIO_FRAME) return;
+        const pcm = data.slice(AUDIO_HEADER_BYTES);
+        if (tag === COMPUTER_AUDIO_FRAME) audioRef.current?.enqueueComputer(pcm);
+        else audioRef.current?.enqueue(pcm);
       };
       ws.onerror = () => {
         setState('error');
@@ -206,18 +183,12 @@ export function useVoiceChat() {
     return () => {
       cancelled = true;
       ws?.close();
-      worklet?.port.close();
-      worklet?.disconnect();
-      source?.disconnect();
-      stream?.getTracks().forEach((t) => t.stop());
-      void context?.close().catch(() => undefined);
-      contextRef.current = null;
+      audioRef.current = null;
+      void audio?.stop().catch(() => undefined);
     };
   }, []);
 
   const toggleMute = useCallback(() => {
-    // A click is also the user gesture an autoplay-blocked AudioContext needs.
-    void contextRef.current?.resume().catch(() => undefined);
     setMuted((m) => {
       mutedRef.current = !m;
       return !m;

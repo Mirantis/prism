@@ -64,7 +64,6 @@ class FakeAudioContext {
   didResume = false;
   destination = { name: 'destination' };
   modules: string[] = [];
-  gains: FakeNode[] = [];
   sources: FakeNode[] = [];
 
   audioWorklet = {
@@ -88,11 +87,6 @@ class FakeAudioContext {
   createMediaStreamSource() {
     const node = new FakeNode();
     this.sources.push(node);
-    return node;
-  }
-  createGain() {
-    const node = new FakeNode();
-    this.gains.push(node);
     return node;
   }
 }
@@ -120,14 +114,25 @@ describe('startVoiceAudio', () => {
     vi.unstubAllGlobals();
   });
 
+  const open = (options: Partial<Parameters<typeof startVoiceAudio>[0]> = {}) =>
+    startVoiceAudio({ sampleRate: VOICE_SAMPLE_RATE, onFrame: vi.fn(), ...options });
+
   it('asks for the microphone once and runs at the session rate', async () => {
-    const audio = await startVoiceAudio({ onFrame: vi.fn() });
+    const audio = await open();
 
     expect(getUserMedia).toHaveBeenCalledTimes(1);
-    expect(getUserMedia).toHaveBeenCalledWith({ audio: true, video: false });
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
 
     const context = FakeAudioContext.instances[0]!;
-    // The model's own rate, so nothing between the microphone and the runtime
+    // The rate the session speaks, so nothing between the microphone and the runtime
     // resamples the audio.
     expect(context.sampleRate).toBe(VOICE_SAMPLE_RATE);
     expect(context.modules).toEqual(['/voice-worklet.js']);
@@ -136,57 +141,69 @@ describe('startVoiceAudio', () => {
     await audio.stop();
   });
 
-  it('keeps the microphone out of the speakers', async () => {
-    await startVoiceAudio({ onFrame: vi.fn() });
+  it('sits between the microphone and the speakers', async () => {
+    await open();
 
     const context = FakeAudioContext.instances[0]!;
-    const capture = FakeWorkletNode.byName('voice-capture');
-    const silence = context.gains[0]!;
+    const io = FakeWorkletNode.byName('voice-io');
 
-    // The capture node has to reach the destination to be pulled at all, so it goes
-    // through a gain of zero rather than straight there.
-    expect(silence.gain.value).toBe(0);
-    expect(capture.connectedTo).toEqual([silence]);
-    expect(silence.connectedTo).toEqual([context.destination]);
+    // One node does both directions: the microphone reaches its input and its output is
+    // what the agent sent, so it is pulled by the destination without being heard.
+    expect(context.sources[0]!.connectedTo).toEqual([io]);
+    expect(io.connectedTo).toEqual([context.destination]);
+  });
+
+  it('asks for capture frames of 20 ms at the session rate', async () => {
+    await open({ sampleRate: 48_000 });
+
+    // The frame size is the one thing about the worklet that follows the rate: a fixed
+    // sample count would be 10 ms of audio at one rate and 40 at another.
+    expect(FakeWorkletNode.byName('voice-io').options).toMatchObject({
+      processorOptions: { captureFrames: 960 },
+    });
   });
 
   it('forwards each captured frame', async () => {
     const onFrame = vi.fn();
-    await startVoiceAudio({ onFrame });
+    await open({ onFrame });
 
     const frame = new Int16Array([1, -1, 0, 300]).buffer;
-    FakeWorkletNode.byName('voice-capture').port.deliver(frame);
+    FakeWorkletNode.byName('voice-io').port.deliver({ type: 'capture', pcm: frame });
 
     expect(onFrame).toHaveBeenCalledWith(frame);
   });
 
-  it('sends the agent audio and the clear that cancels it over one port, in order', async () => {
-    const audio = await startVoiceAudio({ onFrame: vi.fn() });
-    const playback = FakeWorkletNode.byName('voice-playback');
+  it('sends both streams and the clear that cancels the voice over one port, in order', async () => {
+    const audio = await open();
+    const io = FakeWorkletNode.byName('voice-io');
 
-    const first = new Int16Array([1, 2]).buffer;
-    const second = new Int16Array([3, 4]).buffer;
-    audio.enqueue(first);
-    audio.enqueue(second);
+    const voice = new Int16Array([1, 2]).buffer;
+    const computer = new Int16Array([3, 4]).buffer;
+    audio.enqueue(voice);
+    audio.enqueueComputer(computer);
     audio.clear();
 
-    // One port means one order: playback cannot drop frames it has not been given.
-    expect(playback.port.posted).toEqual([first, second, 'clear']);
+    // One port means one order: the worklet cannot drop frames it has not been given.
+    expect(io.port.posted).toEqual([
+      { stream: 'voice', pcm: voice },
+      { stream: 'computer', pcm: computer },
+      { clear: true },
+    ]);
   });
 
   it('reports when the agent is heard and when it stops', async () => {
     const onSpeaking = vi.fn();
-    await startVoiceAudio({ onFrame: vi.fn(), onSpeaking });
-    const playback = FakeWorkletNode.byName('voice-playback');
+    await open({ onSpeaking });
+    const io = FakeWorkletNode.byName('voice-io');
 
-    playback.port.deliver('speaking');
-    playback.port.deliver('idle');
+    io.port.deliver({ type: 'speaking', value: true });
+    io.port.deliver({ type: 'speaking', value: false });
 
     expect(onSpeaking.mock.calls).toEqual([[true], [false]]);
   });
 
   it('releases the microphone when the call ends', async () => {
-    const audio = await startVoiceAudio({ onFrame: vi.fn() });
+    const audio = await open();
 
     await audio.stop();
 
@@ -194,22 +211,21 @@ describe('startVoiceAudio', () => {
     // context alone leaves the tab marked as listening.
     expect(stream.tracks.every((t) => t.stopped)).toBe(true);
     expect(FakeAudioContext.instances[0]!.isClosed).toBe(true);
-    expect(FakeWorkletNode.byName('voice-capture').isDisconnected).toBe(true);
-    expect(FakeWorkletNode.byName('voice-playback').isDisconnected).toBe(true);
+    expect(FakeWorkletNode.byName('voice-io').isDisconnected).toBe(true);
   });
 
   it('opens nothing when the microphone is denied', async () => {
     const denied = new Error('Permission denied');
     getUserMedia.mockRejectedValueOnce(denied);
 
-    await expect(startVoiceAudio({ onFrame: vi.fn() })).rejects.toBe(denied);
+    await expect(open()).rejects.toBe(denied);
     expect(FakeAudioContext.instances).toEqual([]);
   });
 
   it('releases the microphone when the worklet will not load', async () => {
     FakeAudioContext.moduleError = new Error('404');
 
-    await expect(startVoiceAudio({ onFrame: vi.fn() })).rejects.toThrow('404');
+    await expect(open()).rejects.toThrow('404');
 
     // A start that failed has no caller to stop it, so it cleans up after itself.
     expect(stream.tracks.every((t) => t.stopped)).toBe(true);
