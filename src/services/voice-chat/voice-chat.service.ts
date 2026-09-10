@@ -25,6 +25,7 @@ import { contextService } from '../context.service';
 import { buildSystemPromptParts } from '../../prompts/context-builder';
 import { getVoiceChatInstructions } from '../../prompts/voice-chat-prompt';
 import { VoiceConversation } from '../meeting/voice-conversation';
+import { MEETING_SAMPLE_RATE } from '../meeting/resampler';
 import { prepareMeetingTools } from '../meeting/tool-bridge';
 import { isRealtimeConfigured } from '../meeting/openai-endpoint';
 import { AudioStack, VIRTUAL_DISPLAY_SIZE, type AudioStackHandles } from '../meeting/audio-stack';
@@ -822,9 +823,11 @@ class VoiceChatService {
       const conversation = new VoiceConversation({
         instructions,
         tools,
-        // 48 kHz pcm16 straight to the page, paced by `AudioPlayback` exactly as it
-        // would be into `pacat`, so an interruption drops what it always dropped.
+        // 48 kHz pcm16 both ways, the rate the page captures and plays at: straight to
+        // the page, paced by `AudioPlayback` exactly as it would be into `pacat`, so an
+        // interruption drops what it always dropped.
         sink: { write: (chunk) => sendAudio(VOICE_FRAME, chunk) },
+        sampleRate: MEETING_SAMPLE_RATE,
         responseMode: 'open',
         agentName,
         voice: config.openaiRealtimeVoice,
@@ -843,7 +846,7 @@ class VoiceChatService {
           session.handleInput(data.toString());
           return;
         }
-        conversation.pushMeetingAudio(
+        conversation.pushAudio(
           Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer),
         );
       });
