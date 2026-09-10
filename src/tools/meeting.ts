@@ -37,10 +37,10 @@ import { logger } from '../logger';
  * heartbeat, a cron tick or a subagent dialling into a live call with people in it — or
  * hanging up on one — is never what the operator asked for.
  *
- * The rest read the call, set the agent's own microphone, or post one line into it, so
- * every mode keeps them. Asking "am I in a call?" costs nothing, a microphone with no call
- * answers that it has none, and a scheduled run that reports back into the room is why the
- * send is reachable outside a call in the first place.
+ * Every mode keeps the status reads, the microphone and the chat send. Asking "am I in a
+ * call?" costs nothing, a microphone with no call answers that it has none, and a scheduled
+ * run that reports back into the room is why the send is reachable outside a call in the
+ * first place. The screen tools and the chat read go too, each for the reason below.
  */
 export const MEETING_MEMBERSHIP_TOOL_NAMES = ['join_meeting', 'leave_meeting'] as const;
 
