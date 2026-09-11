@@ -155,11 +155,20 @@ describe('useVoiceChat', () => {
     expect(view.result.current.lastFrame?.count).toBe(1);
   });
 
-  it('sends the microphone, and stops while muted', async () => {
+  it('opens muted, sends the microphone once asked, and stops when muted again', async () => {
     const { view, ws } = await start();
 
+    // Opening the page starts the call, so nothing goes out until somebody asks for it.
+    expect(view.result.current.muted).toBe(true);
     act(() => captured.onFrame(FRAME));
+    expect(ws.sent).toHaveLength(0);
+
+    act(() => view.result.current.toggleMute());
+    act(() => captured.onFrame(FRAME));
+    expect(view.result.current.muted).toBe(false);
     expect(ws.sent).toHaveLength(1);
+    // The click is also the gesture an autoplay-blocked context was waiting for.
+    expect(audio.resume).toHaveBeenCalled();
 
     act(() => view.result.current.toggleMute());
     act(() => captured.onFrame(FRAME));
@@ -168,8 +177,6 @@ describe('useVoiceChat', () => {
     // permission prompt.
     expect(ws.sent).toHaveLength(1);
     expect(view.result.current.muted).toBe(true);
-    // The click is also the gesture an autoplay-blocked context was waiting for.
-    expect(audio.resume).toHaveBeenCalled();
   });
 
   it('lets go of the microphone when the call ends', async () => {
