@@ -16,7 +16,7 @@ import path from 'path';
 import type { Page } from 'playwright-core';
 import { logger } from '../../logger';
 import { resolveDataDir } from '../../lib/data-dir';
-import { AudioStack, VIRTUAL_DISPLAY_SIZE, type AudioStackHandles } from '../meeting/audio-stack';
+import { AudioStack, type AudioStackHandles } from '../meeting/audio-stack';
 import { BrowserStack } from '../meeting/browser-stack';
 import {
   capture,
@@ -35,7 +35,18 @@ import {
   type ComputerDesktop,
   type ComputerUserScreen,
 } from './computer-tools';
-import { DesktopControl, OCR_SCALE, type MouseButton, type ScrollDirection } from './desktop-control';
+import { DesktopControl, type MouseButton, type ScrollDirection } from './desktop-control';
+import {
+  clampScreen,
+  currentScreen,
+  DEFAULT_SCREEN,
+  MAX_SCREEN,
+  OCR_SCALE,
+  resizeDisplay,
+  sameSize,
+  sizeText,
+  type ScreenSize,
+} from './screen-size';
 import { findText, readLines, readScreenWords, upscaleForOcr } from './screen-text';
 import { describeElements, findElements, readScreenElements } from './screen-elements';
 import { actOnWindow, findWindows, listWindows, type WindowAction } from './desktop-windows';
@@ -100,7 +111,10 @@ type ScreenShareFrame =
   | { type: 'user_screen'; data: string; width: number; height: number }
   | { type: 'user_screen_stopped' };
 
-type PageFrame = InputFrame | ScreenShareFrame;
+/** The size of the rectangle the page is showing the screen in, in its own device pixels. */
+type ViewportFrame = { type: 'viewport'; width: number; height: number };
+
+type PageFrame = InputFrame | ScreenShareFrame | ViewportFrame;
 
 /** A shared-screen picture larger than this is refused; a 1280-wide JPEG is far smaller. */
 const USER_SCREEN_MAX_CHARS = 6 * 1024 * 1024;
@@ -144,8 +158,18 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   /** The XFCE desktop on the virtual display. Null where the browser is on a real one. */
   private desktop: DesktopSession | null = null;
   private screen: PictureStream | null = null;
+  /** The size of the agent's screen, which the client's own rectangle decides. */
+  private size: ScreenSize = DEFAULT_SCREEN;
   /** Everything that moves the front tab runs in arrival order; see the meeting service. */
   private frontTail: Promise<void> = Promise.resolve();
+  /**
+   * Resizes run one at a time.
+   *
+   * A resize can wait seconds for a desktop that is still coming up, and a client that
+   * changed its mind in that time would otherwise have two of them racing to say what
+   * size the screen is.
+   */
+  private resizeTail: Promise<void> = Promise.resolve();
 
   /** Where pictures and narration go. Called once the session has a model to send to. */
   attach(channel: ModelChannel): void {
@@ -156,7 +180,8 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
    * Open the browser. Every voice chat has one, so a browser that cannot start ends
    * the chat before it begins: the error names the reason for the page.
    */
-  async openBrowser(): Promise<void> {
+  async openBrowser(screen?: ScreenSize): Promise<void> {
+    if (screen) this.size = clampScreen(screen.width, screen.height);
     const browser = new BrowserStack();
     let display: AudioStack | null = null;
     let desktop: DesktopSession | null = null;
@@ -165,7 +190,9 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
       let handles: AudioStackHandles | null = null;
       if (process.platform === 'linux' && !process.env.DISPLAY) {
         display = new AudioStack();
-        handles = await display.start();
+        // The largest screen a client may ask for, since a framebuffer is allocated once
+        // and cropped from there.
+        handles = await display.start({ screen: sizeText(MAX_SCREEN) });
         env = handles.browserEnv;
         // A meeting ends on this; here the browser's sound just stops reaching the page.
         handles.onLost((reason) =>
@@ -173,18 +200,42 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
         );
         // The desktop is part of the deal here, the same as the browser: an image
         // without its packages ends the chat with a message rather than a lesser page.
-        if (!(await hasBinaries('dbus-launch', 'startxfce4', 'xdotool', 'ffmpeg', 'wmctrl', 'tesseract'))) {
+        if (
+          !(await hasBinaries(
+            'dbus-launch',
+            'startxfce4',
+            'xdotool',
+            'xrandr',
+            'ffmpeg',
+            'wmctrl',
+            'tesseract',
+          ))
+        ) {
           throw new Error(
             'this image lacks the desktop packages (xfce4, dbus-x11, ffmpeg, xdotool, wmctrl, ' +
-              'tesseract-ocr, at-spi2-core, python3-pyatspi); rebuild it with `npm run docker:build`',
+              'x11-xserver-utils, tesseract-ocr, at-spi2-core, python3-pyatspi); rebuild it with ' +
+              '`npm run docker:build`',
           );
         }
         // The desktop before the browser, so the window manager is there to place the
         // browser's window when it opens, and the session bus exists for it to join.
         desktop = new DesktopSession(env);
         await desktop.start();
+        // Then cropped to what the client is showing, which needs that desktop: the
+        // output has to be moved aside for the screen to shrink under it, and the
+        // desktop's display manager is what does that. Before the browser, so its window
+        // opens at the size it will keep.
+        //
+        // Not fatal. A screen at the size the server reserved is a working screen, and a
+        // client that cannot have its own size should still get a call. What it actually
+        // became is what everything below is told.
+        await resizeDisplay(env, this.size).catch((err: unknown) => {
+          logger.warn({ err }, '[VoiceChat] The screen stayed at the size the display reserved');
+        });
+        const actual = await currentScreen(env).catch(() => null);
+        if (actual) this.size = actual;
         this.desktopEnv = { ...env, ...desktop.busEnv };
-        this.desktopControl = new DesktopControl(env, VIRTUAL_DISPLAY_SIZE);
+        this.desktopControl = new DesktopControl(env, this.size);
         this.input = new DesktopInput(env, this.desktopControl.width, this.desktopControl.height);
       }
       this.mainPage = await browser.start({
@@ -222,7 +273,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
    */
   startScreenStream(onFrame: (jpegBase64: string) => void): void {
     this.screen = this.audioHandles
-      ? new DisplayStream(this.audioHandles.browserEnv.DISPLAY, VIRTUAL_DISPLAY_SIZE, onFrame)
+      ? new DisplayStream(this.audioHandles.browserEnv.DISPLAY, sizeText(this.size), onFrame)
       : new ScreenStream(() => this.browser?.front() ?? null, onFrame);
     this.screen.start();
   }
@@ -315,6 +366,56 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   }
 
   /**
+   * Make the screen the size of the client's own rectangle.
+   *
+   * Called before the display exists as well as after: an early call records the size the
+   * display comes up at, which saves the desktop laying itself out twice.
+   *
+   * The model is told, because its prompt states the size of the picture it works in and
+   * that picture follows the screen. It is told only when that size really changed, since
+   * a screen below the cap is its own picture and one above it is not.
+   */
+  async resize(width: number, height: number): Promise<void> {
+    const run = this.resizeTail.then(() => this.applyResize(width, height));
+    this.resizeTail = run.catch(() => {});
+    return run;
+  }
+
+  private async applyResize(width: number, height: number): Promise<void> {
+    const wanted = clampScreen(width, height);
+    if (sameSize(wanted, this.size)) return;
+    const control = this.desktopControl;
+    if (!control || !this.audioHandles) {
+      // Before the display exists: this is the size it will come up at.
+      this.size = wanted;
+      return;
+    }
+
+    const before = { width: control.pictureWidth, height: control.pictureHeight };
+    try {
+      await resizeDisplay(this.audioHandles.browserEnv, wanted);
+    } catch (err) {
+      // The screen is still the size it was, and everything that describes it still
+      // describes it correctly. The client draws a picture of one shape into a box of
+      // another until it asks again.
+      logger.warn({ err }, '[VoiceChat] The display would not resize');
+      return;
+    }
+    this.size = wanted;
+    control.resize(wanted);
+    this.screen?.resize?.(sizeText(wanted));
+    logger.info(`[VoiceChat] Screen is now ${sizeText(wanted)}`);
+
+    const after = { width: control.pictureWidth, height: control.pictureHeight };
+    if (before && !sameSize(before, after)) {
+      this.channel?.notify(
+        `Your screen is now ${after.width} by ${after.height} in the pictures you get of it. ` +
+          'Coordinates you read off an older picture no longer point where they did.',
+      );
+    }
+  }
+
+  /**
    * A text frame from the page: the user's shared screen, or their pointer and keyboard
    * while they hold the desktop.
    */
@@ -328,6 +429,9 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
     if (typeof frame !== 'object' || frame === null || typeof frame.type !== 'string') return;
 
     switch (frame.type) {
+      case 'viewport':
+        void this.resize(Number(frame.width), Number(frame.height));
+        return;
       case 'user_screen_started':
         logger.info('[VoiceChat] User started sharing their screen');
         this.channel?.notify(

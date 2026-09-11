@@ -71,6 +71,18 @@ export function sourceIsRunning(pactlShortSources: string, sourceName: string): 
 /** The virtual display's geometry, which anything that grabs the screen needs too. */
 export const VIRTUAL_DISPLAY_SIZE = '1280x720';
 
+/** What `start()` reserves when the caller names no size. */
+export interface AudioStackOptions {
+  /**
+   * The screen the X server reserves, e.g. `2560x1440`.
+   *
+   * A framebuffer is allocated once and cannot grow, so a caller that resizes its screen
+   * while it runs reserves the largest it will ever want and crops down to what it is
+   * using. A meeting never resizes and reserves what it needs.
+   */
+  screen?: string;
+}
+
 export interface AudioStackHandles {
   /** Env vars Chrome needs to use the virtual devices and display. */
   browserEnv: Record<string, string>;
@@ -108,9 +120,12 @@ export class AudioStack {
   /** Kept so a loss that beats the handler's registration still gets reported. */
   private lostReason: string | null = null;
   private stopped = false;
+  /** The screen the X server reserves; see `AudioStackOptions`. */
+  private screen = VIRTUAL_DISPLAY_SIZE;
 
   /** Bring up Xvfb, the PulseAudio daemon, its devices, and the audio pipes. */
-  async start(): Promise<AudioStackHandles> {
+  async start(options: AudioStackOptions = {}): Promise<AudioStackHandles> {
+    this.screen = options.screen ?? VIRTUAL_DISPLAY_SIZE;
     try {
       this.runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'prism-meeting-'));
       this.display = await this.startXvfb();
@@ -164,8 +179,9 @@ export class AudioStack {
    */
   private async startXvfb(): Promise<string> {
     return new Promise<string>((resolve, reject) => {
-      // 1280x720 is enough for Meet's join UI and keeps the framebuffer small.
-      const proc = spawn('Xvfb', ['-displayfd', '1', '-screen', '0', `${VIRTUAL_DISPLAY_SIZE}x24`, '-nolisten', 'tcp'], {
+      // The reservation, not the size in use: a screen that resizes crops this one, and a
+      // meeting asks for 1280x720, which is enough for Meet's join UI.
+      const proc = spawn('Xvfb', ['-displayfd', '1', '-screen', '0', `${this.screen}x24`, '-nolisten', 'tcp'], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       this.xvfb = proc;
