@@ -94,7 +94,9 @@ const AUDIO_HEADER_BYTES = 2;
 export function useVoiceChat(viewport: Viewport | null) {
   const [state, setState] = useState<VoiceChatState>('connecting');
   const [message, setMessage] = useState<string | null>(null);
-  const [muted, setMuted] = useState(false);
+  // Muted to start with: opening the page starts the call, and a microphone that is
+  // live before anyone asks for it is a room being listened to.
+  const [muted, setMuted] = useState(true);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
   /** True once the first picture of the agent's screen has arrived. */
   const [hasScreen, setHasScreen] = useState(false);
@@ -102,7 +104,7 @@ export function useVoiceChat(viewport: Viewport | null) {
   const [hasDesktop, setHasDesktop] = useState(false);
   /** The newest screen picture's arrival, for the frame readout. */
   const [lastFrame, setLastFrame] = useState<FrameEvent | null>(null);
-  const mutedRef = useRef(false);
+  const mutedRef = useRef(true);
   const audioRef = useRef<VoiceAudio | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   /**
