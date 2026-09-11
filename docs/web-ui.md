@@ -216,9 +216,11 @@ The agent's identity and runtime controls.
 A voice call with the agent at its own computer. Opening the page starts the
 call; leaving it ends the call.
 
-The agent's screen fills the page and you hear what it plays. Click the screen to
-take its pointer and keyboard, and press Esc to give them back; while the screen
-is on the page, pasting types your clipboard into it. The share button shows the
+The agent's screen fills the page and you hear what it plays, at the size the page
+draws it, so the desktop is as sharp as the display you are on and follows the
+window when you resize it or go fullscreen. Click the screen to take its pointer
+and keyboard, and press Esc to give them back; while the screen is on the page,
+pasting types your clipboard into it. The share button shows the
 agent your own screen, a window or a tab, and the microphone button mutes yours.
 
 See **[Voice chat](voice-chat.md)** for what the agent can do in a call and what

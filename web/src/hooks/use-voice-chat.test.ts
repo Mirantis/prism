@@ -89,9 +89,12 @@ describe('useVoiceChat', () => {
     vi.unstubAllGlobals();
   });
 
+  /** The rectangle the page shows the screen in, which the call waits for. */
+  const VIEWPORT = { width: 1920, height: 1080 };
+
   /** Render the hook and wait for its socket to exist. */
   async function start() {
-    const view = renderHook(() => useVoiceChat());
+    const view = renderHook(() => useVoiceChat(VIEWPORT));
     await waitFor(() => expect(FakeSocket.last).not.toBeNull());
     return { view, ws: FakeSocket.last! };
   }
@@ -189,7 +192,7 @@ describe('useVoiceChat', () => {
     denied.name = 'NotAllowedError';
     startVoiceAudio.mockRejectedValueOnce(denied);
 
-    const view = renderHook(() => useVoiceChat());
+    const view = renderHook(() => useVoiceChat(VIEWPORT));
 
     await waitFor(() => expect(view.result.current.state).toBe('mic-denied'));
     expect(view.result.current.message).toMatch(/blocked/i);

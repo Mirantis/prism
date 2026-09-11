@@ -379,8 +379,15 @@ export function webSocketUrl(): string {
   return `${proto}://${window.location.host}/api/ws`;
 }
 
-/** The voice chat socket: pcm16 audio both ways, JSON status frames back. */
-export function voiceWebSocketUrl(): string {
+/**
+ * The voice chat socket: pcm16 audio both ways, JSON status frames back.
+ *
+ * `screen` is the size of the rectangle the page will show the agent's screen in, which
+ * the runtime makes that screen. It rides the handshake rather than a first frame so the
+ * screen is the right size before a desktop lays itself out on it.
+ */
+export function voiceWebSocketUrl(screen?: { width: number; height: number }): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${window.location.host}/api/voice`;
+  const query = screen ? `?w=${Math.round(screen.width)}&h=${Math.round(screen.height)}` : '';
+  return `${proto}://${window.location.host}/api/voice${query}`;
 }

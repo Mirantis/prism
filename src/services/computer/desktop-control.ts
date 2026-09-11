@@ -2,8 +2,8 @@
  * Mouse, keyboard and a camera for the virtual display: `xdotool` for the first two,
  * one `ffmpeg` grab for the third.
  *
- * The model works in the coordinates of the picture `capture()` returns: the screen at full
- * size, which image inputs of this size keep as it is, and nothing drawn on it. A labelled
+ * The model works in the coordinates of the picture `capture()` returns: the screen, at
+ * its own size or scaled down to the cap in `screen-size.ts`, and nothing drawn on it. A labelled
  * grid was tried as a ruler and measured against the truth; it made the model's vertical
  * estimates twenty to forty pixels worse, while on the plain picture they were within six.
  * `click()`, `move()`, `drag()` and `scroll()` take picture coordinates and map them to the
@@ -17,6 +17,9 @@
 
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { OCR_SCALE, pictureFor, sizeText, type ScreenSize } from './screen-size';
+
+export { OCR_SCALE };
 
 const run = promisify(execFile);
 
@@ -41,28 +44,46 @@ const COMMAND_TIMEOUT_MS = 10_000;
 const CAPTURE_QUALITY = 6;
 const CAPTURE_MAX_BYTES = 8 * 1024 * 1024;
 
-/** The model's picture: the screen at full size. */
-export const PICTURE_WIDTH = 1280;
-export const PICTURE_HEIGHT = 720;
-/** How much the grab is enlarged for OCR; see `screen-text.ts`. */
-export const OCR_SCALE = 2;
-
 export class DesktopControl {
-  /** The screen's size in pixels. */
-  readonly width: number;
-  readonly height: number;
+  /** The screen's size in pixels, which the client changes as its own window changes. */
+  private screen: ScreenSize;
   /** The model's picture, which its coordinates refer to. */
-  readonly pictureWidth = PICTURE_WIDTH;
-  readonly pictureHeight = PICTURE_HEIGHT;
+  private picture: ScreenSize;
 
-  /** `env` is the display's: DISPLAY and XDG_RUNTIME_DIR. `size` is its geometry, e.g. `1280x720`. */
+  /** `env` is the display's: DISPLAY and XDG_RUNTIME_DIR. `screen` is its size in pixels. */
   constructor(
     private readonly env: Record<string, string>,
-    private readonly size: string,
+    screen: ScreenSize,
   ) {
-    const [w, h] = size.split('x').map(Number);
-    this.width = w;
-    this.height = h;
+    this.screen = { ...screen };
+    this.picture = pictureFor(screen);
+  }
+
+  get width(): number {
+    return this.screen.width;
+  }
+
+  get height(): number {
+    return this.screen.height;
+  }
+
+  get pictureWidth(): number {
+    return this.picture.width;
+  }
+
+  get pictureHeight(): number {
+    return this.picture.height;
+  }
+
+  /**
+   * Follow the screen to a new size.
+   *
+   * The display itself is resized by the computer that owns it; this is the record of it,
+   * and the coordinate mapping below is what has to agree with the pixels a grab returns.
+   */
+  resize(screen: ScreenSize): void {
+    this.screen = { ...screen };
+    this.picture = pictureFor(screen);
   }
 
   /** Put the pointer on a point given in picture coordinates, without clicking. */
@@ -129,8 +150,8 @@ export class DesktopControl {
       'ffmpeg',
       [
         '-loglevel', 'error',
-        '-f', 'x11grab', '-video_size', this.size, '-i', this.env.DISPLAY,
-        '-frames:v', '1', '-vf', `scale=${PICTURE_WIDTH}:${PICTURE_HEIGHT}`,
+        '-f', 'x11grab', '-video_size', sizeText(this.screen), '-i', this.env.DISPLAY,
+        '-frames:v', '1', '-vf', `scale=${this.picture.width}:${this.picture.height}`,
         '-f', 'image2pipe', '-vcodec', 'mjpeg', '-q:v', String(CAPTURE_QUALITY),
         '-',
       ],
@@ -145,7 +166,7 @@ export class DesktopControl {
       'ffmpeg',
       [
         '-loglevel', 'error',
-        '-f', 'x11grab', '-video_size', this.size, '-i', this.env.DISPLAY,
+        '-f', 'x11grab', '-video_size', sizeText(this.screen), '-i', this.env.DISPLAY,
         '-frames:v', '1', '-vf', `scale=iw*${OCR_SCALE}:ih*${OCR_SCALE}`,
         '-f', 'image2pipe', '-vcodec', 'png', '-',
       ],
@@ -156,15 +177,15 @@ export class DesktopControl {
 
   /** A screen pixel as a picture coordinate, the inverse of `toScreen`. */
   toPicture(x: number, y: number): [number, number] {
-    return [(x * this.pictureWidth) / this.width, (y * this.pictureHeight) / this.height];
+    return [(x * this.picture.width) / this.screen.width, (y * this.picture.height) / this.screen.height];
   }
 
   /** A picture coordinate as a screen pixel, kept on the screen. */
   private toScreen(x: number, y: number): [number, number] {
-    const sx = (x * this.width) / this.pictureWidth;
-    const sy = (y * this.height) / this.pictureHeight;
-    const px = Math.min(this.width - 1, Math.max(0, Math.round(sx)));
-    const py = Math.min(this.height - 1, Math.max(0, Math.round(sy)));
+    const sx = (x * this.screen.width) / this.picture.width;
+    const sy = (y * this.screen.height) / this.picture.height;
+    const px = Math.min(this.screen.width - 1, Math.max(0, Math.round(sx)));
+    const py = Math.min(this.screen.height - 1, Math.max(0, Math.round(sy)));
     return [px, py];
   }
 

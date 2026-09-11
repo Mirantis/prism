@@ -7,6 +7,15 @@ interface ScreenViewProps {
   /** The image the runtime's pictures are drawn into; owned by the voice chat hook. */
   screenRef: RefObject<HTMLImageElement | null>;
   hasScreen: boolean;
+  /**
+   * The size of this box in device pixels, whenever it changes.
+   *
+   * The runtime makes the agent's screen this size, so the picture arrives at the size it
+   * is drawn and nothing is scaled on the way. Reported at once the first time, since the
+   * call waits for it, and settled afterwards so a window being dragged does not resize a
+   * desktop on every frame.
+   */
+  onViewport?: (size: { width: number; height: number }) => void;
   /** Whether the runtime accepts pointer and keyboard input for this screen. */
   controllable: boolean;
   onInput: (frame: InputFrame) => void;
@@ -15,6 +24,9 @@ interface ScreenViewProps {
 }
 
 const BUTTONS: Record<number, 'left' | 'middle' | 'right'> = { 0: 'left', 1: 'middle', 2: 'right' };
+
+/** How long the box has to stop changing before its new size is reported. */
+const VIEWPORT_SETTLE_MS = 250;
 
 /**
  * The agent's screen, and a way to take it over.
@@ -32,10 +44,54 @@ const BUTTONS: Record<number, 'left' | 'middle' | 'right'> = { 0: 'left', 1: 'mi
  * With the screen on the page but not under control, a paste types the clipboard text
  * into the desktop, which is how text gets from the user's machine onto it.
  */
-export function ScreenView({ screenRef, hasScreen, controllable, onInput, children }: ScreenViewProps) {
+export function ScreenView({
+  screenRef,
+  hasScreen,
+  controllable,
+  onInput,
+  onViewport,
+  children,
+}: ScreenViewProps) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const [controlling, setControlling] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+
+  // Measured from the box itself rather than the window, so the sidebar, the page's
+  // padding and fullscreen are all already accounted for.
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box || !onViewport) return;
+    let settle: number | null = null;
+    let reported = false;
+
+    const measure = () => {
+      const { width, height } = box.getBoundingClientRect();
+      if (width < 1 || height < 1) return;
+      const ratio = window.devicePixelRatio || 1;
+      onViewport({ width: Math.round(width * ratio), height: Math.round(height * ratio) });
+    };
+    const report = () => {
+      // The first measurement opens the call, so it does not wait.
+      if (!reported) {
+        reported = true;
+        measure();
+        return;
+      }
+      if (settle !== null) clearTimeout(settle);
+      settle = window.setTimeout(measure, VIEWPORT_SETTLE_MS);
+    };
+
+    const observer = new ResizeObserver(report);
+    observer.observe(box);
+    // A window moved to a display of another density changes the pixels without changing
+    // the box, and the observer says nothing about that.
+    window.addEventListener('resize', report);
+    return () => {
+      if (settle !== null) clearTimeout(settle);
+      observer.disconnect();
+      window.removeEventListener('resize', report);
+    };
+  }, [onViewport]);
 
   /**
    * Where the picture is drawn inside the box, in page pixels, and desktop pixels per
