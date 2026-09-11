@@ -105,17 +105,21 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
     send({ type: 'user_screen_started' });
   }, [send, stop]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Set on the way in as well as cleared on the way out. In development React mounts,
+    // unmounts and mounts again to shake out exactly this kind of state, and a flag only
+    // ever cleared would stay cleared for the life of the page: every share would stop
+    // itself the moment the picker handed one over.
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
       const session = sessionRef.current;
       if (!session) return;
       clearInterval(session.timer);
       clearTimeout(session.firstFrame);
       session.stream.getTracks().forEach((t) => t.stop());
-    },
-    [],
-  );
+    };
+  }, []);
 
   return { sharing: stream !== null, stream, error, start, stop };
 }
