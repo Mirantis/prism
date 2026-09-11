@@ -56,7 +56,14 @@ vi.mock('../config', () => ({
     toolRiskGateMode: 'off',
     invalidToolRiskGateMode: null,
     codingAgent: 'claude-code',
-    codingAgentModelOverrides: { 'claude-code': {}, codex: {} },
+    codingAgentModels: {
+      'claude-code': { small: 'haiku', medium: 'sonnet', large: 'opus' },
+      codex: {
+        small: { openai: 'gpt-5.6-luna', bedrock: 'openai.gpt-5.6-luna' },
+        medium: { openai: 'gpt-5.6-terra', bedrock: 'openai.gpt-5.6-terra' },
+        large: { openai: 'gpt-5.6-sol', bedrock: 'openai.gpt-5.6-sol' },
+      },
+    },
     availableCodingAgents: ['claude-code'],
     awsRegion: 'us-east-1',
     awsAccessKeyId: undefined,

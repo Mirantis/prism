@@ -335,7 +335,7 @@ describe('model tier and effort', () => {
   }
 
   it.each(tiers)('uses the override for %s', async (modelTier) => {
-    const overrides = config.codingAgentModelOverrides['claude-code'];
+    const overrides = config.codingAgentModels['claude-code'];
     const previous = overrides[modelTier];
     overrides[modelTier] = 'custom-model';
     try {

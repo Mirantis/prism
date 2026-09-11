@@ -9,10 +9,6 @@ import { runCli, type Spawner } from '../cli-run';
 import type { CodingAgent, CodingAgentEvent, CodingAgentTask } from '../coding-agent';
 import { codexApiKey, codexAuthMethod, resolveCodexHome } from './credentials';
 
-// Reuse the repository's model choices: luna is the fast classification model,
-// sol is the main model, and terra is this adapter's existing Bedrock default.
-const MODEL_TIERS = { small: 'gpt-5.6-luna', medium: 'gpt-5.6-terra', large: 'gpt-5.6-sol' };
-
 interface StreamLine {
   type: string;
   thread_id?: string;
@@ -100,8 +96,7 @@ function buildArgs(task: CodingAgentTask, authMethod: ReturnType<typeof codexAut
   // deployment configuration and the existing Bedrock default above. Keep
   // both optional on resume too; a default tier would silently replace it.
   if (task.modelTier) {
-    const defaultModel = `${useBedrock ? 'openai.' : ''}${MODEL_TIERS[task.modelTier]}`;
-    args.push('--model', config.codingAgentModelOverrides.codex[task.modelTier] ?? defaultModel);
+    args.push('--model', config.codingAgentModels.codex[task.modelTier][useBedrock ? 'bedrock' : 'openai']);
   }
   if (task.effort) args.push('-c', `model_reasoning_effort="${task.effort}"`);
   if (task.appendSystemPrompt) {

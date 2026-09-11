@@ -49,14 +49,23 @@ describe('config', () => {
   for (const [agent, prefix] of [['claude-code', 'CLAUDE_CODE'], ['codex', 'CODEX']] as const) {
     it.each(['small', 'medium', 'large'] as const)('reads ' + agent + ' %s model override', async (tier) => {
       const name = prefix + '_MODEL_' + tier.toUpperCase();
+      const defaults = agent === 'claude-code'
+        ? { small: 'haiku', medium: 'sonnet', large: 'opus' }[tier]
+        : {
+          small: { openai: 'gpt-5.6-luna', bedrock: 'openai.gpt-5.6-luna' },
+          medium: { openai: 'gpt-5.6-terra', bedrock: 'openai.gpt-5.6-terra' },
+          large: { openai: 'gpt-5.6-sol', bedrock: 'openai.gpt-5.6-sol' },
+        }[tier];
       delete process.env[name];
-      expect((await loadConfig()).codingAgentModelOverrides[agent][tier]).toBeUndefined();
+      expect((await loadConfig()).codingAgentModels[agent][tier]).toEqual(defaults);
       process.env[name] = '  custom-model  ';
       vi.resetModules();
-      expect((await loadConfig()).codingAgentModelOverrides[agent][tier]).toBe('custom-model');
+      expect((await loadConfig()).codingAgentModels[agent][tier]).toEqual(
+        agent === 'claude-code' ? 'custom-model' : { openai: 'custom-model', bedrock: 'custom-model' },
+      );
       process.env[name] = '   ';
       vi.resetModules();
-      expect((await loadConfig()).codingAgentModelOverrides[agent][tier]).toBeUndefined();
+      expect((await loadConfig()).codingAgentModels[agent][tier]).toEqual(defaults);
       expect(mockWarn).toHaveBeenCalledWith(
         { variable: name }, '[Startup] empty coding agent model override; using the default',
       );
