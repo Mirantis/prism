@@ -672,6 +672,33 @@ const codingAgentModelOverrides = {
   },
 };
 
+const codingAgentModels = {
+  // CLI aliases let Claude Code resolve each model family for its configured
+  // provider. Full model ids would tie these defaults to a provider and release.
+  'claude-code': {
+    small: codingAgentModelOverrides['claude-code'].small ?? 'haiku',
+    medium: codingAgentModelOverrides['claude-code'].medium ?? 'sonnet',
+    large: codingAgentModelOverrides['claude-code'].large ?? 'opus',
+  },
+  // Reuse the repository's model choices: luna is the fast classification model,
+  // sol is the main model, and terra is the Codex adapter's existing Bedrock default.
+  // Bedrock defaults use the vendor prefix; operator overrides are full model ids.
+  codex: {
+    small: {
+      openai: codingAgentModelOverrides.codex.small ?? 'gpt-5.6-luna',
+      bedrock: codingAgentModelOverrides.codex.small ?? 'openai.gpt-5.6-luna',
+    },
+    medium: {
+      openai: codingAgentModelOverrides.codex.medium ?? 'gpt-5.6-terra',
+      bedrock: codingAgentModelOverrides.codex.medium ?? 'openai.gpt-5.6-terra',
+    },
+    large: {
+      openai: codingAgentModelOverrides.codex.large ?? 'gpt-5.6-sol',
+      bedrock: codingAgentModelOverrides.codex.large ?? 'openai.gpt-5.6-sol',
+    },
+  },
+};
+
 /** Same shape, for the saved copies of oversized tool results. */
 function resolveToolOutputTtlHours(): number {
   const raw = Number.parseFloat(process.env.TOOL_OUTPUT_TTL_HOURS ?? '');
@@ -901,7 +928,7 @@ export const config = {
   invalidToolRiskGateMode,
 
   codingAgent,
-  codingAgentModelOverrides,
+  codingAgentModels,
   availableCodingAgents,
 
   // Overrides the input-context window used by the context-window indicator.

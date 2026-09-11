@@ -269,9 +269,9 @@ describe('model tier and effort', () => {
   }
 
   it.each(tiers)('uses the override for %s', async (modelTier) => {
-    const overrides = config.codingAgentModelOverrides['codex'];
+    const overrides = config.codingAgentModels['codex'];
     const previous = overrides[modelTier];
-    overrides[modelTier] = 'custom-model';
+    overrides[modelTier] = { openai: 'custom-model', bedrock: 'custom-model' };
     try {
       const child = new FakeChild();
       let args: readonly string[] = [];
