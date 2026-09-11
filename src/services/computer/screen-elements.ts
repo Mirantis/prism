@@ -9,8 +9,8 @@
  * since the image's PATH puts a mise-managed one first, which has no `pyatspi`.
  *
  * Not everything is in the tree. The window manager's own title-bar buttons are not
- * widgets (see `desktop-windows.ts`), plain X11 programs such as the card games describe
- * nothing, and Chromium describes its own frame but not the page unless asked to. OCR
+ * widgets (see `desktop-windows.ts`), a plain X11 program describes nothing, and Chromium
+ * describes its own frame but not the page unless asked to. OCR
  * (`screen-text.ts`) covers the rest.
  */
 

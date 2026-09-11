@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  A plain backdrop in the theme's own dark, a shade below the windows so they stand off it.
+  One backdrop for every workspace, and the monitor named twice because the desktop writes
+  the output's name and a numbered fallback.
+-->
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="single-workspace-mode" type="bool" value="true"/>
+    <property name="single-workspace-number" type="int" value="0"/>
+    <property name="screen0" type="empty">
+      <property name="monitor0" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="color-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="0"/>
+          <property name="rgba1" type="array">
+            <value type="double" value="0.106"/>
+            <value type="double" value="0.106"/>
+            <value type="double" value="0.106"/>
+            <value type="double" value="1.000"/>
+          </property>
+        </property>
+      </property>
+      <property name="monitorscreen" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="color-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="0"/>
+          <property name="rgba1" type="array">
+            <value type="double" value="0.106"/>
+            <value type="double" value="0.106"/>
+            <value type="double" value="0.106"/>
+            <value type="double" value="1.000"/>
+          </property>
+        </property>
+      </property>
+    </property>
+  </property>
+</channel>

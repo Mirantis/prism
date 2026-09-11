@@ -165,8 +165,8 @@ function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
         'Read the desktop the way `browse` reads a page: every visible control by name and ' +
         'position — menu items, buttons, tabs, fields, windows — grouped by program. Use the ' +
         'names with `desktop_click_text`. Pass `filter` to list only names containing some ' +
-        'words. Programs that do not describe themselves, such as the card games, show nothing ' +
-        'here; use `see_screen` for those.',
+        'words. A program that does not describe itself shows nothing here; use `see_screen` ' +
+        'for those.',
       inputSchema: z.object({
         filter: z.string().optional().describe('Only controls whose name contains this.'),
       }),
@@ -252,7 +252,7 @@ function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
     desktop_drag: tool({
       description:
         'Drag on your desktop: press at one point, move to another, release. This is how to ' +
-        'move a card, a window or a slider, or to select text. It walks the path in steps so ' +
+        'move a window or a slider, or to select text. It walks the path in steps so ' +
         `the program sees the motion. ${where} Answers with a fresh picture after the release.`,
       inputSchema: z.object({
         fromX: z.number().describe('Where to press: pixels from the left edge.'),
