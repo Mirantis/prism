@@ -4,7 +4,7 @@ import { useAgent } from '@/lib/agent-context';
 import { useVoiceChat, type Viewport, type VoiceChatState } from '@/hooks/use-voice-chat';
 import { useScreenShare } from '@/hooks/use-screen-share';
 import { AgentTile } from '@/components/voice/agent-tile';
-import { FrameStats } from '@/components/voice/frame-stats';
+import { FrameStats, SCREEN_STATS_SHOWN } from '@/components/voice/frame-stats';
 import { MuteButton } from '@/components/voice/mute-button';
 import { ScreenView } from '@/components/voice/screen-view';
 import { ShareButton } from '@/components/voice/share-button';
@@ -70,7 +70,7 @@ function ComputerPage() {
           <div className="absolute bottom-3 left-3 w-40 drop-shadow-lg sm:w-52 md:w-64">
             <AgentTile name={agent.name} speaking={agentSpeaking} compact />
           </div>
-          {hasScreen && (
+          {hasScreen && SCREEN_STATS_SHOWN && (
             <div className="absolute bottom-3 right-3">
               <FrameStats lastFrame={lastFrame} />
             </div>

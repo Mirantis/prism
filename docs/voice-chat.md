@@ -42,9 +42,10 @@ the runtime's voice frames on the chat connection —
 The Web UI's **Computer** page is the same call with a computer in it. Opening
 the page starts the call, and the agent greets you; leaving it ends the call.
 
-The page shows the agent's screen while it works, and you hear what it plays. In
-the container that screen is a whole desktop, so the agent can use a terminal, a
-file manager or anything else installed, not only the browser.
+The page shows the agent's screen while it works, and you hear what it plays. Your
+microphone starts muted; turn it on when you want to be heard. In the container
+that screen is a whole desktop, so the agent can use a terminal, a file manager or
+anything else installed, not only the browser.
 
 That screen is made the size of the area the page draws it in, so what you see is
 the desktop at its own resolution rather than a scaled picture of one. Resizing

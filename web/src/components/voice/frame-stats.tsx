@@ -15,6 +15,13 @@ const FLASH_MS = 150;
 const TICK_MS = 200;
 
 /**
+ * Whether the readout is drawn at all. It is a measurement of the screen stream rather
+ * than something to do with the agent, so it is off unless a build asks for it with
+ * `VITE_SCREEN_STATS=1`.
+ */
+export const SCREEN_STATS_SHOWN = import.meta.env.VITE_SCREEN_STATS === '1';
+
+/**
  * A readout of the pictures arriving for the screen: a dot that lights on each one, the
  * rate in frames and kilobytes a second, and the total. A still screen sends no frames,
  * so the dot stays dark and both rates read zero, which is what shows the suppression of
