@@ -5,9 +5,9 @@
  * One long-lived `xdotool -` reads commands from stdin, one per line, so a stream of mouse
  * movement costs a line each rather than a process each. Movement arrives as deltas: the
  * page has no cursor of its own while locked, so the position lives here, clamped to the
- * screen, and is flushed a few dozen times a second. Buttons and keys go straight through
- * on the same stream, behind any movement already queued, so a click lands where the
- * pointer was last put.
+ * screen it is given, and is flushed a few dozen times a second. Buttons and keys go
+ * straight through on the same stream, behind any movement already queued, so a click
+ * lands where the pointer was last put.
  *
  * Keys arrive as the browser names them (`KeyboardEvent.key` and `code`, plus modifier
  * flags) and leave as X keysyms: a printable character is its own keysym, or a Unicode
@@ -157,14 +157,21 @@ export class DesktopInput {
   /** The paste being typed right now, so that stopping the session stops it. */
   private typer: ChildProcess | null = null;
 
-  /** `env` is the display's; `width` and `height` its geometry in pixels. */
+  /**
+   * `env` is the display's. `screen` is read on every movement rather than copied, so the
+   * pointer's bounds are the screen's own and follow it when the client resizes it.
+   */
   constructor(
     private readonly env: Record<string, string>,
-    private readonly width: number,
-    private readonly height: number,
+    private readonly screen: { readonly width: number; readonly height: number },
   ) {
-    this.x = Math.floor(width / 2);
-    this.y = Math.floor(height / 2);
+    this.x = Math.floor(screen.width / 2);
+    this.y = Math.floor(screen.height / 2);
+  }
+
+  /** Where the user's pointer is on the screen, in its pixels. */
+  get pointer(): { x: number; y: number } {
+    return { x: this.x, y: this.y };
   }
 
   handle(frame: InputFrame): void {
@@ -241,8 +248,8 @@ export class DesktopInput {
   }
 
   private place(x: number, y: number): void {
-    this.x = Math.min(this.width - 1, Math.max(0, Math.round(x)));
-    this.y = Math.min(this.height - 1, Math.max(0, Math.round(y)));
+    this.x = Math.min(this.screen.width - 1, Math.max(0, Math.round(x)));
+    this.y = Math.min(this.screen.height - 1, Math.max(0, Math.round(y)));
   }
 
   private scheduleMove(): void {

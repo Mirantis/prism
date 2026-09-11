@@ -234,9 +234,12 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
         });
         const actual = await currentScreen(env).catch(() => null);
         if (actual) this.size = actual;
+        // The dock only once the screen is the size it will be shown at; see
+        // `DesktopSession.startDock`.
+        await desktop.startDock();
         this.desktopEnv = { ...env, ...desktop.busEnv };
         this.desktopControl = new DesktopControl(env, this.size);
-        this.input = new DesktopInput(env, this.desktopControl.width, this.desktopControl.height);
+        this.input = new DesktopInput(env, this.desktopControl);
       }
       this.mainPage = await browser.start({
         // On the desktop's bus with accessibility on, so the browser's frame is in the tree.
@@ -404,6 +407,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
     this.size = wanted;
     control.resize(wanted);
     this.screen?.resize?.(sizeText(wanted));
+    await this.desktop?.startDock();
     logger.info(`[VoiceChat] Screen is now ${sizeText(wanted)}`);
 
     const after = { width: control.pictureWidth, height: control.pictureHeight };
