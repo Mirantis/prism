@@ -46,8 +46,17 @@ export type ScreenShareFrame =
   | { type: 'user_screen'; data: string; width: number; height: number }
   | { type: 'user_screen_stopped' };
 
+/** The size of the rectangle the page shows the agent's screen in, in device pixels. */
+export type ViewportFrame = { type: 'viewport'; width: number; height: number };
+
 /** Everything the page sends the runtime as JSON text. */
-export type PageFrame = InputFrame | ScreenShareFrame;
+export type PageFrame = InputFrame | ScreenShareFrame | ViewportFrame;
+
+/** The size of the rectangle the page shows the agent's screen in. */
+export interface Viewport {
+  width: number;
+  height: number;
+}
 
 /** One picture of the agent's screen, as base64 JPEG. */
 interface ScreenFrame {
@@ -77,7 +86,12 @@ const VOICE_FRAME = 0x01;
 const COMPUTER_AUDIO_FRAME = 0x02;
 const AUDIO_HEADER_BYTES = 2;
 
-export function useVoiceChat() {
+/**
+ * `viewport` is the rectangle the page will show the screen in. The call waits for the
+ * first one, since the runtime makes the agent's screen that size and a desktop that has
+ * to be resized after it has laid itself out is a desktop the user watches rearrange.
+ */
+export function useVoiceChat(viewport: Viewport | null) {
   const [state, setState] = useState<VoiceChatState>('connecting');
   const [message, setMessage] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
@@ -97,8 +111,13 @@ export function useVoiceChat() {
    * re-render.
    */
   const screenRef = useRef<HTMLImageElement | null>(null);
+  /** The size the call opened with, so a later change is a change rather than a reconnect. */
+  const openedWith = useRef<Viewport | null>(null);
+  if (viewport && !openedWith.current) openedWith.current = viewport;
+  const ready = openedWith.current !== null;
 
   useEffect(() => {
+    if (!ready) return;
     let cancelled = false;
     let ws: WebSocket | null = null;
     let audio: VoiceAudio | null = null;
@@ -154,7 +173,7 @@ export function useVoiceChat() {
       }
       audioRef.current = audio;
 
-      ws = new WebSocket(voiceWebSocketUrl());
+      ws = new WebSocket(voiceWebSocketUrl(openedWith.current ?? undefined));
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
       ws.onmessage = (event: MessageEvent) => {
@@ -212,7 +231,18 @@ export function useVoiceChat() {
       cancelled = true;
       release();
     };
-  }, []);
+  }, [ready]);
+
+  // Later sizes go as frames. The box settles them before reporting, so each one here is
+  // a size the user stopped at rather than a step of a drag.
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!viewport || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (viewport.width === openedWith.current?.width && viewport.height === openedWith.current?.height) {
+      return;
+    }
+    ws.send(JSON.stringify({ type: 'viewport', ...viewport }));
+  }, [viewport]);
 
   const toggleMute = useCallback(() => {
     // Also the gesture an autoplay-blocked context was waiting for.

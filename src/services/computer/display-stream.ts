@@ -40,9 +40,38 @@ export class DisplayStream implements PictureStream {
    */
   constructor(
     private readonly display: string,
-    private readonly size: string,
+    private size: string,
     private readonly onFrame: (jpegBase64: string) => void,
   ) {}
+
+  /**
+   * Grab a screen of a different size from here on.
+   *
+   * `x11grab` takes its size when it opens the display and holds it, so a screen that
+   * resized needs a new grab: the old one goes on producing frames of the old size, which
+   * the client draws into a box that is no longer that shape.
+   *
+   * The old process is dropped before it is killed, so its exit reads as this one's doing
+   * rather than as the capture dying.
+   */
+  resize(size: string): void {
+    if (this.size === size || this.stopped) return;
+    this.size = size;
+    const old = this.proc;
+    this.proc = null;
+    // A frame of the old size half-read, and a repeat check against a frame of a shape
+    // that is gone: both belong to the grab being replaced.
+    this.pending = Buffer.alloc(0);
+    this.lastSent = null;
+    if (old && old.exitCode === null) {
+      try {
+        old.kill('SIGTERM');
+      } catch {
+        // Already gone.
+      }
+    }
+    this.spawn();
+  }
 
   start(): void {
     this.firstFrameTimer = setTimeout(
@@ -50,6 +79,10 @@ export class DisplayStream implements PictureStream {
       FIRST_FRAME_TIMEOUT_MS,
     );
     this.firstFrameTimer.unref?.();
+    this.spawn();
+  }
+
+  private spawn(): void {
     const proc = spawn(
       'ffmpeg',
       [

@@ -112,6 +112,14 @@ export interface StartVoiceChatInput {
   computer?: boolean;
   /** What the client speaks, in and out. Defaults to the model's own rate. */
   sampleRate?: number;
+  /**
+   * The size of the rectangle the client shows the computer's screen in, in its own
+   * device pixels, so the screen comes up at the size it will be drawn at.
+   *
+   * A client that says nothing gets a default and may resize later; a client with no
+   * computer has nothing to size.
+   */
+  screen?: { width: number; height: number };
   /** Said as soon as the session is live. Left out, the agent waits to be spoken to. */
   greeting?: string;
 }
@@ -212,7 +220,7 @@ class VoiceChatService {
       if (input.computer) {
         stage = 'computer';
         computer = new AgentComputer();
-        await computer.openBrowser();
+        await computer.openBrowser(input.screen);
         if (this.epoch !== epoch) {
           await releaseLocals();
           return false;

@@ -1,7 +1,7 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useAgent } from '@/lib/agent-context';
-import { useVoiceChat, type VoiceChatState } from '@/hooks/use-voice-chat';
+import { useVoiceChat, type Viewport, type VoiceChatState } from '@/hooks/use-voice-chat';
 import { useScreenShare } from '@/hooks/use-screen-share';
 import { AgentTile } from '@/components/voice/agent-tile';
 import { FrameStats } from '@/components/voice/frame-stats';
@@ -25,6 +25,14 @@ const STATE_LABEL: Record<VoiceChatState, string> = {
 
 function ComputerPage() {
   const agent = useAgent();
+  // The agent's screen is made the size of the box below, so the call waits for the
+  // first measurement of it.
+  const [viewport, setViewport] = useState<Viewport | null>(null);
+  const onViewport = useCallback((size: Viewport) => {
+    setViewport((current) =>
+      current && current.width === size.width && current.height === size.height ? current : size,
+    );
+  }, []);
   const {
     state,
     message,
@@ -36,7 +44,7 @@ function ComputerPage() {
     screenRef,
     toggleMute,
     sendInput,
-  } = useVoiceChat();
+  } = useVoiceChat(viewport);
   const share = useScreenShare(sendInput);
 
   // A share outlives the call that had a use for it: the browser goes on capturing the
@@ -57,6 +65,7 @@ function ComputerPage() {
           hasScreen={hasScreen}
           controllable={hasDesktop && state === 'ready'}
           onInput={sendInput}
+          onViewport={onViewport}
         >
           <div className="absolute bottom-3 left-3 w-40 drop-shadow-lg sm:w-52 md:w-64">
             <AgentTile name={agent.name} speaking={agentSpeaking} compact />

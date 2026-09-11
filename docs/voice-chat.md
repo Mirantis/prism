@@ -44,7 +44,13 @@ the page starts the call, and the agent greets you; leaving it ends the call.
 
 The page shows the agent's screen while it works, and you hear what it plays. In
 the container that screen is a whole desktop, so the agent can use a terminal, a
-file manager or anything else installed, not only the browser. Click the screen
+file manager or anything else installed, not only the browser.
+
+That screen is made the size of the area the page draws it in, so what you see is
+the desktop at its own resolution rather than a scaled picture of one. Resizing
+the browser window or going fullscreen resizes the desktop with it, a moment
+after you stop. A very large window is served the biggest screen the runtime
+keeps, and the picture is scaled the rest of the way. Click the screen
 to take the pointer and keyboard yourself, and press Esc to give them back. While
 you hold them, pasting types your clipboard into whatever has the focus there; a
 paste with the screen on the page but not under your control types it too.

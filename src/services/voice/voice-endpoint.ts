@@ -11,7 +11,7 @@
  * out, the user's pointer, keyboard and shared screen in.
  */
 
-import type { Server as HttpServer } from 'http';
+import type { Server as HttpServer, IncomingMessage } from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { logger } from '../../logger';
 import { isAllowedOrigin } from '../../lib/origin-guard';
@@ -36,6 +36,23 @@ export interface VoiceChatStatus {
 export interface VoiceChatScreenFrame {
   type: 'screen';
   data: string;
+}
+
+/**
+ * The size of the rectangle a client shows the screen in, read off the handshake.
+ *
+ * On the URL rather than in a frame, so the screen is the right size before the desktop
+ * lays itself out on it. A client that leaves it off gets a default and can send a
+ * `viewport` frame once it knows.
+ */
+function screenFrom(req: IncomingMessage): { width: number; height: number } | undefined {
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const width = Number(url.searchParams.get('w'));
+  const height = Number(url.searchParams.get('h'));
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return undefined;
+  }
+  return { width, height };
 }
 
 /**
@@ -130,11 +147,12 @@ class VoiceEndpoint {
         socket.destroy();
         return;
       }
+      const screen = screenFrom(req);
       wss.handleUpgrade(req, socket, head, (ws) => {
         // Before anything is awaited: `ws` emits `error` for a malformed frame, and an
         // `error` with no listener is an uncaught exception that takes the process down.
         ws.on('error', (err) => logger.warn({ err }, '[VoiceChat] Socket error'));
-        void this.serve(ws).catch((err: unknown) => {
+        void this.serve(ws, screen).catch((err: unknown) => {
           logger.error({ err }, '[VoiceChat] The endpoint failed to serve a connection');
         });
       });
@@ -158,7 +176,7 @@ class VoiceEndpoint {
     logger.info(`Voice chat gateway initialized on ${VOICE_CHAT_PATH}`);
   }
 
-  private async serve(ws: VoiceSocket): Promise<void> {
+  private async serve(ws: VoiceSocket, screen?: { width: number; height: number }): Promise<void> {
     ws.isAlive = true;
     ws.on('pong', () => {
       ws.isAlive = true;
@@ -259,6 +277,7 @@ class VoiceEndpoint {
       signal,
       surface: 'computer',
       computer: true,
+      screen,
       // The client captures and plays at the rate the agent's screen is recorded at, so
       // the sound of a video on that screen reaches it unresampled.
       sampleRate: MEETING_SAMPLE_RATE,
