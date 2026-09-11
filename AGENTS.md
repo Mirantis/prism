@@ -602,6 +602,16 @@ for the full env block.
 
 `tsx watch` restarts on every save (~1s).
 
+### The container image (`npm run docker:build`, `npm run docker:start`)
+
+`docker:build` builds this checkout as `prism-agent:local`, passing the token `gh` holds
+as a build secret so mise resolves its tools against an authenticated rate limit. Extra
+arguments reach `docker build`. `docker:start` then runs that image the way a deployment
+runs it, with only this checkout's `.env` mounted in and the `prism-data` volume for the
+agent's database, skills and browser profile. `PRISM_IMAGE`, `PRISM_PORT` and
+`PRISM_VOLUME` override the defaults. Use these two to try anything that needs the image's
+own toolchain from a clean start; use `docker:dev` below to iterate on code inside it.
+
 ### The container image with live code (`npm run docker:dev`)
 
 `scripts/docker-dev.sh` runs the published image with this checkout's `.env`,
