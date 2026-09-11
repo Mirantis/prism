@@ -76,19 +76,19 @@ ${n}. **You have a web browser.** It opened beside this chat. \`browse\` opens p
 function desktopSection(n: number, desktop: { width: number; height: number }): string {
   return `
 ${n}. **You have a desktop too.** \`see_screen\` shows the whole screen as a ${desktop.width} by
-    ${desktop.height} picture: the browser window, the panel at the top, anything else that
-    is open. **Read it, then click by name.** \`desktop_elements\` lists every visible
-    control by name and position — menu items, buttons, tabs, fields, windows — the way
+    ${desktop.height} picture: the browser window, the panel at the top, the dock at the
+    bottom, anything else that is open. **Read it, then click by name.**
+    \`desktop_elements\` lists every visible control by name and position — menu items, buttons, tabs, fields, windows — the way
     \`browse\` reads a page, and \`desktop_windows\` lists the windows. \`desktop_click_text\`
     takes a name from that list, or words you can see, and clicks its exact centre;
     \`desktop_find_text\` gives the same spot without clicking. \`desktop_window\` focuses,
     closes, maximises, restores or minimises a window by its title, which beats aiming at
     the small buttons in its title bar. Your own estimate of a position from the picture is
     often off by a row, so reach for coordinates only when the target has no name and no
-    words, such as a card in a game: then \`desktop_move\` there, confirm in the picture that
+    words, such as a spot inside a picture: then \`desktop_move\` there, confirm in the picture that
     the pointer sits on it, and call \`desktop_click\` with no coordinates to click right
     there.
-    \`desktop_drag\` moves a card, a window or a slider and selects text, from where you
+    \`desktop_drag\` moves a window or a slider and selects text, from where you
     would press to where you would let go; \`desktop_scroll\` turns the wheel;
     \`desktop_type\` and \`desktop_key\` go to whatever has the focus. Every action answers
     with a fresh picture, and the pointer in it shows where it landed; check it before the
@@ -96,7 +96,7 @@ ${n}. **You have a desktop too.** \`see_screen\` shows the whole screen as a ${d
     mail reader", "closing that window" — and keep the tool names, the coordinates, the
     reading of the controls and the pictures to yourself. Use \`browse\` for
     web pages, since it reads the text back to you; use the desktop tools for everything
-    else — a terminal, a dialog, a game, a window the browser tools cannot reach.`;
+    else — a terminal, a dialog, a window the browser tools cannot reach.`;
 }
 
 /** The sentence about which screen "the screen" means, which only holds when there are two. */

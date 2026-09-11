@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_PASTE_CHARS, chordFor, keysymFor, pasteText } from '../desktop-input';
+import { DesktopInput, MAX_PASTE_CHARS, chordFor, keysymFor, pasteText } from '../desktop-input';
 
 const key = (
   k: string,
@@ -84,5 +84,24 @@ describe('pasteText', () => {
   it('cuts a paste at the limit, on a character boundary', () => {
     const long = '€'.repeat(MAX_PASTE_CHARS + 5);
     expect(Array.from(pasteText(long))).toHaveLength(MAX_PASTE_CHARS);
+  });
+});
+
+describe('the pointer on a screen that changes size', () => {
+  // The screen is the object `DesktopControl` keeps, and the client resizes it mid-chat.
+  const screen = { width: 1280, height: 720 };
+  const input = new DesktopInput({}, screen);
+
+  it('keeps the pointer inside the screen it is on', () => {
+    input.handle({ type: 'pointer_move', dx: 9999, dy: 9999 });
+    expect(input.pointer).toEqual({ x: 1279, y: 719 });
+  });
+
+  it('lets the pointer reach the far corner of a screen that grew', () => {
+    screen.width = 1920;
+    screen.height = 1080;
+    input.handle({ type: 'pointer_move', dx: 9999, dy: 9999 });
+    expect(input.pointer).toEqual({ x: 1919, y: 1079 });
+    input.stop();
   });
 });

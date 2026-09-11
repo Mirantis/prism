@@ -5,8 +5,8 @@
  * The session bus is started here first, with `dbus-launch`, so its address is known
  * and can be handed to every program that should appear in the accessibility tree or
  * read it: the desktop, the browser, and the dump in `screen-elements.ts`. XFCE then
- * starts with accessibility switched on. The desktop belongs to one voice chat and dies
- * with it, bus included.
+ * starts with accessibility switched on, and Plank is the dock along its bottom edge.
+ * The desktop belongs to one voice chat and dies with it, bus included.
  */
 
 import { execFile, spawn, type ChildProcess } from 'child_process';
@@ -15,11 +15,17 @@ import { logger } from '../../logger';
 
 const run = promisify(execFile);
 
-/** How long the desktop gets to exit on SIGTERM before SIGKILL. */
+/** How long a program gets to exit on SIGTERM before SIGKILL. */
 const EXIT_GRACE_MS = 3_000;
+const COMMAND_TIMEOUT_MS = 10_000;
+/** The dock's settings, which are per dock and so addressed by their path. */
+const DOCK_SETTINGS = 'net.launchpad.plank.dock.settings:/net/launchpad/plank/docks/dock1/';
+/** The dock's half of the desktop's theme; the image installs it. */
+const DOCK_THEME = 'Orchis';
 
 export class DesktopSession {
   private proc: ChildProcess | null = null;
+  private dock: ChildProcess | null = null;
   private busPid: number | null = null;
   /**
    * The session bus address and the accessibility switches. Every program that should
@@ -50,14 +56,7 @@ export class DesktopSession {
 
     const proc = spawn('startxfce4', [], {
       stdio: ['ignore', 'ignore', 'pipe'],
-      env: {
-        ...process.env,
-        ...this.env,
-        ...this.busEnv,
-        // Debian puts games under /usr/games, which the runtime's PATH lacks; the menu
-        // entries start them by bare name, so the desktop's PATH has to have it.
-        PATH: `${process.env.PATH ?? ''}:/usr/games`,
-      },
+      env: { ...process.env, ...this.env, ...this.busEnv },
     });
     proc.on('error', (err) => logger.warn({ err }, '[VoiceChat] Desktop failed to start'));
     proc.on('exit', (code, signal) => {
@@ -73,28 +72,48 @@ export class DesktopSession {
     this.proc = proc;
   }
 
-  /** Stop the desktop, then its bus. Idempotent, and never throws. */
-  async stop(): Promise<void> {
-    const proc = this.proc;
-    this.proc = null;
-    if (proc && proc.exitCode === null) {
-      try {
-        proc.kill('SIGTERM');
-      } catch {
-        // Already gone.
-      }
-      const deadline = Date.now() + EXIT_GRACE_MS;
-      while (proc.exitCode === null && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      if (proc.exitCode === null) {
-        try {
-          proc.kill('SIGKILL');
-        } catch {
-          // Already gone.
-        }
-      }
+  /**
+   * Start the dock, replacing the one already running.
+   *
+   * Plank places itself against the screen once, when it starts, and stays where it put
+   * itself when the screen changes size. The session therefore starts it after the screen
+   * is the size it will be shown at, and again each time that size changes.
+   */
+  async startDock(): Promise<void> {
+    const env = { ...process.env, ...this.env, ...this.busEnv };
+    const dock = this.dock;
+    this.dock = null;
+    await endProcess(dock);
+    // Plank hides itself when a window comes near, which on a desktop nobody sits at
+    // reads as a dock that is not there, and it takes its own look rather than the
+    // desktop's, so both are said here.
+    for (const [key, value] of [
+      ['hide-mode', 'none'],
+      ['theme', DOCK_THEME],
+    ]) {
+      await run('gsettings', ['set', DOCK_SETTINGS, key, value], {
+        env,
+        timeout: COMMAND_TIMEOUT_MS,
+      }).catch((err: unknown) => logger.debug({ err }, `[VoiceChat] Could not set the dock's ${key}`));
     }
+
+    const proc = spawn('plank', [], { stdio: ['ignore', 'ignore', 'pipe'], env });
+    proc.on('error', (err) => logger.warn({ err }, '[VoiceChat] Dock failed to start'));
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      const line = chunk.toString().trim();
+      if (line) logger.debug(`[VoiceChat:Dock] ${line.split('\n').slice(-1)[0]}`);
+    });
+    this.dock = proc;
+  }
+
+  /** Stop the dock and the desktop, then the bus. Idempotent, and never throws. */
+  async stop(): Promise<void> {
+    const dock = this.dock;
+    const proc = this.proc;
+    this.dock = null;
+    this.proc = null;
+    await endProcess(dock);
+    await endProcess(proc);
     const busPid = this.busPid;
     this.busPid = null;
     if (busPid !== null) {
@@ -103,6 +122,36 @@ export class DesktopSession {
       } catch {
         // Already gone.
       }
+    }
+  }
+}
+
+/**
+ * SIGTERM, a moment to go, then SIGKILL.
+ *
+ * The wait is on the `exit` event, since a process that left on a signal reports it in
+ * `signalCode` and leaves `exitCode` null.
+ */
+async function endProcess(proc: ChildProcess | null): Promise<void> {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+  proc.removeAllListeners('exit');
+  const gone = new Promise<void>((resolve) => proc.once('exit', () => resolve()));
+  try {
+    proc.kill('SIGTERM');
+  } catch {
+    // Already gone.
+  }
+  let timer: NodeJS.Timeout | undefined;
+  const grace = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, EXIT_GRACE_MS);
+  });
+  await Promise.race([gone, grace]);
+  clearTimeout(timer);
+  if (proc.exitCode === null && proc.signalCode === null) {
+    try {
+      proc.kill('SIGKILL');
+    } catch {
+      // Already gone.
     }
   }
 }

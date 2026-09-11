@@ -84,6 +84,12 @@ ENV CHECKPOINT_DISABLE=1
 # LibreOffice, left out for exactly that reason, there is no way to be in a
 # meeting without a browser and an audio server.
 #
+# Plank is the dock along the bottom of that desktop, and `gsettings` from
+# libglib2.0-bin is how the session tells it how to look and not to hide itself.
+# The four packages after it are what the Orchis theme installed below needs to
+# draw: the GTK2 engines for the older toolkit, and librsvg for the window
+# frames, which the theme ships as SVG. xz-utils unpacks the theme.
+#
 # Debian's `chromium` rather than Google Chrome. Chrome does now have arm64 Linux
 # builds, and the runtime prefers `/usr/bin/google-chrome` when an image happens to
 # provide it — but Meet's refusals turned out to be about being an *anonymous*
@@ -99,9 +105,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-liberation fontconfig \
         iptables \
         chromium xvfb pulseaudio pulseaudio-utils \
-        xfce4 xfce4-terminal dbus-x11 ffmpeg xdotool wmctrl x11-xserver-utils \
+        xfce4 xfce4-terminal plank libglib2.0-bin \
+        gnome-themes-extra gtk2-engines-murrine librsvg2-common xz-utils \
+        dbus-x11 ffmpeg xdotool wmctrl x11-xserver-utils \
         at-spi2-core python3-pyatspi \
-        ace-of-penguins \
         tini \
         binutils \
         file \
@@ -325,6 +332,27 @@ ENV PRISM_DATA_DIR=/data
 # BROWSER_CANDIDATES in services/meeting/browser-stack.ts).
 RUN mkdir -p /etc/chromium/policies/managed /etc/opt/chrome/policies/managed \
  && chown node:node /etc/chromium/policies/managed /etc/opt/chrome/policies/managed
+
+# The Orchis theme (https://github.com/vinceliuice/Orchis-theme), which is what the
+# desktop, its window frames and its dock are drawn with. Pinned to a commit and checked
+# against its digest, since it is a third-party archive fetched at build time. Only the
+# dark variant is unpacked; the others are what the same archive holds for other tastes.
+ADD --checksum=sha256:8e1f72f1f8a8a5cac460e9b23c2e5a5bfb97dad6376746fea4c07a3806cd7a4d \
+    https://raw.githubusercontent.com/vinceliuice/Orchis-theme/c3a729f7bad0f460e4a35e96394408a87bb31c55/release/Orchis.tar.xz \
+    /tmp/orchis.tar.xz
+RUN tar -xJf /tmp/orchis.tar.xz -C /usr/share/themes Orchis-Dark \
+ && mkdir -p /usr/share/plank/themes/Orchis \
+ && cp /usr/share/themes/Orchis-Dark/plank/dock.theme /usr/share/plank/themes/Orchis/dock.theme \
+ && rm -f /tmp/orchis.tar.xz
+
+# What the desktop looks like before anyone touches it: the theme on every GTK program and
+# on the window frames, a plain backdrop in the theme's dark, and one panel along the top.
+# XFCE's own default puts a second panel along the bottom edge, where the dock goes. The
+# dock items are the browser, the terminal and the file manager.
+COPY --chown=node:node docker/xsettings.xml docker/xfwm4.xml docker/xfce4-panel.xml \
+     docker/xfce4-desktop.xml \
+     /home/node/.config/xfce4/xfconf/xfce-perchannel-xml/
+COPY --chown=node:node docker/plank/ /home/node/.config/plank/dock1/launchers/
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

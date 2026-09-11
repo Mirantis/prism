@@ -31,6 +31,14 @@ const COMMAND_TIMEOUT_MS = 10_000;
  */
 const RESIZE_TIMEOUT_MS = 10_000;
 const RESIZE_RETRY_MS = 250;
+/**
+ * How long the new size has to hold before the display counts as resized.
+ *
+ * The desktop applies its own display settings a moment after its session starts, which
+ * puts back the size the X server was started at. A resize that lands in that moment
+ * reads back correctly and is undone right after, so the size is read twice.
+ */
+const RESIZE_HOLD_MS = 1_500;
 
 export interface ScreenSize {
   width: number;
@@ -121,7 +129,8 @@ export async function currentScreen(env: Record<string, string>): Promise<Screen
  * **A desktop has to be running.** Shrinking the screen below the output's own mode needs
  * the output moved out of the way first, and it is the desktop's display manager that
  * does that when it sees the attempt. On a bare display the same command fails and changes
- * nothing.
+ * nothing. The same manager puts the size back once, as its session finishes starting,
+ * which is why the size has to hold rather than merely arrive.
  *
  * The result is read back rather than taken from the exit status, because the two
  * disagree: `xrandr` reports the state it passed through — the output no longer fitting
@@ -143,7 +152,11 @@ export async function resizeDisplay(
     }).catch(() => undefined);
 
     now = await currentScreen(env).catch(() => null);
-    if (now && sameSize(now, size)) return;
+    if (now && sameSize(now, size)) {
+      await new Promise((resolve) => setTimeout(resolve, RESIZE_HOLD_MS));
+      now = await currentScreen(env).catch(() => null);
+      if (now && sameSize(now, size)) return;
+    }
     if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, RESIZE_RETRY_MS));
   }
