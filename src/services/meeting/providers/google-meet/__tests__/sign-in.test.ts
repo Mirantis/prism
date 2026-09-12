@@ -39,6 +39,13 @@ function redirectingPage(chain: string[]) {
 }
 
 /**
+ * A `waitForTimeout` that gives the event loop back, rather than only the microtask
+ * queue. `settledUrl` polls against the real clock, so a stub resolving immediately
+ * spins for the whole stability window and starves anything else on this worker.
+ */
+const tick = () => new Promise((resolve) => setTimeout(resolve, 1));
+
+/**
  * A page that carries a login through: every control is visible, and pressing one
  * moves the URL to the account page.
  *
@@ -62,7 +69,7 @@ function signInFormPage() {
       if (url === 'about:blank') landed = 'about:blank';
     }),
     url: () => landed,
-    waitForTimeout: async () => {},
+    waitForTimeout: tick,
     locator: () => control,
     getByRole: () => control,
   };
@@ -192,7 +199,7 @@ describe('sign-in state', () => {
     const page = {
       goto,
       url: () => 'https://myaccount.google.com/',
-      waitForTimeout: async () => {},
+      waitForTimeout: tick,
     };
 
     await signInToGoogle(page as never);
@@ -221,19 +228,19 @@ describe('sign-in state', () => {
     const page = {
       goto,
       url: () => 'https://www.google.com/account/about',
-      waitForTimeout: async () => {},
+      waitForTimeout: tick,
     };
 
     await signInToGoogle(page as never);
 
     expect(sessionEvidence()).toEqual({
       live: false,
-      signal: 'the account page settled on https://www.google.com',
+      signal: 'the account page settled on https://www.google.com/account/about',
     });
     // It still signs in, which is the path a genuinely refused session depends on.
     expect(goto.mock.calls.map(String).join('\n')).toContain('ServiceLogin');
     expect(info.mock.calls.map(String).join('\n')).toContain(
-      'Signing in: the account page settled on https://www.google.com',
+      'Signing in: the account page settled on https://www.google.com/account/about',
     );
     info.mockRestore();
   });
@@ -243,7 +250,7 @@ describe('sign-in state', () => {
     config.googleBotEmail = 'bot@example.com';
     config.googleBotPassword = 'hunter2';
     const goto = vi.fn().mockRejectedValue(new Error('net::ERR_TUNNEL_CONNECTION_FAILED'));
-    const page = { goto, url: () => 'https://www.google.com/', waitForTimeout: async () => {} };
+    const page = { goto, url: () => 'https://www.google.com/', waitForTimeout: tick };
 
     await signInToGoogle(page as never);
 
@@ -276,7 +283,7 @@ describe('sign-in state', () => {
     const live = {
       goto: vi.fn(async () => undefined),
       url: () => 'https://myaccount.google.com/',
-      waitForTimeout: async () => {},
+      waitForTimeout: tick,
     };
     await signInToGoogle(live as never);
     expect(sessionEvidence()?.live).toBe(true);

@@ -104,12 +104,11 @@ const REJECTION_CONFIRM_READS = 3;
 const REJECTION_CONFIRM_INTERVAL_MS = 1_200;
 
 /**
- * How long to look for a guest name field on a lobby whose session Google refused.
+ * How long to look for a guest name field on a lobby that is not letting us in.
  *
  * A Meet lobby paints its controls late, so the field needs waiting for rather than
- * glancing at. Short, because it is the second of two readings and the join is
- * already suspect by the time it runs; a miss falls through to the ordinary join,
- * which Meet then refuses.
+ * glancing at. Short, because the join is already suspect by the time it runs; a miss
+ * falls through to the ordinary join, which Meet then refuses.
  */
 const STALE_SESSION_PROBE_MS = 2_500;
 
@@ -603,15 +602,15 @@ export class GoogleMeetProvider implements MeetingProvider {
     // Before the camera toggle and the join click: Meet keeps the join button
     // disabled until the guest name has a value.
     //
-    // Two readings decide this, and both have to point the same way. An account is
-    // configured, so a session is meant to exist; Google refused that session when
-    // the sign-in call asked; and Meet is offering a guest name field. Going on from
-    // there is a guaranteed refusal, because Meet auto-denies automated anonymous
-    // guests without ever prompting a host — so say so and let the caller sign in
-    // again. A session Google accepted keeps its join even when Meet paints the
-    // field, since throwing a live session away is what earns this account a
-    // challenge. The session test comes first so a healthy join pays nothing for the
-    // field probe.
+    // Three conditions, and all of them have to hold. An account is configured, so a
+    // session is meant to exist. Google refused that session when the sign-in call
+    // asked. And Meet is offering a guest name field. Going on from there is a
+    // guaranteed refusal, because Meet auto-denies automated anonymous guests without
+    // ever prompting a host — so say so and let the caller sign in again. A session
+    // Google accepted keeps its join even when Meet paints the field, since throwing a
+    // live session away is what earns this account a challenge; the probe after the
+    // button hunt covers a session that reads live and is refused anyway. The session
+    // test comes first so a healthy join pays nothing for the field probe.
     const session = sessionEvidence();
     if (
       isAuthenticated() &&
@@ -651,6 +650,22 @@ export class GoogleMeetProvider implements MeetingProvider {
             "unable to say anything, so I didn't join. The container's audio devices " +
             'are the place to look.',
         };
+      }
+      // A join button that never enables is the other face of a refused session: Meet
+      // keeps it disabled until the guest name has a value, and nothing here fills that
+      // field. Asked whatever the session check read, since a session that reads live
+      // and is refused anyway lands here — and asked only now, so a healthy join pays
+      // nothing for it. The caller signs in again and tries the link once, then reports
+      // a second refusal as a denial.
+      if (
+        isAuthenticated() &&
+        (await this.guestNameFieldPresent(page, Date.now() + STALE_SESSION_PROBE_MS))
+      ) {
+        logger.warn(
+          '[Meeting] The join button never became available and Meet is asking for a guest ' +
+            'name — signing in again before trying the link',
+        );
+        return { status: 'reauth_required' };
       }
       // Deliberately not split further by "did we run out of time". The button hunt
       // always runs to the lobby deadline, so an elapsed-budget test is true on every
@@ -744,11 +759,11 @@ export class GoogleMeetProvider implements MeetingProvider {
   /**
    * Is Meet asking for a guest name?
    *
-   * Asked only of a browser that is meant to hold a session Google has just refused,
-   * where a guest field confirms Meet refuses it too. Short-tempered about it, since
-   * waiting the full lobby budget would delay the answer for a join that is already
-   * suspect. A miss is not costly — the join goes ahead and Meet refuses it, which is
-   * the outcome this only makes faster and clearer.
+   * A field that is on screen means Meet treats this browser as a guest, and it
+   * refuses automated anonymous guests. Short-tempered about it, since waiting the
+   * full lobby budget would delay the answer for a join that is already suspect. A
+   * miss is not costly — the join goes ahead and Meet refuses it, which is the outcome
+   * this only makes faster and clearer.
    */
   private async guestNameFieldPresent(page: Page, lobbyDeadline: number): Promise<boolean> {
     const budget = Math.max(0, Math.min(STALE_SESSION_PROBE_MS, lobbyDeadline - Date.now()));

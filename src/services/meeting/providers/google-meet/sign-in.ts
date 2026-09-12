@@ -34,17 +34,22 @@ import { logger } from '../../../../logger';
 const SESSION_SETTLE_TIMEOUT_MS = 15_000;
 const SESSION_STABLE_MS = 1_000;
 
+/** What Google answered about a profile's session, and the reading it rests on. */
+export type SessionEvidence = { live: boolean; signal: string };
+
 /**
  * What the last sign-in attempt read: why it failed, when one did, and what Google
  * answered about the profile's session.
  *
  * Module-level because the provider it serves is a module singleton, and both fields
  * are reset on every `signInToGoogle` call: the alternative is one meeting's reading
- * deciding the next meeting's join.
+ * deciding the next meeting's join. One call at a time is what makes that reset
+ * enough, and the voice lock holds it — a meeting owns it from its startup to its
+ * teardown, so two sign-ins cannot interleave here.
  */
 const state: {
   signInFailure: string | null;
-  session: { live: boolean; signal: string } | null;
+  session: SessionEvidence | null;
 } = { signInFailure: null, session: null };
 
 /**
@@ -70,7 +75,7 @@ export function isAuthenticated(): boolean {
  * confirmed" — the safe direction, since a session nobody has checked may well be
  * refused.
  */
-export function sessionEvidence(): { live: boolean; signal: string } | null {
+export function sessionEvidence(): SessionEvidence | null {
   return state.session;
 }
 
@@ -150,17 +155,16 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
     logger.info('[Meeting] No Google account configured — joining as an anonymous guest');
     return;
   }
-  if (!options?.force && (await isSignedIn(page))) {
-    logger.info('[Meeting] Reusing the signed-in session from the persisted profile');
-    return;
-  }
-  // Name what refused the session, at the moment the password is about to be typed.
-  // A login this account did not need is what earns it a Google challenge, so the log
-  // has to say which reading asked for this one.
   if (!options?.force) {
-    logger.info(
-      `[Meeting] Signing in: ${sessionEvidence()?.signal ?? 'the account session was not confirmed'}`,
-    );
+    const session = await readSession(page);
+    if (session.live) {
+      logger.info('[Meeting] Reusing the signed-in session from the persisted profile');
+      return;
+    }
+    // Name what refused the session, at the moment the password is about to be typed.
+    // A login this account did not need is what earns it a Google challenge, so the log
+    // has to say which reading asked for this one.
+    logger.info(`[Meeting] Signing in: ${session.signal}`);
   }
 
   try {
@@ -192,7 +196,7 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
       // were already authenticated and sent us straight through. Re-ask instead of
       // reporting a failure — the old bare `waitFor` threw here, which is how a
       // good profile ended up flagged as a failed sign-in.
-      if (await isSignedIn(page)) {
+      if ((await readSession(page)).live) {
         logger.info('[Meeting] Already signed in — Google skipped the login form');
         return;
       }
@@ -213,7 +217,7 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
     // report failure for a login that was about to succeed.
     await settledUrl(page, 45_000);
 
-    if (await isSignedIn(page)) {
+    if ((await readSession(page)).live) {
       return;
     }
     // Most often a "verify it's you" challenge, which needs a code only a human
@@ -265,8 +269,8 @@ async function quiesce(page: Page): Promise<void> {
 }
 
 /**
- * Whether Google still accepts this profile's session — asked by navigating, not
- * by looking for a cookie.
+ * What Google says about this profile's session — asked by navigating, not by looking
+ * for a cookie.
  *
  * A cookie check was the obvious implementation and it was wrong in the way that
  * mattered: Google's auth cookies rotate, and a profile whose browser was killed
@@ -276,13 +280,14 @@ async function quiesce(page: Page): Promise<void> {
  *
  * `myaccount.google.com` is the test because it only stays on that origin for a
  * live session; without one it bounces to `accounts.google.com` or to the
- * `www.google.com/account/about` marketing page. Returning false is what triggers
- * a fresh login, so a stale profile heals itself.
+ * `www.google.com/account/about` marketing page. A reading that is not live is what
+ * triggers a fresh login, so a stale profile heals itself.
  *
- * Every exit records what it read into `state.session`, since this is the one place
- * that sees the settled URL and the provider needs that reading later.
+ * Every exit records its reading as well as returning it. This is the one place that
+ * sees the settled URL, and the provider asks for the reading later, once the join
+ * reaches Meet's lobby.
  */
-async function isSignedIn(page: Page): Promise<boolean> {
+async function readSession(page: Page): Promise<SessionEvidence> {
   // Twice, because the first navigation can be interrupted by a redirect chain that
   // is still running — Google's own — and reject for a session that is perfectly
   // alive. Watched live: a profile whose account page was rendering ("Skip to main
@@ -297,11 +302,9 @@ async function isSignedIn(page: Page): Promise<boolean> {
       // Judged only once the redirect chain has stopped moving — see `settledUrl`.
       const url = await settledUrl(page);
       if (url.startsWith('https://myaccount.google.com/')) {
-        state.session = { live: true, signal: 'the account page stayed on myaccount.google.com' };
-        return true;
+        return record({ live: true, signal: 'the account page stayed on myaccount.google.com' });
       }
-      state.session = { live: false, signal: `the account page settled on ${originOf(url)}` };
-      return false;
+      return record({ live: false, signal: `the account page settled on ${landingOf(url)}` });
     } catch (err) {
       // Loud, and never at debug: this used to be the quietest line in the file and
       // the one that most often decided a join.
@@ -313,14 +316,24 @@ async function isSignedIn(page: Page): Promise<boolean> {
     }
   }
   logger.warn('[Meeting] Could not establish whether the profile is signed in — assuming it is not');
-  state.session = { live: false, signal: 'the account session check could not complete' };
-  return false;
+  return record({ live: false, signal: 'the account session check could not complete' });
 }
 
-/** The origin of a settled URL, or the URL itself when it will not parse. */
-function originOf(url: string): string {
+/** Keep the reading for the provider, and hand it back to the caller. */
+function record(evidence: SessionEvidence): SessionEvidence {
+  state.session = evidence;
+  return evidence;
+}
+
+/**
+ * Where a settled URL landed, without its query — a `continue=` value is Google's
+ * business and not log material. The path stays: it is what tells the signed-out
+ * `www.google.com/account/about` page from anything else on that host.
+ */
+function landingOf(url: string): string {
   try {
-    return new URL(url).origin;
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
   } catch {
     return url;
   }

@@ -25,9 +25,10 @@
  *
  * Authentication is deliberately *not* here: signing in is platform-specific and
  * belongs to the provider (`providers/google-meet/sign-in.ts`). What this file owns
- * is the profile that a session is stored in — which is why `EXIT_GRACE_MS` below
- * matters more than it looks: the browser must be given time to flush its cookie
- * store, or every join re-authenticates.
+ * is the profile that a session is stored in — which is why the quit request in
+ * `stop()` matters more than it looks: a browser that quits when asked flushes its
+ * cookie store, and one that is signalled instead does not, so every join
+ * re-authenticates.
  */
 
 import { spawn, type ChildProcess } from 'child_process';
@@ -408,8 +409,15 @@ export class BrowserStack {
 
   /** Close the browser. Idempotent, and never throws — teardown must not fail. */
   async stop(): Promise<void> {
+    // Taken and released in the same act, so a second call has nothing to work with
+    // and the ladder below cannot run twice against one process.
     const browser = this.browser;
     const proc = this.proc;
+    this.context = null;
+    this.browser = null;
+    this.mainPage = null;
+    this.proc = null;
+    this.tabs.clear();
 
     // Ask the browser to quit before signalling it. Chromium batches cookie writes
     // and flushes them when it quits normally; killed by a signal it takes a fast
@@ -418,15 +426,21 @@ export class BrowserStack {
     // lost that way, so the next start signs in again — and an account that logs in
     // on every start gets challenged. `Browser.close` is the request; it is not
     // `browser.close()`, which on a CDP connection only detaches.
-    if (browser) {
+    if (browser && proc) {
       try {
         const session = await browser.newBrowserCDPSession();
         await withTimeout(session.send('Browser.close'), CLEAN_QUIT_MS);
       } catch (err) {
-        logger.debug(`[Meeting] Browser quit request failed: ${String(err)}`);
+        // A connection that drops while the request is in flight is the browser
+        // leaving, so the exit test below is the answer rather than this.
+        logger.debug(`[Meeting] Browser quit request ended early: ${String(err)}`);
       }
+      logger.debug(
+        (await waitForExit(proc, CLEAN_QUIT_MS))
+          ? '[Meeting] Browser quit when asked, so its cookie store is flushed'
+          : '[Meeting] Browser did not quit when asked — signalling it',
+      );
     }
-    if (proc) await waitForExit(proc, CLEAN_QUIT_MS);
 
     // The context belongs to the persistent profile; closing it would be closing
     // the browser's only window out from under the process we spawned. Detach
@@ -436,26 +450,19 @@ export class BrowserStack {
     } catch (err) {
       logger.debug(`[Meeting] Browser close failed: ${String(err)}`);
     }
-    this.context = null;
-    this.browser = null;
-    this.mainPage = null;
-    this.tabs.clear();
 
     // We spawned it, so we have to reap it: closing the CDP connection leaves the
     // process running with the profile locked, and the next meeting would fail to
     // start with a SingletonLock error.
-    this.proc = null;
     if (!proc || hasExited(proc)) return;
 
-    logger.debug('[Meeting] Browser did not quit when asked — signalling it');
     try {
       proc.kill('SIGTERM');
     } catch {
       // Already gone.
     }
-    // Generous, because the cost of being wrong lands on the *next* join: a browser
-    // killed mid-write leaves the session behind. 500 ms was not enough, and 8 s was
-    // marginal.
+    // Fifteen seconds, because the cost of being wrong lands on the *next* join: a
+    // browser killed mid-write loses the session it was holding.
     if (!(await waitForExit(proc, EXIT_GRACE_MS))) {
       logger.warn(
         '[Meeting] Browser did not exit in time; killing it — the next join may need a fresh sign-in',
