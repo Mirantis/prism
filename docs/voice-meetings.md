@@ -140,11 +140,10 @@ sit in a lobby that will refuse it.
 
 So give the agent a **dedicated** account, not a person's:
 
-- It signs in once and the browser profile is kept under `/data`, so later meetings
-  reuse that session and type no password. Restarting the container does not change
-  that. The agent signs in again only when Google stops accepting the stored session,
-  and the log then names what refused it. That matters for reliability — Google
-  challenges a *new* device, not a returning one.
+- It signs in once, and the browser profile under `/data` keeps that session, so later
+  meetings type no password. Google challenges a *new* device, not a returning one.
+- It signs in again only when Google stops accepting the stored session, and the log
+  then names what refused it.
 - The account's display name is what participants see in the call.
 - **Accounts with a phone/hardware-key challenge or enforced SSO can't be signed in
   unattended.** The runtime will report what Google's page said and fall back to a

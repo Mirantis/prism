@@ -284,7 +284,8 @@ describe('loopback proxy bypass', () => {
  * when it quits normally; killed by a signal it skips the flush, so the profile keeps
  * a session Google no longer accepts and the next start signs in again — which is how
  * a bot account collects challenges. No browser runs here: the CDP connection and the
- * child process are stubs, because the order of the four steps is what regressed.
+ * child process are stubs, because what these tests pin is the order of the steps —
+ * ask, wait, detach, and signal only what is still there.
  */
 describe('stop', () => {
   /** A CDP connection whose quit request may or may not be honoured. */
@@ -399,8 +400,10 @@ describe('stop', () => {
   });
 
   it('does nothing on a second call', async () => {
-    // Teardown reaches this from more than one direction, and a repeat must not signal
-    // a pid the OS may have handed to somebody else.
+    // Teardown reaches this from more than one direction. `stop()` takes the browser
+    // and the child out of the fields before it asks anything of them, so the second
+    // call has nothing to work with — a repeated signal could reach a pid the OS has
+    // since handed to somebody else.
     const proc = fakeProc();
     const browser = fakeBrowser(() => {
       proc.exitCode = 0;
