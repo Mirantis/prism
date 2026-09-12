@@ -755,10 +755,10 @@ export class MeetingBotService {
       // account, a changed password) and retrying it in a loop would hammer Google's
       // login with the credentials that just didn't work.
       if (outcome.status === 'reauth_required') {
-        // `force`, and it matters: the provider's own "am I signed in?" probe is
-        // exactly what got this wrong — a profile whose account page loads happily
-        // is still handed a guest field by the platform. Without it the retry would
-        // re-use the same dead session and fail identically.
+        // `force`, and it matters: the provider only asks for this once its own
+        // session check has already answered that Google refuses the session, so
+        // asking again spends the settle budget for an answer we hold. Without it the
+        // retry would re-use the same dead session and fail identically.
         await provider.signIn?.(page, { force: true });
         if (this.epoch !== epoch) return;
 
