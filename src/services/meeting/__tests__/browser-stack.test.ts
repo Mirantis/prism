@@ -12,7 +12,9 @@ import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 
-const { resolveBrowser, isBrowserAvailable, bypassProxyForLoopback, buildBrowserArgs } =
+import { logger } from '../../../logger';
+
+const { resolveBrowser, isBrowserAvailable, bypassProxyForLoopback, buildBrowserArgs, BrowserStack } =
   await import('../browser-stack');
 
 /**
@@ -272,5 +274,143 @@ describe('loopback proxy bypass', () => {
       vi.doUnmock('fs');
       vi.resetModules();
     }
+  });
+});
+
+/**
+ * Shutting the browser down.
+ *
+ * The cookie store is what is at stake. Chromium batches its writes and flushes them
+ * when it quits normally; killed by a signal it skips the flush, so the profile keeps
+ * a session Google no longer accepts and the next start signs in again — which is how
+ * a bot account collects challenges. No browser runs here: the CDP connection and the
+ * child process are stubs, because the order of the four steps is what regressed.
+ */
+describe('stop', () => {
+  /** A CDP connection whose quit request may or may not be honoured. */
+  function fakeBrowser(onQuit: () => void = () => {}) {
+    const send = vi.fn(async (method: string) => {
+      if (method === 'Browser.close') onQuit();
+    });
+    const close = vi.fn(async () => {});
+    return {
+      send,
+      close,
+      newBrowserCDPSession: vi.fn(async () => ({ send })),
+    };
+  }
+
+  /** A child process that leaves on whichever event the test names, or never. */
+  function fakeProc(leavesOn: 'nothing' | 'SIGTERM' | 'SIGKILL' = 'nothing') {
+    const proc = {
+      exitCode: null as number | null,
+      signalCode: null as string | null,
+      kill: vi.fn((signal: string) => {
+        if (signal === leavesOn) proc.signalCode = signal;
+        return true;
+      }),
+    };
+    return proc;
+  }
+
+  function stackWith(browser: unknown, proc: unknown) {
+    const stack = new BrowserStack();
+    Object.assign(stack, { browser, proc, context: null, mainPage: null });
+    return stack;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('asks the browser to quit, and signals nothing that already left', async () => {
+    const proc = fakeProc();
+    const browser = fakeBrowser(() => {
+      proc.exitCode = 0;
+    });
+
+    await stackWith(browser, proc).stop();
+
+    expect(browser.send).toHaveBeenCalledWith('Browser.close');
+    // The detach still happens, and the signal ladder does not: a process that quit
+    // when asked has already flushed its cookie store.
+    expect(browser.close).toHaveBeenCalled();
+    expect(proc.kill).not.toHaveBeenCalled();
+  });
+
+  it('falls back to SIGTERM when the quit does not take', async () => {
+    vi.useFakeTimers();
+    const proc = fakeProc('SIGTERM');
+    const browser = fakeBrowser();
+
+    const stopped = stackWith(browser, proc).stop();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await stopped;
+
+    expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(proc.kill).not.toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('kills the browser that survives both budgets', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined as never);
+    const proc = fakeProc('nothing');
+    const browser = fakeBrowser();
+
+    const stopped = stackWith(browser, proc).stop();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await stopped;
+
+    expect(proc.kill.mock.calls.map(([signal]) => signal)).toEqual(['SIGTERM', 'SIGKILL']);
+    // Said out loud, because the cost lands on the next join rather than this one.
+    expect(warn.mock.calls.map(String).join('\n')).toMatch(/did not exit in time/);
+    warn.mockRestore();
+  });
+
+  it('reaps a process it cannot ask, rather than leaving the profile locked', async () => {
+    // No CDP connection — a `start()` that failed after the spawn. The quit request is
+    // the better path, never a precondition for reaping: a surviving process holds
+    // `SingletonLock` and the next join cannot start at all.
+    vi.useFakeTimers();
+    const proc = fakeProc('SIGTERM');
+
+    const stopped = stackWith(null, proc).stop();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await stopped;
+
+    expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('signals the process when the quit request itself fails', async () => {
+    vi.useFakeTimers();
+    const proc = fakeProc('SIGTERM');
+    const browser = {
+      newBrowserCDPSession: vi.fn(async () => {
+        throw new Error('Target closed');
+      }),
+      close: vi.fn(async () => {}),
+    };
+
+    const stopped = stackWith(browser, proc).stop();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(stopped).resolves.toBeUndefined();
+    expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('does nothing on a second call', async () => {
+    // Teardown reaches this from more than one direction, and a repeat must not signal
+    // a pid the OS may have handed to somebody else.
+    const proc = fakeProc();
+    const browser = fakeBrowser(() => {
+      proc.exitCode = 0;
+    });
+    const stack = stackWith(browser, proc);
+
+    await stack.stop();
+    await stack.stop();
+
+    expect(browser.send).toHaveBeenCalledTimes(1);
+    expect(proc.kill).not.toHaveBeenCalled();
   });
 });

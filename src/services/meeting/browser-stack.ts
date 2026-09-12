@@ -42,6 +42,7 @@ import path from 'path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { resolveDataDir } from '../../lib/data-dir';
 import { logger } from '../../logger';
+import { withTimeout } from '../../utils/with-timeout';
 import { TabSet } from './browser-tabs';
 
 /**
@@ -71,8 +72,31 @@ function profileDir(): string {
   return path.join(resolveDataDir(), 'meeting-browser-profile');
 }
 
-/** How long the browser gets to exit — and flush its cookie store — before SIGKILL. */
+/** How long the browser gets to quit when asked, before the signal ladder starts. */
+const CLEAN_QUIT_MS = 5_000;
+
+/** How long the browser gets to exit after SIGTERM, before SIGKILL. */
 const EXIT_GRACE_MS = 15_000;
+
+/** Whether a spawned process has left, by either route. */
+function hasExited(proc: ChildProcess): boolean {
+  return proc.exitCode !== null || proc.signalCode !== null;
+}
+
+/**
+ * Wait for a spawned process to leave, up to `ms`. Reports whether it did.
+ *
+ * `signalCode` counts as well as `exitCode`: a Chromium that dies *from* the signal
+ * sets only the former, and testing the exit code alone waited out the whole grace
+ * period for a process that had already gone.
+ */
+async function waitForExit(proc: ChildProcess, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (!hasExited(proc) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return hasExited(proc);
+}
 
 /**
  * Remove the profile's singleton lock files.
@@ -384,11 +408,31 @@ export class BrowserStack {
 
   /** Close the browser. Idempotent, and never throws — teardown must not fail. */
   async stop(): Promise<void> {
+    const browser = this.browser;
+    const proc = this.proc;
+
+    // Ask the browser to quit before signalling it. Chromium batches cookie writes
+    // and flushes them when it quits normally; killed by a signal it takes a fast
+    // path that skips the flush, leaving the store as it was some seconds earlier and
+    // a `-journal` file beside it. The session Google handed this profile is what is
+    // lost that way, so the next start signs in again — and an account that logs in
+    // on every start gets challenged. `Browser.close` is the request; it is not
+    // `browser.close()`, which on a CDP connection only detaches.
+    if (browser) {
+      try {
+        const session = await browser.newBrowserCDPSession();
+        await withTimeout(session.send('Browser.close'), CLEAN_QUIT_MS);
+      } catch (err) {
+        logger.debug(`[Meeting] Browser quit request failed: ${String(err)}`);
+      }
+    }
+    if (proc) await waitForExit(proc, CLEAN_QUIT_MS);
+
     // The context belongs to the persistent profile; closing it would be closing
     // the browser's only window out from under the process we spawned. Detach
     // instead, then stop the process itself.
     try {
-      await this.browser?.close();
+      await browser?.close();
     } catch (err) {
       logger.debug(`[Meeting] Browser close failed: ${String(err)}`);
     }
@@ -400,33 +444,26 @@ export class BrowserStack {
     // We spawned it, so we have to reap it: closing the CDP connection leaves the
     // process running with the profile locked, and the next meeting would fail to
     // start with a SingletonLock error.
-    const proc = this.proc;
     this.proc = null;
-    if (proc && proc.exitCode === null) {
+    if (!proc || hasExited(proc)) return;
+
+    logger.debug('[Meeting] Browser did not quit when asked — signalling it');
+    try {
+      proc.kill('SIGTERM');
+    } catch {
+      // Already gone.
+    }
+    // Generous, because the cost of being wrong lands on the *next* join: a browser
+    // killed mid-write leaves the session behind. 500 ms was not enough, and 8 s was
+    // marginal.
+    if (!(await waitForExit(proc, EXIT_GRACE_MS))) {
+      logger.warn(
+        '[Meeting] Browser did not exit in time; killing it — the next join may need a fresh sign-in',
+      );
       try {
-        proc.kill('SIGTERM');
+        proc.kill('SIGKILL');
       } catch {
         // Already gone.
-      }
-      // Give it real time to shut down. Chromium flushes its cookie store on exit,
-      // and killing it too early leaves a half-rotated session that Google later
-      // rejects — which costs a fresh login, and Google challenges new devices. The
-      // old 500 ms was not enough for that; 8 s turned out to be marginal too, and
-      // the cost of being wrong lands on the *next* join rather than this one, so it
-      // is paid for generously here.
-      const deadline = Date.now() + EXIT_GRACE_MS;
-      while (proc.exitCode === null && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 200));
-      }
-      if (proc.exitCode === null) {
-        logger.warn(
-          '[Meeting] Browser did not exit in time; killing it — the next join may need a fresh sign-in',
-        );
-        try {
-          proc.kill('SIGKILL');
-        } catch {
-          // Already gone.
-        }
       }
     }
   }
