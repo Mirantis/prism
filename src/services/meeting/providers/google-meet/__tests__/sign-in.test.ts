@@ -8,7 +8,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { isAuthenticated, settledUrl, signInFailureReason, signInToGoogle } from '../sign-in';
+import {
+  isAuthenticated,
+  sessionEvidence,
+  settledUrl,
+  signInFailureReason,
+  signInToGoogle,
+} from '../sign-in';
+import { logger } from '../../../../../logger';
 
 // Mutable so a test can put credentials in place: `isAuthenticated()` reads them
 // directly now, rather than reporting what a probe concluded.
@@ -28,6 +35,36 @@ function redirectingPage(chain: string[]) {
       step += 1;
       await new Promise((r) => setTimeout(r, 1));
     },
+  };
+}
+
+/**
+ * A page that carries a login through: every control is visible, and pressing one
+ * moves the URL to the account page.
+ *
+ * One stub for both form fields and both buttons, because the sequence is what is
+ * under test and not which selector found what.
+ */
+function signInFormPage() {
+  let landed = 'https://accounts.google.com/ServiceLogin?hl=en';
+  const control = {
+    waitFor: async () => {},
+    click: async () => {
+      landed = 'https://myaccount.google.com/';
+    },
+    type: async () => {},
+    innerText: async () => '',
+    first: () => control,
+    or: () => control,
+  };
+  return {
+    goto: vi.fn(async (url: string) => {
+      if (url === 'about:blank') landed = 'about:blank';
+    }),
+    url: () => landed,
+    waitForTimeout: async () => {},
+    locator: () => control,
+    getByRole: () => control,
   };
 }
 
@@ -142,6 +179,113 @@ describe('sign-in state', () => {
 
     const [lastUrl] = goto.mock.calls[goto.mock.calls.length - 1];
     expect(lastUrl).toBe('about:blank');
+  });
+
+  it('records the account session as live when the account page holds', async () => {
+    // The reading the join gate needs, and the one a live deployment never got to
+    // use: with it recorded, Meet offering a guest name field no longer costs the
+    // session. Nothing is typed here — the session is reused as it stands.
+    config.googleBotEmail = 'bot@example.com';
+    config.googleBotPassword = 'hunter2';
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined as never);
+    const goto = vi.fn(async () => undefined);
+    const page = {
+      goto,
+      url: () => 'https://myaccount.google.com/',
+      waitForTimeout: async () => {},
+    };
+
+    await signInToGoogle(page as never);
+
+    expect(sessionEvidence()).toEqual({
+      live: true,
+      signal: 'the account page stayed on myaccount.google.com',
+    });
+    expect(goto.mock.calls.map(String).join('\n')).not.toContain('ServiceLogin');
+    // The two statements one start may not both make: reused, then signed in anyway.
+    const said = info.mock.calls.map(String).join('\n');
+    expect(said).toContain('Reusing the signed-in session');
+    expect(said).not.toContain('Signing in:');
+    info.mockRestore();
+  });
+
+  it('records where the account page landed when the session is refused', async () => {
+    // A session Google will not accept has to be named, not merely acted on: the log
+    // is where an operator tells a real refusal from a probe that was interrupted.
+    config.googleBotEmail = 'bot@example.com';
+    config.googleBotPassword = 'hunter2';
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined as never);
+    // No `locator`, so the login attempt below throws — this test is about the
+    // reading that preceded it, and about the fact that it did attempt one.
+    const goto = vi.fn(async () => undefined);
+    const page = {
+      goto,
+      url: () => 'https://www.google.com/account/about',
+      waitForTimeout: async () => {},
+    };
+
+    await signInToGoogle(page as never);
+
+    expect(sessionEvidence()).toEqual({
+      live: false,
+      signal: 'the account page settled on https://www.google.com',
+    });
+    // It still signs in, which is the path a genuinely refused session depends on.
+    expect(goto.mock.calls.map(String).join('\n')).toContain('ServiceLogin');
+    expect(info.mock.calls.map(String).join('\n')).toContain(
+      'Signing in: the account page settled on https://www.google.com',
+    );
+    info.mockRestore();
+  });
+
+  it('reports that the check could not complete when both attempts fail', async () => {
+    // Not the same answer as "Google refused it", and the log must not claim it is.
+    config.googleBotEmail = 'bot@example.com';
+    config.googleBotPassword = 'hunter2';
+    const goto = vi.fn().mockRejectedValue(new Error('net::ERR_TUNNEL_CONNECTION_FAILED'));
+    const page = { goto, url: () => 'https://www.google.com/', waitForTimeout: async () => {} };
+
+    await signInToGoogle(page as never);
+
+    expect(sessionEvidence()).toEqual({
+      live: false,
+      signal: 'the account session check could not complete',
+    });
+  });
+
+  it('records the session established by a login', async () => {
+    // What lets the second join succeed: after a forced sign-in the reading says the
+    // session is live, so the retry is not gated off by the same guest field again.
+    config.googleBotEmail = 'bot@example.com';
+    config.googleBotPassword = 'hunter2';
+
+    await signInToGoogle(signInFormPage() as never, { force: true });
+
+    expect(sessionEvidence()).toEqual({
+      live: true,
+      signal: 'the account page stayed on myaccount.google.com',
+    });
+    expect(signInFailureReason()).toBeNull();
+  });
+
+  it("clears the previous call's verdict", async () => {
+    // The module outlives a meeting. A live reading left over from the last call
+    // would suppress the sign-in the next one needs.
+    config.googleBotEmail = 'bot@example.com';
+    config.googleBotPassword = 'hunter2';
+    const live = {
+      goto: vi.fn(async () => undefined),
+      url: () => 'https://myaccount.google.com/',
+      waitForTimeout: async () => {},
+    };
+    await signInToGoogle(live as never);
+    expect(sessionEvidence()?.live).toBe(true);
+
+    config.googleBotEmail = undefined;
+    config.googleBotPassword = undefined;
+    await signInToGoogle(live as never);
+
+    expect(sessionEvidence()).toBeNull();
   });
 
   it('is not authenticated with no account configured', async () => {

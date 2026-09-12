@@ -22,13 +22,15 @@ import {
   GoogleMeetProvider,
   MIC_TOGGLE_SELECTOR,
 } from '../index';
-import { isAuthenticated, signInFailureReason } from '../sign-in';
+import { isAuthenticated, sessionEvidence, signInFailureReason } from '../sign-in';
+import { logger } from '../../../../../logger';
 
-// The provider reads its own sign-in state rather than being handed it, so the two
-// situations that state distinguishes — "signed in and offered a guest field", and
-// "the catch-all wall after a failed login" — are set here.
+// The provider reads its own sign-in state rather than being handed it, so the three
+// situations that state distinguishes — "an account is configured", "Google refused
+// the session", and "the catch-all wall after a failed login" — are set here.
 vi.mock('../sign-in', () => ({
   isAuthenticated: vi.fn(() => false),
+  sessionEvidence: vi.fn(() => null),
   signInFailureReason: vi.fn(() => null),
   signInToGoogle: vi.fn(async () => {}),
 }));
@@ -349,8 +351,15 @@ const joinOptions = {
 
 beforeEach(() => {
   vi.mocked(isAuthenticated).mockReturnValue(false);
+  vi.mocked(sessionEvidence).mockReturnValue(null);
   vi.mocked(signInFailureReason).mockReturnValue(null);
 });
+
+/** The reading a refused session leaves behind, as `sessionEvidence()` reports it. */
+const REFUSED_SESSION = {
+  live: false,
+  signal: 'the account page settled on https://accounts.google.com',
+};
 
 describe('join outcomes', () => {
   it('reports admitted once in-call furniture appears', async () => {
@@ -780,12 +789,13 @@ describe('leave', () => {
 describe('a stale signed-in session', () => {
   it('reports it instead of joining as a guest', async () => {
     const { page, clicks, fills } = fakePage({
-      // The signature: a guest name field on a browser we believe is authenticated.
+      // The signature: a guest name field on a browser whose session Google refused.
       visibleSelectors: ['input[aria-label="Your name"]'],
       visibleButtons: ['Ask to join'],
     });
 
     vi.mocked(isAuthenticated).mockReturnValue(true);
+    vi.mocked(sessionEvidence).mockReturnValue(REFUSED_SESSION);
 
     const outcome = await provider.join(page, joinOptions);
 
@@ -794,6 +804,66 @@ describe('a stale signed-in session', () => {
     // refusal, and the caller can fix this by signing in again.
     expect(fills).toEqual([]);
     expect(clicks).toEqual([]);
+  });
+
+  it('joins a lobby that offers a name field when the account session is live', async () => {
+    // The defect this fixes. A name field alone used to end the join, so a session
+    // Google had just accepted was thrown away and the password typed again — which
+    // is what earns the account a challenge. Two readings now have to agree, and this
+    // one has them disagreeing.
+    const { page } = fakePage({
+      visibleSelectors: [
+        'input[aria-label="Your name"]',
+        'button[aria-label*="Leave call" i]',
+      ],
+      visibleButtons: ['Ask to join'],
+    });
+
+    vi.mocked(isAuthenticated).mockReturnValue(true);
+    vi.mocked(sessionEvidence).mockReturnValue({
+      live: true,
+      signal: 'the account page stayed on myaccount.google.com',
+    });
+
+    const outcome = await provider.join(page, joinOptions);
+
+    expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
+  });
+
+  it('names the signal that refused the session', async () => {
+    // A login this account did not need is what gets it challenged, so a log that
+    // says only "the session is stale" leaves nobody able to tell a real refusal from
+    // a probe that was interrupted.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined as never);
+    const { page } = fakePage({
+      visibleSelectors: ['input[aria-label="Your name"]'],
+      visibleButtons: ['Ask to join'],
+    });
+
+    vi.mocked(isAuthenticated).mockReturnValue(true);
+    vi.mocked(sessionEvidence).mockReturnValue(REFUSED_SESSION);
+
+    await provider.join(page, joinOptions);
+
+    expect(warn.mock.calls.map(String).join('\n')).toContain(REFUSED_SESSION.signal);
+    warn.mockRestore();
+  });
+
+  it('signs in again when the session was never checked', async () => {
+    // The sign-in call throws before it reads anything, or never ran. Nothing
+    // confirms the session, so the guest field is taken at face value — the safe
+    // direction, since a session nobody checked may well be refused.
+    const { page } = fakePage({
+      visibleSelectors: ['input[aria-label="Your name"]'],
+      visibleButtons: ['Ask to join'],
+    });
+
+    vi.mocked(isAuthenticated).mockReturnValue(true);
+    vi.mocked(sessionEvidence).mockReturnValue(null);
+
+    const outcome = await provider.join(page, joinOptions);
+
+    expect(outcome).toEqual({ status: 'reauth_required' });
   });
 
   it('leaves the name field alone when not signed in', async () => {
