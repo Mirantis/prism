@@ -48,12 +48,22 @@ Feature: Agent Configuration
     And the newest revision is the restore
     And the restored version matches the current document
 
-  # The agent maintains the other documents through conversation, so the Profile
-  # page must not offer them as editable boxes.
-  Scenario: The other identity documents stay read-only
+  # Every identity document is editable here, not the Agent guide alone.
+  Scenario: Edit and save the Soul document
     When I navigate to the profile page
     And I open the "Soul" tab
-    Then that document is read-only
+    And I set the "Soul" document to "Answer with SOULEDIT7K."
+    And I save the open document
+    Then the stored "soulMd" document is "Answer with SOULEDIT7K."
+
+  # A saved heartbeat document also restarts the heartbeat, so this exercises
+  # that path end to end.
+  Scenario: Edit and save the Heartbeat document
+    When I navigate to the profile page
+    And I open the "Heartbeat" tab
+    And I set the "Heartbeat" document to "- Report HEARTEDIT7K."
+    And I save the open document
+    Then the stored "heartbeatMd" document is "- Report HEARTEDIT7K."
 
   Scenario: Configure separate heartbeat and scheduled-task models
     When I navigate to the agent detail page
