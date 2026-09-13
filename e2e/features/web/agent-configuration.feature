@@ -64,6 +64,7 @@ Feature: Agent Configuration
     And I set the "Heartbeat" document to "- Report HEARTEDIT7K."
     And I save the open document
     Then the stored "heartbeatMd" document is "- Report HEARTEDIT7K."
+    And the heartbeat is restarted
 
   Scenario: Configure separate heartbeat and scheduled-task models
     When I navigate to the agent detail page
