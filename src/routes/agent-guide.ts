@@ -2,11 +2,13 @@
  * Agent Guide Route
  *
  * PATCH /agents/agent-guide — replace the agent's operating manual (`agentMd`),
- * which reaches the system prompt as `# Agent Guide`. The user owns this
- * document: no tool writes it, so this route is the only way it changes, and
- * both editors (the web Profile page and the TUI's `/agent-guide`) come through
- * here. Locked-in mode does not gate it — that lock covers the agent's own
- * tools.
+ * which reaches the system prompt as `# Agent Guide`. No tool writes this
+ * document, so the user is its only author, and locked-in mode does not gate the
+ * write — that lock covers the agent's own tools.
+ *
+ * This route exists for the shipped terminal UI, whose binary calls this URL.
+ * `PATCH /agents/documents/:field` writes any of the seven documents, `agentMd`
+ * included, and both reach `updateWorkspaceDoc`.
  *
  * Auth is terminated by the platform in front of the container, as for every
  * other route, so this one takes no credential from inside it.
@@ -33,7 +35,11 @@ router.patch('/agent-guide', async (req: Request, res: Response) => {
       res.status(400).json({ error: "missing required field 'agentMd'" });
       return;
     }
-    const agentMd = await agentWorkspaceService.updateAgentGuide(body.agentMd, body.reason);
+    const agentMd = await agentWorkspaceService.updateWorkspaceDoc(
+      'agentMd',
+      body.agentMd,
+      body.reason,
+    );
     res.json({ agentMd });
   } catch (error: unknown) {
     if (error instanceof ValidationError) {
