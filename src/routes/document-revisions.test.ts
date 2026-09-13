@@ -1,11 +1,12 @@
 /**
- * Identity-Document Revision Route Tests
+ * Identity-Document Route Tests
  *
- * The history read and its drift flag, one revision with its content, and the
- * restore: the rollback revision it appends, the 409 that refuses a stale
- * expected revision, and the heartbeat restart a restored heartbeat config
- * needs. The lock that withholds the agent's document tools does not reach a
- * restore, so a locked agent still restores.
+ * The user's write to one document, the history read and its drift flag, one
+ * revision with its content, and the restore: the rollback revision it appends,
+ * the 409 that refuses a stale expected revision, and the heartbeat restart a
+ * written or restored heartbeat config needs. The lock that withholds the
+ * agent's document tools does not reach either, so a locked agent still writes
+ * and restores.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -135,6 +136,134 @@ beforeEach(() => {
   mockPrisma.agentWorkspaceRevision.create.mockResolvedValue({ id: 'rev-new' });
   mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow());
   mockGetAgent.mockResolvedValue(createAgentRow());
+});
+
+describe('PATCH /agents/documents/:field', () => {
+  it('replaces the document and answers what was stored', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ soulMd: '# Sharper' }));
+
+    const res = await request(createTestApp())
+      .patch('/agents/documents/soulMd')
+      .send({ content: '# Sharper', reason: 'Sharpened the tone.' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ field: 'soulMd', content: '# Sharper' });
+    expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+      where: { id: 'agent-1' },
+      data: { soulMd: '# Sharper' },
+    });
+    expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        field: 'soulMd',
+        content: '# Sharper',
+        actor: 'user',
+        method: 'rest',
+        reason: 'Sharpened the tone.',
+      }),
+    });
+  });
+
+  // Clearing a document is a real edit, not a validation error: it drops that
+  // section from the prompt.
+  it('accepts an empty document', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ visionMd: '' }));
+
+    const res = await request(createTestApp())
+      .patch('/agents/documents/visionMd')
+      .send({ content: '' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ field: 'visionMd', content: '' });
+  });
+
+  it('emits "agent config updated" naming the field and the REST path', async () => {
+    await request(createTestApp()).patch('/agents/documents/userMd').send({ content: '# Them' });
+
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent config updated', null, {
+      'agent.id': 'agent-1',
+      'config.field': 'userMd',
+      'config.method': 'rest',
+    });
+  });
+
+  // The lock covers the agent's own writers, so the user's editor stays open.
+  it('writes while locked-in mode is on', async () => {
+    mockGetAgent.mockResolvedValue(createAgentRow({ lockedIn: true }));
+
+    const res = await request(createTestApp())
+      .patch('/agents/documents/memoryMd')
+      .send({ content: '# Kept' });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.agentWorkspace.update).toHaveBeenCalled();
+  });
+
+  it('restarts the heartbeat after a heartbeat write', async () => {
+    await request(createTestApp())
+      .patch('/agents/documents/heartbeatMd')
+      .send({ content: '# Checks' });
+
+    expect(mockStartHeartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the heartbeat alone for every other document', async () => {
+    await request(createTestApp()).patch('/agents/documents/soulMd').send({ content: '# Soul' });
+
+    expect(mockStartHeartbeat).not.toHaveBeenCalled();
+  });
+
+  // A restart that fails is logged, not reported: the write itself landed.
+  it('answers 200 when the heartbeat restart throws', async () => {
+    mockStartHeartbeat.mockImplementation(() => {
+      throw new Error('timer gone');
+    });
+
+    const res = await request(createTestApp())
+      .patch('/agents/documents/heartbeatMd')
+      .send({ content: '# Checks' });
+
+    expect(res.status).toBe(200);
+  });
+
+  it('answers 400 for a field that is not an identity document', async () => {
+    const res = await request(createTestApp())
+      .patch('/agents/documents/modelId')
+      .send({ content: 'claude-opus-5' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('modelId');
+    expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 for a non-string content without writing', async () => {
+    const res = await request(createTestApp())
+      .patch('/agents/documents/soulMd')
+      .send({ content: { text: 'nope' } });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('soulMd');
+    expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 when content is missing without writing', async () => {
+    const res = await request(createTestApp()).patch('/agents/documents/soulMd').send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('content');
+    expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+  });
+
+  it('answers 500 when the write throws', async () => {
+    mockPrisma.agentWorkspace.update.mockRejectedValue(new Error('database is locked'));
+
+    const res = await request(createTestApp())
+      .patch('/agents/documents/soulMd')
+      .send({ content: '# Soul' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain('database is locked');
+  });
 });
 
 describe('GET /agents/documents/:field/revisions', () => {

@@ -866,9 +866,9 @@ Your reply is what the user acts on, so it has to match what your tools actually
  * `inBootstrapPhase` adds the paused-onboarding paragraph. The bootstrap script
  * is dropped from a locked prompt, so this is the only way an agent locked before
  * its first turn can explain its own silence. Withheld from an agent that already
- * onboarded, for which it is false. The flag cannot change while locked —
- * `clear_bootstrap` is the only thing that empties `bootstrapMd` and it is
- * refused — so the section stays cacheable.
+ * onboarded, for which it is false. The agent's own `clear_bootstrap` is refused
+ * while locked, so the flag turns over only when the user empties `bootstrapMd`
+ * themselves, over REST or by restoring a revision.
  */
 function getLockedInInstructions(inBootstrapPhase: boolean): string {
   const onboarding = inBootstrapPhase

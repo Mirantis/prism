@@ -460,8 +460,8 @@ class AgentWorkspaceService {
    * the workspace markdown files (soul, memory summary, user profile, vision,
    * heartbeat config, bootstrap) — those tools are withheld from the tool set
    * and their writes refused. The agent guide is not in the set because no tool
-   * writes it — only the user does, over REST. Vector memory, behavioural
-   * settings and renames stay editable.
+   * writes it. The user's own REST editor reaches every document either way.
+   * Vector memory, behavioural settings and renames stay editable.
    */
   async updateLockedIn(lockedIn: unknown): Promise<boolean> {
     if (typeof lockedIn !== 'boolean') {
@@ -574,29 +574,32 @@ class AgentWorkspaceService {
   }
 
   /**
-   * Replace the agent guide (`agentMd`), which reaches the system prompt as
-   * `# Agent Guide`. The user owns this document: no tool writes it, so this is
-   * the only write path, and locked-in mode does not gate it — that lock covers
-   * what the agent's own tools may rewrite.
+   * Replace one identity document on the user's behalf. Locked-in mode does not
+   * gate this — that lock covers what the agent's own tools may rewrite.
    *
-   * `reason` is the note the history shows for this write.
+   * `reason` is the note the history shows for this write. Returns the stored
+   * content.
    */
-  async updateAgentGuide(agentMd: unknown, reason?: unknown): Promise<string> {
-    if (typeof agentMd !== 'string') {
-      throw new ValidationError('agentMd must be a string');
+  async updateWorkspaceDoc(
+    field: WorkspaceDocField,
+    content: unknown,
+    reason?: unknown,
+  ): Promise<string> {
+    if (typeof content !== 'string') {
+      throw new ValidationError(`${field} must be a string`);
     }
     const agent = await this.getAgent();
     const stored = await this.writeWorkspaceDoc({
       agentId: agent.id,
-      field: 'agentMd',
-      content: agentMd,
+      field,
+      content,
       actor: 'user',
       method: 'rest',
       reason: typeof reason === 'string' ? reason : '',
     });
     trackEvent('agent config updated', null, {
       'agent.id': agent.id,
-      'config.field': 'agentMd',
+      'config.field': field,
       'config.method': 'rest',
     });
     return stored;

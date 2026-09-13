@@ -1,20 +1,22 @@
 /**
- * Identity-Document Revision Routes
+ * Identity-Document Routes
  *
- * The history of the seven identity documents, and the restore of one revision:
+ * The user's write to one of the seven identity documents, its history, and the
+ * restore of one revision:
  *
- *   GET  /agents/documents/:field/revisions          — the history, newest first
- *   GET  /agents/documents/:field/revisions/:id      — one revision, with content
- *   POST /agents/documents/:field/revisions/:id/restore
+ *   PATCH /agents/documents/:field                    — replace the document
+ *   GET   /agents/documents/:field/revisions          — the history, newest first
+ *   GET   /agents/documents/:field/revisions/:id      — one revision, with content
+ *   POST  /agents/documents/:field/revisions/:id/restore
  *
- * A restore is the user acting, so locked-in mode does not gate it — that lock
- * withholds the agent's own writers.
+ * Each of these is the user acting, so locked-in mode does not gate them — that
+ * lock withholds the agent's own writers.
  */
 
 import { Router, Request, Response } from 'express';
 import { logger } from '../logger';
 import { prisma } from '../lib/prisma';
-import { agentWorkspaceService } from '../services/agent-workspace.service';
+import { agentWorkspaceService, ValidationError } from '../services/agent-workspace.service';
 import { documentRevisionService } from '../services/document-revision.service';
 import { heartbeatService } from '../services/heartbeat.service';
 import { isWorkspaceDocField, WorkspaceDocField } from '../lib/workspace-docs';
@@ -35,9 +37,9 @@ function readField(req: Request<{ field: string }>, res: Response): WorkspaceDoc
 }
 
 /**
- * A restore of the heartbeat config changes what a heartbeat run reads, so the
- * timer is restarted from the stored row, the same as a tool write does
- * (`src/tools/agent-config.ts`). It happens here rather than in the service,
+ * A write or a restore of the heartbeat config changes what a heartbeat run
+ * reads, so the timer is restarted from the stored row, the same as a tool write
+ * does (`src/tools/agent-config.ts`). It happens here rather than in the service,
  * because the heartbeat service imports the invoke path, which builds context
  * through the workspace service.
  */
@@ -46,9 +48,42 @@ async function restartHeartbeat(): Promise<void> {
     const agent = await agentWorkspaceService.getAgent();
     heartbeatService.startHeartbeat(agent);
   } catch (err) {
-    logger.error({ err }, '[DocumentRevisions] Failed to restart heartbeat after a restore');
+    logger.error({ err }, '[DocumentRevisions] Failed to restart the heartbeat');
   }
 }
+
+/**
+ * PATCH /agents/documents/:field
+ * Body: { content: string, reason?: string } — the whole document; an empty
+ * string clears it, which drops that section from the prompt. `reason` is the
+ * note the document's history shows for this write. There is no concurrency
+ * control: the last write wins, so two editors open at once overwrite each other
+ * instead of merging.
+ */
+router.patch('/documents/:field', async (req: Request<{ field: string }>, res: Response) => {
+  const field = readField(req, res);
+  if (!field) return;
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (!('content' in body)) {
+      res.status(400).json({ error: "missing required field 'content'" });
+      return;
+    }
+
+    const content = await agentWorkspaceService.updateWorkspaceDoc(field, body.content, body.reason);
+
+    if (field === 'heartbeatMd') await restartHeartbeat();
+    res.json({ field, content });
+  } catch (error: unknown) {
+    if (error instanceof ValidationError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error({ err: error, field }, '[DocumentRevisions] Failed to write the document');
+    res.status(500).json({ error: msg });
+  }
+});
 
 /**
  * GET /agents/documents/:field/revisions

@@ -429,41 +429,58 @@ describe('AgentWorkspaceService identity-document writes', () => {
     }
   });
 
-  it('records the agent guide as a user REST write carrying the reason', async () => {
-    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ agentMd: '# New guide' }));
+  // Every one of the seven is writable over REST, so the shape is asserted for
+  // each rather than for the guide alone.
+  it.each(WORKSPACE_DOC_FIELDS)(
+    'records a user REST write of %s carrying the reason',
+    async (field) => {
+      mockPrisma.agentWorkspace.update.mockResolvedValue(
+        createAgentRow({ [field]: '# New text' }),
+      );
 
-    const stored = await agentWorkspaceService.updateAgentGuide('# New guide', 'Added a lint rule.');
+      const stored = await agentWorkspaceService.updateWorkspaceDoc(
+        field,
+        '# New text',
+        'Added a lint rule.',
+      );
 
-    expect(stored).toBe('# New guide');
+      expect(stored).toBe('# New text');
+      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
+        where: { id: agentId },
+        data: { [field]: '# New text' },
+      });
+      expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          field,
+          actor: 'user',
+          method: 'rest',
+          reason: 'Added a lint rule.',
+        }),
+      });
+      // The revision does not double the event the write already emitted.
+      expect(mockTrackEvent).toHaveBeenCalledTimes(1);
+      expect(mockTrackEvent).toHaveBeenCalledWith('agent config updated', null, {
+        'agent.id': agentId,
+        'config.field': field,
+        'config.method': 'rest',
+      });
+    },
+  );
+
+  it('records an empty reason when the write supplies none', async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ soulMd: '' }));
+
+    await agentWorkspaceService.updateWorkspaceDoc('soulMd', '');
+
     expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        field: 'agentMd',
-        actor: 'user',
-        method: 'rest',
-        reason: 'Added a lint rule.',
-      }),
-    });
-    // The revision does not double the event the write already emitted.
-    expect(mockTrackEvent).toHaveBeenCalledTimes(1);
-    expect(mockTrackEvent).toHaveBeenCalledWith('agent config updated', null, {
-      'agent.id': agentId,
-      'config.field': 'agentMd',
-      'config.method': 'rest',
+      data: expect.objectContaining({ field: 'soulMd', content: '', reason: '' }),
     });
   });
 
-  it('records an empty reason when the guide write supplies none', async () => {
-    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ agentMd: '' }));
-
-    await agentWorkspaceService.updateAgentGuide('');
-
-    expect(mockPrisma.agentWorkspaceRevision.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ field: 'agentMd', content: '', reason: '' }),
-    });
-  });
-
-  it('rejects a non-string guide without writing a revision', async () => {
-    await expect(agentWorkspaceService.updateAgentGuide(42)).rejects.toThrow('must be a string');
+  it('rejects a non-string document without writing a revision', async () => {
+    await expect(agentWorkspaceService.updateWorkspaceDoc('soulMd', 42)).rejects.toThrow(
+      'soulMd must be a string',
+    );
 
     expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
     expect(mockPrisma.agentWorkspaceRevision.create).not.toHaveBeenCalled();
