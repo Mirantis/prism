@@ -5,17 +5,27 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
-import type { AgentDetails } from '@/types';
+import type { AgentDetails, DocumentField } from '@/types';
 
 /**
- * The Agent tab of the Profile page: the one identity document the user edits
- * here. The others are read-only viewers because the agent maintains them
- * through conversation; nothing writes this one but the user.
+ * One identity document on the Profile page. Every tab renders this: the user
+ * edits any of the seven, and the agent keeps its own tools for the six it
+ * maintains through conversation.
  */
-export function AgentGuideEditor({ details, onDirtyChange }: { details: AgentDetails; onDirtyChange?: (dirty: boolean) => void }) {
+export function DocumentEditor({
+  field,
+  label,
+  details,
+  onDirtyChange,
+}: {
+  field: DocumentField;
+  label: string;
+  details: AgentDetails;
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const agent = useAgent();
   const queryClient = useQueryClient();
-  const stored = details.agentMd ?? '';
+  const stored = details[field] ?? '';
   const [draft, setDraft] = useState(stored);
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -36,19 +46,19 @@ export function AgentGuideEditor({ details, onDirtyChange }: { details: AgentDet
   }
 
   const mutation = useMutation({
-    mutationFn: (next: string) => runtimeApi.updateAgentGuide(next, reason.trim()),
+    mutationFn: (next: string) => runtimeApi.updateWorkspaceDoc(field, next, reason.trim()),
     onMutate: () => setError(null),
     onSuccess: (res) => {
-      savedRef.current = res.agentMd;
+      savedRef.current = res.content;
       setReason('');
       queryClient.setQueryData(['agent-details', agent.agentId], (old: AgentDetails | undefined) =>
-        old ? { ...old, agentMd: res.agentMd } : old,
+        old ? { ...old, [field]: res.content } : old,
       );
     },
     onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Save failed'),
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['agent-details', agent.agentId] });
-      queryClient.invalidateQueries({ queryKey: ['document-revisions', 'agentMd'] });
+      queryClient.invalidateQueries({ queryKey: ['document-revisions', field] });
     },
   });
 
@@ -61,7 +71,7 @@ export function AgentGuideEditor({ details, onDirtyChange }: { details: AgentDet
       <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        aria-label="Agent guide"
+        aria-label={`${label} document`}
         spellCheck={false}
         className="h-72 resize-y bg-background/40 p-4 font-mono text-sm leading-6"
       />
@@ -89,7 +99,7 @@ export function AgentGuideEditor({ details, onDirtyChange }: { details: AgentDet
         {error && <span className="text-xs text-destructive">{error}</span>}
       </div>
       <span className="text-xs text-foreground/70">
-        Your instructions take effect on the agent's next turn. Each save keeps a version in history.
+        Your changes take effect on the agent's next turn. Each save keeps a version in history.
       </span>
     </div>
   );

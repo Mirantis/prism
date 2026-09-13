@@ -6,6 +6,7 @@ import type {
   ConversationMessage,
   ConversationThread,
   CronTask,
+  DocumentField,
   DocumentRevision,
   DocumentRevisionHistory,
   HeartbeatStatus,
@@ -128,12 +129,11 @@ export const runtimeApi = {
       body: JSON.stringify({ lockedIn }),
     }),
 
-  // Agent guide — the one workspace document the user edits directly; no tool
-  // writes it, so this is the only way it changes.
-  updateAgentGuide: (agentMd: string, reason?: string) =>
-    request<{ agentMd: string }>('/agents/agent-guide', {
+  // Replace one identity document. `reason` is the note its history shows.
+  updateWorkspaceDoc: (field: DocumentField, content: string, reason?: string) =>
+    request<{ field: DocumentField; content: string }>(`/agents/documents/${field}`, {
       method: 'PATCH',
-      body: JSON.stringify({ agentMd, reason }),
+      body: JSON.stringify({ content, reason }),
     }),
 
   // Identity-document history. `expectedRevisionId` is the newest revision the
