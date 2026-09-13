@@ -13,13 +13,13 @@ interface OverrideModelInfo {
   effective: string;
 }
 
-/** The Agent tab's editable box — the only document the user writes here. */
-function guideBox(page: Page) {
-  return page.getByRole('textbox', { name: 'Agent guide' });
+/** The editable box of one document, named by its tab label. */
+function documentBox(page: Page, label: string) {
+  return page.getByRole('textbox', { name: `${label} document` });
 }
 
-/** The guide editor's own Save, told apart from the inline model editors'. */
-function guideSaveButton(page: Page) {
+/** The open document editor's own Save, told apart from the inline model editors'. */
+function documentSaveButton(page: Page) {
   return page.locator('[data-slot="tabs-content"]').getByRole('button', { name: 'Save', exact: true });
 }
 
@@ -42,8 +42,7 @@ async function setModelField(page: Page, label: string, value: string): Promise<
   await page.getByRole('button', { name: `Edit ${label.toLowerCase()}` }).click();
   const input = page.getByRole('textbox', { name: `${label} ID` });
   await input.fill(value);
-  // Scoped to the row: the agent guide editor keeps a Save button of its own,
-  // mounted whether or not its tab is showing.
+  // Scoped to the row: the open document's editor keeps a Save button of its own.
   await input.locator('..').getByRole('button', { name: 'Save' }).click();
   // Editor closes and shows the saved value; waiting here avoids racing the
   // REST read against the in-flight PATCH.
@@ -145,24 +144,52 @@ Then('the agent guide editor shows the stored guide', async ({ page }) => {
   // The seed gives the agent a guide, so this also proves the box is populated
   // from the row rather than starting empty.
   expect(stored.length).toBeGreaterThan(0);
-  await expect(guideBox(page)).toHaveValue(stored);
+  await expect(documentBox(page, 'Agent')).toHaveValue(stored);
 });
 
 When('I set the agent guide to {string}', async ({ page }, value: string) => {
-  await guideBox(page).fill(value);
+  await documentBox(page, 'Agent').fill(value);
 });
 
 When('I save the agent guide', async ({ page }) => {
-  await guideSaveButton(page).click();
-  // The button re-disables once the PATCH lands and the box is clean again,
-  // which is what makes the REST read below race-free.
-  await expect(guideSaveButton(page)).toBeDisabled();
+  await saveOpenDocument(page);
 });
 
 Then('the stored agent guide is {string}', async ({ page }, value: string) => {
+  await expectStoredDocument(page, 'agentMd', value);
+});
+
+// ---------------------------------------------------------------------------
+// Any identity document (Profile page → the open tab)
+// ---------------------------------------------------------------------------
+
+/**
+ * Save waits for the button to re-disable, which happens once the PATCH lands
+ * and the box is clean again. That is what makes the REST read after it
+ * race-free.
+ */
+async function saveOpenDocument(page: Page): Promise<void> {
+  await documentSaveButton(page).click();
+  await expect(documentSaveButton(page)).toBeDisabled();
+}
+
+/** Read the authoritative row, not the box the save just left behind. */
+async function expectStoredDocument(page: Page, field: string, value: string): Promise<void> {
   const res = await page.request.get('/agents/details');
   expect(res.ok()).toBeTruthy();
-  expect((await res.json()).agent.agentMd).toBe(value);
+  expect((await res.json()).agent[field]).toBe(value);
+}
+
+When('I set the {string} document to {string}', async ({ page }, label: string, value: string) => {
+  await documentBox(page, label).fill(value);
+});
+
+When('I save the open document', async ({ page }) => {
+  await saveOpenDocument(page);
+});
+
+Then('the stored {string} document is {string}', async ({ page }, field: string, value: string) => {
+  await expectStoredDocument(page, field, value);
 });
 
 // ---------------------------------------------------------------------------
@@ -217,7 +244,7 @@ When('I return to the current document', async ({ page }) => {
 });
 
 Then('the agent guide draft is {string}', async ({ page }, value: string) => {
-  await expect(guideBox(page)).toHaveValue(value);
+  await expect(documentBox(page, 'Agent')).toHaveValue(value);
 });
 
 Then('the restored version matches the current document', async ({ page }) => {
@@ -228,10 +255,4 @@ Then('the restored version matches the current document', async ({ page }) => {
 
 When('I open the {string} tab', async ({ page }, label: string) => {
   await page.getByRole('tab', { name: label, exact: true }).click();
-});
-
-Then('that document is read-only', async ({ page }) => {
-  const boxes = page.locator('[data-slot="tabs-content"] textarea:visible');
-  await expect(boxes).toHaveCount(1);
-  await expect(boxes.first()).toHaveJSProperty('readOnly', true);
 });
