@@ -128,9 +128,9 @@ name, model (plus the heartbeat and scheduled-task models, or `(main)` when they
 inherit it), timezone, and heartbeat status, plus a list of the seven identity
 documents (Soul, User, Memory, Heartbeat, Vision, Agent, Bootstrap). The right pane shows the selected document's content. Use Tab or the
 left/right arrows to move between panes, up/down to scroll, and Page Up/Down to
-page through long documents. It's a viewer: the agent maintains those documents
-through conversation (see **[The agent's identity](agent-identity.md)**), except
-the **Agent** guide, which you edit yourself with `/agent-guide`.
+page through long documents. It's a viewer: ask the agent to change a document
+(see **[The agent's identity](agent-identity.md)**), edit any of the seven on the
+Web UI's Profile page, or edit the **Agent** guide here with `/agent-guide`.
 
 ### Editing the agent guide (`/agent-guide`)
 

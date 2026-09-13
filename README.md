@@ -184,8 +184,8 @@ Two layers, both persisted in the embedded database:
 
 Each agent is defined by a small set of markdown documents:
 
-| Document | Purpose | Edited by |
-|----------|---------|-----------|
+| Document | Purpose | Usually maintained by |
+|----------|---------|-----------------------|
 | **Soul** | Personality, values, boundaries | User |
 | **User** | What the agent knows about the person it's working for | Agent |
 | **Memory** | Curated long-term knowledge | Agent |
@@ -384,8 +384,8 @@ restarts.
 Prism Agent exposes the following surfaces:
 
 - **WebUI** — a built-in browser UI served by the runtime. Chat with the
-  agent, browse threads, view and edit the agent's workspace files
-  (soul, memory, vision, agent guide, heartbeat), inspect scheduled tasks,
+  agent, browse threads, view and edit all seven identity documents,
+  inspect scheduled tasks,
   and watch heartbeat history. Available on the same port as the runtime.
 - **TUI** — a terminal UI for chatting with the agent and managing its
   state from the shell. Useful for headless servers and SSH sessions, and
