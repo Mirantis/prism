@@ -165,9 +165,7 @@ export function DocumentHistory({
                 ? new Date(selected.createdAt).toLocaleString()
                 : showDiff
                   ? 'Latest saved version compared with the current document.'
-                  : field === 'agentMd'
-                    ? 'Written by you · Used on the next turn'
-                    : 'Maintained by your agent'}
+                  : 'Used on the next turn'}
             </p>
           </div>
           {selected && (

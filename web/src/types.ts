@@ -135,6 +135,16 @@ export interface ConversationThread {
   contextUsage?: ContextUsage | null;
 }
 
+/** The seven identity documents, each an editable tab on the Profile page. */
+export type DocumentField =
+  | 'agentMd'
+  | 'soulMd'
+  | 'userMd'
+  | 'heartbeatMd'
+  | 'memoryMd'
+  | 'visionMd'
+  | 'bootstrapMd';
+
 export interface AgentDetails {
   id: string;
   userId: string;
