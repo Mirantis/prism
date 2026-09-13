@@ -1240,7 +1240,7 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toContain('Invalid code');
+      expect(res.body.message).toBe('That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.');
     });
 
     it('returns failure for expired code', async () => {
@@ -1263,7 +1263,7 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toContain('expired');
+      expect(res.body.message).toBe('That code has expired. Generate a new code in Prism Agent, under Settings → Channels.');
     });
 
     it('normalizes codes to uppercase', async () => {
@@ -1336,6 +1336,7 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe('Your Slack channel is now linked. Mention me anytime you need help!');
       expect(res.body.agentName).toBe('Test Agent');
       expect(mockPrisma.$transaction).toHaveBeenCalled();
       expect(mockPrisma.slackMapping.create).toHaveBeenCalledWith({
@@ -1959,7 +1960,7 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toContain('Invalid code');
+      expect(res.body.message).toBe('That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.');
     });
 
     it('returns failure for expired code and deletes it', async () => {
@@ -1981,7 +1982,7 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toContain('expired');
+      expect(res.body.message).toBe('That code has expired. Generate a new code in Prism Agent, under Settings → Channels.');
       expect(mockPrisma.slackVerificationCode.delete).toHaveBeenCalledWith({
         where: { code_type: { code: 'AAAAAA', type: 'DM' } },
       });
@@ -2040,7 +2041,7 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toContain('already linked to another Lens Platform user');
+      expect(res.body.message).toBe('This Slack account is already linked to another Prism Agent user.');
     });
 
     it('atomically creates DM mapping and deletes code on success', async () => {
@@ -2051,6 +2052,7 @@ describe('Management Routes', () => {
         lensUserId: 'user-001',
         connectionId: 'conn-001',
         agentId: 'agent-001',
+        agentName: 'Test Agent',
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
         createdAt: new Date(),
       });
@@ -2071,7 +2073,7 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.message).toContain('linked');
+      expect(res.body.message).toBe('Your Slack account is now linked. You can chat with Test Agent here.');
       expect(mockPrisma.$transaction).toHaveBeenCalled();
       expect(mockPrisma.slackMapping.create).toHaveBeenCalledWith({
         data: {
