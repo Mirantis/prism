@@ -225,13 +225,15 @@ describe('PATCH /agents/documents/:field', () => {
     expect(res.status).toBe(200);
   });
 
-  it('answers 400 for a field that is not an identity document', async () => {
+  // The field names a Prisma column, so the allow-list answers before the
+  // database sees the segment — a prototype key included.
+  it.each(['modelId', '__proto__'])('answers 400 for the field %s', async (field) => {
     const res = await request(createTestApp())
-      .patch('/agents/documents/modelId')
-      .send({ content: 'claude-opus-5' });
+      .patch(`/agents/documents/${field}`)
+      .send({ content: 'x' });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain('modelId');
+    expect(res.body.error).toContain(field);
     expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
   });
 

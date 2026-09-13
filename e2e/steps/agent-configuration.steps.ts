@@ -164,13 +164,16 @@ Then('the stored agent guide is {string}', async ({ page }, value: string) => {
 // ---------------------------------------------------------------------------
 
 /**
- * Save waits for the button to re-disable, which happens once the PATCH lands
- * and the box is clean again. That is what makes the REST read after it
- * race-free.
+ * "Saved" appears when the PATCH has answered and the box holds what it wrote,
+ * so the REST read after this one reads the stored row. The button disables on
+ * the click itself, which says nothing about the request. `exact` keeps the
+ * match off "Unsaved changes".
  */
 async function saveOpenDocument(page: Page): Promise<void> {
   await documentSaveButton(page).click();
-  await expect(documentSaveButton(page)).toBeDisabled();
+  await expect(
+    page.locator('[data-slot="tabs-content"]').getByText('Saved', { exact: true }),
+  ).toBeVisible();
 }
 
 /** Read the authoritative row, not the box the save just left behind. */

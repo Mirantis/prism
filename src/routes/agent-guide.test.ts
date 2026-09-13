@@ -51,7 +51,7 @@ vi.mock('../logger', () => ({
   },
 }));
 
-// Keep the real service (so `updateAgentGuide` and `ValidationError` are the
+// Keep the real service (so `updateWorkspaceDoc` and `ValidationError` are the
 // real implementations) and redirect `getAgent` to the controllable mock.
 vi.mock('../services/agent-workspace.service', async () => {
   const actual = await vi.importActual<typeof import('../services/agent-workspace.service')>(
