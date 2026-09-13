@@ -5,6 +5,7 @@
 import { createBdd } from 'playwright-bdd';
 import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { waitForTelemetryEvent } from '../support/s3-helper';
 
 const { When, Then } = createBdd();
 
@@ -193,6 +194,15 @@ When('I save the open document', async ({ page }) => {
 
 Then('the stored {string} document is {string}', async ({ page }, field: string, value: string) => {
   await expectStoredDocument(page, field, value);
+});
+
+Then('the heartbeat is restarted', async () => {
+  // The timer is restarted so the next run reads the saved checks. A restart
+  // that throws is logged and the write still answers 200, so the event is what
+  // says the restart happened. The bucket is cleared per scenario, so this is
+  // this save's event and not the boot's.
+  const event = await waitForTelemetryEvent('heartbeat started', 30_000);
+  expect(event.attributes['heartbeat.interval_ms']).toBeTruthy();
 });
 
 // ---------------------------------------------------------------------------
