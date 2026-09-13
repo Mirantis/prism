@@ -5,28 +5,25 @@ of a small set of markdown documents. These documents are always present in the
 agent's system prompt, so changing them changes how the agent thinks, talks, and
 acts. Together they're the difference between "a model" and "your agent."
 
-All seven live in the embedded database and are visible in the
-**[Web UI → Profile](web-ui.md#profile)** tabs and the
+All seven live in the embedded database. You edit them in the
+**[Web UI → Profile](web-ui.md#profile)** tabs and read them in the
 **[Terminal UI `/config` panel](terminal-ui.md#config-panel-config)**.
 
 ## The seven documents
 
-| Document | Purpose | Who edits it |
-|----------|---------|--------------|
-| **Soul** | Personality, values, voice, and hard boundaries — the agent's constitution. | You (the agent can update it on request) |
-| **User** | What the agent knows about the person/team it works for. | The agent (it keeps this current as it learns) |
+| Document | Purpose | Who usually keeps it current |
+|----------|---------|------------------------------|
+| **Soul** | Personality, values, voice, and hard boundaries — the agent's constitution. | You |
+| **User** | What the agent knows about the person/team it works for. | The agent, as it learns |
 | **Memory** | A curated long-term summary the agent always keeps in context. | The agent |
 | **Vision** | The user's longer-term goals for the agent to advance proactively. | You |
-| **Agent Guide** | The operating manual — how the agent should behave, when to reach out, safety norms, Slack etiquette, coding workflow. It is also the policy for the optional [tool risk gate](configuration.md#tool-risk-gate). | You, directly — the agent has no tool for it |
+| **Agent Guide** | The operating manual — how the agent should behave, when to reach out, safety norms, Slack etiquette, coding workflow. It is also the policy for the optional [tool risk gate](configuration.md#tool-risk-gate). | You — the agent has no tool for it |
 | **Heartbeat** | The checks the agent runs on its [heartbeat](heartbeat.md) schedule. | You |
 | **Bootstrap** | First-run onboarding instructions; cleared once setup is done. | The agent (clears it) |
 
-A note on "who edits it": for six of the documents the split is about intent,
-not a hard lock. Documents that capture *your* intent (Soul, Vision, Heartbeat)
-are yours to shape; documents that capture what the *agent* learns (User, Memory)
-it maintains itself. In practice you shape all six through conversation — you ask
-the agent to change its soul or add a heartbeat check, and it uses its
-[self-management tools](tools.md#self-management) to rewrite the document.
+You can edit all seven yourself, and for five of them you can also just ask: the
+agent uses its [self-management tools](tools.md#self-management) to rewrite the
+document. It clears Bootstrap with a tool of its own and never rewrites it.
 
 The **Agent Guide** is the exception: no tool writes it, so the document that
 tells the agent how to work is not one the agent maintains, and a drifting
@@ -36,10 +33,9 @@ It is a guardrail against drift, not a security boundary — the same caveat
 [locked-in mode](configuration.md#locked-in-mode) carries, and for the same two
 reasons. The [shell](tools.md#shell) is never withheld, so `shell_exec` can
 write the document straight into `/data/agent.db`; and the Management API takes
-no credential from inside the container, so a shell can `PATCH
-localhost:3003/agents/agent-guide` as easily as you can from the UI. What this
-removes is the ordinary path — a tool the model reaches for while doing its
-work — not every path.
+no credential from inside the container, so a shell can call the same endpoint
+your editor does. What this removes is the ordinary path — a tool the model
+reaches for while doing its work — not every path.
 
 The guide is also where you set the policy for the optional
 **[tool risk gate](configuration.md#tool-risk-gate)**. With the gate on, a rule
@@ -55,32 +51,29 @@ There are three ways the documents change:
    "from now on, be more concise," "remember that our staging cluster is
    `eu-west-1`," "add a heartbeat check for failing pods." It edits the relevant
    document itself.
-2. **You edit the Agent Guide.** Open the **Agent** tab on the Profile page in
-   the [Web UI](web-ui.md#profile), change the text and press **Save**; or run
-   `/agent-guide` in the [terminal UI](terminal-ui.md), which opens the document
-   in your `$EDITOR` and saves what you write. Either way the agent reads the new
-   guide on its next turn. Asking the agent to change its guide gets you a
-   description of what it would have written, because it has no tool for it.
-   Each save sends the whole document and the last one wins, so two editors open
-   at once will overwrite each other rather than merge.
+2. **You edit the document yourself.** Open its tab on the Profile page in the
+   [Web UI](web-ui.md#profile), change the text and press **Save**. Add an
+   optional note about what changed, which the history keeps. The agent reads the
+   new document on its next turn. Each save sends the whole document and the last
+   one wins, so two editors open at once will overwrite each other rather than
+   merge. For the Agent Guide you can also run `/agent-guide` in the
+   [terminal UI](terminal-ui.md), which opens the document in your `$EDITOR`.
 3. **On first run.** The **Bootstrap** document drives an onboarding
    conversation that fills in Soul and User for you, then clears itself.
-
-The other six documents are read-only viewers in both UIs.
 
 The agent's own editing stops in
 **[locked-in mode](configuration.md#locked-in-mode)**: its document writers are
 refused, its long-term memory writes and deletes are refused, and the bootstrap
 script is paused. Ask a locked agent to change its soul and it tells you what it
-would have changed instead. Your own editing is unaffected — the Agent Guide
-editor keeps working while the lock is on.
+would have changed instead. Your own editing is unaffected — the Profile page's
+editors keep working while the lock is on.
 
 ## Version history
 
 Every write to one of the seven documents records a revision: when it happened,
-whether you or the agent wrote it, and why. The Agent Guide editor takes an
-optional note about what changed, and the agent's own edits record the reason it
-gives for the change.
+whether you or the agent wrote it, and why. Your own save takes an optional note
+about what changed, and the agent's own edits record the reason it gives for the
+change.
 
 The **Version history** sidebar lists saved versions, newest first. Select a version
 to compare it with the current document, or choose **Compare versions** for another

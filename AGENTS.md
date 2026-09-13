@@ -800,7 +800,7 @@ src/
 ├── routes/
 │   ├── management.ts           # Management API for backend to push heartbeat/cron/slack-heartbeat-trigger events
 │   ├── activity.ts             # Activity page reads: token totals, paged tool calls
-│   └── document-revisions.ts   # History, one revision with its content, and the restore, per identity document
+│   └── document-revisions.ts   # Per identity document: the write, the history, one revision with its content, and the restore
 ├── utils/
 │   ├── async-channel.ts        # Bridges SDK push-based onStepFinish into async iteration (used by invokeStream)
 │   └── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
@@ -1257,20 +1257,27 @@ memory usage, safety, and Slack channel etiquette. It is included in the
 
 **No tool writes it.** It is the one workspace document outside
 `tools/agent-config.ts`, so the document that tells the agent how to work cannot
-drift from the agent's own edits. The user owns it, through one write path:
+drift from the agent's own edits. The user owns it, through one service call
+reachable at two URLs:
 
-- `PATCH /agents/agent-guide` (`routes/agent-guide.ts` →
-  `agentWorkspaceService.updateAgentGuide`), body `{ agentMd, reason? }`, the
+- `PATCH /agents/documents/agentMd` (`routes/document-revisions.ts` →
+  `agentWorkspaceService.updateWorkspaceDoc`), body `{ content, reason? }`, the
   whole document. An empty string clears it, which drops the section from the
   prompt. The write goes through `writeWorkspaceDoc`, so it records a revision
   with `actor: 'user'`, `method: 'rest'` and the caller's `reason` — the editor's
   optional note about what changed.
-- The web Profile page's **Agent** tab (`web/src/components/profile/agent-guide-editor.tsx`)
-  and the TUI's `/agent-guide` (`cli/src/commands/agent-guide.ts`, which opens
-  `$EDITOR` via `cli/src/editor.ts`) both call that endpoint.
+- `PATCH /agents/agent-guide` (`routes/agent-guide.ts`), body
+  `{ agentMd, reason? }`, is a thin alias on the same service call. It exists for
+  the shipped terminal UI, whose binary calls that URL.
+- The web Profile page's **Agent** tab
+  (`web/src/components/profile/document-editor.tsx`, one component for all seven
+  tabs) calls the first; the TUI's `/agent-guide` (`cli/src/commands/agent-guide.ts`,
+  which opens `$EDITOR` via `cli/src/editor.ts`) calls the alias.
 
 Locked-in mode does not cover it — that lock withholds the agent's own writers,
-and there is none here — so the editors keep working while the lock is on.
+and there is none here — so the editors keep working while the lock is on. That
+holds for the other six documents too: `updateWorkspaceDoc` takes no lock, since
+the user editing a document is not the agent rewriting itself.
 
 **It is also the tool risk gate's policy.** `lib/tool-risk-gate.ts` puts the
 guide in the classifier's **system** prompt, not in the evidence JSON — the rules
@@ -1284,7 +1291,7 @@ container and hold the credentials.
 longer claims otherwise.** `routes/agent-guide.ts` takes no credential from
 inside the container and `tools/shell/workspace.ts` is explicit that its check is
 not a security boundary, so `shell_exec` reaches both `PATCH
-localhost:3003/agents/agent-guide` and `/data/agent.db`, and a `coding_agent`
+localhost:3003/agents/documents/agentMd` and `/data/agent.db`, and a `coding_agent`
 sub-agent's own commands never reach this gate at all. Withholding the ordinary
 path — a tool the model reaches for while working — is what this buys, and with
 allow-authority on a writable document that makes the control a one-way ratchet:
@@ -1292,7 +1299,11 @@ one landed guide write removes a refusal for every later turn on every channel.
 `gate.policy_hash` is one detection signal, since a shell write emits no `agent
 config updated` event; the document's own history is the other — a write that
 skips `writeWorkspaceDoc` records no revision, so the newest revision no longer
-matches the column and the history reports `drifted`. Keep the docs
+matches the column and the history reports `drifted`. Both signals read the
+*straight-to-database* write. A shell that calls `PATCH
+/agents/documents/agentMd` instead gets a revision stamped `actor: 'user'`,
+`method: 'rest'` and an `agent config updated` event, which is what the user's own
+editor produces, so neither signal separates the two. Keep the docs
 and this paragraph honest about it; the
 alternative design (narrowing from the guide, widening from a boot-time root) was
 weighed and declined.
@@ -1323,7 +1334,8 @@ the newest revision is what the document reads now.
 - **One write path.** `agentWorkspaceService.writeWorkspaceDoc` replaces the
   column and records the revision in one `prisma.$transaction`, so a document and
   its history cannot disagree. Three call sites reach it: the agent's own
-  document tools (`tools/agent-config.ts`), `updateAgentGuide`, and the restore.
+  document tools (`tools/agent-config.ts`), `updateWorkspaceDoc` (the user's REST
+  editor, for any of the seven), and the restore.
   Add a fourth rather than a second write path. `lib/workspace-docs.ts` owns the
   field list and the actor (`agent` | `user`) and method (`seed` | `replace` |
   `edit` | `clear` | `rest` | `rollback`) words.
@@ -1336,13 +1348,15 @@ the newest revision is what the document reads now.
 - **Bounded at 500 revisions per document**
   (`MAX_REVISIONS_PER_DOCUMENT`), trimmed inside the insert's transaction. A
   constant, not a setting.
-- **Three routes**, `routes/document-revisions.ts`: the history without the
-  content (`GET /agents/documents/:field/revisions`), one revision with it
-  (`…/:id`), and the restore (`POST …/:id/restore`). The route owns what the
-  service does not — the heartbeat restart after a `heartbeatMd` restore, and the
-  status codes.
-- **Locked-in mode does not gate a restore.** That lock withholds the agent's own
-  writers, and a restore is the user acting.
+- **Four routes**, `routes/document-revisions.ts`: the write
+  (`PATCH /agents/documents/:field`), the history without the content
+  (`GET /agents/documents/:field/revisions`), one revision with it (`…/:id`), and
+  the restore (`POST …/:id/restore`). One `readField` allow-list
+  (`isWorkspaceDocField`) keeps an arbitrary `:field` away from the database. The
+  route owns what the service does not — the heartbeat restart after a write or a
+  restore of `heartbeatMd`, and the status codes.
+- **Locked-in mode does not gate a write or a restore here.** That lock withholds
+  the agent's own writers, and both of these are the user acting.
 - **Every document has a history from the moment the table exists.** A new agent
   gets seven `seed` revisions in the creating transaction; an install created
   before the table gets a baseline for each document from the migration that adds

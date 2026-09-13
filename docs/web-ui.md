@@ -190,19 +190,18 @@ The agent's identity and runtime controls.
   and Bootstrap become read-only to it, and it can no longer add or delete
   long-term memories, while settings, renames and memory search keep working. The
   **Agent** guide is not in that list: no tool writes it, so it is read-only to
-  the agent either way, and your own editor keeps working while the lock is on. The agent cannot turn this off itself. It is a guardrail against drift,
+  the agent either way. Your own editing is unaffected — every tab keeps saving
+  while the lock is on. The agent cannot turn this off itself. It is a guardrail against drift,
   not a security boundary; the known ways around it are listed under
   **[Configuration → Locked-in mode](configuration.md#locked-in-mode)**.
-- **Identity documents.** Seven tabs show the agent's markdown documents —
+- **Identity documents.** Seven tabs hold the agent's markdown documents —
   **Agent** (guide), **Soul**, **User**, **Heartbeat**, **Memory**, **Vision**,
-  and **Bootstrap**. The **Agent** tab is an editor: change the text and press
-  **Save**, and the agent picks it up on its next turn. The rest are read-only
-  viewers, because the agent maintains them during conversation (you ask it to
-  update its soul, or it records something to memory). The **Version history**
-  sidebar compares a selected version with the current document and lets you
-  restore it; the **Agent**
-  tab's editor takes an optional note about what changed, which the history
-  keeps. See **[The agent's identity](agent-identity.md#version-history)**.
+  and **Bootstrap**. Each one is an editor: change the text and press **Save**,
+  and the agent picks it up on its next turn. Saving the **Heartbeat** document
+  also restarts the heartbeat. Add an optional note about what changed, which the
+  history keeps. The **Version history** sidebar compares a selected version with
+  the current document and lets you restore it. See
+  **[The agent's identity](agent-identity.md#version-history)**.
 - **Heartbeat controls.** A status panel shows whether the heartbeat is Active
   or Stopped, its interval, the last run time, and a consecutive-error count.
   Buttons let you **Start**, **Stop**, or **Trigger now**, and you can edit the

@@ -296,12 +296,12 @@ to or delete from its long-term memory:
 | **Soul**, **User**, **Memory** (the curated summary), **Vision**, **Heartbeat** config, **Bootstrap**; **long-term memory** writes and deletes | **Behavioural settings** — heartbeat interval, timezone, `verbose`; the agent's **name** (`rename_self`); **long-term memory search**, so it still reads what it learned before the lock |
 
 The **Agent Guide** is in neither column: no tool writes it, so the lock has
-nothing to take away. You edit it yourself, and that keeps working while the lock
-is on — see [The agent's identity](agent-identity.md#how-editing-works).
+nothing to take away.
 
-Restoring an earlier [revision](agent-identity.md#version-history) of any of
-these documents keeps working too. The lock withholds the agent's own writers,
-and a restore is you acting.
+Your own editing keeps working while the lock is on — every document on the
+Profile page, and restoring an earlier
+[revision](agent-identity.md#version-history) of any of them. The lock withholds
+the agent's own writers, and an edit or a restore there is you acting.
 
 The lock works in two layers. The writing tools (`update_soul`, `update_memory`,
 `update_user_profile`, `update_vision`, `update_heartbeat_config`,
@@ -331,7 +331,10 @@ known holes:
 - **The Management API takes no credential from inside the container.** Auth is
   terminated in front of the container, so a shell can `PATCH
   localhost:3003/agents/locked-in` and turn the lock off. "The agent cannot unlock
-  itself" is a statement about its tools.
+  itself" is a statement about its tools. The same shell can `PATCH
+  localhost:3003/agents/documents/soulMd`, which is the endpoint your editor
+  calls: the write records a revision that reads as your own edit, so the
+  document's history tells you it changed but not that the agent changed it.
 - **`POST /agents/import` is not gated.** It stages a whole replacement
   database — documents, memories, threads, and the lock's own setting — which the
   runtime swaps in on its next boot.
