@@ -1570,7 +1570,7 @@ router.post('/slack/verify-link-code', async (req: Request, res: Response) => {
     });
 
     if (!verification) {
-      res.json({ success: false, message: 'Invalid code. Please generate a new code from the Lens Agents web app.' });
+      res.json({ success: false, message: 'That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.' });
       return;
     }
 
@@ -1578,7 +1578,7 @@ router.post('/slack/verify-link-code', async (req: Request, res: Response) => {
       await prisma.slackVerificationCode.delete({
         where: { code_type: { code: upperCode, type: 'DM' } },
       }).catch(() => {});
-      res.json({ success: false, message: 'Code expired. Please generate a new code from the Lens Agents web app.' });
+      res.json({ success: false, message: 'That code has expired. Generate a new code in Prism Agent, under Settings → Channels.' });
       return;
     }
 
@@ -1595,7 +1595,7 @@ router.post('/slack/verify-link-code', async (req: Request, res: Response) => {
         res.json({ success: false, message: 'Your Slack account is already linked to another agent. Unlink it first from that agent\'s settings.' });
         return;
       }
-      res.json({ success: false, message: 'This Slack account is already linked to another Lens Platform user.' });
+      res.json({ success: false, message: 'This Slack account is already linked to another Prism Agent user.' });
       return;
     }
 
@@ -1622,7 +1622,7 @@ router.post('/slack/verify-link-code', async (req: Request, res: Response) => {
       'slack.user.id': slackUserId,
     });
 
-    res.json({ success: true, message: 'Your Slack account is now linked to Lens Platform! You can now chat with your agent here.' });
+    res.json({ success: true, message: `Your Slack account is now linked. You can chat with ${verification.agentName || 'your agent'} here.` });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to verify Slack link code: ${msg}`);
@@ -1649,7 +1649,7 @@ router.post('/slack/verify-channel-link-code', async (req: Request, res: Respons
     });
 
     if (!verification) {
-      res.json({ success: false, message: 'Invalid code. Please generate a new code from the Lens Agents web app.' });
+      res.json({ success: false, message: 'That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.' });
       return;
     }
 
@@ -1657,7 +1657,7 @@ router.post('/slack/verify-channel-link-code', async (req: Request, res: Respons
       await prisma.slackVerificationCode.delete({
         where: { code_type: { code: upperCode, type: 'CHANNEL' } },
       }).catch(() => {});
-      res.json({ success: false, message: 'Code expired. Please generate a new code from the Lens Agents web app.' });
+      res.json({ success: false, message: 'That code has expired. Generate a new code in Prism Agent, under Settings → Channels.' });
       return;
     }
 
@@ -1698,7 +1698,7 @@ router.post('/slack/verify-channel-link-code', async (req: Request, res: Respons
 
     res.json({
       success: true,
-      message: `Channel linked to ${verification.agentName}!`,
+      message: 'Your Slack channel is now linked. Mention me anytime you need help!',
       agentName: verification.agentName ?? undefined,
     });
   } catch (error: unknown) {

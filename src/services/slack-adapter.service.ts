@@ -830,7 +830,7 @@ class SlackAdapterService implements ChannelAdapter {
           connectionId,
         );
         await say(
-          "👋 Hi! I don't recognize you yet.\n\nTo link your Lens Platform account:\n1. Go to *Settings → Channels* in the web app\n2. Click *Link Account* under Slack\n3. Send me the 6-character code you receive\n\nOnce linked, you can chat with me about your Kubernetes clusters!"
+          "👋 Hi! I don't recognize you yet.\n\nTo link your Prism Agent account:\n1. Go to *Settings → Channels* in the web app\n2. Click *Link Account* under Slack\n3. Send me the 6-character code you receive"
         );
         return;
       }
@@ -1418,14 +1418,14 @@ class SlackAdapterService implements ChannelAdapter {
     });
 
     if (!verification) {
-      return { success: false, message: 'Invalid code. Please generate a new code from the Lens Agents web app.' };
+      return { success: false, message: 'That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.' };
     }
 
     if (new Date() > verification.expiresAt) {
       await prisma.slackVerificationCode.delete({
         where: { code_type: { code: upperCode, type: 'DM' } },
       }).catch(() => {});
-      return { success: false, message: 'Code expired. Please generate a new code from the Lens Agents web app.' };
+      return { success: false, message: 'That code has expired. Generate a new code in Prism Agent, under Settings → Channels.' };
     }
 
     // Check if this Slack user is already linked to someone
@@ -1440,7 +1440,7 @@ class SlackAdapterService implements ChannelAdapter {
       if (existingSlackLink.lensUserId === verification.lensUserId) {
         return { success: false, message: 'Your Slack account is already linked to another agent. Unlink it first from that agent\'s settings.' };
       }
-      return { success: false, message: 'This Slack account is already linked to another Lens Platform user.' };
+      return { success: false, message: 'This Slack account is already linked to another Prism Agent user.' };
     }
 
     // Atomic: create mapping + consume code
@@ -1461,7 +1461,7 @@ class SlackAdapterService implements ChannelAdapter {
 
     logger.info('Slack account linked via code: %s -> %s', slackUserId, verification.lensUserId);
 
-    return { success: true, message: 'Your Slack account is now linked to Lens Platform! You can now chat with your agent here.' };
+    return { success: true, message: `Your Slack account is now linked. You can chat with ${verification.agentName || 'your agent'} here.` };
   }
 
   /**
@@ -1486,7 +1486,7 @@ class SlackAdapterService implements ChannelAdapter {
       if (result.success) {
         return {
           success: true,
-          message: `Linked! I'm now connected to ${result.agentName || 'your agent'}. Mention me anytime you need help!`,
+          message: result.message,
           agentName: result.agentName,
         };
       }
@@ -1512,14 +1512,14 @@ class SlackAdapterService implements ChannelAdapter {
     });
 
     if (!verification) {
-      return { success: false, message: 'Invalid code. Please generate a new code from the Lens Agents web app.' };
+      return { success: false, message: 'That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.' };
     }
 
     if (new Date() > verification.expiresAt) {
       await prisma.slackVerificationCode.delete({
         where: { code_type: { code: upperCode, type: 'CHANNEL' } },
       }).catch(() => {});
-      return { success: false, message: 'Code expired. Please generate a new code from the Lens Agents web app.' };
+      return { success: false, message: 'That code has expired. Generate a new code in Prism Agent, under Settings → Channels.' };
     }
 
     // Check if this channel is already linked
@@ -1553,7 +1553,7 @@ class SlackAdapterService implements ChannelAdapter {
 
     return {
       success: true,
-      message: `Channel linked to ${verification.agentName}!`,
+      message: 'Your Slack channel is now linked. Mention me anytime you need help!',
       agentName: verification.agentName ?? undefined,
     };
   }
