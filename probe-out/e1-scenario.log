@@ -1,0 +1,208 @@
+(node:3050) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+◇ injected env (7) from .env.e2e // tip: ⌘ enable debugging { debug: true }
+◇ injected env (0) from .env.e2e.local // tip: ⌘ override existing { override: true }
+Prisma schema loaded from prisma/sqlite/schema.prisma
+Datasource "db": SQLite database "e2e.db" at "file:./e2e.db"
+
+SQLite database e2e.db created at file:./e2e.db
+
+21 migrations found in prisma/migrations
+
+Applying migration `20260427123025_init`
+Applying migration `20260519120000_add_agent_workspace_model`
+Applying migration `20260608120000_add_message_attachments`
+Applying migration `20260609120000_unique_slack_file_id`
+Applying migration `20260615120000_add_thread_workspace_root`
+Applying migration `20260616071600_drop_thread_status`
+Applying migration `20260618073753_add_goals`
+Applying migration `20260623120000_add_heartbeat_cron_model`
+Applying migration `20260623130000_drop_proactivity_verbosity`
+Applying migration `20260624120000_add_cron_task_thread_binding`
+Applying migration `20260626120000_add_slack_main_channel`
+Applying migration `20260702120000_add_webhook_subscriptions`
+Applying migration `20260716120000_add_verbose`
+Applying migration `20260716130000_add_message_internal_step`
+Applying migration `20260729120000_add_thread_context_usage`
+Applying migration `20260804120000_add_compaction_watermark`
+Applying migration `20260805113021_attachment_storage_path`
+Applying migration `20260806120000_add_locked_in`
+Applying migration `20260824123438_add_update_attempts`
+Applying migration `20260828073517_llm_call_metadata`
+Applying migration `20260905120000_add_agent_workspace_revisions`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260427123025_init/
+    └─ migration.sql
+  └─ 20260519120000_add_agent_workspace_model/
+    └─ migration.sql
+  └─ 20260608120000_add_message_attachments/
+    └─ migration.sql
+  └─ 20260609120000_unique_slack_file_id/
+    └─ migration.sql
+  └─ 20260615120000_add_thread_workspace_root/
+    └─ migration.sql
+  └─ 20260616071600_drop_thread_status/
+    └─ migration.sql
+  └─ 20260618073753_add_goals/
+    └─ migration.sql
+  └─ 20260623120000_add_heartbeat_cron_model/
+    └─ migration.sql
+  └─ 20260623130000_drop_proactivity_verbosity/
+    └─ migration.sql
+  └─ 20260624120000_add_cron_task_thread_binding/
+    └─ migration.sql
+  └─ 20260626120000_add_slack_main_channel/
+    └─ migration.sql
+  └─ 20260702120000_add_webhook_subscriptions/
+    └─ migration.sql
+  └─ 20260716120000_add_verbose/
+    └─ migration.sql
+  └─ 20260716130000_add_message_internal_step/
+    └─ migration.sql
+  └─ 20260729120000_add_thread_context_usage/
+    └─ migration.sql
+  └─ 20260804120000_add_compaction_watermark/
+    └─ migration.sql
+  └─ 20260805113021_attachment_storage_path/
+    └─ migration.sql
+  └─ 20260806120000_add_locked_in/
+    └─ migration.sql
+  └─ 20260824123438_add_update_attempts/
+    └─ migration.sql
+  └─ 20260828073517_llm_call_metadata/
+    └─ migration.sql
+  └─ 20260905120000_add_agent_workspace_revisions/
+    └─ migration.sql
+      
+All migrations have been successfully applied.
+[1A[2K[WebServer] [00:45:47.938] [33mWARN[39m (3146): [36m[dotenv] failed to load .env[39m
+[WebServer]     [35mpath[39m: "/home/runner/work/prism-agent/prism-agent/.env"
+[WebServer]     err: {
+[WebServer]       "type": "Error",
+[WebServer]       "name": "Error",
+[WebServer]       "message": "ENOENT: no such file or directory, open '/home/runner/work/prism-agent/prism-agent/.env'",
+[WebServer]       "stack":
+[WebServer]           Error: ENOENT: no such file or directory, open '/home/runner/work/prism-agent/prism-agent/.env'
+[WebServer]               at Object.readFileSync (node:fs:621:20)
+[WebServer]               at Object.configDotenv (/home/runner/work/prism-agent/prism-agent/node_modules/dotenv/lib/main.js:277:44)
+[WebServer]               at Object.config (/home/runner/work/prism-agent/prism-agent/node_modules/dotenv/lib/main.js:323:25)
+[WebServer]               at dotenv (/home/runner/work/prism-agent/prism-agent/src/lib/environment.ts:15:29)
+[WebServer]               at Object.<anonymous> (/home/runner/work/prism-agent/prism-agent/src/lib/environment.ts:21:1)
+[WebServer]               at Module._compile (node:internal/modules/cjs/loader:1934:14)
+[WebServer]               at Object.transformer (/home/runner/work/prism-agent/prism-agent/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)
+[WebServer]               at Module.load (node:internal/modules/cjs/loader:1656:32)
+[WebServer]               at Module._load (node:internal/modules/cjs/loader:1448:12)
+[WebServer]               at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+[WebServer]       "code": "ENOENT",
+[WebServer]       "errno": -2,
+[WebServer]       "syscall": "open",
+[WebServer]       "redacted": [
+[WebServer]         "path"
+[WebServer]       ]
+[WebServer]     }
+
+[1A[2K[WebServer] [00:45:47.940] [32mINFO[39m (3146): [36m[Langfuse] Not configured (no keys), skipping[39m
+[WebServer] [00:45:47.942] [32mINFO[39m (3146): [36m[Telemetry] Initialized → http://localhost:4318 (env: development, version: <unset>)[39m
+[WebServer] [00:45:47.945] [32mINFO[39m (3146): [36mRegistered channel adapter: websocket[39m
+[WebServer] [00:45:47.945] [32mINFO[39m (3146): [36mRegistered channel adapter: slack[39m
+[WebServer] [00:45:47.945] [32mINFO[39m (3146): [36mWebSocket gateway initialized on /api/ws[39m
+[WebServer] [00:45:47.945] [32mINFO[39m (3146): [36m[Startup] shell workspace: /tmp/prism-e2e-workspace[39m
+[WebServer] [00:45:47.946] [32mINFO[39m (3146): [36m[Startup] skills dir: /tmp/prism-e2e-data/skills[39m
+[WebServer] [00:45:47.946] [32mINFO[39m (3146): [36m[Startup] coding agent[39m
+[WebServer]     [35magent[39m: "claude-code"
+[WebServer]     [35mconfigDir[39m: "/tmp/prism-e2e-data/.claude"
+[WebServer]     [35mskillsLinked[39m: true
+[WebServer] [00:45:47.947] [32mINFO[39m (3146): [36m[Startup] plugins dir: /tmp/prism-e2e-data/plugins (1 installed)[39m
+
+[1A[2K[WebServer] [00:45:47.996] [32mINFO[39m (3146): [36mCreating Bedrock provider[39m
+[WebServer]     [35mrouting[39m: "direct"
+
+[1A[2K[WebServer] [00:45:47.996] [32mINFO[39m (3146): [36mUsing default AWS credential provider chain for Bedrock authentication (no explicit keys set)[39m
+[WebServer] [00:45:47.996] [32mINFO[39m (3146): [36m[Startup] LLM provider[39m
+[WebServer]     [35mprovider[39m: "bedrock"
+[WebServer]     [35mrouting[39m: "direct"
+[WebServer]     [35mendpoint[39m: "vendor default"
+[WebServer]     [35mendpointSource[39m: "direct"
+[WebServer]     [35mchatModel[39m: "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+[WebServer]     [35membeddings[39m: "bedrock:amazon.titan-embed-text-v2:0"
+[WebServer]     [35mpromptCache[39m: "on"
+[WebServer] [00:45:47.997] [32mINFO[39m (3146): [36m[Startup] tool risk gate[39m
+[WebServer]     [35mmode[39m: "off"
+[WebServer] [00:45:47.997] [32mINFO[39m (3146): [36m[Startup] resolving agent workspace[39m
+[WebServer]     [35magentId[39m: "00000000-0000-0000-0000-0000000000e2"
+
+[1A[2K[WebServer] [00:45:48.011] [32mINFO[39m (Prism/3146): [36m[SingleAgent] bootstrapped new agent — set AGENT_ID to this id to pin identity across restarts[39m
+[WebServer]     [35magentId[39m: "00000000-0000-0000-0000-0000000000e2"
+[WebServer]     [35mownerUserId[39m: "e2e-test-user-001"
+
+[1A[2K[WebServer] [00:45:48.012] [32mINFO[39m (3146): [36m[Heartbeat] Started (interval: 480min)[39m
+
+[1A[2K[WebServer] [00:45:48.013] [32mINFO[39m (3146): [36mHeartbeat started[39m
+
+[1A[2K[WebServer] [00:45:48.014] [32mINFO[39m (3146): [36mCron tasks scheduled: 0[39m
+
+[1A[2K[WebServer] [00:45:48.021] [32mINFO[39m (3146): [36m[Goal] Restored 0 active goal(s)[39m
+
+[1A[2K[WebServer] [00:45:48.021] [32mINFO[39m (3146): [36mInitializing session manager...[39m
+
+[1A[2K[WebServer] [00:45:48.037] [32mINFO[39m (3146): [36mScheduled daily reset for user e2e-test-user-001 in 3.2 hours[39m
+
+[1A[2K[WebServer] [00:45:48.037] [32mINFO[39m (3146): [36mSession manager initialized for 1 agent(s)[39m
+[WebServer] [00:45:48.037] [32mINFO[39m (3146): [36mSession manager initialized[39m
+[WebServer] [00:45:48.037] [32mINFO[39m (3146): [36m[Update] updater off (not_sea_install)[39m
+[WebServer] [00:45:48.037] [32mINFO[39m (3146): [36mInitializing 2 channel adapter(s)[39m
+[WebServer] [00:45:48.037] [32mINFO[39m (3146): [36mWebSocket adapter ready[39m
+[WebServer] [00:45:48.037] [32mINFO[39m (3146): [36mwebsocket adapter initialized[39m
+[WebServer] [00:45:48.038] [32mINFO[39m (3146): [36mInitializing Slack adapter...[39m
+[WebServer] [00:45:48.038] [32mINFO[39m (3146): [36m[SlackConfig] SLACK_BOT_TOKEN not set — Slack disabled[39m
+[WebServer] [00:45:48.038] [32mINFO[39m (3146): [36mNo active Slack connections; adapter idle[39m
+[WebServer] [00:45:48.038] [32mINFO[39m (3146): [36mslack adapter initialized[39m
+[WebServer] [00:45:48.038] [32mINFO[39m (3146): [36m[ThrottleQueue] started (in-memory)[39m
+
+[1A[2K[WebServer] [00:45:48.046] [32mINFO[39m (3146): [36m[Meeting] Voice meetings unavailable: pulseaudio is not on PATH[39m
+
+[1A[2K[WebServer] No entries need backfilling.
+
+[1A[2K[WebServer] [00:45:48.046] [32mINFO[39m (3146): [36mVoice meetings unavailable — meeting tools not registered[39m
+[WebServer] [00:45:48.053] [32mINFO[39m (3146): [36mRunning on http://127.0.0.1:3003 (interface 127.0.0.1)[39m
+[WebServer] [00:45:48.053] [32mINFO[39m (3146): [36mHealth: http://127.0.0.1:3003/health[39m
+
+[1A[2K[WebServer] (node:3182) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+[WebServer] (Use `node --trace-deprecation ...` to show where the warning was created)
+
+[1A[2K[WebServer] [MockRealtime] listening on ws://127.0.0.1:3103/v1/realtime
+
+◇ injected env (0) from .env.e2e // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+◇ injected env (0) from .env.e2e.local // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[e2e] Starting OTEL Collector + MinIO...
+Error: docker compose up failed.
+--- docker compose ps ---
+NAME      IMAGE     COMMAND   SERVICE   CREATED   STATUS    PORTS
+--- docker compose logs (last 50 lines/container) ---
+
+--- original error ---
+Command failed: docker compose -f docker-compose.otelcol.yml up -d
+ otelcol Pulling 
+ minio Pulling 
+ minio-init Pulling 
+ minio Error pull access denied for minio/minio, repository does not exist or may require 'docker login': denied: requested access to the resource is denied
+ otelcol  Interrupted
+ minio-init  Interrupted
+Error response from daemon: pull access denied for minio/minio, repository does not exist or may require 'docker login': denied: requested access to the resource is denied
+
+
+   at ../global-setup.ts:61
+
+  59 |     // console — without this it is lost, and the run fails with a bare non-zero
+  60 |     // exit from a command whose whole job is to explain itself.
+> 61 |     throw new Error(
+     |           ^
+  62 |       `docker compose up failed.\n${describeCompose()}\n--- original error ---\n` +
+  63 |         (error instanceof Error ? error.message : String(error)),
+  64 |     );
+    at globalSetup (/home/runner/work/prism-agent/prism-agent/e2e/global-setup.ts:61:11)
+
+[1A[2K## playwright exit: 1
