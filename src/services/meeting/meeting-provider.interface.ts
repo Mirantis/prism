@@ -150,6 +150,19 @@ export interface JoinOptions {
    * the provider having waited even once.
    */
   admissionTimeoutMs: number;
+
+  /**
+   * Called once the request to join has gone in, before the wait for a host starts.
+   *
+   * The caller of a join answers a chat turn, and it can wait for the request but not
+   * for a host. This is the line between the two: everything before it — the page load,
+   * the lobby, the microphone, the join button — is reported to that caller as the
+   * failure it is, and everything after it is left to `status()`.
+   *
+   * Required rather than optional: a platform that never calls it holds the chat turn
+   * for the whole admission budget, which is the wait this exists to end.
+   */
+  onRequestSubmitted: () => void;
 }
 
 export interface MeetingProvider {

@@ -111,8 +111,9 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
       description:
         'Join a video call as a live voice participant — you will speak and listen in real ' +
         'time. Google Meet links are supported today; the platform is taken from the URL. ' +
-        'Returns as soon as the request to join is in; a host must admit you, so call ' +
-        'meeting_status to find out whether you got in. Only one call at a time.',
+        'Returns once the request to join is in, or once the attempt has failed, which it ' +
+        'names a step for; a host still has to admit you, so call meeting_status to find out ' +
+        'whether you got in. Only one call at a time.',
       inputSchema: z.object({
         url: z
           .string()
@@ -153,6 +154,10 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
           // says otherwise, but a structured flag is the stronger signal of the two.
           success: result.state !== 'idle' && result.state !== 'leaving',
           state: result.state,
+          // Absent unless the join failed short of asking to be let in. It says which
+          // part failed — a dead link and a container with no microphone are both
+          // "could not join", and only one of them is worth trying again.
+          step: result.step,
           message: result.message,
         };
       },

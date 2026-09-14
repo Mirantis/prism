@@ -153,6 +153,43 @@ describe('getMeetingTools', () => {
     expect(result.success).toBe(false);
   });
 
+  it('hands the failing step to the model', async () => {
+    // Which part failed decides what the agent does next: a dead link is worth saying
+    // out loud, and a container with no microphone is worth nothing but a report.
+    mockJoin.mockResolvedValue({
+      state: 'idle',
+      step: 'page_load',
+      message: 'Could not join the meeting: net::ERR_TUNNEL_CONNECTION_FAILED',
+    });
+    const tools = getMeetingTools(input);
+
+    const result = (await tools.join_meeting.execute!(
+      { url: 'https://meet.google.com/abc-defg-hij' },
+      { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
+    )) as { success: boolean; step?: string };
+
+    expect(result.success).toBe(false);
+    expect(result.step).toBe('page_load');
+  });
+
+  it('omits the step for a join that got as far as asking', async () => {
+    // The optimistic answer carries none, and an absent step is how the model tells
+    // "it never asked" from "nobody has answered yet".
+    mockJoin.mockResolvedValue({
+      state: 'waiting_admission',
+      message: 'Requested to join the Google Meet call.',
+    });
+    const tools = getMeetingTools(input);
+
+    const result = (await tools.join_meeting.execute!(
+      { url: 'https://meet.google.com/abc-defg-hij' },
+      { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
+    )) as { success: boolean; step?: string };
+
+    expect(result.success).toBe(true);
+    expect(result.step).toBeUndefined();
+  });
+
   it('leaves and reports status', async () => {
     mockLeave.mockResolvedValue({ message: 'Left the Google Meet call.' });
     mockStatus.mockReturnValue({

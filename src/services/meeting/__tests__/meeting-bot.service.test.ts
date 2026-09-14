@@ -213,6 +213,47 @@ const trackEvent = vi.fn();
 vi.mock('../../../lib/telemetry', () => ({ trackEvent: (...a: unknown[]) => trackEvent(...a) }));
 
 const providerJoin = vi.fn();
+
+/**
+ * A provider join that asks to be let in, and then answers `outcome`.
+ *
+ * Every real provider does both, in that order, and the order is what the service
+ * reads: the request going in is what releases `join()`, and the outcome after it is
+ * for the log and `status()`. A mock that only resolves an outcome describes a
+ * platform that never asked to join.
+ */
+const joinAsks = (outcome: unknown): void => {
+  providerJoin.mockImplementation(
+    async (_page: unknown, options: { onRequestSubmitted: () => void }) => {
+      options.onRequestSubmitted();
+      return outcome;
+    },
+  );
+};
+
+/**
+ * A provider join parked in the waiting room: the request is in, and no host has
+ * answered. `admit` and `fail` end it.
+ */
+const joinWaitsForAHost = (): {
+  admit: (outcome: unknown) => void;
+  fail: (err: Error) => void;
+} => {
+  let resolveJoin: (outcome: unknown) => void = () => {};
+  let rejectJoin: (err: Error) => void = () => {};
+  providerJoin.mockImplementation(
+    (_page: unknown, options: { onRequestSubmitted: () => void }) =>
+      new Promise((resolve, reject) => {
+        resolveJoin = resolve;
+        rejectJoin = reject;
+        options.onRequestSubmitted();
+      }),
+  );
+  return {
+    admit: (outcome) => resolveJoin(outcome),
+    fail: (err) => rejectJoin(err),
+  };
+};
 const providerConfigurationError = vi.fn(() => null as string | null);
 const providerSignIn = vi.fn(async () => {});
 const providerLeave = vi.fn();
@@ -320,7 +361,7 @@ beforeEach(() => {
   buildSystemPromptParts.mockResolvedValue([{ text: '# Identity', cacheable: true }]);
   publish.mockResolvedValue(undefined);
   publishToLatestThread.mockResolvedValue(undefined);
-  providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
+  joinAsks({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
   providerLeave.mockResolvedValue(undefined);
   providerEnableAttribution.mockResolvedValue(undefined);
   providerParticipantNames.mockResolvedValue([]);
@@ -397,8 +438,7 @@ describe('sharing the screen', () => {
   it('refuses before the call is up, without touching the page', async () => {
     // The page is the lobby until admission lands, and Meet renders no share control
     // there — so this has to be an answer the agent can say out loud, not a click.
-    let admit: (v: unknown) => void = () => {};
-    providerJoin.mockReturnValue(new Promise((r) => { admit = r; }));
+    const { admit } = joinWaitsForAHost();
     await service.join(input);
     await settle();
 
@@ -471,8 +511,7 @@ describe('using the browser', () => {
   });
 
   it('refuses before the call is up, when the only page is the lobby', async () => {
-    let admit: (v: unknown) => void = () => {};
-    providerJoin.mockReturnValue(new Promise((r) => { admit = r; }));
+    const { admit } = joinWaitsForAHost();
     await service.join(input);
     await settle();
 
@@ -646,8 +685,7 @@ describe('looking at the screen', () => {
 describe('joining', () => {
   it('returns before admission, then reports being in the call', async () => {
     // A guest can wait minutes for a host; the chat turn must not block on it.
-    let admit: (v: unknown) => void = () => {};
-    providerJoin.mockReturnValue(new Promise((r) => { admit = r; }));
+    const { admit } = joinWaitsForAHost();
 
     const result = await service.join(input);
     expect(result.state).toBe('waiting_admission');
@@ -662,6 +700,87 @@ describe('joining', () => {
     // person who asked reads `status()` if they want to know.
     expectLogged(loggerInfo, /Admitted to the Google Meet call, and audible to the room/);
     expectNothingPublished();
+  });
+
+  it('reports a join that failed before the request went in, and names the step', async () => {
+    // The page would not load, so nobody was ever asked to admit anything. Saying
+    // "a host needs to admit me" here is the false success this answer replaces: the
+    // room was told to wait for a click that nothing was waiting for.
+    providerJoin.mockResolvedValue({
+      status: 'failed',
+      step: 'page_load',
+      reason: 'net::ERR_TUNNEL_CONNECTION_FAILED at https://meet.google.com/abc-defg-hij',
+    });
+
+    const result = await service.join(input);
+
+    expect(result.state).toBe('idle');
+    expect(result.step).toBe('page_load');
+    expect(result.message).toContain('net::ERR_TUNNEL_CONNECTION_FAILED');
+    expect(result.message).not.toMatch(/host needs to admit me/i);
+    // Nothing is left running, and nobody was told a second time.
+    expect(service.status().state).toBe('idle');
+    expect(browserStop).toHaveBeenCalled();
+    expectNothingPublished();
+  });
+
+  it('keeps the shared browser profile until the teardown has really let go of it', async () => {
+    // A join waits for the request to go in, and a teardown in that window does real,
+    // awaited work — closing the page, the browser and the audio. The startup marker is
+    // what stops a second `join()` opening a second browser on the profile the first one
+    // still holds, so it has to be released where the stack reaches the fields and not on
+    // the way out of `join()`.
+    let releaseBrowser = (): void => {};
+    browserStop.mockReturnValue(
+      new Promise<void>((resolve) => {
+        releaseBrowser = () => resolve();
+      }),
+    );
+    // A provider that has not asked to join yet: the request is what `join()` waits for.
+    let failJoin: (err: Error) => void = () => {};
+    providerJoin.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          failJoin = reject;
+        }),
+    );
+
+    const joining = service.join(input);
+    await settle();
+
+    // The Realtime socket dies in the waiting room, which closes the page under the
+    // provider and starts the teardown.
+    conversationOptions.onSessionLost?.('code 1011');
+    failJoin(new Error('Target page, context or browser has been closed'));
+    const result = await joining;
+    await settle();
+
+    expect(result.state).toBe('idle');
+    // The browser has not closed, so neither the service nor the voice is free yet.
+    expect(service.status().state).toBe('leaving');
+    expect(voiceSessionLock.holder).toBe('meeting');
+
+    releaseBrowser();
+    await settle();
+    expect(service.status().state).toBe('idle');
+    expect(voiceSessionLock.holder).toBeNull();
+  });
+
+  it('answers as soon as the request is in, and leaves the wait for a host out of it', async () => {
+    // The line criterion 3 draws: a refusal that arrives after the request is nobody's
+    // chat turn, so the caller still gets the request's own answer and reads `status()`
+    // for the rest. A `step` here would be a failure the caller cannot act on.
+    joinAsks({ status: 'denied', step: 'admission', reason: 'A host denied the request to join.' });
+
+    const result = await service.join(input);
+
+    expect(result.state).toBe('waiting_admission');
+    expect(result.step).toBeUndefined();
+    expect(result.message).toMatch(/host needs to admit me/i);
+
+    await settle();
+    expect(service.status().state).toBe('idle');
+    expectLogged(loggerWarn, /Denied entry to the Google Meet call/);
   });
 
   it('introduces itself once admitted so the room is not joined in silence', async () => {
@@ -2033,8 +2152,7 @@ describe('a startup that outlives its own call', () => {
 
 describe('a late admission cannot resurrect a torn-down call', () => {
   it('ignores an admission that arrives after leave()', async () => {
-    let admit: (v: unknown) => void = () => {};
-    providerJoin.mockReturnValue(new Promise((r) => { admit = r; }));
+    const { admit } = joinWaitsForAHost();
 
     await service.join(input);
     await service.leave();
@@ -2049,8 +2167,7 @@ describe('a late admission cannot resurrect a torn-down call', () => {
   });
 
   it('ignores a join that throws after teardown', async () => {
-    let fail: (e: Error) => void = () => {};
-    providerJoin.mockReturnValue(new Promise((_r, reject) => { fail = reject; }));
+    const { fail } = joinWaitsForAHost();
 
     await service.join(input);
     await service.leave();

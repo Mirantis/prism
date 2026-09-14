@@ -160,6 +160,9 @@ The agent joins as its own signed-in participant. That means:
   it does not wait, because a host might take minutes. You'll get "Requested to
   join… a host needs to admit me". Ask the agent for its meeting status to find out
   whether it got in.
+- **A join that never got that far says so.** The agent reports the failure and
+  which part of the join failed, so a dead link and a container with no microphone
+  read as the different problems they are.
 - **Some meetings won't let it in at all.** A tenant can restrict a meeting to
   members of its own organization. The agent gives up rather than retrying, and the
   reason Meet gave is in the runtime log.
