@@ -85,9 +85,11 @@ const LOBBY_SLACK_MS = 20_000;
  *
  * The trade is a longer worst case: roughly 45 s page load + 80 s lobby + the full
  * admission budget, so about 7 minutes at the 300 s default, against about 6 before.
- * Nothing user-facing blocks on it — `runJoin` is fire-and-forget and
- * `MEETING_TIMEOUT_MINUTES` still caps the call — and the alternative is failing a
- * join that was going to succeed.
+ * The caller of a join waits for this phase — that is how it learns a join failed
+ * before anyone was asked to admit it — so a pathological lobby holds a chat turn for
+ * up to two minutes. The admission wait after it is nobody's chat turn, and
+ * `MEETING_TIMEOUT_MINUTES` still caps the call. The alternative is a budget that fails
+ * a join that was going to succeed.
  */
 const LOBBY_PHASE_TIMEOUT_MS = LOBBY_SLACK_MS + JOIN_BUTTON_TIMEOUT_MS;
 
@@ -676,6 +678,11 @@ export class GoogleMeetProvider implements MeetingProvider {
         reason: 'The join button never became available — the Meet page may have changed.',
       };
     }
+
+    // The request is in: the click landed, and every step that could have failed before
+    // it has returned already. What follows is the wait for a host, which is the part
+    // the caller must not sit through.
+    options.onRequestSubmitted();
 
     // Measured from the moment the request actually went in, not from the top of the
     // function — see `LOBBY_PHASE_TIMEOUT_MS`.

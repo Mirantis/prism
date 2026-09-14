@@ -350,6 +350,9 @@ const joinOptions = {
   url: 'https://meet.google.com/abc-defg-hij',
   displayName: 'Prism',
   admissionTimeoutMs: 2_000,
+  // Required by the contract, so every case supplies one; the two that care about it
+  // override it with a recorder.
+  onRequestSubmitted: () => {},
 };
 
 beforeEach(() => {
@@ -397,6 +400,46 @@ describe('join outcomes', () => {
     const outcome = await provider.join(harness.page, joinOptions);
 
     expect(outcome).toEqual({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
+  });
+
+  it('says the request is in once the join button is clicked, and not before', async () => {
+    // The runtime answers its caller on this signal, so it has to come after the click
+    // and before the wait for a host. Admitted only on the third poll, so the two are
+    // separable: a signal raised with the outcome would prove nothing.
+    const submittedAt: number[] = [];
+    const harness = fakePage({
+      visibleButtons: ['Ask to join'],
+      onTick: (tick) => {
+        if (tick >= 3) harness.state.visibleSelectors.add('button[aria-label*="Leave call" i]');
+      },
+    });
+
+    const outcome = await provider.join(harness.page, {
+      ...joinOptions,
+      onRequestSubmitted: () => submittedAt.push(harness.ticks()),
+    });
+
+    expect(outcome.status).toBe('admitted');
+    expect(harness.clicks).toContain('Ask to join');
+    // Once, and while the waiting room was still being polled.
+    expect(submittedAt).toHaveLength(1);
+    expect(submittedAt[0]).toBeLessThan(harness.ticks());
+  });
+
+  it('says nothing about a request it never made', async () => {
+    // The page never loaded, so there was no button to click. A signal here is the
+    // false success the runtime would report to the room.
+    const submitted = vi.fn();
+    const { page } = fakePage({ gotoError: 'net::ERR_NAME_NOT_RESOLVED' });
+
+    const outcome = await provider.join(page, { ...joinOptions, onRequestSubmitted: submitted });
+
+    expect(outcome).toEqual({
+      status: 'failed',
+      step: 'page_load',
+      reason: expect.stringMatching(/could not load/i),
+    });
+    expect(submitted).not.toHaveBeenCalled();
   });
 
   it('reports a denial in the user\'s terms, not as an exception', async () => {

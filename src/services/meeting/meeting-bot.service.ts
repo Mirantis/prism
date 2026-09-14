@@ -6,11 +6,12 @@
  * own display, audio daemon and browser (roughly 4 vCPU worth of media work each),
  * and the agent has one voice to lend.
  *
- * The lifecycle is deliberately asymmetric. Joining is asynchronous — `join()`
- * returns as soon as the request is in, because a guest waits for a host to click
- * "Admit" and that can take minutes; the caller gets a state, the model is told in
- * band once the call starts, and every outcome goes to the log. Leaving is
- * immediate and always safe to call.
+ * The lifecycle is deliberately asymmetric. Joining is asynchronous from the request
+ * onwards — `join()` returns as soon as the request is in, because a guest waits for a
+ * host to click "Admit" and that can take minutes; the caller gets a state, the model is
+ * told in band once the call starts, and every outcome goes to the log. A join that
+ * fails before the request goes in is answered to the caller instead, step and all,
+ * since nothing else would tell it. Leaving is immediate and always safe to call.
  *
  * Everything that can leak — an X server, an audio daemon, a browser, a WebSocket —
  * is released through one `teardown()` path, used by the happy ending, every
@@ -246,6 +247,21 @@ export interface SpeakerReport {
  * message it should have taken. The step a `failed` send got to rides alongside it.
  */
 type ChatSendStatus = 'sent' | 'not_in_call' | 'unsupported' | 'rejected' | 'busy' | 'failed';
+
+/**
+ * What a join attempt has to say to whoever asked for it.
+ *
+ * Three answers rather than a nullable failure, because "the request is in" and "the
+ * call was cancelled under me" are both absences of a failure and read alike. Every
+ * ending names itself, so each one is reported as what it is.
+ */
+type JoinAnswer =
+  /** The request is in — or the whole join finished, which the caller is told the same way. */
+  | { kind: 'requested' }
+  /** A `leave()` or a shutdown ended the call before the request went in. */
+  | { kind: 'cancelled' }
+  /** It stopped short of the request, at `step` when the provider named one. */
+  | { kind: 'failed'; step?: JoinStep; reason: string };
 
 /** What the caller is told: whether the room has it, and one sentence saying so. */
 export interface ChatSendOutcome {
@@ -530,12 +546,16 @@ export class MeetingBotService {
   /**
    * Bring up the stack and request to join.
    *
-   * Returns once the request is submitted (or has failed outright), because a guest
-   * can wait indefinitely for a host and the calling chat turn must not block on
-   * that. Admission, denial and the end of the call are logged as they happen, and
+   * Returns once the request is submitted, or once the join has failed short of that,
+   * and names the step it failed at. A guest can wait indefinitely for a host, so the
+   * calling chat turn must not block on admission — but it can and must wait for the
+   * request itself, which is up to two minutes for a pathological lobby and seconds
+   * otherwise. Admission, denial and the end of the call are logged as they happen, and
    * `status()` answers for them on request.
    */
-  async join(input: JoinMeetingInput): Promise<{ state: MeetingState; message: string }> {
+  async join(
+    input: JoinMeetingInput,
+  ): Promise<{ state: MeetingState; step?: JoinStep; message: string }> {
     if (this.state === 'leaving') {
       // Not "already in a call" — the last one has ended and its browser is still
       // being let go of. Saying so is the honest answer, and starting anyway is the
@@ -680,16 +700,55 @@ export class MeetingBotService {
       this.conversation = conversation;
       this.browser = browser;
       this.page = page;
+      // The stack is on the fields, so `teardown()` can release it — which is the whole
+      // job of the startup marker. Let go of it here rather than in the `finally`: from
+      // this line on a teardown does real, awaited work, and this call now waits for the
+      // request to go in. A marker released in the middle of that teardown would return
+      // the service to `idle` while a live browser still held the shared profile.
+      this.releaseStartupSlot(epoch);
 
       this.state = 'waiting_admission';
-      // Deliberately not awaited: the waiting room can outlast any chat turn.
-      void this.runJoin(provider, page, input, epoch);
+      // Two answers race, and the join decides which one this call gets. The request
+      // going in is the ordinary one. The other is a failure before it went in — a page
+      // that would not load, a lobby that refused, no microphone — which used to be
+      // logged and nothing more, so the room was told a host had been asked to admit a
+      // request nobody had made.
+      let requestSubmitted = (): void => {};
+      const submitted = new Promise<JoinAnswer>((resolve) => {
+        requestSubmitted = () => resolve({ kind: 'requested' });
+      });
+      // Not awaited beyond the race: the waiting room can outlast any chat turn, and
+      // `runJoin` reports everything after the request itself.
+      const attempt = this.runJoin(provider, page, input, epoch, requestSubmitted);
 
+      const answer = await Promise.race([submitted, attempt]);
+      if (answer.kind === 'requested') {
+        // Answered on the request alone, and the epoch is deliberately not re-read: an
+        // ordinary ending bumps it too, and a host who denies the request straight away
+        // gets the teardown far enough to do so before this line runs. Reporting that as
+        // a cancelled join would name the wrong cause. `runJoin` answers `cancelled` for
+        // a call that really was ended before it asked.
+        return {
+          // The state the request left behind, rather than a fresh reading: a call a host
+          // admits at once is already `in_call` by the time this line runs, and one that
+          // waits is not, so reading the field here answers different things for the same
+          // event. The message sends the caller to `status()` for what happened next.
+          state: 'waiting_admission',
+          message:
+            `Requested to join the ${provider.displayName} call. ` +
+            `A host needs to admit me — ask me for my meeting status to find out whether I'm in.`,
+        };
+      }
+      // The attempt finished before the request went in. `idle` literally, never
+      // `this.state`: the teardown it has just run may still be releasing the browser,
+      // and `leaving` describes that teardown rather than this answer.
+      if (answer.kind === 'cancelled') {
+        return { state: 'idle', message: 'The meeting was cancelled before I could join.' };
+      }
       return {
-        state: this.state,
-        message:
-          `Requested to join the ${provider.displayName} call. ` +
-          `A host needs to admit me — ask me for my meeting status to find out whether I'm in.`,
+        state: 'idle',
+        step: answer.step,
+        message: `Could not join the meeting: ${answer.reason}`,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -729,16 +788,25 @@ export class MeetingBotService {
     }
   }
 
-  /** Await the join outcome, then either settle into the call or clean up. */
+  /**
+   * Await the join outcome, then either settle into the call or clean up.
+   *
+   * Answers the failures that happen before the request goes in, so `join()` can report
+   * them to whoever asked. Everything after the request — admission, denial, the end of
+   * the call — is logged and left to `status()`, because no chat turn can wait for a
+   * host, so those endings answer `requested` here.
+   */
   private async runJoin(
     provider: MeetingProvider,
     page: Page,
     input: JoinMeetingInput,
     epoch: number,
-  ): Promise<void> {
+    onRequestSubmitted: () => void,
+  ): Promise<JoinAnswer> {
     const joinOptions = {
       url: input.url,
       admissionTimeoutMs: config.meetingAdmissionTimeoutMs,
+      onRequestSubmitted,
     };
 
     try {
@@ -746,7 +814,7 @@ export class MeetingBotService {
 
       // The call was ended while we waited (leave, timeout, shutdown). Whatever
       // the waiting room decided is now about a meeting that no longer exists.
-      if (this.epoch !== epoch) return;
+      if (this.epoch !== epoch) return { kind: 'cancelled' };
 
       // The platform says the profile's session is stale. Sign in again and try the
       // link once more — this is the one join failure that fixes itself, and until
@@ -761,22 +829,21 @@ export class MeetingBotService {
         // for an answer we hold, and the retry would re-use the same session and fail
         // identically.
         await provider.signIn?.(page, { force: true });
-        if (this.epoch !== epoch) return;
+        if (this.epoch !== epoch) return { kind: 'cancelled' };
 
         outcome = await provider.join(page, joinOptions);
-        if (this.epoch !== epoch) return;
+        if (this.epoch !== epoch) return { kind: 'cancelled' };
 
         // Twice in a row is not a stale cookie any more. Report it as a refusal
         // rather than looping, and name the session as the cause.
         if (outcome.status === 'reauth_required') {
           this.failStep = 'lobby';
-          logger.warn(
-            `[Meeting] Could not join the ${provider.displayName} call: signing in again did not ` +
-              `help, and the meeting still treats this browser as a guest, which it refuses ` +
-              `automatically`,
-          );
+          const reason =
+            `signing in again did not help, and the meeting still treats this browser as a ` +
+            `guest, which it refuses automatically`;
+          logger.warn(`[Meeting] Could not join the ${provider.displayName} call: ${reason}`);
           await this.teardown('denied');
-          return;
+          return { kind: 'failed', step: 'lobby', reason };
         }
       }
 
@@ -797,7 +864,7 @@ export class MeetingBotService {
           );
         }
         await this.teardown(outcome.status === 'denied' ? 'denied' : 'error');
-        return;
+        return { kind: 'failed', step: outcome.step, reason: outcome.reason };
       }
 
       // The provider has the platform's word for the microphone. This is the layer under
@@ -816,7 +883,7 @@ export class MeetingBotService {
       // The wait can outlive the call, and the stack it asked about may already be
       // torn down — reporting this against the next meeting would be worse than
       // missing it.
-      if (this.epoch !== epoch) return;
+      if (this.epoch !== epoch) return { kind: 'cancelled' };
 
       // Audible only if both halves agree. Either one failing is a call the agent can
       // hear but not speak in — degraded, not over. It keeps listening (the room's audio
@@ -855,7 +922,7 @@ export class MeetingBotService {
         await provider.enableSpeakerAttribution(this.page).catch((err: unknown) => {
           logger.debug(`[Meeting] Could not prepare speaker attribution: ${String(err)}`);
         });
-        if (this.epoch !== epoch) return;
+        if (this.epoch !== epoch) return { kind: 'cancelled' };
       }
 
       trackEvent('meeting joined', input.userId, {
@@ -916,14 +983,19 @@ export class MeetingBotService {
       // gap runs the whole teardown, timers included. Arming new ones now would
       // leave an interval nobody clears and — worse — a duration cap that fires an
       // hour later and hangs up on whatever call is running by then.
-      if (this.epoch !== epoch) return;
+      if (this.epoch !== epoch) return { kind: 'cancelled' };
       this.startWatchdogs();
+      return { kind: 'requested' };
     } catch (err) {
       // A teardown mid-wait closes the page underneath the provider, so the throw
       // is expected there and belongs to a call that is already gone.
-      if (this.epoch !== epoch) return;
+      if (this.epoch !== epoch) return { kind: 'cancelled' };
+      const reason = err instanceof Error ? err.message : String(err);
       logger.error({ err }, `[Meeting] Join flow threw for the ${provider.displayName} call`);
       await this.teardown('error');
+      // The throw can come from either side of the request going in. `join()` has
+      // answered already in the second case, and drops this.
+      return { kind: 'failed', step: this.failStep ?? undefined, reason };
     }
   }
 
