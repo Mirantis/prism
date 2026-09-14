@@ -37,33 +37,11 @@ the runtime's voice frames on the chat connection —
 `src/services/voice/socket-audio.ts` and
 `src/services/websocket-gateway.service.ts` define them.
 
-## Talking to the agent at its computer
+## The agent's computer
 
-The Web UI's **Computer** page is the same call with a computer in it. Opening
-the page starts the call, and the agent greets you; leaving it ends the call.
-
-The page shows the agent's screen while it works. Your microphone starts muted;
-turn it on when you want to be heard. In the container that screen is a whole
-desktop, so the agent can use a terminal, a file manager or anything else
-installed, not only the browser.
-
-That screen is made the size of the area the page draws it in, so what you see is
-the desktop at its own resolution rather than a scaled picture of one. Resizing
-the browser window or going fullscreen resizes the desktop with it, a moment
-after you stop. A very large window is served the biggest screen the runtime
-keeps, and the picture is scaled the rest of the way. Click the screen
-to take the pointer and keyboard yourself, and press Esc to give them back. While
-you hold them, pasting types your clipboard into whatever has the focus there; a
-paste with the screen on the page but not under your control types it too.
-
-Press the share button to show the agent your own screen, a window or a tab, the
-way you would in a video call. Ask it to look and it reads what is there. "The
-screen" on its own means the agent's own, since that is the one you are both
-watching.
-
-One call at a time, here too. Opening the Computer page while a call from the chat
-composer is running is refused, and so is the reverse. Opening the page twice
-moves the call to the newer page, which is what a reload does.
+The Web UI's **Computer** page is this same call with a computer in it: the agent
+gets a browser and a desktop, and you watch its screen while it works. See
+**[The agent's computer](computer.md)**.
 
 ## Who the agent answers
 
@@ -113,10 +91,6 @@ do. For a real restriction, start the agent with a narrower tool surface.
 - **The call is refused.** The text says why: a Meet call holds the agent's
   voice, another client already has the session, or the runtime is still loading
   its agent and the call can be retried.
-- **The Computer page says the screen would not start.** It needs
-  packages a published image carries and an older one does not. Build the image
-  with `npm run docker:build`, or run the call from the chat composer, which
-  needs none of them.
 - **The call ends on its own.** The agent's model session closed. Start another.
 - **The agent talks over you, or answers nothing.** Both are the client's audio
   handling: it has to send your microphone continuously, silence included, since
