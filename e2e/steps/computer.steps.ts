@@ -21,6 +21,7 @@
 import { createBdd } from 'playwright-bdd';
 import { expect, test, type Page } from '@playwright/test';
 import {
+  EXCHANGE_TIMEOUT_MS,
   MICROPHONE_MS,
   describeBrowser,
   describeExchange,
@@ -36,7 +37,6 @@ const { When, Then } = createBdd();
 const MUTED_WINDOW_MS = 2_000;
 
 const status = (page: Page) => page.getByRole('status');
-const liveStatus = (page: Page) => status(page).filter({ hasText: 'Live' });
 const screen = (page: Page) => page.getByLabel("The agent's screen");
 const muteButton = (page: Page) => page.getByRole('button', { name: /microphone$/ });
 const speakingCue = (page: Page) => page.getByLabel('Speaking');
@@ -45,14 +45,16 @@ const speakingCue = (page: Page) => page.getByLabel('Speaking');
 const describeScreen = (page: Page) => async (): Promise<string> => {
   const read = async (locator: ReturnType<typeof status>) =>
     (await locator.count()) > 0 ? ((await locator.first().textContent()) ?? '').trim() : null;
-  const state = await read(status(page));
+  // The page states a connection only while it is not live, so an absent one is the
+  // live reading rather than a missing element.
+  const state = (await read(status(page))) ?? 'live';
   const alert = await read(page.getByRole('alert'));
   const mute =
     (await muteButton(page).count()) > 0
       ? await muteButton(page).getAttribute('aria-label')
       : null;
   return (
-    `screen: status=${state === null ? 'absent' : JSON.stringify(state)}, ` +
+    `screen: status=${JSON.stringify(state)}, ` +
     `refusal=${alert === null ? 'none' : JSON.stringify(alert)}, ` +
     `canvas=${await canvasSize(page)}, mute=${mute ?? 'absent'}. ${describeBrowser()}`
   );
@@ -79,9 +81,14 @@ When('I open the Computer page', async ({ page }) => {
 });
 
 Then('the page says the computer is live', async ({ page }) => {
-  // Filtered on the live wording rather than on the status line alone: the same element
-  // says "Connecting…" first, so the whole session-open budget belongs to this wait.
-  await waitForScreen('the live status', liveStatus(page), describeScreen(page));
+  // The page states a connection only while it is not live, so live is the controls
+  // coming alive rather than a word on the screen: both are gated on the same state.
+  try {
+    await expect(muteButton(page)).toBeEnabled({ timeout: EXCHANGE_TIMEOUT_MS });
+  } catch {
+    throw new Error(`the call did not go live. ${await describeScreen(page)()}`);
+  }
+  await expect(status(page)).toHaveCount(0);
   await waitForModel(
     'the runtime opening a session with the voice model',
     (state) => state.sessions === 1,
