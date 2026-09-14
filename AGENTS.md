@@ -703,7 +703,7 @@ tools block.
 | **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, platform token management, subagent relationships. `writeWorkspaceDoc` is the one write path for an identity document — column plus revision in one transaction — and `rollbackWorkspaceDoc` the restore |
 | **DocumentRevisionService** | `services/document-revision.service.ts` | Identity-document revisions: append one per accepted write, the history of one document (with the drift verdict), one revision's content, and the seed rows a new agent gets. Bounded at `MAX_REVISIONS_PER_DOCUMENT` (500) per document, trimmed in the insert's transaction |
 | **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat schedule, heartbeat status) |
-| **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats. The interval is measured from the last run rather than from the last call to `startHeartbeat` (see **Heartbeat Design → Schedule**) |
+| **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats. The interval is measured from the last run (see **Heartbeat Design → Schedule**) |
 | **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; manages cron task state directly via Prisma (list, update run timestamps, delete); skips a tick that would overlap a still-running execution of the same task; runs each result through the instruction-aware DELIVER/SUPPRESS gate before delivering (empty results suppressed, error results bypass the gate and always deliver, in-memory per-task last-delivered baseline fed to the gate as context — cleared when a suppressed run observes a different situation so a recurrence re-alerts — fail-open) |
 | **SlackAdapterService** | `services/slack-adapter.service.ts` | Full Slack implementation: Bolt apps, Socket Mode, message handling, verification codes |
 | **SlackMappingService** | `services/slack-mapping.service.ts` | SlackMapping CRUD for user and channel mappings via Prisma |
@@ -1124,7 +1124,7 @@ time on every terminal path of a timer run, an error included; a Slack-triggered
 run moves it once it completes. A check already due runs about a minute later,
 which is the delay floor.
 
-**Two columns hold the schedule, and they are two different facts.**
+**Two columns hold the schedule.**
 `AgentWorkspace.nextHeartbeatAt` is the deadline, and a boot arms it, so the next
 process keeps the check where the last one had it.
 `AgentWorkspace.lastHeartbeat` is the check that really ran, which the prompt and
