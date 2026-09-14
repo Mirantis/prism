@@ -22,14 +22,17 @@ import {
   GoogleMeetProvider,
   MIC_TOGGLE_SELECTOR,
 } from '../index';
-import { isAuthenticated, sessionEvidence, signInFailureReason } from '../sign-in';
+import { isAuthenticated, quiesce, sessionEvidence, signInFailureReason } from '../sign-in';
 import { logger } from '../../../../../logger';
 
 // The provider reads its own sign-in state rather than being handed it, so the three
 // situations that state distinguishes — "an account is configured", "Google refused
 // the session", and "the catch-all wall after a failed login" — are set here.
+// `quiesce` is a spy that parks nothing: what the provider owes is calling it before
+// the retry, and what it does with the page is proven in `sign-in.test.ts`.
 vi.mock('../sign-in', () => ({
   isAuthenticated: vi.fn(() => false),
+  quiesce: vi.fn(async () => {}),
   sessionEvidence: vi.fn(() => null),
   signInFailureReason: vi.fn(() => null),
   signInToGoogle: vi.fn(async () => {}),
@@ -480,11 +483,11 @@ describe('join outcomes', () => {
 
     const outcome = await provider.join(page, joinOptions);
 
-    // Counted by destination: the retry parks the page in between, so the raw call
-    // count includes an about:blank the assertion is not about.
-    expect(visited.filter((url) => url.includes('meet.google.com'))).toHaveLength(2);
-    // And it started the second attempt from a page that had stopped moving.
-    expect(visited[1]).toBe('about:blank');
+    expect(visited).toEqual([joinOptions.url, joinOptions.url]);
+    // And it started the second attempt from a page that had stopped moving. Without
+    // that, the retry inherits the interloper's next hop and dies the same way — which
+    // is what production did, twice per join.
+    expect(quiesce).toHaveBeenCalledWith(page);
     expect(outcome.status).toBe('admitted');
   });
 
@@ -501,8 +504,9 @@ describe('join outcomes', () => {
 
     await provider.join(page, joinOptions);
 
-    // One try, and no parking navigation either — nothing was retried.
+    // One try, and the page was not parked either — nothing was retried.
     expect(attempts).toBe(1);
+    expect(quiesce).not.toHaveBeenCalled();
   });
 
   it('fails with a UI-changed message when no join button is ever found', async () => {

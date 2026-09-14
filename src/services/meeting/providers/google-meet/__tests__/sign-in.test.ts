@@ -8,8 +8,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Frame } from 'playwright-core';
 import {
   isAuthenticated,
+  quiesce,
   sessionEvidence,
   settledUrl,
   signInFailureReason,
@@ -44,6 +46,75 @@ function redirectingPage(chain: string[]) {
  * spins for the whole stability window and starves anything else on this worker.
  */
 const tick = () => new Promise((resolve) => setTimeout(resolve, 1));
+
+/** `quiesce`'s default quiet window. The sign-in path takes the defaults. */
+const QUIET_MS = 500;
+
+/** What one `goto` does: reject, or commit somewhere, or resolve committing nothing. */
+type Navigate = (url: string, commit: (to: string) => void) => Promise<void>;
+
+/**
+ * A page that keeps the bookkeeping a browser keeps: one main frame, the navigation
+ * commits on it, and a `url()` that reads the last commit.
+ *
+ * Committing is separate from resolving the `goto` because that gap is the subject
+ * here — the parking navigation commits after its own `goto` has already returned, and
+ * lands on top of whatever navigated in between.
+ */
+function framePage(navigate: Navigate = async (url, commit) => commit(url)) {
+  const mainFrame = {} as Frame;
+  const watchers = new Set<(frame: Frame) => void>();
+  // Ordered, because "did the bounce land before the next navigation started?" is a
+  // question about order and cannot be asked of either record on its own.
+  const timeline: string[] = [];
+  let current = 'about:blank';
+  let lastCommitAt = Date.now();
+
+  const commit = (to: string): void => {
+    current = to;
+    lastCommitAt = Date.now();
+    timeline.push(`commit ${to}`);
+    for (const watcher of watchers) watcher(mainFrame);
+  };
+
+  const page = {
+    goto: vi.fn((url: string) => {
+      timeline.push(`goto ${url}`);
+      return navigate(url, commit);
+    }),
+    url: () => current,
+    waitForTimeout: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+    mainFrame: () => mainFrame,
+    on: vi.fn((event: string, watcher: (frame: Frame) => void) => {
+      if (event === 'framenavigated') watchers.add(watcher);
+    }),
+    off: vi.fn((_event: string, watcher: (frame: Frame) => void) => {
+      watchers.delete(watcher);
+    }),
+    commit,
+    lastCommitAt: () => lastCommitAt,
+    watching: () => watchers.size,
+    timeline,
+  };
+  return page;
+}
+
+/** A page that can reach nothing but the blank document. */
+const unreachable =
+  (message: string): Navigate =>
+  async (url, commit) => {
+    if (url === 'about:blank') {
+      commit(url);
+      return;
+    }
+    throw new Error(message);
+  };
+
+/** A page whose navigations all end up on `landing`, the way a redirect chain does. */
+const landsOn =
+  (landing: string): Navigate =>
+  async (url, commit) =>
+    commit(url === 'about:blank' ? url : landing);
 
 /**
  * A page that carries a login through: every control is visible, and pressing one
@@ -126,6 +197,92 @@ describe('settledUrl', () => {
   });
 });
 
+describe('quiesce', () => {
+  it('holds the page until a commit that outlives its own goto has landed', async () => {
+    // The defect in one line. The parking `goto` resolves, its commit lands 200 ms
+    // later, and Playwright raises that commit against whatever navigated in between:
+    // `Navigation to "https://meet.google.com/abc" is interrupted by another
+    // navigation to "about:blank"`. The user reads it as a broken meeting link.
+    let landedAt = 0;
+    const page = framePage(async (url, commit) => {
+      setTimeout(() => {
+        landedAt = Date.now();
+        commit(url);
+      }, 150);
+    });
+
+    await quiesce(page as never, 3_000, QUIET_MS);
+
+    expect(landedAt).toBeGreaterThan(0);
+    expect(Date.now() - landedAt).toBeGreaterThanOrEqual(QUIET_MS);
+    expect(page.url()).toBe('about:blank');
+    // Nothing left watching the page: a failing join parks it up to three times.
+    expect(page.watching()).toBe(0);
+  });
+
+  it('parks the page again when the first attempt committed nothing', async () => {
+    // A `goto` that resolves without committing leaves the page reading the address
+    // the failed navigation left behind. The second attempt is what gets it onto a
+    // blank document.
+    let parks = 0;
+    const page = framePage(async (url, commit) => {
+      parks += 1;
+      if (parks > 1) commit(url);
+    });
+    page.commit('https://accounts.google.com/ServiceLogin');
+
+    await quiesce(page as never, 1_000, 50);
+
+    expect(parks).toBe(2);
+    expect(page.url()).toBe('about:blank');
+    expect(page.watching()).toBe(0);
+  });
+
+  it('parks the page again when somebody else committed while it waited', async () => {
+    // The interloper case: the page goes quiet on a Google URL rather than on the
+    // blank document, so the parking has not held and is done once more.
+    let parks = 0;
+    const page = framePage(async (url, commit) => {
+      parks += 1;
+      commit(parks > 1 ? url : 'https://accounts.google.com/CheckCookie');
+    });
+
+    await quiesce(page as never, 1_000, 50);
+
+    expect(parks).toBe(2);
+    expect(page.url()).toBe('about:blank');
+  });
+
+  it('returns rather than throwing when the page closes while it waits', async () => {
+    // Nothing in this file throws — the header says so, and the provider relies on it.
+    // `waitForTimeout` is not a bare timer: Playwright rejects it once the page is
+    // closed, and a closed page needs no parking.
+    const page = framePage(async () => {});
+    page.waitForTimeout = async () => {
+      throw new Error('Target page, context or browser has been closed');
+    };
+
+    await expect(quiesce(page as never, 1_000, 50)).resolves.toBeUndefined();
+    expect(page.watching()).toBe(0);
+  });
+
+  it('gives up rather than holding a join on a page that never stops navigating', async () => {
+    // Best effort by design. The caller has already failed to sign in, and a page
+    // that will not even park is not a reason to block the join for ever.
+    const page = framePage(async (_url, commit) => commit('https://accounts.google.com/spin'));
+    const spinning = setInterval(() => page.commit('https://accounts.google.com/spin'), 20);
+
+    try {
+      await quiesce(page as never, 200, 100);
+    } finally {
+      clearInterval(spinning);
+    }
+
+    expect(page.goto).toHaveBeenCalledTimes(2);
+    expect(page.watching()).toBe(0);
+  });
+});
+
 describe('sign-in state', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -151,21 +308,22 @@ describe('sign-in state', () => {
     // between reusing the session and running a needless full login.
     config.googleBotEmail = 'bot@example.com';
     config.googleBotPassword = 'hunter2';
-    const goto = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('net::ERR_ABORTED; navigation interrupted'))
-      .mockResolvedValueOnce(undefined);
-    const page = {
-      goto,
-      url: () => 'https://myaccount.google.com/',
-      waitForTimeout: async () => {},
-    };
+    let attempts = 0;
+    const page = framePage(async (url, commit) => {
+      if (url === 'about:blank') {
+        commit(url);
+        return;
+      }
+      attempts += 1;
+      if (attempts === 1) throw new Error('net::ERR_ABORTED; navigation interrupted');
+      commit('https://myaccount.google.com/');
+    });
 
     await signInToGoogle(page as never);
 
     // Counted by destination, not in total: a failed attempt now parks the page on
     // about:blank before retrying, so the raw call count includes that too.
-    const probes = goto.mock.calls.filter(([url]) =>
+    const probes = page.goto.mock.calls.filter(([url]) =>
       String(url).startsWith('https://myaccount.google.com'),
     );
     expect(probes).toHaveLength(2);
@@ -179,13 +337,52 @@ describe('sign-in state', () => {
     // sign-in URL, because the abandoned redirect landed on top of it.
     config.googleBotEmail = 'bot@example.com';
     config.googleBotPassword = 'hunter2';
-    const goto = vi.fn().mockRejectedValue(new Error('net::ERR_TUNNEL_CONNECTION_FAILED'));
-    const page = { goto, url: () => 'https://www.google.com/', waitForTimeout: async () => {} };
+    const page = framePage(unreachable('net::ERR_TUNNEL_CONNECTION_FAILED'));
 
     await signInToGoogle(page as never);
 
-    const [lastUrl] = goto.mock.calls[goto.mock.calls.length - 1];
-    expect(lastUrl).toBe('about:blank');
+    // What the next navigation needs, asserted rather than inferred: the page reads a
+    // blank document, and the main frame has recorded no commit for a full quiet
+    // window. The last `goto` argument was `about:blank` in the broken code too.
+    expect(page.url()).toBe('about:blank');
+    expect(Date.now() - page.lastCommitAt()).toBeGreaterThanOrEqual(QUIET_MS);
+    expect(page.watching()).toBe(0);
+  });
+
+  it('settles both session checks before it navigates to the login form', async () => {
+    // Where the ticket's first interruption came from: the probe's abandoned bounce
+    // committed while the `ServiceLogin` navigation was in flight, so Google's own URL
+    // was reported to the user as the thing that broke their meeting link.
+    config.googleBotEmail = 'bot@example.com';
+    config.googleBotPassword = 'hunter2';
+    const readingsAtLogin: string[] = [];
+    let bounces = 0;
+    const page = framePage(async (url, commit) => {
+      if (url === 'about:blank') {
+        commit(url);
+        return;
+      }
+      if (url.includes('ServiceLogin')) readingsAtLogin.push(page.url());
+      bounces += 1;
+      // Only the first failure leaves a bounce behind, which is enough to prove the
+      // parking is redone: two late bounces cost the same wait twice over.
+      if (bounces === 1) {
+        setTimeout(() => commit('https://accounts.google.com/CheckCookie'), 40);
+      }
+      throw new Error('net::ERR_TUNNEL_CONNECTION_FAILED');
+    });
+
+    await signInToGoogle(page as never);
+
+    // The bounce landed before the login navigation started, which is the whole claim:
+    // it is a navigation the login would otherwise have been interrupted by. Reading
+    // the URL at that moment cannot say so on its own, because the abandoned bounce
+    // was still in the future.
+    const bounced = page.timeline.indexOf('commit https://accounts.google.com/CheckCookie');
+    const login = page.timeline.findIndex((event) => event.includes('ServiceLogin'));
+    expect(bounced).toBeGreaterThanOrEqual(0);
+    expect(bounced).toBeLessThan(login);
+    expect(readingsAtLogin).toEqual(['about:blank']);
   });
 
   it('records the account session as live when the account page holds', async () => {
@@ -224,12 +421,7 @@ describe('sign-in state', () => {
     const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined as never);
     // No `locator`, so the login attempt below throws — this test is about the
     // reading that preceded it, and about the fact that it did attempt one.
-    const goto = vi.fn(async () => undefined);
-    const page = {
-      goto,
-      url: () => 'https://www.google.com/account/about',
-      waitForTimeout: tick,
-    };
+    const page = framePage(landsOn('https://www.google.com/account/about'));
 
     await signInToGoogle(page as never);
 
@@ -238,7 +430,7 @@ describe('sign-in state', () => {
       signal: 'the account page settled on https://www.google.com/account/about',
     });
     // It still signs in, which is the path a genuinely refused session depends on.
-    expect(goto.mock.calls.map(String).join('\n')).toContain('ServiceLogin');
+    expect(page.goto.mock.calls.map(String).join('\n')).toContain('ServiceLogin');
     expect(info.mock.calls.map(String).join('\n')).toContain(
       'Signing in: the account page settled on https://www.google.com/account/about',
     );
@@ -249,8 +441,7 @@ describe('sign-in state', () => {
     // Not the same answer as "Google refused it", and the log must not claim it is.
     config.googleBotEmail = 'bot@example.com';
     config.googleBotPassword = 'hunter2';
-    const goto = vi.fn().mockRejectedValue(new Error('net::ERR_TUNNEL_CONNECTION_FAILED'));
-    const page = { goto, url: () => 'https://www.google.com/', waitForTimeout: tick };
+    const page = framePage(unreachable('net::ERR_TUNNEL_CONNECTION_FAILED'));
 
     await signInToGoogle(page as never);
 
