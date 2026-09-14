@@ -5,7 +5,7 @@ import type { InputFrame } from '@/hooks/use-voice-chat';
 
 interface ScreenViewProps {
   /** The image the runtime's pictures are drawn into; owned by the voice chat hook. */
-  screenRef: RefObject<HTMLImageElement | null>;
+  screenRef: RefObject<HTMLCanvasElement | null>;
   hasScreen: boolean;
   /**
    * The size of this box in device pixels, whenever it changes.
@@ -99,10 +99,12 @@ export function ScreenView({
    */
   const drawn = useCallback((): { left: number; top: number; scale: number } => {
     const box = boxRef.current;
-    const img = screenRef.current;
-    if (!box || !img || box.clientWidth === 0 || box.clientHeight === 0) return { left: 0, top: 0, scale: 1 };
-    const naturalWidth = img.naturalWidth || box.clientWidth;
-    const naturalHeight = img.naturalHeight || box.clientHeight;
+    const screen = screenRef.current;
+    if (!box || !screen || box.clientWidth === 0 || box.clientHeight === 0) {
+      return { left: 0, top: 0, scale: 1 };
+    }
+    const naturalWidth = screen.width || box.clientWidth;
+    const naturalHeight = screen.height || box.clientHeight;
     const fit = Math.min(box.clientWidth / naturalWidth, box.clientHeight / naturalHeight);
     return {
       left: (box.clientWidth - naturalWidth * fit) / 2,
@@ -245,10 +247,9 @@ export function ScreenView({
         canTake && 'cursor-pointer',
       )}
     >
-      <img
+      <canvas
         ref={screenRef}
-        alt="The agent's screen"
-        draggable={false}
+        aria-label="The agent's screen"
         className={cn('h-full w-full object-contain', !hasScreen && 'invisible')}
       />
       {!hasScreen && (

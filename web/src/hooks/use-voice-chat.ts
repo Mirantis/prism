@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { voiceWebSocketUrl } from '@/api/runtime-client';
+import { canDecodeVideo, ScreenCanvas } from '@/lib/screen-canvas';
 import { startVoiceAudio, type VoiceAudio } from '@/lib/voice-audio';
 
 /**
@@ -58,6 +59,14 @@ export interface Viewport {
   height: number;
 }
 
+/** How the agent's screen is encoded, before any of it arrives. */
+interface ScreenStartFrame {
+  type: 'screen_start';
+  encoding: 'jpeg' | 'h264';
+  /** With `h264`: the name the decoder is configured with. */
+  codec?: string;
+}
+
 /** One picture of the agent's screen, as base64 JPEG. */
 interface ScreenFrame {
   type: 'screen';
@@ -69,7 +78,7 @@ interface ClearFrame {
   type: 'clear';
 }
 
-type ServerFrame = StatusFrame | ScreenFrame | ClearFrame;
+type ServerFrame = StatusFrame | ScreenStartFrame | ScreenFrame | ClearFrame;
 
 /**
  * The rate this session speaks, both ways. It is the rate the agent's screen is recorded
@@ -84,6 +93,9 @@ const SAMPLE_RATE = 48_000;
  */
 const VOICE_FRAME = 0x01;
 const COMPUTER_AUDIO_FRAME = 0x02;
+/** A binary frame that is one picture of the agent's screen; its second byte says whether
+ * that picture stands on its own. */
+const SCREEN_VIDEO_FRAME = 0x03;
 const AUDIO_HEADER_BYTES = 2;
 
 /**
@@ -112,7 +124,9 @@ export function useVoiceChat(viewport: Viewport | null) {
    * through state: several frames a second, each a long string, is no job for a
    * re-render.
    */
-  const screenRef = useRef<HTMLImageElement | null>(null);
+  const screenRef = useRef<HTMLCanvasElement | null>(null);
+  /** Draws the screen, whichever way it arrives. */
+  const canvasRef = useRef<ScreenCanvas | null>(null);
   /** The size the call opened with, so a later change is a change rather than a reconnect. */
   const openedWith = useRef<Viewport | null>(null);
   if (viewport && !openedWith.current) openedWith.current = viewport;
@@ -137,6 +151,9 @@ export function useVoiceChat(viewport: Viewport | null) {
       audio = null;
       ws = null;
       audioRef.current = null;
+      const canvas = canvasRef.current;
+      canvasRef.current = null;
+      canvas?.close();
       setAgentSpeaking(false);
       setHasDesktop(false);
       void openAudio?.stop().catch(() => undefined);
@@ -174,6 +191,7 @@ export function useVoiceChat(viewport: Viewport | null) {
         return;
       }
       audioRef.current = audio;
+      canvasRef.current = new ScreenCanvas(() => screenRef.current);
 
       ws = new WebSocket(voiceWebSocketUrl(openedWith.current ?? undefined));
       wsRef.current = ws;
@@ -181,8 +199,22 @@ export function useVoiceChat(viewport: Viewport | null) {
       ws.onmessage = (event: MessageEvent) => {
         if (typeof event.data === 'string') {
           const frame = JSON.parse(event.data) as ServerFrame;
+          if (frame.type === 'screen_start') {
+            if (frame.encoding === 'h264' && frame.codec) {
+              // The call and its sound go on either way, so this is said rather than
+              // treated as the call failing.
+              if (!canDecodeVideo()) {
+                setMessage('This browser cannot show the agent’s screen; the call still works.');
+                return;
+              }
+              canvasRef.current?.openVideo(frame.codec);
+            } else {
+              canvasRef.current?.openPictures();
+            }
+            return;
+          }
           if (frame.type === 'screen') {
-            if (screenRef.current) screenRef.current.src = `data:image/jpeg;base64,${frame.data}`;
+            canvasRef.current?.picture(frame.data);
             setHasScreen(true);
             // Three base64 characters carry a quarter less: the JPEG is 3/4 of the text.
             const bytes = Math.floor((frame.data.length * 3) / 4);
@@ -207,6 +239,14 @@ export function useVoiceChat(viewport: Viewport | null) {
         const data = event.data as ArrayBuffer;
         if (data.byteLength <= AUDIO_HEADER_BYTES) return;
         const tag = new Uint8Array(data, 0, 1)[0];
+        if (tag === SCREEN_VIDEO_FRAME) {
+          const keyframe = new Uint8Array(data, 1, 1)[0] === 1;
+          canvasRef.current?.video(data.slice(AUDIO_HEADER_BYTES), keyframe);
+          setHasScreen(true);
+          const bytes = data.byteLength - AUDIO_HEADER_BYTES;
+          setLastFrame((f) => ({ count: (f?.count ?? 0) + 1, at: performance.now(), bytes }));
+          return;
+        }
         if (tag !== VOICE_FRAME && tag !== COMPUTER_AUDIO_FRAME) return;
         // Cut to whole samples: pcm16 is two bytes each, and a trailing half sample would
         // throw on the audio thread rather than play as one bad sample.
