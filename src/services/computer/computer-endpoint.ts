@@ -150,6 +150,13 @@ class ComputerEndpoint {
       ws.isAlive = true;
     });
 
+    // The watcher that was here goes first, and that order is the whole of it: there is
+    // one screen, so attaching starts a stream that replaces the one before it, and a
+    // detach run afterwards would stop the replacement and leave the original encoding
+    // for nobody. A reload is two sockets whose lifetimes overlap, so this is the
+    // ordinary case rather than a rare one.
+    this.release();
+
     // The call is the chat socket's. This one only shows what that call already has, so a
     // client that opens it too early is told rather than left watching a blank canvas.
     const detach = voiceChatService.attachComputerClient(this.clientFor(ws));
@@ -158,9 +165,6 @@ class ComputerEndpoint {
       ws.close(1011, 'no computer');
       return;
     }
-
-    // One watcher, so a reload does not leave the old socket's capture running.
-    this.release();
     this.watcher = { ws, detach };
 
     ws.on('message', (data, isBinary) => {

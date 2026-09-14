@@ -127,12 +127,19 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
   // Read on every frame by a handler bound once, the same reason the senders are.
   const onAudioRef = useRef(onAudio);
   onAudioRef.current = onAudio;
-  /** The size the socket opened with, so a later change is a change rather than a reopen. */
-  const openedWith = useRef<Viewport | null>(null);
+  /**
+   * The size the runtime was last told, so a later one is only sent when it differs.
+   *
+   * Updated on every send, not just at open: going fullscreen and coming back returns to
+   * the size the socket opened with, and comparing against that would read the way back
+   * as no change and leave the desktop at its fullscreen size, scaled into a smaller
+   * canvas.
+   */
+  const sentSize = useRef<Viewport | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
-    openedWith.current = viewport;
+    sentSize.current = viewport;
     const canvas = new ScreenCanvas(() => screenRef.current);
     canvasRef.current = canvas;
 
@@ -207,11 +214,12 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
     const ws = wsRef.current;
     if (!viewport || !ws || ws.readyState !== WebSocket.OPEN) return;
     if (
-      viewport.width === openedWith.current?.width &&
-      viewport.height === openedWith.current?.height
+      viewport.width === sentSize.current?.width &&
+      viewport.height === sentSize.current?.height
     ) {
       return;
     }
+    sentSize.current = viewport;
     ws.send(JSON.stringify({ type: 'viewport', ...viewport }));
   }, [viewport]);
 

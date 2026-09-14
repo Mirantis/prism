@@ -233,7 +233,10 @@ export class DesktopInput {
     switch (frame.type) {
       case 'pointer':
         this.place(frame.x, frame.y);
-        this.flushMove();
+        // Written now rather than flushed: a flush only sends movement that is already
+        // pending, and this frame is the pointer being put somewhere — the page sends it
+        // when the user takes control, and a click can follow with nothing in between.
+        this.moveNow();
         return;
       case 'pointer_move':
         this.place(this.x + frame.dx, this.y + frame.dy);
@@ -314,10 +317,18 @@ export class DesktopInput {
     }, MOVE_FLUSH_MS);
   }
 
+  /** Send the movement waiting to go out, if any, so what follows lands where it should. */
   private flushMove(): void {
     if (!this.moveTimer) return;
-    clearTimeout(this.moveTimer);
-    this.moveTimer = null;
+    this.moveNow();
+  }
+
+  /** Put the pointer where it is now, dropping any movement still waiting on the timer. */
+  private moveNow(): void {
+    if (this.moveTimer) {
+      clearTimeout(this.moveTimer);
+      this.moveTimer = null;
+    }
     this.write(`mousemove ${this.x} ${this.y}`);
   }
 
