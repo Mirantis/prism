@@ -241,6 +241,21 @@ describe('Slack thread classification', () => {
     });
   });
 
+  describe('respond criteria', () => {
+    it('names an approval a respond and tells the model to prefer respond when unsure', async () => {
+      // An assertion on wording, deliberately: the classifier's verdict is not
+      // traced, so the criteria the model is given are visible nowhere else,
+      // and a message the gate drops leaves only an emoji behind.
+      await classify(TRANSCRIPT);
+
+      const { system } = mockGenerateObject.mock.calls[0][0];
+      expect(system).toContain('an approval');
+      expect(system).toContain(
+        'When you are unsure whether the last message asks the bot for something, choose "respond".',
+      );
+    });
+  });
+
   describe('the transcript the gate judges', () => {
     it('appends the arriving message when the read has not caught up', async () => {
       armThread(reads(PARENT, BOT_REPLY));
