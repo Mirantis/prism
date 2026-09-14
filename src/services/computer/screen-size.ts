@@ -48,12 +48,13 @@ export interface ScreenSize {
 /**
  * The largest screen a client may ask for, and what the X server reserves.
  *
- * A framebuffer this size costs about 15 MB, which is why the reservation is made once
+ * A framebuffer this size costs about 8 MB, which is why the reservation is made once
  * rather than sized to the first client. Past it a client is served the maximum, which is
- * a screen smaller than its rectangle and a picture scaled up to fit, the way it was for
- * every client before this.
+ * a screen smaller than its rectangle and a picture scaled up to fit. A page on a dense
+ * display is past it, and what it gets is a desktop drawn at a comfortable size and blown
+ * up, rather than a sharp one with everything on it half the size to look at.
  */
-export const MAX_SCREEN: ScreenSize = { width: 2560, height: 1440 };
+export const MAX_SCREEN: ScreenSize = { width: 1920, height: 1080 };
 
 /** Below this a desktop has no room for a window, and a client this small is a mistake. */
 export const MIN_SCREEN: ScreenSize = { width: 640, height: 360 };

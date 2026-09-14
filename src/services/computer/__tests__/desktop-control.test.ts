@@ -20,12 +20,12 @@ describe('DesktopControl', () => {
   });
 
   it('maps a point on a screen larger than the picture', () => {
-    const control = new DesktopControl(env, { width: 2560, height: 1440 });
+    const control = new DesktopControl(env, { width: 1920, height: 1080 });
 
     expect(control.pictureWidth).toBe(1280);
     expect(control.pictureHeight).toBe(720);
     // The middle of the screen is the middle of the picture, whatever the scale.
-    expect(control.toPicture(1280, 720)).toEqual([640, 360]);
+    expect(control.toPicture(960, 540)).toEqual([640, 360]);
   });
 
   it('follows the screen when the client resizes it', () => {
