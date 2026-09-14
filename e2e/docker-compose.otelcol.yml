@@ -1,9 +1,14 @@
 # Telemetry test stack: MinIO (fake S3) + OTEL Collector.
 # Started/stopped by global-setup.ts / global-teardown.ts.
+#
+# Both MinIO images come from quay.io, which is MinIO's own registry. Docker Hub
+# refuses an anonymous pull of `minio/minio` and `minio/mc` with "pull access
+# denied ... repository does not exist or may require 'docker login'" (measured
+# on a runner, 2026-09-13), which aborted global setup before any test ran.
 
 services:
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
@@ -12,7 +17,7 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
 
   minio-init:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     depends_on:
       - minio
     # `sleep 2` was the whole synchronisation: MinIO usually answers by then, and
