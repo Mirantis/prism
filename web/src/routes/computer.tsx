@@ -97,11 +97,17 @@ function ComputerCall() {
   });
   const share = useScreenShare(screen.sendInput);
 
-  // Opening the page is the gesture that starts the call, once the box has been measured.
-  const { status, start } = call;
+  // Opening the page is the gesture that starts the call, once the box has been measured
+  // and the socket is up. Once only: a call that ends — because it was refused, because
+  // another client holds the voice, because the model's session closed — leaves the
+  // refusal on the screen, where starting again would wipe it and try forever.
+  const started = useRef(false);
+  const { start } = call;
   useEffect(() => {
-    if (status === 'idle' && viewport && ws.isConnected) start();
-  }, [status, viewport, ws.isConnected, start]);
+    if (started.current || !viewport || !ws.isConnected) return;
+    started.current = true;
+    start();
+  }, [viewport, ws.isConnected, start]);
 
   // A share outlives the call that had a use for it: the browser goes on capturing the
   // user's screen, and the agent it was being shown to is gone. The button is disabled by
