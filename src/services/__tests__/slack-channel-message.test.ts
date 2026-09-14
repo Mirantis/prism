@@ -125,7 +125,10 @@ function makeMapping(overrides: Record<string, unknown> = {}) {
 
 // Access private method for testing
 function handleChannelMessage(
-  ...args: [string, string, string, string, string | undefined, string, typeof mockSay, string, string]
+  ...args: [
+    string, string, string, string, string | undefined, string, typeof mockSay, string, string,
+    Array<{ name?: string }>?,
+  ]
 ) {
   return (slackAdapterService as any).handleChannelMessage(...args);
 }
@@ -314,8 +317,39 @@ describe('Requirement: Channel message mention detection', () => {
         THREAD_TS, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
       );
 
-      expect(isBotInThread).toHaveBeenCalledWith(CHANNEL_ID, THREAD_TS, TEAM_ID);
+      // The gate is handed the message that arrived, so it judges that one
+      // whatever the eventually-consistent Slack read returns.
+      expect(isBotInThread).toHaveBeenCalledWith(CHANNEL_ID, THREAD_TS, TEAM_ID, {
+        user: SLACK_USER_ID,
+        text: 'just a follow-up',
+        ts: MESSAGE_TS,
+      });
       expect(mockConversationEngineService.chat).not.toHaveBeenCalled();
+    });
+
+    it('hands the gate the shared-files description when the message carries only a file', async () => {
+      const mapping = makeMapping();
+      mockSlackMappingService.findByChannelId.mockResolvedValue(mapping);
+
+      const isBotInThread = vi.fn().mockResolvedValue({
+        result: { action: 'ignore' },
+        messages: [],
+      });
+      (slackAdapterService as any).isBotInThread = isBotInThread;
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        '',
+        THREAD_TS, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID,
+        [{ name: 'trace.log' }],
+      );
+
+      // An empty transcript line says nothing about the message; the file does.
+      expect(isBotInThread).toHaveBeenCalledWith(CHANNEL_ID, THREAD_TS, TEAM_ID, {
+        user: SLACK_USER_ID,
+        text: '(shared a file: trace.log)',
+        ts: MESSAGE_TS,
+      });
     });
   });
 
