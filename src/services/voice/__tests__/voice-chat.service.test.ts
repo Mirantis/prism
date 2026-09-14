@@ -28,8 +28,13 @@ vi.mock('../voice-instructions', () => ({
 
 vi.mock('../../meeting/tool-bridge', () => ({
   prepareMeetingTools: vi.fn(async () => ({ declarations: [], execute: vi.fn(), count: 3 })),
+}));
+vi.mock('../realtime-tools', () => ({
   prepareRealtimeTools: vi.fn(() => ({ declarations: [], execute: vi.fn(), count: 0 })),
+}));
+vi.mock('../voice-chat-tools', () => ({
   prepareVoiceChatTools: vi.fn((base: unknown) => base),
+  VOICE_CHAT_TRUNCATION_GUIDANCE: 'guidance',
 }));
 
 const trackEvent = vi.fn();

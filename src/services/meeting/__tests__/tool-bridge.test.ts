@@ -217,11 +217,10 @@ describe('prepareMeetingTools', () => {
     // can see as the whole of it — the bug this replaced.
     expect(output).toContain('INCOMPLETE OUTPUT');
     expect(output).toContain('Do not state a count');
-    // …plus the one instruction that belongs to a live call: the rest of the result goes
-    // nowhere, so the model has to speak a useful part of it rather than offer to hand it
-    // over. Worded for both sessions this bridge serves, since a voice chat has no chat
-    // panel to name.
-    expect(output).toContain('speech is what leaves this call');
+    // …plus the one instruction that belongs to a meeting: the rest of the result goes
+    // nowhere the room can read, so the model has to speak a useful part of it rather
+    // than offer to hand it over.
+    expect(output).toContain('the call chat takes one short line');
   });
 
   it('tells a call where its cut result was saved', async () => {

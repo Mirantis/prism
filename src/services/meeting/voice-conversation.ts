@@ -70,11 +70,11 @@ const SPEAKER_FRESHNESS_MS = 6_000;
  * failure this feature exists to prevent.
  */
 const KEYWORD_LIMIT = 12;
-import type { PreparedMeetingTools } from './tool-bridge';
+import type { PreparedTools } from '../voice/realtime-tools';
 
 export interface VoiceConversationOptions {
   instructions: string;
-  tools: PreparedMeetingTools;
+  tools: PreparedTools;
   /** Written with pcm16 at `sampleRate` — `pacat`'s stdin in production. */
   sink: PlaybackSink;
   /**

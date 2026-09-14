@@ -24,29 +24,9 @@
  * `prompts/meeting-prompt.ts`.
  */
 
-import { asSchema, type Tool } from 'ai';
 import { logger } from '../../logger';
 import { collectTools } from '../../lib/tool-collection';
-import { MEETING_TOOL_NAMES } from '../../tools/meeting';
-import { renderAndSpill } from '../../lib/tool-output-limiter';
-import type { RealtimeFunctionTool } from './realtime-session';
-
-/**
- * Cap on a tool result handed back to the Realtime model.
- *
- * Smaller than the chat-path budget (`lib/tool-output-limiter.ts`) on purpose, and
- * for a reason particular to this transport: a tool result stays in the Realtime
- * session's context for the rest of the call, and that context is far smaller than
- * the chat model's window. This model also *speaks* its answer, so a 100 kB
- * `kubectl get` dump only produces a monologue nobody wants.
- *
- * It used to be 4,000, which cut a single Jira issue's description in half and beheaded
- * a PR listing — so the agent stated the count it could see as the total. 12,000
- * (~3k tokens) holds a long issue or a few dozen listed items while staying a modest
- * share of the session. The *shape* of the cut is chat's, not this file's: shared
- * head+tail, and a notice that says outright the result is incomplete.
- */
-export const MEETING_MAX_RESULT_CHARS = 12_000;
+import { prepareRealtimeTools, type PreparedTools } from '../voice/realtime-tools';
 
 /**
  * The one part of the truncation notice that belongs to this channel: the call's chat
@@ -54,11 +34,11 @@ export const MEETING_MAX_RESULT_CHARS = 12_000;
  * subset instead of handing the rest over.
  */
 const VOICE_TRUNCATION_GUIDANCE =
-  'You cannot hand the rest over — speech is what leaves this call, not a result of this ' +
-  'size — so say the part that answers the question and offer to go into more of it out ' +
-  'loud. If the answer needs something from the omitted middle, search the saved output ' +
-  'with a pattern — never read it through, because everything you pull back stays in ' +
-  "this call's context for the rest of it, and this session's context is small.";
+  'You cannot send the rest anywhere — the call chat takes one short line, not a result ' +
+  'this size, so say the part that answers the question and offer to go into more of it ' +
+  'out loud. If the answer needs something from the omitted middle, search the saved ' +
+  'output with a pattern — never read it through, because everything you pull back stays ' +
+  "in this call's context for the rest of it, and this session's context is small.";
 
 export interface MeetingToolBridgeInput {
   userId: string;
@@ -73,15 +53,6 @@ export interface MeetingToolBridgeInput {
   lockedIn: boolean;
 }
 
-export interface PreparedMeetingTools {
-  /** Declarations for `session.update`. */
-  declarations: RealtimeFunctionTool[];
-  /** Executes a call by name; never throws — errors come back as text. */
-  execute: (name: string, argumentsJson: string) => Promise<string>;
-  /** Tool count, for logging and telemetry. */
-  count: number;
-}
-
 /**
  * Collect the agent's tools in `meeting` mode and adapt them for the Realtime API.
  *
@@ -94,7 +65,7 @@ export interface PreparedMeetingTools {
  */
 export async function prepareMeetingTools(
   input: MeetingToolBridgeInput,
-): Promise<PreparedMeetingTools> {
+): Promise<PreparedTools> {
   const { tools } = await collectTools({
     userId: input.userId,
     agentId: input.agentId,
@@ -114,138 +85,10 @@ export async function prepareMeetingTools(
     },
   });
 
-  const prepared = prepareRealtimeTools(tools, 'Meeting');
+  const prepared = prepareRealtimeTools(tools, {
+    label: 'Meeting',
+    truncationGuidance: VOICE_TRUNCATION_GUIDANCE,
+  });
   logger.info(`[Meeting] Collected ${prepared.count} tool(s) for a live session`);
   return prepared;
 }
-
-/**
- * Adapt a set of AI SDK tools for the Realtime API.
- *
- * `label` names the owner in the log lines, since a session offers two sets: the agent's
- * own, and the tools of the computer it is working on.
- *
- * A tool with no local implementation is left out rather than declared: offering one
- * produces a call the bridge cannot answer.
- */
-export function prepareRealtimeTools(
-  tools: Record<string, Tool>,
-  label: string,
-): PreparedMeetingTools {
-  const usable: Record<string, Tool> = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    if (typeof tool.execute !== 'function') {
-      logger.debug(`[${label}] Skipping non-executable tool ${name}`);
-      continue;
-    }
-    usable[name] = tool;
-  }
-
-  const declarations: RealtimeFunctionTool[] = Object.entries(usable).map(([name, tool]) => ({
-    name,
-    description: describeTool(tool) ?? name,
-    // asSchema normalizes both shapes the codebase produces: zod schemas from the
-    // built-in tools and pre-wrapped JSON Schema from MCP and the task tool.
-    parameters: asSchema(tool.inputSchema).jsonSchema as Record<string, unknown>,
-  }));
-
-  return {
-    declarations,
-    count: declarations.length,
-    execute: (name, argumentsJson) => executeTool(usable, name, argumentsJson, label),
-  };
-}
-
-/**
- * The agent's set as a voice chat gets it: the meeting's own tools dropped, and the
- * computer's laid over the gap when the session has one.
- *
- * The meeting tools go whether or not there is a replacement, since each of them acts on
- * a call this session is not in. `browse` and `see_screen` come back pointed at the
- * computer, under the same names, so the prompt text written for a call still reads true.
- */
-export function prepareVoiceChatTools(
-  base: PreparedMeetingTools,
-  computer: PreparedMeetingTools | null,
-): PreparedMeetingTools {
-  const extra = computer?.declarations ?? [];
-  const dropped = new Set<string>([...MEETING_TOOL_NAMES, ...extra.map((d) => d.name)]);
-  const declarations = [...base.declarations.filter((d) => !dropped.has(d.name)), ...extra];
-  const extraNames = new Set(extra.map((d) => d.name));
-  return {
-    declarations,
-    count: declarations.length,
-    execute: (name, argumentsJson) =>
-      computer && extraNames.has(name)
-        ? computer.execute(name, argumentsJson)
-        : base.execute(name, argumentsJson),
-  };
-}
-
-/**
- * A tool's description as plain text, or undefined when it declares none.
- *
- * The SDK allows a description to be a function of the tool's execution
- * context, so a declaration has to resolve it rather than read it. The bridge
- * gives no tool a context (see `executeTool`), so it resolves with none — the
- * same value the SDK passes for a tool the caller supplied no context for.
- */
-function describeTool(tool: Tool): string | undefined {
-  return typeof tool.description === 'function'
-    ? tool.description({ context: undefined })
-    : tool.description;
-}
-
-/**
- * Run one tool call and render the result as text for the model.
- *
- * Never throws: a rejected tool becomes an error string the model can speak
- * ("I couldn't check that because…"), which is far better in a live call than a
- * silent session or a dropped turn.
- */
-async function executeTool(
-  tools: Record<string, Tool>,
-  name: string,
-  argumentsJson: string,
-  label: string,
-): Promise<string> {
-  const tool = tools[name];
-  if (!tool || typeof tool.execute !== 'function') {
-    return JSON.stringify({ error: `Unknown tool: ${name}` });
-  }
-
-  let args: unknown;
-  try {
-    args = argumentsJson.trim() ? JSON.parse(argumentsJson) : {};
-  } catch {
-    return JSON.stringify({ error: `Invalid JSON arguments for ${name}` });
-  }
-
-  try {
-    logger.info(`[${label}] Executing tool ${name}`);
-    // The AI SDK passes a call context (toolCallId, messages) that built-in tools
-    // ignore; MCP tools only read `abortSignal`. A fresh signal keeps the shape
-    // valid without giving the bridge a cancellation story it doesn't have yet.
-    // `context` carries per-tool state a caller can pass through `generateText`;
-    // no tool here declares one, so it stays undefined.
-    const result = await tool.execute(args, {
-      toolCallId: `${label.toLowerCase()}-${Date.now()}`,
-      messages: [],
-      abortSignal: new AbortController().signal,
-      context: undefined,
-    });
-    // The same store chat uses, so a call's saved outputs are read back the same
-    // way and swept by the same janitor.
-    const rendered = await renderAndSpill(result, {
-      maxChars: MEETING_MAX_RESULT_CHARS,
-      extraGuidance: VOICE_TRUNCATION_GUIDANCE,
-      toolName: name,
-    });
-    return rendered.text;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.warn(`[${label}] Tool ${name} failed: ${message}`);
-    return JSON.stringify({ error: message });
-  }
-}
-

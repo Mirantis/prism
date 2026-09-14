@@ -27,11 +27,12 @@ import { config } from '../../config';
 import { trackEvent } from '../../lib/telemetry';
 import { VoiceConversation } from '../meeting/voice-conversation';
 import { meanGateLatencyMs } from '../meeting/gate-stats';
+import { prepareMeetingTools } from '../meeting/tool-bridge';
+import { prepareRealtimeTools } from './realtime-tools';
 import {
-  prepareMeetingTools,
-  prepareRealtimeTools,
   prepareVoiceChatTools,
-} from '../meeting/tool-bridge';
+  VOICE_CHAT_TRUNCATION_GUIDANCE,
+} from './voice-chat-tools';
 import { AgentComputer } from '../computer/agent-computer';
 import { createComputerTools } from '../computer/computer-tools';
 import type { ScreenFrame } from '../computer/picture-stream';
@@ -268,7 +269,7 @@ class VoiceChatService {
         computer
           ? prepareRealtimeTools(
               createComputerTools(computer, computer.hasDesktop ? computer : null, computer),
-              'Computer',
+              { label: 'Computer', truncationGuidance: VOICE_CHAT_TRUNCATION_GUIDANCE },
             )
           : null,
       );
