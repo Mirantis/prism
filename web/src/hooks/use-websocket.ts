@@ -25,6 +25,7 @@ interface WebSocketMessage {
     | 'context'
     | 'compaction'
     | 'update'
+    | 'prism_plugins'
     | 'voice_state'
     | 'voice_error'
     | 'voice_hello'
@@ -49,6 +50,21 @@ export type VoiceEvent =
   | { type: 'clear' }
   | { type: 'error'; error: string };
 
+/**
+ * A Prism plugin changed.
+ *
+ * `reloaded` — a page was rebuilt and the plugin list is worth re-reading;
+ * nothing restarts. `restarting` — the runtime is ending to load a plugin's
+ * server half, so the socket is about to drop. `restart-required` — the same
+ * change, but nothing will bring this runtime back on its own, so `instruction`
+ * says what the user has to do.
+ */
+export interface PrismPluginsEvent {
+  status: 'reloaded' | 'restarting' | 'restart-required';
+  revision: string;
+  instruction?: string;
+}
+
 interface UseWebSocketOptions {
   onMessage?: (msg: ConversationMessage) => void;
   /** A thread's title was (re)set server-side — update cached thread lists. */
@@ -67,6 +83,8 @@ interface UseWebSocketOptions {
   onCompaction?: (event: CompactionEvent) => void;
   /** Self-update progress (available/updating/failed). Install-level, not thread-scoped. */
   onUpdate?: (event: UpdateEvent) => void;
+  /** A Prism plugin changed and the runtime is restarting. Install-level too. */
+  onPrismPlugins?: (event: PrismPluginsEvent) => void;
   /**
    * A voice control frame arrived. A callback for the same reason as the two
    * above: the voice session belongs to the caller, which owns the microphone
@@ -90,6 +108,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     onContextUsage,
     onCompaction,
     onUpdate,
+    onPrismPlugins,
     onVoiceEvent,
     onVoiceAudio,
     reconnectInterval = 3000,
@@ -111,6 +130,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const onContextUsageRef = useRef(onContextUsage);
   const onCompactionRef = useRef(onCompaction);
   const onUpdateRef = useRef(onUpdate);
+  const onPrismPluginsRef = useRef(onPrismPlugins);
   const onVoiceEventRef = useRef(onVoiceEvent);
   const onVoiceAudioRef = useRef(onVoiceAudio);
   onMessageRef.current = onMessage;
@@ -118,6 +138,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   onContextUsageRef.current = onContextUsage;
   onCompactionRef.current = onCompaction;
   onUpdateRef.current = onUpdate;
+  onPrismPluginsRef.current = onPrismPlugins;
   onVoiceEventRef.current = onVoiceEvent;
   onVoiceAudioRef.current = onVoiceAudio;
 
@@ -214,6 +235,20 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
               (p.status === 'available' || p.status === 'updating' || p.status === 'failed')
             ) {
               onUpdateRef.current?.(p as UpdateEvent);
+            }
+            break;
+          }
+          case 'prism_plugins': {
+            const p = data.payload as Partial<PrismPluginsEvent> | undefined;
+            // Same strictness as the frames above: a malformed one must not
+            // raise a banner nothing can dismiss.
+            if (
+              (p?.status === 'reloaded' ||
+                p?.status === 'restarting' ||
+                p?.status === 'restart-required') &&
+              typeof p.revision === 'string'
+            ) {
+              onPrismPluginsRef.current?.(p as PrismPluginsEvent);
             }
             break;
           }

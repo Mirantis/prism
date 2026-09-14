@@ -1,5 +1,8 @@
 import { Link, useRouterState } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
 import { LayoutDashboard, MessageSquare, MessagesSquare, Clock, Webhook, Bot, Activity } from 'lucide-react';
+import { runtimeApi } from '@/api/runtime-client';
+import { iconFor } from '@/components/plugin-ui/icon';
 import {
   Sidebar,
   SidebarContent,
@@ -26,6 +29,12 @@ const NAV_ITEMS = [
 export function AppSidebar() {
   const agent = useAgent();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // Installed plugins are ordinary pages, listed with the built-in ones. A
+  // failure here leaves the built-in navigation intact.
+  const { data: plugins } = useQuery({
+    queryKey: ['prism-plugins'],
+    queryFn: () => runtimeApi.listPrismPlugins(),
+  });
 
   return (
     <Sidebar variant="inset">
@@ -56,6 +65,23 @@ export function AppSidebar() {
                   <SidebarMenuButton isActive={isActive} render={<Link to={to} />}>
                     <Icon className="size-4" />
                     <span>{label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })}
+            {(plugins ?? []).map((plugin) => {
+              const PluginIcon = iconFor(plugin.icon);
+              const path = `/plugins/${plugin.id}`;
+              return (
+                <SidebarMenuItem key={plugin.id}>
+                  <SidebarMenuButton
+                    isActive={pathname === path}
+                    render={
+                      <Link to="/plugins/$pluginId" params={{ pluginId: plugin.id }} />
+                    }
+                  >
+                    <PluginIcon className="size-4" />
+                    <span>{plugin.name}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               );

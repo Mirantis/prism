@@ -41,6 +41,7 @@ import { messageDeliveryService } from './services/message-delivery.service';
 import { pluginMcpService } from './services/plugin-mcp.service';
 import { updateService } from './services/update/update.service';
 import { pluginCatalogService } from './services/plugin-catalog.service';
+import { prismPluginService } from './services/prism-plugins/prism-plugin.service';
 import { reconcileAttachmentStorage } from './lib/attachment-boot';
 import { startFileJanitor } from './lib/file-janitor';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
@@ -200,6 +201,12 @@ const initialize = async () => {
       data: { status: 'IDLE' },
     });
 
+    // Build, load and schedule the Prism plugins, then watch for a change. After
+    // the agent is resolved, since a plugin's context reads agent data, and
+    // before the heartbeat, so a plugin's tools are in the first turn's set.
+    await prismPluginService.initialize(agent.userId);
+    prismPluginService.startWatching();
+
     heartbeatService.startHeartbeat(agent);
     logger.info('Heartbeat started');
 
@@ -306,6 +313,9 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   // Plugin MCP servers are child processes we spawned; close them explicitly so
   // a bare SIGTERM to the runtime doesn't orphan them.
   await pluginMcpService.shutdownAll();
+  // Stops the directory watch and every plugin job, so a shutdown the watcher
+  // itself asked for cannot be re-triggered while it runs.
+  prismPluginService.shutdown();
   await getSlackHeartbeatThrottleQueue().stop();
   await shutdownLangfuse();
   await shutdownTelemetry().catch(() => {});

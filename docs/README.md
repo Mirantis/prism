@@ -70,6 +70,9 @@ What the agent can do.
   or a repository's own `.claude/skills`.
 - **[Plugins](plugins.md)** — installable folders (the agent-plugins.org
   standard) that bundle skills together with the MCP tool servers they need.
+- **[Prism plugins](prism-plugins.md)** — pages the agent adds to the web UI
+  itself, with the endpoints and tools behind them. Ask for a page in chat and
+  it appears in the navigation.
 - **[Tools](tools.md)** — everything the agent can call: memory, self-management,
   scheduling, skills, shell, file sharing, and the coding sub-agent.
 

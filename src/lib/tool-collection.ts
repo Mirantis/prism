@@ -31,6 +31,7 @@ import {
 } from '../tools/meeting';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { pluginMcpService } from '../services/plugin-mcp.service';
+import { prismPluginService } from '../services/prism-plugins/prism-plugin.service';
 import type { PendingFileWrites } from './pending-file-writes';
 
 export interface CollectToolsInput {
@@ -156,6 +157,8 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   // Tools contributed by installed Agent Plugins, already namespaced by plugin
   // and server and in a stable order.
   const pluginTools = await pluginMcpService.getTools();
+  // Collected once at boot, so this record is the same object every turn.
+  const prismPluginTools = prismPluginService.getTools();
 
   // Merged with an explicit guard rather than a spread, so "nothing replaces a
   // built-in" is a property of this code and not of a naming convention that a
@@ -174,6 +177,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   };
   mergeWithoutOverriding(nexusTools, 'Nexus');
   mergeWithoutOverriding(pluginTools, 'Plugins');
+  mergeWithoutOverriding(prismPluginTools, 'PrismPlugins');
 
   // Applied to everything, not just the built-ins: an MCP tool that shares a
   // name with a built-in the current mode removed must not survive either.
@@ -213,7 +217,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   const tools = capToolNames(filteredTools, 'collect', reservedNames);
 
   logger.info(
-    `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} platform MCP + ${Object.keys(pluginTools).length} plugin MCP tool(s); ${subagents.length} subagent(s)`,
+    `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} platform MCP + ${Object.keys(pluginTools).length} plugin MCP + ${Object.keys(prismPluginTools).length} Prism plugin tool(s); ${subagents.length} subagent(s)`,
   );
 
   return { tools, subagents };

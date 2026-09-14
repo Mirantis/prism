@@ -21,6 +21,10 @@ import { contextUsageService, type ContextUsageEvent } from './context-usage.ser
 import { compactionService, type CompactionEvent } from './compaction.service';
 import { updateService, type UpdateEvent } from './update/update.service';
 import {
+  prismPluginService,
+  type PrismPluginChangeEvent,
+} from './prism-plugins/prism-plugin.service';
+import {
   voiceChatService,
   type VoiceChatEndStatus,
   type VoiceChatSignal,
@@ -73,6 +77,7 @@ interface WebSocketResponse {
     | 'context'
     | 'compaction'
     | 'update'
+    | 'prism_plugins'
     | 'voice_state'
     | 'voice_error'
     | 'voice_hello'
@@ -187,6 +192,14 @@ class WebSocketGatewayService {
     // the one owner user every connection is pinned to.
     updateService.events.on('update', (payload: UpdateEvent) => {
       this.broadcast(config.ownerUserId, { type: 'update', payload });
+    });
+
+    // A Prism plugin changed, so the runtime is about to restart. Install-level
+    // like an update, so it goes to the one owner user as well. The clients use
+    // it to say why the connection is about to drop; what they render afterwards
+    // comes from re-reading the plugin list on reconnect.
+    prismPluginService.events.on('changed', (payload: PrismPluginChangeEvent) => {
+      this.broadcast(config.ownerUserId, { type: 'prism_plugins', payload });
     });
   }
 

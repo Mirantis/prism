@@ -13,7 +13,8 @@ import { humanFileSize } from '../services/attachment.service';
 import { SlackTriggerMessage } from '../types';
 import { skillCatalogService, type SkillSource } from '../services/skill-catalog.service';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
-import { resolveSkillsDir, resolvePluginsDir } from '../lib/data-dir';
+import { prismPluginService } from '../services/prism-plugins/prism-plugin.service';
+import { resolveSkillsDir, resolvePluginsDir, resolvePrismPluginsDir } from '../lib/data-dir';
 import { toModelToolName } from '../lib/tool-names';
 import { renderLegacyStoredOutput } from '../lib/tool-output-limiter';
 
@@ -168,6 +169,7 @@ export async function buildSystemPromptParts(
   // tools are named — the one thing the tools block itself cannot convey.
   // Cacheable on the same terms as the skills section.
   stableSections.push(buildPluginsSection());
+  stableSections.push(buildPrismPluginsSection());
 
   // Concise delivery instructions (chat only, non-verbose)
   if (mode === 'chat' && !context.verbose) {
@@ -477,6 +479,70 @@ function buildPluginsSection(): string {
     `plugin called \`example\`. A name too long for the model's limit is shortened, so ` +
     `always call a tool by the name your tool set gives it rather than one built from ` +
     `this scheme.\n\n${install}`
+  );
+}
+
+/**
+ * The `# Prism Plugins` section: which Prism plugins are loaded, what each one
+ * contributes, and the two paths that make writing one reachable — the plugins
+ * directory, and the authoring manual.
+ *
+ * The manual is a file rather than prose here. The contract it states runs to
+ * several pages, and every turn would pay for it; naming its path costs one
+ * line and the agent reads it when it is about to write a plugin.
+ *
+ * Collapses to a sentence when nothing is loaded, on the same terms as
+ * `# Plugins`: most installs have none, and they should not pay for more than
+ * knowing the feature exists.
+ */
+function buildPrismPluginsSection(): string {
+  const dir = resolvePrismPluginsDir();
+  const guide = prismPluginService.guidePath();
+  const plugins = prismPluginService.list();
+
+  const write =
+    `Prism plugins live in \`${dir}\` — one directory each. **Creating or changing ` +
+    `one starts by reading \`${guide}\`, every time.** A plugin's page and its ` +
+    `server each answer to a contract you cannot infer from the outside — which ` +
+    `specifier the page imports, which components it may use, how it reads agent ` +
+    `state — and one written without reading that file does not load. Adding, ` +
+    `editing or deleting a plugin restarts the runtime once the current turn ` +
+    `finishes.`;
+
+  if (plugins.length === 0) {
+    return (
+      `# Prism Plugins\n\n` +
+      `A Prism plugin adds a page to the web UI, and can add HTTP routes, tools ` +
+      `you can call, and scheduled jobs. None are installed. ${write}`
+    );
+  }
+
+  const listed = plugins.slice(0, MAX_PLUGINS_LISTED);
+  const overflow = plugins.length - listed.length;
+
+  const lines = listed.map((p) => {
+    const parts: string[] = [];
+    if (p.hasPage) parts.push('page');
+    if (p.routes > 0) parts.push(`${p.routes} route(s)`);
+    // Named by prefix rather than listed: the tools block already has the names.
+    if (p.tools > 0) parts.push(`tools prefixed \`${p.id}__\``);
+    if (p.jobs > 0) parts.push(`${p.jobs} job(s)`);
+    if (p.diagnostics.length > 0) parts.push(`**${p.diagnostics.length} problem(s)**`);
+    const detail = parts.length > 0 ? ` (${parts.join('; ')})` : '';
+    const version = p.version ? ` v${p.version}` : '';
+    return `- **${p.id}**${version}${p.description ? ` — ${p.description}` : ''}${detail}`;
+  });
+
+  return (
+    `# Prism Plugins\n\n` +
+    `These Prism plugins are loaded. Each adds a page to the web UI and can add ` +
+    `HTTP routes, tools (already in your tool set) and scheduled jobs.\n\n` +
+    lines.join('\n') +
+    (overflow > 0 ? `\n\n(+${overflow} more loaded.)` : '') +
+    `\n\nA plugin's tools are named \`<plugin>__<tool>\`. A name too long for the ` +
+    `model's limit is shortened, so always call a tool by the name your tool set ` +
+    `gives it rather than one built from this scheme. A plugin reporting a problem ` +
+    `shows the detail on its own page in the web UI.\n\n${write}`
   );
 }
 
@@ -886,4 +952,4 @@ Everything else is unaffected: you can still search long-term memory, run tools,
 
 // Exported for unit tests: these sections read the filesystem, so asserting on
 // them directly is cheaper and clearer than through a whole prompt build.
-export const __test = { buildSkillsSection, buildPluginsSection };
+export const __test = { buildSkillsSection, buildPluginsSection, buildPrismPluginsSection };

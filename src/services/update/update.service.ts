@@ -30,13 +30,8 @@ import {
 } from '../../constants';
 import { logger } from '../../logger';
 import { prisma } from '../../lib/prisma';
+import { isRuntimeIdle } from '../../lib/runtime-idle';
 import { trackEvent } from '../../lib/telemetry';
-import { agentStatusService } from '../agent-status.service';
-import { compactionService } from '../compaction.service';
-import { cronSchedulerService } from '../cron-scheduler.service';
-import { goalService } from '../goal.service';
-import { meetingBotService } from '../meeting/meeting-bot.service';
-import { threadTurnService } from '../thread-turn.service';
 import { compareReleaseVersions, fetchLatestReleaseVersion } from './ghcr';
 import {
   removeStagedRelease,
@@ -392,25 +387,7 @@ class UpdateService {
   }
 
   private async isIdle(): Promise<boolean> {
-    if (
-      agentStatusService.isBusy() ||
-      threadTurnService.hasLiveExchange() ||
-      meetingBotService.isActive ||
-      cronSchedulerService.hasRunningTask() ||
-      goalService.hasLiveLoops() ||
-      compactionService.hasInFlight()
-    ) {
-      return false;
-    }
-
-    // Imported here rather than at the top: this service is reachable from the
-    // WebSocket gateway, and the shell tool modules have no business in that
-    // import graph. An updater that never runs never loads them.
-    const [{ getProcessManager }, { getAgentTaskManager }] = await Promise.all([
-      import('../../tools/shell/process-manager'),
-      import('../../tools/shell/agent-task-manager'),
-    ]);
-    return getProcessManager().runningCount() === 0 && getAgentTaskManager().runningCount() === 0;
+    return isRuntimeIdle();
   }
 
   /**

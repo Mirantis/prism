@@ -1455,3 +1455,99 @@ need. The standard defines exactly two component types and nothing else.
 - **Deliberately out of scope**, because the spec defers all of it: enable/
   disable state, a registry, signing or provenance, and reverse-domain extension
   namespaces (parsed for validity, then ignored — which is conformant).
+
+## Prism Plugins
+
+The runtime's **own** extension format, separate from Agent Plugins above: a
+folder that adds a page to the web UI and, optionally, HTTP routes, agent tools
+and scheduled jobs. Nothing about it is portable — a plugin's backend runs
+inside this process.
+
+- **Layout.** `<DATA>/prism-plugins/<id>/` holding a required
+  `prism-plugin.json` (`apiVersion: 1` + `name`; a version field rather than a
+  `$schema` URL, since there is no published schema to point at), an optional
+  `web/page.tsx`, an optional `server/index.ts` and an optional `public/`. Build
+  output and per-plugin data are *siblings* (`prism-plugin-build/`,
+  `prism-plugin-data/`), so delete-and-re-drop is a clean reinstall. No env
+  override — `PRISM_DATA_DIR` already moves the whole tree.
+- **A page change reloads; a server change restarts.** The split is what makes
+  the feature usable, not an optimization. The page is built to a file the
+  browser fetches by URL, so replacing it needs no new process; the manifest and
+  `server/` load once per process, so they do. `catalog.service.ts` carries both
+  a whole-plugin `revision` and a `serverRevision` over the manifest plus
+  `server/**` (`isServerHalf`), and `onChange` compares the latter. Getting this
+  wrong is not a small cost: the agent writes a plugin one file at a time, so a
+  restart on the first file ends the turn that was going to write the rest.
+- **The restart only happens where something will start another process.**
+  `lib/runtime-restart.ts#respawnGate` answers that — an installed binary
+  (launchd `KeepAlive` / systemd `Restart=always`, but not the Windows scheduled
+  task, which restarts on failure only) or a container. Otherwise the runtime
+  stays up and announces `restart-required` with an instruction, because ending
+  a process nothing will restart takes the agent down and leaves it down.
+  `docs/docker.md` and the root README document `--restart unless-stopped` so
+  the container path is a respawning one.
+- **Nothing outside the runtime watches the plugins dir.** `npm run dev` briefly
+  had `tsx watch --include` pointed at it so the dev loop would restart, and it
+  killed the agent mid-turn every time: tsx restarts on a file change and cannot
+  know a turn is in flight, which is exactly the moment a plugin is being
+  written. `prismPluginService`'s own watcher is the only one, and it waits on
+  `lib/runtime-idle.ts#isRuntimeIdle` (extracted from `UpdateService`, which now
+  delegates to it) before raising SIGTERM, so the graceful path runs.
+- **The revision is a content hash**, not mtime+size like the other catalogs.
+  Those only re-scan on a false positive; this one restarts the runtime, so an
+  identical rewrite — a tool writing a file twice, a checkout, a harness
+  re-seeding a fixture — must not count. The cheap mtime+size fingerprint is
+  kept for the scan cache, where it is a strict superset trigger, so the hash is
+  computed on a rescan rather than on every prompt build.
+- **The page is bound to the SPA's own React and components.** `build.ts` runs
+  esbuild with `jsxImportSource: '@prism/plugin'`, and `host-shim.ts` resolves
+  that specifier plus `@prism/plugin/jsx-runtime` to a global the SPA installs
+  (`web/src/plugin-host/`). One default export, so a component added host-side
+  needs no change on the runtime side; the plugin's id is written into the
+  module at build time rather than read from the host, since `api` is
+  plugin-scoped and a page reads the host once as it evaluates. A direct import
+  of `react`, `react-dom`, `@tanstack/react-query` or `lucide-react` is a build
+  error naming the host import. **esbuild moved to `dependencies`** and ships in
+  the SEA sidecar (`build-sea.mjs` external + `collect-natives.mjs` root).
+- **Plugin pages set no `className`.** Tailwind builds the stylesheet by reading
+  `web/`'s source, which a plugin is not part of, so a utility class there
+  produces no rule. `web/src/components/plugin-ui/` exists so nothing needs one.
+- **Tool input is JSON Schema**, converted with the AI SDK's `jsonSchema()`:
+  nothing installs dependencies for a plugin, so it cannot import zod or `ai`.
+  Names are `<pluginId>__<tool>` through `lib/tool-names.ts` and merge last in
+  `collectTools()` behind the same explicit guard MCP tools use.
+- **The import graph is kept narrow on purpose.** `loader.ts` imports `ai`
+  dynamically and `prism-plugin.service.ts` imports `runtime-idle` dynamically,
+  because the WebSocket gateway imports that service and the boot census reads
+  the catalog — neither has any business loading the AI SDK or the shell tool
+  modules.
+- **The agent's manual is a file, not prompt text.** `prompts/prism-plugin-guide.ts`
+  holds it as a constant, written to `<DATA>/prism-plugins/AUTHORING.md` on every
+  boot (so the path exists in the container, which does not copy `docs/`, and in
+  the SEA binary, and so it can never describe a different runtime than the one
+  running). `buildPrismPluginsSection()` names that path and tells the agent to
+  read it before writing a plugin — the only prompt section that points at a
+  file, and worded to say why it is necessary, because a softer instruction was
+  skipped. It also emits `.types/prism-plugin.d.ts` from the same module;
+  `prism-plugin-guide.test.ts` fails when a type in `types.ts` has no
+  counterpart there.
+- **Both generated files are written only when their content differs.** They land
+  inside the directory `npm run dev` has tsx watch, so an unconditional write
+  moved their mtimes on every boot and the dev loop restarted about once a
+  second, forever. `authoring-files.test.ts` pins it.
+- **Nothing throws.** A malformed manifest hides one plugin; a page that will not
+  build still appears with the message on its own page, which is the normal state
+  while the agent is writing one.
+- **Every `sendFile` here passes `dotfiles: 'allow'`.** `send` refuses a path
+  holding a dot segment, and every real path has one: the data dir is
+  `~/.prism`, and a worktree's checkout sits under `.claude/`. This also fixed
+  the SPA fallback in `server.ts`, where it had been answering 404 to every deep
+  link on a hard refresh while `/` kept working through the static mount. A temp
+  dir without a dot segment hides it, so `server.test.ts` and
+  `routes/prism-plugins.test.ts` both use one with it.
+- **The security posture is wider than Agent Plugins'** and stated as such in
+  `docs/prism-plugins.md`: a page runs in the SPA's origin and a server module
+  runs in this process with its credentials, where an Agent Plugin's MCP server
+  is a child process with six environment variables. That is inherent — a page
+  using Prism's components has to run in Prism's document — and accepted rather
+  than mitigated.

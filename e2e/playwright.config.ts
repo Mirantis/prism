@@ -24,6 +24,24 @@ const SQLITE_SCHEMA_DIR = path.join(REPO_ROOT, 'prisma', 'sqlite');
 const E2E_DB_FILE = path.join(SQLITE_SCHEMA_DIR, 'e2e.db');
 const E2E_DATABASE_URL = 'file:./e2e.db';
 
+/**
+ * Write a fixture only when its content differs.
+ *
+ * Playwright loads this config in the runner *and* in every worker, so a plain
+ * `writeFileSync` rewrites each fixture after the runtime is already up. The
+ * bytes are identical but the mtime is not, and the runtime watches the Prism
+ * plugins dir — so an unconditional write looked like a plugin edit and
+ * restarted the runtime mid-suite.
+ */
+function writeFixture(target: string, content: string): void {
+  try {
+    if (fs.readFileSync(target, 'utf8') === content) return;
+  } catch {
+    // Absent or unreadable — write it.
+  }
+  fs.writeFileSync(target, content);
+}
+
 // Writable workspace for the agent's shell/share_file tools — the `/home/node`
 // default isn't writable on CI, so outbound file-sharing (create-then-share)
 // would fail without this. Created at config load so it exists before the
@@ -39,7 +57,7 @@ fs.mkdirSync(E2E_WORKSPACE, { recursive: true });
 const E2E_DATA_DIR = path.join(os.tmpdir(), 'prism-e2e-data');
 const E2E_ECHO_SKILL_DIR = path.join(E2E_DATA_DIR, 'skills', 'echo-marker');
 fs.mkdirSync(E2E_ECHO_SKILL_DIR, { recursive: true });
-fs.writeFileSync(
+writeFixture(
   path.join(E2E_ECHO_SKILL_DIR, 'SKILL.md'),
   '---\nname: echo-marker\ndescription: Reply with a fixed test marker.\n---\n\n' +
     'When this skill is invoked, reply with exactly the following text and nothing else:\n\n' +
@@ -51,7 +69,7 @@ fs.writeFileSync(
 // that the skill it contributes reaches the catalog labelled as plugin-provided.
 const E2E_PLUGIN_DIR = path.join(E2E_DATA_DIR, 'plugins', 'demo');
 fs.mkdirSync(path.join(E2E_PLUGIN_DIR, 'skills', 'plugin-marker'), { recursive: true });
-fs.writeFileSync(
+writeFixture(
   path.join(E2E_PLUGIN_DIR, 'plugin.json'),
   JSON.stringify({
     $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
@@ -60,11 +78,117 @@ fs.writeFileSync(
     description: 'A demo plugin.',
   }),
 );
-fs.writeFileSync(
+writeFixture(
   path.join(E2E_PLUGIN_DIR, 'skills', 'plugin-marker', 'SKILL.md'),
   '---\nname: plugin-marker\ndescription: Reply with a fixed plugin marker.\n---\n\n' +
     'When this skill is invoked, reply with exactly the following text and nothing else:\n\n' +
     'PLUGIN_SKILL_RAN_OK\n',
+);
+
+// Two Prism plugins (this runtime's own extension format), seeded the same way.
+// `costs` is well-formed and its page is what the web scenarios walk; `broken`
+// has a page that will not compile, which is how the diagnostic path is
+// exercised — a plugin whose page fails to build still appears, with the message
+// on its own page.
+const E2E_PRISM_PLUGIN_DIR = path.join(E2E_DATA_DIR, 'prism-plugins', 'costs');
+fs.mkdirSync(path.join(E2E_PRISM_PLUGIN_DIR, 'web'), { recursive: true });
+fs.mkdirSync(path.join(E2E_PRISM_PLUGIN_DIR, 'server'), { recursive: true });
+fs.mkdirSync(path.join(E2E_PRISM_PLUGIN_DIR, 'public'), { recursive: true });
+writeFixture(
+  path.join(E2E_PRISM_PLUGIN_DIR, 'prism-plugin.json'),
+  JSON.stringify({
+    apiVersion: 1,
+    name: 'costs',
+    version: '1.0.0',
+    description: 'Cloud spend by service.',
+    icon: 'wallet',
+  }),
+);
+writeFixture(
+  path.join(E2E_PRISM_PLUGIN_DIR, 'web', 'page.tsx'),
+  `import host from '@prism/plugin';
+
+const { useQuery, api, ui } = host;
+const { Stack, PageHeader, Card, CardContent, Table, TableHeader, TableBody,
+        TableHead, TableRow, TableCell, Badge, Skeleton } = ui;
+
+export default function Page() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['costs', 'summary'],
+    queryFn: () => api.get('/summary'),
+  });
+
+  if (isLoading) return <Skeleton />;
+
+  return (
+    <Stack>
+      <PageHeader title="Costs" description={'Total ' + String(data?.total ?? 0) + ' USD'} />
+      <Card>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Service</TableHead>
+                <TableHead>USD</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(data?.rows ?? []).map((row) => (
+                <TableRow key={row.service}>
+                  <TableCell>{row.service}</TableCell>
+                  <TableCell><Badge>{row.usd}</Badge></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </Stack>
+  );
+}
+`,
+);
+writeFixture(
+  path.join(E2E_PRISM_PLUGIN_DIR, 'server', 'index.ts'),
+  `export default function plugin(ctx) {
+  return {
+    routes: [
+      {
+        method: 'GET',
+        path: '/summary',
+        handler: () => ({
+          total: 128,
+          rows: [
+            { service: 'compute', usd: 96 },
+            { service: 'storage', usd: 32 },
+          ],
+        }),
+      },
+      { method: 'GET', path: '/where', handler: () => ({ dataDir: ctx.dataDir }) },
+    ],
+    tools: [
+      {
+        name: 'cost_summary',
+        description: 'Current cloud spend for this month, broken down by service.',
+        inputSchema: { type: 'object', properties: {} },
+        execute: () => ({ total: 128 }),
+      },
+    ],
+  };
+}
+`,
+);
+writeFixture(path.join(E2E_PRISM_PLUGIN_DIR, 'public', 'note.txt'), 'PLUGIN_ASSET_OK\n');
+
+const E2E_BROKEN_PLUGIN_DIR = path.join(E2E_DATA_DIR, 'prism-plugins', 'broken');
+fs.mkdirSync(path.join(E2E_BROKEN_PLUGIN_DIR, 'web'), { recursive: true });
+writeFixture(
+  path.join(E2E_BROKEN_PLUGIN_DIR, 'prism-plugin.json'),
+  JSON.stringify({ apiVersion: 1, name: 'broken', description: 'A page that will not compile.' }),
+);
+writeFixture(
+  path.join(E2E_BROKEN_PLUGIN_DIR, 'web', 'page.tsx'),
+  'export default function Page() { return <div>;\n',
 );
 
 // Provision the SQLite e2e DB *at config load* so it exists before

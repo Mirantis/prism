@@ -120,7 +120,7 @@ it so future runs proceed without asking.
 Start the agent and boot into terminal ui:
 
 ```bash
-docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK ghcr.io/lensapp/prism-agent:latest /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
+docker run -it --restart unless-stopped -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK ghcr.io/lensapp/prism-agent:latest /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
 ```
 
 `AWS_BEARER_TOKEN_BEDROCK` must be set in your shell environment — `-e
@@ -330,13 +330,15 @@ the existing workspace and reuse it.
 ```bash
 docker build -t prism .
 docker run -p 3003:3003 \
+  --restart unless-stopped \
   -v prism-data:/data \
   -e AWS_BEARER_TOKEN_BEDROCK=<bedrock-key> \
   prism
 ```
 
 Mount a volume at `/data` so the agent's database survives container
-restarts.
+restarts, and give the container a restart policy so it comes back when the
+agent restarts itself to load a changed plugin.
 
 ## Configuration
 
