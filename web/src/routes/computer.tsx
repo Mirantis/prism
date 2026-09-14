@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Monitor, LoaderCircle } from 'lucide-react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useAgent } from '@/lib/agent-context';
 import { useVoiceChat, type Viewport, type VoiceChatState } from '@/hooks/use-voice-chat';
@@ -14,10 +15,10 @@ export const Route = createFileRoute('/computer')({
   component: ComputerPage,
 });
 
-/** What to say about the connection. Nothing while it is live: the controls speak for it. */
+/** Connection status shown beside the computer title. */
 const STATE_LABEL: Record<VoiceChatState, string> = {
   connecting: 'Connecting…',
-  ready: '',
+  ready: 'Live',
   ended: 'Voice chat ended. Reload the page to start again.',
   error: 'Voice chat could not start.',
   'mic-denied': 'Microphone access is needed for voice chat.',
@@ -57,19 +58,26 @@ function ComputerPage() {
   }, [live, sharing, stopSharing]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col items-center gap-4 rounded-xl bg-zinc-900 p-4">
-        {/* The agent's screen, live, with the agent's own tile laid over one corner. */}
+    <div className="space-y-4">
+      <div className="overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+            <Monitor className="size-4 text-zinc-400" /> Agent computer
+          </div>
+          <div role="status" className="flex items-center gap-2 text-xs text-zinc-300">
+            {state === 'connecting' ? <LoaderCircle className="size-3 motion-safe:animate-spin" /> :
+              <span className={`size-1.5 rounded-full ${live ? 'bg-emerald-400' : 'bg-zinc-500'}`} />}
+            {STATE_LABEL[state]}
+          </div>
+        </div>
         <ScreenView
           screenRef={screenRef}
           hasScreen={hasScreen}
           controllable={hasDesktop && state === 'ready'}
           onInput={sendInput}
           onViewport={onViewport}
+          state={state}
         >
-          <div className="absolute bottom-3 left-3 w-40 drop-shadow-lg sm:w-52 md:w-64">
-            <AgentTile name={agent.name} speaking={agentSpeaking} compact />
-          </div>
           {hasScreen && SCREEN_STATS_SHOWN && (
             <div className="absolute bottom-3 right-3">
               <FrameStats lastFrame={lastFrame} />
@@ -82,11 +90,9 @@ function ComputerPage() {
           )}
         </ScreenView>
 
-        <div className="flex flex-col items-center gap-3">
-          {STATE_LABEL[state] && <p className="text-sm text-zinc-400">{STATE_LABEL[state]}</p>}
-          {message && <p className="text-xs text-zinc-500">{message}</p>}
-          {share.error && <p className="text-xs text-red-400">{share.error}</p>}
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-4 border-t border-white/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <AgentTile name={agent.name} speaking={agentSpeaking} connected={live} />
+          <div className="flex flex-wrap items-center gap-2">
             <MuteButton muted={muted} disabled={state !== 'ready'} onToggle={toggleMute} />
             <ShareButton
               sharing={share.sharing}
@@ -95,7 +101,16 @@ function ComputerPage() {
             />
           </div>
         </div>
+        {(message || share.error) && (
+          <div role="alert" className="space-y-1 border-t border-white/10 px-4 py-3 text-sm text-rose-300">
+            {message && <p>{message}</p>}
+            {share.error && <p>{share.error}</p>}
+          </div>
+        )}
       </div>
+      <p className="text-center text-xs leading-5 text-muted-foreground">
+        Click the screen to take control · Press <kbd className="rounded border bg-muted px-1 py-0.5 font-sans">Esc</kbd> to release · Paste to type on the computer
+      </p>
     </div>
   );
 }

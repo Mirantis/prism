@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from 'react';
-import { Maximize, Minimize } from 'lucide-react';
+import { Maximize, Minimize, Monitor, LoaderCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { InputFrame } from '@/hooks/use-voice-chat';
+import type { InputFrame, VoiceChatState } from '@/hooks/use-voice-chat';
 
 interface ScreenViewProps {
   /** The image the runtime's pictures are drawn into; owned by the voice chat hook. */
   screenRef: RefObject<HTMLCanvasElement | null>;
   hasScreen: boolean;
+  state: VoiceChatState;
   /**
    * The size of this box in device pixels, whenever it changes.
    *
@@ -47,6 +48,7 @@ const VIEWPORT_SETTLE_MS = 250;
 export function ScreenView({
   screenRef,
   hasScreen,
+  state,
   controllable,
   onInput,
   onViewport,
@@ -243,7 +245,7 @@ export function ScreenView({
       ref={boxRef}
       onClick={takeControl}
       className={cn(
-        'relative aspect-video w-full overflow-hidden rounded-lg bg-black select-none',
+        'relative aspect-video w-full overflow-hidden bg-zinc-950 select-none',
         canTake && 'cursor-pointer',
       )}
     >
@@ -253,9 +255,21 @@ export function ScreenView({
         className={cn('h-full w-full object-contain', !hasScreen && 'invisible')}
       />
       {!hasScreen && (
-        <p className="absolute inset-0 flex items-center justify-center text-sm text-zinc-500">
-          Starting the agent's screen…
-        </p>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
+          <div className="flex size-14 items-center justify-center rounded-2xl border border-white/10 bg-zinc-900 text-zinc-400">
+            {state === 'connecting' || state === 'ready'
+              ? <LoaderCircle className="size-6 motion-safe:animate-spin" />
+              : <Monitor className="size-6" />}
+          </div>
+          <p className="text-sm font-medium text-zinc-200">
+            {state === 'connecting' || state === 'ready' ? 'Preparing your computer' : 'Computer unavailable'}
+          </p>
+          <p className="max-w-xs text-xs leading-5 text-zinc-400">
+            {state === 'connecting' || state === 'ready'
+              ? "The agent’s screen will appear here when it is ready."
+              : 'Check the connection status above for details.'}
+          </p>
+        </div>
       )}
       {controlling && (
         <div className="absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-sky-500/90 px-4 py-1.5 text-sm font-medium text-white shadow">
@@ -264,8 +278,8 @@ export function ScreenView({
       )}
       {hasScreen && (
         <div className="absolute right-3 top-3 flex items-center gap-2">
-          {canTake && (
-            <p className="rounded-md bg-black/50 px-2 py-1 text-xs text-zinc-300">
+          {canTake && fullscreen && (
+            <p className="hidden rounded-md bg-black/70 px-2 py-1 text-xs sm:block text-zinc-300">
               Click to control the screen · paste types into it
             </p>
           )}
@@ -273,7 +287,7 @@ export function ScreenView({
             type="button"
             aria-label={fullscreen ? 'Exit fullscreen' : 'Open fullscreen'}
             onClick={toggleFullscreen}
-            className="flex size-7 cursor-pointer items-center justify-center rounded-md bg-black/50 text-zinc-300 hover:bg-black/70 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            className="flex size-9 cursor-pointer items-center justify-center rounded-md bg-black/50 text-zinc-300 hover:bg-black/70 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
           >
             {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
           </button>
