@@ -51,7 +51,7 @@ describe('pictureFor', () => {
   it('caps a larger screen without changing its shape', () => {
     // Every screenshot is billed by the pixel, and a screen twice the size reads no
     // better. The shape is kept so the model is not reading a stretched desktop.
-    const picture = pictureFor({ width: 2560, height: 1440 });
+    const picture = pictureFor({ width: 1920, height: 1080 });
     expect(picture.width).toBe(PICTURE_MAX_WIDTH);
     expect(picture.height).toBe(720);
   });
