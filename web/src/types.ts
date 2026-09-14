@@ -268,6 +268,26 @@ export interface SkillSummary {
 }
 
 /** An installed Agent Plugin (agent-plugins.org), as listed by GET /agents/plugins. */
+/**
+ * One Prism plugin. Distinct from `PluginSummary`, which is an Agent Plugin —
+ * a portable skills-and-MCP bundle rather than a page in this UI.
+ */
+export interface PrismPluginSummary {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  /** A lucide icon name for the nav entry. Unknown names fall back to a generic glyph. */
+  icon?: string;
+  /** Changes whenever the plugin's files change; part of its page's module URL. */
+  revision: string;
+  hasPage: boolean;
+  routes: number;
+  tools: number;
+  jobs: number;
+  diagnostics: string[];
+}
+
 export interface PluginSummary {
   id: string;
   name: string;

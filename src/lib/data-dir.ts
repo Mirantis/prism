@@ -74,10 +74,41 @@ export function resolveToolOutputDir(): string {
   return path.join(resolveDataDir(), 'tool-outputs');
 }
 
+/**
+ * Canonical Prism Plugins directory — this runtime's own extension format
+ * (a page for the web UI plus an optional in-process backend), distinct from
+ * the portable Agent Plugins bundles under `resolvePluginsDir()`.
+ *
+ * No env override: `PRISM_DATA_DIR` already relocates the whole tree, which is
+ * what the container sets and what the tests use.
+ */
+export function resolvePrismPluginsDir(): string {
+  return path.join(resolveDataDir(), 'prism-plugins');
+}
+
+/**
+ * Where a Prism plugin's built page and server modules are cached, keyed by
+ * plugin id. A sibling of the plugins dir rather than a child of the plugin, so
+ * deleting and re-dropping a plugin folder is a clean reinstall.
+ */
+export function resolvePrismPluginBuildDir(pluginId: string): string {
+  return path.join(resolveDataDir(), 'prism-plugin-build', path.basename(pluginId));
+}
+
+/**
+ * A Prism plugin's own persistent directory, handed to it as `ctx.dataDir`.
+ * A sibling for the same reason as the build dir: a plugin's data outlives the
+ * plugin folder it belongs to.
+ */
+export function resolvePrismPluginDataDir(pluginId: string): string {
+  return path.join(resolveDataDir(), 'prism-plugin-data', path.basename(pluginId));
+}
+
 export interface DataDirsSetup {
   dataDir: string;
   skillsDir: string;
   pluginsDir: string;
+  prismPluginsDir: string;
   mediaDir: string;
   toolOutputDir: string;
   /** The intended data dir we couldn't create (so the caller can warn), else null. */
@@ -114,8 +145,8 @@ export function ensureSymlink(target: string, linkPath: string): boolean {
 }
 
 /**
- * Ensure the data dir and the canonical skills, plugins, media and tool-output
- * dirs exist. The coding agent's own home inside the data dir is the adapter's
+ * Ensure the data dir and the canonical skills, plugins, Prism plugins, media
+ * and tool-output dirs exist. The coding agent's own home inside the data dir is the adapter's
  * business (`CodingAgent.prepareHome`), run by `index.ts` right after this.
  *
  * Mirrors `ensureWorkspaceRoot()`'s temp-dir fallback: when the intended data
@@ -139,10 +170,12 @@ export function ensureDataDirs(): DataDirsSetup {
 
   const skillsDir = resolveSkillsDir();
   const pluginsDir = resolvePluginsDir();
+  const prismPluginsDir = resolvePrismPluginsDir();
   const mediaDir = resolveMediaDir();
   const toolOutputDir = resolveToolOutputDir();
   fs.mkdirSync(skillsDir, { recursive: true });
   fs.mkdirSync(pluginsDir, { recursive: true });
+  fs.mkdirSync(prismPluginsDir, { recursive: true });
   fs.mkdirSync(mediaDir, { recursive: true });
   fs.mkdirSync(toolOutputDir, { recursive: true });
 
@@ -150,6 +183,7 @@ export function ensureDataDirs(): DataDirsSetup {
     dataDir,
     skillsDir,
     pluginsDir,
+    prismPluginsDir,
     mediaDir,
     toolOutputDir,
     fellBackFrom,

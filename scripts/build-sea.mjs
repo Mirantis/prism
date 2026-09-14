@@ -68,7 +68,16 @@ const TARGETS = {
   'prism-server': {
     entry: 'src/sea/server-entry.ts',
     // Native addons + sidecar-loaded modules + pino's worker-thread transport.
-    external: ['better-sqlite3', '@prisma/client', 'sqlite-vec', 'pino-pretty', ...UNBUNDLABLE],
+    // esbuild builds a Prism plugin at runtime and carries a platform binary,
+    // so it ships in the sidecar rather than in the bundle.
+    external: [
+      'better-sqlite3',
+      '@prisma/client',
+      'sqlite-vec',
+      'pino-pretty',
+      'esbuild',
+      ...UNBUNDLABLE,
+    ],
   },
 };
 const cfg = TARGETS[target];

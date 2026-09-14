@@ -35,7 +35,8 @@ container; the agent's state survives on the `/data` volume.
 ## Run the agent and boot into the terminal UI
 
 ```bash
-docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK \
+docker run -it --restart unless-stopped \
+  -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK \
   ghcr.io/lensapp/prism-agent:latest \
   /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
 ```
@@ -47,6 +48,9 @@ This starts the runtime in the background and attaches your terminal to the
   parent shell — so export it first: `export AWS_BEARER_TOKEN_BEDROCK=<your-key>`.
 - `-v prism-data:/data` persists the agent's database in the `prism-data` named
   volume across container restarts.
+- `--restart unless-stopped` brings the container back after the agent restarts
+  itself, which is how it loads a changed
+  **[Prism plugin](prism-plugins.md)**. Without it the container stops instead.
 - `-p 3003:3003` exposes the runtime so you can also reach the
   **[Web UI](web-ui.md)** at <http://localhost:3003>. That publishes the port on
   every interface of the host, so the network can connect to it. Publish it to
@@ -61,6 +65,7 @@ attached TUI, run the image with its default entrypoint:
 
 ```bash
 docker run -d --name prism \
+  --restart unless-stopped \
   -p 3003:3003 \
   -v prism-data:/data \
   -e AWS_BEARER_TOKEN_BEDROCK=<your-key> \

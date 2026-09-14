@@ -22,6 +22,7 @@ import { trackEvent, isTelemetryEnabled } from './telemetry';
 import { modelCatalogState } from './model-catalog';
 import { skillCatalogService } from '../services/skill-catalog.service';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
+import { prismPluginCatalogService } from '../services/prism-plugins/catalog.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 
 export async function trackAgentStarted(
@@ -38,6 +39,7 @@ export async function trackAgentStarted(
     // which includes any a plugin contributes.
     const skills = skillCatalogService.getCatalog();
     const plugins = pluginCatalogService.getPlugins();
+    const prismPlugins = prismPluginCatalogService.getPlugins();
     const subagents = await agentWorkspaceService.getSubagents(agent.id);
 
     trackEvent('agent started', agent.userId, {
@@ -86,6 +88,7 @@ export async function trackAgentStarted(
       'cron.tasks': String(opts.cronTasks),
       'skills.count': String(skills.length),
       'plugins.count': String(plugins.length),
+      'prism_plugins.count': String(prismPlugins.length),
       'agent.subagents': String(subagents.length),
     });
   } catch (error: unknown) {

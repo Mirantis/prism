@@ -15,6 +15,7 @@ import type {
   OverrideModelInfo,
   SkillSummary,
   PluginSummary,
+  PrismPluginSummary,
   Goal,
   WebhookSubscription,
   UpdateStatus,
@@ -337,6 +338,9 @@ export const runtimeApi = {
   },
   deleteAttachment: (id: string) =>
     request<{ success: true }>(`/agents/attachments/${id}`, { method: 'DELETE' }),
+
+  // Prism plugins
+  listPrismPlugins: () => request<PrismPluginSummary[]>('/agents/prism-plugins'),
 
   // Activity
   llmUsage: (hours: number) =>

@@ -1,4 +1,6 @@
 import { Link, useRouterState } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
+import { runtimeApi } from '@/api/runtime-client';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -19,8 +21,12 @@ const ROUTE_TITLES: Record<string, string> = {
   '/activity': 'Activity',
 };
 
-function titleFor(pathname: string): string {
+function titleFor(pathname: string, pluginNames: Map<string, string>): string {
   if (pathname in ROUTE_TITLES) return ROUTE_TITLES[pathname];
+  // A plugin page's title is the plugin's own name, which is only known at
+  // runtime — so it is looked up rather than listed above.
+  const pluginId = pathname.startsWith('/plugins/') ? pathname.slice('/plugins/'.length) : null;
+  if (pluginId) return pluginNames.get(pluginId) ?? pluginId;
   const match = Object.entries(ROUTE_TITLES).find(
     ([path]) => path !== '/' && pathname.startsWith(path),
   );
@@ -30,7 +36,14 @@ function titleFor(pathname: string): string {
 export function AppBreadcrumb() {
   const agent = useAgent();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const title = titleFor(pathname);
+  const { data: plugins } = useQuery({
+    queryKey: ['prism-plugins'],
+    queryFn: () => runtimeApi.listPrismPlugins(),
+  });
+  const title = titleFor(
+    pathname,
+    new Map((plugins ?? []).map((p) => [p.id, p.name])),
+  );
   const isRoot = pathname === '/';
 
   return (

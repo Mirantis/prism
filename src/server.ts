@@ -31,6 +31,7 @@ import { agentGuideRouter } from './routes/agent-guide';
 import { updateRouter } from './routes/update';
 import { originGuard } from './lib/origin-guard';
 import { activityRouter } from './routes/activity';
+import { prismPluginsRouter } from './routes/prism-plugins';
 
 export function createApp() {
   const app = express();
@@ -63,6 +64,10 @@ export function createApp() {
   // GET /agents/activity/*
   app.use('/agents', activityRouter);
 
+  // Prism plugins: the catalog, each plugin's built page, its static files and
+  // its own routes. Under /agents so the SPA catch-all below skips it.
+  app.use('/agents', prismPluginsRouter);
+
   // Thread and message routes: /threads, /latest-thread and /messages.
   // Mounted at the root and registered before the SPA fallback so these
   // explicit routes win over the static catch-all.
@@ -78,8 +83,13 @@ export function createApp() {
     : path.resolve(__dirname, '../web/dist');
   if (fs.existsSync(webDist)) {
     app.use(express.static(webDist, { index: 'index.html' }));
+    // `dotfiles: 'allow'` because an installed binary's web dir is
+    // `~/.prism/web` and a worktree's is under `.claude/`, and `send` refuses
+    // any path holding a dot segment — which made every deep link 404 on a hard
+    // refresh while `/` kept working through the static mount above. The path
+    // is this one file, not one a request supplied.
     app.get(/^\/(?!agents|api|health|threads|messages|latest-thread).*/, (_req, res) => {
-      res.sendFile(path.join(webDist, 'index.html'));
+      res.sendFile(path.join(webDist, 'index.html'), { dotfiles: 'allow' });
     });
   }
 

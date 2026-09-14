@@ -2,7 +2,9 @@
 
 **Agent Plugins** package capabilities into a single distributable folder. They
 follow the open [agent-plugins.org](https://agent-plugins.org) standard (version
-1.0.0), so a plugin written for another agent works here unchanged.
+1.0.0), so a plugin written for another agent works here unchanged. They are a
+different feature from [Prism plugins](prism-plugins.md), which add pages and
+endpoints to this runtime alone.
 
 Where a **[skill](skills.md)** carries instructions, a plugin can carry
 instructions *and* the tools those instructions need. A plugin contributes two

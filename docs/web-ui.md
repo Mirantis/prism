@@ -15,6 +15,9 @@ The UI is organized around a left sidebar with seven sections: **Overview**,
 **Chat**, **Channels**, **Scheduled Tasks**, **Webhooks**, **Profile**, and
 **Activity**.
 
+An installed [Prism plugin](prism-plugins.md) adds its own page below these,
+named after the plugin.
+
 ## Overview
 
 The landing page. It shows the agent's status (RUNNING / IDLE / ERROR), its
