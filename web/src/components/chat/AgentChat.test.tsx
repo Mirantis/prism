@@ -214,7 +214,9 @@ describe('AgentChat voice call', () => {
 
     fireEvent.click(screen.getByTestId('voice-start'));
     // The call is asked for on the thread being viewed, so the agent's tools have one.
-    await waitFor(() => expect(wsHolder.sendVoiceStart).toHaveBeenCalledWith('t1'));
+    await waitFor(() =>
+      expect(wsHolder.sendVoiceStart).toHaveBeenCalledWith({ threadId: 't1' }),
+    );
 
     act(() => wsHolder.onVoiceEvent!({ type: 'state', state: 'live' } satisfies VoiceEvent));
     expect(screen.getByTestId('voice-status').textContent).toBe('live');

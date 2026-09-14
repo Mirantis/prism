@@ -97,6 +97,7 @@ class FakeComputer {
   readonly attach = vi.fn();
   readonly stop = vi.fn(async () => {});
   readonly startScreenStream = vi.fn();
+  readonly stopScreenStream = vi.fn();
   readonly startBrowserAudio = vi.fn(() => true);
   readonly handleInput = vi.fn();
   readonly width = 1280;
@@ -129,8 +130,6 @@ function fakeSignal() {
     sendClear: vi.fn(),
     state: vi.fn(),
     error: vi.fn(),
-    screen: vi.fn(),
-    computerAudio: vi.fn(),
   };
 }
 
@@ -151,7 +150,7 @@ async function startSession(
   return { signal, conversation: conversations[conversations.length - 1]! };
 }
 
-/** Start a session with a computer on it, the way the `/api/voice` endpoint does. */
+/** Start a session with a computer on it, the way the Computer page asks for one. */
 async function startWithComputer(): Promise<{ signal: Signal; computer: FakeComputer | undefined }> {
   const signal = fakeSignal();
   await voiceChatService.start({
@@ -429,16 +428,38 @@ describe('ending a session', () => {
  * of these wrong is a desktop left running for the life of the container.
  */
 describe('a session with a computer', () => {
-  it('opens one, tells the client it has a desktop, and streams its screen', async () => {
+  it('opens one and tells the client it has a desktop', async () => {
     const { signal, computer } = await startWithComputer();
 
     expect(computer).toBeDefined();
     expect(signal.state).toHaveBeenCalledWith('live', { desktop: true });
-    expect(computer!.startScreenStream).toHaveBeenCalled();
-    expect(computer!.startBrowserAudio).toHaveBeenCalled();
     // Attached before the model's session opens, so the first tool call has somewhere to
     // put its picture.
     expect(computer!.attach).toHaveBeenCalledWith(conversations[conversations.length - 1]);
+  });
+
+  it('captures the screen only while somebody is watching it', async () => {
+    const { computer } = await startWithComputer();
+
+    // Nothing is encoded until a client attaches: the call can be live with nobody
+    // looking at the screen, and an encoder running for nobody is a core burned.
+    expect(computer!.startScreenStream).not.toHaveBeenCalled();
+
+    const client = { screen: vi.fn(), audio: vi.fn() };
+    const detach = voiceChatService.attachComputerClient(client);
+
+    expect(detach).toBeTypeOf('function');
+    expect(computer!.startScreenStream).toHaveBeenCalled();
+    expect(computer!.startBrowserAudio).toHaveBeenCalled();
+
+    detach!();
+    expect(computer!.stopScreenStream).toHaveBeenCalled();
+  });
+
+  it('has no screen to show when the session has no computer', async () => {
+    await startSession();
+
+    expect(voiceChatService.attachComputerClient({ screen: vi.fn(), audio: vi.fn() })).toBeNull();
   });
 
   it('describes the computer to the prompt, so it only names tools the session has', async () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PageFrame } from './use-voice-chat';
+import type { PageFrame } from './use-computer-screen';
 
 /**
  * Sharing the user's own screen with the agent, the way a call shares it.

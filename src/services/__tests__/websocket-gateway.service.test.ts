@@ -22,6 +22,9 @@ const { mockChat, mockConfig, mockTitleEvents, mockVoice } = vi.hoisted(() => {
       start: vi.fn(),
       pushAudio: vi.fn(),
       stop: vi.fn(),
+      // The rate the session speaks, which the gateway states in `voice_hello`. A
+      // computer raises it; the default is the model's own.
+      sampleRate: 24_000,
     },
     mockConfig: {
       agentId: undefined as string | undefined,

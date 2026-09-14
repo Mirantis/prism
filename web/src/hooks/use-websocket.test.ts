@@ -289,10 +289,10 @@ describe('useWebSocket', () => {
       expect(first).not.toHaveBeenCalled();
       expect(onVoiceEvent.mock.calls.map(([e]) => e)).toEqual([
         { type: 'hello', format: { encoding: 'pcm16', sampleRate: 24_000, channels: 1 } },
-        { type: 'state', state: 'live' },
+        { type: 'state', state: 'live', desktop: false },
         { type: 'clear' },
         { type: 'error', error: 'There is already a voice chat running. End that one first.' },
-        { type: 'state', state: 'ended' },
+        { type: 'state', state: 'ended', desktop: false },
       ]);
     });
 
@@ -324,7 +324,7 @@ describe('useWebSocket', () => {
 
       const frame = pcm(9);
       act(() => {
-        expect(result.current.sendVoiceStart('t1')).toBe(true);
+        expect(result.current.sendVoiceStart({ threadId: 't1' })).toBe(true);
         result.current.sendVoiceAudio(frame);
         result.current.sendVoiceStop();
       });

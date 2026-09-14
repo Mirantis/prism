@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
-import type { FrameEvent } from '@/hooks/use-voice-chat';
+import type { FrameEvent } from '@/hooks/use-computer-screen';
 
 interface FrameStatsProps {
   /** The newest picture's arrival; null until the first one. */

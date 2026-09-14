@@ -28,6 +28,8 @@ const baseProps = {
 function fakeVoice(overrides: Partial<VoiceCall> = {}): VoiceCall {
   return {
     status: 'idle' as VoiceCallStatus,
+    hasDesktop: false,
+    handleComputerAudio: () => {},
     isSpeaking: false,
     isMuted: false,
     error: null,
