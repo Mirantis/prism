@@ -80,6 +80,9 @@ const threadClassificationSchema = z.object({
   emoji: z.string().optional(),
 });
 
+/** The fields of a thread message the gate reads. */
+type GateMessage = { user?: string; text?: string; ts?: string };
+
 /**
  * Telemetry-safe description of a thrown value: what kind of failure it was,
  * and the HTTP status when the AI SDK carries one (`APICallError.statusCode`).
@@ -1031,7 +1034,14 @@ class SlackAdapterService implements ChannelAdapter {
 
     // For thread messages, check if bot is participating in the thread
     if (threadTs && !isMentioned) {
-      const { result, messages } = await this.isBotInThread(channelId, threadTs, mapping.connection.teamId);
+      // `conversations.replies` is eventually consistent, so the gate is given
+      // the message it must judge rather than relying on the read to hold it.
+      const { result, messages } = await this.isBotInThread(
+        channelId,
+        threadTs,
+        mapping.connection.teamId,
+        { user: slackUserId, text: queueText, ts: messageTs },
+      );
 
       if (result.action === 'ignore') {
         logger.info(
@@ -1551,14 +1561,17 @@ class SlackAdapterService implements ChannelAdapter {
   /**
    * Check if bot is participating in a thread (heuristic pass)
    *
-   * Returns a ThreadAction plus the raw thread messages so the caller
-   * can forward them to the LLM classifier without re-fetching.
+   * Judges `arriving`, the message this call was triggered by, and returns a
+   * ThreadAction plus the thread messages so the caller can forward them to the
+   * LLM classifier without re-fetching. The returned transcript ends on
+   * `arriving`, which is the message the caller reacts to or answers.
    */
   private async isBotInThread(
     channelId: string,
     threadTs: string,
     teamId: string,
-  ): Promise<{ result: ThreadAction; messages: Array<{ user?: string; text?: string }> }> {
+    arriving: Required<GateMessage>,
+  ): Promise<{ result: ThreadAction; messages: GateMessage[] }> {
     const slackApp = this.apps.get(teamId);
     if (!slackApp) return { result: { action: 'ignore' }, messages: [] };
 
@@ -1569,7 +1582,12 @@ class SlackAdapterService implements ChannelAdapter {
         limit: 100,
       });
 
-      const messages = (reply.messages || []) as Array<{ user?: string; text?: string }>;
+      // `conversations.replies` is eventually consistent, so the read may lack
+      // `arriving` or already hold a message posted after it. Both cut to a
+      // transcript ending on `arriving`.
+      const fetched = (reply.messages || []) as GateMessage[];
+      const at = fetched.findIndex((m) => m.ts === arriving.ts);
+      const messages = at === -1 ? [...fetched, arriving] : fetched.slice(0, at + 1);
 
       let lastBotIndex = -1;
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -1582,17 +1600,17 @@ class SlackAdapterService implements ChannelAdapter {
       // Bot never posted in this thread
       if (lastBotIndex === -1) return { result: { action: 'ignore' }, messages };
 
-      // Check if conversation branched to another user after bot's last reply
-      for (let i = lastBotIndex + 1; i < messages.length; i++) {
-        const text = messages[i].text || '';
-        for (const match of text.matchAll(/<@([A-Z0-9]+)>/g)) {
-          if (match[1] !== slackApp.botUserId) {
-            return { result: { action: 'react', emoji: 'eyes' }, messages };
-          }
+      // The arriving message tags somebody other than the bot, so it is
+      // addressed to that person. Only this message is read: a tag earlier in
+      // the thread is addressed to somebody else and leaves a later message
+      // aimed at the bot answerable.
+      for (const match of arriving.text.matchAll(/<@([A-Z0-9]+)>/g)) {
+        if (match[1] !== slackApp.botUserId) {
+          return { result: { action: 'react', emoji: 'eyes' }, messages };
         }
       }
 
-      // Bot is participating and no branching detected — pass to LLM
+      // Bot is participating and the message is not addressed elsewhere — pass to LLM
       return { result: { action: 'respond' }, messages };
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -1613,7 +1631,7 @@ class SlackAdapterService implements ChannelAdapter {
    * like a chatty bot and shows up nowhere else.
    */
   private async classifyThreadMessage(
-    messages: Array<{ user?: string; text?: string }>,
+    messages: GateMessage[],
     botUserId: string,
     agentId: string,
   ): Promise<ThreadAction> {
