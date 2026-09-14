@@ -304,6 +304,40 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
+  // POST /chat
+  // ==========================================================================
+
+  describe('POST /chat', () => {
+    it('lets the turn run to completion while the client stays connected', async () => {
+      // The body parser drains `req` before the handler runs, so a disconnect
+      // listener on the request side fires immediately and cancels every turn.
+      // Read the signal from inside the turn, after a tick, to catch that.
+      let abortedDuringTurn: boolean | null = null;
+      mockChatEngine.mockImplementation(
+        async ({ abortSignal }: { abortSignal: AbortSignal }) => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          abortedDuringTurn = abortSignal.aborted;
+          return {
+            threadId: 'thread-1',
+            content: 'answer',
+            toolCalls: [],
+            durationMs: 20,
+            titleSet: null,
+          };
+        },
+      );
+
+      const res = await authedRequest(app)
+        .post('/agents/chat')
+        .send({ userId: 'user-1', agentId: 'agent-1', message: 'hello' });
+
+      expect(res.status).toBe(200);
+      expect(abortedDuringTurn).toBe(false);
+      expect(res.body.content).toBe('answer');
+    });
+  });
+
+  // ==========================================================================
   // POST /heartbeat/start
   // ==========================================================================
 

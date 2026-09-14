@@ -2195,11 +2195,14 @@ router.post('/chat', async (req: Request, res: Response) => {
       return;
     }
 
-    // Cancellation for the synchronous API: if the HTTP client disconnects
-    // before the turn finishes, abort the in-flight LLM generation. Aborting
-    // an already-settled signal after a normal response is a harmless no-op.
+    // Cancel the in-flight generation when the HTTP client hangs up. The
+    // listener goes on `res`, not `req`: `req` emits 'close' once its stream is
+    // drained, which the body parser does before this handler runs.
+    // `writableEnded` tells a hang-up from a reply that finished normally.
     const controller = new AbortController();
-    req.on('close', () => controller.abort());
+    res.once('close', () => {
+      if (!res.writableEnded) controller.abort();
+    });
 
     const response = await conversationEngineService.chat({
       userId, agentId, message, threadId, metadata, attachmentIds,
