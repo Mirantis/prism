@@ -10,7 +10,7 @@
 
 import type { CDPSession, Page } from 'playwright-core';
 import { logger } from '../../logger';
-import type { PictureStream } from './picture-stream';
+import type { PictureStream, ScreenFrame } from './picture-stream';
 
 /** How often to check which tab is in front. */
 const FOLLOW_INTERVAL_MS = 1000;
@@ -37,10 +37,11 @@ export class ScreenStream implements PictureStream {
 
   constructor(
     private readonly front: () => Page | null,
-    private readonly onFrame: (jpegBase64: string) => void,
+    private readonly onFrame: (frame: ScreenFrame) => void,
   ) {}
 
   start(): void {
+    this.onFrame({ kind: 'start', encoding: 'jpeg' });
     this.followTimer = setInterval(() => void this.follow(), FOLLOW_INTERVAL_MS);
     this.followTimer.unref?.();
     void this.follow();
@@ -104,7 +105,7 @@ export class ScreenStream implements PictureStream {
 
   private emit(data: string): void {
     this.lastFrameAt = Date.now();
-    this.onFrame(data);
+    this.onFrame({ kind: 'jpeg', data });
   }
 
   private async detach(): Promise<void> {

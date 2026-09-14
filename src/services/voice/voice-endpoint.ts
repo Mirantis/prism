@@ -32,6 +32,17 @@ export interface VoiceChatStatus {
   desktop?: boolean;
 }
 
+/**
+ * How the agent's screen is encoded, before any of it arrives and again whenever the
+ * source restarts. Video arrives as binary frames; pictures arrive as the frame below.
+ */
+export interface VoiceChatScreenStart {
+  type: 'screen_start';
+  encoding: 'jpeg' | 'h264';
+  /** With `h264`: the name the browser configures its decoder with. */
+  codec?: string;
+}
+
 /** One picture of the agent's screen, as base64 JPEG. */
 export interface VoiceChatScreenFrame {
   type: 'screen';
@@ -66,26 +77,35 @@ export interface VoiceChatClearFrame {
   type: 'clear';
 }
 
-export type VoiceChatFrame = VoiceChatStatus | VoiceChatScreenFrame | VoiceChatClearFrame;
+export type VoiceChatFrame =
+  | VoiceChatStatus
+  | VoiceChatScreenStart
+  | VoiceChatScreenFrame
+  | VoiceChatClearFrame;
 
 /**
- * The first byte of a binary frame says what the pcm16 after it is. The second byte is
- * padding, so the samples start on a 2-byte boundary.
+ * The first byte of a binary frame says what is in it. The second byte is padding for the
+ * two audio kinds, so their samples start on a 2-byte boundary, and says whether a screen
+ * picture stands on its own.
  */
 export const VOICE_FRAME = 0x01;
 export const BROWSER_AUDIO_FRAME = 0x02;
+export const SCREEN_VIDEO_FRAME = 0x03;
 
-function tagged(tag: number, pcm: Buffer): Buffer {
-  return Buffer.concat([Buffer.from([tag, 0]), pcm]);
+function tagged(tag: number, body: Buffer, flag = 0): Buffer {
+  return Buffer.concat([Buffer.from([tag, flag]), body]);
 }
 
 /**
- * How much unsent data the socket may hold before a screen picture is dropped.
+ * How much unsent data the socket may hold before the screen is skipped.
  *
  * The call's audio and the agent's screen share one socket, and the screen is the half
- * that can be skipped: a dropped picture costs one frame of a stream that sends another
- * within the tick, while a late frame of speech is heard. Roughly two pictures' worth, so
- * an ordinary burst is buffered and a client that has stopped draining is not fed.
+ * that can be skipped: a late frame of speech is heard, where a skipped picture costs one
+ * frame of a stream that sends another within the tick. Roughly two pictures' worth, so an
+ * ordinary burst is buffered and a client that has stopped draining is not fed.
+ *
+ * Video is skipped a whole run at a time, up to the next picture that stands on its own,
+ * since every picture between them is read against the one before it.
  */
 const SCREEN_BACKLOG_BYTES = 256 * 1024;
 
@@ -222,19 +242,56 @@ class VoiceEndpoint {
     let reason: string | undefined;
     /** Pictures skipped since the last one that went out, for one log line rather than many. */
     let dropped = 0;
+    /** True while a video run is being skipped, until a picture that stands on its own. */
+    let resyncing = false;
+    const behind = (): boolean => ws.bufferedAmount > SCREEN_BACKLOG_BYTES;
+    const skipped = (): void => {
+      if (dropped === 0) return;
+      logger.debug(`[VoiceChat] Skipped ${dropped} screen picture(s) to a slow client`);
+      dropped = 0;
+    };
     const signal: VoiceChatSignal = {
       sendAudio: (pcm) => sendTagged(VOICE_FRAME, pcm),
       sendClear: () => send({ type: 'clear' }),
-      screen: (data) => {
-        if (ws.bufferedAmount > SCREEN_BACKLOG_BYTES) {
+      screen: (frame) => {
+        if (frame.kind === 'start') {
+          // A stream that starts over is a new stream to a decoder, so nothing of the old
+          // one is still owed to the client.
+          resyncing = false;
+          send(
+            frame.encoding === 'h264'
+              ? { type: 'screen_start', encoding: 'h264', codec: frame.codec }
+              : { type: 'screen_start', encoding: 'jpeg' },
+          );
+          return;
+        }
+        if (frame.kind === 'jpeg') {
+          if (behind()) {
+            dropped += 1;
+            return;
+          }
+          skipped();
+          send({ type: 'screen', data: frame.data });
+          return;
+        }
+        // Video. A picture read against one that was skipped decodes into rubbish, so a
+        // client that fell behind is given nothing until the next one that stands alone.
+        if (resyncing && !frame.keyframe) {
           dropped += 1;
           return;
         }
-        if (dropped > 0) {
-          logger.debug(`[VoiceChat] Dropped ${dropped} screen picture(s) to a slow client`);
-          dropped = 0;
+        if (!frame.keyframe && behind()) {
+          resyncing = true;
+          dropped += 1;
+          return;
         }
-        send({ type: 'screen', data });
+        resyncing = false;
+        skipped();
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(tagged(SCREEN_VIDEO_FRAME, frame.data, frame.keyframe ? 1 : 0), {
+            binary: true,
+          });
+        }
       },
       computerAudio: (pcm) => sendTagged(BROWSER_AUDIO_FRAME, pcm),
       state: (state, info) => {

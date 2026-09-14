@@ -34,6 +34,7 @@ import {
 } from '../meeting/tool-bridge';
 import { AgentComputer } from '../computer/agent-computer';
 import { createComputerTools } from '../computer/computer-tools';
+import type { ScreenFrame } from '../computer/picture-stream';
 import { buildVoiceInstructions } from './voice-instructions';
 import { voiceSessionLock } from './voice-session-lock';
 import { SocketAudio, VOICE_AUDIO_FORMAT, type SocketAudioChannel } from './socket-audio';
@@ -71,8 +72,8 @@ export interface VoiceChatSignal extends SocketAudioChannel {
   state(state: VoiceChatState, info?: VoiceChatLiveInfo): void;
   /** Why the session could not start, or could not continue. */
   error(message: string): void;
-  /** One picture of the agent's screen, as base64 JPEG. */
-  screen?(jpegBase64: string): void;
+  /** The agent's screen: how it is encoded, then each picture of it. */
+  screen?(frame: ScreenFrame): void;
   /** What the agent's browser is playing, pcm16 at the session's rate. */
   computerAudio?(pcm: Buffer): void;
 }
@@ -226,7 +227,7 @@ class VoiceChatService {
           return false;
         }
         if (input.signal.screen) {
-          computer.startScreenStream((data) => input.signal.screen?.(data));
+          computer.startScreenStream((frame) => input.signal.screen?.(frame));
         }
         if (input.signal.computerAudio) {
           const streamed = computer.startBrowserAudio((pcm) => input.signal.computerAudio?.(pcm));

@@ -1,9 +1,25 @@
 /**
- * A source of JPEG pictures of what the agent is looking at, for the page.
+ * A source of what the agent is looking at, for the page.
  *
- * Two implementations: the tab in front over CDP where the browser runs on the host's
- * own display, and the whole virtual display through ffmpeg where the runtime owns it.
+ * Two implementations, and they differ in what they can produce. Where the runtime owns
+ * the display it encodes the whole screen as video, because a desktop that changes in one
+ * corner costs almost nothing that way. Where the browser runs on the host's own display
+ * the source is Chromium's debugger, which hands over one picture at a time.
  */
+
+/**
+ * What a source hands the page.
+ *
+ * `start` comes once before any picture and says how the ones after it are encoded, so the
+ * page knows what to decode before the first byte of it arrives. It comes again whenever
+ * the source restarts, since a video stream that starts over is a new stream.
+ */
+export type ScreenFrame =
+  | { kind: 'start'; encoding: 'jpeg' }
+  | { kind: 'start'; encoding: 'h264'; codec: string }
+  | { kind: 'jpeg'; data: string }
+  | { kind: 'h264'; data: Buffer; keyframe: boolean };
+
 export interface PictureStream {
   start(): void;
   /**

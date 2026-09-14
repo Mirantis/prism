@@ -53,9 +53,9 @@ import { actOnWindow, findWindows, listWindows, type WindowAction } from './desk
 import { DesktopInput, type InputFrame } from './desktop-input';
 import { hasBinaries } from './has-binary';
 import { ScreenStream } from './screen-stream';
-import { DisplayStream } from './display-stream';
+import { VideoStream } from './video-stream';
 import { DesktopSession } from './desktop-session';
-import type { PictureStream } from './picture-stream';
+import type { PictureStream, ScreenFrame } from './picture-stream';
 
 /**
  * How the computer shows the model what it did: a picture into the live session, and a
@@ -274,9 +274,9 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
    * Where the runtime owns the display, the page sees the whole desktop. Where the
    * browser is on the host's own display, it sees the tab in front.
    */
-  startScreenStream(onFrame: (jpegBase64: string) => void): void {
+  startScreenStream(onFrame: (frame: ScreenFrame) => void): void {
     this.screen = this.audioHandles
-      ? new DisplayStream(this.audioHandles.browserEnv.DISPLAY, sizeText(this.size), onFrame)
+      ? new VideoStream(this.audioHandles.browserEnv.DISPLAY, sizeText(this.size), onFrame)
       : new ScreenStream(() => this.browser?.front() ?? null, onFrame);
     this.screen.start();
   }
