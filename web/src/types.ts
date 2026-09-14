@@ -205,6 +205,8 @@ export interface AgentSummary {
   agentId: string;
   userId: string;
   name: string;
+  /** Whether this runtime can give the agent a computer; false leaves the page out. */
+  hasComputer?: boolean;
 }
 
 export interface HeartbeatStatus {

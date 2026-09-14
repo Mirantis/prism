@@ -25,6 +25,26 @@ const STATE_LABEL: Record<VoiceChatState, string> = {
 
 function ComputerPage() {
   const agent = useAgent();
+  // The sidebar leaves this page out on a runtime with no desktop, so this is the
+  // address bar or a stale link rather than a dead end the UI led them into.
+  if (agent.hasComputer === false) return <NoComputer />;
+  return <ComputerCall />;
+}
+
+function NoComputer() {
+  return (
+    <div className="mx-auto max-w-md space-y-2 py-16 text-center">
+      <p className="text-sm font-medium text-zinc-200">This runtime has no computer</p>
+      <p className="text-sm leading-6 text-muted-foreground">
+        The agent's desktop needs packages the container image installs. Run the published
+        image, or talk to the agent by voice from the chat page.
+      </p>
+    </div>
+  );
+}
+
+function ComputerCall() {
+  const agent = useAgent();
   // The agent's screen is made the size of the box below, so the call waits for the
   // first measurement of it.
   const [viewport, setViewport] = useState<Viewport | null>(null);

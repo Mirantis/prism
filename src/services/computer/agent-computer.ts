@@ -1,12 +1,14 @@
 /**
  * The computer the agent works on. One voice session owns one of these.
  *
- * On a host with no display, it starts a virtual display, an XFCE desktop and a browser
- * on that desktop. It streams pictures of the screen to the page, sends the sound the
- * desktop plays, and runs the `browse` and `desktop_*` tools.
+ * It starts a virtual display, an XFCE desktop on it, and a browser on that desktop. It
+ * streams the screen to the page as video, sends the sound the desktop plays, and runs
+ * the `browse` and `desktop_*` tools.
  *
- * On a host that has a display, the browser opens there. There is no desktop to act on,
- * and the tools that need one answer that they have none.
+ * The display is always its own, never the host's. A desktop the runtime owns is what
+ * makes the rest work: it can be resized to the client's rectangle, captured whole,
+ * and acted on with a pointer and keyboard. `isComputerSupported` says whether this host
+ * has the programs for one, and a host without them is not offered the page at all.
  */
 
 import path from 'path';
@@ -49,7 +51,7 @@ import { describeElements, findElements, readScreenElements } from './screen-ele
 import { actOnWindow, findWindows, listWindows, type WindowAction } from './desktop-windows';
 import { DesktopInput, type InputFrame } from './desktop-input';
 import { hasBinaries, missingBinary } from '../../lib/has-binary';
-import { ScreenStream } from './screen-stream';
+import { COMPUTER_BINARIES, unsupportedReason } from './supported';
 import { VideoStream } from './video-stream';
 import { DesktopSession } from './desktop-session';
 import type { PictureStream, ScreenFrame } from './picture-stream';
@@ -137,7 +139,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   private userScreen: { jpeg: Buffer; width: number; height: number; at: number } | null = null;
   /** Whether ffmpeg and Tesseract are on this host, so the shared screen can be read as text. */
   private ocrAvailable: Promise<boolean> | null = null;
-  /** Mouse, keyboard and camera for the virtual display. Null where the browser is on a real one. */
+  /** Mouse, keyboard and camera for the virtual display. Null until the browser opens. */
   private desktopControl: DesktopControl | null = null;
   /** DISPLAY plus the session bus, for the tree dump and `wmctrl`. */
   private desktopEnv: Record<string, string> = {};
@@ -145,15 +147,14 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   private input: DesktopInput | null = null;
   /** The first, blank tab `BrowserStack.start()` opens; `browse` works in others. */
   private mainPage: Page | null = null;
-  /** A virtual display for the browser on a host without one (the container). */
+  /** The virtual display the browser and its desktop run on. */
   private display: AudioStack | null = null;
   /**
    * The virtual display's audio devices. Every program on the desktop plays into their
-   * sink, and its monitor is how the page hears them. Null on a host with a real
-   * display, where that sound comes out of the host's own speakers.
+   * sink, and its monitor is how the page hears them.
    */
   private audioHandles: AudioStackHandles | null = null;
-  /** The XFCE desktop on the virtual display. Null where the browser is on a real one. */
+  /** The XFCE desktop on the virtual display. */
   private desktop: DesktopSession | null = null;
   private screen: PictureStream | null = null;
   /** The size of the agent's screen, which the client's own rectangle decides. */
@@ -184,63 +185,43 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
     let display: AudioStack | null = null;
     let desktop: DesktopSession | null = null;
     try {
-      let env: Record<string, string> = {};
-      let handles: AudioStackHandles | null = null;
-      if (process.platform === 'linux' && !process.env.DISPLAY) {
-        display = new AudioStack();
-        // The largest screen a client may ask for, since a framebuffer is allocated once
-        // and cropped from there.
-        handles = await display.start({ screen: sizeText(MAX_SCREEN) });
-        env = handles.browserEnv;
-        // A meeting ends on this; here the desktop's sound just stops reaching the page.
-        handles.onLost((reason) =>
-          logger.warn(`[VoiceChat] Browser audio capture lost: ${reason}`),
-        );
-        // The desktop is part of the deal here, the same as the browser: an image
-        // without its packages ends the chat with a message rather than a lesser page.
-        const missing = await missingBinary(
-          'dbus-launch',
-          'startxfce4',
-          'xdotool',
-          'xrandr',
-          'ffmpeg',
-          'wmctrl',
-          'tesseract',
-        );
-        if (missing) {
-          throw new Error(
-            `this image lacks the desktop packages (${missing} is not on PATH; the set is ` +
-              'xfce4, dbus-x11, ffmpeg, xdotool, wmctrl, x11-xserver-utils, tesseract-ocr, ' +
-              'at-spi2-core, python3-pyatspi); rebuild it with `npm run docker:build`',
-          );
-        }
-        // The desktop before the browser, so the window manager is there to place the
-        // browser's window when it opens, and the session bus exists for it to join.
-        desktop = new DesktopSession(env);
-        await desktop.start();
-        // Then cropped to what the client is showing, which needs that desktop: the
-        // output has to be moved aside for the screen to shrink under it, and the
-        // desktop's display manager is what does that. Before the browser, so its window
-        // opens at the size it will keep.
-        //
-        // Not fatal. A screen at the size the server reserved is a working screen, and a
-        // client that cannot have its own size should still get a call. What it actually
-        // became is what everything below is told.
-        await resizeDisplay(env, this.size).catch((err: unknown) => {
-          logger.warn({ err }, '[VoiceChat] The screen stayed at the size the display reserved');
-        });
-        const actual = await currentScreen(env).catch(() => null);
-        if (actual) this.size = actual;
-        // The dock only once the screen is the size it will be shown at; see
-        // `DesktopSession.startDock`.
-        await desktop.startDock();
-        this.desktopEnv = { ...env, ...desktop.busEnv };
-        this.desktopControl = new DesktopControl(env, this.size);
-        this.input = new DesktopInput(env, this.desktopControl);
-      }
+      const missing = await missingBinary(...COMPUTER_BINARIES);
+      if (missing) throw new Error(unsupportedReason(missing));
+
+      display = new AudioStack();
+      // The largest screen a client may ask for, since a framebuffer is allocated once
+      // and cropped from there.
+      const handles = await display.start({ screen: sizeText(MAX_SCREEN) });
+      const env = handles.browserEnv;
+      // A meeting ends on this; here the desktop's sound just stops reaching the page.
+      handles.onLost((reason) => logger.warn(`[VoiceChat] Desktop audio capture lost: ${reason}`));
+      // The desktop before the browser, so the window manager is there to place the
+      // browser's window when it opens, and the session bus exists for it to join.
+      desktop = new DesktopSession(env);
+      await desktop.start();
+      // Then cropped to what the client is showing, which needs that desktop: the
+      // output has to be moved aside for the screen to shrink under it, and the
+      // desktop's display manager is what does that. Before the browser, so its window
+      // opens at the size it will keep.
+      //
+      // Not fatal. A screen at the size the server reserved is a working screen, and a
+      // client that cannot have its own size should still get a call. What it actually
+      // became is what everything below is told.
+      await resizeDisplay(env, this.size).catch((err: unknown) => {
+        logger.warn({ err }, '[VoiceChat] The screen stayed at the size the display reserved');
+      });
+      const actual = await currentScreen(env).catch(() => null);
+      if (actual) this.size = actual;
+      // The dock only once the screen is the size it will be shown at; see
+      // `DesktopSession.startDock`.
+      await desktop.startDock();
+      this.desktopEnv = { ...env, ...desktop.busEnv };
+      this.desktopControl = new DesktopControl(env, this.size);
+      this.input = new DesktopInput(env, this.desktopControl);
+
       this.mainPage = await browser.start({
         // On the desktop's bus with accessibility on, so the browser's frame is in the tree.
-        env: desktop ? { ...env, ...desktop.busEnv } : env,
+        env: { ...env, ...desktop.busEnv },
         profileDir: path.join(resolveDataDir(), 'voice-chat-browser-profile'),
       });
       // The agent's working tab, open from the start so the page has something to show
@@ -266,23 +247,20 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   }
 
   /**
-   * Start sending pictures; `openBrowser()` has to have run.
-   *
-   * Where the runtime owns the display, the page sees the whole desktop. Where the
-   * browser is on the host's own display, it sees the tab in front.
+   * Start sending the screen to the page as video; `openBrowser()` has to have run.
    */
   startScreenStream(onFrame: (frame: ScreenFrame) => void): void {
-    this.screen = this.audioHandles
-      ? new VideoStream(this.audioHandles.browserEnv.DISPLAY, sizeText(this.size), onFrame)
-      : new ScreenStream(() => this.browser?.front() ?? null, onFrame);
+    const display = this.audioHandles?.browserEnv.DISPLAY;
+    if (!display) return;
+    this.screen = new VideoStream(display, sizeText(this.size), onFrame);
     this.screen.start();
   }
 
   /**
    * Send what the desktop plays, 48 kHz pcm16 mono, silence left out.
    *
-   * Returns false on a host with a real display: there the sound already
-   * comes out of the host's speakers, and there is no device to record it from.
+   * False when there is no display to record from, which is a computer that never
+   * opened.
    */
   startBrowserAudio(onPcm: (pcm48k: Buffer) => void): boolean {
     if (!this.audioHandles) return false;

@@ -13,9 +13,9 @@ authority over it means.
 Only `OPENAI_API_KEY`, the same key voice chat uses — see
 [Configuration](configuration.md#voice-chat).
 
-The desktop needs packages that the container image installs. Run the published
-image, or build one with `npm run docker:build`. On a host with a display of its
-own, the agent gets a browser on that display and no desktop.
+The agent's desktop needs packages that the container image installs. Run the
+published image, or build one with `npm run docker:build`. A runtime without them
+does not offer this page: **Computer** is absent from the sidebar.
 
 ## Starting
 
@@ -27,10 +27,9 @@ you.
 
 ## The screen
 
-The page shows the agent's screen while it works. In the container that screen is
-a whole desktop, so the agent can use a terminal, a file manager, or anything else
-the image installs. On a host with its own display, the page shows the browser tab
-in front instead.
+The page shows the agent's screen while it works. That screen is a whole desktop,
+so the agent can use a browser, a terminal, a file manager, or anything else the
+image installs.
 
 The screen is made the size of the area the page draws it in, so you see the
 desktop at its own resolution. Resize the browser window or go fullscreen and the
@@ -60,12 +59,11 @@ moves the call to the newer page, which is what a reload does.
 
 ## When it doesn't work
 
-- **The page says the screen would not start.** The image lacks the desktop
-  packages. The message names the program it looked for. Build the image with
-  `npm run docker:build`.
+- **Computer is missing from the sidebar.** This runtime has no desktop toolchain.
+  Run the published container image, or build one with `npm run docker:build`.
 - **The page says the screen cannot be shown.** The browser has no video decoder
   for the stream. The call and its sound continue.
 - **The call is refused.** Another call holds the agent's voice. The message says
   which one.
-- **There is no desktop to take the pointer on.** The runtime found a display of
-  its own, so the agent has a browser and no desktop around it.
+- **The page says the screen would not start.** A program the desktop needs is
+  missing. The message names it.

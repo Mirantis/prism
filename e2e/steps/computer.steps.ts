@@ -31,7 +31,7 @@ import {
   waitForScreen,
 } from '../support/voice-model';
 
-const { When, Then } = createBdd();
+const { Given, When, Then } = createBdd();
 
 /** The page starts muted, so this is the window the model must hear nothing in. */
 const MUTED_WINDOW_MS = 2_000;
@@ -69,6 +69,22 @@ async function canvasSize(page: Page): Promise<string> {
   });
   return size.width === 0 ? 'nothing drawn yet' : `${size.width}x${size.height}`;
 }
+
+Given('the runtime can give the agent a computer', async () => {
+  const response = await fetch('http://localhost:3003/agents/me');
+  const { hasComputer } = (await response.json()) as { hasComputer?: boolean };
+  if (hasComputer) return;
+  // A desktop is what this page is, so there is nothing to assert without one. CI
+  // installs the toolchain, so a missing computer there is a broken job rather than a
+  // host that was never going to have one — and a scenario that quietly stops running
+  // is worse than one that fails.
+  if (process.env.CI) {
+    throw new Error(
+      'the runtime reports no computer: the desktop toolchain is missing on this runner',
+    );
+  }
+  test.skip(true, 'this host has no desktop toolchain, so the agent has no computer');
+});
 
 When('I open the Computer page', async ({ page }) => {
   // The call opens a real browser for the agent, with a profile of its own. A cold one
