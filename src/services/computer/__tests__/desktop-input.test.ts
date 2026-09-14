@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DesktopInput, MAX_PASTE_CHARS, chordFor, keysymFor, pasteText } from '../desktop-input';
+import { DesktopInput, MAX_PASTE_CHARS, chordFor, inputFrame, keysymFor, pasteText } from '../desktop-input';
 
 const key = (
   k: string,
@@ -102,6 +102,59 @@ describe('the pointer on a screen that changes size', () => {
     screen.height = 1080;
     input.handle({ type: 'pointer_move', dx: 9999, dy: 9999 });
     expect(input.pointer).toEqual({ x: 1919, y: 1079 });
+    input.stop();
+  });
+});
+
+describe('inputFrame', () => {
+  it('reads each frame the page sends', () => {
+    expect(inputFrame({ type: 'pointer', x: 4, y: 9 })).toEqual({ type: 'pointer', x: 4, y: 9 });
+    expect(inputFrame({ type: 'pointer_move', dx: -2, dy: 3 })).toEqual({ type: 'pointer_move', dx: -2, dy: 3 });
+    expect(inputFrame({ type: 'pointer_button', button: 'right', down: true })).toEqual({
+      type: 'pointer_button',
+      button: 'right',
+      down: true,
+    });
+    expect(inputFrame({ type: 'wheel', dy: 120 })).toEqual({ type: 'wheel', dy: 120 });
+    expect(inputFrame({ type: 'text', text: 'hello' })).toEqual({ type: 'text', text: 'hello' });
+  });
+
+  it('takes a key with its modifiers, and reads a missing modifier as up', () => {
+    expect(inputFrame({ type: 'key', key: 'c', code: 'KeyC', ctrl: true })).toEqual({
+      type: 'key', key: 'c', code: 'KeyC', ctrl: true, alt: false, shift: false, meta: false,
+    });
+  });
+
+  it('drops a frame whose fields are not what its type needs', () => {
+    // A key frame with no key used to reach `keysymFor`, which reads the key as characters
+    // and threw out of the socket's message handler.
+    expect(inputFrame({ type: 'key', ctrl: false })).toBeNull();
+    expect(inputFrame({ type: 'key', key: 5 })).toBeNull();
+    expect(inputFrame({ type: 'pointer', x: 4 })).toBeNull();
+    expect(inputFrame({ type: 'pointer', x: '4', y: '9' })).toBeNull();
+    expect(inputFrame({ type: 'pointer_move', dx: Number.NaN, dy: 0 })).toBeNull();
+    expect(inputFrame({ type: 'pointer_button', button: 'fourth', down: true })).toBeNull();
+    expect(inputFrame({ type: 'pointer_button', button: 'left' })).toBeNull();
+    expect(inputFrame({ type: 'wheel', dy: null })).toBeNull();
+    expect(inputFrame({ type: 'text' })).toBeNull();
+  });
+
+  it('drops anything that is not a frame at all', () => {
+    expect(inputFrame({ type: 'orbit', x: 1, y: 1 })).toBeNull();
+    expect(inputFrame({})).toBeNull();
+    expect(inputFrame(null)).toBeNull();
+    expect(inputFrame('key')).toBeNull();
+    expect(inputFrame(7)).toBeNull();
+  });
+});
+
+describe('a malformed frame reaching the display', () => {
+  it('is dropped at the door rather than read as input', () => {
+    const input = new DesktopInput({}, { width: 1280, height: 720 });
+    const before = input.pointer;
+    expect(() => input.handle({ type: 'key', ctrl: false, alt: false })).not.toThrow();
+    expect(() => input.handle({ type: 'pointer', x: 'far', y: 'down' })).not.toThrow();
+    expect(input.pointer).toEqual(before);
     input.stop();
   });
 });

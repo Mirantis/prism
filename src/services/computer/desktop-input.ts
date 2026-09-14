@@ -28,6 +28,57 @@ export type InputFrame =
   | { type: 'key'; key: string; code?: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean }
   | { type: 'text'; text: string };
 
+function finite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isButton(value: unknown): value is 'left' | 'middle' | 'right' {
+  return value === 'left' || value === 'middle' || value === 'right';
+}
+
+/**
+ * A frame the page sent, read as input for the display, or null for anything else.
+ *
+ * The page's JSON arrives over a socket, so a frame's `type` says what it claims to be
+ * and nothing more: each field the display needs is checked here. `handle` is the only
+ * way in and it starts with this, so a frame missing a key or a coordinate is dropped at
+ * the door rather than reaching code that reads it as a string or a number.
+ */
+export function inputFrame(value: unknown): InputFrame | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const frame = value as Record<string, unknown>;
+  switch (frame.type) {
+    case 'pointer':
+      return finite(frame.x) && finite(frame.y) ? { type: 'pointer', x: frame.x, y: frame.y } : null;
+    case 'pointer_move':
+      return finite(frame.dx) && finite(frame.dy)
+        ? { type: 'pointer_move', dx: frame.dx, dy: frame.dy }
+        : null;
+    case 'pointer_button':
+      return isButton(frame.button) && typeof frame.down === 'boolean'
+        ? { type: 'pointer_button', button: frame.button, down: frame.down }
+        : null;
+    case 'wheel':
+      return finite(frame.dy) ? { type: 'wheel', dy: frame.dy } : null;
+    case 'key':
+      return typeof frame.key === 'string'
+        ? {
+            type: 'key',
+            key: frame.key,
+            code: typeof frame.code === 'string' ? frame.code : undefined,
+            ctrl: frame.ctrl === true,
+            alt: frame.alt === true,
+            shift: frame.shift === true,
+            meta: frame.meta === true,
+          }
+        : null;
+    case 'text':
+      return typeof frame.text === 'string' ? { type: 'text', text: frame.text } : null;
+    default:
+      return null;
+  }
+}
+
 /**
  * The most a paste types. xdotool types about eighty characters a second, so this is two
  * minutes of typing; a longer paste is cut, not refused, since the start is usually what
@@ -174,8 +225,11 @@ export class DesktopInput {
     return { x: this.x, y: this.y };
   }
 
-  handle(frame: InputFrame): void {
+  /** Act on a frame from the page. Takes it unread, since `inputFrame` is what reads it. */
+  handle(value: unknown): void {
     if (this.stopped) return;
+    const frame = inputFrame(value);
+    if (!frame) return;
     switch (frame.type) {
       case 'pointer':
         this.place(frame.x, frame.y);
@@ -187,7 +241,7 @@ export class DesktopInput {
         return;
       case 'pointer_button':
         this.flushMove();
-        this.write(`${frame.down ? 'mousedown' : 'mouseup'} ${BUTTONS[frame.button] ?? '1'}`);
+        this.write(`${frame.down ? 'mousedown' : 'mouseup'} ${BUTTONS[frame.button]}`);
         return;
       case 'wheel': {
         const clicks = Math.min(MAX_WHEEL_CLICKS, Math.max(1, Math.round(Math.abs(frame.dy) / WHEEL_PIXELS_PER_CLICK)));
@@ -201,7 +255,7 @@ export class DesktopInput {
         return;
       }
       case 'text':
-        if (typeof frame.text === 'string') this.type(pasteText(frame.text));
+        this.type(pasteText(frame.text));
         return;
     }
   }
