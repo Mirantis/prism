@@ -57,8 +57,6 @@ const BROWSER_CANDIDATES = [
   '/usr/bin/google-chrome-stable',
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
-  // Local development on macOS, where the voice chat opens a browser on the desktop.
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 ].filter((p): p is string => Boolean(p));
 
 /**

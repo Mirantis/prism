@@ -68,8 +68,13 @@ export function sourceIsRunning(pactlShortSources: string, sourceName: string): 
   return false;
 }
 
-/** The virtual display's geometry, which anything that grabs the screen needs too. */
-export const VIRTUAL_DISPLAY_SIZE = '1280x720';
+/**
+ * The virtual display's geometry, which anything that grabs the screen needs too.
+ *
+ * Full HD, the same size the agent's computer reserves, so one desktop size serves both
+ * callers. A meeting uses it as it is; the computer crops it to what the client shows.
+ */
+export const VIRTUAL_DISPLAY_SIZE = '1920x1080';
 
 /** What `start()` reserves when the caller names no size. */
 export interface AudioStackOptions {
@@ -179,8 +184,7 @@ export class AudioStack {
    */
   private async startXvfb(): Promise<string> {
     return new Promise<string>((resolve, reject) => {
-      // The reservation, not the size in use: a screen that resizes crops this one, and a
-      // meeting asks for 1280x720, which is enough for Meet's join UI.
+      // The reservation, not the size in use: a screen that resizes crops this one.
       const proc = spawn('Xvfb', ['-displayfd', '1', '-screen', '0', `${this.screen}x24`, '-nolisten', 'tcp'], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });

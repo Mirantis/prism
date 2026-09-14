@@ -1,15 +1,12 @@
 /**
- * The computer the agent works on: a browser, and on a host without a display of its
- * own, a whole desktop around it.
+ * The computer the agent works on. One voice session owns one of these.
  *
- * One of these belongs to one voice session. It opens a browser on a virtual display
- * with an XFCE desktop, streams pictures of that screen, hands on the sound the browser
- * plays, and carries out the `browse` and `desktop_*` tools. On a host that already has
- * a display the browser opens there, and there is no desktop to act on: the tools that
- * need one say so.
+ * On a host with no display, it starts a virtual display, an XFCE desktop and a browser
+ * on that desktop. It streams pictures of the screen to the page, sends the sound the
+ * desktop plays, and runs the `browse` and `desktop_*` tools.
  *
- * What it shows the model goes through `ModelChannel`, so the computer knows nothing
- * about the session it belongs to beyond those two methods.
+ * On a host that has a display, the browser opens there. There is no desktop to act on,
+ * and the tools that need one answer that they have none.
  */
 
 import path from 'path';
@@ -51,7 +48,7 @@ import { findText, readLines, readScreenWords, upscaleForOcr } from './screen-te
 import { describeElements, findElements, readScreenElements } from './screen-elements';
 import { actOnWindow, findWindows, listWindows, type WindowAction } from './desktop-windows';
 import { DesktopInput, type InputFrame } from './desktop-input';
-import { hasBinaries } from './has-binary';
+import { hasBinaries, missingBinary } from '../../lib/has-binary';
 import { ScreenStream } from './screen-stream';
 import { VideoStream } from './video-stream';
 import { DesktopSession } from './desktop-session';
@@ -96,7 +93,8 @@ const SCREEN_LOOK_NOTE =
   'see_screen call. Your user did not say this.';
 const DESKTOP_AFTER_NOTE =
   'This is a picture of your own screen right after the desktop action you just took. ' +
-  'Your user did not say this.';/** How long the desktop gets to redraw after an action before the picture is taken. */
+  'Your user did not say this.';
+/** How long the desktop gets to redraw after an action before the picture is taken. */
 const ACTION_SETTLE_MS = 400;
 const USER_SCREEN_NOTE =
   "This is a picture of your user's own screen, which they are sharing with you, in answer " +
@@ -150,9 +148,9 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   /** A virtual display for the browser on a host without one (the container). */
   private display: AudioStack | null = null;
   /**
-   * The virtual display's audio devices. The browser plays into their sink, and its
-   * monitor is how the page gets to hear what the browser plays. Null on a host with
-   * a real display, where the browser's sound comes out of the host's own speakers.
+   * The virtual display's audio devices. Every program on the desktop plays into their
+   * sink, and its monitor is how the page hears them. Null on a host with a real
+   * display, where that sound comes out of the host's own speakers.
    */
   private audioHandles: AudioStackHandles | null = null;
   /** The XFCE desktop on the virtual display. Null where the browser is on a real one. */
@@ -194,27 +192,26 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
         // and cropped from there.
         handles = await display.start({ screen: sizeText(MAX_SCREEN) });
         env = handles.browserEnv;
-        // A meeting ends on this; here the browser's sound just stops reaching the page.
+        // A meeting ends on this; here the desktop's sound just stops reaching the page.
         handles.onLost((reason) =>
           logger.warn(`[VoiceChat] Browser audio capture lost: ${reason}`),
         );
         // The desktop is part of the deal here, the same as the browser: an image
         // without its packages ends the chat with a message rather than a lesser page.
-        if (
-          !(await hasBinaries(
-            'dbus-launch',
-            'startxfce4',
-            'xdotool',
-            'xrandr',
-            'ffmpeg',
-            'wmctrl',
-            'tesseract',
-          ))
-        ) {
+        const missing = await missingBinary(
+          'dbus-launch',
+          'startxfce4',
+          'xdotool',
+          'xrandr',
+          'ffmpeg',
+          'wmctrl',
+          'tesseract',
+        );
+        if (missing) {
           throw new Error(
-            'this image lacks the desktop packages (xfce4, dbus-x11, ffmpeg, xdotool, wmctrl, ' +
-              'x11-xserver-utils, tesseract-ocr, at-spi2-core, python3-pyatspi); rebuild it with ' +
-              '`npm run docker:build`',
+            `this image lacks the desktop packages (${missing} is not on PATH; the set is ` +
+              'xfce4, dbus-x11, ffmpeg, xdotool, wmctrl, x11-xserver-utils, tesseract-ocr, ' +
+              'at-spi2-core, python3-pyatspi); rebuild it with `npm run docker:build`',
           );
         }
         // The desktop before the browser, so the window manager is there to place the
@@ -282,9 +279,9 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   }
 
   /**
-   * Start handing on what the browser plays, 48 kHz pcm16 mono, silence left out.
+   * Send what the desktop plays, 48 kHz pcm16 mono, silence left out.
    *
-   * Returns false on a host with a real display: there the browser's sound already
+   * Returns false on a host with a real display: there the sound already
    * comes out of the host's speakers, and there is no device to record it from.
    */
   startBrowserAudio(onPcm: (pcm48k: Buffer) => void): boolean {
