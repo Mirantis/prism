@@ -222,7 +222,8 @@ window when you resize it or go fullscreen. Click the screen to take its pointer
 and keyboard, and press Esc to give them back; while the screen is on the page,
 pasting types your clipboard into it. The share button shows the
 agent your own screen, a window or a tab. Your microphone starts muted, so the
-agent hears you once you turn it on with the microphone button.
+agent hears you once you select **Unmute**. The toolbar below the screen shows
+the voice connection and the **Share screen** control.
 
 See **[Voice chat](voice-chat.md)** for what the agent can do in a call and what
 that means for its authority.
