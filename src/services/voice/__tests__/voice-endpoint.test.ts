@@ -49,11 +49,19 @@ class FakeSocket extends EventEmitter {
   static OPEN = 1;
   readyState = 1;
   readonly sent: unknown[] = [];
+  /** How much the socket has not written yet, which the screen is skipped over. */
+  bufferedAmount = 0;
   readonly close = vi.fn((_code?: number, _reason?: string) => {
     this.readyState = 3;
   });
   send(data: unknown) {
     this.sent.push(data);
+  }
+  /** The screen pictures this socket was sent: their tag byte and whether each stands alone. */
+  get pictures(): Array<{ keyframe: boolean }> {
+    return this.sent
+      .filter((d): d is Buffer => Buffer.isBuffer(d) && d[0] === 0x03)
+      .map((d) => ({ keyframe: d[1] === 1 }));
   }
   /** The status frames this socket was told about, in order. */
   get states(): string[] {
@@ -217,5 +225,65 @@ describe('a refused session', () => {
 
     // Nothing was running, so nothing was taken over.
     expect(service.stop).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A picture of the screen is read against the one before it, so one sent after a skip
+ * decodes into rubbish. What is pinned here is that a client which fell behind is given
+ * nothing until a picture that stands on its own, rather than a run it cannot read.
+ */
+describe('the screen on a socket that is behind', () => {
+  /** The signal the endpoint handed the session owner, which is where pictures go in. */
+  async function screenSink(ws: FakeSocket) {
+    const connect = open();
+    connect(ws);
+    await vi.waitFor(() => expect(service.start).toHaveBeenCalled());
+    const input = service.start.mock.calls[0][0] as {
+      signal: { screen?: (frame: unknown) => void };
+    };
+    const screen = input.signal.screen;
+    if (!screen) throw new Error('the endpoint offered no screen');
+    screen({ kind: 'start', encoding: 'h264', codec: 'avc1.64001F' });
+    return screen;
+  }
+
+  it('sends every picture while the socket keeps up', async () => {
+    const ws = new FakeSocket();
+    const screen = await screenSink(ws);
+
+    screen({ kind: 'h264', data: Buffer.from([1]), keyframe: true });
+    screen({ kind: 'h264', data: Buffer.from([2]), keyframe: false });
+    screen({ kind: 'h264', data: Buffer.from([3]), keyframe: false });
+
+    expect(ws.pictures).toEqual([{ keyframe: true }, { keyframe: false }, { keyframe: false }]);
+  });
+
+  it('skips a whole run, and comes back on a picture that stands on its own', async () => {
+    const ws = new FakeSocket();
+    const screen = await screenSink(ws);
+
+    screen({ kind: 'h264', data: Buffer.from([1]), keyframe: true });
+    ws.bufferedAmount = 10 * 1024 * 1024;
+    screen({ kind: 'h264', data: Buffer.from([2]), keyframe: false });
+    // Drained again, but the pictures since the skip cannot be read on their own.
+    ws.bufferedAmount = 0;
+    screen({ kind: 'h264', data: Buffer.from([3]), keyframe: false });
+    screen({ kind: 'h264', data: Buffer.from([4]), keyframe: true });
+    screen({ kind: 'h264', data: Buffer.from([5]), keyframe: false });
+
+    expect(ws.pictures).toEqual([{ keyframe: true }, { keyframe: true }, { keyframe: false }]);
+  });
+
+  it('sends a picture that stands on its own even while the socket is behind', async () => {
+    const ws = new FakeSocket();
+    const screen = await screenSink(ws);
+
+    ws.bufferedAmount = 10 * 1024 * 1024;
+    screen({ kind: 'h264', data: Buffer.from([1]), keyframe: true });
+
+    // Holding this one back would leave the screen frozen for as long as the client is
+    // slow, since nothing after it can be read without it.
+    expect(ws.pictures).toEqual([{ keyframe: true }]);
   });
 });
