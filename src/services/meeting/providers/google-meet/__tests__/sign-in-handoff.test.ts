@@ -165,8 +165,8 @@ describe('sign-in to meeting-page handoff', () => {
     await signInToGoogle(page as never);
     const outcome = await new GoogleMeetProvider().join(page as never, {
       url: MEETING_URL,
-      displayName: 'Prism',
       admissionTimeoutMs: 300,
+      onRequestSubmitted: () => {},
     });
 
     // The sign-in failed, which is the precondition and not the subject.

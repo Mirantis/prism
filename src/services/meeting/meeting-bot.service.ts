@@ -549,8 +549,9 @@ export class MeetingBotService {
    * Returns once the request is submitted, or once the join has failed short of that,
    * and names the step it failed at. A guest can wait indefinitely for a host, so the
    * calling chat turn must not block on admission — but it can and must wait for the
-   * request itself, which is up to two minutes for a pathological lobby and seconds
-   * otherwise. Admission, denial and the end of the call are logged as they happen, and
+   * request itself, which is seconds on a healthy call and minutes on a pathological one,
+   * since a lobby that refuses the session is loaded and hunted twice over a second
+   * sign-in. Admission, denial and the end of the call are logged as they happen, and
    * `status()` answers for them on request.
    */
   async join(
