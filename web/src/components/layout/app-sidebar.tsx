@@ -29,7 +29,8 @@ const NAV_ITEMS = [
   { to: '/cron' as const, label: 'Scheduled Tasks', icon: Clock },
   { to: '/webhooks' as const, label: 'Webhooks', icon: Webhook },
   { to: '/profile' as const, label: 'Profile', icon: Bot },
-  { to: '/computer' as const, label: 'Computer', icon: MonitorPlay },
+  // Left out where the runtime has no desktop to give the agent; see `hasComputer`.
+  { to: '/computer' as const, label: 'Computer', icon: MonitorPlay, needsComputer: true },
   { to: '/activity' as const, label: 'Activity', icon: Activity },
 ];
 
@@ -59,17 +60,19 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>{agent.name}</SidebarGroupLabel>
           <SidebarMenu>
-            {NAV_ITEMS.map(({ to, label, icon: Icon }) => {
-              const isActive = to === '/' ? pathname === '/' : pathname.startsWith(to);
-              return (
-                <SidebarMenuItem key={to}>
-                  <SidebarMenuButton isActive={isActive} render={<Link to={to} />}>
-                    <Icon className="size-4" />
-                    <span>{label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              );
-            })}
+            {NAV_ITEMS.filter((item) => !item.needsComputer || agent.hasComputer).map(
+              ({ to, label, icon: Icon }) => {
+                const isActive = to === '/' ? pathname === '/' : pathname.startsWith(to);
+                return (
+                  <SidebarMenuItem key={to}>
+                    <SidebarMenuButton isActive={isActive} render={<Link to={to} />}>
+                      <Icon className="size-4" />
+                      <span>{label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              },
+            )}
           </SidebarMenu>
         </SidebarGroup>
 

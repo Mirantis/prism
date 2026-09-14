@@ -7,7 +7,8 @@ Feature: The agent's computer in the browser
     And I have a personal agent
 
   Scenario: The page opens a call with a screen, starts muted, and gives the voice back when I leave
-    Given the voice model has heard nothing yet
+    Given the runtime can give the agent a computer
+    And the voice model has heard nothing yet
     When I open the Computer page
     Then the page says the computer is live
     And the agent's screen is being drawn

@@ -32,6 +32,7 @@ import { meetingBotService } from './services/meeting/meeting-bot.service';
 import { voiceChatService } from './services/voice/voice-chat.service';
 import { voiceEndpoint } from './services/voice/voice-endpoint';
 import { initMeetingToolAvailability } from './lib/tool-collection';
+import { initComputerAvailability } from './services/computer/supported';
 import { cronSchedulerService } from './services/cron-scheduler.service';
 import { goalService } from './services/goal.service';
 import { sessionManagerService } from './services/session-manager.service';
@@ -245,6 +246,16 @@ const initialize = async () => {
       meetingsAvailable
         ? 'Voice meetings available (browser + audio toolchain and OpenAI key present)'
         : 'Voice meetings unavailable — meeting tools not registered',
+    );
+
+    // The same question for the agent's own computer, which needs a desktop on top of
+    // that toolchain. The Web UI reads the answer and leaves its Computer page out
+    // where it is no.
+    const computerAvailable = await initComputerAvailability();
+    logger.info(
+      computerAvailable
+        ? "The agent's computer is available (desktop packages present)"
+        : "The agent's computer is unavailable — the Computer page is not offered",
     );
 
     // Embed the memory entries that have no vector yet. In-process and

@@ -124,6 +124,7 @@ import { slackAdapterService } from '../services/slack-adapter.service';
 import { attachmentService, detectMediaType, classifyMediaType } from '../services/attachment.service';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, GOAL_MAX_OBJECTIVE_CHARS } from '../constants';
 import { goalService } from '../services/goal.service';
+import { hasComputer } from '../services/computer/supported';
 import {
   agentWorkspaceService,
   ValidationError,
@@ -181,7 +182,13 @@ const router = Router();
 router.get('/me', async (_req: Request, res: Response) => {
   try {
     const agent = await agentWorkspaceService.getAgent();
-    res.json({ agentId: agent.id, userId: agent.userId, name: agent.name });
+    res.json({
+      agentId: agent.id,
+      userId: agent.userId,
+      name: agent.name,
+      // The Web UI leaves the Computer page out where this host has no desktop for one.
+      hasComputer: hasComputer(),
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to get /me: ${msg}`);

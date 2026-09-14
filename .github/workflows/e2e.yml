@@ -74,16 +74,21 @@ jobs:
       - name: Install coding agents
         run: npm install -g @anthropic-ai/claude-code @openai/codex
 
+      # The agent's computer is a desktop the runtime builds for itself, so the runner
+      # needs what the container image installs for it. Without these the Computer page
+      # is not offered at all and its scenario cannot run.
+      - name: Install the desktop toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb pulseaudio pulseaudio-utils \
+            xfce4 xfce4-terminal dbus-x11 \
+            ffmpeg xdotool wmctrl x11-xserver-utils tesseract-ocr
+
       # No SLACK_* env, and `--grep-invert @slack` so a token added here later
       # still cannot make those scenarios run. They belong to `e2e-slack`.
-      #
-      # Under `xvfb-run` because the Computer page gives the agent a browser, and the
-      # runtime puts that browser on the display it is given. With none it builds a
-      # desktop of its own instead, which needs packages only the container image has.
-      # A display here is the shape the runtime runs in on a workstation, and the one
-      # this runner can serve.
       - name: Run E2E tests
-        run: xvfb-run -a npm run test:e2e:web --workspace=prism-agent-e2e
+        run: npm run test:e2e:web --workspace=prism-agent-e2e
         env:
           CI: true
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

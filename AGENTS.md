@@ -625,8 +625,8 @@ Prisma schema differs from the checkout's; pull a newer image or build one with
 toolchain: in the container the voice chat's browser runs on an XFCE desktop on the
 virtual display, and the Computer page shows that whole desktop, captured with
 `ffmpeg`. A click on it takes the desktop's pointer and keyboard through the browser's
-pointer lock, and Esc gives them back. On a host with its own display the browser opens
-there instead and the page shows the tab in front.
+pointer lock, and Esc gives them back. The runtime always builds that desktop itself, so a
+host without the image's desktop packages does not offer the page at all.
 
 ### Production-shape preview (no HMR, no Vite)
 
