@@ -246,7 +246,7 @@ export function ScreenView({
       ref={boxRef}
       onClick={takeControl}
       className={cn(
-        'relative aspect-video w-full overflow-hidden rounded-lg bg-zinc-950 ring-1 ring-zinc-700/60 select-none',
+        'relative aspect-video w-full overflow-hidden rounded-lg bg-zinc-950 select-none',
         canTake && 'cursor-pointer',
       )}
     >
@@ -295,6 +295,8 @@ export function ScreenView({
         </div>
       )}
       {children}
+      {/* Keep the border inside the screen so the page's scroll container preserves every edge. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[inherit] border border-zinc-700" />
     </div>
   );
 }
