@@ -13,7 +13,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
  */
 
 import { useScreenShare } from './use-screen-share';
-import type { PageFrame } from './use-voice-chat';
+import type { PageFrame } from './use-computer-screen';
 
 /** A display capture, with the tracks the browser would hand over. */
 function fakeStream() {

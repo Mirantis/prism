@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { startVoiceAudio, VOICE_SAMPLE_RATE, type VoiceAudio } from '@/lib/voice-audio';
-import type { VoiceEvent, VoiceFormat } from './use-websocket';
+import type { VoiceEvent, VoiceFormat, VoiceStartOptions } from './use-websocket';
 
 /**
  * A voice call with the agent: the microphone, the playback, and the call's state.
@@ -15,17 +15,31 @@ export type VoiceCallStatus = 'idle' | 'starting' | 'live';
 
 export interface UseVoiceCallOptions {
   /** Asks the runtime for a session. False when the socket is not open. */
-  sendVoiceStart: (threadId?: string) => boolean;
+  sendVoiceStart: (options: VoiceStartOptions) => boolean;
   sendVoiceStop: () => void;
   sendVoiceAudio: (frame: ArrayBuffer) => void;
   /** The thread the call is started from, so the agent's tools have one. */
   threadId?: string;
   /** A call cannot start without the socket, and a call in progress ends with it. */
   isConnected: boolean;
+  /**
+   * What this call asks for beyond a plain one: a computer, the screen size to open it
+   * at, the greeting. Passed through to the runtime on `voice_start`.
+   */
+  request?: Omit<VoiceStartOptions, 'threadId'>;
+  /**
+   * The rate this client captures and plays at, which has to be the rate the session
+   * speaks. A call with a computer runs at the rate its desktop is recorded at.
+   */
+  sampleRate?: number;
+  /** Open the microphone muted, for a surface where the call starts without a press. */
+  startMuted?: boolean;
 }
 
 export interface VoiceCall {
   status: VoiceCallStatus;
+  /** Whether the session has a desktop the client may take the pointer and keyboard on. */
+  hasDesktop: boolean;
   /** The agent's audio is playing right now. */
   isSpeaking: boolean;
   /** The microphone is muted: the call runs on, and the agent hears nothing. */
@@ -40,24 +54,41 @@ export interface VoiceCall {
   handleEvent: (event: VoiceEvent) => void;
   /** Feed a frame of the agent's speech in. Wired to `onVoiceAudio`. */
   handleAudio: (frame: ArrayBuffer) => void;
+  /**
+   * Feed a frame of the agent's desktop in, where the session has one. It plays through
+   * the same path as the agent's voice, at its own level, so the page has one audio
+   * path rather than two.
+   */
+  handleComputerAudio: (frame: ArrayBuffer) => void;
 }
 
-/** The one format this client can send and play. */
-function isSupported(format: VoiceFormat): boolean {
+/** Whether this client can send and play what the runtime says it will speak. */
+function isSupported(format: VoiceFormat, sampleRate: number): boolean {
   return (
-    format.encoding === 'pcm16' &&
-    format.sampleRate === VOICE_SAMPLE_RATE &&
-    format.channels === 1
+    format.encoding === 'pcm16' && format.sampleRate === sampleRate && format.channels === 1
   );
 }
 
 export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
-  const { sendVoiceStart, sendVoiceStop, sendVoiceAudio, threadId, isConnected } = options;
+  const {
+    sendVoiceStart,
+    sendVoiceStop,
+    sendVoiceAudio,
+    threadId,
+    isConnected,
+    request,
+    sampleRate = VOICE_SAMPLE_RATE,
+    startMuted = false,
+  } = options;
 
   const [status, setStatus] = useState<VoiceCallStatus>('idle');
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(startMuted);
+  const [hasDesktop, setHasDesktop] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Read inside callbacks that are built once, like the senders below it.
+  const requestRef = useRef(request);
+  requestRef.current = request;
 
   const audioRef = useRef<VoiceAudio | null>(null);
   // The frames arrive on the socket handler, which is bound once, so the senders are
@@ -76,7 +107,7 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
 
   // Mirrored for the same reason: `onFrame` is bound when the audio path opens and
   // reads the flag on every frame after that.
-  const isMutedRef = useRef(false);
+  const isMutedRef = useRef(startMuted);
   const setMuted = useCallback((next: boolean) => {
     isMutedRef.current = next;
     setIsMuted(next);
@@ -87,12 +118,14 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
     const audio = audioRef.current;
     audioRef.current = null;
     setIsSpeaking(false);
-    // Nothing about a mute outlives the call it was made in.
-    setMuted(false);
+    setHasDesktop(false);
+    // Nothing about a mute outlives the call it was made in; a surface that starts muted
+    // starts its next call muted too.
+    setMuted(startMuted);
     // The stop is asynchronous but nothing waits on it: the call is over either way,
     // and a failure to close a context is not something to tell the user about.
     void audio?.stop().catch(() => {});
-  }, [setMuted]);
+  }, [setMuted, startMuted]);
 
   const toggleMute = useCallback(() => {
     setMuted(!isMutedRef.current);
@@ -112,7 +145,7 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
     // leave the runtime holding a call nobody can talk to. This is the one refusal the
     // client owns, since the runtime never hears about it.
     void startVoiceAudio({
-      sampleRate: VOICE_SAMPLE_RATE,
+      sampleRate,
       // Mute is a frame the client does not send. The microphone stays open, so
       // unmuting is silence ending rather than a second permission prompt.
       onFrame: (frame) => {
@@ -127,7 +160,7 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
           return;
         }
         audioRef.current = audio;
-        if (sendVoiceStart(threadId)) return;
+        if (sendVoiceStart({ threadId, ...requestRef.current })) return;
         // The socket went away between the click and the permission.
         releaseAudio();
         setCallStatus('idle');
@@ -144,7 +177,7 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
             : 'Could not open the microphone.',
         );
       });
-  }, [isConnected, releaseAudio, sendVoiceStart, setCallStatus, threadId]);
+  }, [isConnected, releaseAudio, sampleRate, sendVoiceStart, setCallStatus, threadId]);
 
   const stop = useCallback(() => {
     if (statusRef.current === 'idle') return;
@@ -161,7 +194,7 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
         case 'hello':
           // The runtime states the format it will send. Nothing here can transcode, so
           // a session in another format is ended rather than played as noise.
-          if (!isSupported(event.format)) {
+          if (!isSupported(event.format, sampleRate)) {
             releaseAudio();
             setCallStatus('idle');
             setError('The agent offered audio this browser cannot play.');
@@ -171,6 +204,7 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
         case 'state':
           if (event.state === 'live') {
             if (statusRef.current !== 'idle') setCallStatus('live');
+            setHasDesktop(event.desktop === true);
             break;
           }
           releaseAudio();
@@ -189,11 +223,15 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
           break;
       }
     },
-    [releaseAudio, sendVoiceStop, setCallStatus],
+    [releaseAudio, sampleRate, sendVoiceStop, setCallStatus],
   );
 
   const handleAudio = useCallback((frame: ArrayBuffer) => {
     audioRef.current?.enqueue(frame);
+  }, []);
+
+  const handleComputerAudio = useCallback((frame: ArrayBuffer) => {
+    audioRef.current?.enqueueComputer(frame);
   }, []);
 
   // A socket that dropped mid-call takes the call with it: the runtime ends the session
@@ -208,5 +246,17 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
   // A tab that navigates away releases the microphone too.
   useEffect(() => releaseAudio, [releaseAudio]);
 
-  return { status, isSpeaking, isMuted, error, start, stop, toggleMute, handleEvent, handleAudio };
+  return {
+    status,
+    hasDesktop,
+    isSpeaking,
+    isMuted,
+    error,
+    start,
+    stop,
+    toggleMute,
+    handleEvent,
+    handleAudio,
+    handleComputerAudio,
+  };
 }

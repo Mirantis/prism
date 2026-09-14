@@ -17,7 +17,8 @@ import { config } from '../config';
 import { isAllowedOrigin } from '../lib/origin-guard';
 import { serveUpgrades } from './websocket-upgrades';
 
-/** Where the Web UI's chat connects. The voice chat's own path is in `voice-endpoint.ts`. */
+/** Where the Web UI's chat and its voice connect. The screen has its own path; see
+ * `services/computer/computer-endpoint.ts`. */
 const CHAT_PATH = '/api/ws';
 import { conversationEngineService } from './conversation-engine.service';
 import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
@@ -31,6 +32,7 @@ import {
   type VoiceListeningMode,
 } from './voice/voice-chat.service';
 import { VOICE_AUDIO_FORMAT } from './voice/socket-audio';
+import { MEETING_SAMPLE_RATE } from './meeting/resampler';
 
 // ============================================================================
 // Types
@@ -104,6 +106,24 @@ function payloadOf(message: WebSocketMessage): Record<string, unknown> {
 function stringField(payload: Record<string, unknown>, key: string): string | undefined {
   const value = payload[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/**
+ * The rectangle the client will show the agent's screen in, in its own device pixels.
+ *
+ * Read off the start request rather than sent later, so the desktop comes up at the size
+ * it will be watched at instead of laying itself out twice. A client that leaves it off
+ * takes the default and can resize afterwards.
+ */
+function screenOf(payload: Record<string, unknown>): { width: number; height: number } | undefined {
+  const screen = payload['screen'];
+  if (typeof screen !== 'object' || screen === null) return undefined;
+  const { width, height } = screen as Record<string, unknown>;
+  if (typeof width !== 'number' || typeof height !== 'number') return undefined;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return undefined;
+  }
+  return { width, height };
 }
 
 /**
@@ -453,6 +473,13 @@ class WebSocketGatewayService {
         agentId,
         threadId: stringField(payload, 'threadId'),
         mode,
+        // A session with a computer opens a browser and a desktop for the agent, which
+        // the client then watches on a transport of its own; see `computer-endpoint.ts`.
+        computer: payload['computer'] === true,
+        screen: screenOf(payload),
+        surface: payload['computer'] === true ? 'computer' : 'chat',
+        sampleRate: payload['computer'] === true ? MEETING_SAMPLE_RATE : undefined,
+        greeting: stringField(payload, 'greeting'),
         signal: this.voiceSignal(ws),
       });
     } finally {
@@ -480,7 +507,13 @@ class WebSocketGatewayService {
       return;
     }
 
-    this.sendTo(ws, { type: 'voice_hello', payload: { format: VOICE_AUDIO_FORMAT } });
+    // The rate the session was built at, which a computer raises so the sound of its
+    // desktop reaches the client unresampled. The client opens its microphone and its
+    // playback at whatever this says.
+    this.sendTo(ws, {
+      type: 'voice_hello',
+      payload: { format: { ...VOICE_AUDIO_FORMAT, sampleRate: voiceChatService.sampleRate } },
+    });
   }
 
   /**
@@ -534,9 +567,11 @@ class WebSocketGatewayService {
         ws.send(pcm, { binary: true });
       },
       sendClear: () => this.sendTo(ws, { type: 'voice_clear' }),
-      state: (state) => {
+      state: (state, info) => {
         if (state === 'ended' && this.voiceSocket === ws) this.voiceSocket = null;
-        this.sendTo(ws, { type: 'voice_state', payload: { state } });
+        // `desktop` rides the live state: the client needs it before it decides whether
+        // to offer the pointer and the keyboard on the screen it is about to show.
+        this.sendTo(ws, { type: 'voice_state', payload: { state, ...(info ?? {}) } });
       },
       error: (error) => this.sendTo(ws, { type: 'voice_error', payload: { error } }),
     };

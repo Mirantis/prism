@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from 'react';
 import { Maximize, Minimize, Monitor, LoaderCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { InputFrame, VoiceChatState } from '@/hooks/use-voice-chat';
+import type { InputFrame } from '@/hooks/use-computer-screen';
 
 interface ScreenViewProps {
   /** The image the runtime's pictures are drawn into; owned by the voice chat hook. */
   screenRef: RefObject<HTMLCanvasElement | null>;
   hasScreen: boolean;
-  state: VoiceChatState;
+  /** Whether a call is still expected to bring a screen, so the box says so. */
+  connecting: boolean;
   /**
    * The size of this box in device pixels, whenever it changes.
    *
@@ -48,7 +49,7 @@ const VIEWPORT_SETTLE_MS = 250;
 export function ScreenView({
   screenRef,
   hasScreen,
-  state,
+  connecting,
   controllable,
   onInput,
   onViewport,
@@ -257,15 +258,15 @@ export function ScreenView({
       {!hasScreen && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
           <div className="flex size-14 items-center justify-center rounded-2xl border border-white/10 bg-zinc-900 text-zinc-400">
-            {state === 'connecting' || state === 'ready'
+            {connecting
               ? <LoaderCircle className="size-6 motion-safe:animate-spin" />
               : <Monitor className="size-6" />}
           </div>
           <p className="text-sm font-medium text-zinc-200">
-            {state === 'connecting' || state === 'ready' ? 'Preparing your computer' : 'Computer unavailable'}
+            {connecting ? 'Preparing your computer' : 'Computer unavailable'}
           </p>
           <p className="max-w-xs text-xs leading-5 text-zinc-400">
-            {state === 'connecting' || state === 'ready'
+            {connecting
               ? "The agent’s screen will appear here when it is ready."
               : 'Check the connection status above for details.'}
           </p>

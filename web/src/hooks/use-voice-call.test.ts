@@ -10,6 +10,7 @@ vi.mock('@/lib/voice-audio', () => ({
 }));
 
 import { useVoiceCall, type UseVoiceCallOptions } from './use-voice-call';
+import type { VoiceStartOptions } from './use-websocket';
 
 /** The audio side of a call, as `startVoiceAudio` hands it over. */
 function fakeAudio() {
@@ -24,7 +25,7 @@ const HELLO_FORMAT = { encoding: 'pcm16', sampleRate: 24_000, channels: 1 };
 
 describe('useVoiceCall', () => {
   let audio: ReturnType<typeof fakeAudio>;
-  let sendVoiceStart: Mock<(threadId?: string) => boolean>;
+  let sendVoiceStart: Mock<(options: VoiceStartOptions) => boolean>;
   let sendVoiceStop: Mock<() => void>;
   let sendVoiceAudio: Mock<(frame: ArrayBuffer) => void>;
   /** What the hook passed to `startVoiceAudio`, so a test can feed it a frame. */
@@ -32,7 +33,7 @@ describe('useVoiceCall', () => {
 
   beforeEach(() => {
     audio = fakeAudio();
-    sendVoiceStart = vi.fn<(threadId?: string) => boolean>(() => true);
+    sendVoiceStart = vi.fn<(options: VoiceStartOptions) => boolean>(() => true);
     sendVoiceStop = vi.fn<() => void>();
     sendVoiceAudio = vi.fn<(frame: ArrayBuffer) => void>();
     startVoiceAudio.mockReset();
@@ -75,7 +76,7 @@ describe('useVoiceCall', () => {
     expect(startVoiceAudio).toHaveBeenCalledTimes(1);
     expect(sendVoiceStart).not.toHaveBeenCalled();
 
-    await waitFor(() => expect(sendVoiceStart).toHaveBeenCalledWith('t1'));
+    await waitFor(() => expect(sendVoiceStart).toHaveBeenCalledWith({ threadId: 't1' }));
     expect(result.current.error).toBeNull();
   });
 

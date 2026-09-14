@@ -695,6 +695,15 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
     return this.channel?.showImage(`data:image/jpeg;base64,${jpeg.toString('base64')}`, note) ?? false;
   }
 
+  /** Stop sending the screen. The computer runs on; a later client starts it again. */
+  stopScreenStream(): void {
+    const screen = this.screen;
+    this.screen = null;
+    void screen?.stop().catch((err: unknown) => {
+      logger.warn({ err }, '[VoiceChat] The screen stream would not stop');
+    });
+  }
+
   /** Release everything. Safe to call more than once. */
   async stop(): Promise<void> {
     this.channel = null;

@@ -380,14 +380,13 @@ export function webSocketUrl(): string {
 }
 
 /**
- * The voice chat socket: pcm16 audio both ways, JSON status frames back.
+ * The computer socket: the agent's screen and the sound of its desktop out, the user's
+ * pointer, keyboard and shared screen in.
  *
- * `screen` is the size of the rectangle the page will show the agent's screen in, which
- * the runtime makes that screen. It rides the handshake rather than a first frame so the
- * screen is the right size before a desktop lays itself out on it.
+ * The call itself is on the chat socket. This one is opened once that call is live, and
+ * carries only the computer, so a burst of video cannot put a chat message behind it.
  */
-export function voiceWebSocketUrl(screen?: { width: number; height: number }): string {
+export function computerWebSocketUrl(): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const query = screen ? `?w=${Math.round(screen.width)}&h=${Math.round(screen.height)}` : '';
-  return `${proto}://${window.location.host}/api/voice${query}`;
+  return `${proto}://${window.location.host}/api/computer`;
 }

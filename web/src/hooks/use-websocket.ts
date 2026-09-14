@@ -45,9 +45,21 @@ export interface VoiceFormat {
  */
 export type VoiceEvent =
   | { type: 'hello'; format: VoiceFormat }
-  | { type: 'state'; state: 'live' | 'ended' }
+  /** `desktop` comes with `live` on a session that has a computer the client may drive. */
+  | { type: 'state'; state: 'live' | 'ended'; desktop?: boolean }
   | { type: 'clear' }
   | { type: 'error'; error: string };
+
+/** What a client asks for beyond a plain call. */
+export interface VoiceStartOptions {
+  threadId?: string;
+  /** Open a browser and a desktop for the agent, which the client then watches. */
+  computer?: boolean;
+  /** The rectangle the client will show that screen in, in its own device pixels. */
+  screen?: { width: number; height: number };
+  /** What the agent opens with, for a client that started the call by opening a page. */
+  greeting?: string;
+}
 
 interface UseWebSocketOptions {
   onMessage?: (msg: ConversationMessage) => void;
@@ -218,9 +230,13 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             break;
           }
           case 'voice_state': {
-            const p = data.payload as { state?: string } | undefined;
+            const p = data.payload as { state?: string; desktop?: boolean } | undefined;
             if (p?.state === 'live' || p?.state === 'ended') {
-              onVoiceEventRef.current?.({ type: 'state', state: p.state });
+              onVoiceEventRef.current?.({
+                type: 'state',
+                state: p.state,
+                desktop: p.desktop === true,
+              });
             }
             break;
           }
@@ -349,9 +365,9 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   //
   // `mode` is left unset on purpose, which the runtime reads as `open` — every
   // utterance answered. A browser tab is somebody talking to the agent.
-  const sendVoiceStart = useCallback((threadId?: string) => {
+  const sendVoiceStart = useCallback((options: VoiceStartOptions = {}) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return false;
-    wsRef.current.send(JSON.stringify({ type: 'voice_start', payload: { threadId } }));
+    wsRef.current.send(JSON.stringify({ type: 'voice_start', payload: options }));
     return true;
   }, []);
 

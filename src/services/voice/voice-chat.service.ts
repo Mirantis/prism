@@ -73,10 +73,20 @@ export interface VoiceChatSignal extends SocketAudioChannel {
   state(state: VoiceChatState, info?: VoiceChatLiveInfo): void;
   /** Why the session could not start, or could not continue. */
   error(message: string): void;
+}
+
+/**
+ * Where the agent's screen and the sound of its desktop go.
+ *
+ * A second transport rather than the voice signal, because the screen is video several
+ * times a second and the conversation is not: behind a burst of it a control frame would
+ * wait. A client attaches one after its call is live, and detaching stops the capture.
+ */
+export interface ComputerClient {
   /** The agent's screen: how it is encoded, then each picture of it. */
-  screen?(frame: ScreenFrame): void;
-  /** What the agent's browser is playing, pcm16 at the session's rate. */
-  computerAudio?(pcm: Buffer): void;
+  screen(frame: ScreenFrame): void;
+  /** What the agent's desktop is playing, pcm16 at the session's rate. */
+  audio(pcm: Buffer): void;
 }
 
 /**
@@ -152,6 +162,13 @@ class VoiceChatService {
   private mode: VoiceListeningMode = 'open';
   /** Held for the same reason, and read by a second client deciding whether to take over. */
   private startedFrom: VoiceChatSurface = 'chat';
+  /** The rate this session speaks, which the client opens its own audio at. */
+  private rate: number = VOICE_AUDIO_FORMAT.sampleRate;
+
+  /** What the client should capture and play at. The default until a session sets it. */
+  get sampleRate(): number {
+    return this.rate;
+  }
 
   /** Whether a session is running, for a caller that wants to know before it offers. */
   get isLive(): boolean {
@@ -188,6 +205,7 @@ class VoiceChatService {
     const mode: VoiceListeningMode = input.mode ?? 'open';
     const surface: VoiceChatSurface = input.surface ?? 'chat';
     const sampleRate = input.sampleRate ?? VOICE_AUDIO_FORMAT.sampleRate;
+    this.rate = sampleRate;
 
     // Built into locals and published onto `this` only once the epoch check below says
     // the session is still wanted: a `stop()` during startup has nothing else to release,
@@ -226,17 +244,6 @@ class VoiceChatService {
         if (this.epoch !== epoch) {
           await releaseLocals();
           return false;
-        }
-        if (input.signal.screen) {
-          computer.startScreenStream((frame) => input.signal.screen?.(frame));
-        }
-        if (input.signal.computerAudio) {
-          const streamed = computer.startBrowserAudio((pcm) => input.signal.computerAudio?.(pcm));
-          logger.info(
-            streamed
-              ? '[VoiceChat] The browser is heard through the client'
-              : '[VoiceChat] The browser plays on this host, not through the client',
-          );
         }
         stage = 'session';
       }
@@ -380,6 +387,30 @@ class VoiceChatService {
    */
   pushAudio(pcm: Buffer): void {
     this.transport?.push(pcm);
+  }
+
+  /**
+   * Show a client the agent's screen, and let it hear the desktop. Answers a detach.
+   *
+   * Called once the client's call is live, from whichever transport carries the screen.
+   * Nothing captures the screen until somebody is watching it, and detaching stops the
+   * capture again, so a session nobody is looking at costs no encoder.
+   *
+   * Answers null when this session has no computer to show.
+   */
+  attachComputerClient(client: ComputerClient): (() => void) | null {
+    const computer = this.computer;
+    if (!computer) return null;
+    computer.startScreenStream((frame) => client.screen(frame));
+    const heard = computer.startBrowserAudio((pcm) => client.audio(pcm));
+    logger.info(
+      heard
+        ? '[VoiceChat] The desktop is heard through the client'
+        : '[VoiceChat] The desktop plays on this host, not through the client',
+    );
+    return () => {
+      computer.stopScreenStream();
+    };
   }
 
   /**
