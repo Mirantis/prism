@@ -23,7 +23,7 @@
 import type { Locator, Page } from 'playwright-core';
 import { config } from '../../../../config';
 import { logger } from '../../../../logger';
-import { isAuthenticated, sessionEvidence, signInFailureReason, signInToGoogle } from './sign-in';
+import { isAuthenticated, quiesce, sessionEvidence, signInFailureReason, signInToGoogle } from './sign-in';
 import { judgeSpeaker, namesFrom, openParticipants, readRoom } from './participants';
 import { withTimeout } from '../../../../utils/with-timeout';
 import type {
@@ -574,8 +574,7 @@ export class GoogleMeetProvider implements MeetingProvider {
         logger.info('[Meeting] Another navigation landed on the meeting page — loading it again');
         // From a still page, or the interloper's next hop takes the retry down too and
         // reports the same misleading message this exists to prevent.
-        await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 10_000 })
-          .catch(() => undefined);
+        await quiesce(page);
       }
     }
   }

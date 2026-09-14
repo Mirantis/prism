@@ -23,7 +23,7 @@
 // Type-only, matching `browser-stack.ts`: `playwright-core` is external to the SEA
 // bundle, so a *value* import here would be evaluated at startup — before
 // `isBrowserAvailable()` can decide the host has no browser at all.
-import type { Locator, Page } from 'playwright-core';
+import type { Frame, Locator, Page } from 'playwright-core';
 import { config } from '../../../../config';
 import { logger } from '../../../../logger';
 
@@ -33,6 +33,17 @@ import { logger } from '../../../../logger';
  */
 const SESSION_SETTLE_TIMEOUT_MS = 15_000;
 const SESSION_STABLE_MS = 1_000;
+
+/**
+ * How long one parking attempt gets, and how long the main frame must record no
+ * navigation to count as still. The quiet window must be the shorter of the two.
+ *
+ * 500 ms is a judgement, not a measurement: the commit that produced this defect
+ * landed about 200 ms after its own navigation resolved, and this leaves margin
+ * without adding a second to every failed sign-in.
+ */
+const QUIESCE_SETTLE_TIMEOUT_MS = 3_000;
+const QUIESCE_QUIET_MS = 500;
 
 /** What Google answered about a profile's session, and the reading it rests on. */
 export type SessionEvidence = { live: boolean; signal: string };
@@ -245,7 +256,13 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
 }
 
 /**
- * Park the page on a blank document so that nothing is still navigating.
+ * What `quiesce` uses a page for, narrowed the way `settledUrl` is: a test drives it
+ * with a stub rather than a browser.
+ */
+export type QuiescePage = Pick<Page, 'url' | 'goto' | 'waitForTimeout' | 'on' | 'off' | 'mainFrame'>;
+
+/**
+ * Park the page on a blank document, and hand it back only once nothing is navigating.
  *
  * A failed sign-in does not leave a still page. Google's redirect chains outlive the
  * navigation that started them — an error page about to commit, a `ServiceLogin`
@@ -253,19 +270,58 @@ export async function signInToGoogle(page: Page, options?: { force?: boolean }):
  * takes in production is a join reporting
  *
  *     Could not load the meeting page: Navigation to "https://meet.google.com/abc"
- *     is interrupted by another navigation to
- *     "https://accounts.google.com/v3/signin/identifier?continue=..."
+ *     is interrupted by another navigation to "about:blank"
  *
  * which reads as a broken meeting link and is nothing of the sort. The sign-in
  * failure is the real story and it was two steps upstream.
  *
- * Best effort: if even `about:blank` will not load, the caller has worse problems
- * than a page that is still moving.
+ * Stillness is measured from the main frame's navigation commits, the event Playwright
+ * raises "interrupted by another navigation" from. The parking `goto` resolves with a
+ * commit still to come, and `page.url()` reads `about:blank` either side of that
+ * commit, so the page counts as still only once `quietMs` passes with no commit and it
+ * reads the blank document.
+ *
+ * A quiet page reading anything else means the late commit was somebody else's, so the
+ * parking is done again. Best effort, in two attempts: if even `about:blank` will not
+ * settle, the caller has worse problems than a page that is still moving.
  */
-async function quiesce(page: Page): Promise<void> {
-  await page
-    .goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 10_000 })
-    .catch(() => undefined);
+export async function quiesce(
+  page: QuiescePage,
+  timeoutMs = QUIESCE_SETTLE_TIMEOUT_MS,
+  quietMs = QUIESCE_QUIET_MS,
+): Promise<void> {
+  let lastCommit = Date.now();
+  const onNavigated = (frame: Frame): void => {
+    if (frame === page.mainFrame()) lastCommit = Date.now();
+  };
+
+  page.on('framenavigated', onNavigated);
+  try {
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      // One budget for the whole attempt, the navigation included: the caller of a
+      // failed sign-in is waiting on this, and a `goto` with a cap of its own would
+      // spend that cap on top of the wait below.
+      const deadline = Date.now() + timeoutMs;
+      await page
+        .goto('about:blank', { waitUntil: 'domcontentloaded', timeout: timeoutMs })
+        .catch(() => undefined);
+
+      while (Date.now() < deadline) {
+        // `waitForTimeout` rejects once the page is closed, and nothing in this file
+        // throws — see the header. A closed page is also still enough for the caller.
+        const polled = await page.waitForTimeout(100).then(
+          () => true,
+          () => false,
+        );
+        if (!polled) return;
+        if (Date.now() - lastCommit < quietMs) continue;
+        if (page.url() === 'about:blank') return;
+        break;
+      }
+    }
+  } finally {
+    page.off('framenavigated', onNavigated);
+  }
 }
 
 /**
