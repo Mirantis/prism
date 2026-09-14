@@ -25,6 +25,7 @@ import {
 import { AUDIO_STACK_BINARIES } from '../services/meeting/audio-stack';
 import { isBrowserAvailable } from '../services/meeting/browser-stack';
 import { isRealtimeConfigured } from '../services/meeting/openai-endpoint';
+import { missingBinary } from '../lib/has-binary';
 import { logger } from '../logger';
 
 /**
@@ -97,24 +98,10 @@ export async function isMeetingSupported(): Promise<boolean> {
   if (!isRealtimeConfigured()) return false;
   if (!(await isBrowserAvailable())) return false;
 
-  const { promises: fs } = await import('fs');
-  const path = await import('path');
-  const pathEntries = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
-  for (const binary of AUDIO_STACK_BINARIES) {
-    const found = await Promise.all(
-      pathEntries.map(async (dir) => {
-        try {
-          await fs.access(path.join(dir, binary));
-          return true;
-        } catch {
-          return false;
-        }
-      }),
-    );
-    if (!found.some(Boolean)) {
-      logger.info(`[Meeting] Voice meetings unavailable: ${binary} is not on PATH`);
-      return false;
-    }
+  const missing = await missingBinary(...AUDIO_STACK_BINARIES);
+  if (missing) {
+    logger.info(`[Meeting] Voice meetings unavailable: ${missing} is not on PATH`);
+    return false;
   }
   return true;
 }

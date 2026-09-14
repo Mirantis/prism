@@ -1,14 +1,14 @@
 /**
- * A source of what the agent is looking at, for the page.
+ * A source of the agent's screen, for the page.
  *
  * Two implementations, and they differ in what they can produce. Where the runtime owns
  * the display it encodes the whole screen as video, because a desktop that changes in one
  * corner costs almost nothing that way. Where the browser runs on the host's own display
- * the source is Chromium's debugger, which hands over one picture at a time.
+ * the source is Chromium's debugger, which produces one picture at a time.
  */
 
 /**
- * What a source hands the page.
+ * One frame from a source to the page.
  *
  * `start` comes once before any picture and says how the ones after it are encoded, so the
  * page knows what to decode before the first byte of it arrives. It comes again whenever

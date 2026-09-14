@@ -1,11 +1,22 @@
 /**
- * Reading an H.264 byte stream well enough to send it a frame at a time.
+ * Split the encoder's H.264 output into whole pictures, and read the two things the page
+ * needs to know about each one: whether it is a keyframe, and which codec to decode it
+ * with.
  *
- * The encoder writes one long stream of NAL units, each behind a start code of three or
- * four bytes. A picture is an access unit, which is several NALs together, and the encoder
- * is asked to put a delimiter NAL in front of each one, so a delimiter is where a picture
- * begins. That is the only structure the runtime needs: it forwards whole pictures and
- * lets the browser decode them.
+ * The agent's screen is sent as H.264 because the alternative costs too much. A JPEG of
+ * every frame sends the whole screen thirty times a second whether or not it changed: a
+ * moving desktop measured 1,869 KB a second at 1280x720, and a still one still paid for
+ * every pixel. H.264 sends the difference between one frame and the next, so the same
+ * moving desktop costs 80 KB a second and a still one costs 4. Every browser that plays
+ * video decodes it, and the runtime spends less processor time on it than on encoding
+ * those JPEGs.
+ *
+ * Sending it needs the stream cut at picture boundaries, which is what this file does.
+ * The encoder writes one long run of NAL units, each behind a start code of three or four
+ * bytes. A picture is an access unit, which is several NALs together, and the encoder is
+ * asked to put a delimiter NAL in front of each one, so a delimiter is where a picture
+ * begins. Nothing here decodes anything: the runtime forwards whole pictures and the
+ * browser decodes them.
  */
 
 /** The five bits of a NAL's header byte that say what it is. */
