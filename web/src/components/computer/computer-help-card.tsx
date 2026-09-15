@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Monitor, ArrowUpRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { computerRequest } from '@/api/computer';
 import { useComputerStatus } from '@/hooks/use-computer-status';
 import type { ComputerHelp } from '@/types';
@@ -10,10 +11,12 @@ export function ComputerHelpCard({
   help,
   clientId,
   inComputer,
+  disabled = false,
 }: {
   help: ComputerHelp;
   clientId?: string | null;
   inComputer?: boolean;
+  disabled?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { data } = useComputerStatus();
@@ -34,28 +37,62 @@ export function ComputerHelpCard({
   };
   return (
     <section
-      className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 space-y-3"
+      className={cn(
+        'rounded-xl border p-4',
+        inComputer
+          ? 'space-y-4 border-border bg-card shadow-sm'
+          : 'space-y-3 border-amber-500/25 bg-amber-500/5',
+      )}
       aria-label="Computer help"
     >
       <div className="flex items-center gap-2 text-sm font-medium">
-        <Monitor className="size-4 text-amber-500" />
+        {inComputer ? (
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
+            <Monitor className="size-4" />
+          </span>
+        ) : (
+          <Monitor className="size-4 text-amber-500" />
+        )}
         {current.status === 'waiting'
           ? 'Needs your help'
           : current.status === 'continued'
             ? 'Ready to continue'
             : 'Dismissed'}
       </div>
-      <p className="text-sm text-muted-foreground">{help.reason}</p>
+      <p
+        className={cn(
+          'break-words text-sm',
+          inComputer ? 'leading-relaxed text-foreground/85' : 'text-muted-foreground',
+        )}
+      >
+        {help.reason}
+      </p>
+      {inComputer && (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Click the screen to complete this step. Press Esc when you’re done, or choose Continue.
+        </p>
+      )}
       {current.status === 'waiting' && (
         <div className="flex flex-wrap items-center gap-2">
-          <a className="text-sm underline underline-offset-4" href={`/computer?help=${help.id}`}>
-            {inComputer ? 'Select request' : 'Open Computer'}{' '}
-            <ArrowUpRight className="inline size-3" />
-          </a>
-          <Button size="sm" disabled={busy} onClick={() => void resolve('continue')}>
+          {!inComputer && (
+            <a className="text-sm underline underline-offset-4" href={`/computer?help=${help.id}`}>
+              Open Computer <ArrowUpRight className="inline size-3" />
+            </a>
+          )}
+          <Button
+            size={inComputer ? 'default' : 'sm'}
+            className={inComputer ? 'flex-1' : undefined}
+            disabled={busy || disabled}
+            onClick={() => void resolve('continue')}
+          >
             Continue
           </Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void resolve('dismiss')}>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy || disabled}
+            onClick={() => void resolve('dismiss')}
+          >
             Dismiss
           </Button>
         </div>

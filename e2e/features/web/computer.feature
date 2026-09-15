@@ -33,7 +33,9 @@ Feature: The agent's computer in the browser
     And a website with a sign-in page and public notes
     When I ask Prism to read my inbox and the public notes using its computer
     Then Prism requests computer help and reports the public notes
-    When I open the help request and sign in through the live computer
+    When I open the Computer help request
+    Then Computer keeps help beside the screen and adapts to smaller displays
+    When I sign in through the live computer
     Then Prism continues the original conversation and reports the inbox
 
   Scenario: Human control pauses queued work and survives closing the viewer
