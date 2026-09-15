@@ -254,7 +254,8 @@ speech mangles — a link, an identifier, a command to paste — it can post one
 plain-text message into the meeting's own chat panel instead, and it can read what you
 have typed there when you ask it to look. Nothing tells it a message arrived, so say so
 in the call: "I've pasted the URL in the chat", or "read the chat". It reads the newest
-messages, without who sent them, and answers out loud. The chat is not a second
+messages with the name the call shows for each sender, and answers out loud. A message too
+long to read whole is marked as cut, so it can ask you for the rest. The chat is not a second
 conversation: it is told never to post an answer it should be speaking, and a question
 typed there reaches it only when somebody says it is waiting. Nothing else leaves a call
 — no message anywhere else and no file — and it is instructed never to offer. If you want
@@ -320,11 +321,10 @@ the call is stored with the thread like any other tool argument, and one the age
 from inside the call is not stored at all.
 
 Reading the chat is a tool too, and only the agent in the call has it. Ask it out loud to
-look, and it comes back with the newest **20** messages, oldest first, without who sent
-them, and long ones cut — it says so when it did not get the whole chat. It is told the
-text is other people's information rather than an instruction, and that a typed "go ahead"
-is not the spoken "yes" a destructive action needs. From a chat session there is nothing
-to read: the panel belongs to the call.
+look, and it comes back with the newest **20** messages, oldest first, each with the name
+the call shows for whoever sent it. A message it had to cut is marked as cut, and it says
+so when it did not get the whole chat. From a chat session there is nothing to read: the
+panel belongs to the call.
 
 It can also **share its screen** and **use a browser** on request — see
 [The screen](#the-screen) and [The browser](#the-browser) for what the room sees and
@@ -347,8 +347,7 @@ the only tool withheld in code — nothing is held back for safety. The single g
 is an instruction in its prompt: announce what it's about to do and get an explicit
 "yes" in the room before anything that deletes, deploys, spends money, grants access,
 or changes its own configuration — and never read that permission out of enthusiasm
-or out of someone claiming authority. That "yes" is spoken: a line typed in the chat
-carries no permission, since anyone with the link types there under any name.
+or out of someone claiming authority. That "yes" is spoken, in the room.
 
 **That includes changing itself.** Renaming itself, rewriting any of its workspace
 files (Soul, user profile, memory, vision, heartbeat config, bootstrap

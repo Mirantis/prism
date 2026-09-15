@@ -218,11 +218,11 @@ other tool argument. Posted from inside the call, nothing is stored.
 
 It reads that panel only when somebody in the call asks it to look, and nothing tells it a
 message arrived — so say in the room that you have pasted something. It comes back with
-the newest 20 messages without sender names, and says when it did not get the whole chat.
-The read is the one tool a chat session and a scheduled run do not get: a stored tool
-result is replayed into every later turn, and the chat is other people's words. Nothing it
-reads is kept with the thread, and a line typed there is never permission for anything
-destructive.
+the newest 20 messages, each with the name the call shows for whoever sent it, and says
+when it did not get the whole chat or had to cut a long message short. The read is the one
+tool a chat session and a scheduled run do not get: a stored tool result is replayed into
+every later turn, and the chat is other people's words. Nothing it reads is kept with the
+thread.
 
 Work the call has no time for is the one thing that goes on afterwards — the agent
 schedules it as a one-off task and the result lands in your chat, not in the room.
