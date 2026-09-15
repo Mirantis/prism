@@ -5,7 +5,7 @@
  * resolution + fs I/O. The MCP registration layer is a thin
  * wrapper, so we skip re-testing it here.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
@@ -159,12 +159,69 @@ describe('shell_exec (runShellExec)', () => {
 describe('shell file tools', () => {
   it('rejects relative paths that escape the workspace', async () => {
     const read = await runReadFile({ path: '../etc/passwd' }, workspace);
-    expect(read).toEqual({ error: 'Path outside workspace' });
+    expect(read).toMatchObject({ error: expect.stringContaining('Path outside workspace') });
     const write = await runWriteFile(
       { path: '../escape.txt', content: 'nope' },
       workspace,
     );
-    expect(write).toEqual({ error: 'Path outside workspace' });
+    expect(write).toMatchObject({ error: expect.stringContaining('Path outside workspace') });
+  });
+
+  /**
+   * A skill and a plugin are installed by landing a bundle in the data dir, and the prompt
+   * tells the agent to put one there. `shell_exec` could always write there, so a file
+   * tool refusing the same write left the agent unable to author a skill the obvious way.
+   */
+  describe('the install directories', () => {
+    let dataDir: string;
+
+    beforeEach(async () => {
+      dataDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'shell-data-test-')));
+      process.env.PRISM_SKILLS_DIR = path.join(dataDir, 'skills');
+      process.env.PRISM_PLUGINS_DIR = path.join(dataDir, 'plugins');
+    });
+
+    afterEach(async () => {
+      delete process.env.PRISM_SKILLS_DIR;
+      delete process.env.PRISM_PLUGINS_DIR;
+      await fs.rm(dataDir, { recursive: true, force: true });
+    });
+
+    it('writes a skill bundle, and reads it back', async () => {
+      const skill = path.join(dataDir, 'skills', 'tidy-up', 'SKILL.md');
+
+      const write = await runWriteFile({ path: skill, content: '---\nname: tidy-up\n---\n' }, workspace);
+      expect(write).toEqual({ ok: true });
+
+      const read = await runReadFile({ path: skill }, workspace);
+      expect(read).toMatchObject({ content: expect.stringContaining('tidy-up') });
+    });
+
+    it('writes a plugin manifest', async () => {
+      const manifest = path.join(dataDir, 'plugins', 'weather', 'plugin.json');
+      expect(await runWriteFile({ path: manifest, content: '{}' }, workspace)).toEqual({ ok: true });
+    });
+
+    /**
+     * The database, the stored attachments and the saved tool outputs are the runtime's
+     * own files. A tool that overwrites a whole file has no business in them.
+     */
+    it('refuses the rest of the data directory', async () => {
+      const database = path.join(dataDir, 'agent.db');
+      const result = await runWriteFile({ path: database, content: 'nope' }, workspace);
+
+      expect(result).toMatchObject({ error: expect.stringContaining('Path outside workspace') });
+      await expect(fs.access(database)).rejects.toThrow();
+    });
+
+    /** The message names where a file may go, since the agent reads it and tries again. */
+    it('names the places a file may go', async () => {
+      const result = await runWriteFile({ path: '/etc/nope.txt', content: 'no' }, workspace);
+
+      expect(result).toMatchObject({
+        error: expect.stringContaining(path.join(dataDir, 'skills')),
+      });
+    });
   });
 
   it('write → read roundtrips, and creates parent directories', async () => {
