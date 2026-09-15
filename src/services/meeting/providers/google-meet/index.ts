@@ -243,19 +243,23 @@ export const CHAT_COMPOSER_SELECTOR = 'textarea[aria-label*="Send a message" i]'
 export const CHAT_SEND_SELECTOR = 'button[aria-label*="Send a message" i]';
 
 /**
- * One message in the open panel, and the text inside it.
+ * One message in the open panel, the text inside it, and the group that holds the name of
+ * whoever sent it.
  *
- * A row is pinned by the `data-message-id` attribute as well as the class, because the
- * class is a generated hash: the attribute is what says the node is a message, and a live
- * call showed a second node repeating the same id for the row's pin control. So the reader
- * takes one row per id.
+ * A message is a node with a `data-message-id` that is not a button. The attribute is
+ * Meet's own mark on a message, and a live call showed the row's pin control repeating the
+ * id on a button. Rows also have a generated class, which this selector leaves out because
+ * a Meet release changes it.
  *
- * The body selector is Meet's own `jsname`, which excludes the sender name and the
- * timestamp beside it. Reading the whole row instead would put a participant's name into
- * the text handed to the model, which the read deliberately does not carry.
+ * Meet marks the text of a message with a `jsname` and with nothing else, so that one
+ * value is the whole handle on the body. A row whose body node is gone counts as unparsed.
+ *
+ * Meet draws the sender's name and the time once above a run of messages from that person,
+ * in a group node with its own `jsname`.
  */
-export const CHAT_MESSAGE_ROW_SELECTOR = 'div.RLrADb[data-message-id]';
+export const CHAT_MESSAGE_ROW_SELECTOR = '[data-message-id]:not(button)';
 export const CHAT_MESSAGE_BODY_SELECTOR = '[jsname="dTKtvb"]';
+export const CHAT_MESSAGE_GROUP_SELECTOR = '[jsname="Ypafjf"]';
 
 /** How long to wait for the chat control, and then the composer, to paint. */
 const CHAT_PANEL_TIMEOUT_MS = 5_000;
@@ -434,8 +438,12 @@ interface MicOutcome {
 interface ProbeElement {
   getAttribute(name: string): string | null;
   readonly textContent: string | null;
+  closest(selectors: string): ProbeElement | null;
+  cloneNode(deep: boolean): ProbeElement;
+  remove(): void;
   querySelector(selectors: string): ProbeElement | null;
   querySelectorAll(selectors: string): ArrayLike<ProbeElement>;
+  readonly children: ArrayLike<ProbeElement>;
 }
 
 interface ProbeDocument {
@@ -453,6 +461,30 @@ function plausibleName(name: string): boolean {
   // would drop exactly the hint most needed. The letter test only excludes strings
   // that are punctuation or digits — a stray badge rather than a person.
   return name.length >= 2 && name.length <= 40 && /\p{L}/u.test(name);
+}
+
+/** A clock time, whatever a locale writes around it. */
+const CHAT_GROUP_TIME = /\d{1,2}[:.]\d{2}/u;
+
+/**
+ * The name the panel shows for whoever sent a message, or null when it shows none.
+ *
+ * Meet writes the name and the time in nodes of their own above a run of messages, so the
+ * label arrives as those nodes' text one per line and the name is the first of them. Taken
+ * that way rather than by cutting a glued string, since what Meet writes around the time
+ * moves with the locale and with an edit badge, and each of those read out as part of a
+ * name would name somebody who is not in the room.
+ *
+ * Two answers are null. A group holding no time is not one Meet draws a name in, and a
+ * group whose first line is the time is the agent's own messages, which carry no name.
+ */
+function chatSenderName(label: string): string | null {
+  const lines = label.split('\n').filter((line) => line !== '');
+  if (!lines.some((line) => CHAT_GROUP_TIME.test(line))) return null;
+
+  const name = lines[0];
+  if (CHAT_GROUP_TIME.test(name)) return null;
+  return plausibleName(name) ? name : null;
 }
 
 /**
@@ -1122,40 +1154,61 @@ export class GoogleMeetProvider implements MeetingProvider {
     try {
       const harvest = await withTimeout(
         page.evaluate(
-          ({ rowSelector, bodySelector, limit, maxChars }) => {
+          ({ rowSelector, bodySelector, groupSelector, limit, maxChars }) => {
             const doc = (globalThis as unknown as { document: ProbeDocument }).document;
 
-            const texts: string[] = [];
+            // What a group says apart from the messages and the controls in it: the name of
+            // the person who sent them, and the time. One line per node, so the reader can
+            // tell the name from the time instead of parsing one glued string. Read once
+            // per group, since a group holds a run of messages from one person.
+            const labels = new Map<ProbeElement, string>();
+            const labelOf = (row: ProbeElement): string => {
+              const group = row.closest(groupSelector);
+              if (!group) return '';
+              const known = labels.get(group);
+              if (known !== undefined) return known;
+              const copy = group.cloneNode(true);
+              for (const part of Array.from(copy.querySelectorAll('[data-message-id], button'))) {
+                part.remove();
+              }
+              const label = Array.from(copy.children)
+                .map((part) => (part.textContent ?? '').replace(/\s+/g, ' ').trim())
+                .join('\n');
+              labels.set(group, label);
+              return label;
+            };
+
+            const rows: { label: string; text: string; cut: boolean }[] = [];
             const seen = new Set<string>();
-            let cut = false;
             for (const row of Array.from(doc.querySelectorAll(rowSelector))) {
-              // One row per id: the row's own pin control repeats the id, so the same
-              // message is in the list twice.
               const id = row.getAttribute('data-message-id');
               if (!id || seen.has(id)) continue;
-              seen.add(id);
 
-              // The body node only. A row read whole carries the sender's name and the
-              // timestamp, and the read hands neither to the model. A row with no body
-              // node counts as unparsed rather than falling back to the row.
+              // The body node only, so the name and the time are read from the group rather
+              // than glued to the text. A row with no body node counts as unparsed, and an
+              // id is taken as read only once a body is found.
               const body = row.querySelector(bodySelector);
               if (!body) continue;
               const text = (body.textContent ?? '').replace(/\s+/g, ' ').trim();
               if (!text) continue;
-              if (text.length > maxChars) cut = true;
-              texts.push(text.slice(0, maxChars));
+              seen.add(id);
+              rows.push({
+                label: labelOf(row),
+                text: text.slice(0, maxChars),
+                cut: text.length > maxChars,
+              });
             }
 
             return {
-              texts: texts.slice(-limit),
-              total: texts.length,
-              cut,
+              rows: rows.slice(-limit),
+              total: rows.length,
               idNodes: doc.querySelectorAll('[data-message-id]').length,
             };
           },
           {
             rowSelector: CHAT_MESSAGE_ROW_SELECTOR,
             bodySelector: CHAT_MESSAGE_BODY_SELECTOR,
+            groupSelector: CHAT_MESSAGE_GROUP_SELECTOR,
             limit: options.limit,
             maxChars: options.maxCharsPerMessage,
           },
@@ -1163,8 +1216,10 @@ export class GoogleMeetProvider implements MeetingProvider {
         CHAT_LIST_READ_TIMEOUT_MS,
       );
 
-      // Nothing parsed is an empty chat only when no ids are on the page and the panel is
-      // still open. A toggle that will not say is not a failure.
+      // Nothing parsed has three possible reasons: the chat is empty, the selectors no
+      // longer match, or the panel closed. Ids on the page mean the page has messages this
+      // code could not read. An empty chat is reported only when neither of the other two
+      // is true, and a toggle that does not answer counts as still open.
       if (harvest.total === 0) {
         if (harvest.idNodes > 0) {
           return {
@@ -1180,8 +1235,12 @@ export class GoogleMeetProvider implements MeetingProvider {
 
       return {
         read: true,
-        messages: harvest.texts,
-        truncated: harvest.cut || harvest.total > harvest.texts.length,
+        messages: harvest.rows.map((row) => ({
+          sender: chatSenderName(row.label),
+          text: row.text,
+          truncated: row.cut,
+        })),
+        truncated: harvest.total > harvest.rows.length,
       };
     } catch {
       // A closed page, a navigation mid-read, or a page too busy to answer.
