@@ -50,6 +50,9 @@ picks them up automatically (no restart needed). Two ways:
   path. Then move the resulting `<name>/` folder into the agent's skills
   directory. Use `--copy` so the bundle is a real copy that survives restarts.
 
+You can also ask the agent to do it. It is told where the skills directory is,
+and writes the bundle there itself.
+
 A skill folder looks like:
 
 ```

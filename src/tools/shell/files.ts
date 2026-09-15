@@ -14,10 +14,14 @@
  * paths outside the workspace are both rejected. Real boundary is
  * still filesystem permissions; this layer matches the upstream shell
  * sandbox's workspace semantics.
+ *
+ * The skills and plugins directories are reachable as well, since that is where a skill
+ * or a plugin is installed and the prompt tells the agent to put one there.
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { z } from 'zod';
+import { resolvePluginsDir, resolveSkillsDir } from '../../lib/data-dir';
 import { resolvePath, isInsideWorkspace } from './workspace';
 import { applyEdit } from './edit';
 import { formatFileContent } from './format';
@@ -55,8 +59,31 @@ export const editFileInput = z.object({
     .describe('Replace all occurrences (default: false, requires unique match)'),
 });
 
+/**
+ * Where a file tool may work, beyond the workspace root.
+ *
+ * A skill and a plugin are installed by landing a bundle in the data dir, which is what
+ * the `# Skills` and `# Plugins` sections of the prompt tell the agent to do. `shell_exec`
+ * has always been able to write there — it takes a command rather than a path, so nothing
+ * checks where it lands — so a file tool refusing the same write left the two disagreeing
+ * and made the prompt's own instruction false for one of them.
+ *
+ * Read on each call rather than once: `PRISM_SKILLS_DIR` and `PRISM_PLUGINS_DIR` move
+ * these, and a test sets them per case.
+ *
+ * The rest of the data dir stays out. The database, the stored attachments and the saved
+ * tool outputs are the runtime's own files, and a tool that overwrites a whole file has no
+ * business in them.
+ */
+function installDirs(): string[] {
+  return [resolveSkillsDir(), resolvePluginsDir()];
+}
+
 function rejectOutsideWorkspace(fullPath: string, workspace: string): string | null {
-  return isInsideWorkspace(fullPath, workspace) ? null : 'Path outside workspace';
+  if (isInsideWorkspace(fullPath, workspace)) return null;
+  const reachable = installDirs();
+  if (reachable.some((dir) => isInsideWorkspace(fullPath, dir))) return null;
+  return `Path outside workspace. Write under ${workspace}, or into ${reachable.join(' or ')}.`;
 }
 
 export async function runReadFile(
