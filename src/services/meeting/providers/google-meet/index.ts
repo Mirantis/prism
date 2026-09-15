@@ -88,8 +88,7 @@ const LOBBY_SLACK_MS = 20_000;
  * The caller of a join waits for this phase — that is how it learns a join failed
  * before anyone was asked to admit it — so a pathological lobby holds a chat turn for
  * up to two minutes. The admission wait after it is nobody's chat turn, and
- * `MEETING_TIMEOUT_MINUTES` still caps the call. The alternative is a budget that fails
- * a join that was going to succeed.
+ * `MEETING_TIMEOUT_MINUTES` still caps the call.
  */
 const LOBBY_PHASE_TIMEOUT_MS = LOBBY_SLACK_MS + JOIN_BUTTON_TIMEOUT_MS;
 
