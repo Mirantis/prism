@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, act } from '@testing-library/react';
+import { render, cleanup, act, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { createRef } from 'react';
 import { ScreenView } from './screen-view';
@@ -19,6 +19,9 @@ let frames: Array<() => void> = [];
 
 beforeEach(() => {
   frames = [];
+  Object.defineProperty(document, 'pointerLockElement', { value: null, configurable: true });
+  Object.defineProperty(document, 'exitPointerLock', { value: vi.fn(), configurable: true });
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true);
   // jsdom has no layout, so the box reports its size to nobody.
   vi.stubGlobal(
     'ResizeObserver',
@@ -40,10 +43,11 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 /** Render the screen with the pointer taken, and hand back what it sent. */
-function takeControl() {
+function takeControl(onRelease = vi.fn()) {
   const sent: PageFrame[] = [];
   const screenRef = createRef<HTMLCanvasElement>();
   render(
@@ -51,8 +55,11 @@ function takeControl() {
       screenRef={screenRef}
       hasScreen
       controllable
+      canTakeControl
+      onTakeControl={async () => true}
       onInput={(frame) => sent.push(frame)}
       connecting={false}
+      onRelease={onRelease}
     />,
   );
   // The lock is the browser's; the component follows `pointerlockchange`.
@@ -90,12 +97,41 @@ const runFrame = () =>
 
 describe('the pointer while the user holds the screen', () => {
   it('releases pointer lock on Escape without sending the key to the desktop', () => {
-    const sent = takeControl();
+    const release = vi.fn();
+    const sent = takeControl(release);
     const exit = vi.fn();
     Object.defineProperty(document, 'exitPointerLock', { value: exit, configurable: true });
     act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
     expect(exit).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
     expect(sent).toEqual([]);
+  });
+
+  it('hands back once when native Escape only emits pointerlockchange', async () => {
+    const release = vi.fn();
+    takeControl(release);
+    Object.defineProperty(document, 'pointerLockElement', { value: null, configurable: true });
+    act(() => document.dispatchEvent(new Event('pointerlockchange')));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 110)));
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('keeps human control when focus changes after pointer lock is released', async () => {
+    const release = vi.fn();
+    takeControl(release);
+    Object.defineProperty(document, 'pointerLockElement', { value: null, configurable: true });
+    act(() => document.dispatchEvent(new Event('pointerlockchange')));
+    act(() => window.dispatchEvent(new Event('blur')));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 110)));
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it('keeps human control when the viewer unmounts', () => {
+    const release = vi.fn();
+    takeControl(release);
+    cleanup();
+    expect(release).not.toHaveBeenCalled();
   });
 
   it('sends the movement under a click before the click', () => {
@@ -151,5 +187,76 @@ describe('the pointer while the user holds the screen', () => {
     runFrame();
 
     expect(sent).toEqual([{ type: 'pointer_move', dx: 15, dy: 5 }]);
+  });
+});
+
+describe('clicking to take control', () => {
+  function viewer(onTakeControl: () => Promise<boolean>) {
+    const onInput = vi.fn();
+    const onRelease = vi.fn();
+    const screenRef = createRef<HTMLCanvasElement>();
+    const props = {
+      screenRef,
+      hasScreen: true,
+      controllable: false,
+      canTakeControl: true,
+      connecting: false,
+      onInput,
+      onRelease,
+      onTakeControl,
+    };
+    const view = render(<ScreenView {...props} />);
+    const box = screenRef.current!.parentElement!;
+    box.requestPointerLock = vi.fn(async () => {
+      Object.defineProperty(document, 'pointerLockElement', { value: box, configurable: true });
+      document.dispatchEvent(new Event('pointerlockchange'));
+    });
+    return { box, onInput, onRelease, props, ...view };
+  }
+
+  it('waits for ownership before sending input and consumes the first click', async () => {
+    let resolve!: (granted: boolean) => void;
+    const promise = new Promise<boolean>((done) => {
+      resolve = done;
+    });
+    const grant = { promise, resolve };
+    const acquire = vi.fn(() => grant.promise);
+    const view = viewer(acquire);
+    await act(async () => fireEvent.click(view.box));
+    press();
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(view.onInput).not.toHaveBeenCalled();
+    await act(async () => grant.resolve(true));
+    view.rerender(<ScreenView {...view.props} controllable />);
+    expect(view.onInput.mock.calls).toEqual([[{ type: 'pointer', x: 0, y: 0 }]]);
+    press();
+    expect(view.onInput).toHaveBeenLastCalledWith({
+      type: 'pointer_button',
+      button: 'left',
+      down: true,
+    });
+  });
+
+  it('hands back after Escape during the ownership request', async () => {
+    let resolve!: (granted: boolean) => void;
+    const promise = new Promise<boolean>((done) => {
+      resolve = done;
+    });
+    const grant = { promise, resolve };
+    const view = viewer(() => grant.promise);
+    await act(async () => fireEvent.click(view.box));
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+    expect(view.onRelease).not.toHaveBeenCalled();
+    await act(async () => grant.resolve(true));
+    expect(view.onRelease).toHaveBeenCalledOnce();
+    expect(view.onInput).not.toHaveBeenCalled();
+  });
+
+  it('releases the local pointer when another viewer wins ownership', async () => {
+    const view = viewer(async () => false);
+    await act(async () => fireEvent.click(view.box));
+    expect(document.exitPointerLock).toHaveBeenCalled();
+    expect(view.onInput).not.toHaveBeenCalled();
+    expect(view.onRelease).not.toHaveBeenCalled();
   });
 });

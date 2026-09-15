@@ -1,3 +1,4 @@
+import { computerHelpNotices } from './prompts/computer-prompt';
 import { computerHelpService } from './services/computer/computer-help.service';
 import { hasComputer } from './services/computer/supported';
 import { computerService } from './services/computer/computer.service';
@@ -130,9 +131,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // section (e.g. a Slack attachment that failed to download).
     context.runtimeNotices = request.runtimeNotices;
     if (hasComputer() && request.threadId) {
-      const help = (await computerHelpService.list(request.agentId, request.userId, request.threadId)).filter((item) => item.status === 'waiting');
-      if (help.length) context.runtimeNotices = [...(request.runtimeNotices ?? []),
-        ...help.map((item) => `Outstanding computer help ${item.id}: ${item.reason}. If the user says they finished helping, resolve it with computer_continue and inspect the screen.`)];
+      const help = await computerHelpService.list(request.agentId, request.userId, request.threadId);
+      context.runtimeNotices = [
+        ...(request.runtimeNotices ?? []),
+        ...computerHelpNotices(help),
+      ];
     }
 
     // Heartbeat and cron runs honor their own optional model override,

@@ -1,48 +1,73 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { Maximize, Minimize, Monitor, LoaderCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { InputFrame } from '@/hooks/use-computer-screen';
 
 interface ScreenViewProps {
-  /** The image the runtime's pictures are drawn into; owned by the voice chat hook. */
+  /** Canvas for the live desktop stream. */
   screenRef: RefObject<HTMLCanvasElement | null>;
   hasScreen: boolean;
-  /** Whether a call is still expected to bring a screen, so the box says so. */
+  /** Whether the desktop stream is still connecting. */
   connecting: boolean;
   /** Whether the runtime accepts pointer and keyboard input for this screen. */
   controllable: boolean;
+  canTakeControl: boolean;
+  onTakeControl: () => Promise<boolean>;
   onInput: (frame: InputFrame) => void;
+  onRelease: () => void;
   /** Laid over the screen, e.g. the agent's tile. */
   children?: ReactNode;
 }
 
 const BUTTONS: Record<number, 'left' | 'middle' | 'right'> = { 0: 'left', 1: 'middle', 2: 'right' };
 
-/**
- * The agent's screen, and a way to take it over.
- *
- * A click asks the browser for the pointer lock, which hides the page's own cursor and
- * hands over raw mouse movement until the user presses Esc, the browser's own way out
- * of a lock. While locked, movement, buttons, the wheel and every key go to the
- * runtime, which moves the desktop's pointer. The first click only takes control; it
- * is not sent as a click, so taking over cannot press anything by accident.
- *
- * The box can go fullscreen. The picture keeps its shape inside it, so on a monitor of
- * another shape there are bars beside or above it; the pointer maths works from where
- * the picture is drawn, not from the box.
- *
- * While the user has control, paste types clipboard text into the desktop.
- */
+/** The first click takes control without clicking anything on the desktop. */
 export function ScreenView({
   screenRef,
   hasScreen,
   connecting,
   controllable,
+  canTakeControl,
+  onTakeControl,
   onInput,
+  onRelease,
   children,
 }: ScreenViewProps) {
+  const releaseRef = useRef(onRelease);
+  releaseRef.current = onRelease;
+  const allowedRef = useRef(controllable);
+  allowedRef.current = controllable;
+  const releasing = useRef(false);
+  const pending = useRef(false);
+  const [acquiring, setAcquiring] = useState(false);
+  const [inputError, setInputError] = useState<string | null>(null);
+  const release = useCallback(() => {
+    if ((!allowedRef.current && !pending.current) || releasing.current) return;
+    releasing.current = true;
+    if (document.pointerLockElement) document.exitPointerLock();
+    if (!pending.current) releaseRef.current();
+  }, []);
   useEffect(() => {
-    if (!controllable && document.pointerLockElement) document.exitPointerLock();
+    if (!controllable && !acquiring) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      release();
+    };
+    document.addEventListener('keydown', onEscape);
+    return () => document.removeEventListener('keydown', onEscape);
+  }, [controllable, acquiring, release]);
+  useEffect(() => {
+    if (!controllable && !pending.current && document.pointerLockElement === boxRef.current)
+      document.exitPointerLock();
   }, [controllable]);
   const boxRef = useRef<HTMLDivElement | null>(null);
   const [controlling, setControlling] = useState(false);
@@ -69,20 +94,47 @@ export function ScreenView({
   }, [screenRef]);
 
   useEffect(() => {
-    const onLock = () => setControlling(document.pointerLockElement === boxRef.current);
+    let locked = false;
+    let lostFocus = false;
+    let unlockTimer: ReturnType<typeof setTimeout> | undefined;
+    const onBlur = () => {
+      lostFocus = true;
+    };
+    const onLock = () => {
+      const next = document.pointerLockElement === boxRef.current;
+      const unlocked = locked && !next;
+      locked = next;
+      if (next) lostFocus = false;
+      setControlling(next);
+      // Native Escape can release pointer lock without delivering a keydown event.
+      if (unlocked) {
+        // Allow window focus to settle before treating native pointer unlock as Escape.
+        unlockTimer = setTimeout(() => {
+          if (!lostFocus && document.hasFocus() && document.visibilityState === 'visible')
+            release();
+        }, 100);
+      }
+    };
     const onFull = () => setFullscreen(document.fullscreenElement === boxRef.current);
+    window.addEventListener('blur', onBlur);
     document.addEventListener('pointerlockchange', onLock);
     document.addEventListener('fullscreenchange', onFull);
     return () => {
+      clearTimeout(unlockTimer);
+      window.removeEventListener('blur', onBlur);
       document.removeEventListener('pointerlockchange', onLock);
       document.removeEventListener('fullscreenchange', onFull);
       if (document.pointerLockElement === boxRef.current) document.exitPointerLock();
       if (document.fullscreenElement === boxRef.current) void document.exitFullscreen();
     };
-  }, []);
+  }, [release]);
 
   useEffect(() => {
-    if (!controlling || !controllable) return;
+    if (!controlling || !controllable || acquiring) return;
+
+    const send = (frame: InputFrame) => {
+      if (!releasing.current) onInput(frame);
+    };
 
     // Movement is gathered per animation frame; the runtime gathers again on its side.
     let dx = 0;
@@ -103,7 +155,7 @@ export function ScreenView({
         flush = null;
       }
       if (dx === 0 && dy === 0) return;
-      onInput({ type: 'pointer_move', dx, dy });
+      send({ type: 'pointer_move', dx, dy });
       dx = 0;
       dy = 0;
     };
@@ -120,7 +172,7 @@ export function ScreenView({
       const button = BUTTONS[e.button];
       if (!button) return;
       flushMove();
-      onInput({ type: 'pointer_button', button, down });
+      send({ type: 'pointer_button', button, down });
     };
     const onDown = onButton(true);
     const onUp = onButton(false);
@@ -128,13 +180,13 @@ export function ScreenView({
       e.preventDefault();
       if (e.deltaY === 0) return;
       flushMove();
-      onInput({ type: 'wheel', dy: e.deltaY });
+      send({ type: 'wheel', dy: e.deltaY });
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { document.exitPointerLock(); return; }
+      if (e.key === 'Escape') return;
       if (e.key.toLowerCase() === 'v' && (e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
-      onInput({
+      send({
         type: 'key',
         key: e.key,
         code: e.code,
@@ -161,12 +213,13 @@ export function ScreenView({
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('contextmenu', swallow);
     };
-  }, [controlling, controllable, onInput, drawn]);
+  }, [controlling, controllable, acquiring, onInput, drawn]);
 
   // Paste uses the viewer's clipboard while that viewer has desktop control.
   useEffect(() => {
-    if (!controllable || !hasScreen) return;
+    if (!controllable || !hasScreen || acquiring) return;
     const onPaste = (e: ClipboardEvent) => {
+      if (releasing.current) return;
       const target = e.target;
       if (
         target instanceof HTMLInputElement ||
@@ -182,20 +235,43 @@ export function ScreenView({
     };
     document.addEventListener('paste', onPaste);
     return () => document.removeEventListener('paste', onPaste);
-  }, [controllable, hasScreen, controlling, onInput]);
+  }, [controllable, hasScreen, acquiring, onInput]);
 
-  const takeControl = (e: MouseEvent<HTMLDivElement>) => {
+  const takeControl = async (e: MouseEvent<HTMLDivElement>) => {
     const box = boxRef.current;
-    if (!box || !controllable || !hasScreen || controlling) return;
-    // Put the desktop's pointer where the hand is, then let the deltas move it from there.
+    if (!box || !canTakeControl || !hasScreen || controlling || pending.current) return;
     const rect = box.getBoundingClientRect();
     const { left, top, scale } = drawn();
-    onInput({
+    const pointer: InputFrame = {
       type: 'pointer',
       x: (e.clientX - rect.left - left) * scale,
       y: (e.clientY - rect.top - top) * scale,
-    });
-    box.requestPointerLock();
+    };
+    releasing.current = false;
+    pending.current = true;
+    setAcquiring(true);
+    setInputError(null);
+    try {
+      // Pointer lock needs the click's user activation; input waits for runtime ownership.
+      await box.requestPointerLock();
+      const granted = controllable || (await onTakeControl());
+      pending.current = false;
+      if (!granted) {
+        releasing.current = true;
+        if (document.pointerLockElement === box) document.exitPointerLock();
+        return;
+      }
+      if (releasing.current) {
+        releaseRef.current();
+        return;
+      }
+      onInput(pointer);
+    } catch (error) {
+      setInputError(error instanceof Error ? error.message : String(error));
+    } finally {
+      pending.current = false;
+      setAcquiring(false);
+    }
   };
 
   const toggleFullscreen = (e: MouseEvent<HTMLButtonElement>) => {
@@ -207,7 +283,7 @@ export function ScreenView({
     else void box.requestFullscreen();
   };
 
-  const canTake = controllable && hasScreen && !controlling;
+  const canTake = canTakeControl && hasScreen && !controlling && !acquiring;
 
   return (
     <div
@@ -226,23 +302,39 @@ export function ScreenView({
       {!hasScreen && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
           <div className="flex size-14 items-center justify-center rounded-2xl border border-white/10 bg-zinc-900 text-zinc-400">
-            {connecting
-              ? <LoaderCircle className="size-6 motion-safe:animate-spin" />
-              : <Monitor className="size-6" />}
+            {connecting ? (
+              <LoaderCircle className="size-6 motion-safe:animate-spin" />
+            ) : (
+              <Monitor className="size-6" />
+            )}
           </div>
           <p className="text-sm font-medium text-zinc-200">
             {connecting ? 'Preparing your computer' : 'Computer unavailable'}
           </p>
           <p className="max-w-xs text-xs leading-5 text-zinc-400">
             {connecting
-              ? "The agent’s screen will appear here when it is ready."
+              ? 'The agent’s screen will appear here when it is ready.'
               : 'Check the connection status above for details.'}
           </p>
         </div>
       )}
-      {controlling && (
+      {inputError && (
+        <p
+          role="alert"
+          className="absolute bottom-3 left-3 right-3 rounded-md bg-black/80 p-2 text-sm text-white"
+        >
+          {inputError}
+        </p>
+      )}
+      {acquiring && (
+        <p className="absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-black/80 px-4 py-1.5 text-sm text-white">
+          Taking control…
+        </p>
+      )}
+      {controlling && controllable && !acquiring && (
         <div className="absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-sky-500/90 px-4 py-1.5 text-sm font-medium text-white shadow">
-          You control the screen · press <kbd className="rounded bg-white/20 px-1.5">Esc</kbd> to stop
+          You control the screen · press <kbd className="rounded bg-white/20 px-1.5">Esc</kbd> to
+          hand back to Prism
         </div>
       )}
       {hasScreen && (
@@ -264,7 +356,10 @@ export function ScreenView({
       )}
       {children}
       {/* Keep the border inside the screen so the page's scroll container preserves every edge. */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[inherit] border border-zinc-700" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 rounded-[inherit] border border-zinc-700"
+      />
     </div>
   );
 }

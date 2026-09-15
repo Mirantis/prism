@@ -9,11 +9,11 @@ import type { ComputerHelp } from '@/types';
 export function ComputerHelpCard({
   help,
   clientId,
-  onTakeControl,
+  inComputer,
 }: {
   help: ComputerHelp;
   clientId?: string | null;
-  onTakeControl?: () => void;
+  inComputer?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { data } = useComputerStatus();
@@ -48,15 +48,10 @@ export function ComputerHelpCard({
       <p className="text-sm text-muted-foreground">{help.reason}</p>
       {current.status === 'waiting' && (
         <div className="flex flex-wrap items-center gap-2">
-          {onTakeControl ? (
-            <Button size="sm" variant="outline" onClick={onTakeControl}>
-              Take control
-            </Button>
-          ) : (
-            <a className="text-sm underline underline-offset-4" href={`/computer?help=${help.id}`}>
-              Open Computer <ArrowUpRight className="inline size-3" />
-            </a>
-          )}
+          <a className="text-sm underline underline-offset-4" href={`/computer?help=${help.id}`}>
+            {inComputer ? 'Select request' : 'Open Computer'}{' '}
+            <ArrowUpRight className="inline size-3" />
+          </a>
           <Button size="sm" disabled={busy} onClick={() => void resolve('continue')}>
             Continue
           </Button>
@@ -65,7 +60,7 @@ export function ComputerHelpCard({
           </Button>
         </div>
       )}
-      {help.threadId && onTakeControl && (
+      {help.threadId && inComputer && (
         <a
           className="block text-xs text-muted-foreground underline underline-offset-4"
           href={`/chat/${help.threadId}`}
