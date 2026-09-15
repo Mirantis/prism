@@ -165,10 +165,6 @@ vi.mock('../voice-conversation', () => ({ VoiceConversation: FakeVoiceConversati
 const prepareMeetingTools = vi.fn();
 vi.mock('../tool-bridge', () => ({
   prepareMeetingTools: (...a: unknown[]) => prepareMeetingTools(...a),
-  // The real figure, since the reading the service assembles is bounded by it. It moves
-  // with the one in `tool-bridge`, which this suite cannot import: the real module pulls
-  // the whole tool tree in with it.
-  MEETING_MAX_RESULT_CHARS: 12_000,
 }));
 
 const getAgentContext = vi.fn();
@@ -285,9 +281,8 @@ const {
   MEETING_CHAT_MAX_CHARS,
   MEETING_CHAT_READ_LIMIT,
 } = await import('../meeting-bot.service');
-// The cap the bridge renders a tool result under, and so the bound on a chat reading. The
-// mock above holds the figure; this is the one place the assertions read it from.
-const { MEETING_MAX_RESULT_CHARS } = await import('../tool-bridge');
+// The cap a Realtime tool result is rendered under, and so the bound on a chat reading.
+const { MAX_TOOL_RESULT_CHARS } = await import('../../voice/realtime-tools');
 // The real lock, not a mock: what these tests measure is the service taking and
 // handing back the one voice the runtime has.
 const { voiceSessionLock } = await import('../../voice/voice-session-lock');
@@ -2888,7 +2883,7 @@ describe('reading the call chat', () => {
    * rather than calculated here.
    */
   const spillOf = (result: unknown) =>
-    renderToolResultDetailed(result, { maxChars: MEETING_MAX_RESULT_CHARS, quietLog: true })
+    renderToolResultDetailed(result, { maxChars: MAX_TOOL_RESULT_CHARS, quietLog: true })
       .truncation;
 
   it('hands the model each message with the name of whoever sent it, fenced', async () => {
@@ -3265,7 +3260,7 @@ describe('reading the call chat', () => {
 
     expect(result.incomplete).toBe(true);
     expect(result.message).toMatch(/not the whole chat/i);
-    expect(Number(readProps().chars)).toBeLessThanOrEqual(MEETING_MAX_RESULT_CHARS);
+    expect(Number(readProps().chars)).toBeLessThanOrEqual(MAX_TOOL_RESULT_CHARS);
   });
 
   it('cuts one message that outgrows the whole budget instead of reading back nothing', async () => {
@@ -3273,7 +3268,7 @@ describe('reading the call chat', () => {
     // spoken as an empty chat, which is the one wrong answer to give a room. The message has
     // no sender name, so the cut lands at its own character count, and the surrogate pair
     // sits exactly there — so the cut leaves half of it behind.
-    const room = MEETING_MAX_RESULT_CHARS - MEETING_CHAT_CUT_MARK.length;
+    const room = MAX_TOOL_RESULT_CHARS - MEETING_CHAT_CUT_MARK.length;
     const head = `the trace starts here`.padEnd(room - 1, '.');
     providerReadChatMessages.mockResolvedValue({
       read: true,
@@ -3289,7 +3284,7 @@ describe('reading the call chat', () => {
     expect(result.message).toContain('1. the trace starts here');
     expect(result.message).toContain(MEETING_CHAT_CUT_MARK);
     expect(readProps().count).toBe('1');
-    expect(Number(readProps().chars)).toBeLessThanOrEqual(MEETING_MAX_RESULT_CHARS);
+    expect(Number(readProps().chars)).toBeLessThanOrEqual(MAX_TOOL_RESULT_CHARS);
     expect(JSON.stringify(result)).not.toContain('\\ud83d');
   });
 
