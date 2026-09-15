@@ -1,25 +1,12 @@
-/**
- * The WebSocket that carries the agent's screen, the sound of its desktop, and the user's
- * hand on it.
- *
- * The call itself is not here. A client starts and ends its voice chat on the chat
- * socket, like every other client, and opens this one once that call is live and has a
- * computer. What this carries is the computer: video several times a second, the
- * desktop's audio, and the pointer, keyboard and shared screen coming back. Behind a
- * burst of video a chat message would wait, which is the whole reason it is a socket of
- * its own.
- *
- * Binary frames out are tagged in their first byte, so a client can tell the desktop's
- * sound from a picture of it. Text frames are JSON: the screen's encoding out, and the
- * user's pointer, keyboard and shared screen in.
- */
+/** Live desktop video, audio, and user input on a separate WebSocket. */
 
 import type { Server as HttpServer } from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { logger } from '../../logger';
 import { isAllowedOrigin } from '../../lib/origin-guard';
 import { serveUpgrades } from '../websocket-upgrades';
-import { voiceChatService } from '../voice/voice-chat.service';
+import { randomUUID } from 'node:crypto';
+import { computerService } from './computer.service';
 import type { ScreenFrame } from './picture-stream';
 
 export const COMPUTER_PATH = '/api/computer';
@@ -88,15 +75,6 @@ class ComputerEndpoint {
   private wss: WebSocketServer | null = null;
   private liveness: NodeJS.Timeout | null = null;
   /**
-   * The socket watching the screen, and the way to stop sending it.
-   *
-   * One at a time, because there is one screen and one session. A second connection takes
-   * it over, which is what a page reload is: the first socket is closed and its capture
-   * stopped before the new one starts its own.
-   */
-  private watcher: { ws: WebSocket; detach: () => void } | null = null;
-
-  /**
    * Serve this endpoint's upgrades on the shared HTTP server.
    *
    * `noServer` because a `ws` server bound with `path` answers every other path's
@@ -145,44 +123,26 @@ class ComputerEndpoint {
   }
 
   private serve(ws: ComputerSocket): void {
+    const id = randomUUID();
     ws.isAlive = true;
-    ws.on('pong', () => {
-      ws.isAlive = true;
-    });
-
-    // The watcher that was here goes first, and that order is the whole of it: there is
-    // one screen, so attaching starts a stream that replaces the one before it, and a
-    // detach run afterwards would stop the replacement and leave the original encoding
-    // for nobody. A reload is two sockets whose lifetimes overlap, so this is the
-    // ordinary case rather than a rare one.
-    this.release();
-
-    // The call is the chat socket's. This one only shows what that call already has, so a
-    // client that opens it too early is told rather than left watching a blank canvas.
-    const detach = voiceChatService.attachComputerClient(this.clientFor(ws));
-    if (!detach) {
-      send(ws, { type: 'error', message: 'there is no voice chat with a computer running' });
-      ws.close(1011, 'no computer');
-      return;
-    }
-    this.watcher = { ws, detach };
-
-    ws.on('message', (data, isBinary) => {
-      if (isBinary || this.watcher?.ws !== ws) return;
-      voiceChatService.handleComputerInput(data.toString());
-    });
+    ws.on('pong', () => { ws.isAlive = true; });
+    const state = () => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'computer_state', clientId: id, ...computerService.status() }));
+    };
+    computerService.access.on('change', state);
+    state();
+    ws.on('message', (data, binary) => { if (!binary) computerService.input(id, data.toString()); });
     ws.on('close', () => {
-      if (this.watcher?.ws === ws) this.release();
+      computerService.access.off('change', state);
+      computerService.detach(id);
     });
-  }
-
-  /** Stop the capture the current watcher started, and forget it. */
-  private release(): void {
-    const watcher = this.watcher;
-    this.watcher = null;
-    if (!watcher) return;
-    watcher.detach();
-    if (watcher.ws.readyState === WebSocket.OPEN) watcher.ws.close(1000, 'replaced');
+    void computerService.attach(id, this.clientFor(ws)).then((detach) => {
+      if (ws.readyState !== WebSocket.OPEN) detach();
+      state();
+    }).catch((error) => {
+      send(ws, { type: 'error', message: error instanceof Error ? error.message : String(error) });
+      ws.close(1011, 'computer unavailable');
+    });
   }
 
   /** How the session sends this socket the screen and the desktop's sound. */
@@ -228,7 +188,7 @@ class ComputerEndpoint {
 
   /** Stop taking connections; called from the process shutdown path. */
   close(): void {
-    this.release();
+    for (const ws of this.wss?.clients ?? []) ws.close(1001, 'runtime shutting down');
     if (this.liveness) clearInterval(this.liveness);
     this.liveness = null;
     this.wss?.close();

@@ -368,6 +368,16 @@ export class BrowserStack {
     return this.tabs.list();
   }
 
+  /** Match the browser's visible tab after the user has used its tab strip. */
+  async observeFront(): Promise<void> {
+    for (const page of this.tabs.list()) {
+      if (await page.evaluate("document.visibilityState === 'visible'").catch(() => false)) {
+        this.tabs.observe(page);
+        return;
+      }
+    }
+  }
+
   /**
    * Put the active tab back in front, if there is one.
    *

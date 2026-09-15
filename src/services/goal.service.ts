@@ -1,3 +1,5 @@
+import { computerHelpService } from './computer/computer-help.service';
+import { hasComputer } from './computer/supported';
 /**
  * Goal Service (Agent-Runtime)
  *
@@ -185,13 +187,13 @@ class GoalService {
     });
   }
 
-  async pauseGoal(goalId: string): Promise<Goal | null> {
+  async pauseGoal(goalId: string, reason = 'Paused by user.'): Promise<Goal | null> {
     this.signalAbort(goalId);
     const goal = await prisma.goal.findUnique({ where: { id: goalId } });
     if (!goal || goal.status !== 'active') return goal;
     const paused = await prisma.goal.update({
       where: { id: goalId },
-      data: { status: 'paused', lastReason: 'Paused by user.' },
+      data: { status: 'paused', lastReason: reason },
     });
     logger.info(`[Goal] ${goalId} paused by user after ${paused.turnCount} turn(s)`);
     trackEvent('goal paused', paused.userId, {
@@ -316,6 +318,12 @@ class GoalService {
             'budget_limited',
             "Your organization's AI spending limit has been reached.",
           );
+          return;
+        }
+
+        if (hasComputer() && (await computerHelpService.list(goal.agentId, goal.userId, goal.threadId)).some((help) => help.status === 'waiting')) {
+          await prisma.goal.update({ where: { id: goal.id }, data: { tokensUsed: newTokensUsed, turnCount: newTurnCount, lastReason: 'Waiting for computer help.' } });
+          await this.pauseGoal(goal.id, 'Waiting for computer help.');
           return;
         }
 

@@ -73,6 +73,7 @@ const KEYWORD_LIMIT = 12;
 import type { PreparedTools } from '../voice/realtime-tools';
 
 export interface VoiceConversationOptions {
+  onResponseFinished?: () => void;
   instructions: string;
   tools: PreparedTools;
   /** Written with pcm16 at `sampleRate` — `pacat`'s stdin in production. */
@@ -316,6 +317,7 @@ export class VoiceConversation {
 
     this.session.on('responseDone', () => {
       this.responses += 1;
+      void Promise.allSettled(this.toolRuns).then(() => this.options.onResponseFinished?.());
       // The measurement belongs to one response. Left set, a response that ends
       // without ever producing audio — cancelled by a barge-in, killed by an API
       // error — would hand its marker to whatever spoke next, including the
@@ -329,7 +331,9 @@ export class VoiceConversation {
 
     this.session.on('functionCall', (call) => {
       this.toolCalls += 1;
-      void this.runTool(call.callId, call.name, call.argumentsJson);
+      const run = this.runTool(call.callId, call.name, call.argumentsJson);
+      this.toolRuns.add(run);
+      void run.finally(() => this.toolRuns.delete(run));
     });
 
     // The model never answers on its own, so every utterance passes the policy —
@@ -475,6 +479,8 @@ export class VoiceConversation {
     this.answering = this.currentSpeaker;
     this.session.requestResponse();
   }
+
+  private toolRuns = new Set<Promise<unknown>>();
 
   private async runTool(callId: string, name: string, argumentsJson: string): Promise<void> {
     const output = await this.options.tools.execute(name, argumentsJson);

@@ -52,7 +52,6 @@ function takeControl() {
       hasScreen
       controllable
       onInput={(frame) => sent.push(frame)}
-      onViewport={() => {}}
       connecting={false}
     />,
   );
@@ -90,6 +89,15 @@ const runFrame = () =>
   });
 
 describe('the pointer while the user holds the screen', () => {
+  it('releases pointer lock on Escape without sending the key to the desktop', () => {
+    const sent = takeControl();
+    const exit = vi.fn();
+    Object.defineProperty(document, 'exitPointerLock', { value: exit, configurable: true });
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+    expect(exit).toHaveBeenCalledOnce();
+    expect(sent).toEqual([]);
+  });
+
   it('sends the movement under a click before the click', () => {
     const sent = takeControl();
 

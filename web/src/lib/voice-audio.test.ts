@@ -123,6 +123,13 @@ describe('startVoiceAudio', () => {
   const open = (options: Partial<Parameters<typeof startVoiceAudio>[0]> = {}) =>
     startVoiceAudio({ sampleRate: VOICE_SAMPLE_RATE, onFrame: vi.fn(), ...options });
 
+  it('plays desktop sound without requesting microphone access', async () => {
+    const audio = await startVoiceAudio({ sampleRate: 48_000, capture: false, onFrame: vi.fn() });
+    expect(getUserMedia).not.toHaveBeenCalled();
+    audio.enqueueComputer(new ArrayBuffer(960));
+    await audio.stop();
+  });
+
   it('asks for the microphone once and runs at the session rate', async () => {
     const audio = await open();
 

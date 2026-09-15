@@ -1,19 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { computerWebSocketUrl } from '@/api/runtime-client';
+import type { ComputerStatus } from '@/types';
 import { canDecodeVideo, ScreenCanvas } from '@/lib/screen-canvas';
 
-/**
- * The agent's screen, the sound of its desktop, and the user's hand on it.
- *
- * The call is not here: it is an ordinary voice chat on the chat socket, asked for with a
- * computer, and `useVoiceCall` runs it. This hook opens a second socket once that call is
- * live, because video several times a second would put a chat message behind it. It
- * carries the screen and the desktop's audio in, and the pointer, keyboard and the user's
- * shared screen out.
- *
- * The desktop's sound is handed to the call's own playback, so there is one audio path in
- * the page rather than two.
- */
+/** Live desktop video, sound, and user input on a dedicated socket. */
 
 /** The last picture of the screen that arrived: how many so far, when, and how big. */
 export interface FrameEvent {
@@ -39,17 +29,8 @@ export type ScreenShareFrame =
   | { type: 'user_screen'; data: string; width: number; height: number }
   | { type: 'user_screen_stopped' };
 
-/** The size of the rectangle the page shows the agent's screen in, in device pixels. */
-export type ViewportFrame = { type: 'viewport'; width: number; height: number };
-
 /** Everything the page sends the runtime as JSON text. */
-export type PageFrame = InputFrame | ScreenShareFrame | ViewportFrame;
-
-/** The size of the rectangle the page shows the agent's screen in. */
-export interface Viewport {
-  width: number;
-  height: number;
-}
+export type PageFrame = InputFrame | ScreenShareFrame;
 
 /** How the agent's screen is encoded, before any of it arrives. */
 interface ScreenStartFrame {
@@ -88,15 +69,15 @@ const SCREEN_VIDEO_FRAME = 0x03;
 const HEADER_BYTES = 2;
 
 export interface UseComputerScreenOptions {
-  /** Open the socket only once the call is live and the session has a desktop. */
+  /** Connect while the Computer page is open. */
   enabled: boolean;
-  /** The rectangle the page shows the screen in; a later change is sent as a frame. */
-  viewport: Viewport | null;
-  /** Where the desktop's sound goes: the call's own playback. */
+  /** Playback for the desktop's sound. */
   onAudio: (pcm: ArrayBuffer) => void;
 }
 
 export interface ComputerScreen {
+  clientId: string | null;
+  state: ComputerStatus | null;
   /** The canvas the screen is drawn into. */
   screenRef: React.RefObject<HTMLCanvasElement | null>;
   /** True once the first picture of the agent's screen has arrived. */
@@ -110,8 +91,11 @@ export interface ComputerScreen {
 }
 
 export function useComputerScreen(options: UseComputerScreenOptions): ComputerScreen {
-  const { enabled, viewport, onAudio } = options;
+  const { enabled, onAudio } = options;
 
+  const [clientId, setClientId] = useState<string | null>(null);
+  const [state, setState] = useState<ComputerStatus | null>(null);
+  const [connection, setConnection] = useState(0);
   const [hasScreen, setHasScreen] = useState(false);
   const [lastFrame, setLastFrame] = useState<FrameEvent | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -127,35 +111,33 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
   // Read on every frame by a handler bound once, the same reason the senders are.
   const onAudioRef = useRef(onAudio);
   onAudioRef.current = onAudio;
-  /**
-   * The size the runtime was last told, so a later one is only sent when it differs.
-   *
-   * Updated on every send, not just at open: going fullscreen and coming back returns to
-   * the size the socket opened with, and comparing against that would read the way back
-   * as no change and leave the desktop at its fullscreen size, scaled into a smaller
-   * canvas.
-   */
-  const sentSize = useRef<Viewport | null>(null);
-
   useEffect(() => {
     if (!enabled) return;
-    sentSize.current = viewport;
     const canvas = new ScreenCanvas(() => screenRef.current);
     canvasRef.current = canvas;
 
+    let disposed = false;
+    let reconnect: ReturnType<typeof setTimeout> | undefined;
+    setMessage(null);
     const ws = new WebSocket(computerWebSocketUrl());
     wsRef.current = ws;
+    ws.onclose = () => {
+      if (disposed) return;
+      setClientId(null);
+      setHasScreen(false);
+      setMessage('Reconnecting to the computer…');
+      reconnect = setTimeout(() => setConnection((value) => value + 1), 2000);
+    };
     ws.binaryType = 'arraybuffer';
 
     ws.onmessage = (event: MessageEvent) => {
       if (typeof event.data === 'string') {
-        const frame = JSON.parse(event.data) as ServerFrame;
+        const frame = JSON.parse(event.data) as ServerFrame | (ComputerStatus & { type: 'computer_state'; clientId: string });
+        if (frame.type === 'computer_state') { setClientId(frame.clientId); setState(frame); return; }
         if (frame.type === 'screen_start') {
           if (frame.encoding === 'h264' && frame.codec) {
-            // The call and its sound go on either way, so this is said rather than
-            // treated as the call failing.
             if (!canDecodeVideo()) {
-              setMessage('This browser cannot show the agent’s screen; the call still works.');
+              setMessage('This browser cannot show the agent’s screen. Open Computer in Chrome.');
               return;
             }
             canvas.openVideo(frame.codec);
@@ -197,6 +179,8 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
     };
 
     return () => {
+      disposed = true;
+      clearTimeout(reconnect);
       wsRef.current = null;
       canvasRef.current = null;
       canvas.close();
@@ -204,29 +188,12 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
       setLastFrame(null);
       ws.close();
     };
-    // `viewport` is read once here, at open; later sizes go as frames below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled]);
-
-  // Later sizes go as frames. The box settles them before reporting, so each one here is
-  // a size the user stopped at rather than a step of a drag.
-  useEffect(() => {
-    const ws = wsRef.current;
-    if (!viewport || !ws || ws.readyState !== WebSocket.OPEN) return;
-    if (
-      viewport.width === sentSize.current?.width &&
-      viewport.height === sentSize.current?.height
-    ) {
-      return;
-    }
-    sentSize.current = viewport;
-    ws.send(JSON.stringify({ type: 'viewport', ...viewport }));
-  }, [viewport]);
+  }, [enabled, connection]);
 
   const sendInput = useCallback((frame: PageFrame) => {
     const ws = wsRef.current;
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
   }, []);
 
-  return { screenRef, hasScreen, lastFrame, message, sendInput };
+  return { clientId, state, screenRef, hasScreen, lastFrame, message, sendInput };
 }

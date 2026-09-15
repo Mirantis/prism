@@ -374,3 +374,22 @@ export interface ToolCallHistoryPage {
   items: ToolCallHistoryEntry[];
   nextCursor: string | null;
 }
+export interface ComputerHelp {
+  type: 'computer_help';
+  id: string;
+  reason: string;
+  tab?: number;
+  threadId?: string;
+  status: 'waiting' | 'continued' | 'dismissed';
+}
+
+export interface ComputerStatus {
+  available: boolean;
+  running: boolean;
+  starting: boolean;
+  paused: boolean;
+  controller: string | null;
+  owner: { id: string; threadId?: string; mode: string } | null;
+  waiting: { id: string; threadId?: string; mode: string }[];
+  help?: ComputerHelp[];
+}

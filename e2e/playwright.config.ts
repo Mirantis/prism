@@ -250,7 +250,7 @@ export default defineConfig({
         // places an image installs it, and this suite runs the runtime on the host,
         // where there may be none — so it is handed the Chromium this suite already
         // installs rather than the run depending on what the host happens to have.
-        PRISM_CHROMIUM_PATH: chromium.executablePath(),
+        PRISM_CHROMIUM_PATH: process.env.E2E_CHROMIUM_PATH || chromium.executablePath(),
       },
     },
     {

@@ -104,7 +104,7 @@ Then('the page says the computer is live', async ({ page }) => {
   } catch {
     throw new Error(`the call did not go live. ${await describeScreen(page)()}`);
   }
-  await expect(status(page)).toHaveCount(0);
+  await expect(status(page)).toContainText(/Ready|Prism is working/);
   await waitForModel(
     'the runtime opening a session with the voice model',
     (state) => state.sessions === 1,

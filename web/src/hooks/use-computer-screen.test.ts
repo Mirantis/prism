@@ -12,7 +12,8 @@ vi.mock('@/lib/screen-canvas', () => ({
     openPictures = vi.fn();
     video = vi.fn();
     picture = vi.fn();
-    close = vi.fn();
+    onclose: (() => void) | null = null;
+  close = vi.fn();
   },
 }));
 
@@ -25,6 +26,7 @@ class FakeSocket {
   binaryType = '';
   sent: string[] = [];
   onmessage: ((event: MessageEvent) => void) | null = null;
+  onclose: (() => void) | null = null;
   close = vi.fn();
   send = (data: string) => this.sent.push(data);
 
@@ -37,57 +39,29 @@ vi.stubGlobal('WebSocket', FakeSocket);
 
 const { useComputerScreen } = await import('./use-computer-screen');
 
-/** The sizes the page reported, as `viewport` changes on a live socket. */
-function renderAt(viewport: { width: number; height: number }) {
-  return renderHook(
-    ({ size }) => useComputerScreen({ enabled: true, viewport: size, onAudio: vi.fn() }),
-    { initialProps: { size: viewport } },
-  );
-}
+beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); });
+afterEach(() => { vi.useRealTimers(); });
 
-beforeEach(() => {
-  vi.clearAllMocks();
-});
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
-
-describe('telling the runtime what size to make the screen', () => {
-  it('says nothing about the size it opened with', () => {
-    renderAt({ width: 1280, height: 720 });
+describe('computer viewing', () => {
+  it('opens independently of voice and receives ownership updates', () => {
+    const { result } = renderHook(() => useComputerScreen({ enabled: true, onAudio: vi.fn() }));
+    act(() => socket.onmessage?.({ data: JSON.stringify({
+      type: 'computer_state', clientId: 'viewer', paused: true, controller: 'viewer', owner: null, waiting: [],
+    }) } as MessageEvent));
+    expect(result.current.clientId).toBe('viewer');
+    expect(result.current.state?.paused).toBe(true);
     expect(socket.sent).toEqual([]);
   });
 
-  it('sends a size the page changed to', () => {
-    const { rerender } = renderAt({ width: 1280, height: 720 });
-
-    act(() => rerender({ size: { width: 1920, height: 1080 } }));
-
-    expect(socket.sent).toEqual([JSON.stringify({ type: 'viewport', width: 1920, height: 1080 })]);
-  });
-
-  it('sends the way back from fullscreen, not only the way in', () => {
-    const { rerender } = renderAt({ width: 1280, height: 720 });
-
-    // Into fullscreen and out again. The size on the way back is the one the socket
-    // opened with, and comparing against that would read it as no change — leaving the
-    // desktop at its fullscreen size, scaled into a smaller canvas.
-    act(() => rerender({ size: { width: 1920, height: 1080 } }));
-    act(() => rerender({ size: { width: 1280, height: 720 } }));
-
-    expect(socket.sent).toEqual([
-      JSON.stringify({ type: 'viewport', width: 1920, height: 1080 }),
-      JSON.stringify({ type: 'viewport', width: 1280, height: 720 }),
-    ]);
-  });
-
-  it('says nothing when the size settles where it already was', () => {
-    const { rerender } = renderAt({ width: 1280, height: 720 });
-
-    act(() => rerender({ size: { width: 1920, height: 1080 } }));
-    act(() => rerender({ size: { width: 1920, height: 1080 } }));
-
-    expect(socket.sent).toHaveLength(1);
+  it('clears control and reconnects after losing the connection', () => {
+    const { result, unmount } = renderHook(() => useComputerScreen({ enabled: true, onAudio: vi.fn() }));
+    const first = socket;
+    act(() => first.onclose?.());
+    expect(result.current.clientId).toBeNull();
+    expect(result.current.hasScreen).toBe(false);
+    act(() => vi.advanceTimersByTime(2000));
+    expect(socket).not.toBe(first);
+    unmount();
+    expect(socket.close).toHaveBeenCalled();
   });
 });

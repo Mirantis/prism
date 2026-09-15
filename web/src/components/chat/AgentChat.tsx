@@ -1,3 +1,4 @@
+import { ComputerWaiting } from '@/components/computer/computer-waiting';
 import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
@@ -374,13 +375,14 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         isTyping={isTyping}
         isLoading={isLoadingThread}
       />
+      <ComputerWaiting threadId={activeThreadId} />
       <ChatInput
         value={message}
         onChange={setMessage}
         onSend={handleSend}
         isPending={isTyping}
         onCancel={handleCancel}
-        connectionStatus={status}
+        connectionStatus={activeThreadId ? status : 'connecting'}
         attachments={attachments}
         onFilesSelected={handleFilesSelected}
         onRemoveAttachment={handleRemoveAttachment}

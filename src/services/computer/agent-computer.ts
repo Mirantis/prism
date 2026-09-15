@@ -1,17 +1,7 @@
-/**
- * The computer the agent works on. One voice session owns one of these.
- *
- * It starts a virtual display, an XFCE desktop on it, and a browser on that desktop. It
- * streams the screen to the page as video, sends the sound the desktop plays, and runs
- * the `browse` and `desktop_*` tools.
- *
- * The display is always its own, never the host's. A desktop the runtime owns is what
- * makes the rest work: it can be resized to the client's rectangle, captured whole,
- * and acted on with a pointer and keyboard. `isComputerSupported` says whether this host
- * has the programs for one, and a host without them is not offered the page at all.
- */
+/** The runtime's persistent virtual desktop, browser, screen stream, and input. */
 
 import path from 'path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Page } from 'playwright-core';
 import { logger } from '../../logger';
 import { resolveDataDir } from '../../lib/data-dir';
@@ -37,12 +27,8 @@ import {
 import { DesktopControl, type MouseButton, type ScrollDirection } from './desktop-control';
 import {
   clampScreen,
-  currentScreen,
   DEFAULT_SCREEN,
-  MAX_SCREEN,
   OCR_SCALE,
-  resizeDisplay,
-  sameSize,
   sizeText,
   type ScreenSize,
 } from './screen-size';
@@ -111,10 +97,7 @@ type ScreenShareFrame =
   | { type: 'user_screen'; data: string; width: number; height: number }
   | { type: 'user_screen_stopped' };
 
-/** The size of the rectangle the page is showing the screen in, in its own device pixels. */
-type ViewportFrame = { type: 'viewport'; width: number; height: number };
-
-type PageFrame = InputFrame | ScreenShareFrame | ViewportFrame;
+type PageFrame = InputFrame | ScreenShareFrame;
 
 /** A shared-screen picture larger than this is refused; a 1280-wide JPEG is far smaller. */
 const USER_SCREEN_MAX_CHARS = 6 * 1024 * 1024;
@@ -130,10 +113,11 @@ const WINDOW_ACTION_DONE: Record<WindowAction, string> = {
   minimize: 'Minimised',
 };
 
-/** Everything one voice session's computer owns, released together when it ends. */
+/** Everything the runtime's computer owns, released together when it ends. */
 export class AgentComputer implements ComputerBrowser, ComputerDesktop, ComputerUserScreen {
   /** Where pictures and narration go once the session has a model to show them to. */
-  private channel: ModelChannel | null = null;
+  private channels = new AsyncLocalStorage<ModelChannel>();
+  private get channel(): ModelChannel | null { return this.channels.getStore() ?? null; }
   private browser: BrowserStack | null = null;
   /** The newest picture of the user's shared screen, while they share one. */
   private userScreen: { jpeg: Buffer; width: number; height: number; at: number } | null = null;
@@ -157,28 +141,19 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   /** The XFCE desktop on the virtual display. */
   private desktop: DesktopSession | null = null;
   private screen: PictureStream | null = null;
-  /** The size of the agent's screen, which the client's own rectangle decides. */
+  /** The fixed desktop size; viewers scale its picture. */
   private size: ScreenSize = DEFAULT_SCREEN;
   /** Everything that moves the front tab runs in arrival order; see the meeting service. */
   private frontTail: Promise<void> = Promise.resolve();
-  /**
-   * Resizes run one at a time.
-   *
-   * A resize can wait seconds for a desktop that is still coming up, and a client that
-   * changed its mind in that time would otherwise have two of them racing to say what
-   * size the screen is.
-   */
-  private resizeTail: Promise<void> = Promise.resolve();
-
-  /** Where pictures and narration go. Called once the session has a model to send to. */
-  attach(channel: ModelChannel): void {
-    this.channel = channel;
+  withModelChannel<T>(channel: ModelChannel, action: () => Promise<T>): Promise<T> {
+    return this.channels.run(channel, action);
   }
 
-  /**
-   * Open the browser. Every voice chat has one, so a browser that cannot start ends
-   * the chat before it begins: the error names the reason for the page.
-   */
+  releaseInput(): void {
+    this.input?.stop();
+    this.input = this.desktopControl ? new DesktopInput(this.desktopEnv, this.desktopControl) : null;
+  }
+
   async openBrowser(screen?: ScreenSize): Promise<void> {
     if (screen) this.size = clampScreen(screen.width, screen.height);
     const browser = new BrowserStack();
@@ -189,9 +164,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
       if (missing) throw new Error(unsupportedReason(missing));
 
       display = new AudioStack();
-      // The largest screen a client may ask for, since a framebuffer is allocated once
-      // and cropped from there.
-      const handles = await display.start({ screen: sizeText(MAX_SCREEN) });
+      const handles = await display.start({ screen: sizeText(this.size) });
       const env = handles.browserEnv;
       // A meeting ends on this; here the desktop's sound just stops reaching the page.
       handles.onLost((reason) => logger.warn(`[VoiceChat] Desktop audio capture lost: ${reason}`));
@@ -199,21 +172,6 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
       // browser's window when it opens, and the session bus exists for it to join.
       desktop = new DesktopSession(env);
       await desktop.start();
-      // Then cropped to what the client is showing, which needs that desktop: the
-      // output has to be moved aside for the screen to shrink under it, and the
-      // desktop's display manager is what does that. Before the browser, so its window
-      // opens at the size it will keep.
-      //
-      // Not fatal. A screen at the size the server reserved is a working screen, and a
-      // client that cannot have its own size should still get a call. What it actually
-      // became is what everything below is told.
-      await resizeDisplay(env, this.size).catch((err: unknown) => {
-        logger.warn({ err }, '[VoiceChat] The screen stayed at the size the display reserved');
-      });
-      const actual = await currentScreen(env).catch(() => null);
-      if (actual) this.size = actual;
-      // The dock only once the screen is the size it will be shown at; see
-      // `DesktopSession.startDock`.
       await desktop.startDock();
       this.desktopEnv = { ...env, ...desktop.busEnv };
       this.desktopControl = new DesktopControl(env, this.size);
@@ -252,6 +210,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   startScreenStream(onFrame: (frame: ScreenFrame) => void): void {
     const display = this.audioHandles?.browserEnv.DISPLAY;
     if (!display) return;
+    this.stopScreenStream();
     this.screen = new VideoStream(display, sizeText(this.size), onFrame);
     this.screen.start();
   }
@@ -272,10 +231,11 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
 
   async browse(command: BrowserCommand): Promise<BrowserResult> {
     const browser = this.browser;
-    if (!browser) return { success: false, message: 'There is no browser in this voice chat.' };
+    if (!browser) return { success: false, message: 'There is no browser on this computer.' };
 
     return this.onFrontQueue(async () => {
       try {
+        await browser.observeFront();
         const result = await this.runBrowseCommand(browser, command);
         return { ...result, tabs: await summarizeTabs(browser.listTabs(), browser.front()) };
       } catch (err) {
@@ -291,6 +251,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
    * the words on the page are worth more to a voice model than pixels.
    */
   async lookAtScreen(): Promise<{ success: boolean; message: string } & Partial<BrowserReading>> {
+    await this.browser?.observeFront();
     const page = this.browser?.front();
     const control = this.desktopControl;
 
@@ -343,55 +304,23 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
     return this.desktopControl !== null;
   }
 
-  /**
-   * Make the screen the size of the client's own rectangle.
-   *
-   * Called before the display exists as well as after: an early call records the size the
-   * display comes up at, which saves the desktop laying itself out twice.
-   *
-   * The model is told, because its prompt states the size of the picture it works in and
-   * that picture follows the screen. It is told only when that size really changed, since
-   * a screen below the cap is its own picture and one above it is not.
-   */
-  async resize(width: number, height: number): Promise<void> {
-    const run = this.resizeTail.then(() => this.applyResize(width, height));
-    this.resizeTail = run.catch(() => {});
-    return run;
+  async tabTarget(tab?: number): Promise<string | undefined> {
+    const page = tab ? this.browser?.listTabs()[tab - 1] : this.browser?.front();
+    if (!page || page.isClosed()) return undefined;
+    const session = await page.context().newCDPSession(page);
+    try { return (await session.send('Target.getTargetInfo')).targetInfo.targetId; }
+    finally { await session.detach(); }
   }
 
-  private async applyResize(width: number, height: number): Promise<void> {
-    const wanted = clampScreen(width, height);
-    if (sameSize(wanted, this.size)) return;
-    const control = this.desktopControl;
-    if (!control || !this.audioHandles) {
-      // Before the display exists: this is the size it will come up at.
-      this.size = wanted;
-      return;
+  async focusTarget(targetId: string): Promise<void> {
+    const pages = this.browser?.listTabs() ?? [];
+    for (let index = 0; index < pages.length; index++) {
+      if (await this.tabTarget(index + 1) === targetId) {
+        await this.browser?.selectTab(index);
+        return;
+      }
     }
-
-    const before = { width: control.pictureWidth, height: control.pictureHeight };
-    try {
-      await resizeDisplay(this.audioHandles.browserEnv, wanted);
-    } catch (err) {
-      // The screen is still the size it was, and everything that describes it still
-      // describes it correctly. The client draws a picture of one shape into a box of
-      // another until it asks again.
-      logger.warn({ err }, '[VoiceChat] The display would not resize');
-      return;
-    }
-    this.size = wanted;
-    control.resize(wanted);
-    this.screen?.resize?.(sizeText(wanted));
-    await this.desktop?.startDock();
-    logger.info(`[VoiceChat] Screen is now ${sizeText(wanted)}`);
-
-    const after = { width: control.pictureWidth, height: control.pictureHeight };
-    if (before && !sameSize(before, after)) {
-      this.channel?.notify(
-        `Your screen is now ${after.width} by ${after.height} in the pictures you get of it. ` +
-          'Coordinates you read off an older picture no longer point where they did.',
-      );
-    }
+    throw new Error('The tab needing help has closed. You have control of the current desktop.');
   }
 
   /**
@@ -408,9 +337,6 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
     if (typeof frame !== 'object' || frame === null || typeof frame.type !== 'string') return;
 
     switch (frame.type) {
-      case 'viewport':
-        void this.resize(Number(frame.width), Number(frame.height));
-        return;
       case 'user_screen_started':
         logger.info('[VoiceChat] User started sharing their screen');
         this.channel?.notify(
@@ -488,7 +414,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
 
   /** The desktop's controls as a reading, from the accessibility tree. */
   async listElements(input: { filter?: string }): Promise<DesktopActionResult> {
-    if (!this.desktopControl) return { success: false, message: 'There is no desktop in this voice chat.' };
+    if (!this.desktopControl) return { success: false, message: 'There is no desktop on this computer.' };
     try {
       const elements = await this.onFrontQueue(() => readScreenElements(this.desktopEnv));
       return { success: true, message: describeElements(elements, input.filter) };
@@ -500,7 +426,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   }
 
   async listWindows(): Promise<DesktopActionResult> {
-    if (!this.desktopControl) return { success: false, message: 'There is no desktop in this voice chat.' };
+    if (!this.desktopControl) return { success: false, message: 'There is no desktop on this computer.' };
     try {
       const windows = await listWindows(this.desktopEnv);
       if (windows.length === 0) return { success: true, message: 'No windows are open.' };
@@ -516,7 +442,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   }
 
   async windowAction(input: { title: string; action: WindowAction }): Promise<DesktopActionResult> {
-    if (!this.desktopControl) return { success: false, message: 'There is no desktop in this voice chat.' };
+    if (!this.desktopControl) return { success: false, message: 'There is no desktop on this computer.' };
     let windows;
     try {
       windows = await listWindows(this.desktopEnv);
@@ -537,7 +463,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   /** Where a control or some words are on the screen right now, in picture coordinates. */
   async findText(input: { text: string }): Promise<DesktopActionResult & { matches?: TextLocation[] }> {
     const control = this.desktopControl;
-    if (!control) return { success: false, message: 'There is no desktop in this voice chat.' };
+    if (!control) return { success: false, message: 'There is no desktop on this computer.' };
     try {
       const matches = await this.locateText(control, input.text);
       if (matches.length === 0) {
@@ -563,7 +489,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
     double?: boolean;
   }): Promise<DesktopActionResult> {
     const control = this.desktopControl;
-    if (!control) return { success: false, message: 'There is no desktop in this voice chat.' };
+    if (!control) return { success: false, message: 'There is no desktop on this computer.' };
     let matches: TextLocation[];
     try {
       matches = await this.locateText(control, input.text);
@@ -668,7 +594,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   ): Promise<DesktopActionResult> {
     const control = this.desktopControl;
     if (!control) {
-      return Promise.resolve({ success: false, message: 'There is no desktop in this voice chat.' });
+      return Promise.resolve({ success: false, message: 'There is no desktop on this computer.' });
     }
     return this.onFrontQueue(async () => {
       try {
@@ -706,7 +632,6 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
 
   /** Release everything. Safe to call more than once. */
   async stop(): Promise<void> {
-    this.channel = null;
     this.input?.stop();
     this.input = null;
     const screen = this.screen;

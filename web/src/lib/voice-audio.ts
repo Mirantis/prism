@@ -21,6 +21,8 @@ const WORKLET_URL = '/voice-worklet.js';
 const CAPTURE_SECONDS = 0.02;
 
 export interface VoiceAudioOptions {
+  /** False for desktop playback without microphone access. */
+  capture?: boolean;
   /** The rate the session speaks. The microphone and the playback both run at it. */
   sampleRate: number;
   /** One frame of the microphone, pcm16 mono. Called on every 20 ms of audio. */
@@ -62,7 +64,7 @@ export interface VoiceAudio {
 export async function startVoiceAudio(options: VoiceAudioOptions): Promise<VoiceAudio> {
   // The microphone first. It is the one step that asks the user, so failing here should
   // cost nothing else.
-  const stream = await navigator.mediaDevices.getUserMedia({
+  const stream = options.capture === false ? null : await navigator.mediaDevices.getUserMedia({
     audio: {
       channelCount: 1,
       echoCancellation: true,
@@ -83,7 +85,7 @@ export async function startVoiceAudio(options: VoiceAudioOptions): Promise<Voice
     // is asked again on the next click the page sees.
     if (context.state === 'suspended') void context.resume().catch(() => undefined);
 
-    const source = context.createMediaStreamSource(stream);
+    const source = stream ? context.createMediaStreamSource(stream) : null;
     // One node for both directions: its input is the microphone and its output is what
     // the agent sends, so it sits between the two and is pulled by the destination.
     const io = new AudioWorkletNode(context, 'voice-io', {
@@ -102,7 +104,7 @@ export async function startVoiceAudio(options: VoiceAudioOptions): Promise<Voice
       }
       options.onFrame(message.pcm);
     };
-    source.connect(io);
+    source?.connect(io);
     io.connect(context.destination);
 
     const ctx = context;
@@ -123,16 +125,16 @@ export async function startVoiceAudio(options: VoiceAudioOptions): Promise<Voice
         if (stopped) return;
         stopped = true;
         io.port.onmessage = null;
-        source.disconnect();
+        source?.disconnect();
         io.disconnect();
         // The tracks are what the browser's recording indicator follows, so they are
         // stopped as well as the context closed.
-        for (const track of stream.getTracks()) track.stop();
+        for (const track of (stream?.getTracks() ?? [])) track.stop();
         await ctx.close();
       },
     };
   } catch (err) {
-    for (const track of stream.getTracks()) track.stop();
+    for (const track of (stream?.getTracks() ?? [])) track.stop();
     await context?.close();
     throw err;
   }

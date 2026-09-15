@@ -42,6 +42,11 @@ export class TabSet {
     return this.active;
   }
 
+  /** Remember the tab the user selected without changing the display. */
+  observe(page: Page): void {
+    if (this.pages.includes(page) && !page.isClosed()) this.active = page;
+  }
+
   /** Make tab `index` active and bring it to the front. */
   async select(index: number): Promise<Page | null> {
     this.prune();

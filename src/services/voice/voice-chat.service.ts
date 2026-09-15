@@ -34,7 +34,10 @@ import {
   VOICE_CHAT_TRUNCATION_GUIDANCE,
 } from './voice-chat-tools';
 import { AgentComputer } from '../computer/agent-computer';
-import { createComputerTools } from '../computer/computer-tools';
+import { getComputerTools } from '../../tools/computer';
+import { computerService } from '../computer/computer.service';
+import { computerHelpService } from '../computer/computer-help.service';
+import type { ComputerUse } from '../computer/computer-access';
 import type { ScreenFrame } from '../computer/picture-stream';
 import { buildVoiceInstructions } from './voice-instructions';
 import { voiceSessionLock } from './voice-session-lock';
@@ -155,6 +158,7 @@ class VoiceChatService {
   private transport: SocketAudio | null = null;
   private conversation: VoiceConversation | null = null;
   private computer: AgentComputer | null = null;
+  private computerUse: ComputerUse | null = null;
   private signal: VoiceChatSignal | null = null;
   private userId: string | null = null;
   private startedAt: number | null = null;
@@ -213,6 +217,7 @@ class VoiceChatService {
     let transport: SocketAudio | null = null;
     let conversation: VoiceConversation | null = null;
     let computer: AgentComputer | null = null;
+    let computerUse: ComputerUse | undefined;
     // Where a failure happened, for the event below. An operator reads this to tell an
     // image that cannot carry a computer from a Realtime session that would not open.
     let stage: 'computer' | 'session' = 'session';
@@ -228,9 +233,10 @@ class VoiceChatService {
       await transport?.close().catch((err: unknown) => {
         logger.warn({ err }, '[VoiceChat] The transport would not close');
       });
-      await computer?.stop().catch((err: unknown) => {
-        logger.warn({ err }, '[VoiceChat] The computer would not close');
-      });
+      if (computerUse) {
+        computerHelpService.endVoice(computerUse);
+        computerService.access.finish(computerUse);
+      }
     };
 
     try {
@@ -239,8 +245,8 @@ class VoiceChatService {
       // a Realtime session is opened and billed.
       if (input.computer) {
         stage = 'computer';
-        computer = new AgentComputer();
-        await computer.openBrowser(input.screen);
+        computer = await computerService.open();
+        computerUse = computerService.access.create({ userId: input.userId, agentId: input.agentId, mode: 'voice' });
         if (this.epoch !== epoch) {
           await releaseLocals();
           return false;
@@ -275,7 +281,7 @@ class VoiceChatService {
         agentTools,
         computer
           ? prepareRealtimeTools(
-              createComputerTools(computer, computer.hasDesktop ? computer : null, computer),
+              getComputerTools(computerUse, () => conversation),
               { label: 'Computer', truncationGuidance: VOICE_CHAT_TRUNCATION_GUIDANCE },
             )
           : null,
@@ -300,10 +306,11 @@ class VoiceChatService {
         agentName,
         voice: config.openaiRealtimeVoice,
         onSessionLost: (reason) => void this.end(epoch, 'error', reason),
+        onResponseFinished: () => { if (computerUse) computerService.access.yield(computerUse); },
       });
       // Attached before the session opens, so the first tool call has somewhere to put its
       // picture. Nothing reaches it until the model asks for something.
-      computer?.attach(conversation);
+
       await conversation.start();
 
       // Startup is several awaits long, and a `stop()` in any of them ended this session
@@ -319,12 +326,16 @@ class VoiceChatService {
       this.transport = transport;
       this.conversation = conversation;
       this.computer = computer;
+      this.computerUse = computerUse ?? null;
       this.signal = input.signal;
       this.userId = input.userId;
       this.startedAt = Date.now();
       this.mode = mode;
       this.startedFrom = surface;
       this.state = 'live';
+      computerUse?.signal.addEventListener('abort', () => {
+        if (this.epoch === epoch) void this.end(epoch, 'completed', 'Computer task stopped');
+      }, { once: true });
 
       // Live immediately: the socket that asked is the socket the audio travels on, so
       // there is no media path still to come up and nothing to wait for.
@@ -398,30 +409,6 @@ class VoiceChatService {
    *
    * Answers null when this session has no computer to show.
    */
-  attachComputerClient(client: ComputerClient): (() => void) | null {
-    const computer = this.computer;
-    if (!computer) return null;
-    computer.startScreenStream((frame) => client.screen(frame));
-    const heard = computer.startBrowserAudio((pcm) => client.audio(pcm));
-    logger.info(
-      heard
-        ? '[VoiceChat] The desktop is heard through the client'
-        : '[VoiceChat] The desktop plays on this host, not through the client',
-    );
-    return () => {
-      computer.stopScreenStream();
-    };
-  }
-
-  /**
-   * A text frame from the client about the computer: the user's own pointer and keyboard
-   * on its screen, or a picture of the screen they are sharing. Dropped when there is no
-   * computer, for the same reason a stray audio frame is.
-   */
-  handleComputerInput(text: string): void {
-    this.computer?.handleInput(text);
-  }
-
   /**
    * End the session, from the client asking or from its socket closing.
    *
@@ -437,6 +424,12 @@ class VoiceChatService {
   }
 
   /** Called from the process shutdown path so a container exit ends the call. */
+  continueComputer(reason: string): void {
+    if (!this.computerUse || !this.conversation) return;
+    this.conversation.notify(`Your user finished helping: ${reason}. Inspect the current screen and continue their request.`);
+    this.conversation.speakNow();
+  }
+
   async shutdown(): Promise<void> {
     if (this.state === 'idle') return;
     logger.info('[VoiceChat] Shutting down — ending the live session');
@@ -455,7 +448,7 @@ class VoiceChatService {
     // while the transport closes, from becoming a second ending.
     this.state = 'ending';
     this.epoch += 1;
-    const { conversation, transport, computer, signal, userId, startedAt, mode, startedFrom } = this;
+    const { conversation, transport, computer, computerUse, signal, userId, startedAt, mode, startedFrom } = this;
     this.clearPublished();
 
     logger.info({ status, reason }, '[VoiceChat] Session ended');
@@ -468,9 +461,10 @@ class VoiceChatService {
       // The browser, the desktop and the virtual display go with the call. They are
       // processes, so a session that left them behind would cost the host a whole
       // desktop for every call it ever carried.
-      await computer?.stop().catch((err: unknown) => {
-        logger.warn({ err }, '[VoiceChat] The computer would not close');
-      });
+      if (computerUse) {
+        computerHelpService.endVoice(computerUse);
+        computerService.access.finish(computerUse);
+      }
 
       // The client is told why before it is told it is over, so a failure reads as a
       // failure rather than as an ending it asked for.
@@ -517,6 +511,7 @@ class VoiceChatService {
     this.conversation = null;
     this.transport = null;
     this.computer = null;
+    this.computerUse = null;
     this.signal = null;
     this.userId = null;
     this.startedAt = null;

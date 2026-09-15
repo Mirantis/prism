@@ -1,3 +1,4 @@
+import { computerService } from './services/computer/computer.service';
 /**
  * Agent Runtime Entry Point
  *
@@ -306,6 +307,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   cancelModelCatalogRefresh();
   webSocketGatewayService.closeAll();
   computerEndpoint.close();
+  await computerService.close();
   // Leave any live call before the process goes: otherwise the browser and audio
   // daemon die with us and the bot lingers in the meeting as a frozen participant.
   await meetingBotService.shutdown().catch((err) => {

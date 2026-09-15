@@ -6,6 +6,8 @@
  */
 
 import { AssistantModelMessage, ModelMessage, ToolModelMessage } from 'ai';
+import { COMPUTER_INSTRUCTIONS } from './computer-prompt';
+import { hasComputer } from '../services/computer/supported';
 import { config } from '../config';
 import { memoryManagerService } from '../services/memory-manager.service';
 import type { AttachmentMeta } from '../services/attachment.service';
@@ -92,6 +94,7 @@ export async function buildSystemPromptParts(
   workspaceRoot?: string,
 ): Promise<SystemPromptPart[]> {
   const stableSections: string[] = [];
+  if (hasComputer()) stableSections.push(COMPUTER_INSTRUCTIONS);
   const dynamicSections: string[] = [];
 
   // Bootstrap phase — dynamic (only during onboarding, chat mode only).
