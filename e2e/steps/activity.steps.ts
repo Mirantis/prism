@@ -109,7 +109,9 @@ Then('the Activity nav item comes after Profile', async ({ page }) => {
   const profile = labels.indexOf('Profile');
   const activity = labels.indexOf('Activity');
   expect(profile).toBeGreaterThan(-1);
-  expect(activity).toBe(profile + 1);
+  // Order, not adjacency: Computer sits between the two on a runtime that has a desktop
+  // for it, and is left out where there is none.
+  expect(activity).toBeGreaterThan(profile);
 });
 
 Then('the token totals are all zero', async ({ page }) => {

@@ -386,7 +386,9 @@ export function webSocketUrl(): string {
  * The call itself is on the chat socket. This one is opened once that call is live, and
  * carries only the computer, so a burst of video cannot put a chat message behind it.
  */
+export const COMPUTER_SOCKET_PATH = '/api/computer';
+
 export function computerWebSocketUrl(): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${window.location.host}/api/computer`;
+  return `${proto}://${window.location.host}${COMPUTER_SOCKET_PATH}`;
 }
