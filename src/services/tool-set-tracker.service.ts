@@ -28,16 +28,16 @@ export function diffToolNames(previous: string[], current: string[]): ToolChange
 
 /** The first turn after a restart establishes the thread's tool set. */
 export class ToolSetTracker {
+  /**
+   * Keyed `<invocation mode>:<thread id>`. One entry holds the tool set the
+   * previous turn on that thread in that mode declared, and the model it
+   * declared to.
+   */
   private readonly tracked = new Map<string, { names: string[]; modelId: string }>();
 
   /**
-   * One record per thread *and* invocation mode. A goal turn and a thread-bound
-   * cron run share the thread with chat and each declares its mode's own set
-   * (`filterToolsByMode`), so a single per-thread record would announce a
-   * removal for every tool the mode withholds and an addition for each of them
-   * on the next chat turn — true of the request, and a false account of what the
-   * agent can do. Per mode, each turn diffs against the previous turn in the
-   * same mode, so a plugin that connects is still named.
+   * The key combines the thread id and the invocation mode, since each mode
+   * declares its own tool set (`filterToolsByMode`).
    */
   record(threadId: string, mode: string, modelId: string, names: string[]): ToolChange[] {
     const key = `${mode}:${threadId}`;
