@@ -251,9 +251,7 @@ type ChatSendStatus = 'sent' | 'not_in_call' | 'unsupported' | 'rejected' | 'bus
 /**
  * What a join attempt has to say to whoever asked for it.
  *
- * Three answers rather than a nullable failure, because "the request is in" and "the
- * call was cancelled under me" are both absences of a failure and read alike. Every
- * ending names itself, so each one is reported as what it is.
+ * Every ending names itself: requested, cancelled, or failed with a reason.
  */
 type JoinAnswer =
   /** The request is in — or the whole join finished, which the caller is told the same way. */
