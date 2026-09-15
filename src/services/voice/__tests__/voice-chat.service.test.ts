@@ -117,9 +117,11 @@ class FakeComputer {
 }
 
 vi.mock('../../computer/agent-computer', () => ({ AgentComputer: FakeComputer }));
-vi.mock('../../computer/computer-tools', () => ({ createComputerTools: vi.fn(() => ({})) }));
+vi.mock('../../../tools/computer', () => ({ getComputerTools: vi.fn(() => ({})) }));
+vi.mock('../../computer/supported', () => ({ hasComputer: () => true }));
 
 const { voiceChatService } = await import('../voice-chat.service');
+const { computerService } = await import('../../computer/computer.service');
 const { voiceSessionLock } = await import('../voice-session-lock');
 const { buildVoiceInstructions } = await import('../voice-instructions');
 
@@ -179,6 +181,7 @@ afterEach(async () => {
   await voiceChatService.stop();
   voiceSessionLock.release('voice-chat');
   voiceSessionLock.release('meeting');
+  await computerService.close();
 });
 
 describe('starting a session', () => {
@@ -435,7 +438,7 @@ describe('a session with a computer', () => {
     expect(signal.state).toHaveBeenCalledWith('live', { desktop: true });
     // Attached before the model's session opens, so the first tool call has somewhere to
     // put its picture.
-    expect(computer!.attach).toHaveBeenCalledWith(conversations[conversations.length - 1]);
+    expect(computer!.attach).not.toHaveBeenCalled();
   });
 
   it('captures the screen only while somebody is watching it', async () => {
@@ -446,7 +449,7 @@ describe('a session with a computer', () => {
     expect(computer!.startScreenStream).not.toHaveBeenCalled();
 
     const client = { screen: vi.fn(), audio: vi.fn() };
-    const detach = voiceChatService.attachComputerClient(client);
+    const detach = await computerService.attach('viewer', client);
 
     expect(detach).toBeTypeOf('function');
     expect(computer!.startScreenStream).toHaveBeenCalled();
@@ -454,12 +457,6 @@ describe('a session with a computer', () => {
 
     detach!();
     expect(computer!.stopScreenStream).toHaveBeenCalled();
-  });
-
-  it('has no screen to show when the session has no computer', async () => {
-    await startSession();
-
-    expect(voiceChatService.attachComputerClient({ screen: vi.fn(), audio: vi.fn() })).toBeNull();
   });
 
   it('describes the computer to the prompt, so it only names tools the session has', async () => {
@@ -514,17 +511,17 @@ describe('a session with a computer', () => {
     expect(conversations).toHaveLength(0);
   });
 
-  it('stops the computer with the session, so no desktop outlives the call', async () => {
+  it('keeps the computer running when the voice session ends', async () => {
     const { computer } = await startWithComputer();
     expect(computer!.stop).not.toHaveBeenCalled();
 
     await voiceChatService.stop();
 
-    expect(computer!.stop).toHaveBeenCalled();
+    expect(computer!.stop).not.toHaveBeenCalled();
     expect(voiceSessionLock.holder).toBeNull();
   });
 
-  it('releases the computer when the client goes away mid-startup', async () => {
+  it('keeps the computer when the voice client leaves during startup', async () => {
     const signal = fakeSignal();
     const starting = voiceChatService.start({
       userId: 'user-1',
@@ -538,7 +535,7 @@ describe('a session with a computer', () => {
     await voiceChatService.stop('the client disconnected', 'disconnected');
     await starting;
 
-    expect(computers[0]!.stop).toHaveBeenCalled();
+    expect(computers[0]!.stop).not.toHaveBeenCalled();
     expect(voiceChatService.isLive).toBe(false);
     expect(voiceSessionLock.holder).toBeNull();
   });
@@ -559,13 +556,4 @@ describe('a session with a computer', () => {
     );
   });
 
-  it('hands a text frame from the client to the computer, and drops one with no session', async () => {
-    const { computer } = await startWithComputer();
-    voiceChatService.handleComputerInput('{"type":"pointer","x":1,"y":2}');
-    expect(computer!.handleInput).toHaveBeenCalledWith('{"type":"pointer","x":1,"y":2}');
-
-    await voiceChatService.stop();
-    // A frame in flight when a call ends is ordinary, and there is nothing to hand it to.
-    expect(() => voiceChatService.handleComputerInput('{"type":"wheel","dy":1}')).not.toThrow();
-  });
 });

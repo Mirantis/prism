@@ -9,7 +9,6 @@ import { describe, it, expect } from 'vitest';
 import {
   clampScreen,
   pictureFor,
-  sameSize,
   sizeText,
   MAX_SCREEN,
   MIN_SCREEN,
@@ -63,13 +62,8 @@ describe('pictureFor', () => {
   });
 });
 
-describe('sameSize and sizeText', () => {
-  it('compares by both sides', () => {
-    expect(sameSize({ width: 1, height: 2 }, { width: 1, height: 2 })).toBe(true);
-    expect(sameSize({ width: 1, height: 2 }, { width: 1, height: 3 })).toBe(false);
-  });
-
-  it('writes a size the way ffmpeg and xrandr take one', () => {
+describe('sizeText', () => {
+  it('formats dimensions for ffmpeg', () => {
     expect(sizeText({ width: 1280, height: 720 })).toBe('1280x720');
   });
 });

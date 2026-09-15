@@ -9,15 +9,6 @@ interface ScreenViewProps {
   hasScreen: boolean;
   /** Whether a call is still expected to bring a screen, so the box says so. */
   connecting: boolean;
-  /**
-   * The size of this box in device pixels, whenever it changes.
-   *
-   * The runtime makes the agent's screen this size, so the picture arrives at the size it
-   * is drawn and nothing is scaled on the way. Reported at once the first time, since the
-   * call waits for it, and settled afterwards so a window being dragged does not resize a
-   * desktop on every frame.
-   */
-  onViewport?: (size: { width: number; height: number }) => void;
   /** Whether the runtime accepts pointer and keyboard input for this screen. */
   controllable: boolean;
   onInput: (frame: InputFrame) => void;
@@ -26,9 +17,6 @@ interface ScreenViewProps {
 }
 
 const BUTTONS: Record<number, 'left' | 'middle' | 'right'> = { 0: 'left', 1: 'middle', 2: 'right' };
-
-/** How long the box has to stop changing before its new size is reported. */
-const VIEWPORT_SETTLE_MS = 250;
 
 /**
  * The agent's screen, and a way to take it over.
@@ -43,8 +31,7 @@ const VIEWPORT_SETTLE_MS = 250;
  * another shape there are bars beside or above it; the pointer maths works from where
  * the picture is drawn, not from the box.
  *
- * With the screen on the page but not under control, a paste types the clipboard text
- * into the desktop, which is how text gets from the user's machine onto it.
+ * While the user has control, paste types clipboard text into the desktop.
  */
 export function ScreenView({
   screenRef,
@@ -52,49 +39,14 @@ export function ScreenView({
   connecting,
   controllable,
   onInput,
-  onViewport,
   children,
 }: ScreenViewProps) {
+  useEffect(() => {
+    if (!controllable && document.pointerLockElement) document.exitPointerLock();
+  }, [controllable]);
   const boxRef = useRef<HTMLDivElement | null>(null);
   const [controlling, setControlling] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-
-  // Measured from the box itself rather than the window, so the sidebar, the page's
-  // padding and fullscreen are all already accounted for.
-  useEffect(() => {
-    const box = boxRef.current;
-    if (!box || !onViewport) return;
-    let settle: number | null = null;
-    let reported = false;
-
-    const measure = () => {
-      const { width, height } = box.getBoundingClientRect();
-      if (width < 1 || height < 1) return;
-      const ratio = window.devicePixelRatio || 1;
-      onViewport({ width: Math.round(width * ratio), height: Math.round(height * ratio) });
-    };
-    const report = () => {
-      // The first measurement opens the call, so it does not wait.
-      if (!reported) {
-        reported = true;
-        measure();
-        return;
-      }
-      if (settle !== null) clearTimeout(settle);
-      settle = window.setTimeout(measure, VIEWPORT_SETTLE_MS);
-    };
-
-    const observer = new ResizeObserver(report);
-    observer.observe(box);
-    // A window moved to a display of another density changes the pixels without changing
-    // the box, and the observer says nothing about that.
-    window.addEventListener('resize', report);
-    return () => {
-      if (settle !== null) clearTimeout(settle);
-      observer.disconnect();
-      window.removeEventListener('resize', report);
-    };
-  }, [onViewport]);
 
   /**
    * Where the picture is drawn inside the box, in page pixels, and desktop pixels per
@@ -130,7 +82,7 @@ export function ScreenView({
   }, []);
 
   useEffect(() => {
-    if (!controlling) return;
+    if (!controlling || !controllable) return;
 
     // Movement is gathered per animation frame; the runtime gathers again on its side.
     let dx = 0;
@@ -179,8 +131,8 @@ export function ScreenView({
       onInput({ type: 'wheel', dy: e.deltaY });
     };
     const onKey = (e: KeyboardEvent) => {
-      // Esc ends the lock; the browser handles it, and the desktop never sees it.
-      if (e.key === 'Escape') return;
+      if (e.key === 'Escape') { document.exitPointerLock(); return; }
+      if (e.key.toLowerCase() === 'v' && (e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
       onInput({
         type: 'key',
@@ -209,13 +161,11 @@ export function ScreenView({
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('contextmenu', swallow);
     };
-  }, [controlling, onInput, drawn]);
+  }, [controlling, controllable, onInput, drawn]);
 
-  // Outside control, a paste on the page types the clipboard text into whatever has focus
-  // on the desktop. Inside control the keys go through as they are, so Cmd+V or Ctrl+V
-  // pastes the desktop's own clipboard.
+  // Paste uses the viewer's clipboard while that viewer has desktop control.
   useEffect(() => {
-    if (!controllable || !hasScreen || controlling) return;
+    if (!controllable || !hasScreen) return;
     const onPaste = (e: ClipboardEvent) => {
       const target = e.target;
       if (

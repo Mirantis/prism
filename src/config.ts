@@ -712,6 +712,7 @@ export const config = {
   host: process.env.PRISM_HOST?.trim() || '127.0.0.1',
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
   // via start.sh so the container's mounted /data volume is used.
+  publicUrl: process.env.PRISM_PUBLIC_URL?.trim().replace(/\/+$/, '') || null,
   databaseUrl: process.env.DATABASE_URL ?? 'file:./agent.db',
   bedrockModelId,
   bedrockClassificationModelId,

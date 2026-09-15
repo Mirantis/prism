@@ -1,3 +1,5 @@
+import { ComputerHelpCard } from '@/components/computer/computer-help-card';
+import type { ComputerHelp } from '@/types';
 import { memo } from 'react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Bot } from 'lucide-react';
@@ -58,7 +60,7 @@ const ChatMessage = memo(function ChatMessage({ message, agentName }: ChatMessag
     return (
       <div className="group flex justify-end gap-3">
         <div className="flex max-w-[85%] flex-col items-end gap-1">
-          <AttachmentChips message={message} />
+        <AttachmentChips message={message} />
           {hasText && (
             <div className="rounded-2xl bg-primary px-4 py-3 text-sm text-primary-foreground">
               <ChatMarkdown content={message.content} />
@@ -70,6 +72,7 @@ const ChatMessage = memo(function ChatMessage({ message, agentName }: ChatMessag
     );
   }
 
+  const help = message.blocks?.filter((block): block is ComputerHelp => block !== null && typeof block === 'object' && 'type' in block && block.type === 'computer_help') ?? [];
   return (
     <div className="group flex gap-3">
       <Avatar size="sm" className="mt-0.5 shrink-0">
@@ -82,9 +85,10 @@ const ChatMessage = memo(function ChatMessage({ message, agentName }: ChatMessag
           <span className="text-xs font-medium text-muted-foreground">{agentName}</span>
           <span className="text-[10px] text-muted-foreground">{time}</span>
         </div>
-        <div className="text-sm text-foreground break-words overflow-hidden">
+        {help.length === 0 && <div className="text-sm text-foreground break-words overflow-hidden">
           <ChatMarkdown content={message.content} />
-        </div>
+        </div>}
+        {help.map((item) => <ComputerHelpCard key={item.id} help={item} />)}
         <AttachmentChips message={message} />
         {message.toolCalls && message.toolCalls.length > 0 && <ChatToolCalls toolCalls={message.toolCalls} />}
       </div>

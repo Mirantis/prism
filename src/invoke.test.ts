@@ -1302,13 +1302,13 @@ describe('invoke', () => {
   });
 
   describe('cancellation (abortSignal)', () => {
-    it('threads the abortSignal into generateText', async () => {
+    it('combines caller cancellation with computer cancellation', async () => {
       const controller = new AbortController();
 
       await invoke(createTestInvokeRequest({ abortSignal: controller.signal }));
 
       expect(mockGenerateText).toHaveBeenCalledWith(
-        expect.objectContaining({ abortSignal: controller.signal }),
+        expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
       );
     });
 

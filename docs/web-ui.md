@@ -213,8 +213,8 @@ The agent's identity and runtime controls.
 
 ## Computer
 
-A voice call with the agent at its own computer: its screen fills the page, and
-you can take the pointer and keyboard or share your own screen with it.
+Watch Prism use its desktop, take control when it needs help, or start optional
+voice chat. Work continues when you leave the page.
 
 See **[The agent's computer](computer.md)**.
 

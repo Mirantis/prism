@@ -15,7 +15,7 @@
 // sandbox legitimately needs inherited PATH, HOME, AWS_*, GH_*, and token vars
 // for gh/aws/kubectl and coding-agent auth.
 
-const SERVER_ONLY_VARS = ['NODE_ENV', 'HUSKY'] as const;
+const SERVER_ONLY_VARS = ['NODE_ENV', 'HUSKY', 'DISPLAY', 'XAUTHORITY', 'DBUS_SESSION_BUS_ADDRESS', 'AT_SPI_BUS_ADDRESS'] as const;
 
 export function sandboxEnv(
   base: NodeJS.ProcessEnv = process.env,

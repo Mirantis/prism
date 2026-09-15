@@ -1,3 +1,6 @@
+import { computerHelpService } from './services/computer/computer-help.service';
+import { hasComputer } from './services/computer/supported';
+import { computerService } from './services/computer/computer.service';
 /**
  * Unified Agent Invocation
  *
@@ -91,6 +94,8 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     return;
   }
   const agentId = request.agentId;
+  const computerUse = computerService.access.create(request, request.abortSignal);
+  request = { ...request, abortSignal: computerUse.signal };
 
   // Fetch context. Failures become friendly error steps.
   let context;
@@ -106,6 +111,8 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       verbose: request.verbose,
     });
   } catch (error) {
+    computerUse.failed = true;
+    computerService.access.finish(computerUse);
     yield buildErrorStep(error);
     return;
   }
@@ -122,6 +129,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // Per-turn runtime notices → surfaced as an authoritative system-prompt
     // section (e.g. a Slack attachment that failed to download).
     context.runtimeNotices = request.runtimeNotices;
+    if (hasComputer() && request.threadId) {
+      const help = (await computerHelpService.list(request.agentId, request.userId, request.threadId)).filter((item) => item.status === 'waiting');
+      if (help.length) context.runtimeNotices = [...(request.runtimeNotices ?? []),
+        ...help.map((item) => `Outstanding computer help ${item.id}: ${item.reason}. If the user says they finished helping, resolve it with computer_continue and inspect the screen.`)];
+    }
 
     // Heartbeat and cron runs honor their own optional model override,
     // falling back to the main per-agent model, then the env default. Chat
@@ -165,6 +177,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       taskInvoker: invoke,
       registerAttachmentInjection: (message) => pendingAttachmentInjections.push(message),
       pendingFileWrites,
+      computerUse,
       // While locked in, the workspace-markdown writers are withheld.
       lockedIn: context.lockedIn,
     });
@@ -611,6 +624,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       // Surface the error as a friendly step so consumers don't need a
       // separate error-handling path. buildErrorStep is the single
       // formatter for LLM/runtime errors (budget-aware).
+      computerUse.failed = true;
       channel.push(buildErrorStep(error));
       channel.close();
     });
@@ -631,6 +645,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     });
 
   } finally {
+    computerService.access.finish(computerUse);
     // Persist the turn's final context measurement — one write per turn rather
     // than per step. Runs for canceled turns too: the prompt was still built and
     // sent, so the reading is real.

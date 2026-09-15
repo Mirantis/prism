@@ -28,7 +28,7 @@ export function prepareVoiceChatTools(
   const extra = computer?.declarations ?? [];
   const extraNames = new Set(extra.map((d) => d.name));
   const dropped = new Set<string>([...MEETING_TOOL_NAMES, ...extraNames]);
-  const declarations = [...base.declarations.filter((d) => !dropped.has(d.name)), ...extra];
+  const declarations = [...base.declarations.filter((d) => !dropped.has(d.name) && !d.name.startsWith('computer_')), ...extra];
   return {
     declarations,
     count: declarations.length,

@@ -39,8 +39,8 @@ the runtime's voice frames on the chat connection —
 
 ## The agent's computer
 
-The Web UI's **Computer** page is this same call with a computer in it: the agent
-gets a browser and a desktop, and you watch its screen while it works. See
+Press **Talk** on the Web UI's **Computer** page to discuss the live desktop.
+Voice can pass your instructions to an active chat task. See
 **[The agent's computer](computer.md)**.
 
 ## Who the agent answers

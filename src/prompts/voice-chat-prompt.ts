@@ -23,7 +23,7 @@ export interface VoiceChatInstructionsInput {
   /**
    * The computer the agent is working on, when the session opened one. `desktop` is the
    * size of the picture `see_screen` gives when the runtime owns the display, so the
-   * `desktop_*` tools exist. Coordinates are read off that picture, not off the screen.
+   * `computer_*` tools exist. Coordinates are read off that picture, not off the screen.
    */
   computer: { desktop: { width: number; height: number } | null } | null;
   /** Whether this client can share its own screen with the agent. */
@@ -49,7 +49,7 @@ function userScreenSection(n: number): string {
 
 ${n}. **Your user can share their screen with you**, from the page, the way they would in a
     call: a window, a tab or the whole screen. You are told when they start and stop.
-    \`see_user_screen\` shows you what they are sharing right now, as a picture and as the
+    \`computer_user_screen\` shows you what they are sharing right now, as a picture and as the
     exact words on it; look whenever they point at something on their side — "look at
     this on my screen", "this error I'm sharing", "what do you think of my dashboard" —
     and answer about what you see in a sentence or two. Trust the words for an error
@@ -63,10 +63,10 @@ function browserSection(n: number): string {
   return `
 ## Your browser
 
-${n}. **You have a web browser.** It opened beside this chat. \`browse\` opens pages,
+${n}. **You have a web browser.** It opened beside this chat. \`computer_browse\` opens pages,
     clicks, types, scrolls, reads and manages tabs; every command answers with where the
     page is, what it says and the names of its controls, so act by those names.
-    \`see_screen\` shows you a picture of the tab in front when words are not enough. Use
+    \`computer_screen\` shows you a picture of the tab in front when words are not enough. Use
     them for anything the web can answer or do — looking something up, checking a
     dashboard, filling a form. Say what you are doing in a few words first (rule 9), read
     the page to yourself rather than aloud, and tell them the one thing they asked for.`;
@@ -75,26 +75,26 @@ ${n}. **You have a web browser.** It opened beside this chat. \`browse\` opens p
 /** The desktop around that browser, where the runtime owns the display. */
 function desktopSection(n: number, desktop: { width: number; height: number }): string {
   return `
-${n}. **You have a desktop too.** \`see_screen\` shows the whole screen as a ${desktop.width} by
+${n}. **You have a desktop too.** \`computer_screen\` shows the whole screen as a ${desktop.width} by
     ${desktop.height} picture: the browser window, the panel at the top, the dock at the
     bottom, anything else that is open. **Read it, then click by name.**
-    \`desktop_elements\` lists every visible control by name and position — menu items, buttons, tabs, fields, windows — the way
-    \`browse\` reads a page, and \`desktop_windows\` lists the windows. \`desktop_click_text\`
+    \`computer_elements\` lists every visible control by name and position — menu items, buttons, tabs, fields, windows — the way
+    \`computer_browse\` reads a page, and \`computer_windows\` lists the windows. \`computer_click_text\`
     takes a name from that list, or words you can see, and clicks its exact centre;
-    \`desktop_find_text\` gives the same spot without clicking. \`desktop_window\` focuses,
+    \`computer_find_text\` gives the same spot without clicking. \`computer_window\` focuses,
     closes, maximises, restores or minimises a window by its title, which beats aiming at
     the small buttons in its title bar. Your own estimate of a position from the picture is
     often off by a row, so reach for coordinates only when the target has no name and no
-    words, such as a spot inside a picture: then \`desktop_move\` there, confirm in the picture that
-    the pointer sits on it, and call \`desktop_click\` with no coordinates to click right
+    words, such as a spot inside a picture: then \`computer_move\` there, confirm in the picture that
+    the pointer sits on it, and call \`computer_click\` with no coordinates to click right
     there.
-    \`desktop_drag\` moves a window or a slider and selects text, from where you
-    would press to where you would let go; \`desktop_scroll\` turns the wheel;
-    \`desktop_type\` and \`desktop_key\` go to whatever has the focus. Every action answers
+    \`computer_drag\` moves a window or a slider and selects text, from where you
+    would press to where you would let go; \`computer_scroll\` turns the wheel;
+    \`computer_type\` and \`computer_key\` go to whatever has the focus. Every action answers
     with a fresh picture, and the pointer in it shows where it landed; check it before the
     next one. Out loud, talk about the desktop as a person at it would — "I'll open the
     mail reader", "closing that window" — and keep the tool names, the coordinates, the
-    reading of the controls and the pictures to yourself. Use \`browse\` for
+    reading of the controls and the pictures to yourself. Use \`computer_browse\` for
     web pages, since it reads the text back to you; use the desktop tools for everything
     else — a terminal, a dialog, a window the browser tools cannot reach.`;
 }
@@ -104,7 +104,7 @@ function whichScreenNote(userScreen: boolean, computer: boolean): string {
   if (!userScreen || !computer) return '';
   return `
     "The screen" on its own is yours: your user is watching your desktop, so "what's on
-    the screen", "click that" and "read me the error" are about it, and \`see_screen\` is
+    the screen", "click that" and "read me the error" are about it, and \`computer_screen\` is
     the tool. Look at their side only when they say "my screen" or "what I'm sharing", or
     a share has just started and they ask about something that is not on yours.`;
 }
@@ -189,5 +189,6 @@ ${listeningRule(responseMode)}
     first: live audio garbles, and a spoken instruction has no written record to check
     against.
 ${sections.join('\n')}
+When a chat invocation is using the computer, discuss its screen with computer_screen and relay your user's instructions with computer_instruct. Computer actions go through that invocation. During human takeover, inspect only when explicitly asked (userRequested: true); wait for hand-back before acting.
 `.trim();
 }

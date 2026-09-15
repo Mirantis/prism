@@ -6,10 +6,13 @@ Feature: The agent's computer in the browser
     Given I am logged in
     And I have a personal agent
 
-  Scenario: The page opens a call with a screen, starts muted, and gives the voice back when I leave
+  Scenario: The page shows the desktop and starts voice only when requested
     Given the runtime can give the agent a computer
     And the voice model has heard nothing yet
     When I open the Computer page
+    Then Computer opens without starting voice
+    And the agent's screen is being drawn
+    When I start voice on Computer
     Then the page says the computer is live
     And the agent's screen is being drawn
     And the voice model hears nothing, because the microphone starts muted
@@ -24,3 +27,21 @@ Feature: The agent's computer in the browser
     Then the composer says a voice chat is live
     When I end the voice chat
     Then the voice model has no session open
+
+  Scenario: A blocked sign-in allows independent work and resumes after user help
+    Given the runtime can give the agent a computer
+    And a website with a sign-in page and public notes
+    When I ask Prism to read my inbox and the public notes using its computer
+    Then Prism requests computer help and reports the public notes
+    When I open the help request and sign in through the live computer
+    Then Prism continues the original conversation and reports the inbox
+
+  Scenario: Human control pauses queued work and survives closing the viewer
+    Given the runtime can give the agent a computer
+    And a website with a sign-in page and public notes
+    When I take control of Computer and open another viewer
+    Then the other viewer can watch but cannot take control
+    When I ask for the public notes in a chat while I have control
+    Then the chat shows that it is waiting for the computer
+    When I close the controlling viewer and continue from the other viewer
+    Then the queued chat reports the public notes

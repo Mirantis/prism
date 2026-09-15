@@ -578,3 +578,7 @@ These affect the native [installer](installation.md), not the running agent:
 |----------|---------|---------|
 | `PRISM_HOME` | Install directory | `~/.prism` (`%USERPROFILE%\.prism`) |
 | `PRISM_HTTP_URL` | Runtime URL the [`prism` TUI](cli-reference.md) connects to | `http://localhost:3003` |
+
+## Public Web UI address
+
+Set `PRISM_PUBLIC_URL` to the externally reachable Web UI address, including any path prefix, for clickable Computer help links in Slack. Set it on both Lens-hosted and standalone deployments.

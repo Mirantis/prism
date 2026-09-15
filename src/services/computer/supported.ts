@@ -1,23 +1,10 @@
-/**
- * Whether this host can give the agent a computer.
- *
- * A computer is a virtual display with a desktop on it, so it needs more than a voice
- * session does: the X server and audio stack a meeting already requires, plus the desktop
- * itself. The container image installs all of it; a host running the runtime directly
- * usually has none of it.
- *
- * The Web UI asks once at startup and leaves the Computer page out when the answer is no,
- * rather than offering a page whose call cannot start.
- */
+/** Desktop availability is independent of voice credentials. */
 
 import { missingBinary } from '../../lib/has-binary';
-import { isMeetingSupported } from '../../tools/meeting';
+import { AUDIO_STACK_BINARIES } from '../meeting/audio-stack';
+import { isBrowserAvailable } from '../meeting/browser-stack';
 import { logger } from '../../logger';
 
-/**
- * The programs a computer needs beyond the browser and the audio stack, which
- * `isMeetingSupported` already checks.
- */
 export const COMPUTER_BINARIES = [
   'dbus-launch',
   'startxfce4',
@@ -41,10 +28,11 @@ export function unsupportedReason(missing: string): string {
 }
 
 export async function isComputerSupported(): Promise<boolean> {
-  if (!(await isMeetingSupported())) return false;
+  if (!(await isBrowserAvailable())) return false;
+  if (await missingBinary(...AUDIO_STACK_BINARIES)) return false;
   const missing = await missingBinary(...COMPUTER_BINARIES);
   if (missing) {
-    logger.info(`[VoiceChat] No computer on this host: ${missing} is not on PATH`);
+    logger.info(`[Computer] No computer on this host: ${missing} is not on PATH`);
     return false;
   }
   return true;
@@ -68,7 +56,7 @@ export async function initComputerAvailability(): Promise<boolean> {
   try {
     computerAvailable = await isComputerSupported();
   } catch (err) {
-    logger.warn(`[VoiceChat] Computer probe failed: ${String(err)}`);
+    logger.warn(`[Computer] Computer probe failed: ${String(err)}`);
     computerAvailable = false;
   }
   return computerAvailable;

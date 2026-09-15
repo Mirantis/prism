@@ -1,69 +1,38 @@
 # The agent's computer
 
-The **Computer** page in the [Web UI](web-ui.md) gives the agent a computer and
-shows you its screen. You watch it work, you talk to it, and you can take the
-keyboard and mouse yourself.
-
-The page is a [voice chat](voice-chat.md) with a computer in it. Everything that
-page says about a call applies here: what the agent can do, and what your
-authority over it means.
+Prism has its own desktop and browser. Ask it to use websites or desktop apps in chat, goals, or scheduled tasks. Open **Computer** in the [Web UI](web-ui.md) at any time to watch it work.
 
 ## What you need
 
-Only `OPENAI_API_KEY`, the same key voice chat uses — see
-[Configuration](configuration.md#voice-chat).
+Run the published container image, which includes the desktop packages. Signed-in browser sessions are saved in the persistent data volume.
 
-The agent's desktop needs packages that the container image installs. Run the
-published image, or build one with `npm run docker:build`. A runtime without them
-does not offer this page: **Computer** is absent from the sidebar.
+## Watching and taking control
 
-## Starting
+Opening **Computer** shows the live desktop. Work continues when you leave the page. The status shows who has control and links to the active conversation.
 
-Open **Computer** in the sidebar. The call starts and the agent greets you. Leave
-the page and the call ends.
+Press **Take control**, then click the screen to use the mouse and keyboard. Paste types into the focused field. Press Esc to release your pointer, and **Continue** to hand the computer back to Prism. Closing the page while you have control keeps Prism paused.
 
-Your microphone starts muted. Press **Unmute** when you want the agent to hear
-you.
+While you have control, ask Prism to inspect the screen if you need guidance. Press **Sound** to hear the desktop, or **Talk** to start optional [voice chat](voice-chat.md), initially muted.
 
-## The screen
+## When Prism needs help
 
-The page shows the agent's screen while it works. That screen is a whole desktop,
-so the agent can use a browser, a terminal, a file manager, or anything else the
-image installs.
+Prism sends a help request with **Open Computer** when a website needs sign-in, a CAPTCHA, or another step for you. Take control, finish the step directly on the desktop, and press **Continue** on the help request. You can also tell Prism in the originating chat that you finished helping.
 
-The screen is made the size of the area the page draws it in, so you see the
-desktop at its own resolution. Resize the browser window or go fullscreen and the
-desktop follows, a moment after you stop. A very large window gets the largest
-screen the runtime keeps, scaled up the rest of the way.
+A blocked website can wait while Prism works elsewhere. When you hand back control, the interrupted turn finishes first; the request you unblocked follows it. **Dismiss** closes a help request. **Stop current task** cancels the invocation using the computer.
 
-## Taking control
+## Several requests
 
-Click the screen to take the pointer and keyboard. Press Esc to give them back.
+Computer requests take turns. A conversation waiting for the desktop shows **Waiting for the computer** and offers **Stop current task**. Other requests can continue using connectors or shell tools.
 
-While the screen is on the page, pasting types your clipboard into whatever has
-the focus on the desktop. This works whether or not you hold the pointer.
+Voice can discuss the screen and pass instructions to an active chat task. A voice call creates no chat history of its own.
 
-## Sharing your own screen
+## Links from Slack
 
-Press **Share screen** to show the agent your screen, a window or a tab, the way
-you would in a video call. Ask the agent to look and it reads what is there.
+Set `PRISM_PUBLIC_URL` to the externally reachable Web UI address so help requests include a clickable Computer link. Include the deployment's path prefix when it has one. Set this environment variable on both Lens-hosted and standalone deployments.
 
-"The screen" on its own means the agent's own screen, since that is the one you
-are both watching. Say "my screen" for yours.
+## Troubleshooting
 
-## One call at a time
-
-The agent has one voice. Opening the Computer page while a call from the chat
-composer is running is refused, and so is the reverse. Opening the page twice
-moves the call to the newer page, which is what a reload does.
-
-## When it doesn't work
-
-- **Computer is missing from the sidebar.** This runtime has no desktop toolchain.
-  Run the published container image, or build one with `npm run docker:build`.
-- **The page says the screen cannot be shown.** The browser has no video decoder
-  for the stream. The call and its sound continue.
-- **The call is refused.** Another call holds the agent's voice. The message says
-  which one.
-- **The page says the screen would not start.** A program the desktop needs is
-  missing. The message names it.
+- **Computer is missing.** Run the published container image with its desktop packages.
+- **The viewer reconnects.** Wait for the live stream, then take control again if needed.
+- **The tab needing help has closed.** Use the current desktop or tell Prism to reopen the website.
+- **The runtime restarted.** Ask Prism to continue the interrupted request. Browser logins stored in the data volume remain available.
