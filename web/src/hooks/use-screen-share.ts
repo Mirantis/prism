@@ -37,8 +37,25 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
    * clean it up, and the browser goes on capturing their screen.
    */
   const mountedRef = useRef(true);
+  /**
+   * A stream the browser has handed over that is not a session yet.
+   *
+   * Starting one spans two awaits — the picker, then the video reporting a size — and the
+   * capture is live for both. Held here across the second so that leaving the page, or
+   * pressing stop, has something to stop: a cleanup that only knows about sessions would
+   * leave the user's screen being captured with nothing left to end it.
+   */
+  const pendingRef = useRef<MediaStream | null>(null);
 
   const stop = useCallback(() => {
+    // A start that has not published yet is cancelled here too. Nothing was announced for
+    // it, so there is nothing to say afterwards; the start itself sees the claim gone and
+    // lets its stream go.
+    const pending = pendingRef.current;
+    if (pending) {
+      pendingRef.current = null;
+      pending.getTracks().forEach((t) => t.stop());
+    }
     const session = sessionRef.current;
     if (!session) return;
     sessionRef.current = null;
@@ -71,11 +88,24 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
       return;
     }
 
+    // Claimed before the next await, so a page that closes while the video is starting
+    // stops this capture rather than leaving it running for nobody.
+    pendingRef.current = media;
+
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
     video.srcObject = media;
     await video.play().catch(() => undefined);
+
+    // The page went away, or something else took the claim: stop the capture rather than
+    // setting timers and announcing a share nobody asked for any more.
+    if (!mountedRef.current || pendingRef.current !== media) {
+      media.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    pendingRef.current = null;
+
     const canvas = document.createElement('canvas');
 
     const capture = () => {
@@ -113,6 +143,9 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      pending?.getTracks().forEach((t) => t.stop());
       const session = sessionRef.current;
       if (!session) return;
       clearInterval(session.timer);
