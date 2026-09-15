@@ -38,10 +38,11 @@ import { VoiceConversation, type VoiceConversationStats } from './voice-conversa
 import { MEETING_SAMPLE_RATE } from './resampler';
 import { meanGateLatencyMs } from './gate-stats';
 import type { EffectiveMode, ResponseMode } from './response-policy';
-import { MEETING_MAX_RESULT_CHARS, prepareMeetingTools } from './tool-bridge';
+import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet';
 import { withTimeout } from '../../utils/with-timeout';
 import { voiceSessionLock } from '../voice/voice-session-lock';
+import { MAX_TOOL_RESULT_CHARS } from '../voice/realtime-tools';
 import type {
   ChatMessageRead,
   ChatReadStep,
@@ -179,8 +180,8 @@ export const MEETING_CHAT_READ_LIMIT = 20;
  * reading out. A message longer than this is marked as cut, so the model can say that the
  * end is missing and ask for it.
  *
- * The whole reading is bounded by `MEETING_MAX_RESULT_CHARS`, the most a meeting tool result
- * hands to the model: enough to be read out or acted on, and past it the bridge cuts the
+ * The whole reading is bounded by `MAX_TOOL_RESULT_CHARS`, the cap on one tool result handed
+ * to a Realtime model: enough to be read out or acted on, and past it the adapter cuts the
  * result anyway.
  */
 const CHAT_READ_MAX_CHARS_PER_MESSAGE = 4_000;
@@ -408,7 +409,7 @@ function chatLine(message: ChatMessageRead): string {
  * reading with nothing in it is spoken as an empty chat, and it is marked as cut like any
  * other message the read shortened.
  *
- * Both cuts count characters while the bridge measures the JSON-escaped result, so a
+ * Both cuts count characters while the adapter measures the JSON-escaped result, so a
  * character that escapes to six is replaced with a space: a control character does, and so
  * does half a surrogate pair, which either cut can leave behind — so a message cut to fit is
  * cleaned again. Everything that survives escapes to at most two.
@@ -422,14 +423,14 @@ function fenceChatMessages(
   const kept: string[] = [];
   let chars = 0;
   for (let i = safe.length - 1; i >= 0; i -= 1) {
-    if (chars + safe[i].length > MEETING_MAX_RESULT_CHARS) break;
+    if (chars + safe[i].length > MAX_TOOL_RESULT_CHARS) break;
     kept.unshift(safe[i]);
     chars += safe[i].length;
   }
 
   let cutToFit = false;
   if (kept.length === 0 && safe.length > 0) {
-    const room = MEETING_MAX_RESULT_CHARS - MEETING_CHAT_CUT_MARK.length;
+    const room = MAX_TOOL_RESULT_CHARS - MEETING_CHAT_CUT_MARK.length;
     // A message the reader already cut ends with the mark, so that copy comes off before
     // this cut. Slicing over it would leave half a mark and then append a whole one.
     const newest = safe[safe.length - 1];
@@ -2058,7 +2059,7 @@ export class MeetingBotService {
    *
    * **In-call only.** The text never reaches a thread, a channel adapter or the
    * conversation database — it goes to the model that asked and nowhere else. A reading over
-   * the bridge's cap is saved whole to the tool-output store, as any long tool result is,
+   * the adapter's cap is saved whole to the tool-output store, as any long tool result is,
    * and the hourly sweep deletes it there; that is the one copy a call leaves behind. Apart
    * from it the only trace after the call is a count and a duration in telemetry. The tool
    * runs in meeting mode alone for the same reason: a chat turn persists its tool results as
