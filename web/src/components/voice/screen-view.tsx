@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import type { InputFrame } from '@/hooks/use-computer-screen';
 
 interface ScreenViewProps {
+  className?: string;
   /** Canvas for the live desktop stream. */
   screenRef: RefObject<HTMLCanvasElement | null>;
   hasScreen: boolean;
@@ -31,6 +32,7 @@ const BUTTONS: Record<number, 'left' | 'middle' | 'right'> = { 0: 'left', 1: 'mi
 
 /** The first click takes control without clicking anything on the desktop. */
 export function ScreenView({
+  className,
   screenRef,
   hasScreen,
   connecting,
@@ -292,6 +294,7 @@ export function ScreenView({
       className={cn(
         'relative aspect-video w-full overflow-hidden rounded-lg bg-zinc-950 select-none',
         canTake && 'cursor-pointer',
+        className,
       )}
     >
       <canvas
@@ -331,10 +334,9 @@ export function ScreenView({
           Taking control…
         </p>
       )}
-      {controlling && controllable && !acquiring && (
-        <div className="absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-sky-500/90 px-4 py-1.5 text-sm font-medium text-white shadow">
-          You control the screen · press <kbd className="rounded bg-white/20 px-1.5">Esc</kbd> to
-          hand back to Prism
+      {fullscreen && controlling && controllable && !acquiring && (
+        <div className="absolute left-3 top-3 rounded-lg border border-white/15 bg-zinc-900/90 px-3 py-2 text-xs font-medium text-white shadow">
+          Your control · <kbd className="rounded bg-white/20 px-1.5">Esc</kbd> to return
         </div>
       )}
       {hasScreen && (

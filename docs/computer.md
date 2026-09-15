@@ -16,7 +16,7 @@ While you have control, ask Prism to inspect the screen if you need guidance. Pr
 
 ## When Prism needs help
 
-Prism sends a help request with **Open Computer** when a website needs sign-in, a CAPTCHA, or another step for you. Click the screen, finish the step directly on the desktop, and press Esc or **Continue** to resume the request. You can also tell Prism in the originating chat that you finished helping.
+Prism sends a help request with **Open Computer** when a website needs sign-in, a CAPTCHA, or another step for you. On Computer, the request appears beside the screen, or above it on smaller displays. Click the screen, finish the step directly on the desktop, and press Esc or **Continue** to resume the request. You can also tell Prism in the originating chat that you finished helping.
 
 A blocked website can wait while Prism works elsewhere. When you hand back control, the interrupted turn finishes first; the request you unblocked follows it. **Dismiss** closes a help request; Prism treats it as dismissed in later conversation turns. **Stop current task** cancels the invocation using the computer.
 

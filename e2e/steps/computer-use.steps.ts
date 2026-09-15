@@ -41,28 +41,81 @@ Then('Prism requests computer help and reports the public notes', async ({ page 
   );
 });
 
-When(
-  'I open the help request and sign in through the live computer',
+When('I open the Computer help request', async ({ page }) => {
+  helpConversationUrl = page.url();
+  await page.getByLabel('Computer help').getByRole('link', { name: 'Open Computer' }).click();
+  await expect(page.getByLabel("The agent's screen")).toBeVisible();
+});
+
+Then(
+  'Computer keeps help beside the screen and adapts to smaller displays',
   async ({ page, $testInfo }) => {
-    helpConversationUrl = page.url();
-    await page.getByLabel('Computer help').getByRole('link', { name: 'Open Computer' }).click();
-    page.setDefaultTimeout(15_000);
-    await expect(page.getByLabel("The agent's screen")).toBeVisible();
-    await page.screenshot({ path: $testInfo.outputPath('computer-watching.png'), fullPage: true });
-    await page.getByLabel("The agent's screen").click();
-    await expect(page.getByRole('status')).toContainText('You have control', { timeout: 30_000 });
-    await page.keyboard.type('demo-user', { delay: 80 });
-    await page.screenshot({
-      path: $testInfo.outputPath('computer-controlling.png'),
-      fullPage: true,
-    });
-    await page.keyboard.press('Enter');
-    // The browser's actual authenticated request confirms the user input arrived.
-    await expect.poll(() => site!.isSignedIn(), { timeout: 15_000 }).toBe(true);
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('status')).not.toContainText('You have control');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const help = page.getByRole('complementary', { name: 'Computer assistance' });
+    const screen = page.getByLabel("The agent's screen");
+    const controls = page.getByLabel('Computer controls');
+    await expect(help).toBeVisible();
+    await expect
+      .poll(async () => {
+        const helpBox = await help.boundingBox();
+        const screenBox = await screen.boundingBox();
+        const controlsBox = await controls.boundingBox();
+        return Boolean(
+          helpBox &&
+          screenBox &&
+          controlsBox &&
+          helpBox.x >= screenBox.x + screenBox.width &&
+          helpBox.y + helpBox.height <= 900 &&
+          controlsBox.y + controlsBox.height <= 900,
+        );
+      })
+      .toBe(true);
+    await expect(help.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(1);
+    await page.screenshot({ path: $testInfo.outputPath('computer-wide.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Open fullscreen' }).click();
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement !== null)).toBe(true);
+    await expect
+      .poll(async () => {
+        const box = await screen.boundingBox();
+        return Boolean(box && box.width === 1440 && box.height === 900);
+      })
+      .toBe(true);
+    await page.getByRole('button', { name: 'Exit fullscreen' }).click();
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
+    await page.setViewportSize({ width: 768, height: 900 });
+    await expect
+      .poll(async () => {
+        const helpBox = await help.boundingBox();
+        const screenBox = await screen.boundingBox();
+        return Boolean(
+          helpBox &&
+          screenBox &&
+          helpBox.y + helpBox.height <= screenBox.y &&
+          helpBox.x + helpBox.width <= 768,
+        );
+      })
+      .toBe(true);
+    await page.screenshot({ path: $testInfo.outputPath('computer-narrow.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
   },
 );
+
+When('I sign in through the live computer', async ({ page, $testInfo }) => {
+  page.setDefaultTimeout(15_000);
+  await page.getByLabel("The agent's screen").click();
+  await expect(page.getByRole('status')).toContainText('You have control', { timeout: 30_000 });
+  await page.keyboard.type('demo-user', { delay: 80 });
+  await page.screenshot({
+    path: $testInfo.outputPath('computer-controlling.png'),
+    fullPage: true,
+  });
+  await page.keyboard.press('Enter');
+  // The browser's actual authenticated request confirms the user input arrived.
+  await expect.poll(() => site!.isSignedIn(), { timeout: 15_000 }).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('status')).not.toContainText('You have control');
+});
 
 Then(
   'Prism continues the original conversation and reports the inbox',
@@ -79,7 +132,10 @@ Then(
       )
       .toContain('INBOX-CLEAR');
     await page.goto(helpConversationUrl);
-    const result = page.getByTestId('chat-messages').getByText(/INBOX-CLEAR/).last();
+    const result = page
+      .getByTestId('chat-messages')
+      .getByText(/INBOX-CLEAR/)
+      .last();
     await result.scrollIntoViewIfNeeded();
     await expect(result).toBeVisible();
     await expect(new HomePage(page).chatInput).toBeEnabled();

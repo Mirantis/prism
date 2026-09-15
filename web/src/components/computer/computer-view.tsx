@@ -21,7 +21,8 @@ import { useComputerAudio } from '@/hooks/use-computer-audio';
 import { useComputerVoice } from '@/hooks/use-computer-voice';
 import { useScreenShare } from '@/hooks/use-screen-share';
 import { computerRequest } from '@/api/computer';
-import { ComputerHelpCard } from './computer-help-card';
+import { ComputerHelpPanel } from './computer-help-panel';
+import { cn } from '@/lib/utils';
 
 export function ComputerView({ helpId }: { helpId?: string }) {
   const call = useComputerVoice();
@@ -40,8 +41,9 @@ export function ComputerView({ helpId }: { helpId?: string }) {
   const ownControl = Boolean(screen.clientId) && state?.controller === screen.clientId;
   const anotherController = Boolean(state?.controller) && !ownControl;
   const waiting = data?.help?.filter((help) => help.status === 'waiting') ?? [];
-  const selected = waiting.find((help) => help.id === helpId);
-  const help = selected ? [selected, ...waiting.filter((item) => item !== selected)] : waiting;
+  const [selectedHelpId, setSelectedHelpId] = useState(helpId);
+  useEffect(() => setSelectedHelpId(helpId), [helpId]);
+  const selected = waiting.find((help) => help.id === selectedHelpId) ?? waiting[0];
   const action = async (path: string, selectedHelp?: string) => {
     setBusy(true);
     setError(null);
@@ -91,111 +93,145 @@ export function ComputerView({ helpId }: { helpId?: string }) {
           ? 'Paused · Waiting for hand-back'
           : state?.owner
             ? 'Prism is working'
-            : 'Ready';
+            : selected
+              ? 'Waiting for you'
+              : 'Ready';
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm" role="status">
-          <span
-            className={`size-2 rounded-full ${state?.paused ? 'bg-amber-500' : screen.hasScreen ? 'bg-emerald-500' : 'bg-muted-foreground animate-pulse'}`}
-          />
-          {label}
-          {Boolean(state?.waiting.length) && (
-            <span className="text-muted-foreground">· {state?.waiting.length} waiting</span>
-          )}
-        </div>
-        {state?.owner?.threadId && (
-          <a
-            href={`/chat/${state.owner.threadId}`}
-            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-          >
-            <MessageSquare className="size-4" />
-            Open conversation
-          </a>
-        )}
-      </div>
-      <ScreenView
-        screenRef={screen.screenRef}
-        hasScreen={screen.hasScreen}
-        controllable={ownControl && !busy}
-        canTakeControl={!anotherController && !busy && Boolean(screen.clientId)}
-        onTakeControl={() => action('/control', selected?.id ?? help[0]?.id)}
-        onInput={screen.sendInput}
-        onRelease={() => void handBack()}
-        connecting={!screen.message}
+    <div className={cn('grid items-start gap-4', selected && 'xl:grid-cols-[minmax(0,1fr)_20rem]')}>
+      <section
+        aria-label="Live computer"
+        className="order-2 min-w-0 overflow-hidden rounded-xl border bg-card shadow-sm xl:order-1"
       >
-        {share.stream && (
-          <div className="absolute left-3 top-3">
-            <SharePreview stream={share.stream} />
+        <div className="flex min-h-14 flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
+          <div className="flex items-center gap-2 text-sm font-medium" role="status">
+            <span
+              className={cn(
+                'size-2 shrink-0 rounded-full',
+                state?.paused || (selected && !state?.owner)
+                  ? 'bg-amber-500'
+                  : screen.hasScreen
+                    ? 'bg-emerald-500'
+                    : 'bg-muted-foreground animate-pulse',
+              )}
+            />
+            {label}
+            {Boolean(state?.waiting.length) && (
+              <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                {state?.waiting.length} waiting
+              </span>
+            )}
           </div>
-        )}
-      </ScreenView>
-      <div className="flex flex-wrap items-center gap-2">
-        {state?.paused && !anotherController && (
-          <Button disabled={busy || !screen.clientId} onClick={() => void handBack()}>
-            <Play className="size-4" />
-            Continue
-          </Button>
-        )}
-        {state?.owner && (
-          <Button variant="outline" disabled={busy} onClick={() => void action('/stop')}>
-            <Square className="size-3.5" />
-            Stop current task
-          </Button>
-        )}
-        <div className="ml-auto flex items-center gap-2">
-          <Button
-            variant="outline"
-            aria-label={audio.enabled ? 'Mute computer sound' : 'Play computer sound'}
-            onClick={() => void audio.toggle()}
-          >
-            {audio.enabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}Sound
-          </Button>
-          {call.isSpeaking && (
-            <AudioLines aria-label="Speaking" className="size-4 animate-pulse text-sky-500" />
-          )}
-          {call.status === 'idle' ? (
-            <Button variant="outline" onClick={call.start}>
-              <Mic className="size-4" />
-              Talk
-            </Button>
-          ) : (
-            <>
-              <MuteButton
-                muted={call.isMuted}
-                disabled={call.status !== 'live'}
-                onToggle={call.toggleMute}
-              />
-              <Button variant="outline" onClick={call.stop}>
-                <Pause className="size-4" />
-                End voice
+          <div className="flex items-center gap-2">
+            {state?.owner?.threadId && (
+              <a
+                href={`/chat/${state.owner.threadId}`}
+                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <MessageSquare className="size-3.5" /> Open conversation
+              </a>
+            )}
+            {state?.owner && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => void action('/stop')}
+              >
+                <Square className="size-3" /> Stop current task
               </Button>
-            </>
+            )}
+            {state?.paused && !anotherController && !selected && (
+              <Button size="sm" disabled={busy || !screen.clientId} onClick={() => void handBack()}>
+                <Play className="size-3.5" /> Continue
+              </Button>
+            )}
+          </div>
+        </div>
+        <ScreenView
+          className="max-h-[calc(100dvh-14rem)] min-h-48 rounded-none [&:fullscreen]:max-h-none"
+          screenRef={screen.screenRef}
+          hasScreen={screen.hasScreen}
+          controllable={ownControl && !busy}
+          canTakeControl={!anotherController && !busy && Boolean(screen.clientId)}
+          onTakeControl={() => action('/control', selected?.id)}
+          onInput={screen.sendInput}
+          onRelease={() => void handBack()}
+          connecting={!screen.message}
+        >
+          {share.stream && (
+            <div className="absolute left-3 top-3">
+              <SharePreview stream={share.stream} />
+            </div>
           )}
-          <ShareButton
-            sharing={share.sharing}
-            disabled={call.status !== 'live'}
-            onToggle={() => (share.sharing ? share.stop() : void share.start())}
-          />
+        </ScreenView>
+        <div className="space-y-3 border-t px-4 py-3">
+          <div aria-label="Computer controls" className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="ghost"
+              aria-label={audio.enabled ? 'Mute computer sound' : 'Play computer sound'}
+              aria-pressed={audio.enabled}
+              onClick={() => void audio.toggle()}
+            >
+              {audio.enabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
+              Sound {audio.enabled ? 'on' : 'off'}
+            </Button>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {call.isSpeaking && (
+                <AudioLines aria-label="Speaking" className="size-4 animate-pulse text-sky-500" />
+              )}
+              {call.status === 'idle' ? (
+                <Button variant="outline" onClick={call.start}>
+                  <Mic className="size-4" /> Talk
+                </Button>
+              ) : (
+                <>
+                  <MuteButton
+                    muted={call.isMuted}
+                    disabled={call.status !== 'live'}
+                    onToggle={call.toggleMute}
+                  />
+                  <Button variant="outline" onClick={call.stop}>
+                    <Pause className="size-4" /> End voice
+                  </Button>
+                  <ShareButton
+                    sharing={share.sharing}
+                    disabled={call.status !== 'live'}
+                    onToggle={() => (share.sharing ? share.stop() : void share.start())}
+                  />
+                </>
+              )}
+            </div>
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {anotherController ? (
+              'You’re watching. Another viewer is using the computer.'
+            ) : ownControl ? (
+              'You have the mouse and keyboard. Press Esc to hand control back.'
+            ) : (
+              <>
+                Click the screen to take control.{' '}
+                <kbd className="rounded border bg-muted px-1 py-0.5 text-[10px]">Esc</kbd> hands it
+                back to Prism.
+              </>
+            )}
+          </p>
+          {(error || screen.message || call.error || share.error || audio.error) && (
+            <p role="alert" className="text-sm text-destructive">
+              {error || screen.message || call.error || share.error || audio.error}
+            </p>
+          )}
         </div>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        {ownControl
-          ? 'Press Esc or Continue to hand control back to Prism.'
-          : 'Click the screen to take control. Press Esc to hand it back to Prism.'}
-      </p>
-      {(error || screen.message || call.error || share.error || audio.error) && (
-        <p role="alert" className="text-sm text-destructive">
-          {error || screen.message || call.error || share.error || audio.error}
-        </p>
-      )}
-      {help.length > 0 && (
-        <div className="grid gap-3 lg:grid-cols-2">
-          {help.map((item) => (
-            <ComputerHelpCard key={item.id} help={item} clientId={screen.clientId} inComputer />
-          ))}
-        </div>
+      </section>
+      {selected && (
+        <ComputerHelpPanel
+          requests={waiting}
+          selected={selected}
+          clientId={screen.clientId}
+          disabled={busy || anotherController || !screen.clientId}
+          canSelect={!ownControl && !busy}
+          onSelect={setSelectedHelpId}
+        />
       )}
     </div>
   );
