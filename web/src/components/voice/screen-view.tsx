@@ -136,29 +136,47 @@ export function ScreenView({
     let dx = 0;
     let dy = 0;
     let flush: number | null = null;
+
+    /**
+     * Send the movement gathered so far, now.
+     *
+     * Anything that acts on where the pointer is goes out behind it. A click sent while a
+     * frame's movement is still waiting would land where the pointer was a frame ago, and
+     * the runtime cannot put the two back in order: it has not been told about the
+     * movement yet.
+     */
+    const flushMove = () => {
+      if (flush !== null) {
+        cancelAnimationFrame(flush);
+        flush = null;
+      }
+      if (dx === 0 && dy === 0) return;
+      onInput({ type: 'pointer_move', dx, dy });
+      dx = 0;
+      dy = 0;
+    };
+
     const onMove = (e: globalThis.MouseEvent) => {
       const { scale } = drawn();
       dx += e.movementX * scale;
       dy += e.movementY * scale;
       if (flush !== null) return;
-      flush = requestAnimationFrame(() => {
-        flush = null;
-        if (dx === 0 && dy === 0) return;
-        onInput({ type: 'pointer_move', dx, dy });
-        dx = 0;
-        dy = 0;
-      });
+      flush = requestAnimationFrame(flushMove);
     };
     const onButton = (down: boolean) => (e: globalThis.MouseEvent) => {
       e.preventDefault();
       const button = BUTTONS[e.button];
-      if (button) onInput({ type: 'pointer_button', button, down });
+      if (!button) return;
+      flushMove();
+      onInput({ type: 'pointer_button', button, down });
     };
     const onDown = onButton(true);
     const onUp = onButton(false);
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      if (e.deltaY !== 0) onInput({ type: 'wheel', dy: e.deltaY });
+      if (e.deltaY === 0) return;
+      flushMove();
+      onInput({ type: 'wheel', dy: e.deltaY });
     };
     const onKey = (e: KeyboardEvent) => {
       // Esc ends the lock; the browser handles it, and the desktop never sees it.

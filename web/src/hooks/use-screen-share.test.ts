@@ -102,6 +102,57 @@ describe('useScreenShare', () => {
     expect(send).not.toHaveBeenCalledWith({ type: 'user_screen_started' });
   });
 
+  it('stops a capture the page was left in the middle of starting', async () => {
+    // The gap this covers is the second await, not the first: the picker has already
+    // handed the stream over, and the video is still starting when the page goes. A
+    // cleanup that only knows about published sessions finds nothing and leaves the
+    // browser capturing the user's screen.
+    let startPlaying: () => void = () => {};
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(
+      () => new Promise<void>((resolve) => (startPlaying = resolve)),
+    );
+
+    const view = renderHook(() => useScreenShare(send));
+    let starting!: Promise<void>;
+    act(() => {
+      starting = view.result.current.start();
+    });
+    await waitFor(() => expect(getDisplayMedia).toHaveBeenCalled());
+
+    view.unmount();
+    await act(async () => {
+      startPlaying();
+      await starting;
+    });
+
+    expect(stream.track.stopped).toBe(true);
+    expect(send).not.toHaveBeenCalledWith({ type: 'user_screen_started' });
+  });
+
+  it('stops a capture that stop() cancelled while it was starting', async () => {
+    let startPlaying: () => void = () => {};
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(
+      () => new Promise<void>((resolve) => (startPlaying = resolve)),
+    );
+
+    const view = renderHook(() => useScreenShare(send));
+    let starting!: Promise<void>;
+    act(() => {
+      starting = view.result.current.start();
+    });
+    await waitFor(() => expect(getDisplayMedia).toHaveBeenCalled());
+
+    act(() => view.result.current.stop());
+    await act(async () => {
+      startPlaying();
+      await starting;
+    });
+
+    expect(stream.track.stopped).toBe(true);
+    expect(view.result.current.sharing).toBe(false);
+    expect(send).not.toHaveBeenCalledWith({ type: 'user_screen_started' });
+  });
+
   it('still shares under the double mount React makes in development', async () => {
     // StrictMode runs the effect, its cleanup, and the effect again on the same hook, to
     // shake out exactly this: state kept across an effect and only ever torn down. A flag
