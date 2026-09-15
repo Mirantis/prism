@@ -40,9 +40,9 @@ describe('serveUpgrades', () => {
     const chat = vi.fn();
     const voice = vi.fn();
     serveUpgrades(server as unknown as HttpServer, '/api/ws', chat);
-    serveUpgrades(server as unknown as HttpServer, '/api/voice', voice);
+    serveUpgrades(server as unknown as HttpServer, '/api/computer', voice);
 
-    const socket = upgrade(server, '/api/voice');
+    const socket = upgrade(server, '/api/computer');
 
     expect(voice).toHaveBeenCalledTimes(1);
     expect(chat).not.toHaveBeenCalled();
@@ -69,9 +69,9 @@ describe('serveUpgrades', () => {
     const chat = vi.fn();
     const voice = vi.fn();
     serveUpgrades(server as unknown as HttpServer, '/api/ws', chat);
-    serveUpgrades(server as unknown as HttpServer, '/api/voice', voice);
+    serveUpgrades(server as unknown as HttpServer, '/api/computer', voice);
 
-    upgrade(server, '/api/ws/../voice');
+    upgrade(server, '/api/ws/../computer');
 
     // Both are the runtime's own endpoints, so there is nothing to reach this way that a
     // client could not ask for plainly. Matching the raw string instead would close a
@@ -82,7 +82,7 @@ describe('serveUpgrades', () => {
 
   it('listens once however many endpoints register', () => {
     serveUpgrades(server as unknown as HttpServer, '/api/ws', vi.fn());
-    serveUpgrades(server as unknown as HttpServer, '/api/voice', vi.fn());
+    serveUpgrades(server as unknown as HttpServer, '/api/computer', vi.fn());
 
     // A listener per endpoint would close each other's sockets, since each would find no
     // handler for the other's path.

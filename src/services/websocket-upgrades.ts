@@ -1,8 +1,8 @@
 /**
  * Which WebSocket endpoint an upgrade belongs to.
  *
- * Two endpoints share the runtime's HTTP server: chat on `/api/ws` and a voice chat with
- * a computer on `/api/voice`. A `ws` server bound with `path` answers every other path's
+ * Two endpoints share the runtime's HTTP server: chat and its voice on `/api/ws`, and the
+ * agent's screen on `/api/computer`. A `ws` server bound with `path` answers every other path's
  * upgrade with a 400, which is why each takes `noServer` and picks its own off the
  * server's event instead.
  *

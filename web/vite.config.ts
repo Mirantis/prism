@@ -26,7 +26,7 @@ export default defineConfig({
         target: 'ws://localhost:3003',
         ws: true,
       },
-      '/api/voice': {
+      '/api/computer': {
         target: 'ws://localhost:3003',
         ws: true,
       },
