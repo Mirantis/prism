@@ -138,17 +138,30 @@ export type ChatSendResult =
 export type ChatReadStep = 'panel' | 'composer' | 'read';
 
 /**
+ * One message as the panel shows it.
+ *
+ * `sender` is the name beside the message, and null when the panel shows none — the
+ * agent's own messages, and a platform that names nobody. `truncated` says the reader cut
+ * this message at the per-message bound.
+ */
+export interface ChatMessageRead {
+  sender: string | null;
+  text: string;
+  truncated: boolean;
+}
+
+/**
  * Outcome of reading the messages already in the call's own chat.
  *
  * `read: true` with an empty list is a real answer — the panel opened and holds
  * nothing. A reader that cannot tell an empty panel from one it failed to parse says
  * `read: false`, so a rotted selector never reports the chat as empty.
  *
- * `truncated` says the panel held more than the caller asked for, or one message was
- * longer than the per-message bound.
+ * `truncated` says the panel held more messages than the caller asked for. A message the
+ * reader cut is marked on the message itself.
  */
 export type ChatReadResult =
-  | { read: true; messages: readonly string[]; truncated: boolean }
+  | { read: true; messages: readonly ChatMessageRead[]; truncated: boolean }
   /** `step` is what telemetry gets; `reason` is what a human reads in a log. */
   | { read: false; step: ChatReadStep; reason: string };
 

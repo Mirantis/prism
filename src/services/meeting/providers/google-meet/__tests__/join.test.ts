@@ -1450,16 +1450,36 @@ describe('reading the chat panel', () => {
 
   /** One message row as Meet renders it: an id on the row, the text in the body node. */
   const row = (id: string, text: string) =>
-    `<div class="RLrADb" data-message-id="${id}"><div class="poVWob">Iris</div><div jsname="dTKtvb">${text}</div></div>`;
+    `<div class="RLrADb" data-message-id="${id}"><div jsname="dTKtvb">${text}</div></div>`;
+
+  /**
+   * The group Meet draws around a run of messages from one person: the name and the time
+   * once at the top, then a row per message.
+   */
+  const group = (sender: string, time: string, rows: string) =>
+    `<div class="Ss4fHf" jsname="Ypafjf"><div>${sender}</div><div>${time}</div>${rows}</div>`;
+
+  /** The common case: one message from one person. */
+  const message = (id: string, text: string, sender = 'Iris') =>
+    group(sender, '8:01 AM', row(id, text));
 
   const bounds = { limit: 20, maxCharsPerMessage: 500 };
 
   it('reads the messages oldest first and puts the panel back', async () => {
-    const harness = inCall({ chatHtml: `${row('m1', 'deploy is stuck')}${row('m2', 'on it')}` });
+    const harness = inCall({
+      chatHtml: message('m1', 'deploy is stuck') + message('m2', 'on it', 'Ravi'),
+    });
 
     const result = await provider.readChatMessages(harness.page, bounds);
 
-    expect(result).toEqual({ read: true, messages: ['deploy is stuck', 'on it'], truncated: false });
+    expect(result).toEqual({
+      read: true,
+      messages: [
+        { sender: 'Iris', text: 'deploy is stuck', truncated: false },
+        { sender: 'Ravi', text: 'on it', truncated: false },
+      ],
+      truncated: false,
+    });
     // Opened, then closed again.
     expect(harness.clicks.filter((c) => /^chat/i.test(c))).toHaveLength(2);
     expect(harness.state.chatOpen).toBe(false);
@@ -1468,11 +1488,11 @@ describe('reading the chat panel', () => {
   it('leaves a panel somebody else had open exactly as it was', async () => {
     // The one place the read differs from the send: a person reading the chat mid-call
     // keeps it. The send closes it either way, which is its own decision.
-    const harness = inCall({ chat: 'open', chatHtml: row('m1', 'anyone else seeing this') });
+    const harness = inCall({ chat: 'open', chatHtml: message('m1', 'anyone else seeing this') });
 
     const result = await provider.readChatMessages(harness.page, bounds);
 
-    expect(result).toMatchObject({ read: true, messages: ['anyone else seeing this'] });
+    expect(result).toMatchObject({ read: true, messages: [{ text: 'anyone else seeing this' }] });
     expect(harness.clicks.filter((c) => /^chat/i.test(c))).toHaveLength(0);
     expect(harness.state.chatOpen).toBe(true);
   });
@@ -1481,23 +1501,82 @@ describe('reading the chat panel', () => {
     // Measured on a live call: the row's pin control carries the same `data-message-id`,
     // so twelve messages produced twenty-two nodes.
     const harness = inCall({
-      chatHtml:
+      chatHtml: group(
+        'Iris',
+        '8:01 AM',
         row('m1', 'deploy is stuck') +
-        `<button class="RLrADb" data-message-id="m1" aria-label="Pin"><div jsname="dTKtvb">Pin</div></button>`,
+          `<button class="RLrADb" data-message-id="m1" aria-label="Pin message">` +
+          `<div jsname="dTKtvb">Pin message</div></button>`,
+      ),
     });
 
     const result = await provider.readChatMessages(harness.page, bounds);
 
-    expect(result).toMatchObject({ read: true, messages: ['deploy is stuck'] });
+    // The pin control's own words stay out of the sender's name as well.
+    expect(result).toMatchObject({
+      read: true,
+      messages: [{ sender: 'Iris', text: 'deploy is stuck' }],
+    });
   });
 
-  it('reads the body node, so no sender name reaches the text', async () => {
-    const harness = inCall({ chatHtml: row('m1', 'the staging cluster is back') });
+  it('names the sender and keeps the time out of the name', async () => {
+    const harness = inCall({ chatHtml: message('m1', 'the staging cluster is back') });
 
     const result = await provider.readChatMessages(harness.page, bounds);
 
-    expect(result).toMatchObject({ read: true, messages: ['the staging cluster is back'] });
-    expect(JSON.stringify(result)).not.toContain('Iris');
+    expect(result).toEqual({
+      read: true,
+      messages: [{ sender: 'Iris', text: 'the staging cluster is back', truncated: false }],
+      truncated: false,
+    });
+  });
+
+  it('answers a null sender when the panel shows no name', async () => {
+    // The agent's own messages: Meet puts the time above them and no name at all.
+    const harness = inCall({ chatHtml: group('', '8:05 AM', row('m1', 'posting the link now')) });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toMatchObject({
+      read: true,
+      messages: [{ sender: null, text: 'posting the link now' }],
+    });
+  });
+
+  it('takes the name from its own node, whatever else the group writes', async () => {
+    // The name is the first node rather than a slice of the group's whole text: Meet adds
+    // an edit badge of its own, and a locale writes its clock marker before the digits.
+    // Either one read as part of the name would be spoken in the room as a person.
+    const harness = inCall({
+      chatHtml:
+        group('Iris', '8:01 AM</div><div>Edited', row('m1', 'deploy is stuck')) +
+        group('Ravi', '午後10:32', row('m2', 'on it')),
+    });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toMatchObject({
+      read: true,
+      messages: [
+        { sender: 'Iris', text: 'deploy is stuck' },
+        { sender: 'Ravi', text: 'on it' },
+      ],
+    });
+  });
+
+  it('answers a null sender for a group holding no time at all', async () => {
+    // A group Meet draws a name in draws the time beside it. Without one this is some
+    // other grouping node, and its text is a label rather than a person.
+    const harness = inCall({
+      chatHtml: `<div class="Ss4fHf" jsname="Ypafjf"><div>Pinned</div>${row('m1', 'the runbook')}</div>`,
+    });
+
+    const result = await provider.readChatMessages(harness.page, bounds);
+
+    expect(result).toMatchObject({
+      read: true,
+      messages: [{ sender: null, text: 'the runbook' }],
+    });
   });
 
   it('answers an empty chat when the panel painted and holds nothing', async () => {
@@ -1538,10 +1617,10 @@ describe('reading the chat panel', () => {
   }, 10_000);
 
   it('reports the read step when the panel has messages it cannot parse', async () => {
-    // A rotted row class with the ids still there. Answering "empty" here tells the room
-    // nobody typed anything, which is the one wrong thing to say.
+    // A rotted body `jsname` with the ids still there. Answering "empty" here tells the
+    // room nobody typed anything, which is the one wrong thing to say.
     const harness = inCall({
-      chatHtml: `<div class="Xq7Yz" data-message-id="m1"><div jsname="dTKtvb">deploy is stuck</div></div>`,
+      chatHtml: `<div class="RLrADb" data-message-id="m1"><div jsname="Xq7Yz">deploy is stuck</div></div>`,
     });
 
     const result = await provider.readChatMessages(harness.page, bounds);
@@ -1571,7 +1650,7 @@ describe('reading the chat panel', () => {
 
   it('keeps the newest messages and says the reading is short', async () => {
     const harness = inCall({
-      chatHtml: Array.from({ length: 5 }, (_, i) => row(`m${i}`, `message ${i}`)).join(''),
+      chatHtml: Array.from({ length: 5 }, (_, i) => message(`m${i}`, `message ${i}`)).join(''),
     });
 
     const result = await provider.readChatMessages(harness.page, {
@@ -1579,26 +1658,40 @@ describe('reading the chat panel', () => {
       maxCharsPerMessage: 500,
     });
 
-    expect(result).toEqual({ read: true, messages: ['message 3', 'message 4'], truncated: true });
+    expect(result).toEqual({
+      read: true,
+      messages: [
+        { sender: 'Iris', text: 'message 3', truncated: false },
+        { sender: 'Iris', text: 'message 4', truncated: false },
+      ],
+      truncated: true,
+    });
   });
 
-  it('cuts a message longer than the per-message bound and says so', async () => {
-    const harness = inCall({ chatHtml: row('m1', 'x'.repeat(40)) });
+  it('marks the message it cut at the per-message bound', async () => {
+    const harness = inCall({ chatHtml: message('m1', 'x'.repeat(40)) });
 
     const result = await provider.readChatMessages(harness.page, {
       limit: 20,
       maxCharsPerMessage: 10,
     });
 
-    expect(result).toEqual({ read: true, messages: ['x'.repeat(10)], truncated: true });
+    expect(result).toEqual({
+      read: true,
+      messages: [{ sender: 'Iris', text: 'x'.repeat(10), truncated: true }],
+      truncated: false,
+    });
   });
 
   it('reads anyway when the toggle will not say whether the panel is open', async () => {
-    const harness = inCall({ chatExpanded: 'missing', chatHtml: row('m1', 'ready when you are') });
+    const harness = inCall({
+      chatExpanded: 'missing',
+      chatHtml: message('m1', 'ready when you are'),
+    });
 
     const result = await provider.readChatMessages(harness.page, bounds);
 
-    expect(result).toMatchObject({ read: true, messages: ['ready when you are'] });
+    expect(result).toMatchObject({ read: true, messages: [{ text: 'ready when you are' }] });
     // Unreadable counts as ours to close: a rail left on chat costs the call.
     expect(harness.state.chatOpen).toBe(false);
   });

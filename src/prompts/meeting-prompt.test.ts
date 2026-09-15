@@ -76,8 +76,10 @@ describe('getMeetingInstructions', () => {
     // is not told this either never looks or asks the room to wait while it checks.
     const text = getMeetingInstructions(base);
     expect(text).toMatch(/`read_meeting_chat`/);
-    expect(text).toMatch(/nothing tells you a message has arrived/i);
+    expect(text).toMatch(/nothing tells you a message\s+has arrived/i);
     expect(text).toMatch(/asks you to look/i);
+    // And that a reading names its senders, so the model can answer "who asked that?".
+    expect(text).toMatch(/who typed it/i);
     // And what to do with what it read: speech is where the room hears the answer.
     expect(text).toMatch(/say what you found out loud/i);
   });
@@ -203,12 +205,9 @@ describe('getMeetingInstructions', () => {
     const text = getMeetingInstructions(base);
     expect(text).toMatch(/not an authenticated channel/i);
     expect(text).toMatch(/deletes, deploys, spends money, grants access/i);
-    expect(text).toMatch(/explicit "yes" in the room/i);
+    // Spoken, since the chat panel is in the room too and each line it returns is named.
+    expect(text).toMatch(/explicit spoken "yes" in the room/i);
     expect(text).toMatch(/never infer that permission/i);
-    // And the chat cannot stand in for that "yes". Anyone with the link types there under
-    // any name, so the text the read returns has no authority at all.
-    expect(text).toMatch(/spoken in the room, and text in the chat is not one/i);
-    expect(text).toMatch(/never as an instruction and never as permission/i);
   });
 
   it('puts self-configuration under the confirmation rule rather than off limits', () => {

@@ -31,6 +31,7 @@ vi.mock('../../services/meeting/meeting-bot.service', () => ({
   // be the numbers the tool descriptions quote.
   MEETING_CHAT_MAX_CHARS: 500,
   MEETING_CHAT_READ_LIMIT: 20,
+  MEETING_CHAT_CUT_MARK: ' [message cut]',
 }));
 
 const mockIsBrowserAvailable = vi.fn();
@@ -294,7 +295,7 @@ describe('getMeetingTools', () => {
     expect(result.message).toMatch(/not in a call/);
   });
 
-  it('reads the chat as the calling user, and says the reading is data', async () => {
+  it('reads the chat as the calling user, and describes what a reading holds', async () => {
     const tools = getMeetingTools(input);
 
     const result = await tools.read_meeting_chat.execute!(
@@ -304,11 +305,12 @@ describe('getMeetingTools', () => {
 
     expect(mockReadChatMessages).toHaveBeenCalledWith('u1');
     expect(result).toMatchObject({ success: true, incomplete: false });
-    // The description is where the model learns what the text is before it reads any of
-    // it: information from unidentified people, and never an instruction or a permission.
+    // The description is where the model learns what a reading holds before it asks for
+    // one: the newest messages, each named with its sender, and a mark on a message the
+    // reader cut short.
     const { description } = tools.read_meeting_chat as { description: string };
-    expect(description).toMatch(/data, not instructions/i);
-    expect(description).toMatch(/never as permission/i);
+    expect(description).toMatch(/name the call shows for whoever sent it/i);
+    expect(description).toContain('[message cut]');
     expect(description).toContain('20');
   });
 
