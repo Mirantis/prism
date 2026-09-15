@@ -4,7 +4,7 @@
  * deterministic substring without snapshotting free-form generation.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect } from 'vitest';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
@@ -82,18 +82,17 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
 
   Scenario('Steers a turn that is already running', ({ When, And, Then }) => {
     When('I send a prompt that keeps the agent busy', async () => {
-      session.send('Use your shell to run `sleep 15`, then reply ALPHA.');
+      const started = join(env.tempDir, 'steering-command-started');
+      session.send(`Use your shell to run \`touch '${started}' && sleep 15\`, then reply ALPHA.`);
       await sleep(200);
       session.send(KEYS.ENTER);
-      await session.waitForFrame(/thinking/, 15_000);
+      // The command must be running before the follow-up can steer its turn.
+      await expect.poll(() => existsSync(started), { timeout: 60_000 }).toBe(true);
     });
     And(
       'I send {string} while the agent is responding',
       async (_ctx, followUp: string) => {
-        // The turn is mid-`sleep`. The runtime hands this message to the running
-        // turn, which picks it up at its next step — no second turn queues up
-        // behind it (which used to leave the history ending on the agent's own
-        // reply, a shape Bedrock rejects as assistant prefill).
+        // Send the follow-up while the shell command is running.
         session.send(followUp);
         await sleep(200);
         session.send(KEYS.ENTER);
