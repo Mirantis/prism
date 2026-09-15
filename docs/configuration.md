@@ -581,4 +581,4 @@ These affect the native [installer](installation.md), not the running agent:
 
 ## Public Web UI address
 
-Set `PRISM_PUBLIC_URL` to the externally reachable Web UI address, including any path prefix, for clickable Computer help links in Slack. Set it on both Lens-hosted and standalone deployments.
+Computer help links use the public address supplied by Lens through `NEXUS_INGRESS_ORIGINS_WEB` (or the name of the exposed Web UI port). Set `PRISM_PUBLIC_URL` for standalone deployments or to override that address, including any path prefix.

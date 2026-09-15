@@ -19,6 +19,17 @@ import { logger } from './logger';
 
 const nexusApiUrl = process.env.NEXUS_API_URL;
 const projectId = process.env.PROJECT_ID;
+const port = parseInt(process.env.PORT || '3003', 10);
+const ingressPortName = process.env.LENS_SANDBOX_INGRESS_PORTS
+  ?.split(',')
+  .map((entry) => entry.trim().split('='))
+  .find(([, value]) => Number(value) === port)?.[0] ?? 'web';
+const ingressOrigins = process.env[
+  `NEXUS_INGRESS_ORIGINS_${ingressPortName.toUpperCase().replaceAll('-', '_')}`
+];
+const publicUrl = (
+  process.env.PRISM_PUBLIC_URL?.trim() || ingressOrigins?.split(',')[0]?.trim()
+)?.replace(/\/+$/, '') || null;
 const awsRegion = process.env.AWS_REGION || 'us-east-1';
 
 // Which vendor the runtime talks to. One provider per container (matching one
@@ -706,13 +717,13 @@ function resolveToolOutputTtlHours(): number {
 }
 
 export const config = {
-  port: parseInt(process.env.PORT || '3003', 10),
+  port,
   // Loopback by default, so only this machine connects. The container image
   // sets `PRISM_HOST=0.0.0.0`, which is what a published port needs.
   host: process.env.PRISM_HOST?.trim() || '127.0.0.1',
+  publicUrl,
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
   // via start.sh so the container's mounted /data volume is used.
-  publicUrl: process.env.PRISM_PUBLIC_URL?.trim().replace(/\/+$/, '') || null,
   databaseUrl: process.env.DATABASE_URL ?? 'file:./agent.db',
   bedrockModelId,
   bedrockClassificationModelId,

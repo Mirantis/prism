@@ -212,6 +212,9 @@ export default defineConfig({
       stderr: 'pipe',
       env: {
         PORT: String(RUNTIME_PORT),
+        PRISM_PUBLIC_URL: '',
+        NEXUS_INGRESS_ORIGINS_WEB: `http://localhost:${WEB_PORT},http://alias.localhost:${WEB_PORT}`,
+        LENS_SANDBOX_INGRESS_PORTS: `web=${RUNTIME_PORT}`,
         DATABASE_URL: E2E_DATABASE_URL,
         AGENT_ID: DEFAULT_AGENT_ID,
         // Writable workspace for the agent's shell/share_file tools (see above).

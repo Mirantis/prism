@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   AudioLines,
   MessageSquare,
   Mic,
-  MousePointer2,
   Pause,
   Play,
   Square,
@@ -37,6 +36,7 @@ export function ComputerView({ helpId }: { helpId?: string }) {
   }, [call.status, share.stop]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const controlHelpId = useRef<string | undefined>(undefined);
   const ownControl = Boolean(screen.clientId) && state?.controller === screen.clientId;
   const anotherController = Boolean(state?.controller) && !ownControl;
   const waiting = data?.help?.filter((help) => help.status === 'waiting') ?? [];
@@ -50,6 +50,30 @@ export function ComputerView({ helpId }: { helpId?: string }) {
         clientId: screen.clientId,
         ...(selectedHelp ? { helpId: selectedHelp } : {}),
       });
+      if (path === '/control') controlHelpId.current = selectedHelp;
+      await queryClient.invalidateQueries({ queryKey: ['computer'] });
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const handBack = async () => {
+    const currentHelp = waiting.find((item) => item.id === controlHelpId.current);
+    if (!currentHelp) {
+      await action('/continue');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await computerRequest(`/help/${currentHelp.id}`, {
+        action: 'continue',
+        clientId: screen.clientId,
+      });
+      controlHelpId.current = undefined;
       await queryClient.invalidateQueries({ queryKey: ['computer'] });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -95,7 +119,10 @@ export function ComputerView({ helpId }: { helpId?: string }) {
         screenRef={screen.screenRef}
         hasScreen={screen.hasScreen}
         controllable={ownControl && !busy}
+        canTakeControl={!anotherController && !busy && Boolean(screen.clientId)}
+        onTakeControl={() => action('/control', selected?.id ?? help[0]?.id)}
         onInput={screen.sendInput}
+        onRelease={() => void handBack()}
         connecting={!screen.message}
       >
         {share.stream && (
@@ -105,27 +132,10 @@ export function ComputerView({ helpId }: { helpId?: string }) {
         )}
       </ScreenView>
       <div className="flex flex-wrap items-center gap-2">
-        {state?.paused && !anotherController ? (
-          <Button disabled={busy || !screen.clientId} onClick={() => void action('/continue')}>
+        {state?.paused && !anotherController && (
+          <Button disabled={busy || !screen.clientId} onClick={() => void handBack()}>
             <Play className="size-4" />
             Continue
-          </Button>
-        ) : (
-          <Button
-            disabled={busy || !screen.hasScreen || anotherController}
-            onClick={() => void action('/control', selected?.id)}
-          >
-            <MousePointer2 className="size-4" />
-            Take control
-          </Button>
-        )}
-        {state?.paused && !ownControl && !anotherController && (
-          <Button
-            variant="outline"
-            disabled={busy || !screen.clientId}
-            onClick={() => void action('/control', selected?.id)}
-          >
-            Take control
           </Button>
         )}
         {state?.owner && (
@@ -172,8 +182,8 @@ export function ComputerView({ helpId }: { helpId?: string }) {
       </div>
       <p className="text-xs text-muted-foreground">
         {ownControl
-          ? 'Click the screen to use the mouse and keyboard. Esc releases your pointer; Continue hands control back to Prism.'
-          : 'Watch Prism work, or take control when you want to use the computer.'}
+          ? 'Press Esc or Continue to hand control back to Prism.'
+          : 'Click the screen to take control. Press Esc to hand it back to Prism.'}
       </p>
       {(error || screen.message || call.error || share.error || audio.error) && (
         <p role="alert" className="text-sm text-destructive">
@@ -183,12 +193,7 @@ export function ComputerView({ helpId }: { helpId?: string }) {
       {help.length > 0 && (
         <div className="grid gap-3 lg:grid-cols-2">
           {help.map((item) => (
-            <ComputerHelpCard
-              key={item.id}
-              help={item}
-              clientId={screen.clientId}
-              onTakeControl={() => void action('/control', item.id)}
-            />
+            <ComputerHelpCard key={item.id} help={item} clientId={screen.clientId} inComputer />
           ))}
         </div>
       )}

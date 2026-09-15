@@ -72,6 +72,44 @@ describe('config', () => {
     });
   }
 
+  describe('public Web UI address', () => {
+    beforeEach(() => {
+      delete process.env.PRISM_PUBLIC_URL;
+      delete process.env.NEXUS_INGRESS_ORIGINS_WEB;
+      delete process.env.LENS_SANDBOX_INGRESS_PORTS;
+      delete process.env.PORT;
+    });
+
+    it('uses the first public web origin supplied by the deployment', async () => {
+      process.env.NEXUS_INGRESS_ORIGINS_WEB = ' https://prism.example.com/,https://alias.example.com';
+      expect((await loadConfig()).publicUrl).toBe('https://prism.example.com');
+    });
+
+    it('matches a renamed exposed port to the runtime port', async () => {
+      process.env.PORT = '4000';
+      process.env.LENS_SANDBOX_INGRESS_PORTS = 'metrics=9090,agent-ui=4000';
+      process.env.NEXUS_INGRESS_ORIGINS_AGENT_UI = 'https://agent.example.com';
+      process.env.NEXUS_INGRESS_ORIGINS_METRICS = 'https://metrics.example.com';
+      expect((await loadConfig()).publicUrl).toBe('https://agent.example.com');
+    });
+
+    it('uses an explicit URL including its path prefix ahead of the deployment origin', async () => {
+      process.env.PRISM_PUBLIC_URL = ' https://custom.example.com/assistant/ ';
+      process.env.NEXUS_INGRESS_ORIGINS_WEB = 'https://prism.example.com';
+      expect((await loadConfig()).publicUrl).toBe('https://custom.example.com/assistant');
+    });
+
+    it('uses the deployment origin when the explicit URL is blank', async () => {
+      process.env.PRISM_PUBLIC_URL = '   ';
+      process.env.NEXUS_INGRESS_ORIGINS_WEB = 'https://prism.example.com';
+      expect((await loadConfig()).publicUrl).toBe('https://prism.example.com');
+    });
+
+    it('uses a relative Computer link without a public address', async () => {
+      expect((await loadConfig()).publicUrl).toBeNull();
+    });
+  });
+
   it('reads PORT with default 3003', async () => {
     delete process.env.PORT;
     const cfg = await loadConfig();

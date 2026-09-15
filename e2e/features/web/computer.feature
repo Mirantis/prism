@@ -45,3 +45,11 @@ Feature: The agent's computer in the browser
     Then the chat shows that it is waiting for the computer
     When I close the controlling viewer and continue from the other viewer
     Then the queued chat reports the public notes
+
+  Scenario: Dismissing sign-in help updates the next conversation turn
+    Given the runtime can give the agent a computer
+    And a website with a sign-in page and public notes
+    When I ask Prism to read my inbox and the public notes using its computer
+    Then Prism requests computer help and reports the public notes
+    When I dismiss the sign-in request and ask about pending computer help
+    Then Prism confirms the sign-in request is closed
