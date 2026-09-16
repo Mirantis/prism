@@ -49,6 +49,7 @@ class FakeConversation {
   readonly start = vi.fn(async () => {});
   readonly notify = vi.fn();
   readonly showRecording = vi.fn(() => true);
+  readonly stopSpeaking = vi.fn();
   readonly speakNow = vi.fn();
   readonly sink: PlaybackSink;
   readonly sampleRate?: number;
@@ -585,6 +586,26 @@ describe('a recording of the user\'s screen', () => {
     voiceChatService.handleRecordingFrame('client-1', { type: 'recording_cancelled' }, ack);
     voiceChatService.pushAudio(frame());
     expect(conversation.pushAudio).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * An answer already in the air plays over the demonstration, which is the opposite of
+   * what a recording promises. Notifying the model is not enough on its own: that adds
+   * context rather than ending the turn it is already speaking.
+   */
+  it('cuts an answer short when a recording begins', async () => {
+    await startWithComputer();
+    const conversation = conversations[conversations.length - 1]!;
+    // The session greets on start, so the note below is the only one this asserts on.
+    conversation.notify.mockClear();
+
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_started' }, ack);
+
+    expect(conversation.stopSpeaking).toHaveBeenCalledTimes(1);
+    // Before the note, so the model is not told to wait by a turn it is still finishing.
+    expect(conversation.stopSpeaking.mock.invocationCallOrder[0]).toBeLessThan(
+      conversation.notify.mock.invocationCallOrder[0]!,
+    );
   });
 
   /** The page opens its microphone on this, and not before. */

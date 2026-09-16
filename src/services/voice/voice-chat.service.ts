@@ -498,6 +498,10 @@ class VoiceChatService {
         if (!recording.start()) return;
         this.recordingClient = clientId;
         acknowledge();
+        // An answer already in the air would play over the demonstration, and what this
+        // promises is an agent that stays quiet while a recording runs. Notifying alone
+        // would not stop it: that adds context rather than ending the turn.
+        conversation.stopSpeaking();
         conversation.notify(RECORDING_STARTED_NOTE);
         return;
       case 'recording_frame':

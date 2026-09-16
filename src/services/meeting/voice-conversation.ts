@@ -542,6 +542,26 @@ export class VoiceConversation {
     return true;
   }
 
+  /**
+   * Cut an answer short because the user took the floor by other means than speaking.
+   *
+   * The same act as a barge-in: drop what has not been heard, tell the client to drop what
+   * it holds, and tell the model how far each item actually got, so its context does not
+   * claim words nobody heard. Asked for here rather than triggered by a voice.
+   */
+  stopSpeaking(): void {
+    if (this.stopped || !this.session.isOpen) return;
+    const items = this.playback.flush();
+    this.session.interrupt(items);
+    if (items.length === 0) return;
+    this.interruptions += 1;
+    const heard = items.reduce((n, i) => n + i.playedMs, 0);
+    logger.info(
+      `[VoiceChat] Cut the answer short after ${Math.round(heard)}ms of speech ` +
+        `across ${items.length} item(s)`,
+    );
+  }
+
   /** Ask the model to speak now (used to greet the room on admission). */
   speakNow(): void {
     if (this.stopped) return;

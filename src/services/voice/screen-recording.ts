@@ -116,12 +116,21 @@ export class ScreenRecording {
     return true;
   }
 
-  /** A picture the page kept, with the offset it was taken at. */
+  /**
+   * A picture the page kept, with the offset it was taken at.
+   *
+   * The offset is the page's claim rather than a fact, and it decides how many windows
+   * `buildSegments` walks: a frame claiming 1e308 milliseconds would hold the runtime in
+   * that loop for the rest of the process. One outside the length a recording may run is
+   * refused rather than clamped, since clamping would file the picture under a time it
+   * was not taken at.
+   */
   addFrame(data: string, at: number): void {
     if (this.startedAt === null) return;
     if (this.frames.length >= MAX_RECORDING_FRAMES) return;
     if (typeof data !== 'string' || data.length === 0 || data.length > MAX_FRAME_CHARS) return;
-    this.frames.push({ image: `data:image/jpeg;base64,${data}`, at: Math.max(0, at) });
+    if (!Number.isFinite(at) || at < 0 || at > MAX_RECORDING_MS) return;
+    this.frames.push({ image: `data:image/jpeg;base64,${data}`, at });
   }
 
   /**
