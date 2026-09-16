@@ -160,10 +160,12 @@ Then(
 
 Then('Computer opens without starting voice', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Talk', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Mute computer sound' }))
+  await expect(page.getByRole('button', { name: 'Mute sound' }))
     .toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('button', { name: 'Share your screen', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Share your screen', exact: true })).toBeDisabled();
+  // Sharing and recording show the agent something, so neither is offered while there is
+  // no call to show it to.
+  await expect(page.getByRole('button', { name: 'Share your screen', exact: true })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Record your screen', exact: true })).toBeHidden();
   await expect(page.getByLabel("The agent's screen")).toBeVisible({ timeout: 60_000 });
   await expect.poll(() => page.getByLabel("The agent's screen").evaluate((canvas: HTMLCanvasElement) =>
     ({ width: canvas.width, height: canvas.height })), { timeout: 60_000 })

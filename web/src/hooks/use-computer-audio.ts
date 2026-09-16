@@ -36,6 +36,9 @@ export function useComputerAudio() {
   }, [enabled]);
   const toggle = () => {
     setError(null);
+    // Dropped before the context is torn down, which is asynchronous: without this the
+    // desktop plays on out of the buffer while the button already says it is off.
+    if (enabled) audio.current?.clear();
     setEnabled((value) => !value);
   };
   const enqueue = useCallback((frame: ArrayBuffer) => audio.current?.enqueueComputer(frame), []);

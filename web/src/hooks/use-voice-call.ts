@@ -55,6 +55,14 @@ export interface VoiceCall {
    * for as long as it runs and puts it back afterwards, which a toggle cannot express.
    */
   setMuted: (muted: boolean) => void;
+  /**
+   * Stop playing what the agent says, and drop what is already waiting to be played.
+   *
+   * The runtime goes on sending and the model goes on generating: this is the speaker,
+   * not the call. Silence is immediate because the frames already handed to the playback
+   * are dropped rather than left to drain.
+   */
+  setPlaybackMuted: (muted: boolean) => void;
   /** Feed a voice frame in. Wired to `onVoiceEvent` on the chat socket. */
   handleEvent: (event: VoiceEvent) => void;
   /** Feed a frame of the agent's speech in. Wired to `onVoiceAudio`. */
@@ -231,11 +239,26 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
     [releaseAudio, sampleRate, sendVoiceStop, setCallStatus],
   );
 
+  /**
+   * Whether the speaker is off. Read on every frame by a handler bound once, which is why
+   * it is a ref as well as state.
+   */
+  const playbackMutedRef = useRef(false);
+  const setPlaybackMuted = useCallback((muted: boolean) => {
+    if (playbackMutedRef.current === muted) return;
+    playbackMutedRef.current = muted;
+    // What is already queued would otherwise play on for as long as the buffer holds,
+    // which is the delay this exists to remove.
+    if (muted) audioRef.current?.clear();
+  }, []);
+
   const handleAudio = useCallback((frame: ArrayBuffer) => {
+    if (playbackMutedRef.current) return;
     audioRef.current?.enqueue(frame);
   }, []);
 
   const handleComputerAudio = useCallback((frame: ArrayBuffer) => {
+    if (playbackMutedRef.current) return;
     audioRef.current?.enqueueComputer(frame);
   }, []);
 
@@ -261,6 +284,7 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
     stop,
     toggleMute,
     setMuted,
+    setPlaybackMuted,
     handleEvent,
     handleAudio,
     handleComputerAudio,

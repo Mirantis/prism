@@ -365,4 +365,48 @@ describe('useVoiceCall', () => {
     await waitFor(() => expect(audio.stop).toHaveBeenCalledTimes(1));
     expect(sendVoiceStart).not.toHaveBeenCalled();
   });
+
+  /**
+   * The speaker, not the call. The runtime goes on sending and the model goes on
+   * generating; what this has to do is stop the sound at once, which means dropping what
+   * the playback already holds rather than letting the buffer drain.
+   */
+  describe('silencing what the agent says', () => {
+    it('drops what is queued and refuses more until it is turned back on', async () => {
+      const { result } = await renderLive();
+
+      act(() => result.current.handleAudio(new ArrayBuffer(8)));
+      expect(audio.enqueue).toHaveBeenCalledTimes(1);
+
+      act(() => result.current.setPlaybackMuted(true));
+      expect(audio.clear).toHaveBeenCalledTimes(1);
+
+      act(() => result.current.handleAudio(new ArrayBuffer(8)));
+      expect(audio.enqueue).toHaveBeenCalledTimes(1);
+
+      act(() => result.current.setPlaybackMuted(false));
+      act(() => result.current.handleAudio(new ArrayBuffer(8)));
+      expect(audio.enqueue).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears once, however often it is told the same thing', async () => {
+      const { result } = await renderLive();
+
+      act(() => result.current.setPlaybackMuted(true));
+      act(() => result.current.setPlaybackMuted(true));
+
+      expect(audio.clear).toHaveBeenCalledTimes(1);
+    });
+
+    /** The desktop's sound rides the same playback, so it goes quiet with the rest. */
+    it('silences the desktop the agent is working on too', async () => {
+      const { result } = await renderLive();
+      act(() => result.current.setPlaybackMuted(true));
+
+      act(() => result.current.handleComputerAudio(new ArrayBuffer(8)));
+
+      expect(audio.enqueue).not.toHaveBeenCalled();
+    });
+  });
+
 });
