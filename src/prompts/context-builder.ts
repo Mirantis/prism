@@ -308,9 +308,12 @@ export async function buildRecalledMemories(
  * accepts is the entries and a recorded date on each.
  *
  * A user turn, so a run of them merges into one provider turn and the model sees the
- * block and the question as one message. Its own message rather than an edit to the
- * user's, so what is stored is what was sent — the row is written with `internalStep`,
- * which replays into model context and reaches no client transcript.
+ * block and the question as one message. The block opens on a blank line, because the
+ * adapter emits each text of that run as its own block with nothing between them, and
+ * a model reads two such blocks as one piece of prose — the question's last word joins
+ * the block's first word. Its own message rather than an edit to the user's, so what is
+ * stored is what was sent — the row is written with `internalStep`, which replays into
+ * model context and reaches no client transcript.
  */
 export function recalledMemoriesMessage(recalled: string): ModelMessage {
   return { role: 'user', content: recalledMemoryContent(recalled) };
@@ -331,11 +334,11 @@ export function recalledMemoriesMessage(recalled: string): ModelMessage {
  *
  * The marker is inserted into the text that is stored as well as sent, so it is
  * permanent in that thread's replay. That is the point: the two have to be the same
- * bytes.
+ * bytes. The leading blank line is part of the string for the same reason.
  */
 export function recalledMemoryContent(recalled: string): string {
   const payload = recalled.replace(/<(\s*\/?\s*)recalled-memories/gi, '<\u200b$1recalled-memories');
-  return `Context:\n<recalled-memories>\n${payload}\n</recalled-memories>`;
+  return `\n\nContext:\n<recalled-memories>\n${payload}\n</recalled-memories>`;
 }
 
 /** Max skills listed inline before we summarize the overflow (a guardrail —

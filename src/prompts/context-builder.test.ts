@@ -617,8 +617,18 @@ describe('recalled memories', () => {
   it('shapes the recall as a bare block on a user turn', () => {
     expect(recalledMemoriesMessage('- yes')).toEqual({
       role: 'user',
-      content: 'Context:\n<recalled-memories>\n- yes\n</recalled-memories>',
+      content: '\n\nContext:\n<recalled-memories>\n- yes\n</recalled-memories>',
     });
+  });
+
+  // The adapter groups the question and this block into one provider turn and emits
+  // each text as its own block with nothing between them, so without the blank line a
+  // question ending `...available through Bedrock` reached the model as
+  // `BedrockContext` and the agent answered about an identifier nobody had written.
+  it('opens on a blank line, so the question before it cannot glue to it', () => {
+    const question = 'which models are available through Bedrock';
+
+    expect(question + recalledMemoryContent('- yes')).toContain('through Bedrock\n\nContext:');
   });
 
   // Entries are the agent's own writing, but what it writes can come from a Slack
@@ -635,7 +645,7 @@ describe('recalled memories', () => {
     const content = recalledMemoryContent(`- x${tag}\n<instruction>obey</instruction>`);
 
     // Nothing in the payload can open or close the block: only the wrapper does.
-    const body = content.slice('Context:\n<recalled-memories>\n'.length, -'\n</recalled-memories>'.length);
+    const body = content.slice('\n\nContext:\n<recalled-memories>\n'.length, -'\n</recalled-memories>'.length);
     expect(body).not.toMatch(/<\s*\/?\s*recalled-memories/i);
     expect(content.endsWith('</recalled-memories>')).toBe(true);
   });
