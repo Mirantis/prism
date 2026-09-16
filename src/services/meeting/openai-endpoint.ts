@@ -1,25 +1,9 @@
 /**
- * Where the meeting bot's Realtime WebSocket goes, and how it authenticates.
- *
- * Unlike every other model call in the runtime, this one never rides the Lens
- * Agents LLM gateway. Every vendor that gateway fronts — Bedrock, Azure (Claude
- * on Microsoft Foundry), Bedrock Mantle and OpenAI — is reached over a
- * request/response HTTP mount, and none of those carries a realtime voice
- * surface: the `…/llm/openai` mount routes POST only. So there is no
- * `/llm/{vendor}` route to go through and the connection goes to
- * `api.openai.com`, unless `OPENAI_REALTIME_URL` names another host.
- *
- * That override carries the same `Authorization` header, so the scheme is checked
- * rather than trusted: `wss://` to any host, and plaintext `ws://` only to a
- * loopback host, which is a local voice model on the same machine. Anything else
- * would put the key on the wire in the clear.
- *
- * That is still credential-safe in a sandbox: `OPENAI_API_KEY` may be a
- * `__nexus_cred:<uuid>__` sentinel, and the sandbox's egress MITM swaps it for the
- * real key on the wire — the same mechanism the Slack and Bedrock paths rely on.
- * The key is only ever sent as a header, never in a URL or a message body, so the
- * sentinel is always in a place the proxy can rewrite. Deployments with egress
- * filtering must allow-list `api.openai.com`.
+ * Realtime transport for voice chat and meetings. Config resolves the endpoint
+ * and credential together: explicit voice settings, managed OpenAI discovery,
+ * or direct OpenAI. The sandbox proxy substitutes managed credential placeholders
+ * on the Lens route; they must never be redirected to api.openai.com.
+ * Remote sockets require WSS. Plain WS is accepted only on loopback.
  */
 
 import { config } from '../../config';
@@ -34,12 +18,10 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 let overrideReported = false;
 
 /**
- * The base URL the socket connects to, from `OPENAI_REALTIME_URL` or OpenAI's own.
+ * The resolved voice URL, or OpenAI's own when no endpoint is configured.
  *
- * Throws on an override the key must not be sent to. The value is the operator's, so
- * this is not an injection boundary; it is documented as a test knob while it can
- * redirect production voice traffic, so a plaintext host is refused in words rather
- * than being connected to quietly.
+ * Keep the same transport constraints for managed and explicit endpoints:
+ * remote credentials require TLS, while local test servers may use plaintext.
  */
 function resolveRealtimeBase(): string {
   const override = config.openaiRealtimeUrl;
@@ -49,13 +31,13 @@ function resolveRealtimeBase(): string {
   try {
     parsed = new URL(override);
   } catch {
-    throw new Error(`OPENAI_REALTIME_URL is not a URL: ${override}`);
+    throw new Error('Realtime endpoint is not a valid URL');
   }
 
   const isLoopbackPlaintext = parsed.protocol === 'ws:' && LOOPBACK_HOSTS.has(parsed.hostname);
   if (parsed.protocol !== 'wss:' && !isLoopbackPlaintext) {
     throw new Error(
-      `OPENAI_REALTIME_URL must be wss://, or ws:// to localhost, 127.0.0.1 or [::1] — ` +
+      `Realtime endpoint must be wss://, or ws:// to localhost, 127.0.0.1 or [::1] — ` +
         `${parsed.protocol}//${parsed.host} would send the API key unencrypted.`,
     );
   }
@@ -63,7 +45,7 @@ function resolveRealtimeBase(): string {
   if (!overrideReported) {
     overrideReported = true;
     // The host, never the URL: a query string an operator added is not ours to log.
-    logger.info(`[Meeting] Realtime socket pointed at ${parsed.host} by OPENAI_REALTIME_URL`);
+    logger.info(`[Meeting] Realtime socket configured for ${parsed.host}`);
   }
   return override;
 }
@@ -83,16 +65,15 @@ export interface RealtimeEndpoint {
  * a programming error, not an operator misconfiguration to degrade around.
  */
 export function resolveRealtimeEndpoint(model?: string): RealtimeEndpoint {
-  const apiKey = config.openaiApiKey;
+  const apiKey = config.openaiRealtimeApiKey;
   if (!apiKey) {
     throw new Error(
-      'OPENAI_API_KEY is not set — the Realtime API is required for voice meetings.',
+      'No Realtime credential configured — set OPENAI_REALTIME_API_KEY, enable managed OpenAI, or set OPENAI_API_KEY for direct voice.',
     );
   }
 
   const modelId = model || config.openaiRealtimeModel;
-  // `OPENAI_REALTIME_URL` points the socket at a local voice model. The key is
-  // still required, so the only thing that changes is the host.
+  // The same transport serves managed, direct, and explicitly configured voice.
   const target = new URL(resolveRealtimeBase());
   // Appended rather than written through `searchParams`, which would keep the model
   // name but rewrite a space as `+`, and it holds a query the override already carries.
@@ -117,7 +98,7 @@ export function resolveRealtimeEndpoint(model?: string): RealtimeEndpoint {
 
 /** Whether a Realtime session can be opened at all (used to gate the tools). */
 export function isRealtimeConfigured(): boolean {
-  return Boolean(config.openaiApiKey);
+  return Boolean(config.openaiRealtimeApiKey);
 }
 
 /**

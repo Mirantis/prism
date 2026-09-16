@@ -251,9 +251,9 @@ it requests to join signed into its own Google account, a host admits it like an
 other participant, and from then on it listens and speaks in the room. It keeps its
 tools during the call, so it can look something up and say the answer without leaving.
 Interrupt it and it yields the floor; a short "mm-hm" won't cut it off. Needs the
-container image (which ships Chromium, Xvfb and PulseAudio) plus `OPENAI_API_KEY` —
-the in-meeting voice is OpenAI's Realtime API, connected directly to
-`api.openai.com` whatever the configured provider. Speaking is how it answers, and it can
+container image (which ships Chromium, Xvfb and PulseAudio) plus managed OpenAI
+or a direct voice credential. Realtime audio uses the Lens endpoint when managed
+OpenAI is configured, independently of the chat provider. Speaking is how it answers, and it can
 put one short line — a link, an id, a command to paste — into the call's own chat panel.
 Work it can't finish in the call it schedules as a one-off task, and that result lands in
 your chat afterwards. Nothing else leaves a call, and nothing about the meeting is
@@ -268,7 +268,7 @@ grants the agent's authority, over itself included. See
 
 A client can also talk to the agent **directly**, with no meeting in between: the
 audio rides the same chat connection, and the agent keeps its tools and its
-authority while you speak. It needs the same `OPENAI_API_KEY` as a meeting and
+authority while you speak. It needs the same Realtime credential as a meeting and
 nothing else, so it works wherever chat works — a hosted sandbox and the
 installed binary included. See [docs/voice-chat.md](docs/voice-chat.md).
 
@@ -369,7 +369,7 @@ restarts.
 | `CONTEXT_WINDOW_TOKENS` | Context window to assume for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry at startup (e.g. `https://models.dev/api.json`); unset means no outbound call, bundled catalog only | — (disabled) |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check on the Slack app identity | — |
-| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) and [voice chat](docs/voice-chat.md) (OpenAI Realtime API, connected directly — not via the Lens Agents gateway); also the chat credential when `LLM_PROVIDER=openai`, and the default embedding credential when `LLM_PROVIDER=anthropic` | — (disabled) |
+| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) and [voice chat](docs/voice-chat.md) (legacy direct-OpenAI voice credential; managed voice resolves its own endpoint and key); also the chat credential when `LLM_PROVIDER=openai`, and the default embedding credential when `LLM_PROVIDER=anthropic` | — (disabled) |
 | `ANTHROPIC_API_KEY` | Chat credential when `LLM_PROVIDER=anthropic` (the first-party Anthropic API; always direct — no gateway mount) | — |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the agent's voice, in a meeting and in a voice chat (pinned snapshot) | `gpt-realtime-2.1` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one meeting call | `60` |

@@ -10,11 +10,12 @@ message appears in the thread. What you hear is all the call produces.
 
 ## What you need
 
-Only `OPENAI_API_KEY`, the same key voice meetings use — see
+A Realtime credential, from managed OpenAI or `OPENAI_REALTIME_API_KEY` /
+`OPENAI_API_KEY`, shared with voice meetings — see
 [Configuration](configuration.md#voice-chat).
 
-If the runtime's outbound network is filtered, allow `api.openai.com`. A runtime
-that cannot reach it refuses the call and says why.
+If outbound traffic is filtered, allow the resolved voice endpoint: Lens for
+managed OpenAI, or `api.openai.com` for direct voice.
 
 Nothing else. The audio travels on the connection your client already uses for
 chat, so a voice chat works wherever chat works: a container, a hosted sandbox

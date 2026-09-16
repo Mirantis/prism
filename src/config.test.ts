@@ -1093,6 +1093,61 @@ describe('config', () => {
   });
 
   describe('voice meetings', () => {
+    it.each(['bedrock', 'azure', 'openai'])('selects managed OpenAI voice independently of %s chat', async (provider) => {
+      process.env.LLM_PROVIDER = provider;
+      process.env.OPENAI_API_KEY = 'chat-key';
+      process.env.OPENAI_BASE_URL = 'https://chat.example/v1';
+      process.env.LENS_INFERENCE_OPENAI_BASE_URL = 'https://lens.example/prefix/v1/projects/p/llm/openai/v1/';
+      process.env.LENS_INFERENCE_OPENAI_API_KEY = '__lens_cred:nexus-llm-openai__';
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeUrl).toBe('wss://lens.example/prefix/v1/projects/p/llm/openai/v1/realtime');
+      expect(cfg.openaiRealtimeApiKey).toBe('__lens_cred:nexus-llm-openai__');
+      expect(cfg.openaiApiKey).toBe('chat-key');
+      expect(cfg.openaiEndpoint).toBe('https://chat.example/v1');
+    });
+
+    it('preserves explicit voice overrides over managed discovery', async () => {
+      process.env.LENS_INFERENCE_OPENAI_BASE_URL = 'https://lens.example/v1';
+      process.env.LENS_INFERENCE_OPENAI_API_KEY = 'managed-key';
+      process.env.OPENAI_REALTIME_URL = 'wss://voice.example/realtime';
+      process.env.OPENAI_REALTIME_API_KEY = 'voice-key';
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeUrl).toBe('wss://voice.example/realtime');
+      expect(cfg.openaiRealtimeApiKey).toBe('voice-key');
+    });
+
+    it('does not send a managed credential to an explicit voice host', async () => {
+      process.env.LENS_INFERENCE_OPENAI_BASE_URL = 'https://lens.example/v1';
+      process.env.LENS_INFERENCE_OPENAI_API_KEY = 'managed-key';
+      process.env.OPENAI_REALTIME_URL = 'wss://voice.example/realtime';
+      delete process.env.OPENAI_API_KEY;
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeApiKey).toBeUndefined();
+    });
+
+    it('does not borrow the chat key when managed voice has no credential', async () => {
+      process.env.LENS_INFERENCE_OPENAI_BASE_URL = 'https://lens.example/v1';
+      delete process.env.LENS_INFERENCE_OPENAI_API_KEY;
+      process.env.OPENAI_API_KEY = 'azure-chat-key';
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeApiKey).toBeUndefined();
+    });
+
+    it('allows an independent direct voice key without enabling OpenAI chat', async () => {
+      process.env.OPENAI_REALTIME_API_KEY = 'voice-only-key';
+      delete process.env.OPENAI_API_KEY;
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeApiKey).toBe('voice-only-key');
+      expect(cfg.openaiApiKey).toBeUndefined();
+      expect(cfg.openaiRealtimeUrl).toBeUndefined();
+    });
+
+    it('derives a plaintext WebSocket URL for a loopback managed test endpoint', async () => {
+      process.env.LENS_INFERENCE_OPENAI_BASE_URL = 'http://127.0.0.1:1234/v1';
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeUrl).toBe('ws://127.0.0.1:1234/v1/realtime');
+    });
+
     it('leaves the OpenAI key undefined when unset, which disables the feature', async () => {
       delete process.env.OPENAI_API_KEY;
       const cfg = await loadConfig();
@@ -1104,6 +1159,7 @@ describe('config', () => {
       process.env.OPENAI_API_KEY = '__nexus_cred:1234-uuid__';
       const cfg = await loadConfig();
       expect(cfg.openaiApiKey).toBe('__nexus_cred:1234-uuid__');
+      expect(cfg.openaiRealtimeApiKey).toBe('__nexus_cred:1234-uuid__');
     });
 
     it('pins the realtime model to a snapshot rather than the moving alias', async () => {

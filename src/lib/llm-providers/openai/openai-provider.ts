@@ -10,11 +10,10 @@
  * else the Lens Agents OpenAI mount (`…/llm/openai/v1`), else undefined for
  * api.openai.com. `config.openaiEndpoint` decides between them, so nothing is
  * chosen here. The gateway appends the client path to its configured OpenAI root
- * and injects the API key on the outbound leg. The one OpenAI call that never
- * rides the gateway is the voice-meeting Realtime WebSocket — the mount routes
- * POST only — which stays pinned in `services/meeting/openai-endpoint.ts`.
+ * and injects the API key on the outbound leg. Realtime voice resolves its own
+ * endpoint and credential in config.ts; it can also use managed OpenAI.
  *
- * Auth: the same `OPENAI_API_KEY` the voice-meeting stack uses, sent as a
+ * Auth: OPENAI_API_KEY for chat/embeddings, sent as a
  * bearer header. It may be a `__nexus_cred:<uuid>__` sentinel the MITM proxy
  * rewrites on the wire — read verbatim, never trimmed or validated. An endpoint
  * on the gateway needs no local key (the gateway holds its own), but the SDK

@@ -107,8 +107,8 @@ const nexusBedrockMantleBaseUrl = nexusApiUrl
 // proxied URL lands on `…/v1/responses` etc. One mount carries chat,
 // classification *and* embeddings — OpenAI has no split surface. Keyless —
 // the gateway injects the API key on the outbound leg. Note the Realtime
-// WebSocket is NOT served here (the mount routes POST only); voice meetings
-// keep their pinned direct socket (`services/meeting/openai-endpoint.ts`).
+// WebSocket uses its independently resolved managed or direct endpoint
+// (`services/meeting/openai-endpoint.ts`).
 // null when NEXUS_API_URL is unset (callers talk to api.openai.com directly).
 const nexusOpenAiBaseUrl = nexusApiUrl
   ? (projectId
@@ -290,17 +290,8 @@ const openrouterApiKey = process.env.OPENROUTER_API_KEY;
 // just `/chat/completions`. Does NOT move the Realtime WebSocket.
 const openaiOverride = process.env.OPENAI_BASE_URL || undefined;
 
-// The OpenAI API key, serving double duty: live voice meetings (OpenAI
-// Realtime API) and, when LLM_PROVIDER=openai, the chat provider. The
-// *Realtime WebSocket* is the one model call that never rides the Lens Agents
-// LLM gateway — the `…/llm/openai` mount routes POST only, so the socket goes
-// straight to api.openai.com. Chat/classification/
-// embeddings do ride that mount when NEXUS_API_URL is set, and then need no
-// local key at all (the gateway injects its own). Still credential-safe in a
-// sandbox: the key may be a `__nexus_cred:<uuid>__` sentinel that the egress
-// MITM swaps on the wire, and it is only ever sent as a header. Unset
-// disables the meeting tools entirely (they're also gated on the browser and
-// audio toolchain being present).
+// Chat/embedding credential and legacy fallback for direct Realtime.
+// Managed voice resolves its own provider-specific credential below.
 const openaiApiKey = process.env.OPENAI_API_KEY;
 
 // Anthropic model IDs (used when LLM_PROVIDER=anthropic) — bare first-party
@@ -457,11 +448,25 @@ const embeddingModelId = embeddingModelIds[embeddingProvider];
 // follows OpenAI's current snapshot, and a voice model changing under a live
 // deployment shifts turn-taking and prosody with no code change to point at.
 const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1';
-// Where the Realtime WebSocket goes. `OPENAI_BASE_URL` does not move it — that one
-// is the Responses API endpoint — so a test that needs a local voice model has no
-// other way in: the runtime under test is a separate process, and the in-process
-// endpoint override cannot cross that boundary. Unset means api.openai.com.
-const openaiRealtimeUrl = process.env.OPENAI_REALTIME_URL || undefined;
+// Resolve voice independently of chat: Azure and other OpenAI-compatible
+// backends may own OPENAI_BASE_URL / OPENAI_API_KEY but cannot serve Realtime.
+// An explicit voice URL opts out of managed discovery, including its key.
+const realtimeOverride = process.env.OPENAI_REALTIME_URL || undefined;
+const managedRealtimeBase = process.env.LENS_INFERENCE_OPENAI_BASE_URL || undefined;
+function managedRealtimeUrl(base: string): string {
+  const url = new URL(base);
+  if (url.protocol === 'https:') url.protocol = 'wss:';
+  else if (url.protocol === 'http:') url.protocol = 'ws:';
+  else throw new Error('LENS_INFERENCE_OPENAI_BASE_URL must use HTTP or HTTPS');
+  url.pathname = url.pathname.replace(/\/+$/, '') + '/realtime';
+  return url.toString();
+}
+const openaiRealtimeUrl = realtimeOverride
+  || (managedRealtimeBase ? managedRealtimeUrl(managedRealtimeBase) : undefined);
+const openaiRealtimeApiKey = process.env.OPENAI_REALTIME_API_KEY
+  || (!realtimeOverride && managedRealtimeBase
+    ? process.env.LENS_INFERENCE_OPENAI_API_KEY
+    : openaiApiKey);
 // `marin` is markedly better for conversation than the API's `alloy` default.
 // Overridable because a future model may retire a voice name.
 const openaiRealtimeVoice = process.env.OPENAI_REALTIME_VOICE || 'marin';
@@ -795,8 +800,8 @@ export const config = {
   // OpenAI (used when LLM_PROVIDER=openai). Chat/classification/embeddings all
   // speak the OpenAI API on one surface, at `openaiEndpoint`: OPENAI_BASE_URL if
   // set, else the Lens Agents `…/llm/openai/v1` mount when NEXUS_API_URL is set,
-  // else api.openai.com. The key is `openaiApiKey` below (shared with voice
-  // meetings); on the gateway no local key is needed.
+  // else api.openai.com. The key is `openaiApiKey` below; voice resolves its
+  // credential separately. On the gateway no local chat key is needed.
   openaiModelId,
   openaiClassificationModelId,
   openaiEmbeddingModelId,
@@ -973,15 +978,15 @@ export const config = {
   compactionTailMessages,
 
   // Live voice meetings (see the derivations above). The meeting tools are only
-  // registered when `openaiApiKey` is set AND the container has the browser and
+  // registered when `openaiRealtimeApiKey` is set AND the container has the browser and
   // audio toolchain. The name shown to participants is the Google account's own, so
   // there is no display-name setting: it is a per-join argument for platforms that
   // admit named guests, defaulting to the agent's name.
   openaiApiKey,
   openaiRealtimeModel,
-  // OPENAI_REALTIME_URL, unset in every deployment: the Realtime WebSocket host,
-  // for a test that runs a local voice model instead of api.openai.com.
+  // Explicit voice override, else the managed OpenAI endpoint when supplied.
   openaiRealtimeUrl,
+  openaiRealtimeApiKey,
   openaiRealtimeVoice,
   // OPENAI_REALTIME_REASONING_EFFORT, default 'high' (the API's own default is
   // 'low'); '' sends no setting at all and leaves the choice to the API.

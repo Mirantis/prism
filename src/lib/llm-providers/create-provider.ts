@@ -29,9 +29,8 @@
  *
  * **openai** is the one vendor serving OpenAI models rather than Claude, on a
  * single surface: chat and classification ride one base URL — the Lens Agents
- * `…/llm/openai/v1` mount or api.openai.com direct. Only the voice-meeting
- * Realtime WebSocket stays off the gateway (the mount routes POST only); see
- * `openai/openai-provider.ts`. **openrouter** rides the same OpenAI-compatible
+ * `…/llm/openai/v1` mount or api.openai.com direct. Realtime voice resolves its
+ * managed or direct endpoint separately in config.ts. **openrouter** rides the same OpenAI-compatible
  * surface at openrouter.ai (or the `…/llm/openrouter/openai/v1` mount) with
  * `vendor/model` ids; see `openrouter/openrouter-provider.ts`.
  *
