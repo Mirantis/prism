@@ -20,10 +20,12 @@ import { logger } from './logger';
 const nexusApiUrl = process.env.NEXUS_API_URL;
 const projectId = process.env.PROJECT_ID;
 const port = parseInt(process.env.PORT || '3003', 10);
+// Example: LENS_SANDBOX_INGRESS_PORTS=web=3003,metrics=9090 selects the web origin for PORT=3003.
 const ingressPortName = process.env.LENS_SANDBOX_INGRESS_PORTS
   ?.split(',')
   .map((entry) => entry.trim().split('='))
   .find(([, value]) => Number(value) === port)?.[0] ?? 'web';
+// Example: NEXUS_INGRESS_ORIGINS_WEB=https://prism.example.com,https://alias.example.com.
 const ingressOrigins = process.env[
   `NEXUS_INGRESS_ORIGINS_${ingressPortName.toUpperCase().replaceAll('-', '_')}`
 ];

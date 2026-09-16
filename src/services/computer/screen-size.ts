@@ -10,7 +10,7 @@ export const MAX_SCREEN: ScreenSize = { width: 1920, height: 1080 };
 export const MIN_SCREEN: ScreenSize = { width: 640, height: 360 };
 
 /** The persistent desktop size. */
-export const DEFAULT_SCREEN: ScreenSize = { width: 1280, height: 720 };
+export const DEFAULT_SCREEN: ScreenSize = { width: 1920, height: 1080 };
 
 /**
  * The widest picture the model is given, whatever the screen is.

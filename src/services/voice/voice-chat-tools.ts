@@ -1,11 +1,4 @@
-/**
- * The tool set a voice chat offers: the agent's own, with the meeting tools taken out and
- * the computer's laid over the gap when the session has a computer.
- *
- * The meeting tools go whether or not there is a replacement, since each of them acts on
- * a call this session is not in. `browse` and `see_screen` come back pointed at the
- * computer, under the same names, so the prompt text written for a call still reads true.
- */
+/** Tool assembly for voice chat, including optional desktop control. */
 
 import { MEETING_TOOL_NAMES } from '../../tools/meeting';
 import type { PreparedTools } from './realtime-tools';
@@ -21,20 +14,27 @@ export const VOICE_CHAT_TRUNCATION_GUIDANCE =
   'with a pattern — never read it through, because everything you pull back stays in ' +
   "this call's context for the rest of it, and this session's context is small.";
 
+/** Remove call-specific tools and route each declaration to its session's executor. */
 export function prepareVoiceChatTools(
   base: PreparedTools,
   computer: PreparedTools | null,
 ): PreparedTools {
-  const extra = computer?.declarations ?? [];
-  const extraNames = new Set(extra.map((d) => d.name));
-  const dropped = new Set<string>([...MEETING_TOOL_NAMES, ...extraNames]);
-  const declarations = [...base.declarations.filter((d) => !dropped.has(d.name) && !d.name.startsWith('computer_')), ...extra];
+  const meetingNames = new Set<string>(MEETING_TOOL_NAMES);
+  const tools = new Map(
+    base.declarations
+      .filter((declaration) => !meetingNames.has(declaration.name))
+      .map((declaration) => [declaration.name, { declaration, owner: base }]),
+  );
+  for (const declaration of computer?.declarations ?? []) {
+    tools.set(declaration.name, { declaration, owner: computer! });
+  }
   return {
-    declarations,
-    count: declarations.length,
-    execute: (name, argumentsJson) =>
-      computer && extraNames.has(name)
-        ? computer.execute(name, argumentsJson)
-        : base.execute(name, argumentsJson),
+    declarations: [...tools.values()].map(({ declaration }) => declaration),
+    count: tools.size,
+    execute: (name, argumentsJson) => {
+      const tool = tools.get(name);
+      if (!tool) return Promise.resolve(JSON.stringify({ error: `Unknown tool: ${name}` }));
+      return tool.owner.execute(name, argumentsJson);
+    },
   };
 }

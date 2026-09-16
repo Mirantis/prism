@@ -6,17 +6,10 @@ import { computerService } from '../services/computer/computer.service';
 import { computerHelpService, computerLink } from '../services/computer/computer-help.service';
 import type { ComputerUse } from '../services/computer/computer-access';
 import type { AgentComputer, ModelChannel } from '../services/computer/agent-computer';
-import { DEFAULT_SCREEN } from '../services/computer/screen-size';
+import { DEFAULT_SCREEN, pictureFor } from '../services/computer/screen-size';
 import { renderToolResult } from '../lib/tool-output-limiter';
 
 const pictures = new WeakMap<object, string[]>();
-
-function nameOf(name: string): string {
-  if (name === 'browse') return 'computer_browse';
-  if (name === 'see_screen') return 'computer_screen';
-  if (name === 'see_user_screen') return 'computer_user_screen';
-  return name.replace(/^desktop_/, 'computer_');
-}
 
 /** Schemas stay fixed; the calling invocation supplies its ownership and image sink. */
 export function getComputerTools(
@@ -24,7 +17,7 @@ export function getComputerTools(
   voiceChannel?: () => ModelChannel | null,
 ): Record<string, Tool> {
   const desktop = new Proxy(
-    { width: DEFAULT_SCREEN.width, height: DEFAULT_SCREEN.height },
+    pictureFor(DEFAULT_SCREEN),
     {
       get(target, property) {
         if (property === 'width' || property === 'height') return target[property];
@@ -61,14 +54,8 @@ export function getComputerTools(
   const base = createComputerTools(desktop, desktop, desktop);
   const result: Record<string, Tool> = {};
   for (const [name, original] of Object.entries(base)) {
-    const mapped = nameOf(name);
-    const description = String(original.description).replace(
-      /\b(browse|see_screen|see_user_screen|desktop_\w+)\b/g,
-      nameOf,
-    );
-    result[mapped] = {
+    result[name] = {
       ...original,
-      description,
       execute: async (input, options) => {
         if (
           use?.mode === 'voice' &&
@@ -129,7 +116,7 @@ export function getComputerTools(
   });
   result.computer_help = tool({
     description:
-      'Ask your user to sign in, solve a CAPTCHA, or help with your computer. Preserves this help request and releases the computer for independent work. Explain what the user needs to do. Continue independent tasks; when only blocked work remains, end this turn and wait for the user. Never ask for passwords in chat.',
+      'When computer work is blocked by a step only the user can complete, ask them for help, such as signing in, solving a CAPTCHA, or approving a device. Preserves this help request and releases the computer for independent work. Explain what the user needs to do. Continue independent tasks; when only blocked work remains, end this turn and wait for the user. Never ask for passwords in chat.',
     inputSchema: z.object({
       reason: z.string().min(1).max(2000),
       tab: z.number().int().positive().optional(),

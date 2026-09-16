@@ -37,7 +37,7 @@ describe('clampScreen', () => {
   });
 
   it('falls back on a size that is not a number', () => {
-    expect(clampScreen(Number.NaN, 720)).toEqual({ width: 1280, height: 720 });
+    expect(clampScreen(Number.NaN, 720)).toEqual({ width: 1920, height: 720 });
   });
 });
 

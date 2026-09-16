@@ -147,6 +147,9 @@ Then(
 Then('Computer opens without starting voice', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Talk', exact: true })).toBeVisible();
   await expect(page.getByLabel("The agent's screen")).toBeVisible({ timeout: 60_000 });
+  await expect.poll(() => page.getByLabel("The agent's screen").evaluate((canvas: HTMLCanvasElement) =>
+    ({ width: canvas.width, height: canvas.height })), { timeout: 60_000 })
+    .toEqual({ width: 1920, height: 1080 });
   await expect(page.getByRole('button', { name: 'Take control', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'End voice', exact: true })).toHaveCount(0);
 });
