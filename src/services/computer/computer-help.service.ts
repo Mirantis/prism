@@ -175,7 +175,7 @@ class ComputerHelpService {
         userId,
         agentId,
         threadId: help.threadId,
-        message: `I finished helping with the computer: ${help.reason}. Continue the original request after inspecting the current screen.`,
+        message: `I finished helping with the computer. The help request was: ${JSON.stringify(help.reason)}\n\nInspect the current screen, then continue the original request.`,
         metadata: {
           channel: context.channel,
           channelId: context.channelId,

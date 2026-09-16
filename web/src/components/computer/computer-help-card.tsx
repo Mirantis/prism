@@ -69,7 +69,7 @@ export function ComputerHelpCard({
       </p>
       {inComputer && (
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Click the screen to complete this step. Press Esc when you’re done, or choose Continue.
+          Click the screen to complete this step. Press Esc when you’re done, or choose “I’m done”.
         </p>
       )}
       {current.status === 'waiting' && (
@@ -85,7 +85,7 @@ export function ComputerHelpCard({
             disabled={busy || disabled}
             onClick={() => void resolve('continue')}
           >
-            Continue
+            I’m done
           </Button>
           <Button
             size="sm"

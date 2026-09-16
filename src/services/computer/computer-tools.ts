@@ -56,7 +56,7 @@ export interface ComputerDesktop {
 export function createComputerTools(
   browser: ComputerBrowser,
   desktop: ComputerDesktop | null,
-  userScreen: ComputerUserScreen,
+  userScreen: ComputerUserScreen | null,
 ): Record<string, Tool> {
   const screenDescription = desktop
     ? `See your whole screen right now — a ${desktop.width} by ${desktop.height} picture of the ` +
@@ -68,16 +68,20 @@ export function createComputerTools(
       'or to answer a question about what is on screen. Takes a couple of seconds.';
 
   return {
-    computer_user_screen: tool({
-      description:
-        "Look at what your user is sharing from their own screen — a window, a tab or their " +
-        'whole screen, as it looks right now. You get the picture and, read off it, the exact ' +
-        'words on it, so trust the text for an error message, a name or a number and the picture ' +
-        'for where things are. Use it when they point at something on their side: "look at ' +
-        'this", "this error", "my dashboard". Says so if they are not sharing.',
-      inputSchema: z.object({}),
-      execute: async () => userScreen.lookAtUserScreen(),
-    }),
+    ...(userScreen
+      ? {
+          computer_user_screen: tool({
+            description:
+              "Look at what your user is sharing from their own screen — a window, a tab or their " +
+              'whole screen, as it looks right now. You get the picture and, read off it, the exact ' +
+              'words on it, so trust the text for an error message, a name or a number and the picture ' +
+              'for where things are. Use it when they point at something on their side: "look at ' +
+              'this", "this error", "my dashboard". Says so if they are not sharing.',
+            inputSchema: z.object({}),
+            execute: async () => userScreen.lookAtUserScreen(),
+          }),
+        }
+      : {}),
 
     ...(desktop ? createDesktopTools(desktop) : {}),
     computer_browse: tool({
