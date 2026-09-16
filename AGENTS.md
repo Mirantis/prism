@@ -502,9 +502,8 @@ bedrock mount; openai chat, classification and embeddings all ride
 `…/llm/openai/v1`, a gateway backend; openrouter rides
 `…/llm/openrouter/openai/v1` — a distinct mount because the managed-inference
 gate 403s a path whose backend is not the one the project's policy selected;
-the gateway holds the platform credentials, so no local LLM key is needed on that path). The one
-OpenAI call that never rides the gateway is the voice-meeting Realtime
-WebSocket — the openai mount routes POST only.
+the gateway holds the platform credentials, so no local LLM key is needed on that path). Voice Realtime resolves its endpoint and credential independently: explicit
+voice settings, managed OpenAI discovery, then direct OpenAI defaults.
 `config.ts` resolves each vendor's endpoint once, in this order: the explicit
 `*_BASE_URL`, else the gateway mount, else the vendor's own host. A factory
 receives that endpoint and chooses nothing. The keyless path follows an origin
@@ -799,7 +798,7 @@ src/
 │   │   ├── addressed-audio-gate.ts # "Was that said to me?" — asked of the audio, one word back
 │   │   ├── transcript-log.ts   # Whether a log line may carry an utterance at all (`MEETING_TRANSCRIPT_LOGGING`)
 │   │   ├── resampler.ts        # 48k⇄24k pcm16 with anti-alias FIR
-│   │   └── openai-endpoint.ts  # Direct wss://api.openai.com — no gateway mount exists
+│   │   └── openai-endpoint.ts  # Managed or direct Realtime WebSocket transport
 │   ├── voice/                  # A voice conversation with one client, on the chat socket
 │   │   ├── voice-chat.service.ts    # Lifecycle owner: one session, teardown, telemetry
 │   │   ├── socket-audio.ts     # Audio in and out as binary frames, pcm16 mono 24 kHz
@@ -956,9 +955,10 @@ What the operator sets on `docker run`:
 | `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction (sent verbatim) | `6` |
 | `ATTACHMENT_TTL_HOURS` | How long attachment content (the media file under `<data dir>/media`) is kept before the hourly sweep deletes it; the metadata stub survives, so history keeps showing the file as *content expired*. A non-positive or unparseable value falls back to the default | `168` (7 days) |
 | `TOOL_OUTPUT_TTL_HOURS` | How long the saved whole copy of an oversized tool result is kept under `<data dir>/tool-outputs`. Same defensive parse. Compaction also reclaims eagerly: a compacted message never re-enters the context, so the ids it carried are unreachable | `168` (7 days) |
-| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md), and drives chat when `LLM_PROVIDER=openai` (required direct; not needed through the gateway). The Realtime WebSocket is **never routed through the gateway** — the openai mount routes POST only, so the socket goes direct to `api.openai.com`; may be a `__nexus_cred:…__` sentinel since it only ever rides a header | — (meeting tools unregistered) |
+| `OPENAI_API_KEY` | Chat/embedding credential and legacy direct-voice fallback. Managed Realtime uses its own resolved endpoint/key; see [voice configuration](docs/configuration.md#voice-meetings). | — |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot rather than the moving `gpt-realtime` alias, so a new snapshot cannot change turn-taking under a live deployment | `gpt-realtime-2.1` |
-| `OPENAI_REALTIME_URL` | The Realtime WebSocket host, for a test that runs a local voice model in place of OpenAI's. The key requirement is unchanged, so the host is the only thing that moves. `OPENAI_BASE_URL` is the Responses endpoint and does not reach this socket, and the in-process `endpointOverride` cannot cross to a runtime the test launches as its own process | — (`wss://api.openai.com/v1/realtime`) |
+| `OPENAI_REALTIME_URL` | Explicit voice WebSocket endpoint; opts out of managed discovery. Otherwise derive from `LENS_INFERENCE_OPENAI_BASE_URL`, then direct OpenAI. | managed or direct OpenAI |
+| `OPENAI_REALTIME_API_KEY` | Independent voice credential. Otherwise use the managed OpenAI key for managed voice, or `OPENAI_API_KEY` for direct/explicit endpoints. | derived |
 | `OPENAI_REALTIME_VOICE` | Voice name | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the in-meeting model thinks before answering or picking a tool (`minimal`…`xhigh`). The Realtime API's own default is `low` — right for a voice agent that reads out an order status, wrong for one holding shell, kubectl and its own configuration, so this defaults to `high`. Paid for in latency, which in a call is silence in a room: `[Meeting:Latency]` logs the level in force beside the figure so levels can be compared. `''` sends no setting and takes the API default | `high` |
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber kept **only so a call can be read back in the log** — never fed to the model, and no decision waits on it since the addressed question is judged from the audio. Requested only when `MEETING_TRANSCRIPT_LOGGING` is `full`, since it bills per minute of audio — a small fraction of the Realtime audio rate for the same minute. Read once at connect, since an utterance already past cannot be transcribed retroactively. `gpt-live-transcribe` because it accepts `keywords`, which is how the agent's name and the room's roster are seeded; a model without them still works, but names in the log are likelier to be wrong | `gpt-live-transcribe` |

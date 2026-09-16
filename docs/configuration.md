@@ -86,11 +86,10 @@ mount — see [Memory embeddings](#memory-embeddings). A `*_BASE_URL` you set
 wins over the gateway mount, so you can point a gateway deployment at your own
 endpoint. Through the gateway the platform credentials are held for you, so no
 local LLM credential is needed.
-Two exceptions stay off the gateway: the voice-meeting Realtime WebSocket,
-which always goes direct to `api.openai.com` (the gateway's openai mount
-routes POST only), and `anthropic` chat as above. The credentials and model
-IDs below are grouped per
-platform.
+Voice Realtime resolves its own endpoint and credential independently of chat;
+it can use managed OpenAI even when another backend handles chat. First-party
+`anthropic` chat remains direct-only. The credentials and model IDs below are
+grouped per platform.
 
 ## Credentials
 
@@ -498,22 +497,36 @@ for that.
 ## Voice meetings
 
 [Voice meetings](voice-meetings.md) let the agent join a Google Meet call and take
-part by voice. The tools appear only when `OPENAI_API_KEY` is set **and** the host
-has the browser/audio toolchain, which ships in the container image.
+part by voice. The tools appear when a Realtime credential is configured and the
+host has the browser/audio toolchain shipped in the container image.
 
-The voice model is OpenAI's Realtime API. It is the one model call that never
-routes through the Lens Agents LLM gateway: its openai mount serves POST
-endpoints only, and no managed-inference backend exposes a realtime voice
-surface. The socket goes straight to `api.openai.com`, so an egress-filtered
-deployment must allow that host (plus Google's meeting and accounts hosts, including
-WebRTC UDP). The browser profile — and with it the signed-in session — is persisted
-under the data dir, so sign-in happens once rather than per meeting.
+Voice endpoint and credential resolution is independent of `LLM_PROVIDER`:
+
+1. An explicit `OPENAI_REALTIME_URL` wins. It uses `OPENAI_REALTIME_API_KEY`,
+   falling back to the existing `OPENAI_API_KEY`; managed credentials are not
+   implicitly copied to an explicitly chosen host.
+2. Otherwise, `LENS_INFERENCE_OPENAI_BASE_URL` selects managed OpenAI. Prism
+   converts HTTPS to WSS and appends `/realtime`, preserving any path prefix.
+   It uses `OPENAI_REALTIME_API_KEY` if explicitly set, otherwise
+   `LENS_INFERENCE_OPENAI_API_KEY`. A missing managed key does not borrow a
+   different backend's chat key.
+3. Without either endpoint, voice connects to `wss://api.openai.com/v1/realtime`
+   using `OPENAI_REALTIME_API_KEY` or the legacy `OPENAI_API_KEY`.
+
+`OPENAI_BASE_URL` remains a chat/embeddings setting. This allows Bedrock or Azure
+chat with managed OpenAI audio without changing either chat's endpoint or key.
+Only direct voice requires egress to `api.openai.com`; managed voice uses the Lens
+endpoint and its metering/budget controls. Remote sockets require WSS; plaintext
+WS is accepted only on loopback. The model and voice settings below are unchanged.
+The browser profile persists under the data directory, so meeting sign-in happens
+once rather than per meeting.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `OPENAI_API_KEY` | Enables voice meetings. The same key drives chat when `LLM_PROVIDER=openai`, and memory embeddings by default when `LLM_PROVIDER=anthropic` — see [Provider selection](#provider-selection). | — (disabled) |
+| `OPENAI_API_KEY` | Legacy direct-voice credential fallback. The same key drives chat when `LLM_PROVIDER=openai`, and memory embeddings by default when `LLM_PROVIDER=anthropic` — see [Provider selection](#provider-selection). | — (disabled) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the agent's voice, in a meeting and in a [voice chat](voice-chat.md). Pinned to a snapshot so a new one cannot change behaviour under you; `gpt-realtime-mini` is materially cheaper. | `gpt-realtime-2.1` |
-| `OPENAI_REALTIME_URL` | Point the voice socket at another server, for a test that runs a local voice model instead of OpenAI's. The key is still required. `OPENAI_BASE_URL` does not move this socket. | — (`api.openai.com`) |
+| `OPENAI_REALTIME_URL` | Explicit voice WebSocket endpoint; opts out of managed endpoint and credential discovery. | managed OpenAI, else direct OpenAI |
+| `OPENAI_REALTIME_API_KEY` | Independent voice credential; overrides the managed or legacy voice key without changing chat. | managed OpenAI key, else `OPENAI_API_KEY` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the voice model thinks before it answers or picks a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. The API's own default is `low`, which suits a voice agent that reads out an order status; the model in a call here holds the agent's real toolset — shell, kubectl, integrations, its own configuration — so this defaults higher. The cost is latency, and latency in a call is silence in a room, so lower it if the pause is more noticeable than the mistakes it prevents. Set empty to send no setting and take the API's default. | `high` |
 | `GOOGLE_BOT_EMAIL` | Google account the agent signs into for meetings. **Effectively required**: Google auto-denies automated anonymous guests, so without this the agent reaches the lobby and is refused. Use a dedicated account. | — |
@@ -527,7 +540,7 @@ under the data dir, so sign-in happens once rather than per meeting.
 ## Voice chat
 
 [Voice chat](voice-chat.md) is a direct voice conversation between the agent and
-one client. It needs the same `OPENAI_API_KEY` as voice meetings and uses the
+one client. It needs the same resolved Realtime credential as voice meetings and uses the
 same voice, model and reasoning settings from the table above. The agent has one
 voice, so a voice chat and a Meet call exclude each other.
 

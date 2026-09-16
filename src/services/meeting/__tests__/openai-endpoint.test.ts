@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockConfig: {
-  openaiApiKey?: string;
+  openaiRealtimeApiKey?: string;
   openaiRealtimeModel: string;
   openaiRealtimeUrl?: string;
 } = {
-  openaiApiKey: undefined,
+  openaiRealtimeApiKey: undefined,
   openaiRealtimeModel: 'gpt-realtime',
   openaiRealtimeUrl: undefined,
 };
@@ -18,7 +18,7 @@ const { resolveRealtimeEndpoint, isRealtimeConfigured, buildRealtimeSocketOption
 const savedProxy = process.env.HTTPS_PROXY;
 
 beforeEach(() => {
-  mockConfig.openaiApiKey = 'sk-test-key';
+  mockConfig.openaiRealtimeApiKey = 'sk-test-key';
   mockConfig.openaiRealtimeModel = 'gpt-realtime';
   mockConfig.openaiRealtimeUrl = undefined;
   delete process.env.HTTPS_PROXY;
@@ -31,9 +31,19 @@ afterEach(() => {
 });
 
 describe('resolveRealtimeEndpoint', () => {
-  it('connects directly to OpenAI — there is no gateway mount for Realtime', () => {
+  it('connects directly to OpenAI when no voice endpoint is configured', () => {
     const endpoint = resolveRealtimeEndpoint();
     expect(endpoint.url).toBe('wss://api.openai.com/v1/realtime?model=gpt-realtime');
+  });
+
+  it('uses a managed endpoint with its scoped placeholder for both routing and auth', () => {
+    mockConfig.openaiRealtimeUrl = 'wss://lens.example/prefix/v1/projects/p/llm/openai/v1/realtime';
+    mockConfig.openaiRealtimeApiKey = '__lens_cred:nexus-llm-openai__';
+    expect(resolveRealtimeEndpoint()).toMatchObject({
+      url: 'wss://lens.example/prefix/v1/projects/p/llm/openai/v1/realtime?model=gpt-realtime',
+      headers: { Authorization: 'Bearer __lens_cred:nexus-llm-openai__' },
+    });
+    expect(isRealtimeConfigured()).toBe(true);
   });
 
   it('takes the host from OPENAI_REALTIME_URL when it is set', () => {
@@ -62,7 +72,7 @@ describe('resolveRealtimeEndpoint', () => {
 
   it('refuses an override that is not a URL', () => {
     mockConfig.openaiRealtimeUrl = '127.0.0.1:3103/v1/realtime';
-    expect(() => resolveRealtimeEndpoint()).toThrow(/OPENAI_REALTIME_URL is not a URL/);
+    expect(() => resolveRealtimeEndpoint()).toThrow(/Realtime endpoint is not a valid URL/);
   });
 
   it('keeps a query string the override already carries', () => {
@@ -76,12 +86,12 @@ describe('resolveRealtimeEndpoint', () => {
     // The host moves; nothing about authentication does, so a local voice model
     // is reached the same way the real one is.
     mockConfig.openaiRealtimeUrl = 'ws://127.0.0.1:3103/v1/realtime';
-    mockConfig.openaiApiKey = undefined;
-    expect(() => resolveRealtimeEndpoint()).toThrow(/OPENAI_API_KEY is not set/);
+    mockConfig.openaiRealtimeApiKey = undefined;
+    expect(() => resolveRealtimeEndpoint()).toThrow(/No Realtime credential configured/);
   });
 
   it('sends the key as a header, so a credential sentinel stays rewritable', () => {
-    mockConfig.openaiApiKey = '__nexus_cred:0d1a-uuid__';
+    mockConfig.openaiRealtimeApiKey = '__nexus_cred:0d1a-uuid__';
     const endpoint = resolveRealtimeEndpoint();
 
     // The sandbox MITM can only swap a sentinel it can see in a header.
@@ -104,8 +114,8 @@ describe('resolveRealtimeEndpoint', () => {
   });
 
   it('throws a clear error when no key is configured', () => {
-    mockConfig.openaiApiKey = undefined;
-    expect(() => resolveRealtimeEndpoint()).toThrow(/OPENAI_API_KEY is not set/);
+    mockConfig.openaiRealtimeApiKey = undefined;
+    expect(() => resolveRealtimeEndpoint()).toThrow(/No Realtime credential configured/);
   });
 
   it('reports a proxy only when one is explicitly configured', () => {
@@ -118,7 +128,7 @@ describe('resolveRealtimeEndpoint', () => {
 describe('isRealtimeConfigured', () => {
   it('follows the presence of a key', () => {
     expect(isRealtimeConfigured()).toBe(true);
-    mockConfig.openaiApiKey = undefined;
+    mockConfig.openaiRealtimeApiKey = undefined;
     expect(isRealtimeConfigured()).toBe(false);
   });
 });

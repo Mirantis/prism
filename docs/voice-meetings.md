@@ -34,11 +34,10 @@ appears when the first two are present:
 1. **The container image.** It ships the browser and audio toolchain (Chromium,
    Xvfb, PulseAudio). A native install via the `prism` binary has no browser to
    drive, so the feature is container-only.
-2. **`OPENAI_API_KEY`.** The voice model is OpenAI's Realtime API, connected
-   directly to `api.openai.com` — it never rides the Lens Agents gateway, whose
-   openai mount routes POST only. Your chat model is unaffected: on the Claude platforms
-   only the in-meeting voice uses OpenAI, and with `LLM_PROVIDER=openai` chat
-   shares this same key (see [Configuration](configuration.md#provider-selection)).
+2. **A Realtime credential.** Enable managed OpenAI in the Lens sandbox policy,
+   or set `OPENAI_REALTIME_API_KEY` / `OPENAI_API_KEY` for direct voice. Managed
+   voice uses the Lens endpoint independently of the chat provider; explicit
+   endpoint overrides remain supported. See [Configuration](configuration.md#voice-meetings).
 3. **A Google account for the agent** (`GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD`).
    This one is not optional in practice — see below. Note the password has to be the
    **real password, in plain text**: the agent signs in by typing it into Google's
@@ -72,7 +71,7 @@ If your deployment filters outbound traffic, a meeting needs these:
 
 | Host | Why |
 |------|-----|
-| `api.openai.com:443` | The Realtime voice session. Goes direct — no managed-inference vendor serves this surface, so it is never proxied through a gateway |
+| `api.openai.com:443` | Direct Realtime voice only. Managed voice connects to the Lens endpoint instead |
 | `meet.google.com:443` | The call itself |
 | `accounts.google.com:443` | Signing the agent in |
 | `myaccount.google.com:443` | Checking whether the profile is still signed in. Easy to miss, and blocking it makes every join run a full login |
@@ -431,7 +430,8 @@ is the same thing to tell them about as the agent's presence.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `OPENAI_API_KEY` | Enables voice meetings. May be a managed-credential sentinel. Shared with the chat provider when `LLM_PROVIDER=openai`. | — (disabled) |
+| `OPENAI_API_KEY` | Legacy direct-voice fallback; shared with OpenAI chat. Managed voice resolves its own credential. | — |
+| `OPENAI_REALTIME_API_KEY` | Independent voice credential override. | managed OpenAI key, else `OPENAI_API_KEY` |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model thinks before answering or picking a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults higher than the API's own `low` — see [Reasoning effort](#reasoning-effort). Empty takes the API default. | `high` |
@@ -573,7 +573,7 @@ network, the way you would for the shell.
 **The agent says it can't join meetings, or doesn't offer to.** The tool is only
 registered when the toolchain and the key are both present — check the startup log
 for `Voice meetings available` or `Voice meetings unavailable`, and confirm
-`OPENAI_API_KEY` is set and you're running the container image.
+a Realtime credential is configured and you're running the container image.
 
 **It isn't answering to its name.** In a call with more than one other person the
 agent answers only when it is spoken to. Each decision is logged — look for
