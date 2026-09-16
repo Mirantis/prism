@@ -671,6 +671,62 @@ describe('RealtimeSession outbound frames', () => {
     );
   });
 
+  it("sends a recording as one item per window, each labelled beside its audio", async () => {
+    active = await harness();
+    active.session.sendRecording(
+      [
+        { label: '0:00', images: ['data:image/jpeg;base64,AAAA'], audio: Buffer.from([1, 2, 3, 4]) },
+        { label: '0:30', images: [], audio: Buffer.from([5, 6]) },
+      ],
+      'Your user recorded their screen.',
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    const items = active.sent.filter((f) => f.type === 'conversation.item.create') as Array<{
+      item: Record<string, any>;
+    }>;
+    // The note first, then a window each.
+    expect(items).toHaveLength(3);
+    expect(items[0].item.content).toEqual([
+      { type: 'input_text', text: 'Your user recorded their screen.' },
+    ]);
+    expect(items[1].item.role).toBe('user');
+    expect(items[1].item.content).toEqual([
+      { type: 'input_text', text: 'At 0:00:' },
+      { type: 'input_image', image_url: 'data:image/jpeg;base64,AAAA' },
+      { type: 'input_audio', audio: Buffer.from([1, 2, 3, 4]).toString('base64') },
+    ]);
+    // A window with nothing on the screen is still its own item, so the narration over it
+    // keeps its place in the order.
+    expect(items[2].item.content).toEqual([
+      { type: 'input_text', text: 'At 0:30:' },
+      { type: 'input_audio', audio: Buffer.from([5, 6]).toString('base64') },
+    ]);
+  });
+
+  it('keeps a recording out of the window a probe re-reads', async () => {
+    // A segment holds up to half a minute of audio, and a probe runs on every utterance.
+    // Counting one as a turn in the room would have every later probe re-read the whole
+    // recording. The label beside the audio is what tells the two apart.
+    active = await harness();
+    active.emit({
+      type: 'conversation.item.added',
+      item: { id: 'u-1', type: 'message', role: 'user', content: [{ type: 'input_audio' }] },
+    });
+    active.emit({
+      type: 'conversation.item.added',
+      item: {
+        id: 'rec-1',
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text' }, { type: 'input_image' }, { type: 'input_audio' }],
+      },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(active.session.recentConversationItems(10)).toEqual(['u-1']);
+  });
+
   it('drops sends after close instead of throwing', async () => {
     active = await harness();
     active.session.close();

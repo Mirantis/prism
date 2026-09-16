@@ -36,6 +36,7 @@ function fakeVoice(overrides: Partial<VoiceCall> = {}): VoiceCall {
     start: vi.fn(),
     stop: vi.fn(),
     toggleMute: vi.fn(),
+    setMuted: vi.fn(),
     handleEvent: vi.fn(),
     handleAudio: vi.fn(),
     ...overrides,

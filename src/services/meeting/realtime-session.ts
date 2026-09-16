@@ -129,6 +129,18 @@ export interface OutOfBandRequest {
 }
 
 /**
+ * One window of a recording of the user's own screen: the pictures taken in it, and the
+ * narration over them as pcm16 mono at this session's own input rate.
+ */
+export interface RecordingSegment {
+  /** Where the window starts, the way the model is told it: `0:30`. */
+  label: string;
+  /** Pictures in the order they were taken, as data URIs. */
+  images: string[];
+  audio: Buffer;
+}
+
+/**
  * Whether a conversation item is somebody's turn in the room.
  *
  * The agent's own speech qualifies; so does a participant's audio. What does *not*
@@ -139,12 +151,16 @@ export interface OutOfBandRequest {
  * change whether the latest utterance looks like it continues an exchange.
  *
  * Judged on content rather than role for that reason: role alone cannot tell a
- * spoken turn from an injected one.
+ * spoken turn from an injected one. A turn spoken in the room is audio and nothing
+ * else, so anything carrying a second kind of part was written here — which is what
+ * keeps a recording out, each of whose segments holds a label and pictures beside up
+ * to half a minute of audio that a probe would otherwise re-read on every utterance.
  */
 function isSpokenTurn(item: { role?: string; content?: { type?: string }[] }): boolean {
   if (item.role === 'assistant') return true;
   if (item.role !== 'user') return false;
-  return (item.content ?? []).some((part) => part.type === 'input_audio');
+  const content = item.content ?? [];
+  return content.length > 0 && content.every((part) => part.type === 'input_audio');
 }
 
 /** The out-of-band send id carried in a response's metadata, if any. */
@@ -1235,6 +1251,34 @@ export class RealtimeSession extends EventEmitter {
         ],
       },
     });
+  }
+
+  /**
+   * Put a recording of the user's own screen in front of the model: the pictures in the
+   * order they were taken, and the words said over them.
+   *
+   * One item per window rather than one for the whole recording. A window's audio is
+   * around two megabytes of base64 where five minutes in a single event would be twenty,
+   * and keeping each window together is what tells the model which words go with which
+   * picture — the thing a recording has that a shared screen does not.
+   *
+   * The label rides in the same item as the audio on purpose: every segment then carries
+   * a part that is not audio, which is how `isSpokenTurn` tells a recording from somebody
+   * talking.
+   */
+  sendRecording(segments: RecordingSegment[], note: string): void {
+    this.sendContext(note);
+    for (const segment of segments) {
+      const content: Record<string, unknown>[] = [{ type: 'input_text', text: `At ${segment.label}:` }];
+      for (const image of segment.images) content.push({ type: 'input_image', image_url: image });
+      if (segment.audio.length > 0) {
+        content.push({ type: 'input_audio', audio: segment.audio.toString('base64') });
+      }
+      this.send({
+        type: 'conversation.item.create',
+        item: { type: 'message', role: 'user', content },
+      });
+    }
   }
 
   /**

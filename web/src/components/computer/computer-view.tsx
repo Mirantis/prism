@@ -13,12 +13,14 @@ import {
 import { Button } from '@/components/ui/button';
 import { ScreenView } from '@/components/voice/screen-view';
 import { MuteButton } from '@/components/voice/mute-button';
+import { RecordButton } from '@/components/voice/record-button';
 import { ShareButton } from '@/components/voice/share-button';
 import { SharePreview } from '@/components/voice/share-preview';
 import { useComputerScreen } from '@/hooks/use-computer-screen';
 import { useComputerStatus } from '@/hooks/use-computer-status';
 import { useComputerAudio } from '@/hooks/use-computer-audio';
 import { useComputerVoice } from '@/hooks/use-computer-voice';
+import { useScreenRecording } from '@/hooks/use-screen-recording';
 import { useScreenShare } from '@/hooks/use-screen-share';
 import { computerRequest } from '@/api/computer';
 import { ComputerHelpPanel } from './computer-help-panel';
@@ -26,15 +28,79 @@ import { cn } from '@/lib/utils';
 
 export function ComputerView({ helpId }: { helpId?: string }) {
   const call = useComputerVoice();
+  // The call as it stands now, for a handler that reads it after an await: a closure's
+  // copy is the one from the render the click happened in. See `toggleRecording`.
+  const callRef = useRef(call);
+  callRef.current = call;
   const audio = useComputerAudio();
-  const screen = useComputerScreen({ enabled: true, onAudio: audio.enqueue });
+  // Set when the runtime answers that it has begun recording, on the socket the request
+  // went out on. The microphone opens then and not before, so no part of the narration
+  // reaches the model live on the other socket first.
+  const [micOpen, setMicOpen] = useState(false);
+  const screen = useComputerScreen({
+    enabled: true,
+    onAudio: audio.enqueue,
+    onRecordingStarted: () => setMicOpen(true),
+  });
   const { data } = useComputerStatus();
   const queryClient = useQueryClient();
   const state = screen.state ?? data;
   const share = useScreenShare(screen.sendInput);
+  const recorder = useScreenRecording(screen.sendInput);
+  const { recording } = recorder;
   useEffect(() => {
     if (call.status === 'idle') share.stop();
   }, [call.status, share.stop]);
+
+  // A recording holds the microphone open for as long as it runs, whatever the call was
+  // set to, and gives it back at the end however the recording ended. The agent hears none
+  // of it live: the runtime puts those frames in the recording instead.
+  const mutedBeforeRecording = useRef(true);
+  const { setMuted } = call;
+  useEffect(() => {
+    if (!micOpen) return;
+    setMuted(false);
+    return () => setMuted(mutedBeforeRecording.current);
+  }, [micOpen, setMuted]);
+
+  // The runtime answers each recording, so the microphone closes with the one it opened
+  // for. A recording that ends before the answer arrives leaves it shut.
+  useEffect(() => {
+    if (!recording) setMicOpen(false);
+  }, [recording]);
+
+  // A recording that outlives the socket its pictures travel on has nowhere to go, so it
+  // ends here rather than running to its limit holding the microphone. The socket comes
+  // back on its own, but as a new client, and the session dropped the old one's recording.
+  const { abandon } = recorder;
+  const clientId = screen.clientId;
+  useEffect(() => {
+    if (!recording || clientId) return;
+    abandon('The connection to the screen dropped, so that recording was not sent.');
+  }, [recording, clientId, abandon]);
+
+  // A recording ends with the call, since the model it would be handed to goes with it.
+  const { stop: stopRecording } = recorder;
+  useEffect(() => {
+    if (call.status === 'idle' && recording) stopRecording();
+  }, [call.status, recording, stopRecording]);
+
+  const toggleRecording = async () => {
+    if (recording) {
+      recorder.stop();
+      return;
+    }
+    // Recording the screen means sharing it, so a first press opens the picker and records
+    // what it hands back. The share outlives the recording, since the agent having a live
+    // view of what it was just shown is the useful state to end in.
+    const stream = share.stream ?? (await share.start());
+    if (!stream) return;
+    // Read from the ref rather than this closure's `call`: the picker is open across the
+    // await, the microphone control stays live while it is, and somebody who mutes there
+    // would otherwise have it reopened for them when the recording ends.
+    mutedBeforeRecording.current = callRef.current?.isMuted ?? true;
+    recorder.start(stream);
+  };
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const controlHelpId = useRef<string | undefined>(undefined);
@@ -206,8 +272,19 @@ export function ComputerView({ helpId }: { helpId?: string }) {
                 >
                   <ShareButton
                     sharing={share.sharing}
-                    disabled={call.status !== 'live'}
+                    disabled={call.status !== 'live' || recording}
                     onToggle={() => (share.sharing ? share.stop() : void share.start())}
+                  />
+                </span>
+                <span title={call.status === 'idle' ? 'Start Talk to record your screen' : undefined}>
+                  <RecordButton
+                    recording={recording}
+                    elapsedMs={recorder.elapsedMs}
+                    // Readiness gates starting a recording, never ending one: a socket
+                    // that goes while one runs would otherwise leave the control dead and
+                    // the microphone held until the length limit.
+                    disabled={!recording && (call.status !== 'live' || !screen.clientId)}
+                    onToggle={() => void toggleRecording()}
                   />
                 </span>
                 {call.status === 'idle' ? (
@@ -218,7 +295,7 @@ export function ComputerView({ helpId }: { helpId?: string }) {
                   <>
                     <MuteButton
                       muted={call.isMuted}
-                      disabled={call.status !== 'live'}
+                      disabled={call.status !== 'live' || recording}
                       onToggle={call.toggleMute}
                     />
                     <Button variant="outline" onClick={call.stop}>

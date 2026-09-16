@@ -41,7 +41,70 @@ import type { ComputerUse } from '../computer/computer-access';
 import type { ScreenFrame } from '../computer/picture-stream';
 import { buildVoiceInstructions } from './voice-instructions';
 import { voiceSessionLock } from './voice-session-lock';
-import { SocketAudio, VOICE_AUDIO_FORMAT, type SocketAudioChannel } from './socket-audio';
+import {
+  isAudioFrameUsable,
+  maxFrameBytes,
+  SocketAudio,
+  VOICE_AUDIO_FORMAT,
+  type SocketAudioChannel,
+} from './socket-audio';
+import {
+  formatOffset,
+  ScreenRecording,
+  type RecordingEndReason,
+  type RecordingResult,
+} from './screen-recording';
+
+/**
+ * A recording of the user's own screen, as the Computer page sends it: it began, a
+ * picture the page kept with the offset it was taken at, and the end. The pictures arrive
+ * together, before the end.
+ *
+ * They come in on the screen's socket, because that is the socket the page has, and they
+ * are answered here rather than by the computer: a recording is part of the call the page
+ * started, and the desktop outlives any one call.
+ */
+export type RecordingFrame =
+  | { type: 'recording_started' }
+  | { type: 'recording_frame'; data: string; at: number }
+  | { type: 'recording_stopped'; ms: number; reason: RecordingEndReason }
+  | { type: 'recording_cancelled' };
+
+/** Whether a page frame is one of those, so the socket knows where to send it. */
+export function isRecordingFrame(type: unknown): boolean {
+  return typeof type === 'string' && type.startsWith('recording_');
+}
+
+/** The reason a page states for ending a recording, or `user` for anything else it says. */
+function endReason(reason: unknown): RecordingEndReason {
+  return reason === 'limit' || reason === 'share_ended' ? reason : 'user';
+}
+
+/** What the model is told when a recording starts, so it waits rather than talking over it. */
+const RECORDING_STARTED_NOTE =
+  'Your user is recording their screen and talking through what they are doing. You will ' +
+  'be given the whole recording when they stop, so say nothing until then — you cannot ' +
+  'hear them while it runs.';
+
+/** And when the page carrying one goes away, so it stops waiting for it. */
+const RECORDING_LOST_NOTE =
+  'Your user was recording their screen, and the page showing it went away before they ' +
+  'finished. The recording is gone and you will not be given it. You can hear them again ' +
+  'now, so carry on with them.';
+
+/** What the model is told a recording is, before the segments of it arrive. */
+function recordingNote(result: RecordingResult): string {
+  const pictures = result.frames === 1 ? '1 picture' : `${result.frames} pictures`;
+  return (
+    `Your user recorded their own screen for ${formatOffset(result.ms)} and has just handed ` +
+    'it to you. What follows is that recording in order: the pictures are their screen as ' +
+    `it changed (${pictures}), and the voice is theirs, recorded while they worked rather ` +
+    'than said to you now. Watch it through, then answer them about it in a sentence or two.' +
+    (result.reason === 'limit'
+      ? ' The recording stopped at its length limit, so it may end in the middle of something.'
+      : '')
+  );
+}
 
 /** What the client is told about the session it asked for. */
 export type VoiceChatState = 'live' | 'ended';
@@ -159,6 +222,10 @@ class VoiceChatService {
   private conversation: VoiceConversation | null = null;
   private computer: AgentComputer | null = null;
   private computerUse: ComputerUse | null = null;
+  /** The user's recording of their own screen. Built for a session that has a page. */
+  private recording: ScreenRecording | null = null;
+  /** Which client's socket the running recording came in on, so its loss is noticed. */
+  private recordingClient: string | null = null;
   private signal: VoiceChatSignal | null = null;
   private userId: string | null = null;
   private startedAt: number | null = null;
@@ -237,6 +304,10 @@ class VoiceChatService {
         computerHelpService.endVoice(computerUse);
         computerService.access.finish(computerUse);
       }
+
+      // A recording still running has no model left to be handed to, and reporting it as
+      // cancelled is what keeps one that never arrived out of the delivered count.
+      this.recording?.cancel();
     };
 
     try {
@@ -325,6 +396,11 @@ class VoiceChatService {
       this.conversation = conversation;
       this.computer = computer;
       this.computerUse = computerUse ?? null;
+      // Only a client that shows the computer has a screen to record, and it is the same
+      // client that sends the pictures.
+      this.recording = computer
+        ? new ScreenRecording({ clientSampleRate: sampleRate, userId: input.userId })
+        : null;
       this.signal = input.signal;
       this.userId = input.userId;
       this.startedAt = Date.now();
@@ -395,7 +471,79 @@ class VoiceChatService {
    * answering it would tell the client something it already knows.
    */
   pushAudio(pcm: Buffer): void {
+    // Judged before the frame is routed, since a recording takes it before the transport
+    // sees it and would resample whatever arrived.
+    if (!isAudioFrameUsable(pcm, maxFrameBytes(this.rate))) return;
+    // A recording of the user's screen takes the microphone while it runs, so the model
+    // hears the narration once — at the end, with the pictures — rather than answering
+    // over the demonstration and then being handed the same words again.
+    if (this.recording?.pushAudio(pcm)) return;
     this.transport?.push(pcm);
+  }
+
+  /**
+   * A recording frame from the page showing the computer.
+   *
+   * `acknowledge` answers on the socket the frame arrived on, and the page opens its
+   * microphone only when that answer lands: the microphone travels on the other socket,
+   * and two sockets have no order between them.
+   */
+  handleRecordingFrame(clientId: string, frame: RecordingFrame, acknowledge: () => void): void {
+    const recording = this.recording;
+    const conversation = this.conversation;
+    if (!recording || !conversation) return;
+
+    switch (frame.type) {
+      case 'recording_started':
+        if (!recording.start()) return;
+        this.recordingClient = clientId;
+        acknowledge();
+        conversation.notify(RECORDING_STARTED_NOTE);
+        return;
+      case 'recording_frame':
+        recording.addFrame(frame.data, Number(frame.at));
+        return;
+      case 'recording_stopped':
+        this.recordingClient = null;
+        this.deliverRecording(endReason(frame.reason), Number(frame.ms));
+        return;
+      case 'recording_cancelled':
+        this.recordingClient = null;
+        recording.cancel();
+        return;
+    }
+  }
+
+  /**
+   * The page a recording was coming from has gone.
+   *
+   * Its pictures and its end were going to arrive on that socket, so there is nothing to
+   * wait for. Left running, the recording would take the microphone for the rest of the
+   * call and the model would hear nothing.
+   */
+  releaseRecordingClient(clientId: string): void {
+    if (this.recordingClient !== clientId) return;
+    this.recordingClient = null;
+    if (!this.recording?.cancel()) return;
+    logger.info('[VoiceChat] The recording was dropped: its page is gone');
+    this.conversation?.notify(RECORDING_LOST_NOTE);
+  }
+
+  /** Hand a finished recording to the model, or say why there is nothing to hand over. */
+  private deliverRecording(reason: RecordingEndReason, ms: number): void {
+    const result = this.recording?.stop(reason, ms) ?? null;
+    const conversation = this.conversation;
+    if (!conversation) return;
+    if (!result) {
+      conversation.notify(
+        'Your user stopped their recording, and there was nothing in it — no pictures of ' +
+          'their screen and nothing said. Tell them so and ask them to try again.',
+      );
+      return;
+    }
+    if (!conversation.showRecording(result.segments, recordingNote(result))) {
+      logger.info('[VoiceChat] The recording did not reach the model');
+    }
   }
 
   /**
@@ -464,6 +612,10 @@ class VoiceChatService {
         computerService.access.finish(computerUse);
       }
 
+      // A recording still running has no model left to be handed to, and reporting it as
+      // cancelled is what keeps one that never arrived out of the delivered count.
+      this.recording?.cancel();
+
       // The client is told why before it is told it is over, so a failure reads as a
       // failure rather than as an ending it asked for.
       if (status !== 'completed') signal?.error(reason);
@@ -510,6 +662,8 @@ class VoiceChatService {
     this.transport = null;
     this.computer = null;
     this.computerUse = null;
+    this.recording = null;
+    this.recordingClient = null;
     this.signal = null;
     this.userId = null;
     this.startedAt = null;

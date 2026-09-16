@@ -214,7 +214,8 @@ The agent's identity and runtime controls.
 ## Computer
 
 Watch Prism use its desktop, take control when it needs help, or start optional
-voice chat. Work continues when you leave the page.
+voice chat — where you can also share your own screen or record yourself working
+through something. Work continues when you leave the page.
 
 See **[The agent's computer](computer.md)**.
 

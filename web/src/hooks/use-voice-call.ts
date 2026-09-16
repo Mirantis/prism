@@ -50,6 +50,11 @@ export interface VoiceCall {
   stop: () => void;
   /** Mute the microphone, or open it again. The session and the playback are untouched. */
   toggleMute: () => void;
+  /**
+   * The same, said outright rather than flipped. A recording holds the microphone open
+   * for as long as it runs and puts it back afterwards, which a toggle cannot express.
+   */
+  setMuted: (muted: boolean) => void;
   /** Feed a voice frame in. Wired to `onVoiceEvent` on the chat socket. */
   handleEvent: (event: VoiceEvent) => void;
   /** Feed a frame of the agent's speech in. Wired to `onVoiceAudio`. */
@@ -255,6 +260,7 @@ export function useVoiceCall(options: UseVoiceCallOptions): VoiceCall {
     start,
     stop,
     toggleMute,
+    setMuted,
     handleEvent,
     handleAudio,
     handleComputerAudio,

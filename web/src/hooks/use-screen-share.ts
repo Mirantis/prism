@@ -67,8 +67,9 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
     send({ type: 'user_screen_stopped' });
   }, [send]);
 
-  const start = useCallback(async () => {
-    if (sessionRef.current) return;
+  /** Answers the stream it opened, so a caller that wants to record it has it at once. */
+  const start = useCallback(async (): Promise<MediaStream | null> => {
+    if (sessionRef.current) return sessionRef.current.stream;
     let media: MediaStream;
     try {
       media = await navigator.mediaDevices.getDisplayMedia({
@@ -80,12 +81,12 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
       if (!(err instanceof DOMException && err.name === 'NotAllowedError')) {
         setError(err instanceof Error ? err.message : 'Could not share the screen.');
       }
-      return;
+      return null;
     }
 
     if (!mountedRef.current) {
       media.getTracks().forEach((t) => t.stop());
-      return;
+      return null;
     }
 
     // Claimed before the next await, so a page that closes while the video is starting
@@ -102,7 +103,7 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
     // setting timers and announcing a share nobody asked for any more.
     if (!mountedRef.current || pendingRef.current !== media) {
       media.getTracks().forEach((t) => t.stop());
-      return;
+      return null;
     }
     pendingRef.current = null;
 
@@ -133,6 +134,7 @@ export function useScreenShare(send: (frame: PageFrame) => void) {
     setStream(media);
     setError(null);
     send({ type: 'user_screen_started' });
+    return media;
   }, [send, stop]);
 
   useEffect(() => {

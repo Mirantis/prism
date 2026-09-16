@@ -14,6 +14,16 @@ Click the screen to use the mouse and keyboard. Paste types into the focused fie
 
 While you have control, ask Prism to inspect the screen if you need guidance. Desktop sound is on; use **Sound** to mute it. Choose **Talk** to start optional [voice chat](voice-chat.md), initially muted.
 
+## Showing Prism your own screen
+
+During a voice call, **Share screen** shows Prism your own screen, window or tab, the way
+you would in a video call. Ask it to look and it reads what is there.
+
+**Record** captures that screen while you talk through what you are doing, for something
+that takes more than a glance. Press stop and Prism is given the whole thing — your screen
+as it changed, and your voice over it — and answers about it. It cannot hear you while a
+recording runs, so it will not interrupt, and a recording stops itself after five minutes.
+
 ## When Prism needs help
 
 Prism sends a help request with **Open Computer** when a website needs sign-in, a CAPTCHA, or another step for you. On Computer, the request appears beside the screen, or above it on smaller displays. Click the screen, finish the step directly on the desktop, and press Esc or **I’m done** to resume the request. You can also tell Prism in the originating chat that you finished helping.

@@ -48,6 +48,7 @@ class FakeConversation {
   readonly stop = vi.fn();
   readonly start = vi.fn(async () => {});
   readonly notify = vi.fn();
+  readonly showRecording = vi.fn(() => true);
   readonly speakNow = vi.fn();
   readonly sink: PlaybackSink;
   readonly sampleRate?: number;
@@ -556,4 +557,136 @@ describe('a session with a computer', () => {
     );
   });
 
+});
+
+/**
+ * A recording of the user's screen belongs to the call the Computer page started: it takes
+ * that call's microphone and is handed to that call's model. The desktop outlives any one
+ * call, so the recorder lives with the session rather than with the computer.
+ */
+describe('a recording of the user\'s screen', () => {
+  const ack = () => {};
+
+  /** A frame of the microphone, as the client sends it at the computer page's rate. */
+  const frame = () => Buffer.alloc(960, 1);
+
+  it('takes the microphone while one runs, and gives it back after', async () => {
+    await startWithComputer();
+    const conversation = conversations[conversations.length - 1]!;
+
+    voiceChatService.pushAudio(frame());
+    expect(conversation.pushAudio).toHaveBeenCalledTimes(1);
+
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_started' }, ack);
+    voiceChatService.pushAudio(frame());
+    // The model hears the narration once, at the end, rather than over the demonstration.
+    expect(conversation.pushAudio).toHaveBeenCalledTimes(1);
+
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_cancelled' }, ack);
+    voiceChatService.pushAudio(frame());
+    expect(conversation.pushAudio).toHaveBeenCalledTimes(2);
+  });
+
+  /** The page opens its microphone on this, and not before. */
+  it('answers the page on the socket the request came in on', async () => {
+    await startWithComputer();
+    const acknowledge = vi.fn();
+
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_started' }, acknowledge);
+    expect(acknowledge).toHaveBeenCalledTimes(1);
+
+    // A page repeating itself is not a second recording, and is not answered twice.
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_started' }, acknowledge);
+    expect(acknowledge).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands the pictures and the narration to the model, and asks it to answer', async () => {
+    await startWithComputer();
+    const conversation = conversations[conversations.length - 1]!;
+
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_started' }, ack);
+    voiceChatService.pushAudio(frame());
+    voiceChatService.handleRecordingFrame(
+      'client-1',
+      { type: 'recording_frame', data: Buffer.from('a picture').toString('base64'), at: 0 },
+      ack,
+    );
+    voiceChatService.handleRecordingFrame(
+      'client-1',
+      { type: 'recording_stopped', ms: 4_000, reason: 'user' },
+      ack,
+    );
+
+    expect(conversation.showRecording).toHaveBeenCalledTimes(1);
+    const [segments, note] = conversation.showRecording.mock.calls[0]!;
+    expect(segments[0].images).toHaveLength(1);
+    expect(segments[0].audio.length).toBeGreaterThan(0);
+    expect(note).toContain('recorded their own screen');
+  });
+
+  /**
+   * The pictures and the end were going to arrive on that socket. Left running, the
+   * recording keeps taking the microphone and the model hears nothing for the rest of the
+   * call while it waits for a hand-over nobody can send.
+   */
+  it('drops a recording whose page has gone, and hears the user again', async () => {
+    await startWithComputer();
+    const conversation = conversations[conversations.length - 1]!;
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_started' }, ack);
+
+    voiceChatService.releaseRecordingClient('client-1');
+
+    expect(conversation.notify).toHaveBeenCalledWith(expect.stringContaining('recording is gone'));
+    voiceChatService.pushAudio(frame());
+    expect(conversation.pushAudio).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a recording alone when another page goes', async () => {
+    await startWithComputer();
+    const conversation = conversations[conversations.length - 1]!;
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_started' }, ack);
+
+    voiceChatService.releaseRecordingClient('client-2');
+
+    voiceChatService.pushAudio(frame());
+    expect(conversation.pushAudio).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The recording takes the frame before the transport's own guard sees it, so the guard
+   * runs before the fork. Without that a client can hand it tens of megabytes to resample.
+   */
+  it('judges a frame before a recording can take it', async () => {
+    await startWithComputer();
+    const conversation = conversations[conversations.length - 1]!;
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_started' }, ack);
+    voiceChatService.handleRecordingFrame(
+      'client-1',
+      { type: 'recording_frame', data: Buffer.from('a picture').toString('base64'), at: 0 },
+      ack,
+    );
+
+    voiceChatService.pushAudio(Buffer.alloc(48_000 * 2 + 2));
+    voiceChatService.pushAudio(Buffer.from([1, 2, 3]));
+    voiceChatService.handleRecordingFrame(
+      'client-1',
+      { type: 'recording_stopped', ms: 1_000, reason: 'user' },
+      ack,
+    );
+
+    // A picture but no narration: neither oversized frame reached the recording.
+    const [segments] = conversation.showRecording.mock.calls[0]!;
+    expect(segments[0].audio.length).toBe(0);
+  });
+
+  it('has no recording to run when the session has no computer', async () => {
+    const { conversation } = await startSession();
+    const acknowledge = vi.fn();
+
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_started' }, acknowledge);
+
+    expect(acknowledge).not.toHaveBeenCalled();
+    voiceChatService.pushAudio(Buffer.alloc(960, 1));
+    expect(conversation.pushAudio).toHaveBeenCalledTimes(1);
+  });
 });

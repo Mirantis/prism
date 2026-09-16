@@ -30,7 +30,17 @@ export type ScreenShareFrame =
   | { type: 'user_screen_stopped' };
 
 /** Everything the page sends the runtime as JSON text. */
-export type PageFrame = InputFrame | ScreenShareFrame;
+/**
+ * A recording of that shared screen: it began, a picture the page kept with the offset it
+ * was taken at, and the end. The pictures are sent together, before the end.
+ */
+export type RecordingFrame =
+  | { type: 'recording_started' }
+  | { type: 'recording_frame'; data: string; at: number }
+  | { type: 'recording_stopped'; ms: number; reason: 'user' | 'limit' | 'share_ended' }
+  | { type: 'recording_cancelled' };
+
+export type PageFrame = InputFrame | ScreenShareFrame | RecordingFrame;
 
 /** How the agent's screen is encoded, before any of it arrives. */
 interface ScreenStartFrame {
@@ -52,7 +62,18 @@ interface ErrorFrame {
   message: string;
 }
 
-type ServerFrame = ScreenStartFrame | ScreenPictureFrame | ErrorFrame;
+/**
+ * The call has begun recording the user's screen, and so is taking their microphone.
+ *
+ * It answers on this socket rather than the one the microphone travels on, and the page
+ * opens the microphone only when it arrives: two sockets have no order between them, so
+ * without this the first words of a narration can reach the model live.
+ */
+interface RecordingStartedFrame {
+  type: 'recording_started';
+}
+
+type ServerFrame = ScreenStartFrame | ScreenPictureFrame | ErrorFrame | RecordingStartedFrame;
 
 /**
  * A binary frame from the runtime starts with a tag byte and a padding byte. The tag says
@@ -73,6 +94,8 @@ export interface UseComputerScreenOptions {
   enabled: boolean;
   /** Playback for the desktop's sound. */
   onAudio: (pcm: ArrayBuffer) => void;
+  /** Called when the runtime says it has begun recording the user's screen. */
+  onRecordingStarted?: () => void;
 }
 
 export interface ComputerScreen {
@@ -111,6 +134,8 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
   // Read on every frame by a handler bound once, the same reason the senders are.
   const onAudioRef = useRef(onAudio);
   onAudioRef.current = onAudio;
+  const onRecordingStartedRef = useRef(options.onRecordingStarted);
+  onRecordingStartedRef.current = options.onRecordingStarted;
   useEffect(() => {
     if (!enabled) return;
     const canvas = new ScreenCanvas(() => screenRef.current);
@@ -152,6 +177,10 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
           // Three base64 characters carry a quarter less: the JPEG is 3/4 of the text.
           const bytes = Math.floor((frame.data.length * 3) / 4);
           setLastFrame((f) => ({ count: (f?.count ?? 0) + 1, at: performance.now(), bytes }));
+          return;
+        }
+        if (frame.type === 'recording_started') {
+          onRecordingStartedRef.current?.();
           return;
         }
         if (frame.type === 'error') setMessage(frame.message);
