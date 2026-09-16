@@ -147,6 +147,48 @@ describe('ScreenRecording', () => {
     expect(result?.frames).toBe(MAX_RECORDING_FRAMES);
   });
 
+  /**
+   * The offset decides how many windows `buildSegments` walks, so a frame claiming a time
+   * far outside the recording held the runtime in that loop for the rest of the process.
+   *
+   * On its own, deliberately: a non-finite offset in the same recording makes the window
+   * count `NaN`, the walk ends before it starts, and the hang this pins would be hidden.
+   */
+  it('refuses a huge offset, so stopping cannot walk to it', () => {
+    const rec = recording();
+    rec.start();
+    rec.addFrame(PICTURE, 0);
+    rec.addFrame(PICTURE, 1e308);
+
+    const started = Date.now();
+    const result = rec.stop('user', 1_000);
+
+    expect(result?.frames).toBe(1);
+    expect(result?.segments).toHaveLength(1);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('refuses an offset that is not a time at all', () => {
+    const rec = recording();
+    rec.start();
+    rec.addFrame(PICTURE, 0);
+    rec.addFrame(PICTURE, Number.POSITIVE_INFINITY);
+    rec.addFrame(PICTURE, Number.NaN);
+    rec.addFrame(PICTURE, -1);
+    rec.addFrame(PICTURE, MAX_RECORDING_MS + 1);
+
+    // Only the frame at zero survives; the rest name a time the recording cannot have.
+    expect(rec.stop('user', 1_000)?.frames).toBe(1);
+  });
+
+  it('keeps a frame at the far end of what a recording may run', () => {
+    const rec = recording();
+    rec.start();
+    rec.addFrame(PICTURE, MAX_RECORDING_MS);
+
+    expect(rec.stop('user', MAX_RECORDING_MS)?.frames).toBe(1);
+  });
+
   it('refuses a picture too large to be one', () => {
     const rec = recording();
     rec.start();
