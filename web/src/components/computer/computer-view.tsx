@@ -79,6 +79,14 @@ export function ComputerView({ helpId }: { helpId?: string }) {
     abandon('The connection to the screen dropped, so that recording was not sent.');
   }, [recording, clientId, abandon]);
 
+  // Sound covers everything this page plays, the agent's voice included: one control, and
+  // pressing it is silence at once. The runtime goes on sending and the model goes on
+  // generating — this is the speaker rather than the call.
+  const { setPlaybackMuted } = call;
+  useEffect(() => {
+    setPlaybackMuted(!audio.enabled);
+  }, [audio.enabled, setPlaybackMuted]);
+
   // A recording ends with the call, since the model it would be handed to goes with it.
   const { stop: stopRecording } = recorder;
   useEffect(() => {
@@ -256,7 +264,7 @@ export function ComputerView({ helpId }: { helpId?: string }) {
             <div className="ml-auto flex flex-wrap items-center gap-2">
               <Button
                 variant="ghost"
-                aria-label={audio.enabled ? 'Mute computer sound' : 'Play computer sound'}
+                aria-label={audio.enabled ? 'Mute sound' : 'Play sound'}
                 aria-pressed={audio.enabled}
                 onClick={() => void audio.toggle()}
               >
@@ -267,28 +275,28 @@ export function ComputerView({ helpId }: { helpId?: string }) {
                 {call.isSpeaking && (
                   <AudioLines aria-label="Speaking" className="size-4 animate-pulse text-sky-500" />
                 )}
-                <span
-                  title={call.status === 'idle' ? 'Start Talk to share your screen' : undefined}
-                >
-                  <ShareButton
-                    sharing={share.sharing}
-                    disabled={call.status !== 'live' || recording}
-                    onToggle={() => (share.sharing ? share.stop() : void share.start())}
-                  />
-                </span>
-                <span title={call.status === 'idle' ? 'Start Talk to record your screen' : undefined}>
-                  <RecordButton
-                    recording={recording}
-                    elapsedMs={recorder.elapsedMs}
-                    // Readiness gates starting a recording, never ending one: a socket
-                    // that goes while one runs would otherwise leave the control dead and
-                    // the microphone held until the length limit.
-                    disabled={!recording && (call.status !== 'live' || !screen.clientId)}
-                    onToggle={() => void toggleRecording()}
-                  />
-                </span>
+                {/* Both show the agent something during a call, so neither is offered
+                    while there is no call to show it to. */}
+                {call.status !== 'idle' && (
+                  <>
+                    <ShareButton
+                      sharing={share.sharing}
+                      disabled={call.status !== 'live' || recording}
+                      onToggle={() => (share.sharing ? share.stop() : void share.start())}
+                    />
+                    <RecordButton
+                      recording={recording}
+                      elapsedMs={recorder.elapsedMs}
+                      // Readiness gates starting a recording, never ending one: a socket
+                      // that goes while one runs would otherwise leave the control dead and
+                      // the microphone held until the length limit.
+                      disabled={!recording && (call.status !== 'live' || !screen.clientId)}
+                      onToggle={() => void toggleRecording()}
+                    />
+                  </>
+                )}
                 {call.status === 'idle' ? (
-                  <Button variant="outline" onClick={call.start}>
+                  <Button variant="outline" className="h-10" onClick={call.start}>
                     <Mic className="size-4" /> Talk
                   </Button>
                 ) : (
@@ -298,7 +306,7 @@ export function ComputerView({ helpId }: { helpId?: string }) {
                       disabled={call.status !== 'live' || recording}
                       onToggle={call.toggleMute}
                     />
-                    <Button variant="outline" onClick={call.stop}>
+                    <Button variant="outline" className="h-10" onClick={call.stop}>
                       <Pause className="size-4" /> End voice
                     </Button>
                   </>
