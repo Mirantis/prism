@@ -116,6 +116,7 @@ export interface StartVoiceChatInput {
   signal: VoiceChatSignal;
   /** Which client asked. Defaults to the chat composer, the one that came first. */
   surface?: VoiceChatSurface;
+  client?: 'web' | 'tui';
   /**
    * Open a computer for the agent to work on, and give it the tools that act on it.
    *
@@ -166,6 +167,7 @@ class VoiceChatService {
   private mode: VoiceListeningMode = 'open';
   /** Held for the same reason, and read by a second client deciding whether to take over. */
   private startedFrom: VoiceChatSurface = 'chat';
+  private startedClient: 'web' | 'tui' = 'web';
   /** The rate this session speaks, which the client opens its own audio at. */
   private rate: number = VOICE_AUDIO_FORMAT.sampleRate;
 
@@ -177,6 +179,18 @@ class VoiceChatService {
   /** Whether a session is running, for a caller that wants to know before it offers. */
   get isLive(): boolean {
     return this.state === 'live';
+  }
+
+  reportStartFailure(
+    input: Pick<StartVoiceChatInput, 'userId' | 'client' | 'surface' | 'computer'>,
+    stage: string,
+  ): void {
+    trackEvent('voice chat start failed', input.userId, {
+      client: input.client ?? 'web',
+      surface: input.surface ?? 'chat',
+      computer: String(input.computer === true),
+      stage,
+    });
   }
 
   /**
@@ -192,6 +206,7 @@ class VoiceChatService {
    */
   async start(input: StartVoiceChatInput): Promise<boolean> {
     if (!voiceSessionLock.tryAcquire('voice-chat')) {
+      this.reportStartFailure(input, 'busy');
       input.signal.error(
         voiceSessionLock.holder === 'meeting'
           ? `I'm in a meeting call right now. That has to end before I can talk here.`
@@ -330,6 +345,7 @@ class VoiceChatService {
       this.startedAt = Date.now();
       this.mode = mode;
       this.startedFrom = surface;
+      this.startedClient = input.client ?? 'web';
       this.state = 'live';
       computerUse?.signal.addEventListener('abort', () => {
         if (this.epoch === epoch) void this.end(epoch, 'completed', 'Computer task stopped');
@@ -349,6 +365,7 @@ class VoiceChatService {
         '[VoiceChat] Session is live',
       );
       trackEvent('voice chat started', input.userId, {
+        client: input.client ?? 'web',
         tools: String(tools.count),
         locked_in: String(lockedIn),
         response_mode: mode,
@@ -375,11 +392,7 @@ class VoiceChatService {
       // without this a runtime that can never open a computer looks like a runtime nobody
       // called. The stage is the whole of what is reported: the message is an error's
       // prose, which telemetry does not carry.
-      trackEvent('voice chat start failed', input.userId, {
-        surface,
-        computer: String(input.computer === true),
-        stage,
-      });
+      this.reportStartFailure(input, stage);
       // No `ended` frame: this session never reported `live`, so it has no ending to
       // report, and `live → ended` stays the one shape a session has. The error below is
       // the whole answer.
@@ -446,7 +459,7 @@ class VoiceChatService {
     // while the transport closes, from becoming a second ending.
     this.state = 'ending';
     this.epoch += 1;
-    const { conversation, transport, computer, computerUse, signal, userId, startedAt, mode, startedFrom } = this;
+    const { conversation, transport, computer, computerUse, signal, userId, startedAt, mode, startedFrom, startedClient } = this;
     this.clearPublished();
 
     logger.info({ status, reason }, '[VoiceChat] Session ended');
@@ -472,6 +485,7 @@ class VoiceChatService {
       if (userId && startedAt) {
         const stats = conversation?.statistics;
         trackEvent('voice chat ended', userId, {
+          client: startedClient,
           status,
           surface: startedFrom,
           computer: String(computer !== null),

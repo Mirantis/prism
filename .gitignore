@@ -41,3 +41,6 @@ tmp/
 # Agent exports (`.prism` archives from the export endpoint) — host-local, often
 # large, and full of real conversation data
 *.prism
+
+# Bundled audio helper build output
+cli/native/bin/

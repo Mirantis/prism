@@ -11,6 +11,7 @@
  */
 
 import type { SlashCommand } from './commands/types.js';
+import { voiceChatCommand } from './commands/voice-chat.js';
 import { copyCommand } from './commands/copy.js';
 import { schedulesCommand } from './commands/schedules.js';
 import { configCommand } from './commands/config.js';
@@ -40,6 +41,7 @@ export const COMMANDS: SlashCommand[] = [
   copyCommand,
   schedulesCommand,
   configCommand,
+  voiceChatCommand,
   agentGuideCommand,
   renameCommand,
   modelCommand,
@@ -57,15 +59,19 @@ export const COMMANDS: SlashCommand[] = [
   // /help lists the registry. The getter reads COMMANDS lazily (at run() time,
   // after this array is built) so help can live in its own file without a
   // circular import.
-  makeHelpCommand(() => COMMANDS),
+  makeHelpCommand(() => availableCommands()),
   exitCommand,
 ];
 
-export function findExact(name: string): SlashCommand | undefined {
-  return COMMANDS.find((c) => c.name === name);
+export function availableCommands(voiceAvailable = false): SlashCommand[] {
+  return COMMANDS.filter((command) => command.name !== '/voice-chat' || voiceAvailable);
 }
 
-export function filterByPrefix(prefix: string): SlashCommand[] {
+export function findExact(name: string, voiceAvailable = false): SlashCommand | undefined {
+  return availableCommands(voiceAvailable).find((c) => c.name === name);
+}
+
+export function filterByPrefix(prefix: string, voiceAvailable = false): SlashCommand[] {
   if (!prefix.startsWith('/')) return [];
-  return COMMANDS.filter((c) => c.name.startsWith(prefix));
+  return availableCommands(voiceAvailable).filter((c) => c.name.startsWith(prefix));
 }

@@ -18,6 +18,14 @@ npm run dev --workspace=prism-cli
 The runtime owns the `agentId` / `userId` server-side; the CLI sends
 chat envelopes without them.
 
+## Voice chat
+
+`/voice-chat` appears when local input and output audio are available. Enter starts
+the call, M toggles mute, and Esc ends it; use a headset.
+
+Development builds need a C compiler (`cc`, or `clang` on Windows); `npm run dev`
+builds the audio helper. Downloaded binaries include it.
+
 ## Configuration
 
 Display preferences live in `~/.prism/settings.json`. Every key is optional;

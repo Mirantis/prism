@@ -72,6 +72,11 @@ const TARGETS = {
   },
 };
 const cfg = TARGETS[target];
+const audioName = isWin ? 'prism-audio.exe' : 'prism-audio';
+const audioPath = path.join(ROOT, 'cli/native/bin', audioName);
+if (target === 'prism') {
+  execFileSync(process.execPath, [path.join(ROOT, 'scripts/build-cli-audio.mjs')], { stdio: 'inherit' });
+}
 
 // esbuild plugin: stub optional deps ink only loads under DEV=true (the
 // react-devtools-core import is otherwise unresolved and fails the build).
@@ -172,7 +177,12 @@ try {
   file = tmpFile;
 }`
     : `const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prism-sea-')), 'main.mjs');
-fs.writeFileSync(file, Buffer.from(getAsset('main.mjs')));`;
+fs.writeFileSync(file, Buffer.from(getAsset('main.mjs')));
+try {
+  fs.writeFileSync(path.join(path.dirname(file), '${audioName}'), Buffer.from(getAsset('audio')), { mode: 0o700 });
+} catch {
+  // Audio availability is optional; the TUI probes the helper after startup.
+}`;
 
 writeFileSync(
   stubPath,
@@ -195,7 +205,7 @@ writeFileSync(
       main: stubPath,
       output: blobPath,
       disableExperimentalSEAWarning: true,
-      assets: { 'main.mjs': bundlePath },
+      assets: { 'main.mjs': bundlePath, ...(target === 'prism' ? { audio: audioPath } : {}) },
     },
     null,
     2,

@@ -68,6 +68,7 @@ complete the selection, then **Enter** to run. The available commands:
 | `/plugins` | List installed [plugins](plugins.md) and what each contributes |
 | `/compact` | Summarize older history to free up context — see [Compaction](compaction.md) |
 | `/schedules` | Open the scheduled-tasks panel |
+| `/voice-chat` | Open the voice panel when local audio is available |
 | `/config` | Open the identity/config viewer panel |
 | `/exit` | Shut down the TUI |
 
@@ -110,6 +111,11 @@ that the content is gone.
 ## Panels
 
 Two full-screen panels replace the chat view temporarily; **Escape** closes them.
+
+### Voice panel (`/voice-chat`)
+
+Press **Enter** to start, **M** to mute or unmute, and **Esc** to end and return
+to chat. Use a headset; see [Voice chat](voice-chat.md) for audio requirements.
 
 ### Schedules panel (`/schedules`)
 

@@ -10,13 +10,13 @@ message appears in the thread. What you hear is all the call produces.
 
 ## What you need
 
-Only `OPENAI_API_KEY`, the same key voice meetings use — see
+Set `OPENAI_API_KEY` on the runtime, the same key voice meetings use — see
 [Configuration](configuration.md#voice-chat).
 
 If the runtime's outbound network is filtered, allow `api.openai.com`. A runtime
 that cannot reach it refuses the call and says why.
 
-Nothing else. The audio travels on the connection your client already uses for
+Your client supplies the microphone and audio output. Audio uses the connection for
 chat, so a voice chat works wherever chat works: a container, a hosted sandbox
 behind a reverse proxy, the installed binary. A voice meeting needs Chromium and
 PulseAudio; this needs neither.
@@ -32,10 +32,13 @@ call. While a call runs, a second button beside it mutes the microphone: the
 agent hears nothing until you press it again, and keeps talking to you in the
 meantime.
 
-The terminal UI has no voice control. Another client starts a call by speaking
-the runtime's voice frames on the chat connection —
-`src/services/voice/socket-audio.ts` and
-`src/services/websocket-gateway.service.ts` define them.
+In the terminal UI, `/voice-chat` opens the call panel: **Enter** starts, **M**
+mutes or unmutes, and **Esc** ends the call and returns to chat. Use a headset.
+
+The command appears when the machine running the TUI has a microphone and audio
+output. A local TUI can use local audio with a remote runtime; in Docker or SSH,
+audio devices must be available inside that environment. If microphone access
+is refused, allow it in your operating system’s privacy settings and retry.
 
 ## The agent's computer
 

@@ -285,7 +285,7 @@ export async function clearCronTasks(port: number): Promise<void> {
  * close. There's a small race window between close and the test consumer
  * re-binding, but it's good enough for one-shot allocation.
  */
-function findFreePort(): Promise<number> {
+export function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.unref();

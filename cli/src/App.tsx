@@ -18,9 +18,13 @@ import { CommandPopup, PopupItem } from './components/CommandPopup.js';
 import { SchedulesPanel } from './components/SchedulesPanel.js';
 import { ConfigPanel } from './components/ConfigPanel.js';
 import { ResumeList } from './components/ResumeList.js';
+import { VoicePanel } from './components/voice-panel.js';
+import { VoiceController } from './voice/controller.js';
+import { probeAudio } from './voice/audio.js';
 import { apiClient } from './api-client.js';
 import {
   ATTACH_COMMAND,
+  availableCommands,
   filterByPrefix,
   findExact,
   parseCommandLine,
@@ -49,6 +53,9 @@ const ATTACH_PREFIX = `${ATTACH_COMMAND} `;
 
 export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar, resume }) => {
   const { exit } = useApp();
+  const [voiceAvailable, setVoiceAvailable] = useState(false);
+  const [voiceController] = useState(() => new VoiceController(tuiAdapterService));
+  useEffect(() => () => voiceController.dispose(), [voiceController]);
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   // In resume mode, the thread picker owns the screen until the user selects a
   // thread (→ 'chat') or cancels (→ exit). Without `resume` we go straight to chat.
@@ -151,9 +158,14 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // has been typed yet. After Tab or Enter accepts a row (which appends a
   // space), the popup hides and the user is free to type arguments.
   const slashMode = inputValue.startsWith('/') && !inputValue.includes(' ');
+  useEffect(() => {
+    let active = true;
+    void probeAudio().then((available) => { if (active) setVoiceAvailable(available); });
+    return () => { active = false; };
+  }, [slashMode]);
   const filteredCommands = useMemo<SlashCommand[]>(
-    () => (slashMode ? filterByPrefix(inputValue.length === 1 ? '/' : inputValue) : []),
-    [slashMode, inputValue],
+    () => (slashMode ? filterByPrefix(inputValue.length === 1 ? '/' : inputValue, voiceAvailable) : []),
+    [slashMode, inputValue, voiceAvailable],
   );
 
   // Path-completion popup: once '/attach ' has been typed (slashMode is then
@@ -231,8 +243,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // "Shutting down…" render commits, so the frame is visible before the
   // tree unmounts and the process exits.
   const triggerShutdown = useCallback(() => {
+    voiceController.stop();
     setShuttingDown(true);
-  }, []);
+  }, [voiceController]);
 
   // Resume picker → chat: pin the chosen thread, replay its history into the
   // chat surface, then hand over to the normal chat UI. The thread id is sent
@@ -327,6 +340,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         }
       }
       const ctx: CommandContext = {
+        availableCommands: availableCommands(voiceAvailable),
         lastMessageContent: lastEntry?.message.content ?? null,
         requestShutdown: triggerShutdown,
         args,
@@ -345,7 +359,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       // synthetic SYSTEM message when there's actual text to show.
       if (result) appendSystemMessage(result);
     },
-    [entries, appendSystemMessage, triggerShutdown, openPanel, staged, stageAttachment, clearStagedAttachments, activeThreadId, suspendInput],
+    [entries, appendSystemMessage, triggerShutdown, openPanel, staged, stageAttachment, clearStagedAttachments, activeThreadId, suspendInput, voiceAvailable],
   );
 
   // Ctrl+C must work everywhere, including while a panel owns the screen, so
@@ -479,7 +493,12 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       // Staged files survive slash commands — only a chat send consumes them.
       if (trimmed.startsWith('/')) {
         const { headWord, args, rawArgs } = parseCommandLine(trimmed);
-        const cmd = findExact(headWord);
+        const cmd = findExact(headWord, voiceAvailable);
+        if (headWord === '/voice-chat' && !cmd) {
+          setInputValue('');
+          appendSystemMessage('Voice chat needs an available microphone and audio output on this machine.');
+          return;
+        }
         if (cmd) {
           setInputValue('');
           await runCommand(cmd, args, rawArgs);
@@ -530,6 +549,8 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       slashMode,
       filteredCommands,
       acceptHighlightedCommand,
+      voiceAvailable,
+      appendSystemMessage,
     ],
   );
 
@@ -566,7 +587,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   return (
     <Box flexDirection="column" paddingX={1}>
       <Header agentName={agent.name} />
-      {activePanel === 'schedules' ? (
+      {activePanel === 'voice' ? (
+        <VoicePanel controller={voiceController} threadId={activeThreadId} onClose={closePanel} />
+      ) : activePanel === 'schedules' ? (
         <SchedulesPanel api={apiClient} onClose={closePanel} />
       ) : activePanel === 'config' ? (
         <ConfigPanel api={apiClient} onClose={closePanel} />

@@ -11,7 +11,7 @@ import { ApiClient } from '../api-client.js';
 import { AttachmentMeta } from '../attachments.js';
 
 /** Panels that a command can ask the UI to open. */
-export type PanelId = 'schedules' | 'config';
+export type PanelId = 'schedules' | 'config' | 'voice';
 
 /**
  * Canonical name of the /attach command — single source of truth shared by
@@ -21,6 +21,7 @@ export type PanelId = 'schedules' | 'config';
 export const ATTACH_COMMAND = '/attach';
 
 export interface CommandContext {
+  availableCommands?: SlashCommand[];
   /** Content of the most recent message in the chat (any role), or null. */
   lastMessageContent: string | null;
   /** Triggers the same graceful shutdown path as Ctrl+C. */

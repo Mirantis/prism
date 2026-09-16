@@ -21,7 +21,7 @@ ENV HUSKY=0
 ENV CHECKPOINT_DISABLE=1
 
 # openssl is needed by Prisma's query engine on Debian slim (not shipped by default).
-RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends openssl gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 
 RUN npm ci --ignore-scripts
 
@@ -43,6 +43,7 @@ RUN npm run build --workspace=prism-agent-web
 # Build the prism CLI from the workspace. Bundled into the image so an
 # operator can `docker exec -it <container> prism`.
 COPY cli ./cli
+COPY scripts/build-cli-audio.mjs ./scripts/build-cli-audio.mjs
 RUN npm run build --workspace=prism-cli
 
 # Stage 2: Production
@@ -255,6 +256,7 @@ COPY --from=builder /app/web/dist ./web/dist
 # in-container default (http://localhost:3003). Prod deps were installed
 # by the workspace-scoped `npm ci` above; just drop in the built dist.
 COPY --from=builder /app/cli/dist ./cli/dist
+COPY --from=builder /app/cli/native/bin ./cli/native/bin
 RUN chmod +x /app/cli/dist/index.js \
  && ln -s /app/cli/dist/index.js /usr/local/bin/prism
 

@@ -44,6 +44,22 @@ export class WsClient {
     this.pendingOutbound.push(env);
   }
 
+  get connected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  sendConnected(env: WsEnvelope): boolean {
+    if (!this.connected) return false;
+    this.ws!.send(JSON.stringify(env));
+    return true;
+  }
+
+  sendAudio(pcm: Buffer): boolean {
+    if (!this.connected || this.ws!.bufferedAmount > 48_000) return false;
+    this.ws!.send(pcm);
+    return true;
+  }
+
   close(): void {
     this.closed = true;
     if (this.reconnectTimer) {
@@ -78,7 +94,12 @@ export class WsClient {
       this.events.emit('open');
     });
 
-    ws.on('message', (data: WebSocket.RawData) => {
+    ws.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
+      if (isBinary) {
+        const pcm = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
+        this.events.emit('audio', pcm);
+        return;
+      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(data.toString());

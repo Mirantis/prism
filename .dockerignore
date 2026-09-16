@@ -7,6 +7,7 @@ node_modules
 dist
 web/dist
 cli/dist
+cli/native/bin
 
 # Never in an image.
 .env

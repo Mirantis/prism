@@ -9,6 +9,6 @@ export function makeHelpCommand(getCommands: () => SlashCommand[]): SlashCommand
   return {
     name: '/help',
     description: 'List all commands',
-    run: async () => getCommands().map((c) => `${c.name} — ${c.description}`).join('\n'),
+    run: async (ctx) => (ctx.availableCommands ?? getCommands()).map((c) => `${c.name} — ${c.description}`).join('\n'),
   };
 }

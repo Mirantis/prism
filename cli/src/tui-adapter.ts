@@ -251,12 +251,23 @@ class TuiAdapter {
     });
     this.client.events.on('close', () => {
       this.events.emit('status', 'error', 'disconnected, retrying…');
+      this.events.emit('voiceDisconnected');
     });
     this.client.events.on('error', (err: Error) => {
       this.events.emit('status', 'error', err.message);
     });
-    this.client.events.on('envelope', (env: WsEnvelope) => this.onEnvelope(env));
+    this.client.events.on('audio', (pcm: Buffer) => this.events.emit('voiceAudio', pcm));
+    this.client.events.on('envelope', (env: WsEnvelope) => {
+      if (env.type.startsWith('voice_')) this.events.emit('voice', env);
+      else this.onEnvelope(env);
+    });
   }
+
+  get voiceConnected(): boolean { return this.client?.connected ?? false; }
+
+  sendVoice(env: WsEnvelope): boolean { return this.client?.sendConnected(env) ?? false; }
+
+  sendVoiceAudio(pcm: Buffer): boolean { return this.client?.sendAudio(pcm) ?? false; }
 
   markDisconnected(): void {
     if (!this.client) return;

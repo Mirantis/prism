@@ -20,6 +20,7 @@ const { mockChat, mockConfig, mockTitleEvents, mockVoice } = vi.hoisted(() => {
     // audio, so what a test asserts here is what goes to which socket.
     mockVoice: {
       start: vi.fn(),
+      reportStartFailure: vi.fn(),
       pushAudio: vi.fn(),
       stop: vi.fn(),
       // The rate the session speaks, which the gateway states in `voice_hello`. A
@@ -63,6 +64,9 @@ vi.mock('../../config', () => ({
 vi.mock('../voice/voice-chat.service', () => ({
   voiceChatService: mockVoice,
 }));
+
+vi.mock('../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
+import { trackEvent } from '../../lib/telemetry';
 
 // Import after mocking
 import { webSocketGatewayService } from '../websocket-gateway.service';
@@ -792,6 +796,28 @@ describe('Requirement: WebSocket Gateway', () => {
         type: 'voice_hello',
         payload: { format: { encoding: 'pcm16', sampleRate: 24_000, channels: 1 } },
       });
+    });
+
+    it('passes the TUI client identity to the voice service', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'voice_start', payload: { client: 'tui' } });
+      expect(mockVoice.start).toHaveBeenCalledWith(expect.objectContaining({ client: 'tui' }));
+    });
+
+    it('ends a call with an error when its client loses audio', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'voice_start', payload: { client: 'tui' } });
+      await frame(ws, { type: 'voice_client_error', payload: { code: 'device', phase: 'call' } });
+      expect(mockVoice.stop).toHaveBeenCalledWith('The client audio stopped.', 'error');
+    });
+
+    it('reports only the supported local audio failure fields', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'voice_client_error', payload: { code: 'open', phase: 'start', message: 'private words' } });
+      expect(trackEvent).toHaveBeenCalledWith('voice chat client failed', 'user-123', { client: 'tui', code: 'open', phase: 'start' });
+      vi.mocked(trackEvent).mockClear();
+      await frame(ws, { type: 'voice_client_error', payload: { code: 'private words', phase: 'start' } });
+      expect(trackEvent).not.toHaveBeenCalled();
     });
 
     it('passes the listening mode the client asked for', async () => {

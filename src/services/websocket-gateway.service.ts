@@ -13,6 +13,7 @@ import { Server as HttpServer } from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { IncomingMessage } from 'http';
 import { logger } from '../logger';
+import { trackEvent } from '../lib/telemetry';
 import { config } from '../config';
 import { isAllowedOrigin } from '../lib/origin-guard';
 import { serveUpgrades } from './websocket-upgrades';
@@ -45,7 +46,7 @@ interface AuthenticatedWebSocket extends WebSocket {
 }
 
 interface WebSocketMessage {
-  type: 'chat' | 'ping' | 'pong' | 'subscribe' | 'cancel' | 'voice_start' | 'voice_stop';
+  type: 'chat' | 'ping' | 'pong' | 'subscribe' | 'cancel' | 'voice_start' | 'voice_stop' | 'voice_client_error';
   mode?: 'followup' | 'collect';
   content?: string;
   threadId?: string;
@@ -376,6 +377,16 @@ class WebSocketGatewayService {
         await this.handleVoiceStart(ws, userId, message);
         break;
 
+      case 'voice_client_error': {
+        const { code, phase } = payloadOf(message);
+        if (typeof code === 'string' && ['open', 'device', 'connection', 'timeout', 'format'].includes(code)
+          && (phase === 'start' || phase === 'call')) {
+          trackEvent('voice chat client failed', userId, { client: 'tui', code, phase });
+          await this.handleVoiceStop(ws, 'error');
+        }
+        break;
+      }
+
       case 'voice_stop':
         await this.handleVoiceStop(ws);
         break;
@@ -422,36 +433,34 @@ class WebSocketGatewayService {
     message: WebSocketMessage
   ): Promise<void> {
     const payload = payloadOf(message);
+    const refuse = (error: string, stage: string) => {
+      voiceChatService.reportStartFailure({
+        userId,
+        client: payload['client'] === 'tui' ? 'tui' : 'web',
+        surface: payload['computer'] === true ? 'computer' : 'chat',
+        computer: payload['computer'] === true,
+      }, stage);
+      this.sendTo(ws, { type: 'voice_error', payload: { error } });
+    };
 
     const agentId = config.agentId;
     if (!agentId) {
-      this.sendTo(ws, {
-        type: 'voice_error',
-        payload: { error: 'Agent runtime is still initializing; retry shortly' },
-      });
+      refuse('Agent runtime is still initializing; retry shortly', 'initializing');
       return;
     }
 
     const mode = listeningMode(payload);
     if (mode === null) {
-      this.sendTo(ws, {
-        type: 'voice_error',
-        payload: { error: 'mode must be "open" or "addressed"' },
-      });
+      refuse('mode must be "open" or "addressed"', 'mode');
       return;
     }
 
     // Two different situations and two different things for the user to do: end the call
     // on this connection, or find whoever is on the other one.
     if (this.voiceSocket !== null) {
-      this.sendTo(ws, {
-        type: 'voice_error',
-        payload: {
-          error: this.voiceSocket === ws
-            ? 'A voice chat is already running on this connection. Stop it first.'
-            : 'There is already a voice chat running. End that one first.',
-        },
-      });
+      refuse(this.voiceSocket === ws
+        ? 'A voice chat is already running on this connection. Stop it first.'
+        : 'There is already a voice chat running. End that one first.', 'busy');
       return;
     }
 
@@ -472,6 +481,7 @@ class WebSocketGatewayService {
         userId,
         agentId,
         threadId: stringField(payload, 'threadId'),
+        client: payload['client'] === 'tui' ? 'tui' : 'web',
         mode,
         // A session with a computer opens a browser and a desktop for the agent, which
         // the client then watches on a transport of its own; see `computer-endpoint.ts`.
@@ -529,15 +539,16 @@ class WebSocketGatewayService {
   }
 
   /** End the session this socket opened. A stop from any other socket does nothing. */
-  private async handleVoiceStop(ws: AuthenticatedWebSocket): Promise<void> {
+  private async handleVoiceStop(ws: AuthenticatedWebSocket, status: VoiceChatEndStatus = 'completed'): Promise<void> {
     if (this.voiceStarting?.ws === ws) {
       // Still opening, so there is nothing to end yet. `handleVoiceStart` ends it once
       // the start returns, and reads this as the client having asked.
-      this.voiceStarting.cancelled = 'completed';
+      this.voiceStarting.cancelled ??= status;
       return;
     }
     if (this.voiceSocket !== ws) return;
-    await voiceChatService.stop();
+    if (status === 'completed') await voiceChatService.stop();
+    else await voiceChatService.stop('The client audio stopped.', status);
   }
 
   /** How the voice service answers the client that asked for the session. */

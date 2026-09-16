@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 
 import {
-  COMMANDS,
+  availableCommands,
   CommandContext,
   PanelId,
   findExact,
@@ -680,9 +680,9 @@ describe('/agent-guide', () => {
 });
 
 describe('/help', () => {
-  it('lists every registered command name', async () => {
+  it('lists every available command name', async () => {
     const out = await cmd('/help').run(makeCtx());
-    for (const c of COMMANDS) {
+    for (const c of availableCommands()) {
       expect(out).toContain(c.name);
     }
     // /help itself is included.
@@ -1012,5 +1012,20 @@ describe('/plugins', () => {
     api.listPlugins.mockRejectedValue(new ApiError('boom', 500));
     const out = await cmd('/plugins').run(makeCtx({ api: api as unknown as ApiClient }));
     expect(out).toBe('boom');
+  });
+});
+
+
+describe('voice command availability', () => {
+  it('uses the same availability for discovery, help, and dispatch', async () => {
+    expect(findExact('/voice-chat')).toBeUndefined();
+    expect(filterByPrefix('/voice')).toEqual([]);
+    expect(await cmd('/help').run(makeCtx())).not.toContain('/voice-chat');
+    const commands = availableCommands(true);
+    expect(filterByPrefix('/voice', true)).toEqual([findExact('/voice-chat', true)]);
+    expect(await cmd('/help').run(makeCtx({ availableCommands: commands }))).toContain('/voice-chat');
+    const openPanel = vi.fn();
+    await findExact('/voice-chat', true)!.run(makeCtx({ openPanel }));
+    expect(openPanel).toHaveBeenCalledWith('voice');
   });
 });

@@ -380,6 +380,7 @@ describe('ending a session', () => {
     await voiceChatService.stop();
 
     expect(trackEvent).toHaveBeenCalledWith('voice chat started', 'user-1', {
+      client: 'web',
       tools: '3',
       locked_in: 'false',
       response_mode: 'open',

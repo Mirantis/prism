@@ -536,9 +536,8 @@ client already uses for chat, so a voice chat works wherever chat works and need
 no relay and no browser. A voice meeting cannot run in the installed binary; this
 can.
 
-The web UI starts a call from the microphone in its chat composer. The terminal
-UI has no voice control, and any other client needs the runtime's voice frames —
-see [Voice chat](voice-chat.md#starting-a-call).
+Start a call from the Web UI’s microphone button or the terminal UI’s
+`/voice-chat` panel. See [Voice chat](voice-chat.md#starting-a-call).
 
 ## Observability
 
