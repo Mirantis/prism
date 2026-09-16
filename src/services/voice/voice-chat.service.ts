@@ -424,7 +424,7 @@ class VoiceChatService {
   /** Called from the process shutdown path so a container exit ends the call. */
   continueComputer(reason: string): void {
     if (!this.computerUse || !this.conversation) return;
-    this.conversation.notify(`Your user finished helping: ${reason}. Inspect the current screen and continue their request.`);
+    this.conversation.notify(`Your user finished helping. The help request was: ${JSON.stringify(reason)}\n\nInspect the current screen and continue their request.`);
     this.conversation.speakNow();
   }
 

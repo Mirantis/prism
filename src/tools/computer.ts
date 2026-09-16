@@ -51,7 +51,7 @@ export function getComputerTools(
       },
     },
   ) as unknown as AgentComputer;
-  const base = createComputerTools(desktop, desktop, desktop);
+  const base = createComputerTools(desktop, desktop, voiceChannel ? desktop : null);
   const result: Record<string, Tool> = {};
   for (const [name, original] of Object.entries(base)) {
     result[name] = {

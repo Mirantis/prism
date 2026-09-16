@@ -24,7 +24,7 @@ When('I ask Prism to read my inbox and the public notes using its computer', asy
   await page.goto('/chat');
   const home = new HomePage(page);
   await home.typeMessage(
-    `Use your computer to read my inbox at ${site!.url}/inbox and the public notes at ${site!.url}/notes. If the inbox requires sign-in, ask me for help and preserve that tab. Read the public notes while waiting and report their reference. Let me enter the account information myself.`,
+    `Use your computer to read my inbox at ${site!.url}/inbox and the public notes at ${site!.url}/notes. Report what you find on both pages.`,
   );
   await home.sendMessage();
   await home.waitForAgentResponse(180_000);
@@ -43,14 +43,21 @@ Then('Prism requests computer help and reports the public notes', async ({ page 
 });
 
 When('I open the Computer help request', async ({ page }) => {
-  helpConversationUrl = page.url();
   await page.getByLabel('Computer help').getByRole('link', { name: 'Open Computer' }).click();
+  const helpId = new URL(page.url()).searchParams.get('help');
+  const { help } = await (await page.request.get('/agents/computer')).json();
+  helpConversationUrl = `/chat/${help.find((item: { id: string }) => item.id === helpId).threadId}`;
   await expect(page.getByLabel("The agent's screen")).toBeVisible();
 });
 
 Then(
   'Computer keeps help beside the screen and adapts to smaller displays',
   async ({ page, $testInfo }) => {
+    await page.setViewportSize({ width: 1497, height: 722 });
+    await expect.poll(async () => {
+      const box = await page.getByLabel("The agent's screen").boundingBox();
+      return box ? Math.abs(box.width / box.height - 16 / 9) : 1;
+    }).toBeLessThan(0.01);
     await page.setViewportSize({ width: 1440, height: 900 });
     const help = page.getByRole('complementary', { name: 'Computer assistance' });
     const screen = page.getByLabel("The agent's screen");
@@ -71,8 +78,8 @@ Then(
         );
       })
       .toBe(true);
-    await expect(help.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
-    await expect(page.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(1);
+    await expect(help.getByRole('button', { name: 'I’m done', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'I’m done', exact: true })).toHaveCount(1);
     await page.screenshot({ path: $testInfo.outputPath('computer-wide.png'), fullPage: true });
     await page.getByRole('button', { name: 'Open fullscreen' }).click();
     await expect.poll(() => page.evaluate(() => document.fullscreenElement !== null)).toBe(true);
@@ -98,6 +105,11 @@ Then(
       })
       .toBe(true);
     await page.screenshot({ path: $testInfo.outputPath('computer-narrow.png'), fullPage: true });
+    await page.setViewportSize({ width: 1497, height: 722 });
+    await expect.poll(async () => {
+      const box = await page.getByLabel("The agent's screen").boundingBox();
+      return box ? Math.abs(box.width / box.height - 16 / 9) : 1;
+    }).toBeLessThan(0.01);
     await page.setViewportSize({ width: 1440, height: 900 });
   },
 );
@@ -132,6 +144,8 @@ Then(
         { timeout: 180_000 },
       )
       .toContain('INBOX-CLEAR');
+    await expect(page.getByRole('link', { name: 'Open conversation', exact: true }))
+      .toHaveAttribute('href', helpConversationUrl);
     await page.goto(helpConversationUrl);
     const result = page
       .getByTestId('chat-messages')
@@ -146,6 +160,10 @@ Then(
 
 Then('Computer opens without starting voice', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Talk', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Mute computer sound' }))
+    .toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Share your screen', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Share your screen', exact: true })).toBeDisabled();
   await expect(page.getByLabel("The agent's screen")).toBeVisible({ timeout: 60_000 });
   await expect.poll(() => page.getByLabel("The agent's screen").evaluate((canvas: HTMLCanvasElement) =>
     ({ width: canvas.width, height: canvas.height })), { timeout: 60_000 })
@@ -156,6 +174,8 @@ Then('Computer opens without starting voice', async ({ page }) => {
 
 When('I start voice on Computer', async ({ page }) => {
   await page.getByRole('button', { name: 'Talk', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'End voice', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Computer controls').getByRole('button').last()).toHaveText('End voice');
 });
 
 let observer: Page;
@@ -200,7 +220,7 @@ When('I close the controlling viewer and continue from the other viewer', async 
   await page.close();
   await expect(observer.getByRole('status')).toContainText('Paused');
   await expect(queuedChat.getByRole('status')).toContainText('Waiting for the computer');
-  await observer.getByRole('button', { name: 'Continue', exact: true }).click();
+  await observer.getByRole('button', { name: 'Return control', exact: true }).click();
 });
 
 Then('the queued chat reports the public notes', async () => {

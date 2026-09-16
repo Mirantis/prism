@@ -14,3 +14,8 @@ it('uses canonical computer names in declarations and descriptions', () => {
 it('describes model picture coordinates independently of desktop resolution', () => {
   expect(getComputerTools().computer_click.description).toContain('1280 by 720');
 });
+
+it('offers the user screen only to a voice session that supports screen sharing', () => {
+  expect(getComputerTools().computer_user_screen).toBeUndefined();
+  expect(getComputerTools(undefined, () => null).computer_user_screen).toBeDefined();
+});

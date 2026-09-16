@@ -44,6 +44,15 @@ export function ComputerView({ helpId }: { helpId?: string }) {
   const [selectedHelpId, setSelectedHelpId] = useState(helpId);
   useEffect(() => setSelectedHelpId(helpId), [helpId]);
   const selected = waiting.find((help) => help.id === selectedHelpId) ?? waiting[0];
+  const threadId =
+    state?.owner?.threadId ??
+    selected?.threadId ??
+    data?.help?.find((help) => help.id === helpId)?.threadId;
+  const [lastThreadId, setLastThreadId] = useState<string>();
+  useEffect(() => {
+    if (threadId) setLastThreadId(threadId);
+  }, [threadId]);
+  const conversationThreadId = threadId ?? lastThreadId;
   const action = async (path: string, selectedHelp?: string) => {
     setBusy(true);
     setError(null);
@@ -101,55 +110,10 @@ export function ComputerView({ helpId }: { helpId?: string }) {
     <div className={cn('grid items-start gap-4', selected && 'xl:grid-cols-[minmax(0,1fr)_20rem]')}>
       <section
         aria-label="Live computer"
-        className="order-2 min-w-0 overflow-hidden rounded-xl border bg-card shadow-sm xl:order-1"
+        className="order-2 w-full min-w-0 max-w-[calc((100dvh-12rem)*16/9)] justify-self-center overflow-hidden rounded-xl border bg-card shadow-sm xl:order-1"
       >
-        <div className="flex min-h-14 flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
-          <div className="flex items-center gap-2 text-sm font-medium" role="status">
-            <span
-              className={cn(
-                'size-2 shrink-0 rounded-full',
-                state?.paused || (selected && !state?.owner)
-                  ? 'bg-amber-500'
-                  : screen.hasScreen
-                    ? 'bg-emerald-500'
-                    : 'bg-muted-foreground animate-pulse',
-              )}
-            />
-            {label}
-            {Boolean(state?.waiting.length) && (
-              <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
-                {state?.waiting.length} waiting
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {state?.owner?.threadId && (
-              <a
-                href={`/chat/${state.owner.threadId}`}
-                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-              >
-                <MessageSquare className="size-3.5" /> Open conversation
-              </a>
-            )}
-            {state?.owner && (
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => void action('/stop')}
-              >
-                <Square className="size-3" /> Stop current task
-              </Button>
-            )}
-            {state?.paused && !anotherController && !selected && (
-              <Button size="sm" disabled={busy || !screen.clientId} onClick={() => void handBack()}>
-                <Play className="size-3.5" /> Continue
-              </Button>
-            )}
-          </div>
-        </div>
         <ScreenView
-          className="max-h-[calc(100dvh-14rem)] min-h-48 rounded-none [&:fullscreen]:max-h-none"
+          className="rounded-none"
           screenRef={screen.screenRef}
           hasScreen={screen.hasScreen}
           controllable={ownControl && !busy}
@@ -165,42 +129,104 @@ export function ComputerView({ helpId }: { helpId?: string }) {
             </div>
           )}
         </ScreenView>
-        <div className="space-y-3 border-t px-4 py-3">
-          <div aria-label="Computer controls" className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="ghost"
-              aria-label={audio.enabled ? 'Mute computer sound' : 'Play computer sound'}
-              aria-pressed={audio.enabled}
-              onClick={() => void audio.toggle()}
-            >
-              {audio.enabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
-              Sound {audio.enabled ? 'on' : 'off'}
-            </Button>
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              {call.isSpeaking && (
-                <AudioLines aria-label="Speaking" className="size-4 animate-pulse text-sky-500" />
-              )}
-              {call.status === 'idle' ? (
-                <Button variant="outline" onClick={call.start}>
-                  <Mic className="size-4" /> Talk
-                </Button>
-              ) : (
-                <>
-                  <MuteButton
-                    muted={call.isMuted}
-                    disabled={call.status !== 'live'}
-                    onToggle={call.toggleMute}
-                  />
-                  <Button variant="outline" onClick={call.stop}>
-                    <Pause className="size-4" /> End voice
+        <div className="space-y-2 border-t px-3 py-2">
+          <div
+            aria-label="Computer controls"
+            className="flex flex-wrap items-center justify-between gap-2"
+          >
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2 text-sm font-medium" role="status">
+                <span
+                  className={cn(
+                    'size-2 shrink-0 rounded-full',
+                    state?.paused || (selected && !state?.owner)
+                      ? 'bg-amber-500'
+                      : screen.hasScreen
+                        ? 'bg-emerald-500'
+                        : 'bg-muted-foreground animate-pulse',
+                  )}
+                />
+                {label}
+                {Boolean(state?.waiting.length) && (
+                  <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                    {state?.waiting.length} waiting
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {conversationThreadId && (
+                  <a
+                    href={`/chat/${conversationThreadId}`}
+                    aria-label="Open conversation"
+                    title="Open conversation"
+                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <MessageSquare className="size-3.5" /> Chat
+                  </a>
+                )}
+                {state?.owner && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label="Stop current task"
+                    disabled={busy}
+                    onClick={() => void action('/stop')}
+                  >
+                    <Square className="size-3" /> Stop
                   </Button>
+                )}
+                {state?.paused && !anotherController && !selected && (
+                  <Button
+                    size="sm"
+                    disabled={busy || !screen.clientId}
+                    onClick={() => void handBack()}
+                  >
+                    <Play className="size-3.5" /> Return control
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <Button
+                variant="ghost"
+                aria-label={audio.enabled ? 'Mute computer sound' : 'Play computer sound'}
+                aria-pressed={audio.enabled}
+                onClick={() => void audio.toggle()}
+              >
+                {audio.enabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
+                Sound {audio.enabled ? 'on' : 'off'}
+              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {call.isSpeaking && (
+                  <AudioLines aria-label="Speaking" className="size-4 animate-pulse text-sky-500" />
+                )}
+                <span
+                  title={call.status === 'idle' ? 'Start Talk to share your screen' : undefined}
+                >
                   <ShareButton
                     sharing={share.sharing}
                     disabled={call.status !== 'live'}
                     onToggle={() => (share.sharing ? share.stop() : void share.start())}
                   />
-                </>
-              )}
+                </span>
+                {call.status === 'idle' ? (
+                  <Button variant="outline" onClick={call.start}>
+                    <Mic className="size-4" /> Talk
+                  </Button>
+                ) : (
+                  <>
+                    <MuteButton
+                      muted={call.isMuted}
+                      disabled={call.status !== 'live'}
+                      onToggle={call.toggleMute}
+                    />
+                    <Button variant="outline" onClick={call.stop}>
+                      <Pause className="size-4" /> End voice
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">
