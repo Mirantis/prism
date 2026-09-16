@@ -7,6 +7,7 @@ import { isAllowedOrigin } from '../../lib/origin-guard';
 import { serveUpgrades } from '../websocket-upgrades';
 import { randomUUID } from 'node:crypto';
 import { computerService } from './computer.service';
+import { isRecordingFrame, voiceChatService, type RecordingFrame } from '../voice/voice-chat.service';
 import type { ScreenFrame } from './picture-stream';
 
 export const COMPUTER_PATH = '/api/computer';
@@ -34,7 +35,21 @@ export interface ComputerErrorFrame {
   message: string;
 }
 
-export type ComputerFrame = ScreenStartFrame | ScreenPictureFrame | ComputerErrorFrame;
+/**
+ * The call is recording the user's screen, so the page may open its microphone.
+ *
+ * Answered on this socket, which is the one the request arrived on: the microphone
+ * travels on the other, and two sockets have no order between them.
+ */
+export interface RecordingStartedFrame {
+  type: 'recording_started';
+}
+
+export type ComputerFrame =
+  | ScreenStartFrame
+  | ScreenPictureFrame
+  | ComputerErrorFrame
+  | RecordingStartedFrame;
 
 /**
  * The first byte of a binary frame says what is in it. The second is padding, so audio
@@ -131,10 +146,30 @@ class ComputerEndpoint {
     };
     computerService.access.on('change', state);
     state();
-    ws.on('message', (data, binary) => { if (!binary) computerService.input(id, data.toString()); });
+    ws.on('message', (data, binary) => {
+      if (binary) return;
+      const text = data.toString();
+      // A recording belongs to the call this page started rather than to the desktop it
+      // shows, so those frames go to the session and the rest to the computer.
+      let frame: { type?: string };
+      try {
+        frame = JSON.parse(text) as { type?: string };
+      } catch {
+        return;
+      }
+      if (isRecordingFrame(frame.type)) {
+        voiceChatService.handleRecordingFrame(id, frame as RecordingFrame, () =>
+          send(ws, { type: 'recording_started' }),
+        );
+        return;
+      }
+      computerService.input(id, text);
+    });
     ws.on('close', () => {
       computerService.access.off('change', state);
       computerService.detach(id);
+      // The pictures and the end of a recording were going to arrive on this socket.
+      voiceChatService.releaseRecordingClient(id);
     });
     void computerService.attach(id, this.clientFor(ws)).then((detach) => {
       if (ws.readyState !== WebSocket.OPEN) detach();

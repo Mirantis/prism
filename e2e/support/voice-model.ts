@@ -29,12 +29,24 @@ export interface MockState {
   inboundMs: number;
   responsesRequested: number;
   deltasSent: number;
+  /** Windows of a handed-over screen recording, and what each held. */
+  recordingSegments: number;
+  recordingImages: number;
+  recordingAudioMs: number;
 }
 
 /** What the page showed and complained about, for the same failure message. */
 export type DescribeScreen = () => Promise<string>;
 
-let baseline: MockState = { sessions: 0, inboundMs: 0, responsesRequested: 0, deltasSent: 0 };
+let baseline: MockState = {
+  sessions: 0,
+  inboundMs: 0,
+  responsesRequested: 0,
+  deltasSent: 0,
+  recordingSegments: 0,
+  recordingImages: 0,
+  recordingAudioMs: 0,
+};
 
 export async function readState(): Promise<MockState> {
   const response = await fetch(STATE_URL);
@@ -60,7 +72,10 @@ export function describeExchange(state: MockState): string {
     `voice model: sessions open=${state.sessions}, ` +
     `microphone=${Math.round(state.inboundMs - baseline.inboundMs)}ms, ` +
     `answers requested=${state.responsesRequested - baseline.responsesRequested}, ` +
-    `audio frames sent=${state.deltasSent - baseline.deltasSent} ` +
+    `audio frames sent=${state.deltasSent - baseline.deltasSent}, ` +
+    `recording windows=${state.recordingSegments - baseline.recordingSegments} ` +
+    `(${state.recordingImages - baseline.recordingImages} pictures, ` +
+    `${Math.round(state.recordingAudioMs - baseline.recordingAudioMs)}ms of narration) ` +
     `(counted since this scenario started)`
   );
 }

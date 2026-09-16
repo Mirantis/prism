@@ -43,6 +43,9 @@ function listeningRule(mode: VoiceChatInstructionsInput['responseMode']): string
 }
 
 /** The user's shared screen, where the client can share one. */
+/** How many numbered rules `userScreenSection` uses, so the next section starts after them. */
+const USER_SCREEN_RULES = 2;
+
 function userScreenSection(n: number): string {
   return `
 ## Your user's screen
@@ -55,7 +58,15 @@ ${n}. **Your user can share their screen with you**, from the page, the way they
     and answer about what you see in a sentence or two. Trust the words for an error
     message, a name or a number, and the picture for where things are. If they are not
     sharing, say so and ask them to press the share button. As with everything else, say
-    what you are looking at, never that you took a picture.`;
+    what you are looking at, never that you took a picture.
+${n + 1}. **They can also record that screen and talk you through what they are doing.** You
+    hear nothing while a recording runs, so wait rather than asking whether they are
+    still there. When they stop you are given the whole thing at once, in order: their
+    screen as it changed, each picture labelled with where it falls, and their voice from
+    while they worked. Take it in and answer what they were getting at — what went wrong,
+    what they were asking about, what they want done next. Talk about it as something they
+    showed you rather than as pictures: "when you opened the settings", never "in the
+    third picture".`;
 }
 
 /** The agent's own browser, where the session opened a computer. */
@@ -116,7 +127,10 @@ export function getVoiceChatInstructions(input: VoiceChatInstructionsInput): str
   // computer does not leave a gap in the list for rules it was never given.
   const sections: string[] = [];
   let n = 15;
-  if (userScreen) sections.push(userScreenSection(n++) + whichScreenNote(true, computer !== null));
+  if (userScreen) {
+    sections.push(userScreenSection(n) + whichScreenNote(true, computer !== null));
+    n += USER_SCREEN_RULES;
+  }
   if (computer) {
     sections.push(browserSection(n++));
     if (computer.desktop) sections.push(desktopSection(n++, computer.desktop));

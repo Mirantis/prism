@@ -113,7 +113,7 @@ describe('useScreenShare', () => {
     );
 
     const view = renderHook(() => useScreenShare(send));
-    let starting!: Promise<void>;
+    let starting!: Promise<MediaStream | null>;
     act(() => {
       starting = view.result.current.start();
     });
@@ -136,7 +136,7 @@ describe('useScreenShare', () => {
     );
 
     const view = renderHook(() => useScreenShare(send));
-    let starting!: Promise<void>;
+    let starting!: Promise<MediaStream | null>;
     act(() => {
       starting = view.result.current.start();
     });

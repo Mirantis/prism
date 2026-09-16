@@ -40,7 +40,11 @@
 import { logger } from '../../logger';
 import { config } from '../../config';
 import { Downsampler, Upsampler, MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } from './resampler';
-import { RealtimeSession, type RealtimeSessionOptions } from './realtime-session';
+import {
+  RealtimeSession,
+  type RealtimeSessionOptions,
+  type RecordingSegment,
+} from './realtime-session';
 import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { BargeInPolicy } from './barge-in';
 import { ResponsePolicy, type EffectiveMode, type ResponseMode } from './response-policy';
@@ -517,6 +521,24 @@ export class VoiceConversation {
   showImage(imageUrl: string, note: string): boolean {
     if (this.stopped || !this.session.isOpen) return false;
     this.session.sendImage(imageUrl, note);
+    return true;
+  }
+
+  /**
+   * Show the model a recording of the user's own screen, with the narration over it.
+   *
+   * The audio is already at the model's own rate — the recording converts it as it
+   * arrives — so it goes through untouched rather than through `toModel`, whose filter
+   * state belongs to the live microphone.
+   *
+   * Asks for an answer as part of the same act. Nothing else would: the segments are
+   * items rather than speech, so no turn ends and the policy is never consulted, and a
+   * user who has just handed over a recording is waiting to be told about it.
+   */
+  showRecording(segments: RecordingSegment[], note: string): boolean {
+    if (this.stopped || !this.session.isOpen) return false;
+    this.session.sendRecording(segments, note);
+    this.speakNow();
     return true;
   }
 

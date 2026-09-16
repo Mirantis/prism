@@ -39,7 +39,14 @@ const MUTED_WINDOW_MS = 2_000;
 const status = (page: Page) => page.getByRole('status');
 const screen = (page: Page) => page.getByLabel("The agent's screen");
 const muteButton = (page: Page) => page.getByRole('button', { name: /microphone$/ });
+const shareButton = (page: Page) =>
+  page.getByRole('button', { name: /^(Share|Stop sharing) your screen$/ });
+const recordButton = (page: Page) =>
+  page.getByRole('button', { name: /^(Record|Stop recording) your screen$/ });
 const speakingCue = (page: Page) => page.getByLabel('Speaking');
+
+/** How long a recording runs for: enough narration to hand over, and more than one look. */
+const RECORDING_MS = 4_000;
 
 /** What the page says about the call, and what the browser complained about. */
 const describeScreen = (page: Page) => async (): Promise<string> => {
@@ -49,14 +56,18 @@ const describeScreen = (page: Page) => async (): Promise<string> => {
   // live reading rather than a missing element.
   const state = (await read(status(page))) ?? 'live';
   const alert = await read(page.getByRole('alert'));
-  const mute =
-    (await muteButton(page).count()) > 0
-      ? await muteButton(page).getAttribute('aria-label')
-      : null;
+  const label = async (locator: ReturnType<typeof muteButton>) =>
+    (await locator.count()) > 0 ? await locator.first().getAttribute('aria-label') : null;
+  const mute = await label(muteButton(page));
+  // Both of these say what they would do next, so they report the state they are in. The
+  // share matters to a recording failure: a picker the browser refuses leaves no message.
+  const share = await label(shareButton(page));
+  const record = await label(recordButton(page));
   return (
     `screen: status=${JSON.stringify(state)}, ` +
     `refusal=${alert === null ? 'none' : JSON.stringify(alert)}, ` +
-    `canvas=${await canvasSize(page)}, mute=${mute ?? 'absent'}. ${describeBrowser()}`
+    `canvas=${await canvasSize(page)}, mute=${mute ?? 'absent'}, ` +
+    `share=${share ?? 'absent'}, record=${record ?? 'absent'}. ${describeBrowser()}`
   );
 };
 
@@ -86,13 +97,45 @@ Given('the runtime can give the agent a computer', async () => {
   test.skip(true, 'this host has no desktop toolchain, so the agent has no computer');
 });
 
+/**
+ * A screen for the page to share, since this runner has none.
+ *
+ * `--auto-select-desktop-capture-source` answers the browser's picker by naming a screen,
+ * and measured on a machine with no `DISPLAY` there is no screen to name: the picker waits
+ * for a person and the share never starts. The suite hands Chromium a synthetic microphone
+ * for the same reason, and this is the same substitution for the other half of a
+ * recording. What it does not cover is the picker itself, which is the browser's.
+ */
+async function stubDisplayCapture(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1280;
+    canvas.height = 720;
+    const ctx = canvas.getContext('2d');
+    let step = 0;
+    // Redrawn so the screen changes, which is what the page keeps a picture of.
+    const draw = () => {
+      step += 1;
+      if (!ctx) return;
+      ctx.fillStyle = `hsl(${(step * 40) % 360} 60% 28%)`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'white';
+      ctx.font = '88px sans-serif';
+      ctx.fillText(`step ${step}`, 90, 380);
+    };
+    draw();
+    setInterval(draw, 1_000);
+    navigator.mediaDevices.getDisplayMedia = async () => canvas.captureStream(10);
+  });
+}
+
 When('I open the Computer page', async ({ page }) => {
   // The call opens a real browser for the agent, with a profile of its own. A cold one
   // costs most of the default budget on its own, and this scenario then runs a second
   // call from the composer after it.
   test.setTimeout(300_000);
-  // The microphone grant is Playwright's, per origin, so no prompt appears. Opening the
-  // route is the whole gesture: the page asks for the session itself.
+  await stubDisplayCapture(page);
+  // The microphone grant is Playwright's, per origin, so no prompt appears.
   await page.goto('/computer');
 });
 
@@ -166,4 +209,48 @@ When('I leave the Computer page', async ({ page }) => {
   // Leaving is what ends the call: the page has no control that does, by design.
   await page.goto('/chat');
   await page.waitForLoadState('networkidle');
+});
+
+When('I record my screen for a few seconds', async ({ page }) => {
+  // The picker is answered by `stubDisplayCapture`, installed when the page opened.
+  await recordButton(page).click();
+  try {
+    await expect(recordButton(page)).toHaveAttribute('aria-label', 'Stop recording your screen', {
+      timeout: EXCHANGE_TIMEOUT_MS,
+    });
+  } catch {
+    throw new Error(`the recording did not start. ${await describeScreen(page)()}`);
+  }
+  // Long enough for the microphone to carry something worth handing over, and for the
+  // sampler to have looked at the screen more than once.
+  await new Promise((resolve) => setTimeout(resolve, RECORDING_MS));
+});
+
+Then('the voice model hears nothing while the recording runs', async ({ page }) => {
+  // The narration goes into the recording instead of the session. Silence here is the
+  // whole point: the agent does not answer over a demonstration.
+  const settled = await readState();
+  await new Promise((resolve) => setTimeout(resolve, MUTED_WINDOW_MS));
+  const after = await readState();
+  expect(
+    Math.round(after.inboundMs - settled.inboundMs),
+    `the recording's narration still reached the voice model live. ` +
+      `${describeExchange(after)}. ${await describeScreen(page)()}`,
+  ).toBe(0);
+});
+
+When('I stop the recording', async ({ page }) => {
+  await recordButton(page).click();
+  await expect(recordButton(page)).toHaveAttribute('aria-label', 'Record your screen');
+});
+
+Then('the voice model is given my screen and my voice from the recording', async ({ page }) => {
+  await waitForModel(
+    'the recording reaching the voice model as pictures and narration',
+    (state) =>
+      state.recordingSegments - getBaseline().recordingSegments > 0 &&
+      state.recordingImages - getBaseline().recordingImages > 0 &&
+      state.recordingAudioMs - getBaseline().recordingAudioMs > 0,
+    describeScreen(page),
+  );
 });

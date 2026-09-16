@@ -37,8 +37,32 @@ export const VOICE_AUDIO_FORMAT = {
  * so a server-wide limit would drop a text client mid-conversation over a large paste.
  * This drops the frame and leaves the call running.
  */
-function maxFrameBytes(sampleRate: number): number {
+export function maxFrameBytes(sampleRate: number): number {
   return sampleRate * 2;
+}
+
+/**
+ * Whether a frame the client sent is microphone audio worth carrying.
+ *
+ * An odd byte count is not: pcm16 is two bytes a sample, and half a sample would shift
+ * every sample after it by a byte and turn the rest of the frame into noise. Nor is one
+ * past `maxBytes`, since everything downstream is metered by the second of audio.
+ *
+ * Read wherever a frame is first acted on rather than only by the transport. A recording
+ * of the user's screen takes the frame before the transport sees it, and resampling one
+ * nobody asked for is the work this bounds.
+ */
+export function isAudioFrameUsable(pcm: Buffer, maxBytes: number): boolean {
+  if (pcm.length === 0) return false;
+  if (pcm.length % 2 !== 0) {
+    logger.warn({ bytes: pcm.length }, '[VoiceChat] Dropped an audio frame with a half sample');
+    return false;
+  }
+  if (pcm.length > maxBytes) {
+    logger.warn({ bytes: pcm.length }, '[VoiceChat] Dropped an audio frame over the size limit');
+    return false;
+  }
+  return true;
 }
 
 /** What the transport needs from whoever owns the socket. */
@@ -97,26 +121,10 @@ export class SocketAudio {
     },
   };
 
-  /**
-   * A frame the client sent.
-   *
-   * An odd byte count is dropped rather than passed on: pcm16 is two bytes a
-   * sample, and half a sample would shift every sample after it by a byte and
-   * turn the rest of the frame into noise.
-   *
-   * A frame past `MAX_FRAME_BYTES` is dropped too. Everything downstream is metered by
-   * the second of audio, so a frame nobody asked for is billed as if somebody had.
-   */
+  /** A frame the client sent, carried on if `isAudioFrameUsable` says it is audio. */
   push(pcm: Buffer): void {
-    if (this.closed || pcm.length === 0) return;
-    if (pcm.length % 2 !== 0) {
-      logger.warn({ bytes: pcm.length }, '[VoiceChat] Dropped an audio frame with a half sample');
-      return;
-    }
-    if (pcm.length > this.maxFrameBytes) {
-      logger.warn({ bytes: pcm.length }, '[VoiceChat] Dropped an audio frame over the size limit');
-      return;
-    }
+    if (this.closed) return;
+    if (!isAudioFrameUsable(pcm, this.maxFrameBytes)) return;
     this.events.onAudio(pcm);
   }
 

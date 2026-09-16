@@ -40,6 +40,10 @@ const state = {
   inboundMs: 0,
   responsesRequested: 0,
   deltasSent: 0,
+  /** Windows of a handed-over recording, and what each held. */
+  recordingSegments: 0,
+  recordingImages: 0,
+  recordingAudioMs: 0,
 };
 
 const server = http.createServer((req, res) => {
@@ -72,10 +76,15 @@ wss.on('connection', (ws: WebSocket) => {
   send(ws, { type: 'session.created', session: { id: 'sess_mock' } });
 
   ws.on('message', (data) => {
-    let event: { type?: string; audio?: string; event_id?: string };
+    let event: { type?: string; audio?: string; event_id?: string; item?: unknown };
     try {
       event = JSON.parse(data.toString());
     } catch {
+      return;
+    }
+
+    if (event.type === 'conversation.item.create') {
+      countRecordingSegment(event.item);
       return;
     }
 
@@ -104,6 +113,26 @@ wss.on('connection', (ws: WebSocket) => {
     log(`session closed (${state.sessions} open)`);
   });
 });
+
+/**
+ * Count one window of a recording the runtime handed over.
+ *
+ * A window carries its label beside its audio, which is what tells it from a turn
+ * somebody spoke — the real API's own items for those hold audio and nothing else.
+ */
+function countRecordingSegment(item: unknown): void {
+  const content = (item as { content?: { type?: string; audio?: string }[] } | undefined)?.content;
+  if (!Array.isArray(content)) return;
+  const audio = content.filter((part) => part.type === 'input_audio');
+  if (audio.length === 0 || audio.length === content.length) return;
+
+  state.recordingSegments += 1;
+  state.recordingImages += content.filter((part) => part.type === 'input_image').length;
+  for (const part of audio) {
+    state.recordingAudioMs += (Buffer.from(part.audio ?? '', 'base64').length / 2 / SAMPLE_RATE) * 1000;
+  }
+  log(`recording window ${state.recordingSegments}: ${content.length} parts`);
+}
 
 /** How much of a pcm16 buffer is loud enough to count as somebody speaking. */
 function speechMs(pcm: Buffer): number {
