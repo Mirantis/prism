@@ -22,7 +22,7 @@ export interface VoiceChatInstructionsInput {
   responseMode: 'open' | 'addressed';
   /**
    * The computer the agent is working on, when the session opened one. `desktop` is the
-   * size of the picture `see_screen` gives when the runtime owns the display, so the
+   * size of the picture `computer_screen` gives when the runtime owns the display, so the
    * `computer_*` tools exist. Coordinates are read off that picture, not off the screen.
    */
   computer: { desktop: { width: number; height: number } | null } | null;

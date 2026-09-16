@@ -78,7 +78,7 @@ const START_PAGE =
 /** The label a screenshot carries into the session; see `meeting-bot.service.ts`. */
 const SCREEN_LOOK_NOTE =
   'This is a picture of your own screen as it looks right now, in answer to your ' +
-  'see_screen call. Your user did not say this.';
+  'computer_screen call. Your user did not say this.';
 const DESKTOP_AFTER_NOTE =
   'This is a picture of your own screen right after the desktop action you just took. ' +
   'Your user did not say this.';
@@ -86,7 +86,7 @@ const DESKTOP_AFTER_NOTE =
 const ACTION_SETTLE_MS = 400;
 const USER_SCREEN_NOTE =
   "This is a picture of your user's own screen, which they are sharing with you, in answer " +
-  'to your see_user_screen call. Your user did not say this.';
+  'to your computer_user_screen call. Your user did not say this.';
 
 /**
  * A page frame that is about the user's shared screen rather than the desktop's input:
@@ -340,7 +340,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
       case 'user_screen_started':
         logger.info('[VoiceChat] User started sharing their screen');
         this.channel?.notify(
-          'Your user has just started sharing their screen with you. Call see_user_screen ' +
+          'Your user has just started sharing their screen with you. Call computer_user_screen ' +
             'whenever you want to look at it, and do look when they refer to something on it.',
         );
         return;
