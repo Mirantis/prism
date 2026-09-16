@@ -22,7 +22,7 @@ A blocked website can wait while Prism works elsewhere. When you hand back contr
 
 ## Several requests
 
-Computer requests take turns. A conversation waiting for the desktop shows **Waiting for the computer** and offers **Stop current task**. Other requests can continue using connectors or shell tools.
+Computer requests take turns. A conversation waiting for the desktop shows **Waiting for the computer** and offers **Stop current task**. Other requests can continue using connectors or shell tools. Prism handles desktop steps in the main conversation and can delegate other work to subagents.
 
 Voice can discuss the screen and pass instructions to an active chat task. A voice call creates no chat history of its own.
 

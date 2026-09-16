@@ -2,7 +2,7 @@
  * Context Builder Tests
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 const { mockBuildImportantMemories, mockBuildRelevantMemories } = vi.hoisted(() => ({
   mockBuildImportantMemories: vi.fn(),
@@ -24,6 +24,16 @@ import {
   buildConversationMessages,
   buildSteeringMessage,
 } from './context-builder';
+vi.mock('../lib/has-binary', () => ({ missingBinary: vi.fn(async () => null) }));
+vi.mock('../services/meeting/browser-stack', async (original) => ({
+  ...(await original<typeof import('../services/meeting/browser-stack')>()),
+  isBrowserAvailable: vi.fn(async () => true),
+}));
+import { initComputerAvailability } from '../services/computer/supported';
+beforeAll(async () => {
+  await initComputerAvailability();
+});
+
 import { createTestAgentContext } from '../test-utils/factories';
 import type { AttachmentMeta } from '../services/attachment.service';
 
@@ -1328,4 +1338,10 @@ describe('buildSteeringMessage', () => {
     expect(message.content as string).toContain('doc.pdf');
     expect(message.content as string).toContain('id=c');
   });
+});
+
+it.each(['meeting', 'subagent'] as const)('omits desktop instructions from %s', async (mode) => {
+  const prompt = await promptText(createTestAgentContext(), mode);
+  expect(prompt).not.toContain('# Your computer');
+  expect(prompt).not.toContain('computer_continue');
 });

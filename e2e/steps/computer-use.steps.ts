@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
 import { startComputerSite } from '../support/computer-site';
 import * as dbHelper from '../support/db-helper';
+import { getSlackState } from '../support/slack-state';
 import { DEFAULT_AGENT_ID } from '../fixtures/test-data';
 
 const { Given, When, Then, After } = createBdd();
@@ -239,4 +240,27 @@ Then('Prism confirms the sign-in request is closed', async ({ page, $testInfo })
   expect(requests).toHaveLength(1);
   expect(requests[0].blocks).toEqual([expect.objectContaining({ status: 'dismissed' })]);
   await page.screenshot({ path: $testInfo.outputPath('computer-dismissed.png'), fullPage: true });
+});
+
+When('I ask for computer sign-in help from Slack', async () => {
+  const slack = getSlackState();
+  const result = await slack.userClient!.chat.postMessage({
+    channel: slack.channelId,
+    text: `<@${slack.botUserId}> Use your computer to read my inbox at ${site!.url}/inbox. If sign-in is required, use computer_help so I can sign in myself.`,
+  });
+  slack.messageTs = result.ts!;
+});
+
+Then('an invalid help continuation keeps my control and the chat waiting', async ({ page }) => {
+  const before = await (await page.request.get('/agents/computer')).json();
+  expect(before.paused).toBe(true);
+  expect(before.controller).toBeTruthy();
+  const response = await page.request.post('/agents/computer/help/00000000-0000-4000-8000-000000000000', {
+    data: { action: 'continue', clientId: before.controller },
+  });
+  expect(response.status()).toBe(409);
+  const after = await (await page.request.get('/agents/computer')).json();
+  expect(after.paused).toBe(true);
+  expect(after.controller).toBe(before.controller);
+  await expect(queuedChat.getByRole('status')).toContainText('Waiting for the computer');
 });

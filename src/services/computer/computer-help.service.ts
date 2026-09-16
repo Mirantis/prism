@@ -144,7 +144,7 @@ class ComputerHelpService {
   ): Promise<void> {
     if (action === 'continue' && computerService.access.paused) {
       if (!clientId) throw new Error('Hand control back in Computer first.');
-      computerService.handBack(clientId);
+      computerService.assertCanHandBack(clientId);
     }
     const help = await this.resolve(
       agentId,
@@ -153,6 +153,10 @@ class ComputerHelpService {
       action === 'continue' ? 'continued' : 'dismissed',
     );
     if (!help || action === 'dismiss') return;
+    if (computerService.access.paused) {
+      if (!clientId) throw new Error('Hand control back in Computer first.');
+      computerService.handBack(clientId);
+    }
     if (!help.threadId) {
       const { voiceChatService } = await import('../voice/voice-chat.service');
       voiceChatService.continueComputer(help.reason);

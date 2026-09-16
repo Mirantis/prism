@@ -34,3 +34,5 @@ export const DEFAULT_AGENT_SEED = {
  * database as a side effect. playwright.config.ts creates the directory.
  */
 export const E2E_WORKSPACE = path.join(os.tmpdir(), 'prism-e2e-workspace');
+
+export const SLACK_COMPUTER_PUBLIC_URL = 'http://localhost:5173';

@@ -136,8 +136,13 @@ export class ComputerAccess extends EventEmitter {
     this.changed();
   }
 
+  assertCanHandBack(clientId: string): void {
+    if ((this.human && this.human !== clientId) || (this.claimant && this.claimant !== clientId))
+      throw new Error('Another viewer has control.');
+  }
+
   handBack(clientId: string): void {
-    if (this.human && this.human !== clientId) throw new Error('Another viewer has control.');
+    this.assertCanHandBack(clientId);
     this.human = null;
     this.claimant = null;
     this.paused = false;

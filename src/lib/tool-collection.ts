@@ -16,7 +16,7 @@ import { getMCPTools } from './mcp-client';
 import { capToolNames } from './tool-names';
 import { createTaskTool, type Invoker } from './task-tool';
 import { getComputerTools } from '../tools/computer';
-import { hasComputer } from '../services/computer/supported';
+import { hasComputerForMode } from '../services/computer/supported';
 import type { ComputerUse } from '../services/computer/computer-access';
 import { getMemoryTools } from '../tools/memory';
 import { getCronTools } from '../tools/cron';
@@ -117,7 +117,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   const originChannel = input.originChannel ?? 'websocket';
   const builtInTools: Record<string, Tool> = {
     ...getMemoryTools(input.userId, input.agentId),
-    ...(hasComputer() ? getComputerTools(input.computerUse) : {}),
+    ...(hasComputerForMode(input.mode) ? getComputerTools(input.computerUse) : {}),
     ...getCronTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
     ...getGoalTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
     ...getAgentConfigTools(),

@@ -1,6 +1,6 @@
 import { computerHelpNotices } from './prompts/computer-prompt';
 import { computerHelpService } from './services/computer/computer-help.service';
-import { hasComputer } from './services/computer/supported';
+import { hasComputerForMode } from './services/computer/supported';
 import { computerService } from './services/computer/computer.service';
 /**
  * Unified Agent Invocation
@@ -130,7 +130,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // Per-turn runtime notices → surfaced as an authoritative system-prompt
     // section (e.g. a Slack attachment that failed to download).
     context.runtimeNotices = request.runtimeNotices;
-    if (hasComputer() && request.threadId) {
+    if (hasComputerForMode(request.mode) && request.threadId) {
       const help = await computerHelpService.list(request.agentId, request.userId, request.threadId);
       context.runtimeNotices = [
         ...(request.runtimeNotices ?? []),
