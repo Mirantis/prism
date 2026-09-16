@@ -51,6 +51,11 @@ export function hasComputer(): boolean {
   return computerAvailable;
 }
 
+/** Meetings use their own browser; subagents return work to the desktop's owning invocation. */
+export function hasComputerForMode(mode: string): boolean {
+  return hasComputer() && mode !== 'meeting' && mode !== 'subagent';
+}
+
 /** Probe once and remember the answer. Never throws: a failed probe means "no computer". */
 export async function initComputerAvailability(): Promise<boolean> {
   try {

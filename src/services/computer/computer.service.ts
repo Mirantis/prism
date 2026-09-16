@@ -112,15 +112,22 @@ class ComputerService {
     return this.computer?.tabTarget(tab);
   }
 
-  handBack(id: string): void {
+  assertCanHandBack(id: string): void {
     if (!this.viewers.has(id)) throw new Error('Open Computer before continuing.');
+    this.access.assertCanHandBack(id);
+  }
+
+  handBack(id: string): void {
+    this.assertCanHandBack(id);
     this.computer?.releaseInput();
     this.access.handBack(id);
   }
 
   continueFromChat(): void {
+    const id = this.access.human ?? 'chat';
+    this.access.assertCanHandBack(id);
     this.computer?.releaseInput();
-    this.access.handBack(this.access.human ?? 'chat');
+    this.access.handBack(id);
   }
 
   input(id: string, text: string): void {

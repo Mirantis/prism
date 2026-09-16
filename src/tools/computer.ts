@@ -154,15 +154,16 @@ export function getComputerTools(
     inputSchema: z.object({ helpId: z.string(), dismiss: z.boolean().default(false) }),
     execute: async ({ helpId, dismiss }) => {
       if (!use) throw new Error('Computer help requires an active invocation.');
-      if (!dismiss && computerService.access.paused) computerService.continueFromChat();
       const help = await computerHelpService.resolve(
         use.agentId,
         use.userId,
         helpId,
         dismiss ? 'dismissed' : 'continued',
       );
+      if (!help) return { success: false, message: 'This help request is already closed.' };
+      if (!dismiss && computerService.access.paused) computerService.continueFromChat();
       const goalResumed =
-        !dismiss && help
+        !dismiss
           ? await computerHelpService.resumeGoal(use.agentId, use.userId, help)
           : false;
       return {

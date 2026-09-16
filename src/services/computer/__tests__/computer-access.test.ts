@@ -141,3 +141,23 @@ describe('computer ownership', () => {
     access.finish(use);
   });
 });
+
+it('rejects hand-back by another viewer while takeover waits for an action', async () => {
+  const access = new ComputerAccess();
+  const use = access.create(caller);
+  const started = deferred(), finish = deferred();
+  const action = access.run(use, async () => {
+    started.resolve();
+    await finish.promise;
+  });
+  await started.promise;
+  const takeover = access.takeControl('first');
+  expect(() => access.handBack('second')).toThrow('Another viewer has control');
+  expect(access.paused).toBe(true);
+  finish.resolve();
+  await action;
+  await takeover;
+  expect(access.human).toBe('first');
+  access.handBack('first');
+  access.finish(use);
+});

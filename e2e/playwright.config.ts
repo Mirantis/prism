@@ -5,7 +5,12 @@ import fs from 'fs';
 import os from 'os';
 import { execSync } from 'child_process';
 import { config } from 'dotenv';
-import { DEFAULT_AGENT_ID, E2E_WORKSPACE, TEST_USER } from './fixtures/test-data';
+import {
+  DEFAULT_AGENT_ID,
+  E2E_WORKSPACE,
+  TEST_USER,
+  SLACK_COMPUTER_PUBLIC_URL,
+} from './fixtures/test-data';
 import { MOCK_REALTIME_PORT } from './support/mock-realtime-port';
 
 // Load e2e environment variables (.env.e2e.local overrides for secrets)
@@ -212,8 +217,10 @@ export default defineConfig({
       stderr: 'pipe',
       env: {
         PORT: String(RUNTIME_PORT),
-        PRISM_PUBLIC_URL: '',
-        NEXUS_INGRESS_ORIGINS_WEB: `http://localhost:${WEB_PORT},http://alias.localhost:${WEB_PORT}`,
+        PRISM_PUBLIC_URL: process.env.SLACK_E2E_BOT_TOKEN ? SLACK_COMPUTER_PUBLIC_URL : '',
+        NEXUS_INGRESS_ORIGINS_WEB: process.env.SLACK_E2E_BOT_TOKEN
+          ? `http://alias.localhost:${WEB_PORT}`
+          : `http://localhost:${WEB_PORT},http://alias.localhost:${WEB_PORT}`,
         LENS_SANDBOX_INGRESS_PORTS: `web=${RUNTIME_PORT}`,
         DATABASE_URL: E2E_DATABASE_URL,
         AGENT_ID: DEFAULT_AGENT_ID,

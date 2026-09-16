@@ -45,6 +45,7 @@ Feature: The agent's computer in the browser
     Then the other viewer can watch but cannot take control
     When I ask for the public notes in a chat while I have control
     Then the chat shows that it is waiting for the computer
+    And an invalid help continuation keeps my control and the chat waiting
     When I close the controlling viewer and continue from the other viewer
     Then the queued chat reports the public notes
 

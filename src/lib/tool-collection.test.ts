@@ -7,7 +7,7 @@
  * that could answer to `memory_write` would inherit that name's exemptions
  * without being the tool they were written for.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
@@ -26,6 +26,16 @@ vi.mock('../services/plugin-mcp.service', () => ({
 vi.mock('../services/agent-workspace.service', () => ({
   agentWorkspaceService: { getSubagents: mockGetSubagents },
 }));
+
+vi.mock('./has-binary', () => ({ missingBinary: vi.fn(async () => null) }));
+vi.mock('../services/meeting/browser-stack', async (original) => ({
+  ...(await original<typeof import('../services/meeting/browser-stack')>()),
+  isBrowserAvailable: vi.fn(async () => true),
+}));
+import { initComputerAvailability } from '../services/computer/supported';
+beforeAll(async () => {
+  await initComputerAvailability();
+});
 
 import { collectTools } from './tool-collection';
 import { attachmentService } from '../services/attachment.service';
@@ -147,5 +157,24 @@ describe('collectTools workspace root', () => {
       else process.env.SHELL_WORKSPACE_ROOT = original;
       await fs.rm(workspaceRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe('computer tool modes', () => {
+  beforeEach(() => {
+    mockGetSubagents.mockResolvedValue([]);
+    mockGetMCPTools.mockResolvedValue({});
+    mockGetPluginTools.mockResolvedValue({});
+  });
+
+  it.each(['meeting', 'subagent'])('omits desktop tools from %s', async (mode) => {
+    const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode, lockedIn: false, taskInvoker: vi.fn() });
+    expect(Object.keys(tools).filter((name) => name.startsWith('computer_'))).toEqual([]);
+  });
+
+  it.each(['chat', 'goal', 'cron', 'heartbeat', 'webhook'])('keeps stable desktop declarations in %s without an execution context', async (mode) => {
+    const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode, lockedIn: false, taskInvoker: vi.fn() });
+    expect(tools.computer_browse).toBeDefined();
+    expect(tools.computer_help).toBeDefined();
   });
 });
