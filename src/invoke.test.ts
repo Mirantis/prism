@@ -131,10 +131,10 @@ vi.mock('./prompts/context-builder', () => ({
   buildRecalledMemories: mockBuildRecalledMemories,
   recalledMemoriesMessage: (recalled: string) => ({
     role: 'user',
-    content: `Context:\n<recalled-memories>\n${recalled}\n</recalled-memories>`,
+    content: `\n\nContext:\n<recalled-memories>\n${recalled}\n</recalled-memories>`,
   }),
   recalledMemoryContent: (recalled: string) =>
-    `Context:\n<recalled-memories>\n${recalled}\n</recalled-memories>`,
+    `\n\nContext:\n<recalled-memories>\n${recalled}\n</recalled-memories>`,
   buildConversationMessages: mockBuildConversationMessages,
   // Text-only stand-in for the real shaping (content parts for attachments are
   // covered in context-builder.test.ts); these specs only care that a steering
@@ -2049,7 +2049,7 @@ describe('invoke', () => {
   describe('recalled memories', () => {
     const RECALL = {
       role: 'user',
-      content: 'Context:\n<recalled-memories>\n- Mario likes chocolate\n</recalled-memories>',
+      content: '\n\nContext:\n<recalled-memories>\n- Mario likes chocolate\n</recalled-memories>',
     };
 
     it('closes the request with the recalled block', async () => {
@@ -2064,13 +2064,11 @@ describe('invoke', () => {
 
       // After the question, not before: that is where the stored row sorts, since the
       // engine writes the user's message before the turn runs. A run of user messages
-      // merges into one provider turn, so the model sees them together — with the
-      // question closed by a blank line, since the two texts share one block
-      // (`lib/message-boundaries.ts`).
+      // merges into one provider turn, so the model sees them together.
       expect(mockGenerateText.mock.calls[0][0].messages).toEqual([
         { role: 'user', content: 'hi' },
         { role: 'assistant', content: 'hello' },
-        { role: 'user', content: 'q\n\n' },
+        { role: 'user', content: 'q' },
         RECALL,
       ]);
     });
@@ -2143,7 +2141,7 @@ describe('invoke', () => {
 
       expect(mockAddMessage).not.toHaveBeenCalled();
       expect(mockGenerateText.mock.calls[0][0].messages).toEqual([
-        { role: 'user', content: 'q\n\n' },
+        { role: 'user', content: 'q' },
         RECALL,
       ]);
     });
@@ -2194,89 +2192,6 @@ describe('invoke', () => {
       expect(mockBuildRecalledMemories).toHaveBeenCalledWith(expect.anything(), 'q');
       expect(call.messages).toEqual([{ role: 'user', content: 'q' }]);
       expect(call.system).toHaveLength(2);
-    });
-  });
-
-  // A provider adapter puts a run of adjacent user texts in one API message, each
-  // as its own block and with nothing between them, and a model reads that run as
-  // one piece of prose: a turn ending `...through Bedrock` followed by a block
-  // starting `Context:` was read as `BedrockContext`, and the agent answered a
-  // question about an identifier nobody had written.
-  describe('context block boundaries', () => {
-    const RECALLED_BLOCK =
-      'Context:\n<recalled-memories>\n- Mario likes chocolate\n</recalled-memories>';
-
-    /**
-     * The texts of the request's user messages, back to back with nothing
-     * between them — what the model reads out of one merged block.
-     */
-    const asOneBlock = (messages: Array<{ role: string; content: unknown }>) =>
-      messages
-        .filter((m) => m.role === 'user')
-        .flatMap((m) =>
-          typeof m.content === 'string'
-            ? [m.content]
-            : (m.content as Array<{ type: string; text?: string }>)
-                .filter((p) => p.type === 'text')
-                .map((p) => p.text ?? ''),
-        )
-        .join('');
-
-    it('separates the question from the recalled block behind it', async () => {
-      mockBuildRecalledMemories.mockResolvedValue('- Mario likes chocolate');
-      mockBuildConversationMessages.mockReturnValue([
-        { role: 'user', content: 'which models are available through Bedrock' },
-      ]);
-
-      await invoke(
-        createTestInvokeRequest({
-          mode: 'chat',
-          threadId: 'thread-1',
-          prompt: 'which models are available through Bedrock',
-        }),
-      );
-
-      expect(asOneBlock(mockGenerateText.mock.calls[0][0].messages)).toContain(
-        'through Bedrock\n\nContext:',
-      );
-      // The block itself is untouched, so the row recorded for the replay is the
-      // string that was sent.
-      expect(mockGenerateText.mock.calls[0][0].messages.at(-1).content).toBe(RECALLED_BLOCK);
-    });
-
-    it('separates the question from each attachment stub', async () => {
-      mockBuildConversationMessages.mockReturnValue([
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'have a look at these' },
-            { type: 'text', text: '[Attachment: spec.pdf] — use view_attachment to read it.' },
-            { type: 'text', text: '[Attachment: notes.pdf] — use view_attachment to read it.' },
-          ],
-        },
-      ]);
-
-      await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'have a look at these' }));
-
-      const block = asOneBlock(mockGenerateText.mock.calls[0][0].messages);
-      expect(block).toContain('at these\n\n[Attachment: spec.pdf]');
-      expect(block).toContain('read it.\n\n[Attachment: notes.pdf]');
-      // The stubs keep the wording they were written with.
-      expect(block.endsWith('[Attachment: notes.pdf] — use view_attachment to read it.')).toBe(true);
-    });
-
-    it('separates two steering messages folded in at one step boundary', async () => {
-      const steering = vi
-        .fn()
-        .mockResolvedValueOnce([{ text: 'skip the tests' }, { text: 'and rebase it' }])
-        .mockResolvedValue([]);
-
-      await invoke(createTestInvokeRequest({ prompt: 'review the PR', steering }));
-
-      const { prepareStep } = mockGenerateText.mock.calls[0][0];
-      const result = await prepareStep(firstStep([{ role: 'user', content: 'review the PR' }]));
-
-      expect(asOneBlock(result.messages)).toBe('review the PR\n\nskip the tests\n\nand rebase it');
     });
   });
 

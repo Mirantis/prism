@@ -16,7 +16,6 @@ import { config } from './config';
 import { logger } from './logger';
 import { createProvider, isProviderConfigured } from './lib/llm-providers/create-provider';
 import { collectTools, withToolsCacheControl } from './lib/tool-collection';
-import { withTextBoundaries } from './lib/message-boundaries';
 import { createPendingFileWrites } from './lib/pending-file-writes';
 import { SHARE_FILE_TOOL_NAME } from './tools/share-file';
 import { contextService } from './services/context.service';
@@ -284,16 +283,6 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       }
     }
 
-    // Separate every text that another text follows inside one provider block —
-    // the user's question from the recall block above, a stored turn from its
-    // attachment stubs, a user-terminated history from an appended prompt. Here
-    // rather than at each injection site, so a new injection cannot forget it.
-    //
-    // After the recall row is written, so the row holds the block's own bytes.
-    // The compaction fork reads this local, so its request keeps the prefix the
-    // turn sent.
-    messages = withTextBoundaries(messages);
-
     // Prompt caching: system prompt parts marked cacheable get cache breakpoints.
     // [0] stable prefix — identity, soul, important memories, instructions. The one
     // system breakpoint: the dynamic part behind it carries only the date, and a
@@ -413,17 +402,10 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
         // Splice highest index first so each injection lands before the
         // step-message it was recorded against, unshifted by the others.
-        const spliced = [...base];
+        const merged = [...base];
         for (let i = injections.length - 1; i >= 0; i--) {
-          spliced.splice(injections[i].at, 0, injections[i].message);
+          merged.splice(injections[i].at, 0, injections[i].message);
         }
-
-        // Injections make new seams — two steering messages at one boundary, a
-        // steering message behind a user-terminated history — so the pass runs
-        // again over the array this step sends. It is idempotent, so the
-        // messages the initial call normalized keep their bytes and the cached
-        // prefix holds between steps.
-        const merged = withTextBoundaries(spliced);
 
         if (merged.length > 0) {
           const lastIdx = merged.length - 1;
@@ -552,13 +534,13 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         // pending-injection drain covers a document viewed on the very step
         // that hit the limit — no prepareStep ran after it, so it would
         // otherwise vanish from the summary call.
-        const summaryMessages: ModelMessage[] = withTextBoundaries([
+        const summaryMessages: ModelMessage[] = [
           ...messages,
           ...injections.map((i) => i.message),
           ...pendingAttachmentInjections.splice(0),
           { role: 'assistant' as const, content: assistantText },
           { role: 'user' as const, content: EARLY_STOPPING_PROMPT },
-        ]);
+        ];
         warnOnTrailingAssistant(summaryMessages, { ...guardContext, stage: 'early-stopping' });
 
         const summaryResult = await callModel(
