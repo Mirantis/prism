@@ -268,9 +268,7 @@ class VoiceChatService {
           userScreen: computer !== null,
         },
       });
-      // The agent's own set without the meeting's tools, which act on a call this session
-      // is not in, and with the computer's real `browse` and `see_screen` where there is
-      // one to act on.
+      // Bind computer tools to this voice session’s ownership and image delivery.
       const agentTools = await prepareMeetingTools({
         userId: input.userId,
         agentId: input.agentId,

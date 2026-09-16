@@ -299,7 +299,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
     return this.desktopControl?.pictureHeight ?? 0;
   }
 
-  /** Whether `desktop_*` tools have anything to act on. */
+  /** Whether the computer tools have a desktop to act on. */
   get hasDesktop(): boolean {
     return this.desktopControl !== null;
   }

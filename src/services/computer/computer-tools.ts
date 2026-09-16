@@ -1,16 +1,4 @@
-/**
- * The tools of the computer the agent is working on.
- *
- * `browse` and `see_screen` are the meeting's tools (`tools/meeting.ts`) bound to this
- * computer instead of the meeting bot's: same names, same schemas, so the prompt text
- * written for a call reads the same here. The meeting's copies, which answer "I am not
- * in a meeting", are dropped from the agent's set in their favour by
- * `prepareVoiceChatTools`.
- *
- * The `desktop_*` tools exist only where the runtime owns the display: they move the
- * mouse and press keys on it by pixel coordinates read off the picture `see_screen`
- * gives, and each answers with a fresh picture.
- */
+/** Browser, desktop, and shared-screen tools for the agent’s computer. */
 
 import { tool, type Tool } from 'ai';
 import { z } from 'zod';
@@ -76,11 +64,11 @@ export function createComputerTools(
       'Use it to find what to click, to check what an action did, or to answer a question about ' +
       'what is on screen. Takes a couple of seconds.'
     : 'See what your browser is showing right now — a picture of the tab in front, plus ' +
-      'the text and controls of the page. Use it to check a page `browse` reported oddly, ' +
+      'the text and controls of the page. Use it to check a page `computer_browse` reported oddly, ' +
       'or to answer a question about what is on screen. Takes a couple of seconds.';
 
   return {
-    see_user_screen: tool({
+    computer_user_screen: tool({
       description:
         "Look at what your user is sharing from their own screen — a window, a tab or their " +
         'whole screen, as it looks right now. You get the picture and, read off it, the exact ' +
@@ -92,7 +80,7 @@ export function createComputerTools(
     }),
 
     ...(desktop ? createDesktopTools(desktop) : {}),
-    browse: tool({
+    computer_browse: tool({
       description:
         'Use your web browser: open a page, click things, type, scroll, and work in ' +
         'several tabs. Every command answers with where the page is, what it says, the ' +
@@ -146,7 +134,7 @@ export function createComputerTools(
       execute: async (command) => browser.browse(command),
     }),
 
-    see_screen: tool({
+    computer_screen: tool({
       description: screenDescription,
       inputSchema: z.object({}),
       execute: async () => browser.lookAtScreen(),
@@ -156,16 +144,16 @@ export function createComputerTools(
 
 function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
   const where =
-    `Pixel coordinates in the ${desktop.width} by ${desktop.height} picture from \`see_screen\`: ` +
+    `Pixel coordinates in the ${desktop.width} by ${desktop.height} picture from \`computer_screen\`: ` +
     'x from the left edge, y from the top. Aim at the middle of the button or row.';
 
   return {
-    desktop_elements: tool({
+    computer_elements: tool({
       description:
-        'Read the desktop the way `browse` reads a page: every visible control by name and ' +
+        'Read the desktop the way `computer_browse` reads a page: every visible control by name and ' +
         'position — menu items, buttons, tabs, fields, windows — grouped by program. Use the ' +
-        'names with `desktop_click_text`. Pass `filter` to list only names containing some ' +
-        'words. A program that does not describe itself shows nothing here; use `see_screen` ' +
+        'names with `computer_click_text`. Pass `filter` to list only names containing some ' +
+        'words. A program that does not describe itself shows nothing here; use `computer_screen` ' +
         'for those.',
       inputSchema: z.object({
         filter: z.string().optional().describe('Only controls whose name contains this.'),
@@ -173,13 +161,13 @@ function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
       execute: async (input) => desktop.listElements(input),
     }),
 
-    desktop_windows: tool({
+    computer_windows: tool({
       description: 'List the open windows on your desktop by title, with their position and size.',
       inputSchema: z.object({}),
       execute: async () => desktop.listWindows(),
     }),
 
-    desktop_window: tool({
+    computer_window: tool({
       description:
         'Manage a window by its title: bring it to the front, close it, maximise it, restore ' +
         'it, or minimise it. Use this instead of aiming at the small buttons in a title bar. ' +
@@ -191,12 +179,12 @@ function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
       execute: async (input) => desktop.windowAction(input),
     }),
 
-    desktop_click_text: tool({
+    computer_click_text: tool({
       description:
         'Click a control or some words by name — a menu row, a button, a tab, a link, a file ' +
         'name. Give the name as it appears; the desktop\'s own controls are looked up first and ' +
         'clicked at their exact centre, and words with no control behind them are read off the ' +
-        'screen. Prefer this over `desktop_click` with coordinates whenever the target has a ' +
+        'screen. Prefer this over `computer_click` with coordinates whenever the target has a ' +
         'name, since it does not miss. If the name appears more than once, `occurrence` picks ' +
         'which, counted from the top. Answers with a fresh picture after the click, or says the ' +
         'name is not on screen.',
@@ -209,23 +197,23 @@ function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
       execute: async (input) => desktop.clickText(input),
     }),
 
-    desktop_find_text: tool({
+    computer_find_text: tool({
       description:
         'Find a control or some words on your desktop by name and get their exact coordinates, ' +
         'without clicking. Use it to check whether something is on screen, to tell apart several ' +
-        'places the same name appears, or to get a precise point for `desktop_move`, ' +
-        '`desktop_drag` or `desktop_scroll`.',
+        'places the same name appears, or to get a precise point for `computer_move`, ' +
+        '`computer_drag` or `computer_scroll`.',
       inputSchema: z.object({
         text: z.string().min(1).describe('The words to look for, as they appear on screen.'),
       }),
       execute: async (input) => desktop.findText(input),
     }),
 
-    desktop_move: tool({
+    computer_move: tool({
       description:
         'Put the pointer somewhere on your desktop without clicking, and see it there. Use it ' +
         'before clicking a small target such as a menu row: the picture that comes back shows ' +
-        'the pointer, so you can check it sits on the target and then call `desktop_click` ' +
+        'the pointer, so you can check it sits on the target and then call `computer_click` ' +
         `with no coordinates to click right there. ${where}`,
       inputSchema: z.object({
         x: z.number().describe('Pixels from the left edge.'),
@@ -234,11 +222,11 @@ function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
       execute: async (input) => desktop.move(input),
     }),
 
-    desktop_click: tool({
+    computer_click: tool({
       description:
         'Click on your desktop: a menu, a button, a window, a text field to focus. With ' +
         'coordinates it clicks there; without, it clicks where the pointer already is, which ' +
-        `is how to commit a spot you checked with \`desktop_move\`. ${where} Answers with a ` +
+        `is how to commit a spot you checked with \`computer_move\`. ${where} Answers with a ` +
         'fresh picture of the screen after the click; the pointer in it shows where the click landed.',
       inputSchema: z.object({
         x: z.number().optional().describe('Pixels from the left edge. Omit to click where the pointer is.'),
@@ -249,7 +237,7 @@ function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
       execute: async (input) => desktop.click(input),
     }),
 
-    desktop_drag: tool({
+    computer_drag: tool({
       description:
         'Drag on your desktop: press at one point, move to another, release. This is how to ' +
         'move a window or a slider, or to select text. It walks the path in steps so ' +
@@ -264,7 +252,7 @@ function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
       execute: async (input) => desktop.drag(input),
     }),
 
-    desktop_type: tool({
+    computer_type: tool({
       description:
         'Type text on your desktop, into whatever has the keyboard focus — click a field or a ' +
         'terminal first. Answers with a fresh picture of the screen.',
@@ -272,7 +260,7 @@ function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
       execute: async (input) => desktop.type(input),
     }),
 
-    desktop_key: tool({
+    computer_key: tool({
       description:
         'Press one key or a chord on your desktop, such as "Return", "Escape", "Tab", ' +
         '"ctrl+l", "alt+F4" or "super". Answers with a fresh picture of the screen.',
@@ -282,7 +270,7 @@ function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
       execute: async (input) => desktop.key(input),
     }),
 
-    desktop_scroll: tool({
+    computer_scroll: tool({
       description:
         `Scroll the mouse wheel over a point on your desktop. ${where} Answers with a fresh ` +
         'picture of the screen.',

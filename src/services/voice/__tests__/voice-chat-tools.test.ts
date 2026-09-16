@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { prepareVoiceChatTools } from '../voice-chat-tools';
+import { getComputerTools } from '../../../tools/computer';
+import { MEETING_TOOL_NAMES } from '../../../tools/meeting';
 import type { PreparedTools } from '../realtime-tools';
 
 // The meeting tool list is the real one, so a tool added there is dropped here without
@@ -19,51 +21,60 @@ function set(names: string[]): PreparedTools & { ran: string[] } {
   };
 }
 
+const computerNames = Object.keys(getComputerTools(undefined, () => null));
+
 describe('prepareVoiceChatTools', () => {
-  it('drops the meeting tools, which act on a call this session is not in', () => {
-    const base = set(['memory_search', 'join_meeting', 'leave_meeting', 'send_meeting_chat']);
+  it('omits call-specific tools and refuses to execute them', async () => {
+    const base = set(['memory_search', ...MEETING_TOOL_NAMES]);
     const tools = prepareVoiceChatTools(base, null);
     expect(tools.declarations.map((d) => d.name)).toEqual(['memory_search']);
     expect(tools.count).toBe(1);
+    expect(await tools.execute('browse', '{}')).toContain('Unknown tool');
+    expect(base.ran).toEqual([]);
   });
 
-  it("puts the computer's tools in the place of the meeting's, under the same names", () => {
-    const base = set(['memory_search', 'browse', 'see_screen']);
-    const computer = set(['browse', 'see_screen', 'desktop_click']);
-    const tools = prepareVoiceChatTools(base, computer);
-    expect(tools.declarations.map((d) => d.name)).toEqual([
-      'memory_search',
-      'browse',
-      'see_screen',
-      'desktop_click',
-    ]);
+  it('adds the computer declarations used by a real voice session', () => {
+    const base = set(['memory_search', ...MEETING_TOOL_NAMES]);
+    const tools = prepareVoiceChatTools(base, set(computerNames));
+    expect(tools.declarations.map((d) => d.name)).toEqual(['memory_search', ...computerNames]);
+    expect(computerNames).toEqual(
+      expect.arrayContaining([
+        'computer_browse',
+        'computer_screen',
+        'computer_click',
+        'computer_instruct',
+      ]),
+    );
+    expect(computerNames).not.toEqual(
+      expect.arrayContaining(['browse', 'see_screen', 'desktop_click']),
+    );
   });
 
-  it('routes a call to the set it came from', async () => {
-    const base = set(['memory_search', 'browse']);
-    const computer = set(['browse', 'desktop_click']);
+  it('routes each computer declaration to the computer executor', async () => {
+    const base = set(['memory_search', ...MEETING_TOOL_NAMES]);
+    const computer = set(computerNames);
     const tools = prepareVoiceChatTools(base, computer);
-
     await tools.execute('memory_search', '{}');
-    await tools.execute('browse', '{}');
-    await tools.execute('desktop_click', '{}');
-
-    // `browse` exists in both, and the computer's is the one that acts on something.
+    for (const name of computerNames) await tools.execute(name, '{}');
     expect(base.ran).toEqual(['memory_search']);
-    expect(computer.ran).toEqual(['browse', 'desktop_click']);
+    expect(computer.ran).toEqual(computerNames);
   });
 
-  it("keeps the agent's own tools when there is no computer", async () => {
-    const base = set(['memory_search', 'browse']);
+  it('keeps unrelated tools whose names start with computer_', async () => {
+    const base = set(['computer_inventory']);
     const tools = prepareVoiceChatTools(base, null);
-    await tools.execute('browse', '{}');
-    expect(base.ran).toEqual(['browse']);
+    expect(tools.declarations.map((d) => d.name)).toEqual(['computer_inventory']);
+    await tools.execute('computer_inventory', '{}');
+    expect(base.ran).toEqual(['computer_inventory']);
   });
 
-  it('declares a name once, whichever set it came from', () => {
-    const base = set(['browse']);
-    const computer = set(['browse']);
-    const names = prepareVoiceChatTools(base, computer).declarations.map((d) => d.name);
-    expect(names).toEqual(['browse']);
+  it('declares a duplicate name once and uses its replacement executor', async () => {
+    const base = set(['computer_browse']);
+    const computer = set(['computer_browse']);
+    const tools = prepareVoiceChatTools(base, computer);
+    expect(tools.declarations.map((d) => d.name)).toEqual(['computer_browse']);
+    await tools.execute('computer_browse', '{}');
+    expect(base.ran).toEqual([]);
+    expect(computer.ran).toEqual(['computer_browse']);
   });
 });
