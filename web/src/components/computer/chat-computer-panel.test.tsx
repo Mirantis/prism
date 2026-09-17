@@ -40,7 +40,9 @@ vi.mock('@/components/voice/screen-view', () => ({
   ),
 }));
 vi.mock('./computer-help-card', () => ({
-  ComputerHelpCard: () => <div aria-label="Computer help">Help</div>,
+  ComputerHelpCard: ({ help }: { help: ComputerHelp }) => (
+    <div aria-label="Computer help">Help {help.id}</div>
+  ),
 }));
 
 const help: ComputerHelp = {
@@ -172,5 +174,34 @@ describe('chat computer panel', () => {
     expect(screen.getByLabelText('Computer help panel').getAttribute('data-state')).toBe(
       'open',
     );
+  });
+
+  it('reopens an older waiting request from its history marker', () => {
+    const older = { ...help, id: '00000000-0000-4000-8000-000000000003' };
+    const newer = { ...help, id: '00000000-0000-4000-8000-000000000004' };
+    state.status = { ...status('waiting'), help: [older, newer] };
+    const queryClient = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel requests={[older, newer]} />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByLabelText('Computer help').textContent).toContain(newer.id);
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel
+          requests={[older, newer]}
+          reopenRequest={{ id: older.id, token: 1 }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByLabelText('Computer help').textContent).toContain(older.id);
+    fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
+    expect(computerRequest).toHaveBeenCalledWith('/control', {
+      clientId: '00000000-0000-4000-8000-000000000001',
+      helpId: older.id,
+    });
   });
 });
