@@ -41,7 +41,7 @@ Then('Prism requests computer help and reports the public notes', async ({ page 
   );
 });
 
-Then('the live computer opens over the right side of the chat', async ({ page, $testInfo }) => {
+Then('the live computer opens over the chat', async ({ page, $testInfo }) => {
   const help = page.getByLabel('Computer help', { exact: true });
   const panel = page.getByLabel('Computer help panel');
   const messages = page.getByTestId('chat-messages');
@@ -63,10 +63,22 @@ Then('the live computer opens over the right side of the chat', async ({ page, $
       messagesBox &&
       viewport &&
       Math.abs(panelBox.width - viewport.width * 0.6) < 2 &&
-      panelBox.x < messagesBox.x + messagesBox.width,
+      panelBox.x < messagesBox.x + messagesBox.width &&
+      panelBox.y === 0 &&
+      panelBox.height === viewport.height &&
+      panelBox.x + panelBox.width === viewport.width,
     );
   }).toBe(true);
   await page.screenshot({ path: $testInfo.outputPath('computer-in-chat.png'), fullPage: true });
+});
+
+Then('I can close and reopen the computer panel', async ({ page }) => {
+  const panel = page.getByLabel('Computer help panel');
+  await page.getByRole('button', { name: 'Close computer panel' }).click();
+  await expect(panel).toHaveAttribute('data-state', 'closed');
+  await expect(panel).toHaveCount(0, { timeout: 15_000 });
+  await page.getByRole('button', { name: 'Open computer help' }).click();
+  await expect(page.getByLabel('Computer help panel')).toHaveAttribute('data-state', 'open');
 });
 
 Then('I can resize the computer panel', async ({ page }) => {

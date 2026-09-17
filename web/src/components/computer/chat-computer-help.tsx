@@ -2,7 +2,13 @@ import { CircleCheck, CircleX, Monitor } from 'lucide-react';
 import { useComputerStatus } from '@/hooks/use-computer-status';
 import type { ComputerHelp } from '@/types';
 
-export function ChatComputerHelp({ help }: { help: ComputerHelp }) {
+export function ChatComputerHelp({
+  help,
+  onOpen,
+}: {
+  help: ComputerHelp;
+  onOpen: (id: string) => void;
+}) {
   const { data } = useComputerStatus();
   const current = data?.help?.find((item) => item.id === help.id) ?? help;
   const dismissed = current.status === 'dismissed';
@@ -13,17 +19,35 @@ export function ChatComputerHelp({ help }: { help: ComputerHelp }) {
     : completed
       ? 'Computer help completed'
       : 'Computer help requested';
+  const content = (
+    <>
+      <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0">
+        <p className="font-medium text-foreground">{label}</p>
+        <p className="mt-0.5 break-words text-xs text-muted-foreground">{help.reason}</p>
+      </div>
+    </>
+  );
+
+  if (!dismissed && !completed) {
+    return (
+      <button
+        type="button"
+        aria-label="Open computer help"
+        onClick={() => onOpen(help.id)}
+        className="flex w-full items-start gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {content}
+      </button>
+    );
+  }
 
   return (
     <div
       aria-label="Computer help status"
       className="flex items-start gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm"
     >
-      <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0">
-        <p className="font-medium text-foreground">{label}</p>
-        <p className="mt-0.5 break-words text-xs text-muted-foreground">{help.reason}</p>
-      </div>
+      {content}
     </div>
   );
 }

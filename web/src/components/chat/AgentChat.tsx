@@ -38,6 +38,10 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
+  const [computerPanelRequest, setComputerPanelRequest] = useState<{
+    id: string;
+    token: number;
+  }>();
   // Terminal compaction frame pending a SYSTEM note. Staged as state (not
   // appended directly in the WS callback) so the note goes through
   // appendSystemMessage, which is declared further down.
@@ -124,6 +128,9 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
           block.type === 'computer_help',
       ) ?? [],
   );
+  const openComputerPanel = useCallback((id: string) => {
+    setComputerPanelRequest((current) => ({ id, token: (current?.token ?? 0) + 1 }));
+  }, []);
 
   // Cancel the in-flight turn and drop an ephemeral marker so the user gets
   // explicit confirmation. The marker is client-only (never stored), so it
@@ -429,15 +436,16 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         <VoiceCallControl call={voice} blockedReason={callBlockedReason} />
       </HeaderActions>
       <VoiceCallBar call={voice} agentName={agent.name} />
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <ChatMessageList
-          messages={localMessages}
-          agentName={agent.name}
-          isTyping={isTyping}
-          isLoading={isLoadingThread}
-        />
-        {computerHelp.length > 0 && <ChatComputerPanel requests={computerHelp} />}
-      </div>
+      <ChatMessageList
+        messages={localMessages}
+        agentName={agent.name}
+        isTyping={isTyping}
+        isLoading={isLoadingThread}
+        onOpenComputerHelp={openComputerPanel}
+      />
+      {computerHelp.length > 0 && (
+        <ChatComputerPanel requests={computerHelp} reopenRequest={computerPanelRequest} />
+      )}
       <div className="mx-auto w-full max-w-3xl px-4 empty:hidden">
         <ComputerWaiting threadId={activeThreadId} />
       </div>

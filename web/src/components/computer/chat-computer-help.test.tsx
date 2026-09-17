@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ComputerHelp, ComputerStatus } from '@/types';
 import { ChatComputerHelp } from './chat-computer-help';
@@ -41,10 +41,17 @@ describe('computer help history marker', () => {
     ['dismissed', 'Computer help dismissed'],
   ] as const)('shows the %s state and reason', (helpStatus, label) => {
     state.status = status(helpStatus);
-    render(<ChatComputerHelp help={help} />);
+    const onOpen = vi.fn();
+    render(<ChatComputerHelp help={help} onOpen={onOpen} />);
 
-    const marker = screen.getByLabelText('Computer help status');
+    const marker = screen.getByLabelText(
+      helpStatus === 'waiting' ? 'Open computer help' : 'Computer help status',
+    );
     expect(marker.textContent).toContain(label);
     expect(marker.textContent).toContain(help.reason);
+    if (helpStatus === 'waiting') {
+      fireEvent.click(marker);
+      expect(onOpen).toHaveBeenCalledWith(help.id);
+    }
   });
 });
