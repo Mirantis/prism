@@ -25,15 +25,17 @@ export function ChatComputerPanel({
   const current = requests.map(
     (request) => data?.help?.find((item) => item.id === request.id) ?? request,
   );
+  const currentRef = useRef(current);
+  currentRef.current = current;
   const waiting = [...current].reverse().find((request) => request.status === 'waiting');
   const [displayed, setDisplayed] = useState<ComputerHelp | null>(waiting ?? null);
   const [open, setOpen] = useState(false);
-  const [closedHelpId, setClosedHelpId] = useState<string | null>(null);
   const [width, setWidth] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
+  const autoOpenedIdRef = useRef<string | null>(null);
   const resizeRef = useRef<{ startX: number; startWidth: number; maxWidth: number } | null>(
     null,
   );
@@ -43,8 +45,15 @@ export function ChatComputerPanel({
   const ownControl = Boolean(screen.clientId) && state?.controller === screen.clientId;
   const anotherController = Boolean(state?.controller) && !ownControl;
   const waitingId = waiting?.id;
-  const displayedId = displayed?.id;
-  const active = open && waitingId === displayedId;
+  const displayedCurrent =
+    current.find((request) => request.id === displayed?.id) ?? displayed;
+  const displayedStatus = displayedCurrent?.status;
+  const active = open && displayedStatus === 'waiting';
+  const reopenedId = reopenRequest
+    ? current.find(
+        (request) => request.id === reopenRequest.id && request.status === 'waiting',
+      )?.id
+    : undefined;
 
   const showPanel = useCallback((help: ComputerHelp) => {
     if (closeTimerRef.current) {
@@ -55,6 +64,17 @@ export function ChatComputerPanel({
     const frame = window.requestAnimationFrame(() => setOpen(true));
     return () => window.cancelAnimationFrame(frame);
   }, []);
+
+  const showPanelById = useCallback(
+    (id: string) => {
+      const help = currentRef.current.find(
+        (request) => request.id === id && request.status === 'waiting',
+      );
+      if (!help) return;
+      return showPanel(help);
+    },
+    [showPanel],
+  );
 
   const hidePanel = useCallback(() => {
     setOpen(false);
@@ -69,21 +89,24 @@ export function ChatComputerPanel({
   }, []);
 
   useEffect(() => {
-    if (waiting && waitingId !== closedHelpId) {
-      if (displayedId !== waitingId || !open) return showPanel(waiting);
+    if (!waitingId) {
+      autoOpenedIdRef.current = null;
       return;
     }
-    if (!waiting) {
-      if (closedHelpId) setClosedHelpId(null);
-      if (displayed && open) hidePanel();
-    }
-  }, [closedHelpId, displayedId, hidePanel, open, showPanel, waiting, waitingId]);
+    if (autoOpenedIdRef.current === waitingId) return;
+    autoOpenedIdRef.current = waitingId;
+    return showPanelById(waitingId);
+  }, [showPanelById, waitingId]);
 
   useEffect(() => {
-    if (!reopenRequest || reopenRequest.id !== waitingId || !waiting) return;
-    setClosedHelpId(null);
-    return showPanel(waiting);
-  }, [reopenRequest, showPanel, waiting, waitingId]);
+    if (!reopenRequest || !reopenedId) return;
+    return showPanelById(reopenedId);
+  }, [reopenRequest?.token, reopenedId, showPanelById]);
+
+  useEffect(() => {
+    if (!displayedCurrent || displayedStatus === 'waiting' || !open) return;
+    hidePanel();
+  }, [displayedCurrent, displayedStatus, hidePanel, open]);
 
   useEffect(
     () => () => {
@@ -94,11 +117,14 @@ export function ChatComputerPanel({
 
   const request = useCallback(
     async (path: string) => {
-      if (!displayed) return false;
+      if (!displayedCurrent) return false;
       setBusy(true);
       setError(null);
       try {
-        await computerRequest(path, { clientId: screen.clientId, helpId: displayed.id });
+        await computerRequest(path, {
+          clientId: screen.clientId,
+          helpId: displayedCurrent.id,
+        });
         await queryClient.invalidateQueries({ queryKey: ['computer'] });
         return true;
       } catch (cause) {
@@ -108,15 +134,15 @@ export function ChatComputerPanel({
         setBusy(false);
       }
     },
-    [displayed, queryClient, screen.clientId],
+    [displayedCurrent, queryClient, screen.clientId],
   );
 
   const finish = useCallback(async () => {
-    if (!displayed) return;
+    if (!displayedCurrent) return;
     setBusy(true);
     setError(null);
     try {
-      await computerRequest(`/help/${displayed.id}`, {
+      await computerRequest(`/help/${displayedCurrent.id}`, {
         action: 'continue',
         clientId: screen.clientId,
       });
@@ -126,7 +152,7 @@ export function ChatComputerPanel({
     } finally {
       setBusy(false);
     }
-  }, [displayed, queryClient, screen.clientId]);
+  }, [displayedCurrent, queryClient, screen.clientId]);
 
   const startResize = (event: PointerEvent<HTMLButtonElement>) => {
     const panel = panelRef.current;
@@ -161,7 +187,7 @@ export function ChatComputerPanel({
     );
   };
 
-  if (!displayed) return null;
+  if (!displayedCurrent) return null;
 
   return createPortal(
     <aside
@@ -208,7 +234,6 @@ export function ChatComputerPanel({
           aria-label="Close computer panel"
           title="Close"
           onClick={() => {
-            setClosedHelpId(displayed.id);
             hidePanel();
           }}
           className="ml-auto flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -232,7 +257,7 @@ export function ChatComputerPanel({
             connecting={!screen.message}
           />
           <ComputerHelpCard
-            help={displayed}
+            help={displayedCurrent}
             clientId={screen.clientId}
             inComputer
             showConversationLink={false}
