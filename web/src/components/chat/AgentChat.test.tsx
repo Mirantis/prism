@@ -87,6 +87,7 @@ const idleComputer: ComputerStatus = {
   running: false,
   starting: false,
   paused: false,
+  secure: false,
   controller: null,
   owner: null,
   waiting: [],

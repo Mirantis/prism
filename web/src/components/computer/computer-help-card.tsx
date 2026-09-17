@@ -58,6 +58,8 @@ export function ComputerHelpCard({
       </p>
       <p className="text-xs leading-relaxed text-muted-foreground">
         Click the screen to complete this step. Press Esc when you’re done, or choose “I’m done”.
+        Prism is stopped while you work here and cannot see the screen. Submit a sign-in before
+        you finish: anything left in a password field is cleared.
       </p>
       {current.status === 'waiting' && (
         <div className="flex flex-wrap items-center gap-2">

@@ -1,3 +1,4 @@
+import WebSocket from 'ws';
 import { createBdd } from 'playwright-bdd';
 import { expect, test, type Page } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
@@ -397,3 +398,143 @@ Then('an invalid help continuation keeps my control and the chat waiting', async
   expect(after.controller).toBe(before.controller);
   await expect(queuedChat.getByTestId('computer-waiting')).toContainText('Waiting for the computer');
 });
+
+/** The client that waits out a secure takeover, and what the agent had answered before it. */
+let quietSocket: WebSocket | undefined;
+let answersBeforeTakeover = 0;
+
+const countAnswers = () =>
+  dbHelper.getPrisma().conversationMessage.count({
+    where: { thread: { agentId: DEFAULT_AGENT_ID }, role: 'AGENT', internalStep: false },
+  });
+
+/** What the agent has said lately, for a question whose answer is one word. */
+const answerText = async () => {
+  const rows = await dbHelper.getPrisma().conversationMessage.findMany({
+    where: { thread: { agentId: DEFAULT_AGENT_ID }, role: 'AGENT', internalStep: false },
+    orderBy: { createdAt: 'desc' },
+    take: 5,
+  });
+  return rows.map((row) => row.content).join('\n');
+};
+
+/**
+ * The inbox alone, unlike the scenario above.
+ *
+ * Which tab the agent leaves in front is its own business, and the help request carries
+ * that tab: asked for the notes as well, it can hand over a desktop showing them, and the
+ * keystrokes below would land on the wrong page.
+ */
+When('I ask Prism to read my inbox using its computer', async ({ page }) => {
+  test.setTimeout(420_000);
+  await page.goto('/chat');
+  const home = new HomePage(page);
+  await home.typeMessage(
+    `Use your computer to read my inbox at ${site!.url}/inbox and tell me what it says. ` +
+      'It needs a sign-in you cannot do: call computer_help so I can sign in myself.',
+  );
+  await home.sendMessage();
+  await home.waitForAgentResponse(180_000);
+  await home.waitForStreamComplete(180_000);
+});
+
+Then('Prism requests computer help', async ({ page }) => {
+  await expect(page.getByLabel('Computer help', { exact: true })).toBeVisible();
+});
+
+When('I open the help request on the Computer page', async ({ page }) => {
+  const status = (await (await page.request.get('/agents/computer')).json()) as {
+    help?: { id: string; status: string }[];
+  };
+  const waiting = status.help?.find((item) => item.status === 'waiting');
+  expect(waiting).toBeDefined();
+  await page.goto(`/computer?help=${waiting!.id}`);
+  await expect(page.getByLabel("The agent's screen")).toBeVisible({ timeout: 60_000 });
+});
+
+When('I take control for the help request and type a password', async ({ page, $testInfo }) => {
+  test.setTimeout(420_000);
+  page.setDefaultTimeout(15_000);
+  await page.getByLabel("The agent's screen").click();
+  await expect(page.getByRole('status')).toContainText('You have control', { timeout: 30_000 });
+  await openSignInPage(page);
+  await page.keyboard.type(SIGN_IN_PASSWORD, { delay: 60 });
+  await expect.poll(() => site!.passwordLength(), { timeout: 15_000 }).toBeGreaterThan(0);
+  await page.screenshot({
+    path: $testInfo.outputPath('computer-secure-takeover.png'),
+    fullPage: true,
+  });
+});
+
+Then('Computer says Prism is stopped, and a question in another chat goes unanswered', async ({
+  page,
+}) => {
+  await expect(page.getByRole('status')).toContainText('Prism is stopped');
+  answersBeforeTakeover = await countAnswers();
+  // A question needing no computer at all, asked on a socket of its own rather than in a
+  // second tab: opening one takes this page's pointer lock, and the keyboard a takeover
+  // gives you goes with it.
+  quietSocket = new WebSocket('ws://localhost:3003/api/ws');
+  await new Promise<void>((resolve, reject) => {
+    quietSocket!.once('open', resolve);
+    quietSocket!.once('error', reject);
+  });
+  quietSocket.send(
+    JSON.stringify({
+      type: 'chat',
+      payload: { content: 'Reply with the single word ACKNOWLEDGED. Use no tools.' },
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20_000));
+  expect(await countAnswers()).toBe(answersBeforeTakeover);
+});
+
+When('I hand the computer back without signing in', async ({ page }) => {
+  // Esc rather than the card's button: the screen holds the pointer, so it takes every
+  // click on the page until this gives the pointer back.
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('status')).not.toContainText('You have control');
+});
+
+Then(
+  'the password I typed is gone, and Prism answers the waiting question',
+  async ({ page, $testInfo }) => {
+    await expect.poll(() => site!.passwordLength(), { timeout: 30_000 }).toBe(0);
+    expect(site!.isSignedIn()).toBe(false);
+    // The question itself, rather than any answer anywhere: handing back also
+    // continues the help request, and that reply would satisfy a count.
+    await expect.poll(answerText, { timeout: 180_000 }).toContain('ACKNOWLEDGED');
+    await page.screenshot({
+      path: $testInfo.outputPath('computer-secure-cleared.png'),
+      fullPage: true,
+    });
+    // Handing back also continues the help request, and that turn outlives these
+    // assertions. A scenario that ends while it runs leaves it holding the computer
+    // and the user's message queue, which stalls every scenario after this one.
+    await waitForQuiet(page);
+    quietSocket?.close();
+    quietSocket = undefined;
+  },
+);
+
+/**
+ * Wait for the agent to stop working: two readings in a row with the same number of
+ * answers and nothing using or queued for the computer. An invocation keeps the
+ * computer from its first tool call until it ends, so a free computer and a steady
+ * count together mean no turn is in flight.
+ */
+async function waitForQuiet(page: Page): Promise<void> {
+  let previous = -1;
+  await expect
+    .poll(
+      async () => {
+        const answers = await countAnswers();
+        const computer = await (await page.request.get('/agents/computer')).json();
+        const quiet = answers === previous && !computer.owner && computer.waiting.length === 0;
+        previous = answers;
+        return quiet;
+      },
+      { timeout: 180_000, intervals: [5_000] },
+    )
+    .toBe(true);
+}

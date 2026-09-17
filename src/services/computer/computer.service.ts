@@ -12,7 +12,7 @@ export interface ComputerViewer {
 
 /** The runtime's desktop, independent of calls, invocations, and viewers. */
 class ComputerService {
-  readonly access = new ComputerAccess();
+  readonly access = new ComputerAccess(() => this.forgetSecureWindow());
   private computer: AgentComputer | null = null;
   private opening: Promise<AgentComputer> | null = null;
   private viewers = new Map<string, ComputerViewer>();
@@ -25,6 +25,7 @@ class ComputerService {
       running: this.computer !== null,
       starting: this.opening !== null,
       paused: this.access.paused,
+      secure: this.access.secure,
       controller: this.access.human,
       owner: this.access.owner ? describe(this.access.owner) : null,
       waiting: this.access.waiting.map(describe),
@@ -102,10 +103,16 @@ class ComputerService {
     if (!this.viewers.size) this.computer?.stopScreenStream();
   }
 
-  async takeControl(id: string, targetId?: string): Promise<void> {
+  /** A takeover answering a help request is secure: pass that request's id. */
+  async takeControl(id: string, help?: { id: string; targetId?: string }): Promise<void> {
     if (!this.viewers.has(id)) throw new Error('Open Computer before taking control.');
-    await this.access.takeControl(id);
-    if (targetId) await this.computer?.focusTarget(targetId);
+    await this.access.takeControl(id, help?.id);
+    if (help?.targetId) await this.computer?.focusTarget(help.targetId);
+  }
+
+  /** Nothing a person typed inside a secure window reaches the agent after it. */
+  private async forgetSecureWindow(): Promise<void> {
+    await this.computer?.clearAfterSecureWindow();
   }
 
   async helpTarget(tab?: number): Promise<string | undefined> {
@@ -117,17 +124,17 @@ class ComputerService {
     this.access.assertCanHandBack(id);
   }
 
-  handBack(id: string): void {
+  async handBack(id: string): Promise<void> {
     this.assertCanHandBack(id);
     this.computer?.releaseInput();
-    this.access.handBack(id);
+    await this.access.handBack(id);
   }
 
-  continueFromChat(): void {
+  async continueFromChat(): Promise<void> {
     const id = this.access.human ?? 'chat';
     this.access.assertCanHandBack(id);
     this.computer?.releaseInput();
-    this.access.handBack(id);
+    await this.access.handBack(id);
   }
 
   input(id: string, text: string): void {

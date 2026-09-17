@@ -23,6 +23,7 @@ function status(over: Partial<ComputerStatus> = {}): ComputerStatus {
     running: true,
     starting: false,
     paused: false,
+    secure: false,
     controller: null,
     owner: null,
     waiting: [],

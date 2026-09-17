@@ -39,21 +39,31 @@ computerRouter.post('/computer/control', async (req, res) => {
           (item) => item.id === parsed.data.helpId,
         )
       : undefined;
-    await computerService.takeControl(parsed.data.clientId, help?.targetId);
+    // A takeover naming a request is secure because of that request. One nothing
+    // matches is refused, rather than granted as an ordinary takeover with the agent
+    // still running.
+    if (parsed.data.helpId && !help) {
+      res.status(404).json({ error: 'That help request is gone. Reload Computer.' });
+      return;
+    }
+    await computerService.takeControl(
+      parsed.data.clientId,
+      help && { id: help.id, targetId: help.targetId },
+    );
     res.json(computerService.status());
   } catch (error) {
     res.status(409).json({ error: String(error instanceof Error ? error.message : error) });
   }
 });
 
-computerRouter.post('/computer/continue', (req, res) => {
+computerRouter.post('/computer/continue', async (req, res) => {
   const parsed = control.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'A connected Computer viewer is required.' });
     return;
   }
   try {
-    computerService.handBack(parsed.data.clientId);
+    await computerService.handBack(parsed.data.clientId);
     res.json(computerService.status());
   } catch (error) {
     res.status(409).json({ error: String(error instanceof Error ? error.message : error) });

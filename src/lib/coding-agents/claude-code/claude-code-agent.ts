@@ -17,7 +17,6 @@ import { claudeCodeEnvironment } from './credentials';
 import { config } from '../../../config';
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
 import { ensureSymlink } from '../../data-dir';
 import { runCli, type Spawner } from '../cli-run';
 import type {
@@ -52,8 +51,8 @@ interface StreamLine {
   session_id?: string;
 }
 
-/** The optional spawner is a test hook; production runs the real binary. */
-export function createClaudeCodeAgent(spawner: Spawner = spawn): CodingAgent {
+/** The optional spawner is a test hook; without one, `runCli` spawns the real binary. */
+export function createClaudeCodeAgent(spawner?: Spawner): CodingAgent {
   return {
     id: 'claude-code',
     displayName: DISPLAY_NAME,

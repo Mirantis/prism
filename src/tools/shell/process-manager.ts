@@ -13,7 +13,8 @@
  * agent-driven background tasks; the cap exists to prevent runaway
  * fork-bomb scenarios, not to gate user concurrency.
  */
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess } from 'child_process';
+import { agentProcesses } from '../../lib/agent-processes';
 import { randomUUID } from 'crypto';
 import { logger } from '../../logger';
 import { appendCappedChunk } from './exec';
@@ -54,15 +55,14 @@ class ProcessManager {
     }
 
     const processId = randomUUID();
-    // `detached: true` makes the child the leader of its own process
-    // group. We can then signal the whole group via process.kill(-pid)
-    // — necessary because the shell wrapper would otherwise leave any
-    // forked children behind when we kill bash itself.
-    const child = spawn('/bin/bash', ['-c', params.command], {
+    // The spawner makes the child the leader of its own process group. We can then
+    // signal the whole group via process.kill(-pid) — necessary because the shell
+    // wrapper would otherwise leave any forked children behind when we kill bash
+    // itself — and a secure takeover can stop everything the agent started.
+    const child = agentProcesses.spawn('/bin/bash', ['-c', params.command], {
       cwd: params.workdir,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...sandboxEnv(), ...params.env },
-      detached: true,
     });
 
     const state: ProcessState = {

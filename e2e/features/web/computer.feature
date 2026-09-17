@@ -47,6 +47,17 @@ Feature: The agent's computer in the browser
     When I sign in through the live computer
     Then Prism continues the original conversation and reports the inbox
 
+  Scenario: A help request stops Prism, and the password typed for it is cleared
+    Given the runtime can give the agent a computer
+    And a website with a sign-in page and public notes
+    When I ask Prism to read my inbox using its computer
+    Then Prism requests computer help
+    When I open the help request on the Computer page
+    And I take control for the help request and type a password
+    Then Computer says Prism is stopped, and a question in another chat goes unanswered
+    When I hand the computer back without signing in
+    Then the password I typed is gone, and Prism answers the waiting question
+
   Scenario: Human control pauses queued work and survives closing the viewer
     Given the runtime can give the agent a computer
     And a website with a sign-in page and public notes

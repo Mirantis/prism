@@ -91,7 +91,7 @@ export function getComputerTools(
   const screenOutput = result.computer_screen.toModelOutput;
   result.computer_screen = tool({
     description:
-      'Inspect your current desktop and browser. During human takeover, set userRequested only when the user explicitly asks you to inspect the screen. Automatic inspection waits for hand-back.',
+      'Inspect your current desktop and browser. During human takeover, set userRequested only when the user explicitly asks you to inspect the screen. Automatic inspection waits for hand-back. While the user completes a help request, every inspection waits for hand-back.',
     inputSchema: z.object({ userRequested: z.boolean().default(false) }),
     execute: async ({ userRequested }) => {
       if (!use) throw new Error('Screen inspection requires an active invocation.');
@@ -107,7 +107,11 @@ export function getComputerTools(
           },
           notify() {},
         },
-        userRequested || (use.mode === 'voice' && !computerService.access.paused),
+        // An inspection is the one look that outruns the desktop's queue, so a
+        // secure takeover withdraws it: the user's own screen is theirs alone
+        // until they hand back.
+        !computerService.access.secure &&
+          (userRequested || (use.mode === 'voice' && !computerService.access.paused)),
       );
       if (images.length) pictures.set(output, images);
       return output;
@@ -148,7 +152,7 @@ export function getComputerTools(
         dismiss ? 'dismissed' : 'continued',
       );
       if (!help) return { success: false, message: 'This help request is already closed.' };
-      if (!dismiss && computerService.access.paused) computerService.continueFromChat();
+      if (!dismiss && computerService.access.paused) await computerService.continueFromChat();
       const goalResumed =
         !dismiss
           ? await computerHelpService.resumeGoal(use.agentId, use.userId, help)

@@ -36,6 +36,7 @@ import { findText, readLines, readScreenWords, upscaleForOcr } from './screen-te
 import { describeElements, findElements, readScreenElements } from './screen-elements';
 import { actOnWindow, findWindows, listWindows, type WindowAction } from './desktop-windows';
 import { DesktopInput, type InputFrame } from './desktop-input';
+import { clearPasswordFields } from './secure-window';
 import { hasBinaries, missingBinary } from '../../lib/has-binary';
 import { COMPUTER_BINARIES, unsupportedReason } from './supported';
 import { VideoStream } from './video-stream';
@@ -147,6 +148,17 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   private frontTail: Promise<void> = Promise.resolve();
   withModelChannel<T>(channel: ModelChannel, action: () => Promise<T>): Promise<T> {
     return this.channels.run(channel, action);
+  }
+
+  /**
+   * End a secure takeover: empty every password field the browser holds, and drop
+   * the retained picture of the user's own shared screen. Sharing carries on, so the
+   * next frame replaces what this drops.
+   */
+  async clearAfterSecureWindow(): Promise<void> {
+    this.userScreen = null;
+    const pages = this.browser?.listTabs() ?? [];
+    if (pages.length) await this.onFrontQueue(() => clearPasswordFields(pages));
   }
 
   releaseInput(): void {

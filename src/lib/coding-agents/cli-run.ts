@@ -8,7 +8,8 @@
  * that is not a CLI builds its run another way.
  */
 
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess } from 'child_process';
+import { agentProcesses } from '../agent-processes';
 import { createInterface } from 'readline';
 import { logger } from '../../logger';
 import { AsyncChannel } from '../../utils/async-channel';
@@ -42,7 +43,10 @@ export type Spawner = (
   options: { cwd?: string; env: NodeJS.ProcessEnv },
 ) => ChildProcess;
 
-export function runCli(spec: CliRunSpec, spawner: Spawner = spawn): CodingAgentRun {
+const spawnAgent: Spawner = (command, args, options) =>
+  agentProcesses.spawn(command, args, options);
+
+export function runCli(spec: CliRunSpec, spawner: Spawner = spawnAgent): CodingAgentRun {
   const { taskId } = spec;
   const child = spawner(spec.command, spec.args, { cwd: spec.cwd, env: spec.env });
   // Prompts are argv inputs; Codex also reads piped stdin until EOF.
@@ -150,19 +154,11 @@ function closingMessage(
  * two-stage shape `shell_exec` uses for its timeout and cancel paths.
  */
 function terminateChild(child: ChildProcess, taskId: string): void {
-  try {
-    child.kill('SIGTERM');
-  } catch (err) {
-    logger.warn({ err, taskId }, '[AgentTask] SIGTERM failed');
-    return;
-  }
+  // The whole group: a task stopped by a secure takeover holds a stopped group.
+  agentProcesses.kill(child, 'SIGTERM');
   setTimeout(() => {
     if (child.exitCode === null && child.signalCode === null) {
-      try {
-        child.kill('SIGKILL');
-      } catch (err) {
-        logger.warn({ err, taskId }, '[AgentTask] SIGKILL failed');
-      }
+      agentProcesses.kill(child, 'SIGKILL');
     }
   }, STOP_GRACE_MS).unref();
 }

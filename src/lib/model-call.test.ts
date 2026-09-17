@@ -3,7 +3,7 @@
  * caller never sees — every step of a multi-step turn.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { mockGenerateText, mockGenerateObject, mockRecord } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
@@ -22,6 +22,7 @@ vi.mock('../services/llm-call.service', () => ({
 }));
 
 import { NoObjectGeneratedError } from 'ai';
+import { inferenceGate } from './inference-gate';
 import { callModel, callModelForObject } from './model-call';
 
 const model = { modelId: 'a-model' } as never;
@@ -148,5 +149,38 @@ describe('callModelForObject', () => {
       model: 'a-model',
       usage: { inputTokens: 40, outputTokens: 4, totalTokens: 44 },
     });
+  });
+});
+
+describe('the gate a secure takeover holds', () => {
+  afterEach(() => inferenceGate.free());
+
+  it('holds each step of a turn already running, then runs the caller’s own hook', async () => {
+    const callerPrepare = vi.fn(() => ({ toolChoice: 'auto' }));
+    let ranWhileHeld = true;
+    let stepResult: unknown;
+
+    mockGenerateText.mockImplementation(async (params: never) => {
+      const { prepareStep } = params as { prepareStep: (o: unknown) => Promise<unknown> };
+      // A takeover opens after the turn started: the next step has to wait for it.
+      inferenceGate.hold();
+      const step = prepareStep({ stepNumber: 1 }).then((result) => (stepResult = result));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      ranWhileHeld = callerPrepare.mock.calls.length > 0;
+
+      inferenceGate.free();
+      await step;
+      return { text: 'done' };
+    });
+
+    const result = await callModel(
+      { purpose: 'chat' },
+      { model, prompt: 'hi', prepareStep: callerPrepare } as never,
+    );
+
+    expect(ranWhileHeld).toBe(false);
+    expect(callerPrepare).toHaveBeenCalledOnce();
+    expect(stepResult).toEqual({ toolChoice: 'auto' });
+    expect(result).toEqual({ text: 'done' });
   });
 });

@@ -348,6 +348,9 @@ const start = async () => {
 
   process.on('SIGTERM', () => void shutdown(server, 'SIGTERM'));
   process.on('SIGINT', () => void shutdown(server, 'SIGINT'));
+  // A closed terminal on a host install: without a handler Node ends at once, and the
+  // exit hooks that stop the agent's own processes never run.
+  process.on('SIGHUP', () => void shutdown(server, 'SIGHUP'));
 };
 
 start().catch((error) => {

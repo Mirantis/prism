@@ -155,7 +155,7 @@ class ComputerHelpService {
     if (!help || action === 'dismiss') return;
     if (computerService.access.paused) {
       if (!clientId) throw new Error('Hand control back in Computer first.');
-      computerService.handBack(clientId);
+      await computerService.handBack(clientId);
     }
     if (!help.threadId) {
       const { voiceChatService } = await import('../voice/voice-chat.service');

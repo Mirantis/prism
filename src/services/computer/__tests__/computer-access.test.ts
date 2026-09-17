@@ -1,7 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { ComputerAccess } from '../computer-access';
+import { agentProcesses } from '../../../lib/agent-processes';
+import { inferenceGate } from '../../../lib/inference-gate';
 
 vi.mock('../../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
+vi.mock('../../../lib/agent-processes', () => ({
+  agentProcesses: { suspend: vi.fn(), resume: vi.fn() },
+}));
 const caller = { userId: 'user', agentId: 'agent', threadId: 'thread', mode: 'chat' };
 const deferred = () => {
   let resolve!: () => void;
@@ -80,7 +85,7 @@ describe('computer ownership', () => {
     expect(next).not.toHaveBeenCalled();
     access.disconnected('viewer');
     expect(access.paused).toBe(true);
-    access.handBack('new-viewer');
+    await access.handBack('new-viewer');
     await pending;
     expect(next).toHaveBeenCalledOnce();
     access.finish(use);
@@ -92,7 +97,7 @@ describe('computer ownership', () => {
     await access.takeControl('viewer');
     expect(await access.run(use, async () => 'screen', true)).toBe('screen');
     expect(access.owner).toBeNull();
-    access.handBack('viewer');
+    await access.handBack('viewer');
     access.finish(use);
   });
 
@@ -152,12 +157,72 @@ it('rejects hand-back by another viewer while takeover waits for an action', asy
   });
   await started.promise;
   const takeover = access.takeControl('first');
-  expect(() => access.handBack('second')).toThrow('Another viewer has control');
+  await expect(access.handBack('second')).rejects.toThrow('Another viewer has control');
   expect(access.paused).toBe(true);
   finish.resolve();
   await action;
   await takeover;
   expect(access.human).toBe('first');
-  access.handBack('first');
+  await access.handBack('first');
   access.finish(use);
+});
+
+describe('secure takeover', () => {
+  afterEach(() => {
+    inferenceGate.free();
+    vi.mocked(agentProcesses.suspend).mockClear();
+    vi.mocked(agentProcesses.resume).mockClear();
+  });
+
+  it('stops the runtime for the help request, and cleans up before it runs again', async () => {
+    let clearedWhileStopped: boolean | null = null;
+    const access = new ComputerAccess(async () => {
+      clearedWhileStopped = inferenceGate.held;
+    });
+    await access.takeControl('viewer', 'help-1');
+    expect(access.secure).toBe(true);
+    expect(inferenceGate.held).toBe(true);
+    expect(agentProcesses.suspend).toHaveBeenCalledOnce();
+
+    await access.handBack('viewer');
+    expect(clearedWhileStopped).toBe(true);
+    expect(access.secure).toBe(false);
+    expect(inferenceGate.held).toBe(false);
+    expect(agentProcesses.resume).toHaveBeenCalledOnce();
+  });
+
+  it('runs the runtime again when the viewer goes away, and keeps the desktop paused', async () => {
+    const access = new ComputerAccess();
+    await access.takeControl('viewer', 'help-1');
+    access.disconnected('viewer');
+    await vi.waitFor(() => expect(inferenceGate.held).toBe(false));
+    expect(access.secure).toBe(false);
+    expect(access.paused).toBe(true);
+    expect(agentProcesses.resume).toHaveBeenCalledOnce();
+  });
+
+  it('leaves the runtime alone for a takeover that answers no help request', async () => {
+    const access = new ComputerAccess();
+    await access.takeControl('viewer');
+    expect(access.secure).toBe(false);
+    expect(inferenceGate.held).toBe(false);
+    expect(agentProcesses.suspend).not.toHaveBeenCalled();
+    await access.handBack('viewer');
+  });
+
+  it('keeps the desktop paused for a viewer who takes control while it is cleared', async () => {
+    const clearing = deferred();
+    const access = new ComputerAccess(() => clearing.promise);
+    await access.takeControl('first', 'help-1');
+
+    const handBack = access.handBack('first');
+    await access.takeControl('second', 'help-1');
+    clearing.resolve();
+    await handBack;
+
+    expect(access.human).toBe('second');
+    expect(access.paused).toBe(true);
+    expect(access.secure).toBe(true);
+    expect(inferenceGate.held).toBe(true);
+  });
 });
