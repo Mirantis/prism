@@ -37,6 +37,17 @@ dev builds never exit. If the agent comes back on the same release, it does not
 stop again for that release. Do not set it under a plain `docker run`, which
 does not pull a new image.
 
+## Develop with the container desktop
+
+Build the local image once, then run the container development loop:
+
+```bash
+npm run docker:build
+npm run docker:dev
+```
+
+The development loop watches runtime and Web UI changes and mounts each build into the container. Reload the Web UI after a frontend change. Rebuild the image when dependencies, the database schema, or container tools change.
+
 ## Run the agent and boot into the terminal UI
 
 ```bash

@@ -9,7 +9,7 @@
 # reads it; the database and data dir live in a named volume. The container is removed
 # when this script exits, however it exits.
 #
-#   PRISM_IMAGE      image to run          (default ghcr.io/lensapp/prism-agent:canary)
+#   PRISM_IMAGE      image to run          (default prism-agent:local)
 #   PRISM_PORT       host port for :3003   (default 3003)
 #   PRISM_CONTAINER  container name        (default prism-dev)
 #   PRISM_VOLUME     named volume for /data (default prism-dev-data)
@@ -18,10 +18,15 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
-IMAGE="${PRISM_IMAGE:-ghcr.io/lensapp/prism-agent:canary}"
+IMAGE="${PRISM_IMAGE:-prism-agent:local}"
 PORT="${PRISM_PORT:-3003}"
 NAME="${PRISM_CONTAINER:-prism-dev}"
 VOLUME="${PRISM_VOLUME:-prism-dev-data}"
+
+if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
+  echo "No image $IMAGE. Build one with 'npm run docker:build'." >&2
+  exit 1
+fi
 
 if [ ! -f .env ]; then
   echo "No .env in $REPO_ROOT. Copy .env.example to .env and fill it in." >&2
@@ -47,13 +52,13 @@ image_differs() {
 }
 if image_differs package-lock.json || image_differs prisma/sqlite/schema.prisma; then
   echo "Warning: $IMAGE was built from a different package-lock.json or Prisma schema than this checkout." >&2
-  echo "         Pull a newer image, or build one with 'npm run docker:build' and set PRISM_IMAGE=prism-agent:local." >&2
+  echo "         Rebuild it with 'npm run docker:build', or select another image with PRISM_IMAGE." >&2
 fi
 # The voice chat's desktop needs packages the Dockerfile installs; an image built before
 # they were added starts, then refuses every voice chat.
 if ! docker run --rm --entrypoint sh "$IMAGE" -c 'command -v startxfce4 ffmpeg xdotool > /dev/null' 2>/dev/null; then
   echo "Warning: $IMAGE lacks the desktop packages (xfce4, ffmpeg, xdotool); voice chats will refuse to start." >&2
-  echo "         Build one with 'npm run docker:build' and set PRISM_IMAGE=prism-agent:local." >&2
+  echo "         Rebuild it with 'npm run docker:build'." >&2
 fi
 
 echo "Compiling src/ to dist/ and the web UI to web/dist/..."
