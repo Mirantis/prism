@@ -11,11 +11,13 @@ export function ComputerHelpCard({
   help,
   clientId,
   inComputer,
+  showConversationLink = inComputer,
   disabled = false,
 }: {
   help: ComputerHelp;
   clientId?: string | null;
   inComputer?: boolean;
+  showConversationLink?: boolean;
   disabled?: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -97,7 +99,7 @@ export function ComputerHelpCard({
           </Button>
         </div>
       )}
-      {help.threadId && inComputer && (
+      {help.threadId && showConversationLink && (
         <a
           className="block text-xs text-muted-foreground underline underline-offset-4"
           href={`/chat/${help.threadId}`}
