@@ -49,6 +49,20 @@ Then('the live computer opens over the chat', async ({ page, $testInfo }) => {
   await expect(help.getByRole('link', { name: 'Open Computer' })).toHaveCount(0);
   await expect(panel).toHaveAttribute('data-state', 'open', { timeout: 60_000 });
   await expect(screen).toBeVisible({ timeout: 60_000 });
+  await expect(panel.getByText('Click the desktop to help')).toHaveCount(0);
+  await expect(panel.getByText('Needs your help')).toHaveCount(0);
+  await expect
+    .poll(() =>
+      panel.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return (
+          style.transitionProperty.includes('transform') &&
+          style.transitionDuration === '1.2s' &&
+          style.opacity === '1'
+        );
+      }),
+    )
+    .toBe(true);
   await expect.poll(async () => {
     const box = await screen.boundingBox();
     return box ? Math.abs(box.width / box.height - 16 / 9) : 1;
@@ -62,7 +76,7 @@ Then('the live computer opens over the chat', async ({ page, $testInfo }) => {
       panelBox &&
       messagesBox &&
       viewport &&
-      Math.abs(panelBox.width - viewport.width * 0.6) < 2 &&
+      Math.abs(panelBox.width - viewport.width * 0.5) < 2 &&
       panelBox.x < messagesBox.x + messagesBox.width &&
       panelBox.y === 0 &&
       panelBox.height === viewport.height &&

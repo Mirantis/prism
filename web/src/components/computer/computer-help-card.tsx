@@ -12,12 +12,14 @@ export function ComputerHelpCard({
   clientId,
   inComputer,
   showConversationLink = inComputer,
+  showHeader = true,
   disabled = false,
 }: {
   help: ComputerHelp;
   clientId?: string | null;
   inComputer?: boolean;
   showConversationLink?: boolean;
+  showHeader?: boolean;
   disabled?: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -47,20 +49,22 @@ export function ComputerHelpCard({
       )}
       aria-label="Computer help"
     >
-      <div className="flex items-center gap-2 text-sm font-medium">
-        {inComputer ? (
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
-            <Monitor className="size-4" />
-          </span>
-        ) : (
-          <Monitor className="size-4 text-amber-500" />
-        )}
-        {current.status === 'waiting'
-          ? 'Needs your help'
-          : current.status === 'continued'
-            ? 'Ready to continue'
-            : 'Dismissed'}
-      </div>
+      {showHeader && (
+        <div className="flex items-center gap-2 text-sm font-medium">
+          {inComputer ? (
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
+              <Monitor className="size-4" />
+            </span>
+          ) : (
+            <Monitor className="size-4 text-amber-500" />
+          )}
+          {current.status === 'waiting'
+            ? 'Needs your help'
+            : current.status === 'continued'
+              ? 'Ready to continue'
+              : 'Dismissed'}
+        </div>
+      )}
       <p
         className={cn(
           'break-words text-sm',

@@ -81,7 +81,7 @@ describe('chat computer panel', () => {
     vi.restoreAllMocks();
   });
 
-  it('opens at 60% width, controls the request, and closes after one second', async () => {
+  it('opens at 50% width, controls the request, and closes after 1.2 seconds', async () => {
     const queryClient = new QueryClient();
     const view = render(
       <QueryClientProvider client={queryClient}>
@@ -91,7 +91,10 @@ describe('chat computer panel', () => {
 
     const panel = screen.getByLabelText('Computer help panel');
     expect(panel.getAttribute('data-state')).toBe('open');
-    expect(panel.style.width).toBe('60vw');
+    expect(panel.style.width).toBe('50vw');
+    expect(panel.className).toContain('transition-transform');
+    expect(panel.className).toContain('duration-[1200ms]');
+    expect(panel.className).not.toContain('opacity');
 
     fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
     await act(async () => {});
@@ -114,7 +117,9 @@ describe('chat computer panel', () => {
       </QueryClientProvider>,
     );
     expect(panel.getAttribute('data-state')).toBe('closed');
-    act(() => vi.advanceTimersByTime(999));
+    expect(panel.style.width).toBe('50vw');
+    expect(panel.className).toContain('translate-x-full');
+    act(() => vi.advanceTimersByTime(1199));
     expect(screen.queryByLabelText('Computer help panel')).not.toBeNull();
     act(() => vi.advanceTimersByTime(1));
     expect(screen.queryByLabelText('Computer help panel')).toBeNull();
@@ -153,7 +158,7 @@ describe('chat computer panel', () => {
     expect(screen.getByLabelText('Computer help panel').getAttribute('data-state')).toBe(
       'closed',
     );
-    act(() => vi.advanceTimersByTime(1000));
+    act(() => vi.advanceTimersByTime(1200));
     expect(screen.queryByLabelText('Computer help panel')).toBeNull();
 
     view.rerender(
