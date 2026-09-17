@@ -40,6 +40,7 @@
  * false positives the failure mode to design against.
  */
 
+import { inferenceGate } from '../../lib/inference-gate';
 import { logger } from '../../logger';
 
 /** What the caller asked for. `auto` resolves from the participant count. */
@@ -208,6 +209,10 @@ export class ResponsePolicy {
    * decided exactly once.
    */
   onUtteranceCommitted(itemId: string): TurnDecision {
+    // A secure takeover of the computer stops the runtime, and the session refuses to
+    // answer while it lasts (`realtime-session.ts`). Declining here as well spends no
+    // probe judging an utterance that cannot be answered.
+    if (inferenceGate.held) return 'ignore';
     if (this.isClaimed(itemId)) return 'ignore';
     this.claim(itemId);
     this.stats.utterances += 1;

@@ -37,6 +37,7 @@
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
 import { config } from '../../config';
+import { inferenceGate } from '../../lib/inference-gate';
 import { logger } from '../../logger';
 import { REALTIME_SAMPLE_RATE } from './resampler';
 import type { PlaybackSnapshot } from './audio-playback';
@@ -912,6 +913,13 @@ export class RealtimeSession extends EventEmitter {
    * until some later turn happened to trigger a response.
    */
   requestResponse(): void {
+    // The one boundary every spoken answer crosses — a turn the policy allowed, a
+    // verdict that landed late, the report on a recording. A secure takeover of the
+    // computer stops the runtime, and an answer here can call the agent's tools.
+    if (inferenceGate.held) {
+      logger.info('[Meeting:Resp] Not answering — the computer is held for a secure sign-in');
+      return;
+    }
     if (this.responseActive) {
       // Only one can be queued. A second request while one is already waiting is
       // dropped here, silently — which is invisible without this line, and reads in

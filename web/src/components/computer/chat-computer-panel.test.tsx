@@ -59,6 +59,7 @@ function status(helpStatus: ComputerHelp['status']): ComputerStatus {
     running: true,
     starting: false,
     paused: false,
+    secure: false,
     controller: null,
     owner: null,
     waiting: [],

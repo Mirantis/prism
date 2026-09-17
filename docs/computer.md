@@ -30,6 +30,8 @@ When Prism needs help, the live desktop opens in a resizable panel on the right 
 
 From Slack, **Open Computer** opens the Computer page with the request beside the screen.
 
+While you are completing a help request, Prism's inference is paused, so it cannot see what you type. After the help request ends, any password fields are cleared. Type the password on the desktop, never in a chat message, and submit the sign-in before you press Esc or **I’m done**. The browser never offers to save a password.
+
 A blocked website can wait while Prism works elsewhere. When you hand back control, the interrupted turn finishes first; the request you unblocked follows it. **Dismiss** closes a help request; Prism treats it as dismissed in later conversation turns. **Stop** cancels the invocation using the computer.
 
 ## Several requests

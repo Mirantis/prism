@@ -8,7 +8,7 @@
  * are identical to upstream so the agent's tool contract doesn't
  * change between modes.
  */
-import { spawn } from 'child_process';
+import { agentProcesses } from '../../lib/agent-processes';
 import { z } from 'zod';
 import { sandboxEnv } from './sandbox-env';
 import { resolvePath } from './workspace';
@@ -101,7 +101,7 @@ export async function runShellExec(
   );
 
   return new Promise<ExecResult>((resolve) => {
-    const child = spawn('/bin/bash', ['-c', input.command], {
+    const child = agentProcesses.spawn('/bin/bash', ['-c', input.command], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: sandboxEnv(),
@@ -132,18 +132,36 @@ export async function runShellExec(
     // SIGTERM, then escalate to SIGKILL if the child hasn't exited shortly
     // after. Shared by the timeout and the cancel (abort) paths.
     const terminate = () => {
-      child.kill('SIGTERM');
+      agentProcesses.kill(child, 'SIGTERM');
       setTimeout(() => {
-        if (child.exitCode === null) child.kill('SIGKILL');
+        if (child.exitCode === null) agentProcesses.kill(child, 'SIGKILL');
       }, 2000).unref();
     };
 
+    // The budget counts the time the command runs, so the clock stops while a secure
+    // takeover holds the command stopped and restarts with what was left.
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      terminate();
-    }, timeoutMs);
-    timer.unref();
+    let remainingMs = timeoutMs;
+    let armedAt = 0;
+    let timer: NodeJS.Timeout | undefined;
+    const arm = () => {
+      if (timer) return;
+      armedAt = Date.now();
+      timer = setTimeout(() => {
+        timedOut = true;
+        terminate();
+      }, remainingMs);
+      timer.unref();
+    };
+    const pauseClock = () => {
+      if (!timer) return;
+      clearTimeout(timer);
+      timer = undefined;
+      remainingMs = Math.max(0, remainingMs - (Date.now() - armedAt));
+    };
+    if (!agentProcesses.isSuspended) arm();
+    agentProcesses.on('suspend', pauseClock);
+    agentProcesses.on('resume', arm);
 
     // Cancel propagation: when the turn is aborted mid-command, kill the child
     // so it doesn't run on to its own timeout in the background. The signal is
@@ -160,6 +178,8 @@ export async function runShellExec(
 
     const done = (exitCode: number) => {
       clearTimeout(timer);
+      agentProcesses.off('suspend', pauseClock);
+      agentProcesses.off('resume', arm);
       abortSignal?.removeEventListener('abort', onAbort);
       stdoutBytes = outState.n;
       stderrBytes = errState.n;
@@ -178,6 +198,8 @@ export async function runShellExec(
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      agentProcesses.off('suspend', pauseClock);
+      agentProcesses.off('resume', arm);
       abortSignal?.removeEventListener('abort', onAbort);
       resolve({
         stdout: '',

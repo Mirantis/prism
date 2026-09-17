@@ -13,6 +13,7 @@ import {
   type InferSchema,
   type LanguageModel,
 } from 'ai';
+import { inferenceGate } from './inference-gate';
 import { llmCallService, type LlmCallPurpose } from '../services/llm-call.service';
 
 export interface ModelCallMeta {
@@ -37,13 +38,24 @@ type TextResult = Awaited<ReturnType<typeof generateText>>;
  * Recording rides `onStepFinish` so a multi-step turn is counted step by step,
  * as the provider bills it, and a turn that dies part-way keeps the steps it
  * finished. A caller's own `onStepFinish` runs after the row is written.
+ *
+ * The gate a secure takeover of the computer holds is asked before every step, not
+ * only before the call: one `generateText` runs a whole tool loop, so a takeover that
+ * opens mid-turn has to stop the next step rather than the next turn. A password is
+ * then typed with nothing running that could decide to look at it.
  */
 export async function callModel(meta: ModelCallMeta, params: TextParams): Promise<TextResult> {
+  await inferenceGate.wait(params.abortSignal);
   const model = modelIdOf(params.model);
   const callerOnStepFinish = params.onStepFinish;
+  const callerPrepareStep = params.prepareStep;
 
   return generateText({
     ...params,
+    prepareStep: async (options) => {
+      await inferenceGate.wait(params.abortSignal);
+      return callerPrepareStep?.(options);
+    },
     onStepFinish: async (step) => {
       llmCallService.record({ ...meta, model, usage: step.usage });
       await callerOnStepFinish?.(step);
@@ -68,6 +80,7 @@ export async function callModelForObject<
   meta: ModelCallMeta,
   params: Parameters<typeof generateObject<SCHEMA, OUTPUT, RESULT>>[0],
 ): Promise<Awaited<ReturnType<typeof generateObject<SCHEMA, OUTPUT, RESULT>>>> {
+  await inferenceGate.wait(params.abortSignal);
   const model = modelIdOf(params.model);
 
   try {

@@ -39,7 +39,7 @@ const caller = { userId: 'user', agentId: 'agent', mode: 'chat' };
 const options = { toolCallId: 'call', messages: [] };
 
 beforeEach(async () => {
-  computerService.access.handBack('viewer');
+  await computerService.access.handBack('viewer');
   await computerService.access.takeControl('viewer');
   vi.mocked(prisma.conversationMessage.findFirst).mockResolvedValue({
     id: 'message',

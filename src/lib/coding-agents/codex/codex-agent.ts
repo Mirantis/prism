@@ -1,7 +1,6 @@
 import { bedrockRegion } from '../bedrock-credentials';
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
 import { config } from '../../../config';
 import { trackEvent } from '../../telemetry';
 import { ensureSymlink } from '../../data-dir';
@@ -17,7 +16,8 @@ interface StreamLine {
   message?: string;
 }
 
-export function createCodexAgent(spawner: Spawner = spawn): CodingAgent {
+/** The optional spawner is a test hook; without one, `runCli` spawns the real binary. */
+export function createCodexAgent(spawner?: Spawner): CodingAgent {
   return {
     id: 'codex',
     displayName: 'Codex',

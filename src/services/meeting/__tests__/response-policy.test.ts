@@ -13,7 +13,8 @@
  * verdict, and there is no second path left to collide with.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import { inferenceGate } from '../../../lib/inference-gate';
 import { ResponsePolicy } from '../response-policy';
 
 const policy = (over: Partial<ConstructorParameters<typeof ResponsePolicy>[0]> = {}) =>
@@ -295,5 +296,22 @@ describe('a mode flip while a verdict is in flight', () => {
 
     // A verdict for an utterance open mode already spoke to must not add a second.
     expect(p.resolveVerdict('i1', true)).toBe(false);
+  });
+});
+
+describe('a secure takeover of the computer', () => {
+  afterEach(() => inferenceGate.free());
+
+  it('keeps the agent quiet, in a room it would otherwise answer', () => {
+    const p = policy({ mode: 'open' });
+    inferenceGate.hold();
+
+    // Not even claimed: the utterance is not the agent's to decide while somebody is
+    // typing a password on its desktop.
+    expect(p.onUtteranceCommitted('i1')).toBe('ignore');
+    expect(p.statistics.utterances).toBe(0);
+
+    inferenceGate.free();
+    expect(p.onUtteranceCommitted('i1')).toBe('respond');
   });
 });

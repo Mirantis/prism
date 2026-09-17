@@ -100,6 +100,38 @@ async function waitForExit(proc: ChildProcess, ms: number): Promise<boolean> {
 }
 
 /**
+ * Turn off the browser's password manager on this profile.
+ *
+ * A real sign-in offers to save the password, and one click writes it into the
+ * profile — which sits in the data dir the agent's shell tools read, encrypted with
+ * a key a container without a keyring takes from a published constant. The agent
+ * never needs a stored password: a person types it, and the session cookie is what
+ * the work runs on afterwards.
+ *
+ * These are the preferences behind the browser's own "Offer to save passwords"
+ * setting, written before the launch that reads them. Passwords a profile saved
+ * before this stay until somebody removes them.
+ */
+export async function disablePasswordStorage(userDataDir: string): Promise<void> {
+  const file = path.join(userDataDir, 'Default', 'Preferences');
+  let prefs: Record<string, unknown> = {};
+  try {
+    prefs = JSON.parse(await fs.readFile(file, 'utf8')) as Record<string, unknown>;
+  } catch {
+    // A profile that has not run yet: the file is written from nothing.
+  }
+  const profile = { ...(prefs.profile as object), password_manager_enabled: false };
+  const next = {
+    ...prefs,
+    credentials_enable_service: false,
+    credentials_enable_autosignin: false,
+    profile,
+  };
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify(next));
+}
+
+/**
  * Remove the profile's singleton lock files.
  *
  * Chromium writes `SingletonLock` as a symlink naming `<hostname>-<pid>` and
@@ -292,6 +324,9 @@ export class BrowserStack {
     const userDataDir = options.profileDir ?? profileDir();
     await fs.mkdir(userDataDir, { recursive: true });
     await clearStaleProfileLocks(userDataDir);
+    // Fatal on purpose: a browser that would offer to save a password is the one
+    // thing this profile must never be.
+    await disablePasswordStorage(userDataDir);
 
     // Spawned as its own process rather than through `chromium.launch`. See the
     // module comment: Playwright's launch path is what Meet answers 403 to.

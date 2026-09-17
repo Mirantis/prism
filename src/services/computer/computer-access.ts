@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { config } from '../../config';
+import { agentProcesses } from '../../lib/agent-processes';
+import { inferenceGate } from '../../lib/inference-gate';
+import { logger } from '../../logger';
 import { trackEvent } from '../../lib/telemetry';
 
 export interface ComputerCaller {
@@ -28,6 +32,31 @@ export class ComputerAccess extends EventEmitter {
   private claimant: string | null = null;
   private queue: ComputerUse[] = [];
   private tail: Promise<unknown> = Promise.resolve();
+  /** The takeover that answers a help request, while it lasts. */
+  private secureWindow: {
+    clientId: string;
+    helpId: string;
+    startedAt: number;
+    /** Set while the desktop is being cleared, which is still inside the window. */
+    ending: boolean;
+  } | null = null;
+
+  /**
+   * @param clearSecrets what the desktop must forget before the agent runs again.
+   */
+  constructor(private readonly clearSecrets?: () => Promise<void>) {
+    super();
+  }
+
+  /**
+   * Whether a person is answering a help request at the keyboard right now.
+   *
+   * For as long as this holds, the runtime calls no model, the agent's own
+   * processes are stopped, and the computer tools inspect nothing.
+   */
+  get secure(): boolean {
+    return this.secureWindow !== null;
+  }
 
   create(caller: ComputerCaller, signal?: AbortSignal): ComputerUse {
     const controller = new AbortController();
@@ -123,7 +152,8 @@ export class ComputerAccess extends EventEmitter {
     }
   }
 
-  async takeControl(clientId: string): Promise<void> {
+  /** A takeover naming a help request is secure; see the `secure` getter. */
+  async takeControl(clientId: string, helpId?: string): Promise<void> {
     if ((this.human && this.human !== clientId) || (this.claimant && this.claimant !== clientId))
       throw new Error('Another viewer has control.');
     this.paused = true;
@@ -133,6 +163,55 @@ export class ComputerAccess extends EventEmitter {
     if (this.claimant !== clientId) return;
     this.human = clientId;
     this.claimant = null;
+    // The window opens where the keyboard becomes theirs: `computerService.input`
+    // passes a frame on only once `human` is this client.
+    if (helpId) this.beginSecure(clientId, helpId);
+    this.changed();
+  }
+
+  private beginSecure(clientId: string, helpId: string): void {
+    // A window that is clearing up is replaced rather than joined: its guards are
+    // already in force, and the one ending will find itself superseded.
+    if (this.secureWindow && !this.secureWindow.ending) return;
+    this.secureWindow = { clientId, helpId, startedAt: Date.now(), ending: false };
+    inferenceGate.hold();
+    agentProcesses.suspend();
+    trackEvent('computer secure takeover started', config.ownerUserId, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'computer.help_id': helpId,
+    });
+  }
+
+  /**
+   * Close the window, in this order: forget what was typed, let the agent's
+   * processes run, then let it call a model again. A failure to clear still opens
+   * the gate — a runtime that never infers again is the worse outcome — and says so.
+   *
+   * `secure` holds until the clearing is done. The password fields are still filled
+   * while it runs, so this is the part of the window the screen tools must miss.
+   */
+  async endSecure(exit: 'handed_back' | 'disconnected'): Promise<void> {
+    const open = this.secureWindow;
+    if (!open || open.ending) return;
+    open.ending = true;
+    try {
+      await this.clearSecrets?.();
+    } catch (err) {
+      logger.error({ err }, '[Computer] Could not clear what a secure takeover left behind');
+    }
+    // A takeover that began while this one was clearing holds the guards now, and
+    // releasing them here would leave that window unguarded.
+    if (this.secureWindow === open) {
+      this.secureWindow = null;
+      agentProcesses.resume();
+      inferenceGate.free();
+    }
+    trackEvent('computer secure takeover ended', config.ownerUserId, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'computer.help_id': open.helpId,
+      exit,
+      elapsed_ms: String(Date.now() - open.startedAt),
+    });
     this.changed();
   }
 
@@ -141,18 +220,30 @@ export class ComputerAccess extends EventEmitter {
       throw new Error('Another viewer has control.');
   }
 
-  handBack(clientId: string): void {
+  async handBack(clientId: string): Promise<void> {
     this.assertCanHandBack(clientId);
+    // Control goes first: `computerService.input` passes a frame on only while this
+    // client is `human`, so a key already on its way cannot refill a field that the
+    // clearing below has just emptied. The desktop stays paused until that is done.
     this.human = null;
     this.claimant = null;
+    this.changed();
+    await this.endSecure('handed_back');
+    // A viewer who took control while the clearing ran holds the desktop now.
+    if (this.human || this.claimant) return;
     this.paused = false;
     this.changed();
   }
 
+  /**
+   * A viewer that goes away keeps the desktop paused for its return, but ends its
+   * secure window: nobody is typing, and the runtime would otherwise never infer again.
+   */
   disconnected(clientId: string): void {
     if (this.claimant === clientId) this.claimant = null;
     if (this.human !== clientId) return;
     this.human = null;
+    if (this.secureWindow?.clientId === clientId) void this.endSecure('disconnected');
     this.changed();
   }
 

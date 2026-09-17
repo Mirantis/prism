@@ -10,6 +10,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { runShellExec, shellExecInput } from '../exec';
+import { agentProcesses } from '../../../lib/agent-processes';
 import { MAX_EXEC_OUTPUT_BYTES } from '../config';
 import { runReadFile, runWriteFile, runEditFile } from '../files';
 
@@ -82,6 +83,49 @@ describe('shell_exec (runShellExec)', () => {
     expect(result.timedOut).toBe(true);
     // SIGTERM → exit code 143 (128 + 15) on most shells
     expect(result.exitCode).not.toBe(0);
+  });
+
+  it('does not count the time a secure takeover holds the command stopped', async () => {
+    // Longer stopped than the whole budget, and the command itself needs almost none.
+    const p = runShellExec({ command: 'sleep 0.2; echo done', timeout: 800 }, workspace);
+    agentProcesses.suspend();
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    agentProcesses.resume();
+
+    const result = await p;
+    expect(result.timedOut).toBeUndefined();
+    expect(result.stdout.trim()).toBe('done');
+  });
+
+  it('keeps the budget when a second takeover suspends the command again', async () => {
+    // The takeover-during-clearing path calls suspend() twice with no resume between.
+    // 600 ms of a 1 s budget are spent first, so a second subtraction would leave none.
+    const p = runShellExec({ command: 'sleep 0.8; echo done', timeout: 1_000 }, workspace);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    agentProcesses.suspend();
+    agentProcesses.suspend();
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    agentProcesses.resume();
+
+    const result = await p;
+    expect(result.timedOut).toBeUndefined();
+    expect(result.stdout.trim()).toBe('done');
+  });
+
+  it('settles a command canceled while a secure takeover holds it stopped', async () => {
+    const controller = new AbortController();
+    const p = runShellExec({ command: 'sleep 37; echo x' }, workspace, controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    agentProcesses.suspend();
+    try {
+      controller.abort();
+      // The forked `sleep` holds the output pipe, so only a signal to the whole group
+      // lets the command end while it is stopped.
+      const result = await p;
+      expect(result.aborted).toBe(true);
+    } finally {
+      agentProcesses.resume();
+    }
   });
 
   it('kills the child and sets aborted when the turn is canceled mid-command', async () => {

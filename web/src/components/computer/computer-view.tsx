@@ -169,7 +169,9 @@ export function ComputerView({ helpId }: { helpId?: string }) {
   const label = !screen.hasScreen
     ? 'Preparing your computer'
     : ownControl
-      ? 'You have control'
+      ? state?.secure
+        ? 'You have control · Prism is stopped'
+        : 'You have control'
       : anotherController
         ? 'Another viewer has control'
         : state?.paused

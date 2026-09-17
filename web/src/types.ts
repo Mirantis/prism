@@ -398,6 +398,8 @@ export interface ComputerStatus {
   running: boolean;
   starting: boolean;
   paused: boolean;
+  /** A takeover answering a help request: Prism is stopped for as long as it lasts. */
+  secure: boolean;
   controller: string | null;
   owner: { id: string; threadId?: string; mode: string } | null;
   waiting: { id: string; threadId?: string; mode: string }[];
