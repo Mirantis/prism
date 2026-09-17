@@ -32,6 +32,17 @@ A running container never updates itself — [automatic updates](installation.md
 apply to native installs only. To update, pull a newer tag and recreate the
 container; the agent's state survives on the `/data` volume.
 
+## Develop with the container desktop
+
+Build the local image once, then run the container development loop:
+
+```bash
+npm run docker:build
+npm run docker:dev
+```
+
+The development loop watches runtime and Web UI changes and mounts each build into the container. Reload the Web UI after a frontend change. Rebuild the image when dependencies, the database schema, or container tools change.
+
 ## Run the agent and boot into the terminal UI
 
 ```bash
