@@ -140,4 +140,32 @@ describe('chat computer panel', () => {
     });
     expect(panel.style.width).toBe('632px');
   });
+
+  it('closes from the header and reopens from history', () => {
+    const queryClient = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel requests={[help]} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close computer panel' }));
+    expect(screen.getByLabelText('Computer help panel').getAttribute('data-state')).toBe(
+      'closed',
+    );
+    act(() => vi.advanceTimersByTime(1000));
+    expect(screen.queryByLabelText('Computer help panel')).toBeNull();
+
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel
+          requests={[help]}
+          reopenRequest={{ id: help.id, token: 1 }}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByLabelText('Computer help panel').getAttribute('data-state')).toBe(
+      'open',
+    );
+  });
 });

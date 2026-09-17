@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Monitor } from 'lucide-react';
+import { Monitor, X } from 'lucide-react';
 import { ScreenView } from '@/components/voice/screen-view';
 import { computerRequest } from '@/api/computer';
 import { useComputerScreen } from '@/hooks/use-computer-screen';
@@ -12,7 +13,13 @@ import { ComputerHelpCard } from './computer-help-card';
 const PANEL_TRANSITION_MS = 1000;
 const MIN_PANEL_WIDTH = 320;
 
-export function ChatComputerPanel({ requests }: { requests: ComputerHelp[] }) {
+export function ChatComputerPanel({
+  requests,
+  reopenRequest,
+}: {
+  requests: ComputerHelp[];
+  reopenRequest?: { id: string; token: number };
+}) {
   const queryClient = useQueryClient();
   const { data } = useComputerStatus();
   const current = requests.map(
@@ -21,10 +28,12 @@ export function ChatComputerPanel({ requests }: { requests: ComputerHelp[] }) {
   const waiting = [...current].reverse().find((request) => request.status === 'waiting');
   const [displayed, setDisplayed] = useState<ComputerHelp | null>(waiting ?? null);
   const [open, setOpen] = useState(false);
+  const [closedHelpId, setClosedHelpId] = useState<string | null>(null);
   const [width, setWidth] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
   const resizeRef = useRef<{ startX: number; startWidth: number; maxWidth: number } | null>(
     null,
   );
@@ -33,19 +42,55 @@ export function ChatComputerPanel({ requests }: { requests: ComputerHelp[] }) {
   const state = screen.state ?? data;
   const ownControl = Boolean(screen.clientId) && state?.controller === screen.clientId;
   const anotherController = Boolean(state?.controller) && !ownControl;
-  const active = waiting?.id === displayed?.id;
+  const waitingId = waiting?.id;
+  const displayedId = displayed?.id;
+  const active = open && waitingId === displayedId;
+
+  const showPanel = useCallback((help: ComputerHelp) => {
+    if (closeTimerRef.current) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    setDisplayed(help);
+    const frame = window.requestAnimationFrame(() => setOpen(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  const hidePanel = useCallback(() => {
+    setOpen(false);
+    if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(
+      () => {
+        closeTimerRef.current = null;
+        setDisplayed(null);
+      },
+      PANEL_TRANSITION_MS,
+    );
+  }, []);
 
   useEffect(() => {
-    if (waiting) {
-      if (displayed?.id !== waiting.id) setDisplayed(waiting);
-      const frame = window.requestAnimationFrame(() => setOpen(true));
-      return () => window.cancelAnimationFrame(frame);
+    if (waiting && waitingId !== closedHelpId) {
+      if (displayedId !== waitingId || !open) return showPanel(waiting);
+      return;
     }
-    setOpen(false);
-    if (!displayed) return;
-    const timer = window.setTimeout(() => setDisplayed(null), PANEL_TRANSITION_MS);
-    return () => window.clearTimeout(timer);
-  }, [displayed?.id, waiting?.id]);
+    if (!waiting) {
+      if (closedHelpId) setClosedHelpId(null);
+      if (displayed && open) hidePanel();
+    }
+  }, [closedHelpId, displayedId, hidePanel, open, showPanel, waiting, waitingId]);
+
+  useEffect(() => {
+    if (!reopenRequest || reopenRequest.id !== waitingId || !waiting) return;
+    setClosedHelpId(null);
+    return showPanel(waiting);
+  }, [reopenRequest, showPanel, waiting, waitingId]);
+
+  useEffect(
+    () => () => {
+      if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+    },
+    [],
+  );
 
   const request = useCallback(
     async (path: string) => {
@@ -90,7 +135,7 @@ export function ChatComputerPanel({ requests }: { requests: ComputerHelp[] }) {
     resizeRef.current = {
       startX: event.clientX,
       startWidth: panel.getBoundingClientRect().width,
-      maxWidth: panel.parentElement?.getBoundingClientRect().width ?? window.innerWidth,
+      maxWidth: window.innerWidth,
     };
   };
 
@@ -108,20 +153,24 @@ export function ChatComputerPanel({ requests }: { requests: ComputerHelp[] }) {
   const resizeWithKeyboard = (direction: number) => {
     const panel = panelRef.current;
     if (!panel) return;
-    const maxWidth = panel.parentElement?.getBoundingClientRect().width ?? window.innerWidth;
-    setWidth(Math.min(maxWidth, Math.max(MIN_PANEL_WIDTH, panel.offsetWidth + direction * 32)));
+    setWidth(
+      Math.min(
+        window.innerWidth,
+        Math.max(MIN_PANEL_WIDTH, panel.offsetWidth + direction * 32),
+      ),
+    );
   };
 
   if (!displayed) return null;
 
-  return (
+  return createPortal(
     <aside
       ref={panelRef}
       aria-label="Computer help panel"
       data-state={open ? 'open' : 'closed'}
-      style={{ width: width === null ? '60vw' : width, maxWidth: '100%' }}
+      style={{ width: width === null ? '60vw' : width, maxWidth: '100vw' }}
       className={cn(
-        'absolute inset-y-0 right-0 z-30 flex min-w-0 flex-col border-l bg-background shadow-2xl transition-[transform,opacity] duration-1000 ease-in-out motion-reduce:transition-none',
+        'fixed inset-y-0 right-0 z-50 flex min-w-0 flex-col border-l bg-background shadow-2xl transition-[transform,opacity] duration-1000 ease-in-out motion-reduce:transition-none',
         !open && 'translate-x-full opacity-0',
       )}
     >
@@ -150,10 +199,22 @@ export function ChatComputerPanel({ requests }: { requests: ComputerHelp[] }) {
         <span className="flex size-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
           <Monitor className="size-4" />
         </span>
-        <div>
+        <div className="min-w-0">
           <h2 className="text-sm font-medium">Computer help</h2>
           <p className="text-xs text-muted-foreground">Complete the requested step on the desktop.</p>
         </div>
+        <button
+          type="button"
+          aria-label="Close computer panel"
+          title="Close"
+          onClick={() => {
+            setClosedHelpId(displayed.id);
+            hidePanel();
+          }}
+          className="ml-auto flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <X className="size-4" />
+        </button>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -201,6 +262,7 @@ export function ChatComputerPanel({ requests }: { requests: ComputerHelp[] }) {
           )}
         </div>
       </div>
-    </aside>
+    </aside>,
+    document.body,
   );
 }

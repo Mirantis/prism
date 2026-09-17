@@ -22,9 +22,14 @@ function AttachmentChips({ message }: { message: ConversationMessage }) {
 interface ChatMessageProps {
   message: ConversationMessage;
   agentName: string;
+  onOpenComputerHelp: (id: string) => void;
 }
 
-const ChatMessage = memo(function ChatMessage({ message, agentName }: ChatMessageProps) {
+const ChatMessage = memo(function ChatMessage({
+  message,
+  agentName,
+  onOpenComputerHelp,
+}: ChatMessageProps) {
   const isError = message.role === 'SYSTEM' && message.id.startsWith('error-');
   const time = new Date(message.createdAt).toLocaleTimeString([], {
     hour: '2-digit',
@@ -88,7 +93,9 @@ const ChatMessage = memo(function ChatMessage({ message, agentName }: ChatMessag
         {help.length === 0 && <div className="text-sm text-foreground break-words overflow-hidden">
           <ChatMarkdown content={message.content} />
         </div>}
-        {help.map((item) => <ChatComputerHelp key={item.id} help={item} />)}
+        {help.map((item) => (
+          <ChatComputerHelp key={item.id} help={item} onOpen={onOpenComputerHelp} />
+        ))}
         <AttachmentChips message={message} />
         {message.toolCalls && message.toolCalls.length > 0 && <ChatToolCalls toolCalls={message.toolCalls} />}
       </div>

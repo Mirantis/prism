@@ -9,9 +9,16 @@ interface ChatMessageListProps {
   agentName: string;
   isTyping: boolean;
   isLoading: boolean;
+  onOpenComputerHelp: (id: string) => void;
 }
 
-export default function ChatMessageList({ messages, agentName, isTyping, isLoading }: ChatMessageListProps) {
+export default function ChatMessageList({
+  messages,
+  agentName,
+  isTyping,
+  isLoading,
+  onOpenComputerHelp,
+}: ChatMessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -21,7 +28,7 @@ export default function ChatMessageList({ messages, agentName, isTyping, isLoadi
   const isEmpty = messages.length === 0 && !isLoading;
 
   return (
-    <div className="h-full overflow-y-auto" data-testid="chat-messages">
+    <div className="flex-1 overflow-y-auto" data-testid="chat-messages">
       {isEmpty ? (
         <ChatWelcome />
       ) : (
@@ -29,7 +36,12 @@ export default function ChatMessageList({ messages, agentName, isTyping, isLoadi
         // a large screen is a line the eye cannot follow back.
         <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6">
           {messages.map((msg) => (
-            <ChatMessage key={msg.id} message={msg} agentName={agentName} />
+            <ChatMessage
+              key={msg.id}
+              message={msg}
+              agentName={agentName}
+              onOpenComputerHelp={onOpenComputerHelp}
+            />
           ))}
           {isTyping && <ChatTypingIndicator />}
           <div ref={endRef} />
