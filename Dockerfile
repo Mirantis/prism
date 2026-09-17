@@ -233,9 +233,15 @@ RUN --mount=type=secret,id=github_token,uid=1000,required=false \
 # so editing the pins doesn't rebuild the CLI-install layer above (which floats
 # the `@latest` tools). Installs into the node-owned mise python: no venv, not
 # PEP-668-managed. pip reaches PyPI (build network / egress allowlist), not the
-# GitHub API, so no token/cache mounts are needed here.
+# GitHub API. The index can transiently return an empty version list, so retry
+# the complete resolution and keep downloads in BuildKit's cache between attempts.
 COPY --chown=node:node requirements.txt ./
-RUN ~/.local/bin/mise exec -- pip install --no-cache-dir -r /app/requirements.txt
+RUN --mount=type=cache,target=/home/node/.cache/pip,uid=1000,gid=1000 \
+    for attempt in 1 2 3; do \
+      ~/.local/bin/mise exec -- pip install -r /app/requirements.txt && exit 0; \
+      [ "$attempt" -eq 3 ] && exit 1; \
+      sleep 5; \
+    done
 ENV PATH="/home/node/.local/share/mise/shims:/home/node/.local/bin:${PATH}"
 USER root
 
