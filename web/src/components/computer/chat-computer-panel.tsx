@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 import type { ComputerHelp } from '@/types';
 import { ComputerHelpCard } from './computer-help-card';
 
-const PANEL_TRANSITION_MS = 1000;
+const PANEL_TRANSITION_MS = 1200;
 const MIN_PANEL_WIDTH = 320;
 
 export function ChatComputerPanel({
@@ -168,10 +168,10 @@ export function ChatComputerPanel({
       ref={panelRef}
       aria-label="Computer help panel"
       data-state={open ? 'open' : 'closed'}
-      style={{ width: width === null ? '60vw' : width, maxWidth: '100vw' }}
+      style={{ width: width ?? '50vw', maxWidth: '100vw' }}
       className={cn(
-        'fixed inset-y-0 right-0 z-50 flex min-w-0 flex-col border-l bg-background shadow-2xl transition-[transform,opacity] duration-1000 ease-in-out motion-reduce:transition-none',
-        !open && 'translate-x-full opacity-0',
+        'fixed inset-y-0 right-0 z-50 flex min-w-0 flex-col border-l bg-background shadow-2xl transition-transform duration-[1200ms] ease-in-out motion-reduce:transition-none',
+        !open && 'translate-x-full',
       )}
     >
       <button
@@ -231,28 +231,12 @@ export function ChatComputerPanel({
             onRelease={() => void finish()}
             connecting={!screen.message}
           />
-          <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
-            <span
-              className={cn(
-                'size-2 shrink-0 rounded-full',
-                ownControl
-                  ? 'bg-amber-500'
-                  : screen.hasScreen
-                    ? 'bg-emerald-500'
-                    : 'animate-pulse bg-muted-foreground',
-              )}
-            />
-            {ownControl
-              ? 'You have control · Press Esc when you’re done'
-              : anotherController
-                ? 'Another viewer has control'
-                : 'Click the desktop to help'}
-          </div>
           <ComputerHelpCard
             help={displayed}
             clientId={screen.clientId}
             inComputer
             showConversationLink={false}
+            showHeader={false}
             disabled={busy || anotherController || !screen.clientId}
           />
           {(error || screen.message) && (
