@@ -1,4 +1,5 @@
 import { ComputerWaiting } from '@/components/computer/computer-waiting';
+import { ChatComputerPanel } from '@/components/computer/chat-computer-panel';
 import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
@@ -14,6 +15,7 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   type Attachment,
   type CompactionEvent,
+  type ComputerHelp,
   type ContextUsage,
   type ConversationMessage,
 } from '@/types';
@@ -111,6 +113,17 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     isConnected: status === 'connected',
   });
   voiceRef.current = voice;
+
+  const computerHelp = localMessages.flatMap(
+    (item) =>
+      item.blocks?.filter(
+        (block): block is ComputerHelp =>
+          block !== null &&
+          typeof block === 'object' &&
+          'type' in block &&
+          block.type === 'computer_help',
+      ) ?? [],
+  );
 
   // Cancel the in-flight turn and drop an ephemeral marker so the user gets
   // explicit confirmation. The marker is client-only (never stored), so it
@@ -416,12 +429,15 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         <VoiceCallControl call={voice} blockedReason={callBlockedReason} />
       </HeaderActions>
       <VoiceCallBar call={voice} agentName={agent.name} />
-      <ChatMessageList
-        messages={localMessages}
-        agentName={agent.name}
-        isTyping={isTyping}
-        isLoading={isLoadingThread}
-      />
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <ChatMessageList
+          messages={localMessages}
+          agentName={agent.name}
+          isTyping={isTyping}
+          isLoading={isLoadingThread}
+        />
+        {computerHelp.length > 0 && <ChatComputerPanel requests={computerHelp} />}
+      </div>
       <div className="mx-auto w-full max-w-3xl px-4 empty:hidden">
         <ComputerWaiting threadId={activeThreadId} />
       </div>

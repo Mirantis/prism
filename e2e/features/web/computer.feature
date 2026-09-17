@@ -38,8 +38,9 @@ Feature: The agent's computer in the browser
     And a website with a sign-in page and public notes
     When I ask Prism to read my inbox and the public notes using its computer
     Then Prism requests computer help and reports the public notes
-    When I open the Computer help request
-    Then Computer keeps help beside the screen and adapts to smaller displays
+    Then the live computer opens over the right side of the chat
+    And I can resize the computer panel
+    And I can enlarge the chat computer to fullscreen
     When I sign in through the live computer
     Then Prism continues the original conversation and reports the inbox
 

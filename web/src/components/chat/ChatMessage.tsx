@@ -1,4 +1,4 @@
-import { ComputerHelpCard } from '@/components/computer/computer-help-card';
+import { ChatComputerHelp } from '@/components/computer/chat-computer-help';
 import type { ComputerHelp } from '@/types';
 import { memo } from 'react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -88,7 +88,7 @@ const ChatMessage = memo(function ChatMessage({ message, agentName }: ChatMessag
         {help.length === 0 && <div className="text-sm text-foreground break-words overflow-hidden">
           <ChatMarkdown content={message.content} />
         </div>}
-        {help.map((item) => <ComputerHelpCard key={item.id} help={item} />)}
+        {help.map((item) => <ChatComputerHelp key={item.id} help={item} />)}
         <AttachmentChips message={message} />
         {message.toolCalls && message.toolCalls.length > 0 && <ChatToolCalls toolCalls={message.toolCalls} />}
       </div>
