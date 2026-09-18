@@ -226,3 +226,77 @@ describe('secure takeover', () => {
     expect(inferenceGate.held).toBe(true);
   });
 });
+
+describe('a sign-in the runtime types', () => {
+  afterEach(() => {
+    inferenceGate.free();
+    vi.mocked(agentProcesses.suspend).mockClear();
+    vi.mocked(agentProcesses.resume).mockClear();
+  });
+
+  it('stops the runtime for the typing, and gives everything back afterwards', async () => {
+    let cleared = false;
+    const access = new ComputerAccess(async () => {
+      cleared = true;
+    });
+    const stopped: boolean[] = [];
+
+    const answer = await access.runSecure('help-1', async () => {
+      stopped.push(access.secure, inferenceGate.held, access.paused);
+      return 'filled';
+    });
+
+    expect(answer).toBe('filled');
+    expect(stopped).toEqual([true, true, true]);
+    expect(cleared).toBe(true);
+    expect(access.secure).toBe(false);
+    expect(access.paused).toBe(false);
+    expect(inferenceGate.held).toBe(false);
+    expect(agentProcesses.resume).toHaveBeenCalledOnce();
+  });
+
+  it('waits for the action the agent already started', async () => {
+    const access = new ComputerAccess();
+    const use = access.create(caller);
+    const started = deferred();
+    const action = deferred();
+    const order: string[] = [];
+    const agentAction = access.run(use, async () => {
+      started.resolve();
+      await action.promise;
+      order.push('agent');
+    });
+    await started.promise;
+
+    const signIn = access.runSecure('help-1', async () => void order.push('sign-in'));
+    action.resolve();
+    await agentAction;
+    await signIn;
+
+    expect(order).toEqual(['agent', 'sign-in']);
+  });
+
+  it('refuses while somebody is at the keyboard, and leaves their takeover alone', async () => {
+    const access = new ComputerAccess();
+    await access.takeControl('viewer', 'help-1');
+
+    await expect(access.runSecure('help-1', async () => 'filled')).rejects.toThrow(
+      'Another viewer has control.',
+    );
+    expect(access.human).toBe('viewer');
+    expect(access.secure).toBe(true);
+  });
+
+  it('gives the desktop back when the typing throws', async () => {
+    const access = new ComputerAccess();
+
+    await expect(
+      access.runSecure('help-1', async () => {
+        throw new Error('the tab went away');
+      }),
+    ).rejects.toThrow('the tab went away');
+    expect(access.paused).toBe(false);
+    expect(access.secure).toBe(false);
+    expect(inferenceGate.held).toBe(false);
+  });
+});

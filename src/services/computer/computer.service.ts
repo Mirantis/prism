@@ -3,7 +3,18 @@ import { ComputerAccess, type ComputerUse } from './computer-access';
 import type { ScreenFrame } from './picture-stream';
 import { DEFAULT_SCREEN } from './screen-size';
 import { hasComputer } from './supported';
+import type { SignInCredentials } from './sign-in-form';
 import { logger } from '../../logger';
+import { trackEvent } from '../../lib/telemetry';
+
+/** How a sign-in the user answered ended. */
+export type SignInOutcome =
+  | 'filled'
+  | 'no_form'
+  | 'tab_gone'
+  | 'site_changed'
+  | 'in_use'
+  | 'error';
 
 export interface ComputerViewer {
   screen(frame: ScreenFrame): void;
@@ -117,6 +128,53 @@ class ComputerService {
 
   async helpTarget(tab?: number): Promise<string | undefined> {
     return this.computer?.tabTarget(tab);
+  }
+
+  /** The site of a sign-in the user can answer with a username and a password. */
+  async signInSite(tab?: number): Promise<string | undefined> {
+    return this.computer?.signInForm(tab);
+  }
+
+  /**
+   * Type a sign-in the user answered, with the agent stopped for as long as it takes.
+   *
+   * The window around it is the one a takeover opens, so nothing decides anything while
+   * a field holds a password, and the fields are cleared when it closes.
+   */
+  async signIn(
+    help: { id: string; targetId?: string; site?: string },
+    credentials: SignInCredentials,
+    userId: string,
+    agentId?: string,
+  ): Promise<SignInOutcome> {
+    const startedAt = Date.now();
+    const outcome = await this.runSignIn(help, credentials);
+    trackEvent('computer sign-in filled', userId, {
+      ...(agentId ? { 'agent.id': agentId } : {}),
+      'computer.help_id': help.id,
+      status: outcome,
+      elapsed_ms: String(Date.now() - startedAt),
+    });
+    return outcome;
+  }
+
+  private async runSignIn(
+    help: { id: string; targetId?: string; site?: string },
+    credentials: SignInCredentials,
+  ): Promise<SignInOutcome> {
+    const computer = this.computer;
+    if (!computer || !help.targetId || !help.site) return 'tab_gone';
+    // Somebody is at the keyboard: their takeover pauses the desktop, and this one would
+    // queue behind it and type into a screen they are using.
+    if (this.access.paused) return 'in_use';
+    try {
+      return await this.access.runSecure(help.id, () =>
+        computer.signIn(help.targetId!, help.site!, credentials),
+      );
+    } catch (err) {
+      logger.error({ err }, '[Computer] A sign-in could not be typed');
+      return 'error';
+    }
   }
 
   assertCanHandBack(id: string): void {

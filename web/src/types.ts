@@ -379,6 +379,10 @@ export interface ComputerHelp {
   id: string;
   reason: string;
   tab?: number;
+  /** A sign-in answered with a username and a password rather than at the keyboard. */
+  credentials?: boolean;
+  /** Where those are typed. */
+  site?: string;
   threadId?: string;
   status: 'waiting' | 'continued' | 'dismissed';
 }

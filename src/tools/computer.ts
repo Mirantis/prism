@@ -120,15 +120,16 @@ export function getComputerTools(
   });
   result.computer_help = tool({
     description:
-      'When computer work is blocked by a step only the user can complete, ask them for help, such as signing in, solving a CAPTCHA, or approving a device. Preserves this help request and releases the computer for independent work. Explain what the user needs to do. Continue independent tasks; when only blocked work remains, end this turn and wait for the user. Never ask for passwords in chat.',
+      'When computer work is blocked by a step only the user can complete, ask them for help, such as signing in, solving a CAPTCHA, or approving a device. Preserves this help request and releases the computer for independent work. Explain what the user needs to do. Continue independent tasks; when only blocked work remains, end this turn and wait for the user. Never ask for passwords in chat. Set credentials when a sign-in form asking for a username and a password is the whole of what blocks you: the user then types them where they are and the runtime enters them for you. A CAPTCHA, a device approval, or a second factor leaves it false.',
     inputSchema: z.object({
       reason: z.string().min(1).max(2000),
       tab: z.number().int().positive().optional(),
+      credentials: z.boolean().default(false),
     }),
-    execute: async ({ reason, tab }) => {
+    execute: async ({ reason, tab, credentials }) => {
       if (!use) throw new Error('Computer help requires an active invocation.');
       const help = await computerService.access.run(use, () =>
-        computerHelpService.request(use, reason, tab),
+        computerHelpService.request(use, reason, tab, credentials),
       );
       return {
         success: true,

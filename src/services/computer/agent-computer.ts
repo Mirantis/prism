@@ -37,6 +37,7 @@ import { describeElements, findElements, readScreenElements } from './screen-ele
 import { actOnWindow, findWindows, listWindows, type WindowAction } from './desktop-windows';
 import { DesktopInput, type InputFrame } from './desktop-input';
 import { clearPasswordFields } from './secure-window';
+import { fillSignInForm, hasSignInForm, type SignInCredentials } from './sign-in-form';
 import { hasBinaries, missingBinary } from '../../lib/has-binary';
 import { COMPUTER_BINARIES, unsupportedReason } from './supported';
 import { VideoStream } from './video-stream';
@@ -55,6 +56,16 @@ export interface ModelChannel {
   showImage(imageUrl: string, note: string): boolean;
   /** Tell the model something in words, without asking it to answer. */
   notify(text: string): void;
+}
+
+/** Where a tab is, as a sign-in is judged by. A tab on no page at all has no origin. */
+function originOf(page: Page): string | undefined {
+  try {
+    const { origin } = new URL(page.url());
+    return origin === 'null' ? undefined : origin;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Whether a capture chunk is nothing but silence, which is most of them. */
@@ -317,22 +328,66 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   }
 
   async tabTarget(tab?: number): Promise<string | undefined> {
-    const page = tab ? this.browser?.listTabs()[tab - 1] : this.browser?.front();
-    if (!page || page.isClosed()) return undefined;
+    const page = this.tabPage(tab);
+    if (!page) return undefined;
     const session = await page.context().newCDPSession(page);
     try { return (await session.send('Target.getTargetInfo')).targetInfo.targetId; }
     finally { await session.detach(); }
   }
 
   async focusTarget(targetId: string): Promise<void> {
+    const found = await this.pageForTarget(targetId);
+    if (!found)
+      throw new Error('The tab needing help has closed. You have control of the current desktop.');
+    await this.browser?.selectTab(found.index);
+  }
+
+  /**
+   * The origin of a tab whose sign-in a username and a password can answer.
+   *
+   * Asked when the agent says a help request is that kind, so the box for it is only
+   * offered where the runtime can really type it, and the user is told which site it
+   * goes to.
+   */
+  async signInForm(tab?: number): Promise<string | undefined> {
+    const page = this.tabPage(tab);
+    if (!page) return undefined;
+    const origin = originOf(page);
+    if (!origin) return undefined;
+    return (await this.onFrontQueue(() => hasSignInForm(page))) ? origin : undefined;
+  }
+
+  /**
+   * Type a sign-in the user answered, into the tab that asked for it.
+   *
+   * The tab is brought to the front first: a background tab takes no key press, and the
+   * sign-in happens where anybody watching the screen can see it.
+   */
+  async signIn(
+    targetId: string,
+    site: string,
+    credentials: SignInCredentials,
+  ): Promise<'filled' | 'no_form' | 'tab_gone' | 'site_changed'> {
+    const found = await this.pageForTarget(targetId);
+    if (!found) return 'tab_gone';
+    if (originOf(found.page) !== site) return 'site_changed';
+    return this.onFrontQueue(async () => {
+      await this.browser?.selectTab(found.index);
+      return fillSignInForm(found.page, credentials);
+    });
+  }
+
+  private tabPage(tab?: number): Page | undefined {
+    const page = tab ? this.browser?.listTabs()[tab - 1] : this.browser?.front();
+    return page && !page.isClosed() ? page : undefined;
+  }
+
+  private async pageForTarget(targetId: string): Promise<{ page: Page; index: number } | null> {
     const pages = this.browser?.listTabs() ?? [];
     for (let index = 0; index < pages.length; index++) {
-      if (await this.tabTarget(index + 1) === targetId) {
-        await this.browser?.selectTab(index);
-        return;
-      }
+      if ((await this.tabTarget(index + 1)) === targetId) return { page: pages[index], index };
     }
-    throw new Error('The tab needing help has closed. You have control of the current desktop.');
+    return null;
   }
 
   /**

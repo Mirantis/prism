@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Page } from 'playwright-core';
 import { clearPasswordFields } from '../secure-window';
+import { logger } from '../../../logger';
 
 /** A tab whose frames answer the clearing script with what they cleared. */
 function tab(options: { closed?: boolean; frames: (number | Error)[] }): {
@@ -44,6 +45,24 @@ describe('clearing what a secure takeover left behind', () => {
     const { page } = tab({ frames: [new Error('Frame was detached'), 1] });
 
     expect(await clearPasswordFields([page])).toBe(1);
+  });
+
+  it('says nothing about the frame a sign-in navigated away from', async () => {
+    const warn = vi.spyOn(logger, 'warn');
+    const { page } = tab({
+      frames: [new Error('frame.evaluate: Execution context was destroyed, most likely because of a navigation')],
+    });
+
+    expect(await clearPasswordFields([page])).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('reports a frame that answers with anything else', async () => {
+    const warn = vi.spyOn(logger, 'warn');
+    const { page } = tab({ frames: [new Error('timed out after 5000ms')] });
+
+    await clearPasswordFields([page]);
+    expect(warn).toHaveBeenCalled();
   });
 
   it('leaves a closed tab alone', async () => {

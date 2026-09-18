@@ -211,6 +211,54 @@ async function openSignInPage(page: Page): Promise<void> {
     .toBe(true);
 }
 
+When('I ask Prism to read my mail using its computer', async ({ page }) => {
+  test.setTimeout(300_000);
+  await page.goto('/chat');
+  const home = new HomePage(page);
+  await home.typeMessage(
+    `Use your computer to read my mail at ${site!.url}/mail and report what it says. ` +
+      'Ask me for the username and password when you need them.',
+  );
+  await home.sendMessage();
+  await home.waitForAgentResponse(180_000);
+  await home.waitForStreamComplete(180_000);
+});
+
+/** A sign-in is answered where the message is, so the live desktop never slides over it. */
+Then('Prism asks for the sign-in in the chat, with a box for it', async ({ page, $testInfo }) => {
+  const box = page.getByLabel('Computer sign-in');
+  await expect(box).toBeVisible({ timeout: 60_000 });
+  await expect(box.getByText(new URL(site!.url).origin)).toBeVisible();
+  await expect(page.getByLabel('Computer help panel')).toHaveCount(0);
+  await page.screenshot({ path: $testInfo.outputPath('computer-sign-in-box.png'), fullPage: true });
+});
+
+When('I fill in the username and password and submit', async ({ page }) => {
+  const form = page.getByLabel('Sign in for Prism');
+  await form.getByLabel('Username').fill('demo-user');
+  await form.getByLabel('Password').fill('a-password');
+  await form.getByRole('button', { name: 'Sign in' }).click();
+});
+
+Then('the website has both of them, and Prism reports the mail', async ({ page, $testInfo }) => {
+  await expect.poll(() => site!.mailCredentials(), { timeout: 60_000 }).toEqual({
+    username: 'demo-user',
+    password: 'a-password',
+  });
+  await expect
+    .poll(
+      async () => {
+        const messages = await dbHelper.getPrisma().conversationMessage.findMany({
+          where: { thread: { agentId: DEFAULT_AGENT_ID }, role: 'AGENT', internalStep: false },
+        });
+        return messages.map((row) => row.content).join('\n');
+      },
+      { timeout: 180_000 },
+    )
+    .toContain('MAIL-CLEAR');
+  await page.screenshot({ path: $testInfo.outputPath('computer-signed-in.png'), fullPage: true });
+});
+
 When('I sign in through the live computer', async ({ page, $testInfo }) => {
   page.setDefaultTimeout(15_000);
   await page.getByLabel("The agent's screen").click();

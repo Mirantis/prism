@@ -3,6 +3,7 @@ import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import {
   tuiAdapterService,
   ContextUsage,
+  SignInRequest,
   ThreadSummary,
   TuiMessage,
   TuiStatus,
@@ -17,6 +18,7 @@ import { StatusBar } from './components/StatusBar.js';
 import { CommandPopup, PopupItem } from './components/CommandPopup.js';
 import { SchedulesPanel } from './components/SchedulesPanel.js';
 import { ConfigPanel } from './components/ConfigPanel.js';
+import { SignInPanel } from './components/SignInPanel.js';
 import { ResumeList } from './components/ResumeList.js';
 import { apiClient } from './api-client.js';
 import {
@@ -80,6 +82,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // Input + popup). Panel commands set this via openPanel; the panels call
   // closePanel (wired to onClose) to return to chat.
   const [activePanel, setActivePanel] = useState<PanelId | null>(null);
+  // The sign-in the agent is blocked on, while this session is answering it. Its own
+  // state rather than a `PanelId`: no slash command opens it, the request opens it.
+  const [signInRequest, setSignInRequest] = useState<SignInRequest | null>(null);
   // Files staged by /attach, sent with (and cleared by) the next chat message.
   const [staged, setStaged] = useState<AttachmentMeta[]>([]);
   // Submitted-input history for Up/Down recall (oldest → newest). historyIndex
@@ -135,15 +140,20 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
           : prev,
       );
     };
+    // The newest request wins: the agent asks for one sign-in at a time, and a second
+    // one means the first is no longer what it is waiting for.
+    const onSignIn = (request: SignInRequest) => setSignInRequest(request);
     tuiAdapterService.events.on('message', onMessage);
     tuiAdapterService.events.on('status', onStatus);
     tuiAdapterService.events.on('thread', onThread);
     tuiAdapterService.events.on('contextUsage', onContextUsage);
+    tuiAdapterService.events.on('signIn', onSignIn);
     return () => {
       tuiAdapterService.events.off('message', onMessage);
       tuiAdapterService.events.off('status', onStatus);
       tuiAdapterService.events.off('thread', onThread);
       tuiAdapterService.events.off('contextUsage', onContextUsage);
+      tuiAdapterService.events.off('signIn', onSignIn);
     };
   }, []);
 
@@ -447,7 +457,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       setInputValue(history[nextIndex] ?? '');
       setInputResetKey((k) => k + 1);
     }
-  }, { isActive: !suspended && activePanel === null && resumePhase === 'chat' });
+  }, {
+    isActive: !suspended && activePanel === null && signInRequest === null && resumePhase === 'chat',
+  });
 
   const onSubmit = useCallback(
     async (text: string) => {
@@ -566,7 +578,13 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   return (
     <Box flexDirection="column" paddingX={1}>
       <Header agentName={agent.name} />
-      {activePanel === 'schedules' ? (
+      {signInRequest ? (
+        <SignInPanel
+          api={apiClient}
+          request={signInRequest}
+          onClose={() => setSignInRequest(null)}
+        />
+      ) : activePanel === 'schedules' ? (
         <SchedulesPanel api={apiClient} onClose={closePanel} />
       ) : activePanel === 'config' ? (
         <ConfigPanel api={apiClient} onClose={closePanel} />

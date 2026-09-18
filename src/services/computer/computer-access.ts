@@ -169,6 +169,27 @@ export class ComputerAccess extends EventEmitter {
     this.changed();
   }
 
+  /**
+   * A sign-in the runtime types for the user: the same window a takeover opens, bounded
+   * by the typing rather than by a person at the keyboard.
+   *
+   * The desktop is taken first, so the agent's own actions stop and the one in flight is
+   * drained before a field is touched, and given back afterwards, which is what clears
+   * whatever the page was left holding.
+   */
+  async runSecure<T>(helpId: string, action: () => Promise<T>): Promise<T> {
+    const clientId = `sign-in:${helpId}`;
+    await this.takeControl(clientId, helpId);
+    // A viewer that claimed the desktop while this waited holds it now. Typing into a
+    // screen somebody else has their hands on is the one thing not to do.
+    if (this.human !== clientId) throw new Error('Another viewer has control.');
+    try {
+      return await action();
+    } finally {
+      if (this.human === clientId) await this.handBack(clientId);
+    }
+  }
+
   private beginSecure(clientId: string, helpId: string): void {
     // A window that is clearing up is replaced rather than joined: its guards are
     // already in force, and the one ending will find itself superseded.

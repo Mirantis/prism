@@ -174,6 +174,10 @@ export interface ApiClient {
   runSkill(name: string, threadId?: string): Promise<{ threadId: string; skill: string }>;
   listPlugins(): Promise<PluginSummary[]>;
   compactThread(threadId: string): Promise<{ threadId: string }>;
+  signInForComputer(
+    helpId: string,
+    credentials: { username: string; password: string },
+  ): Promise<{ success: boolean }>;
   updateStatus(): Promise<UpdateStatus>;
   applyUpdate(): Promise<{ ok: true; version: string }>;
 }
@@ -383,6 +387,19 @@ export class HttpApiClient implements ApiClient {
   // `compaction` frames carry the progress; 409 when there's nothing to compact.
   compactThread(threadId: string): Promise<{ threadId: string }> {
     return this.request('POST', `/agents/threads/${encodeURIComponent(threadId)}/compact`);
+  }
+
+  // The answer to a sign-in the agent asked for. The runtime types it into the
+  // browser and resolves the request; 409 carries what stopped it.
+  signInForComputer(
+    helpId: string,
+    credentials: { username: string; password: string },
+  ): Promise<{ success: boolean }> {
+    return this.request(
+      'POST',
+      `/agents/computer/help/${encodeURIComponent(helpId)}/credentials`,
+      credentials,
+    );
   }
 
   // Self-update. POST answers 202 before the download starts; the outcome

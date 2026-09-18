@@ -10,12 +10,7 @@
 import type { Page } from 'playwright-core';
 import { logger } from '../../logger';
 import { withTimeout } from '../../utils/with-timeout';
-
-/**
- * A field holding a password: the ordinary one, and the one a "show password"
- * control has turned into plain text, which keeps its autocomplete name.
- */
-const PASSWORD_FIELDS = 'input[type="password" i], input[autocomplete*="password" i]';
+import { PASSWORD_FIELDS } from './sign-in-form';
 
 /**
  * How long one frame gets. `page.evaluate` has no deadline of its own, and the agent
@@ -38,9 +33,17 @@ interface FieldRoot {
 }
 
 /**
+ * A frame the page has already left. It holds nothing, so there is nothing to clear and
+ * nothing to say: a sign-in that went through navigates, which is this exact state.
+ */
+function isGone(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : '';
+  return message.includes('Execution context was destroyed') || message.includes('detached');
+}
+
+/**
  * Empty every password field in every frame of these tabs, and report how many held
- * something. A frame that does not answer, because it has gone or because it is wedged,
- * is reported and passed over.
+ * something. A frame that is wedged is reported and passed over.
  */
 export async function clearPasswordFields(pages: readonly Page[]): Promise<number> {
   let cleared = 0;
@@ -86,7 +89,7 @@ export async function clearPasswordFields(pages: readonly Page[]): Promise<numbe
           return count;
         }, PASSWORD_FIELDS);
       cleared += await withTimeout(evaluated, CLEAR_TIMEOUT_MS).catch((err: unknown) => {
-        logger.warn({ err }, '[Computer] A frame could not be cleared');
+        if (!isGone(err)) logger.warn({ err }, '[Computer] A frame could not be cleared');
         return 0;
       });
     }

@@ -49,7 +49,7 @@ vi.mock('./ws-client.js', () => {
   return { WsClient: FakeWsClient };
 });
 
-import { tuiAdapterService, TuiStatus } from './tui-adapter.js';
+import { signInRequestIn, tuiAdapterService, TuiStatus } from './tui-adapter.js';
 
 describe('TuiAdapter.startNewSession', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -346,5 +346,31 @@ describe('TuiAdapter.listSessions context usage', () => {
     const sessions = await tuiAdapterService.listSessions();
 
     expect(sessions[0]).toMatchObject({ id: 'thread-a', contextUsage: null });
+  });
+});
+
+describe('the sign-in in a message', () => {
+  const help = {
+    type: 'computer_help',
+    id: 'help-1',
+    reason: 'Sign in to the mail',
+    credentials: true,
+    site: 'https://mail.example.com',
+    status: 'waiting',
+  };
+
+  it('is the one help request this session answers', () => {
+    expect(signInRequestIn([help])).toEqual({
+      id: 'help-1',
+      reason: 'Sign in to the mail',
+      site: 'https://mail.example.com',
+    });
+  });
+
+  it('passes over a request of any other kind, and one already answered', () => {
+    expect(signInRequestIn([{ ...help, credentials: undefined }])).toBeNull();
+    expect(signInRequestIn([{ ...help, status: 'continued' }])).toBeNull();
+    expect(signInRequestIn(null)).toBeNull();
+    expect(signInRequestIn([null, 'text'])).toBeNull();
   });
 });

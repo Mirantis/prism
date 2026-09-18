@@ -109,7 +109,7 @@ that the content is gone.
 
 ## Panels
 
-Two full-screen panels replace the chat view temporarily; **Escape** closes them.
+Panels replace the chat view temporarily; **Escape** closes them.
 
 ### Schedules panel (`/schedules`)
 
@@ -131,6 +131,14 @@ left/right arrows to move between panes, up/down to scroll, and Page Up/Down to
 page through long documents. It's a viewer: ask the agent to change a document
 (see **[The agent's identity](agent-identity.md)**), edit any of the seven on the
 Web UI's Profile page, or edit the **Agent** guide here with `/agent-guide`.
+
+### Sign-in panel
+
+Opens by itself when the agent's [computer](computer.md) is blocked by a sign-in
+that a username and a password answer. Tab or the arrows move between the two
+fields, the password is shown as dots, Enter signs in, and **Escape** closes the
+panel and leaves the request for the Web UI. The agent is stopped while the
+sign-in is typed in and is given neither value.
 
 ### Editing the agent guide (`/agent-guide`)
 

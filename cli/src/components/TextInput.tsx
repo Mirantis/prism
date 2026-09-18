@@ -18,8 +18,8 @@
  * belong to `App`, never to the value. `key.meta` is deliberately NOT filtered —
  * Ink sets it for Option+Enter, which must keep submitting.
  *
- * Everything else is upstream's logic, transcribed to TSX. `mask`, `placeholder`,
- * `highlightPastedText` and `UncontrolledTextInput` are dropped as unused.
+ * Everything else is upstream's logic, transcribed to TSX, less `placeholder`,
+ * `highlightPastedText` and `UncontrolledTextInput`, which nothing here uses.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -34,6 +34,8 @@ interface Props {
   focus?: boolean;
   /** Draw the fake block cursor (upstream's `showCursor`). */
   showCursor?: boolean;
+  /** Draw each character as this instead, for a password field. */
+  mask?: string;
 }
 
 export const TextInput: React.FC<Props> = ({
@@ -42,6 +44,7 @@ export const TextInput: React.FC<Props> = ({
   onSubmit,
   focus = true,
   showCursor = true,
+  mask,
 }) => {
   const [cursorOffset, setCursorOffset] = useState((originalValue || '').length);
 
@@ -56,15 +59,16 @@ export const TextInput: React.FC<Props> = ({
   }, [originalValue, focus, showCursor]);
 
   // Fake block cursor: dealing with the real one plus ANSI escapes is worse.
-  let renderedValue = originalValue;
+  const shownValue = mask ? mask.repeat(originalValue.length) : originalValue;
+  let renderedValue = shownValue;
   if (showCursor && focus) {
-    renderedValue = originalValue.length > 0 ? '' : chalk.inverse(' ');
+    renderedValue = shownValue.length > 0 ? '' : chalk.inverse(' ');
     let i = 0;
-    for (const char of originalValue) {
+    for (const char of shownValue) {
       renderedValue += i === cursorOffset ? chalk.inverse(char) : char;
       i++;
     }
-    if (originalValue.length > 0 && cursorOffset === originalValue.length) {
+    if (shownValue.length > 0 && cursorOffset === shownValue.length) {
       renderedValue += chalk.inverse(' ');
     }
   }

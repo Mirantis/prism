@@ -73,6 +73,43 @@ export interface UpdateEvent {
   errorCode?: string;
 }
 
+/**
+ * A sign-in the agent asked for, taken off a chat message's blocks.
+ *
+ * Only the kind a username and a password answer reaches here. Every other computer
+ * help request is answered in the Web UI, and its message carries the link.
+ */
+export interface SignInRequest {
+  id: string;
+  reason: string;
+  site?: string;
+}
+
+/** The sign-in in a message's blocks, when it holds one that is still waiting. */
+export function signInRequestIn(blocks: unknown): SignInRequest | null {
+  if (!Array.isArray(blocks)) return null;
+  for (const block of blocks) {
+    if (!block || typeof block !== 'object') continue;
+    const help = block as {
+      type?: unknown;
+      id?: unknown;
+      reason?: unknown;
+      site?: unknown;
+      credentials?: unknown;
+      status?: unknown;
+    };
+    if (help.type !== 'computer_help' || help.credentials !== true) continue;
+    if (help.status !== 'waiting') continue;
+    if (typeof help.id !== 'string' || typeof help.reason !== 'string') continue;
+    return {
+      id: help.id,
+      reason: help.reason,
+      ...(typeof help.site === 'string' ? { site: help.site } : {}),
+    };
+  }
+  return null;
+}
+
 export interface TuiAdapterEvents {
   message: (msg: TuiMessage) => void;
   status: (status: TuiStatus, detail?: string) => void;
@@ -85,6 +122,8 @@ export interface TuiAdapterEvents {
   contextUsage: (usage: ContextUsage) => void;
   compaction: (event: CompactionEvent) => void;
   update: (event: UpdateEvent) => void;
+  /** The agent is blocked on a sign-in this session can answer. */
+  signIn: (request: SignInRequest) => void;
 }
 
 /** A resumable conversation thread, as listed by the `--resume` picker. */
@@ -397,6 +436,8 @@ class TuiAdapter {
         const msg = coerceMessage(env.payload);
         if (msg) {
           this.events.emit('message', msg);
+          const signIn = signInRequestIn(msg.blocks);
+          if (signIn) this.events.emit('signIn', signIn);
           // Deliberately does NOT flip to idle. A turn publishes each of its
           // text steps as it arrives, and after a mid-turn message the exchange
           // runs another turn — so a reply landing is not evidence the work is

@@ -21,9 +21,20 @@ vi.mock('../computer.service', async () => {
       assertCanHandBack: (id: string) => access.assertCanHandBack(id),
       handBack: (id: string) => access.handBack(id),
       continueFromChat: () => access.handBack(access.human ?? 'chat'),
+      helpTarget: vi.fn(),
+      signInSite: vi.fn(),
     },
   };
 });
+vi.mock('../../conversation.service', () => ({
+  conversationService: {
+    getOrCreateLatestThread: vi.fn(async () => ({ id: 'thread' })),
+    getChannelContext: vi.fn(async () => ({ channel: 'websocket' })),
+  },
+}));
+vi.mock('../../message-delivery.service', () => ({
+  messageDeliveryService: { publish: vi.fn() },
+}));
 vi.mock('../../voice/voice-chat.service', () => ({
   voiceChatService: { continueComputer: vi.fn() },
 }));
@@ -101,4 +112,42 @@ it('rejects another viewer before resolving the help request', async () => {
   ).rejects.toThrow('Another viewer has control');
   expect(prisma.conversationMessage.updateMany).not.toHaveBeenCalled();
   expect(computerService.access.human).toBe('viewer');
+});
+
+describe('a help request a username and a password answer', () => {
+  beforeEach(() => {
+    vi.mocked(computerService.helpTarget).mockResolvedValue('target-1');
+    vi.mocked(computerService.signInSite).mockResolvedValue(undefined);
+  });
+
+  const ask = (reason: string, credentials?: boolean) =>
+    computerHelpService.request(
+      computerService.access.create({ ...caller, threadId: 'thread' }),
+      reason,
+      undefined,
+      credentials,
+    );
+
+  it('records the sign-in and the site of the tab it goes to', async () => {
+    vi.mocked(computerService.signInSite).mockResolvedValue('https://mail.example.com');
+
+    const request = await ask('Sign in to the inbox', true);
+
+    expect(request.credentials).toBe(true);
+    expect(request.site).toBe('https://mail.example.com');
+  });
+
+  it('asks for the desktop instead when that tab holds no sign-in form', async () => {
+    const request = await ask('Approve the device', true);
+
+    expect(request.credentials).toBeUndefined();
+    expect(request.site).toBeUndefined();
+  });
+
+  it('leaves the browser alone for a request of any other kind', async () => {
+    const request = await ask('Solve the CAPTCHA');
+
+    expect(computerService.signInSite).not.toHaveBeenCalled();
+    expect(request.credentials).toBeUndefined();
+  });
 });

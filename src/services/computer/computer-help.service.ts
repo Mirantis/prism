@@ -15,6 +15,10 @@ export interface ComputerHelp {
   reason: string;
   tab?: number;
   targetId?: string;
+  /** The user answers this one with a username and a password, typed into `site`. */
+  credentials?: true;
+  /** Where those go: the origin of the tab that asked, as it read when it asked. */
+  site?: string;
   threadId?: string;
   originChannel?: 'slack' | 'websocket';
   originChannelId?: string;
@@ -30,13 +34,25 @@ export function computerLink(helpId?: string): string {
 class ComputerHelpService {
   private voice = new Map<string, ComputerHelp>();
 
-  async request(use: ComputerUse, reason: string, tab?: number): Promise<ComputerHelp> {
+  /**
+   * @param credentials a sign-in that a username and a password answer. Recorded only
+   * when the tab really holds such a form, so the box for it is never offered where the
+   * runtime could not type it.
+   */
+  async request(
+    use: ComputerUse,
+    reason: string,
+    tab?: number,
+    credentials = false,
+  ): Promise<ComputerHelp> {
+    const site = credentials ? await computerService.signInSite(tab) : undefined;
     const help: ComputerHelp = {
       type: 'computer_help',
       id: randomUUID(),
       reason,
       tab,
       targetId: await computerService.helpTarget(tab),
+      ...(site ? { credentials: true as const, site } : {}),
       status: 'waiting',
       threadId: use.threadId,
       originChannel: use.originChannel,
@@ -84,6 +100,7 @@ class ComputerHelpService {
     trackEvent('computer help requested', use.userId, {
       'agent.id': use.agentId,
       'computer.help_id': help.id,
+      credentials: help.credentials ? 'true' : 'false',
     });
     computerService.access.emit('change');
     return help;
