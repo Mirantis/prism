@@ -505,19 +505,35 @@ Voice endpoint and credential resolution is independent of `LLM_PROVIDER`:
 1. An explicit `OPENAI_REALTIME_URL` wins. It uses `OPENAI_REALTIME_API_KEY`,
    falling back to the existing `OPENAI_API_KEY`; managed credentials are not
    implicitly copied to an explicitly chosen host.
-2. Otherwise, `LENS_INFERENCE_OPENAI_BASE_URL` selects managed OpenAI. Prism
-   converts HTTPS to WSS and appends `/realtime`, preserving any path prefix.
-   It uses `OPENAI_REALTIME_API_KEY` if explicitly set, otherwise
-   `LENS_INFERENCE_OPENAI_API_KEY`. A missing managed key does not borrow a
-   different backend's chat key.
-3. Without either endpoint, voice connects to `wss://api.openai.com/v1/realtime`
-   using `OPENAI_REALTIME_API_KEY` or the legacy `OPENAI_API_KEY`.
+2. Otherwise, select a managed endpoint supporting the OpenAI Realtime protocol:
+   primary provider first, then `LENS_MANAGED_INFERENCE_PROVIDERS` order. OpenAI
+   and Azure are supported. Each uses its own namespaced base URL and API key;
+   `OPENAI_REALTIME_API_KEY` does not replace a selected managed credential.
+   In older environments without provider markers, prefer OpenAI, then Azure.
+   A provider needs both its endpoint and credential to qualify.
+3. With no eligible managed endpoint, use `OPENAI_REALTIME_API_KEY` for direct
+   OpenAI. Standalone installs may also use `OPENAI_API_KEY` when no managed
+   inference variables or custom `OPENAI_BASE_URL` are configured. Managed
+   placeholders never become direct OpenAI credentials.
 
-`OPENAI_BASE_URL` remains a chat/embeddings setting. This allows Bedrock or Azure
-chat with managed OpenAI audio without changing either chat's endpoint or key.
+| Managed provider | Endpoint variable | Credential variable |
+| --- | --- | --- |
+| OpenAI | `LENS_INFERENCE_OPENAI_BASE_URL` | `LENS_INFERENCE_OPENAI_API_KEY` |
+| Azure | `LENS_INFERENCE_AZURE_OPENAI_BASE_URL` | `LENS_INFERENCE_AZURE_OPENAI_API_KEY` |
+
+Prism converts HTTPS to WSS and appends `/realtime`, preserving the path prefix.
+`OPENAI_BASE_URL` remains a chat/embeddings setting. Bedrock can therefore serve
+chat while Azure serves voice. OpenRouter and Bedrock Mantle's OpenAI-compatible
+chat endpoints do not qualify for Realtime; protocol support is declared in
+`src/lib/managed-realtime.ts`, not inferred from an SDK variable name.
+
 Only direct voice requires egress to `api.openai.com`; managed voice uses the Lens
 endpoint and its metering/budget controls. Remote sockets require WSS; plaintext
-WS is accepted only on loopback. The model and voice settings below are unchanged.
+WS is accepted only on loopback. Selection happens at startup; restart existing
+sandboxes after updating Prism or their discovery environment. A connection
+failure is reported without trying another provider. Azure's
+`OPENAI_REALTIME_MODEL` must name an actual Realtime deployment in the configured
+resource; endpoint discovery does not verify deployment availability or quota.
 The browser profile persists under the data directory, so meeting sign-in happens
 once rather than per meeting.
 
@@ -525,8 +541,8 @@ once rather than per meeting.
 |----------|---------|---------|
 | `OPENAI_API_KEY` | Legacy direct-voice credential fallback. The same key drives chat when `LLM_PROVIDER=openai`, and memory embeddings by default when `LLM_PROVIDER=anthropic` — see [Provider selection](#provider-selection). | — (disabled) |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the agent's voice, in a meeting and in a [voice chat](voice-chat.md). Pinned to a snapshot so a new one cannot change behaviour under you; `gpt-realtime-mini` is materially cheaper. | `gpt-realtime-2.1` |
-| `OPENAI_REALTIME_URL` | Explicit voice WebSocket endpoint; opts out of managed endpoint and credential discovery. | managed OpenAI, else direct OpenAI |
-| `OPENAI_REALTIME_API_KEY` | Independent voice credential; overrides the managed or legacy voice key without changing chat. | managed OpenAI key, else `OPENAI_API_KEY` |
+| `OPENAI_REALTIME_URL` | Explicit voice WebSocket endpoint; opts out of managed endpoint and credential discovery. | managed Realtime, else direct OpenAI |
+| `OPENAI_REALTIME_API_KEY` | Credential for an explicit voice endpoint or direct fallback; does not replace a discovered managed credential. | selected managed key, else eligible direct key |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the voice model thinks before it answers or picks a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. The API's own default is `low`, which suits a voice agent that reads out an order status; the model in a call here holds the agent's real toolset — shell, kubectl, integrations, its own configuration — so this defaults higher. The cost is latency, and latency in a call is silence in a room, so lower it if the pause is more noticeable than the mistakes it prevents. Set empty to send no setting and take the API's default. | `high` |
 | `GOOGLE_BOT_EMAIL` | Google account the agent signs into for meetings. **Effectively required**: Google auto-denies automated anonymous guests, so without this the agent reaches the lobby and is refused. Use a dedicated account. | — |

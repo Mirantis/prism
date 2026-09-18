@@ -244,10 +244,13 @@ const initialize = async () => {
     // Probe for the voice-meeting toolchain once, here rather than per turn: the
     // tools block must stay byte-identical across requests for the provider's
     // prompt cache to hit.
+    if (config.realtimeUnavailableReason) {
+      logger.info({ reason: config.realtimeUnavailableReason }, 'Voice is not configured');
+    }
     const meetingsAvailable = await initMeetingToolAvailability();
     logger.info(
       meetingsAvailable
-        ? 'Voice meetings available (browser + audio toolchain and OpenAI key present)'
+        ? 'Voice meetings available (browser + audio toolchain and Realtime credential present)'
         : 'Voice meetings unavailable — meeting tools not registered',
     );
 

@@ -26,6 +26,7 @@ export const EXCHANGE_TIMEOUT_MS = 30_000;
 export interface MockState {
   /** How many voice sessions the model has open right now. */
   sessions: number;
+  managedHandshakes: number;
   inboundMs: number;
   responsesRequested: number;
   deltasSent: number;
@@ -40,6 +41,7 @@ export type DescribeScreen = () => Promise<string>;
 
 let baseline: MockState = {
   sessions: 0,
+  managedHandshakes: 0,
   inboundMs: 0,
   responsesRequested: 0,
   deltasSent: 0,

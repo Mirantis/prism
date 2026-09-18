@@ -1,6 +1,6 @@
 /**
  * Realtime transport for voice chat and meetings. Config resolves the endpoint
- * and credential together: explicit voice settings, managed OpenAI discovery,
+ * and credential together: explicit voice settings, managed protocol discovery,
  * or direct OpenAI. The sandbox proxy substitutes managed credential placeholders
  * on the Lens route; they must never be redirected to api.openai.com.
  * Remote sockets require WSS. Plain WS is accepted only on loopback.
@@ -24,8 +24,7 @@ let overrideReported = false;
  * remote credentials require TLS, while local test servers may use plaintext.
  */
 function resolveRealtimeBase(): string {
-  const override = config.openaiRealtimeUrl;
-  if (!override) return REALTIME_HOST;
+  const override = config.openaiRealtimeUrl || REALTIME_HOST;
 
   let parsed: URL;
   try {
@@ -45,7 +44,7 @@ function resolveRealtimeBase(): string {
   if (!overrideReported) {
     overrideReported = true;
     // The host, never the URL: a query string an operator added is not ours to log.
-    logger.info(`[Meeting] Realtime socket configured for ${parsed.host}`);
+    logger.info({ host: parsed.host, provider: config.realtimeProvider, source: config.realtimeSource }, '[Meeting] Realtime endpoint selected');
   }
   return override;
 }
@@ -68,7 +67,7 @@ export function resolveRealtimeEndpoint(model?: string): RealtimeEndpoint {
   const apiKey = config.openaiRealtimeApiKey;
   if (!apiKey) {
     throw new Error(
-      'No Realtime credential configured — set OPENAI_REALTIME_API_KEY, enable managed OpenAI, or set OPENAI_API_KEY for direct voice.',
+      config.realtimeUnavailableReason || 'No Realtime credential configured — set OPENAI_REALTIME_API_KEY or enable a managed Realtime provider.',
     );
   }
 

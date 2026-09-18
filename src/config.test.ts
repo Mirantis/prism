@@ -1093,6 +1093,22 @@ describe('config', () => {
   });
 
   describe('voice meetings', () => {
+    it('selects managed Azure voice while keeping Bedrock chat', async () => {
+      process.env.LLM_PROVIDER = 'bedrock';
+      process.env.LENS_MANAGED_INFERENCE_PROVIDER = 'bedrock';
+      process.env.LENS_MANAGED_INFERENCE_PROVIDERS = '["bedrock","azure"]';
+      process.env.LENS_INFERENCE_AZURE_OPENAI_BASE_URL = 'https://lens.example/v1/projects/p/llm/azure/openai/v1';
+      process.env.LENS_INFERENCE_AZURE_OPENAI_API_KEY = '__lens_cred:nexus-llm-azure-openai__';
+      process.env.OPENAI_REALTIME_MODEL = 'voice-deployment';
+      const cfg = await loadConfig();
+      expect(cfg.llmProvider).toBe('bedrock');
+      expect(cfg.realtimeProvider).toBe('azure');
+      expect(cfg.realtimeSource).toBe('managed');
+      expect(cfg.openaiRealtimeUrl).toBe('wss://lens.example/v1/projects/p/llm/azure/openai/v1/realtime');
+      expect(cfg.openaiRealtimeApiKey).toBe('__lens_cred:nexus-llm-azure-openai__');
+      expect(cfg.openaiRealtimeModel).toBe('voice-deployment');
+    });
+
     it.each(['bedrock', 'azure', 'openai'])('selects managed OpenAI voice independently of %s chat', async (provider) => {
       process.env.LLM_PROVIDER = provider;
       process.env.OPENAI_API_KEY = 'chat-key';
@@ -1144,6 +1160,7 @@ describe('config', () => {
 
     it('derives a plaintext WebSocket URL for a loopback managed test endpoint', async () => {
       process.env.LENS_INFERENCE_OPENAI_BASE_URL = 'http://127.0.0.1:1234/v1';
+      process.env.LENS_INFERENCE_OPENAI_API_KEY = 'local-voice-key';
       const cfg = await loadConfig();
       expect(cfg.openaiRealtimeUrl).toBe('ws://127.0.0.1:1234/v1/realtime');
     });

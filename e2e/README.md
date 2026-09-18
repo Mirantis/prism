@@ -33,8 +33,9 @@ The Codex home must contain a valid, writable `auth.json` from `codex login`.
 
 ### The voice chat scenario
 
-It needs no OpenAI account: the runtime's voice socket is pointed at
-`support/mock-realtime-server.ts`, and the microphone is Chromium's own synthetic
+It needs no OpenAI account: the runtime discovers a synthetic managed Azure
+endpoint served by `support/mock-realtime-server.ts`. That server requires the
+Azure route and matching decoy credential, and the microphone is Chromium's own synthetic
 capture device.
 
 On a host with no Playwright-managed browser, name a system Chromium instead:

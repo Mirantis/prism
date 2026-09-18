@@ -11,6 +11,7 @@ Feature: Voice chat in the browser
     And the voice model has heard nothing yet
     When I start a voice chat from the composer
     Then the composer says a voice chat is live
+    And voice used the managed Azure endpoint and credential
     And the voice model hears at least half a second of my microphone
     And the agent's voice is playing in the browser
     When I mute the microphone

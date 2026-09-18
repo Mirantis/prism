@@ -12,6 +12,7 @@ import {
 } from './constants';
 import { readAgentModelDefaults } from './lib/prism-settings';
 import { logger } from './logger';
+import { resolveRealtimeConfiguration } from './lib/managed-realtime';
 
 /**
  * Centralized configuration — single place for all env var reads.
@@ -448,25 +449,10 @@ const embeddingModelId = embeddingModelIds[embeddingProvider];
 // follows OpenAI's current snapshot, and a voice model changing under a live
 // deployment shifts turn-taking and prosody with no code change to point at.
 const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1';
-// Resolve voice independently of chat: Azure and other OpenAI-compatible
-// backends may own OPENAI_BASE_URL / OPENAI_API_KEY but cannot serve Realtime.
-// An explicit voice URL opts out of managed discovery, including its key.
-const realtimeOverride = process.env.OPENAI_REALTIME_URL || undefined;
-const managedRealtimeBase = process.env.LENS_INFERENCE_OPENAI_BASE_URL || undefined;
-function managedRealtimeUrl(base: string): string {
-  const url = new URL(base);
-  if (url.protocol === 'https:') url.protocol = 'wss:';
-  else if (url.protocol === 'http:') url.protocol = 'ws:';
-  else throw new Error('LENS_INFERENCE_OPENAI_BASE_URL must use HTTP or HTTPS');
-  url.pathname = url.pathname.replace(/\/+$/, '') + '/realtime';
-  return url.toString();
-}
-const openaiRealtimeUrl = realtimeOverride
-  || (managedRealtimeBase ? managedRealtimeUrl(managedRealtimeBase) : undefined);
-const openaiRealtimeApiKey = process.env.OPENAI_REALTIME_API_KEY
-  || (!realtimeOverride && managedRealtimeBase
-    ? process.env.LENS_INFERENCE_OPENAI_API_KEY
-    : openaiApiKey);
+// One resolver owns managed discovery and explicit/direct voice configuration.
+const realtimeConfiguration = resolveRealtimeConfiguration(process.env);
+const openaiRealtimeUrl = realtimeConfiguration.url;
+const openaiRealtimeApiKey = realtimeConfiguration.apiKey;
 // `marin` is markedly better for conversation than the API's `alloy` default.
 // Overridable because a future model may retire a voice name.
 const openaiRealtimeVoice = process.env.OPENAI_REALTIME_VOICE || 'marin';
@@ -984,9 +970,12 @@ export const config = {
   // admit named guests, defaulting to the agent's name.
   openaiApiKey,
   openaiRealtimeModel,
-  // Explicit voice override, else the managed OpenAI endpoint when supplied.
+  // Explicit voice override, else capability-based managed discovery or direct voice.
   openaiRealtimeUrl,
   openaiRealtimeApiKey,
+  realtimeSource: realtimeConfiguration.source,
+  realtimeProvider: realtimeConfiguration.provider,
+  realtimeUnavailableReason: realtimeConfiguration.unavailableReason,
   openaiRealtimeVoice,
   // OPENAI_REALTIME_REASONING_EFFORT, default 'high' (the API's own default is
   // 'low'); '' sends no setting at all and leaves the choice to the API.

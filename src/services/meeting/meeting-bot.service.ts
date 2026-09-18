@@ -1095,6 +1095,8 @@ export class MeetingBotService {
       }
 
       trackEvent('meeting joined', input.userId, {
+        inference_provider: config.realtimeProvider ?? 'unknown',
+        inference_source: config.realtimeSource,
         provider: provider.name,
         response_mode: this.responseMode,
         // How often the platform auto-mutes a new joiner. Worth a property because it
@@ -2303,6 +2305,8 @@ export class MeetingBotService {
     if (wasActive && this.startedAt && this.current && this.provider) {
       const stats = this.conversation?.statistics;
       trackEvent('meeting ended', this.current.userId, {
+        inference_provider: config.realtimeProvider ?? 'unknown',
+        inference_source: config.realtimeSource,
         provider: this.provider.name,
         status,
         response_mode: this.responseMode,

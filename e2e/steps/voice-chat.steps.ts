@@ -171,3 +171,8 @@ Then('the voice model has no session open', async ({ page }) => {
     describeScreen(page),
   );
 });
+
+Then('voice used the managed Azure endpoint and credential', async () => {
+  const state = await readState();
+  expect(state.managedHandshakes).toBeGreaterThan(getBaseline().managedHandshakes);
+});
