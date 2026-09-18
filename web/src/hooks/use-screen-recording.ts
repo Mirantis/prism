@@ -20,6 +20,9 @@ import {
  * The narration itself is not sent from here. The runtime diverts the call's own
  * microphone into the recording between `recording_started` and `recording_stopped`,
  * which is what keeps the agent from answering over the demonstration.
+ *
+ * `onEnded` runs however a recording ends. The page stops the share there, since the
+ * share was opened to be recorded.
  */
 
 /** How often the shared screen is looked at. Four times a second catches a click. */
@@ -70,7 +73,10 @@ function toGrey(rgba: Uint8ClampedArray): Uint8ClampedArray {
   return grey;
 }
 
-export function useScreenRecording(send: (frame: PageFrame) => void): ScreenRecordingControls {
+export function useScreenRecording(
+  send: (frame: PageFrame) => void,
+  onEnded: () => void,
+): ScreenRecordingControls {
   const [recording, setRecording] = useState(false);
   const [elapsedMs, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -97,11 +103,12 @@ export function useScreenRecording(send: (frame: PageFrame) => void): ScreenReco
         send({ type: 'recording_frame', data: frame.data, at: frame.at });
       }
       send({ type: 'recording_stopped', ms, reason });
+      onEnded();
       if (!mountedRef.current) return;
       setRecording(false);
       setElapsed(0);
     },
-    [release, send],
+    [onEnded, release, send],
   );
 
   const start = useCallback(
@@ -194,12 +201,13 @@ export function useScreenRecording(send: (frame: PageFrame) => void): ScreenReco
       sessionRef.current = null;
       release(session);
       send({ type: 'recording_cancelled' });
+      onEnded();
       if (!mountedRef.current) return;
       setRecording(false);
       setElapsed(0);
       setError(why);
     },
-    [release, send],
+    [onEnded, release, send],
   );
 
   useEffect(() => {
