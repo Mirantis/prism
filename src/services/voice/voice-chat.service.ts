@@ -425,6 +425,8 @@ class VoiceChatService {
         '[VoiceChat] Session is live',
       );
       trackEvent('voice chat started', input.userId, {
+        inference_provider: config.realtimeProvider ?? 'unknown',
+        inference_source: config.realtimeSource,
         tools: String(tools.count),
         locked_in: String(lockedIn),
         response_mode: mode,
@@ -452,6 +454,8 @@ class VoiceChatService {
       // called. The stage is the whole of what is reported: the message is an error's
       // prose, which telemetry does not carry.
       trackEvent('voice chat start failed', input.userId, {
+        inference_provider: config.realtimeProvider ?? 'unknown',
+        inference_source: config.realtimeSource,
         surface,
         computer: String(input.computer === true),
         stage,
@@ -628,6 +632,8 @@ class VoiceChatService {
       if (userId && startedAt) {
         const stats = conversation?.statistics;
         trackEvent('voice chat ended', userId, {
+          inference_provider: config.realtimeProvider ?? 'unknown',
+          inference_source: config.realtimeSource,
           status,
           surface: startedFrom,
           computer: String(computer !== null),

@@ -401,6 +401,13 @@ export class RealtimeSession extends EventEmitter {
       };
       const onError = (err: Error) => {
         ws.off('open', onOpen);
+        const status = /Unexpected server response: (\d{3})/.exec(err.message)?.[1];
+        logger.warn({
+          host: new URL(endpoint.url).host,
+          provider: config.realtimeProvider,
+          source: config.realtimeSource,
+          ...(status ? { status: Number(status) } : {}),
+        }, '[Meeting] Realtime handshake failed');
         reject(new Error(`Realtime connection failed: ${err.message}`));
       };
       ws.once('open', onOpen);

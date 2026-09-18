@@ -313,6 +313,8 @@ vi.mock('../../../config', () => ({
     meetingTimeoutMinutes: 60,
     meetingAdmissionTimeoutMs: 5_000,
     openaiRealtimeVoice: undefined,
+    realtimeProvider: 'azure',
+    realtimeSource: 'managed',
   },
 }));
 
@@ -2386,6 +2388,8 @@ describe('telemetry', () => {
     await settle();
 
     expect(trackEvent).toHaveBeenCalledWith('meeting joined', 'u1', {
+      inference_provider: 'azure',
+      inference_source: 'managed',
       provider: 'google-meet',
       response_mode: 'auto',
       muted_on_entry: 'false',

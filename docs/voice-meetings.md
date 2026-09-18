@@ -35,7 +35,7 @@ appears when the first two are present:
 1. **The container image.** It ships the browser and audio toolchain (Chromium,
    Xvfb, PulseAudio). A native install via the `prism` binary has no browser to
    drive, so the feature is container-only.
-2. **A Realtime credential.** Enable managed OpenAI in the Lens sandbox policy,
+2. **A Realtime credential.** Enable managed OpenAI or Azure in the Lens sandbox policy,
    or set `OPENAI_REALTIME_API_KEY` / `OPENAI_API_KEY` for direct voice. Managed
    voice uses the Lens endpoint independently of the chat provider; explicit
    endpoint overrides remain supported. See [Configuration](configuration.md#voice-meetings).
@@ -443,7 +443,7 @@ is the same thing to tell them about as the agent's presence.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `OPENAI_API_KEY` | Legacy direct-voice fallback; shared with OpenAI chat. Managed voice resolves its own credential. | — |
-| `OPENAI_REALTIME_API_KEY` | Independent voice credential override. | managed OpenAI key, else `OPENAI_API_KEY` |
+| `OPENAI_REALTIME_API_KEY` | Credential for an explicit voice endpoint or direct fallback. | selected managed key, else eligible direct key |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model thinks before answering or picking a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults higher than the API's own `low` — see [Reasoning effort](#reasoning-effort). Empty takes the API default. | `high` |

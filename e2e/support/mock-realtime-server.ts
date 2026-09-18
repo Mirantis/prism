@@ -2,8 +2,7 @@
  * A local stand-in for OpenAI's Realtime API, so a voice call can be tested with
  * no OpenAI account and no metered socket.
  *
- * The runtime reaches it because `OPENAI_REALTIME_URL` points its voice socket
- * here. It speaks only the part of the protocol the runtime uses: the session is
+ * The runtime discovers its managed Azure endpoint from environment variables. It speaks only the part of the protocol the runtime uses: the session is
  * created, the audio the runtime appends is counted, a turn boundary is announced
  * once enough of it has arrived, and a requested response answers with a steady
  * tone. Nothing here is a model — the words are never read.
@@ -21,6 +20,7 @@
 import http from 'http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { MOCK_REALTIME_PORT } from './mock-realtime-port';
+import { MANAGED_VOICE_KEY, MANAGED_VOICE_PATH } from './managed-voice';
 
 /** pcm16 mono at the rate the Realtime API speaks, in both directions. */
 const SAMPLE_RATE = 24_000;
@@ -37,6 +37,7 @@ const DELTA_MS = 200;
 const state = {
   /** How many sockets are open right now. */
   sessions: 0,
+  managedHandshakes: 0,
   inboundMs: 0,
   responsesRequested: 0,
   deltasSent: 0,
@@ -61,10 +62,15 @@ const server = http.createServer((req, res) => {
   res.end();
 });
 
-const wss = new WebSocketServer({ server, path: '/v1/realtime' });
+const wss = new WebSocketServer({
+  server,
+  path: `${MANAGED_VOICE_PATH}/realtime`,
+  verifyClient: ({ req }: { req: http.IncomingMessage }) => req.headers.authorization === `Bearer ${MANAGED_VOICE_KEY}`,
+});
 
 wss.on('connection', (ws: WebSocket) => {
   state.sessions += 1;
+  state.managedHandshakes += 1;
   log(`session opened (${state.sessions} open)`);
   let turns = 0;
   // Both counted for this socket only. The turn boundary is a property of one
@@ -201,5 +207,5 @@ function log(message: string): void {
 }
 
 server.listen(MOCK_REALTIME_PORT, '127.0.0.1', () =>
-  log(`listening on ws://127.0.0.1:${MOCK_REALTIME_PORT}/v1/realtime`),
+  log(`listening on ws://127.0.0.1:${MOCK_REALTIME_PORT}${MANAGED_VOICE_PATH}/realtime`),
 );

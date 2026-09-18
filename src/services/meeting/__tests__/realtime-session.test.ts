@@ -738,6 +738,32 @@ describe('RealtimeSession outbound frames', () => {
 });
 
 describe('RealtimeSession connection failure', () => {
+  it('reports a rejected handshake status without retrying or logging secrets', async () => {
+    let attempts = 0;
+    const server = new WebSocketServer({
+      port: 0,
+      verifyClient: (_info, done) => { attempts += 1; done(false, 403, 'Forbidden'); },
+    });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as { port: number }).port;
+    const session = new RealtimeSession({
+      instructions: 'x', tools: [],
+      endpointOverride: { url: `ws://127.0.0.1:${port}/?secret=hidden`, headers: { Authorization: 'Bearer hidden-key' } },
+    });
+    try {
+      await expect(session.connect()).rejects.toThrow(/Unexpected server response: 403/);
+      expect(attempts).toBe(1);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 403, host: `127.0.0.1:${port}` }),
+        '[Meeting] Realtime handshake failed',
+      );
+      expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain('hidden');
+    } finally {
+      session.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('rejects with a clear message when the socket cannot open', async () => {
     const session = new RealtimeSession({
       instructions: 'x',

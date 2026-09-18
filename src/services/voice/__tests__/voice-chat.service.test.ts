@@ -15,7 +15,7 @@ vi.mock('../../../logger', () => ({
 }));
 
 vi.mock('../../../config', () => ({
-  config: { openaiRealtimeVoice: 'marin' },
+  config: { openaiRealtimeVoice: 'marin', realtimeProvider: 'azure', realtimeSource: 'managed' },
 }));
 
 vi.mock('../voice-instructions', () => ({
@@ -382,6 +382,8 @@ describe('ending a session', () => {
     await voiceChatService.stop();
 
     expect(trackEvent).toHaveBeenCalledWith('voice chat started', 'user-1', {
+      inference_provider: 'azure',
+      inference_source: 'managed',
       tools: '3',
       locked_in: 'false',
       response_mode: 'open',
