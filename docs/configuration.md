@@ -504,7 +504,8 @@ Voice endpoint and credential resolution is independent of `LLM_PROVIDER`:
 
 1. An explicit `OPENAI_REALTIME_URL` wins. It uses `OPENAI_REALTIME_API_KEY`,
    falling back to the existing `OPENAI_API_KEY`; managed credentials are not
-   implicitly copied to an explicitly chosen host.
+   implicitly copied to an explicitly chosen host. A managed credential is
+   accepted only for its matching discovered Realtime endpoint.
 2. Otherwise, select a managed endpoint supporting the OpenAI Realtime protocol:
    primary provider first, then `LENS_MANAGED_INFERENCE_PROVIDERS` order. OpenAI
    and Azure are supported. Each uses its own namespaced base URL and API key;
@@ -516,6 +517,17 @@ Voice endpoint and credential resolution is independent of `LLM_PROVIDER`:
    inference variables or custom `OPENAI_BASE_URL` are configured. Managed
    placeholders never become direct OpenAI credentials.
 
+For example, Nexus can supply Bedrock for chat and Azure for voice:
+
+```bash
+LENS_MANAGED_INFERENCE_PROVIDER=bedrock
+LENS_MANAGED_INFERENCE_PROVIDERS='["bedrock","openrouter","azure"]'
+```
+
+The provider list is a JSON array of provider IDs. In this example, Prism skips
+Bedrock and OpenRouter for voice and selects Azure when its endpoint and matching
+credential are present.
+
 | Managed provider | Endpoint variable | Credential variable |
 | --- | --- | --- |
 | OpenAI | `LENS_INFERENCE_OPENAI_BASE_URL` | `LENS_INFERENCE_OPENAI_API_KEY` |
@@ -524,8 +536,8 @@ Voice endpoint and credential resolution is independent of `LLM_PROVIDER`:
 Prism converts HTTPS to WSS and appends `/realtime`, preserving the path prefix.
 `OPENAI_BASE_URL` remains a chat/embeddings setting. Bedrock can therefore serve
 chat while Azure serves voice. OpenRouter and Bedrock Mantle's OpenAI-compatible
-chat endpoints do not qualify for Realtime; protocol support is declared in
-`src/lib/managed-realtime.ts`, not inferred from an SDK variable name.
+chat endpoints do not qualify for Realtime. OpenAI-compatible chat support
+alone does not establish Realtime support.
 
 Only direct voice requires egress to `api.openai.com`; managed voice uses the Lens
 endpoint and its metering/budget controls. Remote sockets require WSS; plaintext

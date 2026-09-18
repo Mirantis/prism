@@ -36,7 +36,9 @@ appears when the first two are present:
    Xvfb, PulseAudio). A native install via the `prism` binary has no browser to
    drive, so the feature is container-only.
 2. **A Realtime credential.** Enable managed OpenAI or Azure in the Lens sandbox policy,
-   or set `OPENAI_REALTIME_API_KEY` / `OPENAI_API_KEY` for direct voice. Managed
+   or set `OPENAI_REALTIME_API_KEY` for direct voice. Standalone direct setups
+   without managed inference variables or a custom `OPENAI_BASE_URL` can also
+   use `OPENAI_API_KEY`. Managed
    voice uses the Lens endpoint independently of the chat provider; explicit
    endpoint overrides remain supported. See [Configuration](configuration.md#voice-meetings).
 3. **A Google account for the agent** (`GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD`).

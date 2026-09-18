@@ -11,7 +11,8 @@ message appears in the thread. What you hear is all the call produces.
 ## What you need
 
 A Realtime credential, from managed OpenAI/Azure or `OPENAI_REALTIME_API_KEY` /
-`OPENAI_API_KEY`, shared with voice meetings — see
+`OPENAI_API_KEY` in a standalone direct setup (no managed inference variables
+or custom `OPENAI_BASE_URL`), shared with voice meetings — see
 [Configuration](configuration.md#voice-chat).
 
 If outbound traffic is filtered, allow the resolved voice endpoint: Lens for

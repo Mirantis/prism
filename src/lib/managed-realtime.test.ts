@@ -90,6 +90,24 @@ describe('managed Realtime discovery', () => {
     }).apiKey).toBeUndefined();
   });
 
+  it.each([
+    'wss://voice.example/realtime',
+    'wss://lens.example/prefix/v1/projects/p/llm/openai/v1/realtime',
+  ])('rejects a managed credential for an unrelated explicit endpoint %s', (url) => {
+    expect(resolveRealtimeConfiguration({
+      ...azure, OPENAI_REALTIME_URL: url,
+      OPENAI_API_KEY: azure.LENS_INFERENCE_AZURE_OPENAI_API_KEY,
+    }).apiKey).toBeUndefined();
+  });
+
+  it('preserves an explicit managed URL with its own scoped credential', () => {
+    expect(resolveRealtimeConfiguration({
+      ...azure,
+      OPENAI_REALTIME_URL: 'wss://lens.example/prefix/v1/projects/p/llm/azure/openai/v1/realtime',
+      OPENAI_API_KEY: azure.LENS_INFERENCE_AZURE_OPENAI_API_KEY,
+    })).toMatchObject({ source: 'explicit', apiKey: azure.LENS_INFERENCE_AZURE_OPENAI_API_KEY });
+  });
+
   it('does not borrow a discovered key for an explicit endpoint', () => {
     expect(resolveRealtimeConfiguration({ ...azure, OPENAI_REALTIME_URL: 'wss://voice.example/realtime' }).apiKey).toBeUndefined();
   });

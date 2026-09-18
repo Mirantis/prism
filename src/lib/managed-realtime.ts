@@ -73,11 +73,23 @@ function isDirectBase(base: string | undefined): boolean {
 /** Resolve voice independently of chat, keeping each endpoint and credential paired. */
 export function resolveRealtimeConfiguration(env: Environment): RealtimeConfiguration {
   if (env.OPENAI_REALTIME_URL) {
-    let apiKey = env.OPENAI_REALTIME_API_KEY || env.OPENAI_API_KEY || undefined;
-    // Explicit routing may use managed placeholders on Nexus, but never send
-    // those placeholders to the direct OpenAI host.
-    if (apiKey && new URL(env.OPENAI_REALTIME_URL).hostname === 'api.openai.com'
-      && isManagedCredential(apiKey, env)) apiKey = undefined;
+    const apiKey = env.OPENAI_REALTIME_API_KEY || env.OPENAI_API_KEY || undefined;
+    // An explicit URL does not widen a managed credential's scope. Require
+    // the same protocol, host and route as its discovered endpoint/key pair.
+    if (apiKey && isManagedCredential(apiKey, env)) {
+      const target = new URL(env.OPENAI_REALTIME_URL);
+      const matchesManagedEndpoint = Object.values(providers).flat().some((surface) => {
+        const base = env[surface.baseUrlEnv];
+        if (!base || env[surface.apiKeyEnv] !== apiKey) return false;
+        const managed = new URL(realtimeUrl(base));
+        return target.origin === managed.origin && target.pathname === managed.pathname
+          && !target.username && !target.password;
+      });
+      if (!matchesManagedEndpoint) return {
+        source: 'explicit', url: env.OPENAI_REALTIME_URL,
+        unavailableReason: 'The managed voice credential does not match this endpoint. Set OPENAI_REALTIME_API_KEY to a separate credential for the explicit voice endpoint.',
+      };
+    }
     return {
       source: 'explicit', url: env.OPENAI_REALTIME_URL, apiKey,
       ...(!apiKey ? { unavailableReason: 'Set OPENAI_REALTIME_API_KEY for the configured voice endpoint.' } : {}),

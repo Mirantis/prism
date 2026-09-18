@@ -1,26 +1,42 @@
 import { afterEach, expect, it, vi } from 'vitest';
-afterEach(() => vi.unstubAllEnvs());
+import { MANAGED_VOICE_KEY, MANAGED_VOICE_PATH } from './managed-voice';
+import { resolveRealtimeConfiguration } from '../../src/lib/managed-realtime';
+import { codexAuthMethod } from '../../src/lib/coding-agents/codex/credentials';
 
-it.each([undefined, '', 'test-api-key'])('starts the voice mock with environment key %s', async (apiKey) => {
+const originalEnv = { ...process.env };
+afterEach(() => {
+  process.env = { ...originalEnv };
+  vi.doUnmock('../../src/config');
+  vi.doUnmock('../../src/index');
+});
+vi.mock('../../src/lib/environment', () => ({}));
+
+it.each([undefined, '', 'test-api-key'])('discovers managed voice without changing inherited key %s', async (apiKey) => {
   vi.resetModules();
-  vi.stubEnv('OPENAI_API_KEY', apiKey);
-  const config = {
-    openaiApiKey: apiKey,
-    openaiRealtimeApiKey: apiKey,
-    openaiRealtimeUrl: undefined as string | undefined,
-  };
+  if (apiKey === undefined) delete process.env.OPENAI_API_KEY;
+  else process.env.OPENAI_API_KEY = apiKey;
+  const config = { openaiApiKey: apiKey };
   vi.doMock('../../src/config', () => ({ config }));
-  const runtimeStarted = vi.fn(() => {
-    expect(config.openaiApiKey).toBe(apiKey || 'sk-e2e-not-a-real-key');
-    expect(config.openaiRealtimeApiKey).toBe('sk-e2e-not-a-real-key');
-    expect(config.openaiRealtimeUrl).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/v1\/realtime$/);
-    expect(process.env.OPENAI_API_KEY).toBe(apiKey);
-  });
+  const runtimeStarted = vi.fn();
   vi.doMock('../../src/index', () => {
     runtimeStarted();
     return {};
   });
-  await import('./runtime-entry');
-  await vi.dynamicImportSettled();
+
+  const { runtimeReady } = await import('./runtime-entry');
+  await runtimeReady;
   expect(runtimeStarted).toHaveBeenCalledOnce();
+  expect(config.openaiApiKey).toBe(apiKey || 'sk-e2e-not-a-real-key');
+  // Child coding agents must inherit the caller's credentials, never the mock's key.
+  expect(process.env.OPENAI_API_KEY).toBe(apiKey);
+  expect(codexAuthMethod({
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    AWS_BEARER_TOKEN_BEDROCK: 'test-bedrock-token',
+    CODEX_HOME: '/nonexistent-prism-e2e-codex-home',
+  })).toBe(apiKey ? 'api' : 'bedrock');
+  expect(process.env.OPENAI_REALTIME_URL).toBe('');
+  expect(resolveRealtimeConfiguration(process.env)).toMatchObject({
+    source: 'managed', provider: 'azure', apiKey: MANAGED_VOICE_KEY,
+    url: `ws://127.0.0.1:${process.env.MOCK_REALTIME_PORT || 3103}${MANAGED_VOICE_PATH}/realtime`,
+  });
 });
