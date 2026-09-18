@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComputerHelp, ComputerStatus } from '@/types';
 import { ChatComputerPanel } from './chat-computer-panel';
@@ -203,5 +204,33 @@ describe('chat computer panel', () => {
       clientId: '00000000-0000-4000-8000-000000000001',
       helpId: older.id,
     });
+  });
+
+  it('opens when Strict Mode cancels the first animation frame', () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let frameId = 0;
+    vi.mocked(window.requestAnimationFrame).mockImplementation((callback) => {
+      frameId += 1;
+      frames.set(frameId, callback);
+      return frameId;
+    });
+    vi.mocked(window.cancelAnimationFrame).mockImplementation((id) => {
+      frames.delete(id);
+    });
+    const queryClient = new QueryClient();
+
+    render(
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <ChatComputerPanel requests={[help]} />
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+
+    expect(frames.size).toBe(1);
+    act(() => frames.forEach((callback) => callback(0)));
+    expect(screen.getByLabelText('Computer help panel').getAttribute('data-state')).toBe(
+      'open',
+    );
   });
 });
