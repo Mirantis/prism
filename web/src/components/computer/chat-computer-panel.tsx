@@ -95,7 +95,11 @@ export function ChatComputerPanel({
     }
     if (autoOpenedIdRef.current === waitingId) return;
     autoOpenedIdRef.current = waitingId;
-    return showPanelById(waitingId);
+    const cancelOpen = showPanelById(waitingId);
+    return () => {
+      cancelOpen?.();
+      if (autoOpenedIdRef.current === waitingId) autoOpenedIdRef.current = null;
+    };
   }, [showPanelById, waitingId]);
 
   useEffect(() => {
