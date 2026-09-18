@@ -58,6 +58,14 @@ Feature: The agent's computer in the browser
     When I hand the computer back without signing in
     Then the password I typed is gone, and Prism answers the waiting question
 
+  Scenario: Prism asks for a sign-in and I answer it in the chat
+    Given the runtime can give the agent a computer
+    And a website with a sign-in page and public notes
+    When I ask Prism to read my mail using its computer
+    Then Prism asks for the sign-in in the chat, with a box for it
+    When I fill in the username and password and submit
+    Then the website has both of them, and Prism reports the mail
+
   Scenario: Human control pauses queued work and survives closing the viewer
     Given the runtime can give the agent a computer
     And a website with a sign-in page and public notes

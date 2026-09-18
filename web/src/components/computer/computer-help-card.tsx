@@ -4,6 +4,7 @@ import { Monitor } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { computerRequest } from '@/api/computer';
 import { useComputerStatus } from '@/hooks/use-computer-status';
+import { SignInForm } from './sign-in-form';
 import type { ComputerHelp } from '@/types';
 
 export function ComputerHelpCard({
@@ -56,15 +57,21 @@ export function ComputerHelpCard({
       <p className="break-words text-sm leading-relaxed text-foreground/85">
         {help.reason}
       </p>
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        Click the screen to complete this step. Press Esc when you’re done, or choose “I’m done”.
-        Prism is stopped while you work here and cannot see the screen. Submit a sign-in before
-        you finish: anything left in a password field is cleared.
-      </p>
+      {!current.credentials && (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Click the screen to complete this step. Press Esc when you’re done, or choose “I’m done”.
+          Prism is stopped while you work here and cannot see the screen. Submit a sign-in before
+          you finish: anything left in a password field is cleared.
+        </p>
+      )}
+      {current.status === 'waiting' && current.credentials && (
+        <SignInForm help={current} disabled={disabled} />
+      )}
       {current.status === 'waiting' && (
         <div className="flex flex-wrap items-center gap-2">
           <Button
-            className="flex-1"
+            className={current.credentials ? undefined : 'flex-1'}
+            variant={current.credentials ? 'outline' : 'default'}
             disabled={busy || disabled}
             onClick={() => void resolve('continue')}
           >

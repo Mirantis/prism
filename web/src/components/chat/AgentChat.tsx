@@ -121,6 +121,9 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   voiceRef.current = voice;
 
   const computerHelp = localMessages.flatMap(computerHelpBlocks);
+  // A sign-in is answered in the message itself, so it never slides the live desktop over
+  // the chat.
+  const desktopHelp = computerHelp.filter((help) => !help.credentials);
   const openComputerPanel = useCallback((id: string) => {
     setComputerPanelRequest((current) => ({ id, token: (current?.token ?? 0) + 1 }));
   }, []);
@@ -436,9 +439,9 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         isLoading={isLoadingThread}
         onOpenComputerHelp={openComputerPanel}
       />
-      {computerHelp.length > 0 && (
+      {desktopHelp.length > 0 && (
         <ChatComputerPanel
-          requests={computerHelp}
+          requests={desktopHelp}
           reopenRequest={computerPanelRequest}
           onLayoutChange={setComputerPanelWidth}
           onResizingChange={setComputerPanelResizing}

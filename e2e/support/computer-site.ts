@@ -1,6 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 
+/** The page whose sign-in takes a username and a password together. */
+function mailPage(signedIn: boolean): string {
+  if (signedIn) return '<h1>Your mail</h1><p>MAIL-CLEAR: The invoice was paid on Tuesday.</p>';
+  return (
+    '<h1>Sign in to your mail</h1><p>Please ask your user for the username and password.</p>' +
+    '<form method="post" action="/sign-in-mail">' +
+    '<label>Username <input name="username" autocomplete="username" required></label> ' +
+    '<label>Password <input type="password" name="password" autocomplete="current-password" required></label> ' +
+    '<button>Sign in</button></form>'
+  );
+}
+
 /**
  * The password the site accepts, which only the test knows.
  *
@@ -13,8 +25,10 @@ export const SIGN_IN_PASSWORD = 'a-password-prism-never-sees';
 /**
  * A real website with a sign-in step and an independent public page.
  *
- * The sign-in form reports how much its password field holds, so a test can see what
- * reached the field without reading the agent's browser itself.
+ * The inbox sign-in form reports how much its password field holds, so a test can see
+ * what reached the field without reading the agent's browser itself. The mail page is the
+ * other kind: a username and a password together, which is what the agent asks its user
+ * to fill in rather than to type on the desktop, and it reports what was posted to it.
  */
 export async function startComputerSite(): Promise<{
   url: string;
@@ -22,16 +36,35 @@ export async function startComputerSite(): Promise<{
   isSignedIn: () => boolean;
   passwordLength: () => number;
   signInPageLoads: () => number;
+  mailCredentials: () => { username: string; password: string } | null;
 }> {
   let signedIn = false;
   let passwordLength = 0;
   let signInPageLoads = 0;
+  let mailCredentials: { username: string; password: string } | null = null;
   const server: Server = createServer((req, res) => {
     if (req.method === 'POST' && req.url?.startsWith('/typed')) {
       passwordLength = Number(new URL(req.url, 'http://site').searchParams.get('length')) || 0;
       req.resume();
       res.writeHead(204);
       res.end();
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/sign-in-mail') {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', () => {
+        const posted = new URLSearchParams(body);
+        mailCredentials = {
+          username: posted.get('username') ?? '',
+          password: posted.get('password') ?? '',
+        };
+        res.writeHead(303, {
+          'set-cookie': 'computer-test-mail=yes; Path=/; HttpOnly',
+          location: '/mail',
+        });
+        res.end();
+      });
       return;
     }
     if (req.method === 'POST' && req.url === '/sign-in') {
@@ -61,7 +94,9 @@ export async function startComputerSite(): Promise<{
     const content =
       req.url === '/notes'
         ? '<h1>Public notes</h1><p>Reference: NOTES-42. The workshop starts at 10:00.</p>'
-        : req.headers.cookie?.includes('computer-test-login=yes')
+        : req.url === '/mail'
+          ? mailPage(req.headers.cookie?.includes('computer-test-mail=yes') ?? false)
+          : req.headers.cookie?.includes('computer-test-login=yes')
           ? '<h1>Your inbox</h1><p>INBOX-CLEAR: Your parcel arrives on Friday.</p>'
           : '<h1>Sign in to your inbox</h1><p>Please ask your user to sign in.</p>' +
             '<form method="post" action="/sign-in">' +
@@ -85,6 +120,7 @@ export async function startComputerSite(): Promise<{
     isSignedIn: () => signedIn,
     passwordLength: () => passwordLength,
     signInPageLoads: () => signInPageLoads,
+    mailCredentials: () => mailCredentials,
     url: `http://${randomUUID()}.localhost:${address.port}`,
     close: () =>
       new Promise((resolve, reject) => {

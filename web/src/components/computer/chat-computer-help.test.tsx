@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ComputerHelp, ComputerStatus } from '@/types';
@@ -54,5 +55,43 @@ describe('computer help history marker', () => {
       fireEvent.click(marker);
       expect(onOpen).toHaveBeenCalledWith(help.id);
     }
+  });
+});
+
+describe('a sign-in the agent asked for', () => {
+  const signIn: ComputerHelp = {
+    ...help,
+    credentials: true,
+    site: 'https://mail.example.com',
+  };
+
+  function renderSignIn() {
+    state.status = { ...status('waiting'), help: [signIn] };
+    const onOpen = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ChatComputerHelp help={signIn} onOpen={onOpen} />
+      </QueryClientProvider>,
+    );
+    return onOpen;
+  }
+
+  it('is answered in the message, with the site it goes to', () => {
+    renderSignIn();
+
+    const box = screen.getByLabelText('Computer sign-in');
+    expect(box.textContent).toContain('Prism needs a sign-in');
+    expect(box.textContent).toContain('https://mail.example.com');
+    expect(screen.getByLabelText('Sign in for Prism')).toBeTruthy();
+  });
+
+  it('never opens the live desktop for one', () => {
+    const onOpen = renderSignIn();
+
+    fireEvent.click(screen.getByText('Cancel'));
+    fireEvent.click(screen.getByLabelText('Open sign-in'));
+
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Sign in for Prism')).toBeTruthy();
   });
 });
