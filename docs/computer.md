@@ -21,8 +21,9 @@ you would in a video call. Ask it to look and it reads what is there.
 
 **Record** captures that screen while you talk through what you are doing, for something
 that takes more than a glance. Press stop and Prism is given the whole thing — your screen
-as it changed, and your voice over it — and answers about it. It cannot hear you while a
-recording runs, so it will not interrupt, and a recording stops itself after five minutes.
+as it changed, and your voice over it — and answers about it. Sharing stops with the
+recording. It cannot hear you while a recording runs, so it will not interrupt, and a
+recording stops itself after five minutes.
 
 ## When Prism needs help
 

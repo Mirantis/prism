@@ -46,7 +46,9 @@ export function ComputerView({ helpId }: { helpId?: string }) {
   const queryClient = useQueryClient();
   const state = screen.state ?? data;
   const share = useScreenShare(screen.sendInput);
-  const recorder = useScreenRecording(screen.sendInput);
+  // The share is opened to be recorded, so it closes however the recording ends. Nothing
+  // keeps capturing the user's screen once they press stop.
+  const recorder = useScreenRecording(screen.sendInput, share.stop);
   const { recording } = recorder;
   useEffect(() => {
     if (call.status === 'idle') share.stop();
@@ -99,8 +101,7 @@ export function ComputerView({ helpId }: { helpId?: string }) {
       return;
     }
     // Recording the screen means sharing it, so a first press opens the picker and records
-    // what it hands back. The share outlives the recording, since the agent having a live
-    // view of what it was just shown is the useful state to end in.
+    // what it hands back.
     const stream = share.stream ?? (await share.start());
     if (!stream) return;
     // Read from the ref rather than this closure's `call`: the picker is open across the

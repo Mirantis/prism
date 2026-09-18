@@ -8,7 +8,8 @@ import { renderHook, act } from '@testing-library/react';
  * What is worth pinning is every way a recording ends, because each one leaves somebody
  * waiting: the user pressing stop, the length limit, the browser's own stop button, and
  * the page being left. The last hands nothing over on purpose — the call it was made for
- * is going with the page.
+ * is going with the page. Every ending also gives the screen back, which stops the
+ * share.
  */
 
 import { MAX_RECORDING_MS, useScreenRecording } from './use-screen-recording';
@@ -55,12 +56,15 @@ function stubCanvas() {
 describe('useScreenRecording', () => {
   let stream: ReturnType<typeof fakeStream>;
   let send: ReturnType<typeof vi.fn<(frame: PageFrame) => void>>;
+  /** What the page does when a recording ends: it stops sharing the screen. */
+  let ended: ReturnType<typeof vi.fn<() => void>>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     pixel = 10;
     stream = fakeStream();
     send = vi.fn<(frame: PageFrame) => void>();
+    ended = vi.fn<() => void>();
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
     // jsdom's video has no size, and a sample of a video with no size is skipped.
     Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', { value: 1920, configurable: true });
@@ -79,7 +83,7 @@ describe('useScreenRecording', () => {
   }
 
   it('tells the runtime a recording began, then hands over the pictures and the end', () => {
-    const view = renderHook(() => useScreenRecording(send));
+    const view = renderHook(() => useScreenRecording(send, ended));
 
     act(() => view.result.current.start(stream));
     expect(send).toHaveBeenCalledWith({ type: 'recording_started' });
@@ -105,10 +109,11 @@ describe('useScreenRecording', () => {
     const end = send.mock.calls.at(-1)![0] as { type: string; reason: string };
     expect(end.reason).toBe('user');
     expect(view.result.current.recording).toBe(false);
+    expect(ended).toHaveBeenCalledTimes(1);
   });
 
   it('keeps one picture of a screen that never changes', () => {
-    const view = renderHook(() => useScreenRecording(send));
+    const view = renderHook(() => useScreenRecording(send, ended));
     act(() => view.result.current.start(stream));
 
     act(() => vi.advanceTimersByTime(4_000));
@@ -118,7 +123,7 @@ describe('useScreenRecording', () => {
   });
 
   it('stops itself at the length limit', () => {
-    const view = renderHook(() => useScreenRecording(send));
+    const view = renderHook(() => useScreenRecording(send, ended));
     act(() => view.result.current.start(stream));
 
     act(() => vi.advanceTimersByTime(MAX_RECORDING_MS));
@@ -127,10 +132,11 @@ describe('useScreenRecording', () => {
     expect(end.type).toBe('recording_stopped');
     expect(end.reason).toBe('limit');
     expect(view.result.current.recording).toBe(false);
+    expect(ended).toHaveBeenCalledTimes(1);
   });
 
   it("stops when the browser's own stop button ends the share", () => {
-    const view = renderHook(() => useScreenRecording(send));
+    const view = renderHook(() => useScreenRecording(send, ended));
     act(() => view.result.current.start(stream));
 
     act(() => stream.track.listeners.ended?.());
@@ -138,10 +144,11 @@ describe('useScreenRecording', () => {
     const end = send.mock.calls.at(-1)![0] as { type: string; reason: string };
     expect(end.type).toBe('recording_stopped');
     expect(end.reason).toBe('share_ended');
+    expect(ended).toHaveBeenCalledTimes(1);
   });
 
   it('abandons a recording when the page is left', () => {
-    const view = renderHook(() => useScreenRecording(send));
+    const view = renderHook(() => useScreenRecording(send, ended));
     act(() => view.result.current.start(stream));
     act(() => vi.advanceTimersByTime(1_000));
 
@@ -157,7 +164,7 @@ describe('useScreenRecording', () => {
    * will never take the hand-over.
    */
   it('drops a recording that has nowhere to go, and says why', () => {
-    const view = renderHook(() => useScreenRecording(send));
+    const view = renderHook(() => useScreenRecording(send, ended));
     act(() => view.result.current.start(stream));
     act(() => vi.advanceTimersByTime(2_000));
 
@@ -167,19 +174,21 @@ describe('useScreenRecording', () => {
     expect(view.result.current.error).toBe('the screen went away');
     // No pictures and no end: nothing is claiming this recording was handed over.
     expect(sentTypes()).toEqual(['recording_started', 'recording_cancelled']);
+    expect(ended).toHaveBeenCalledTimes(1);
   });
 
   it('has nothing to abandon when no recording is running', () => {
-    const view = renderHook(() => useScreenRecording(send));
+    const view = renderHook(() => useScreenRecording(send, ended));
 
     act(() => view.result.current.abandon('nothing to drop'));
 
     expect(send).not.toHaveBeenCalled();
+    expect(ended).not.toHaveBeenCalled();
     expect(view.result.current.error).toBeNull();
   });
 
   it('reports elapsed time in whole seconds, so the page does not redraw four times a second', () => {
-    const view = renderHook(() => useScreenRecording(send));
+    const view = renderHook(() => useScreenRecording(send, ended));
     act(() => view.result.current.start(stream));
 
     act(() => vi.advanceTimersByTime(2_500));
@@ -188,7 +197,7 @@ describe('useScreenRecording', () => {
   });
 
   it('refuses a stream with no picture in it', () => {
-    const view = renderHook(() => useScreenRecording(send));
+    const view = renderHook(() => useScreenRecording(send, ended));
     const soundOnly = { getVideoTracks: () => [], getTracks: () => [] } as unknown as MediaStream;
 
     act(() => view.result.current.start(soundOnly));
