@@ -48,10 +48,13 @@ const {
  */
 function streamFromSteps(
   steps: Array<{ text: string; toolCalls: unknown[]; blocks?: unknown[] }>,
+  /** Held open until this settles, for a test that needs two turns at once. */
+  hold?: Promise<void>,
 ): AsyncIterable<unknown> {
   return {
     async *[Symbol.asyncIterator]() {
       for (const s of steps) yield s;
+      if (hold) await hold;
     },
   };
 }
@@ -1227,6 +1230,89 @@ describe('Requirement: Conversation Engine', () => {
       expect(followUp.prompt).toBe('no need to run tests');
       expect(followUp.appendPrompt).toBe(true);
       expect(threadTurnService.pendingCount(steerThread)).toBe(0);
+    });
+  });
+
+  /**
+   * The bracket a client shows the agent working from. It belongs to the engine rather
+   * than to the transport that happened to ask, so a turn the runtime starts itself — the
+   * continuation after a computer help request — reports like any other.
+   */
+  describe('Scenario: Turn activity', () => {
+    function record(): { seen: { active: boolean; threadId: string }[]; off: () => void } {
+      const seen: { active: boolean; threadId: string }[] = [];
+      const listener = (event: { active: boolean; threadId: string }) => void seen.push(event);
+      conversationEngineService.events.on('activity', listener);
+      return { seen, off: () => void conversationEngineService.events.off('activity', listener) };
+    }
+
+    it('brackets an exchange, whoever asked for it', async () => {
+      const { seen, off } = record();
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'I finished helping with the computer.',
+      });
+      off();
+
+      expect(seen).toEqual([
+        { userId: 'user-123', threadId: 'thread-123', active: true },
+        { userId: 'user-123', threadId: 'thread-123', active: false },
+      ]);
+    });
+
+    it('ends once, after the last exchange on the thread', async () => {
+      const { seen, off } = record();
+      let release!: () => void;
+      mockInvokeStream.mockReturnValueOnce(
+        streamFromSteps([{ text: 'first', toolCalls: [] }], new Promise<void>((done) => {
+          release = done;
+        })),
+      );
+
+      const first = conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'read the notes',
+        threadId: 'thread-a',
+      });
+      // The second waits for the thread the first holds, and is reported as the same
+      // stretch of work: the user is waiting either way.
+      const second = conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'and the mail',
+        threadId: 'thread-a',
+      });
+      await Promise.resolve();
+      expect(seen.filter((event) => !event.active)).toEqual([]);
+
+      release();
+      await first;
+      await second;
+      off();
+
+      expect(seen.filter((event) => event.active)).toHaveLength(1);
+      expect(seen.filter((event) => !event.active)).toHaveLength(1);
+    });
+
+    it('ends the report when the turn throws', async () => {
+      const { seen, off } = record();
+      mockInvokeStream.mockImplementationOnce(() => {
+        throw new Error('the provider refused');
+      });
+
+      await expect(
+        conversationEngineService.chat({
+          userId: 'user-123',
+          agentId: 'agent-123',
+          message: 'read the notes',
+        }),
+      ).rejects.toThrow('the provider refused');
+      off();
+
+      expect(seen.map((event) => event.active)).toEqual([true, false]);
     });
   });
 });

@@ -15,7 +15,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   mockChat,
   mockConfig,
+  mockRunningThreads,
   mockTitleEvents,
+  mockTurnEvents,
   mockVoice,
   mockComputerAccess,
   mockComputerStatus,
@@ -24,6 +26,7 @@ const {
   mockRealtime,
 } = vi.hoisted(() => {
   const listeners: Array<(payload: unknown) => void> = [];
+  const turnListeners: Array<(payload: unknown) => void> = [];
   const computerListeners: Array<() => void> = [];
   return {
     // The desktop's access gate. The gateway subscribes to its 'change' event in the
@@ -49,6 +52,7 @@ const {
     }>,
     mockRealtime: { configured: true },
     mockChat: vi.fn(),
+    mockRunningThreads: vi.fn(() => [] as string[]),
     // The voice session owner. The gateway carries its control frames and its
     // audio, so what a test asserts here is what goes to which socket.
     mockVoice: {
@@ -64,6 +68,15 @@ const {
       codingAgent: 'claude-code',
       availableCodingAgents: ['claude-code'],
       ownerUserId: '00000000-0000-0000-0000-000000000001',
+    },
+    // The engine's turn bracket, which the gateway turns into `status` frames.
+    mockTurnEvents: {
+      on: (_event: string, cb: (payload: unknown) => void) => {
+        turnListeners.push(cb);
+      },
+      emit: (_event: string, payload: unknown) => {
+        turnListeners.forEach((cb) => cb(payload));
+      },
     },
     // Minimal EventEmitter stub. The gateway subscribes via `.on('change', cb)`
     // in its constructor; tests drive broadcasts via `.emit('change', payload)`.
@@ -81,6 +94,8 @@ const {
 vi.mock('../conversation-engine.service', () => ({
   conversationEngineService: {
     chat: mockChat,
+    events: mockTurnEvents,
+    runningThreads: mockRunningThreads,
   },
 }));
 
@@ -447,17 +462,18 @@ describe('Requirement: WebSocket Gateway', () => {
       await turn.processing;
     });
 
-    it('broadcasts a terminal { processing: false } status when the turn ends', async () => {
+    it('answers a cancel at once, without waiting for the turn to unwind', async () => {
       const userId = 'user-123';
       const turn = startBlockingTurn(userId);
       await Promise.resolve();
 
-      turn.settle('resolve');
-      await turn.processing;
+      await service.handleMessage(turn.ws, userId, { type: 'cancel' });
 
       expect(turn.ws.send).toHaveBeenCalledWith(
         JSON.stringify({ type: 'status', payload: { processing: false } }),
       );
+      turn.settle('resolve');
+      await turn.processing;
     });
 
     it('does not surface an error envelope when the turn was cancelled', async () => {
@@ -808,25 +824,67 @@ describe('Requirement: WebSocket Gateway', () => {
     });
   });
 
+  /**
+   * The engine brackets every exchange and this gateway is the transport for it, so a
+   * turn the runtime starts on its own — the continuation after a computer help request
+   * — reports as one the user sent.
+   */
   describe('Scenario: Processing indicator', () => {
-    it('should send processing indicator', async () => {
+    it('reports a turn the engine started, to every connection of that user', () => {
       const userId = 'user-123';
+      const first = createMockWebSocket();
+      const second = createMockWebSocket();
+      first.readyState = 1;
+      second.readyState = 1;
+      service.connections.set(userId, [first, second]);
+
+      mockTurnEvents.emit('activity', { userId, threadId: 'thread-1', active: true });
+
+      const frame = JSON.stringify({
+        type: 'status',
+        payload: { processing: true, threadId: 'thread-1' },
+      });
+      expect(first.send).toHaveBeenCalledWith(frame);
+      expect(second.send).toHaveBeenCalledWith(frame);
+    });
+
+    it('tells a connection that arrives mid-turn what is already running', () => {
+      mockRunningThreads.mockReturnValue(['thread-1']);
       const ws = createMockWebSocket();
-      ws.userId = userId;
       ws.readyState = 1;
 
+      service.handleConnection(ws, { url: '/api/ws', headers: {} });
+
+      expect(ws.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: 'status', payload: { processing: true, threadId: 'thread-1' } }),
+      );
+    });
+
+    it('says nothing extra to one that arrives between turns', () => {
+      mockRunningThreads.mockReturnValue([]);
+      const ws = createMockWebSocket();
+      ws.readyState = 1;
+
+      service.handleConnection(ws, { url: '/api/ws', headers: {} });
+
+      const frames = ws.send.mock.calls.map((call: [string]) => JSON.parse(call[0]));
+      expect(frames).toEqual([{ type: 'status', payload: { connected: true } }]);
+    });
+
+    it('reports the end of one the same way', () => {
+      const userId = 'user-123';
+      const ws = createMockWebSocket();
+      ws.readyState = 1;
       service.connections.set(userId, [ws]);
 
-      await service.processMessage(ws, userId, {
-        type: 'chat',
-        content: 'Test',
-        agentId: 'agent-123',
-      });
+      mockTurnEvents.emit('activity', { userId, threadId: 'thread-1', active: false });
 
-      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({
-        type: 'status',
-        payload: { processing: true },
-      }));
+      expect(ws.send).toHaveBeenCalledWith(
+        JSON.stringify({
+          type: 'status',
+          payload: { processing: false, threadId: 'thread-1' },
+        }),
+      );
     });
   });
 

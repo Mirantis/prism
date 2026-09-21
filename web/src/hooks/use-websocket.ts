@@ -120,6 +120,12 @@ interface UseWebSocketOptions {
   onVoiceAudio?: (frame: ArrayBuffer) => void;
   /** A dictation control frame arrived. The dictation belongs to the caller, like a call. */
   onDictationEvent?: (event: DictationEvent) => void;
+  /**
+   * The thread on screen. A turn runs on one thread, and the runtime says which, so this
+   * is what keeps work on another thread — a Slack conversation, a goal — from showing
+   * the agent typing here.
+   */
+  activeThreadId?: string;
   reconnectInterval?: number;
   maxReconnectAttempts?: number;
 }
@@ -135,6 +141,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     onVoiceEvent,
     onVoiceAudio,
     onDictationEvent,
+    activeThreadId,
     reconnectInterval = 3000,
     maxReconnectAttempts = 10,
   } = opts;
@@ -158,6 +165,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const onVoiceEventRef = useRef(onVoiceEvent);
   const onVoiceAudioRef = useRef(onVoiceAudio);
   const onDictationEventRef = useRef(onDictationEvent);
+  const activeThreadIdRef = useRef(activeThreadId);
   onMessageRef.current = onMessage;
   onThreadUpdateRef.current = onThreadUpdate;
   onContextUsageRef.current = onContextUsage;
@@ -167,6 +175,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   onVoiceEventRef.current = onVoiceEvent;
   onVoiceAudioRef.current = onVoiceAudio;
   onDictationEventRef.current = onDictationEvent;
+  activeThreadIdRef.current = activeThreadId;
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [isTyping, setIsTyping] = useState(false);
@@ -207,8 +216,13 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             // revert even when a cancel produced no new message to deliver.
             // The connect handshake sends { connected: true } with no
             // `processing` key, hence the boolean guard.
-            const p = data.payload as { processing?: boolean } | undefined;
-            if (typeof p?.processing === 'boolean') setIsTyping(p.processing);
+            const p = data.payload as { processing?: boolean; threadId?: string } | undefined;
+            if (typeof p?.processing !== 'boolean') break;
+            // A turn on another thread is not this view's. A frame naming no thread —
+            // the answer to a cancel — belongs to whatever is on screen.
+            const thread = activeThreadIdRef.current;
+            if (p.threadId && thread && p.threadId !== thread) break;
+            setIsTyping(p.processing);
             break;
           }
           case 'thread': {
