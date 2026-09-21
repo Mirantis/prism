@@ -93,6 +93,27 @@ describe('the box a sign-in is answered in', () => {
     );
   });
 
+  it('refuses the sign-in where it is asked, when that is the whole request', async () => {
+    computerRequest.mockResolvedValue({ success: true });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SignInForm help={help} canDismiss />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByText('Dismiss'));
+
+    await waitFor(() =>
+      expect(computerRequest).toHaveBeenCalledWith(`/help/${help.id}`, { action: 'dismiss' }),
+    );
+  });
+
+  it('offers no way to refuse it where the card already has one', () => {
+    renderForm();
+
+    expect(screen.queryByText('Dismiss')).toBeNull();
+  });
+
   it('sends nothing without a password', () => {
     renderForm();
 

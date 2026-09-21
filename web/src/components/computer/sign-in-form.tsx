@@ -11,10 +11,13 @@ import type { ComputerHelp } from '@/types';
 export function SignInForm({
   help,
   onCancel,
+  /** Offered where the box is the whole of the request, so it can be refused there. */
+  canDismiss = false,
   disabled = false,
 }: {
   help: ComputerHelp;
   onCancel?: () => void;
+  canDismiss?: boolean;
   disabled?: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -22,6 +25,19 @@ export function SignInForm({
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const dismiss = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await computerRequest(`/help/${help.id}`, { action: 'dismiss' });
+      await queryClient.invalidateQueries({ queryKey: ['computer'] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -85,6 +101,17 @@ export function SignInForm({
         {onCancel && (
           <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onCancel}>
             Hide
+          </Button>
+        )}
+        {canDismiss && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={busy || disabled}
+            onClick={() => void dismiss()}
+          >
+            Dismiss
           </Button>
         )}
       </div>

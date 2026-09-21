@@ -134,7 +134,7 @@ class ComputerService {
   /** The sign-in on a tab, when it holds one the user can answer. */
   async signInForm(
     tab?: number,
-  ): Promise<{ origin: string; fields: 'both' | 'password' } | undefined> {
+  ): Promise<{ origin: string; fields: 'both' | 'password'; targetId?: string } | undefined> {
     return this.computer?.signInForm(tab);
   }
 
