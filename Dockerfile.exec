@@ -1,0 +1,113 @@
+# The execution environment's image: where the agent's shell commands run when
+# the runtime serves them through Docker (`lib/execution-environments/docker/`).
+#
+# It holds the toolchain and nothing else. The runtime, the web UI, the CLI and
+# the meeting/computer stacks stay on the host — those are the runtime's own
+# processes, and only the agent's commands run here.
+#
+# Two properties this image has that the runtime image does not, because it is
+# entered by `docker exec` as the runtime user's uid rather than started as its
+# own user:
+#
+#   1. The toolchain is uid-independent. mise lives in /opt, world-readable,
+#      with its cache and config there too — the runtime image puts mise under
+#      /home/node/.local, which only works for uid 1000.
+#   2. Nothing is written to the container's HOME at build time. The runtime
+#      points HOME at a bind-mounted directory, so anything baked into a home
+#      here would be shadowed.
+#
+# Debian bookworm with Node, rather than bare Debian: `runShell` execs
+# /bin/bash, which rules out Alpine's busybox, and both coding-agent CLIs are
+# npm packages. Same base family as the runtime image, so a command behaves the
+# same in either.
+FROM node:26-bookworm-slim
+
+# `setsid` (util-linux) is load-bearing, not incidental: every command runs
+# under it so the payload becomes a process-group leader and `shell_kill` can
+# signal the whole group. Without it a kill reaches the `docker exec` client
+# and leaves the work running.
+#
+# gcc/libc-dev/make/binutils are here because `npm install` and `pip install`
+# build native modules, which is ordinary work for the agent.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash coreutils util-linux procps \
+        git ca-certificates curl wget openssh-client \
+        ripgrep jq sqlite3 \
+        unzip zip p7zip-full zstd xz-utils file \
+        gcc libc-dev make binutils \
+        less vim-tiny \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+# Everything mise owns lives in /opt so any uid can read it. The cache and
+# config dirs are named explicitly for the same reason: their defaults are
+# under $HOME, which here is a bind mount that does not exist at build time.
+ENV MISE_DATA_DIR=/opt/mise \
+    MISE_CONFIG_DIR=/opt/mise/config \
+    MISE_CACHE_DIR=/opt/mise/cache \
+    MISE_STATE_DIR=/opt/mise/state \
+    MISE_INSTALL_PATH=/usr/local/bin/mise \
+    PATH=/opt/mise/shims:$PATH
+
+ARG MISE_VERSION=v2026.7.12
+# The same split the runtime image makes: ripgrep and jq come from apt above
+# because mise's aqua backend has no linux/arm64 ripgrep build, and everything
+# below is a first-class mise tool on both arches.
+#
+# python is pinned to an exact patch and compiling from source is refused, so a
+# missing prebuilt fails the build instead of falling back to a fragile
+# in-container source build. It is a standalone interpreter rather than
+# Debian's, so it is not PEP-668 externally managed and `pip install` works
+# without a venv — which is what a skill installing a library at run time needs.
+#
+# The GitHub token is optional and never lands in a layer: mise's aqua backend
+# resolves releases through the GitHub API, which is ~60 req/hr unauthenticated
+# and shared per CI runner IP.
+RUN --mount=type=secret,id=github_token,required=false \
+    GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
+    export GITHUB_TOKEN MISE_GITHUB_TOKEN="$GITHUB_TOKEN" AQUA_GITHUB_TOKEN="$GITHUB_TOKEN"; \
+    export MISE_PYTHON_COMPILE=false; \
+    curl -fsSL https://mise.jdx.dev/install.sh | MISE_VERSION=${MISE_VERSION} sh \
+ && mise use -g \
+        awscli@latest \
+        kubectl@latest \
+        gh@latest \
+        yq@latest \
+        python@3.13.14 \
+        pandoc@latest \
+ && mise reshim
+
+# The coding sub-agent's two CLIs. npm's global prefix here is /usr/local, so
+# they are on PATH for every uid.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex \
+ && npm cache clean --force
+
+# Readable and traversable by any uid; the cache and state dirs writable,
+# because mise touches them when a shim runs. Done once, after every install,
+# so no later layer can leave a root-only path behind.
+RUN chmod -R a+rX /opt/mise \
+ && mkdir -p /opt/mise/cache /opt/mise/state \
+ && chmod -R a+rwX /opt/mise/cache /opt/mise/state
+
+# A uid with no /etc/passwd entry gets no home from the OS, and some tools read
+# $HOME before anything sets it. The runtime overrides this with a bind-mounted
+# path; this is the fallback that keeps a bare `docker run` usable.
+#
+# A real directory rather than /tmp, and 1777 rather than 777: codex refuses to
+# lay down its helper binaries under a temporary dir, so `codex --version`
+# warns when HOME is /tmp. Sticky, so one uid cannot remove another's files.
+RUN mkdir -p /home/agent && chmod 1777 /home/agent
+ENV HOME=/home/agent
+
+# Held open by the runtime, which creates the container at boot and removes it
+# at shutdown, then runs each command with `docker exec`. Nothing runs here on
+# its own.
+#
+# Under tini, because PID 1 has to reap. Every process the agent leaves behind
+# — a killed `shell_spawn` group, anything its commands double-fork — is
+# re-parented to PID 1, and `sleep` never calls wait(), so each one would
+# linger as an unreapable zombie for the life of the container. Measured before
+# this: killing one background command left two permanent `Z` entries, which
+# also made `pgrep` report the work as still running.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["sleep", "infinity"]

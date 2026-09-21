@@ -84,12 +84,27 @@ paths resolve from there.
   drain its stdout/stderr, and kill it with a signal. Useful for servers, watch
   processes, and interactive tools.
 
-> **On confinement:** the file read/write/edit tools reject paths outside the
-> workspace, but running a command does not — `shell_exec` can run anything the
-> runtime's OS user is permitted to, including reading paths elsewhere on the
-> machine. The workspace is a default working directory, not a security sandbox;
-> the real boundary is OS filesystem permissions. For a hard boundary around
-> what the agent can reach, run Prism Agent under **[Lens Sandbox](lens-sandbox.md)**.
+### Where commands run
+
+When Docker is available, the agent's commands run in a container and the files
+they work on stay on your machine — the workspace, your skills and your plugins
+are mounted into it, so a command sees the same files you do. Nothing to set up:
+the runtime finds the engine and uses it. Set `EXECUTION_ENVIRONMENT=local` to
+keep commands on the host, or `docker` to require the container.
+
+Two things follow. Anything written **outside** the mounted directories — in
+`/tmp` inside the container, say — is gone when the agent restarts, so keep work
+in the workspace. And a conversation you start with `prism` inside a repository
+runs its commands on the host instead, because that repository is not one of
+the mounted directories; the startup log says so when it happens.
+
+> **On confinement:** in a container, a command reaches the mounted directories
+> and nothing else of yours — not your home directory, and not the agent's own
+> database. On the host it is different: the file read/write/edit tools reject
+> paths outside the workspace, but running a command does not — `shell_exec` can
+> run anything the runtime's OS user is permitted to. There the workspace is a
+> default working directory rather than a boundary. Neither case limits the
+> network; for that, run Prism Agent under **[Lens Sandbox](lens-sandbox.md)**.
 
 In the published container image, the shell comes with common tooling
 preinstalled — `git`, `gh` (GitHub CLI), `kubectl`, `aws`, `jq`, `yq`, and

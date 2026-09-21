@@ -20,6 +20,7 @@ export interface FakeEnvironmentParts {
   runShell?: (command: string, options: RunOptions) => ReturnType<ExecutionEnvironment['runShell']>;
   workspaceRoot?: string;
   baseEnv?: NodeJS.ProcessEnv;
+  servesPath?: (path: string) => boolean;
   files?: Partial<ExecutionFiles>;
 }
 
@@ -33,6 +34,9 @@ export function fakeExecutionEnvironment(parts: FakeEnvironmentParts = {}): Exec
     displayName: 'fake',
     workspaceRoot: () => parts.workspaceRoot ?? '/workspace',
     prepareWorkspace: () => ({ root: parts.workspaceRoot ?? '/workspace', fellBackFrom: null }),
+    start: () => Promise.resolve(),
+    shutdown: () => Promise.resolve(),
+    servesPath: parts.servesPath ?? (() => true),
     baseEnv: () => parts.baseEnv ?? {},
     runShell: parts.runShell ?? (unsupported('runShell') as ExecutionEnvironment['runShell']),
     runProgram: parts.runProgram ?? (unsupported('runProgram') as ExecutionEnvironment['runProgram']),

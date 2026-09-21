@@ -3,8 +3,7 @@
 Prism Agent is self-contained. One container, one embedded database, no
 external services. It persists between conversations, keeps its own memory,
 runs heartbeat checks on a schedule, can put work on its own calendar, and can
-act over a shell — all running in a single process. The only hard dependency is
-an LLM provider.
+act over a shell. The only hard dependency is an LLM provider.
 
 These docs walk you from a first install through every feature the agent has.
 

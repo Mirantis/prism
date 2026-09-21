@@ -22,12 +22,18 @@ jobs:
     # fork-originated event carries a read-only token that could not delete one.
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    # One job per published image. Both carry the same `pr-<n>` tag, and a PR
+    # that leaves either behind keeps paying for it.
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [prism-agent, prism-agent-exec]
     steps:
       - name: Delete this PR's image versions
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PACKAGE: prism-agent
-          VERSIONS_API: /orgs/${{ github.repository_owner }}/packages/container/prism-agent/versions
+          PACKAGE: ${{ matrix.package }}
+          VERSIONS_API: /orgs/${{ github.repository_owner }}/packages/container/${{ matrix.package }}/versions
           PR_PREFIX: pr-${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
