@@ -18,7 +18,7 @@
 
 import type { Readable, Writable } from 'stream';
 
-export type ExecutionEnvironmentName = 'local';
+export type ExecutionEnvironmentName = 'local' | 'docker';
 
 export interface ExecutionEnvironment {
   readonly id: ExecutionEnvironmentName;
@@ -32,6 +32,19 @@ export interface ExecutionEnvironment {
    * not be used, so the caller can warn; null when the intended one works.
    */
   prepareWorkspace(): { root: string; fellBackFrom: string | null };
+  /**
+   * Bring the environment up, once, at boot. Throws when it cannot serve
+   * commands, which the selector turns into a fall back to `local`.
+   */
+  start(): Promise<void>;
+  /** Tear it down at shutdown. Never throws: the process is leaving either way. */
+  shutdown(): Promise<void>;
+  /**
+   * Whether a command with this cwd can run here. An environment that sees only
+   * part of the host filesystem answers false for the rest, and the caller
+   * falls back to `local` — see `getExecutionEnvironmentFor`.
+   */
+  servesPath(path: string): boolean;
   /** The environment a command inherits, with the runtime's own vars removed. */
   baseEnv(): NodeJS.ProcessEnv;
 
@@ -71,7 +84,12 @@ export interface ExecProcess {
   readonly ended: Promise<ExecEnd>;
   /** Settles once the output streams have closed as well. */
   readonly closed: Promise<ExecEnd>;
-  /** True once the signal was delivered to a running process. */
+  /**
+   * Signal a running process, reporting whether the signal went out.
+   *
+   * A terminating signal has to reach something that settles `ended` and
+   * `closed`, since every caller kills and then waits on the same process.
+   */
   kill(signal: NodeJS.Signals): boolean;
 }
 

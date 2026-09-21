@@ -7,6 +7,7 @@ on:
       # re-validate the image build on both platforms.
       - '.github/workflows/docker-build.yml'
       - 'Dockerfile'
+      - 'Dockerfile.exec'
       - 'src/**'
       - 'web/**'
       - 'cli/**'
@@ -154,6 +155,113 @@ jobs:
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
+
+  # The execution environment's image: where the agent's shell commands run.
+  # Built here rather than in its own workflow so it shares the `tag` job —
+  # two copies of that slug derivation would drift.
+  build-exec:
+    needs: tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Login to GitHub Container Registry
+        if: needs.tag.outputs.push == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Prepare build secrets
+        run: |
+          # Same reason as the runtime image: mise/aqua resolve tool releases
+          # through the GitHub API, which is rate-limited per runner IP.
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.gh-token-secret"
+
+      - name: Build the exec image
+        id: build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: .
+          file: Dockerfile.exec
+          platforms: ${{ matrix.platform }}
+          # No OTel build-args: this image holds no runtime, so it reports
+          # nothing and has nothing to report it to.
+          outputs: ${{ needs.tag.outputs.push == 'true' && 'type=image,name=ghcr.io/lensapp/prism-agent-exec,push-by-digest=true,name-canonical=true,push=true' || 'type=cacheonly' }}
+          secret-files: |
+            github_token=${{ runner.temp }}/.gh-token-secret
+          cache-from: |
+            type=gha,scope=pr-exec-${{ matrix.platform }}
+            type=gha,scope=release-exec-${{ matrix.platform }}
+          cache-to: type=gha,scope=pr-exec-${{ matrix.platform }},mode=max
+
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/.gh-token-secret"
+
+      - name: Export digest
+        if: needs.tag.outputs.push == 'true'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Prepare platform pair
+        if: needs.tag.outputs.push == 'true'
+        run: echo "PLATFORM_PAIR=${PLATFORM//\//-}" >> "$GITHUB_ENV"
+        env:
+          PLATFORM: ${{ matrix.platform }}
+
+      - name: Upload digest
+        if: needs.tag.outputs.push == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pr-exec-digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-exec:
+    needs: [tag, build-exec]
+    if: needs.tag.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: /tmp/digests
+          pattern: pr-exec-digests-*
+          merge-multiple: true
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Create and push manifest
+        env:
+          GHCR_REPO: ghcr.io/lensapp/prism-agent-exec
+          IMAGE_TAG: ${{ needs.tag.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          cd /tmp/digests
+          docker buildx imagetools create \
+            -t "$GHCR_REPO:$IMAGE_TAG" \
+            $(printf "$GHCR_REPO@sha256:%s " *)
 
   # Merge the per-platform images into one multi-arch manifest list and apply
   # the PR's tag. Skipped on a fork PR, and skipped when either platform

@@ -228,6 +228,11 @@ export default defineConfig({
         SHELL_WORKSPACE_ROOT: E2E_WORKSPACE,
         // Persistent data dir → skills live at <dir>/skills (seeded above).
         PRISM_DATA_DIR: E2E_DATA_DIR,
+        // Pinned, not derived: CI runners have a container engine, so the
+        // suite would otherwise run the agent's commands in a container on CI
+        // and on the host locally, which is two different tests under one name.
+        // The scenario that does want a container sets this itself.
+        EXECUTION_ENVIRONMENT: process.env.EXECUTION_ENVIRONMENT ?? 'local',
         // Heartbeat-driven broadcasts publish under config.ownerUserId, and
         // the slack adapter delivers via SlackMapping rows scoped by
         // lensUserId. db-helper.seed() uses TEST_USER.id, so the SPA's

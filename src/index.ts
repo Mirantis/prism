@@ -49,10 +49,15 @@ import { startFileJanitor } from './lib/file-janitor';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
-import { getExecutionEnvironment } from './lib/execution-environments/get-execution-environment';
+import {
+  ensureExecutionEnvironmentDetected,
+  getExecutionEnvironment,
+} from './lib/execution-environments/get-execution-environment';
 import { ensureDataDirs } from './lib/data-dir';
 import { getCodingAgent } from './lib/coding-agents/get-coding-agent';
 import { ensureCodingAgentsDetected } from './lib/coding-agents/availability';
+import { getProcessManager } from './tools/shell/process-manager';
+import { getAgentTaskManager } from './tools/shell/agent-task-manager';
 import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
 import { createProvider } from './lib/llm-providers/create-provider';
 import { runBackfill } from './scripts/backfill-embeddings';
@@ -87,13 +92,25 @@ computerEndpoint.initialize(httpServer);
 
 const initialize = async () => {
   try {
+    // The data dirs come first: an execution environment that isolates the
+    // agent has to mount them, and a mount whose host path does not exist yet
+    // is one the engine invents as a root-owned directory.
+    const dirs = ensureDataDirs();
+    if (dirs.fellBackFrom) {
+      logger.warn(
+        '[Startup] data dir %s is not usable; falling back to %s. Set PRISM_DATA_DIR to choose another.',
+        dirs.fellBackFrom,
+        dirs.dataDir,
+      );
+    }
+    logger.info('[Startup] skills dir: %s', dirs.skillsDir);
+
     // Ensure the shell tools' workspace dir exists before any invocation can
     // spawn a command there — a missing cwd surfaces as `spawn /bin/bash
     // ENOENT`, which masquerades as a missing shell (e.g. `npm run dev` on
-    // macOS, where the default /home/node can't be created).
-    const executionEnvironment = getExecutionEnvironment();
-    logger.info('[Startup] execution environment: %s', executionEnvironment.displayName);
-    const ws = executionEnvironment.prepareWorkspace();
+    // macOS, where the default /home/node can't be created). It is a host
+    // directory in either environment, so it is made before one is chosen.
+    const ws = getExecutionEnvironment().prepareWorkspace();
     if (ws.fellBackFrom) {
       logger.warn(
         '[Startup] shell workspace %s is not usable; falling back to %s. Set SHELL_WORKSPACE_ROOT to choose another.',
@@ -104,20 +121,13 @@ const initialize = async () => {
       logger.info('[Startup] shell workspace: %s', ws.root);
     }
 
-    // Ensure the persistent data dirs exist, then give the configured coding
-    // agent its home inside them, pointed at the same canonical skills folder,
-    // so the prism loop and the coding sub-agent see one shared set of skills.
-    const dirs = ensureDataDirs();
-    if (dirs.fellBackFrom) {
-      logger.warn(
-        '[Startup] data dir %s is not usable; falling back to %s. Set PRISM_DATA_DIR to choose another.',
-        dirs.fellBackFrom,
-        dirs.dataDir,
-      );
-    }
-    logger.info('[Startup] skills dir: %s', dirs.skillsDir);
+    // Where the agent's commands run. Derived, not configured — and it reports
+    // itself, including when it wanted a container and could not have one.
+    await ensureExecutionEnvironmentDetected();
+
     // Which agents have credentials is a question for the execution
-    // environment, so it is asked here rather than derived at import.
+    // environment, so it is asked here rather than derived at import — and
+    // after the line above, so it is asked of the environment that won.
     await ensureCodingAgentsDetected();
     for (const name of config.availableCodingAgents) {
       const codingAgent = getCodingAgent(name);
@@ -316,6 +326,16 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   // A SIGTERM early in boot would otherwise leave the catalog fetch holding a
   // socket, so server.close() waits and the 5s force-exit below fires.
   cancelModelCatalogRefresh();
+
+  // The agent's own work goes early, ahead of the slower teardowns below.
+  // Locally these die with us because they are our children; in a container
+  // they do not, and a shutdown that is cut short after this point would leave
+  // both them and the container behind. A crashed runtime still leaves the
+  // container, which is why `start()` removes a stale one by name.
+  getProcessManager().killAll();
+  getAgentTaskManager().killAll();
+  await getExecutionEnvironment().shutdown();
+
   webSocketGatewayService.closeAll();
   computerEndpoint.close();
   await computerService.close();

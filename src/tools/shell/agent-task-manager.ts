@@ -22,7 +22,7 @@ import type {
   CodingAgentStopReason,
   CodingAgentTask,
 } from '../../lib/coding-agents/coding-agent';
-import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
+import { getExecutionEnvironmentFor } from '../../lib/execution-environments/get-execution-environment';
 
 export const MAX_CONCURRENT = 3;
 export const DEFAULT_WAIT_MS = 5_000;
@@ -107,7 +107,10 @@ export class AgentTaskManager {
       taskId,
       prompt: params.prompt,
       workdir: params.workdir,
-      env: getExecutionEnvironment().baseEnv(),
+      // The environment that will run it, which the workdir decides: a thread
+      // rooted outside the container's mounts runs on the host, and the host's
+      // `PATH` and `HOME` are exactly what the container's environment drops.
+      env: getExecutionEnvironmentFor(params.workdir).baseEnv(),
       mode: params.mode ?? 'edit',
       modelTier: params.modelTier,
       effort: params.effort,

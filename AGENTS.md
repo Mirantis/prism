@@ -59,6 +59,24 @@ to clear.
   a plugin's MCP children — stay outside. `capture.ts` is the one bounded, timed,
   cancellable run, shared by `shell_exec` and every probe. A new environment is
   one folder plus one entry in the selector.
+- **An environment is chosen per deployment, and per path.** `detect()` prefers
+  `docker` when an engine answers, stays `local` when the runtime is itself in a
+  container, and takes `EXECUTION_ENVIRONMENT` over both. Selection is async, so
+  it is a memoized boot probe (`ensureExecutionEnvironmentDetected`) awaited by
+  `index.ts` and by `collectTools`, while `getExecutionEnvironment()` stays
+  synchronous and answers `local` until it settles — that is what leaves the
+  existing call sites unchanged and settles the tools block before the first
+  turn. A call site holding a cwd asks `getExecutionEnvironmentFor(cwd)`
+  instead, because an environment serves only part of the filesystem and a
+  thread rooted outside it runs on the host.
+- **Docker keeps files on the host.** Every path the container serves is
+  bind-mounted at the identical absolute path, so no code translates one into
+  the other and the container holds nothing durable — its `files` member *is*
+  the local filesystem. The database, the media store, the plugin scratch and
+  the browser profiles are not mounted. A command is one `docker exec` under
+  `setsid --wait`, recording its process group into a mounted pid file so a
+  kill can reach inside; the image runs tini as PID 1, because everything the
+  agent leaves behind is re-parented there and `sleep` reaps nothing.
 - **Prove an option is needed before you add it.** A flag, a setting or an env
   var has to show that no existing product behavior, no provider selection and
   no better default can cover the case. Each one is a fork in the code and a
@@ -884,7 +902,14 @@ src/
 │   │   ├── get-execution-environment.ts # Selector: derives the environment (no setting), one instance per process
 │   │   ├── capture.ts         # The one bounded, timed, cancellable run — `shell_exec` and every probe format their own result out of it
 │   │   ├── workspace.ts       # `resolveWorkspace`: the single owner of the per-thread-vs-default fallback
-│   │   └── local/             # Commands as children of this process, on the filesystem it sees
+│   │   ├── local/             # Commands as children of this process, on the filesystem it sees
+│   │   └── docker/            # Commands in a container, files still on the host
+│   │       ├── detect.ts      # Which environment serves this deployment, in four steps
+│   │       ├── engine.ts      # The `docker` CLI, always run on the host
+│   │       ├── container.ts   # The container's lifetime, which is the runtime's
+│   │       ├── mounts.ts      # What it can see, and `servesPath`
+│   │       ├── docker-env.ts  # What a command inherits; a longer deny-list than local's
+│   │       └── docker-process.ts # `docker exec` under `setsid --wait`, and the pid-file kill
 │   ├── embedding-providers/    # Memory-embedding vendors, a feature of their own decoupled from the chat provider (`EMBEDDING_PROVIDER`)
 │   │   ├── embedding-provider.ts # Shared `EmbeddingProvider` type: `model(modelId)` + the vendor's `providerOptions` fragment carrying the 1024-dim truncation target; `EMBEDDING_DIMENSIONS`
 │   │   ├── create-embedding-provider.ts # Embedding selector: picks vendor (bedrock/azure-openai/openai/openrouter) off `config.embeddingProvider`, passes each its own gateway mount; `none` → null

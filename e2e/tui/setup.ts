@@ -85,6 +85,10 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
     // spreads process.env above, so a developer who opts in via .env would
     // otherwise leak the refresh into the suite.
     MODELS_DEV_URL: '',
+    // Pinned, not derived: CI runners have a container engine, so the suite
+    // would otherwise run the agent's commands in a container on CI and on the
+    // host locally, which is two different tests under one name.
+    EXECUTION_ENVIRONMENT: 'local',
     ...(opts.runtimeEnvOverrides ?? {}),
   };
 

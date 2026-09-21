@@ -125,6 +125,7 @@ See **[Slack](slack.md)** for how the tokens are used.
 | `TEAM_NAME` | Team name on first boot | `Local` |
 | `OWNER_USER_ID` | Owner user ID on first boot | local sentinel UUID |
 | `SHELL_WORKSPACE_ROOT` | Working directory for the agent's [shell tools](tools.md#shell) | install `workspace` dir (Docker: `/home/node`) |
+| `EXECUTION_ENVIRONMENT` | Where the agent's commands run: `docker` (a container, with your workspace and skills mounted) or `local` (this machine). See [where commands run](tools.md#where-commands-run). | `docker` when a container engine answers, else `local` |
 | `PRISM_DATA_DIR` | Persistent data dir for [skills](skills.md), [plugins](plugins.md), attachment media (`<data dir>/media`) and the coding agent's config. The Docker image sets this to the `/data` volume. | `/data` (Docker), else `~/.prism` |
 | `PRISM_SKILLS_DIR` | Override the [skills](skills.md) directory specifically. | `<data dir>/skills` |
 | `PRISM_PLUGINS_DIR` | Override the [plugins](plugins.md) directory specifically. | `<data dir>/plugins` |
@@ -323,10 +324,13 @@ it afterwards. The document is kept, so onboarding runs when you unlock the agen
 known holes:
 
 - **The [shell](tools.md#shell) is never withheld.** Every agent has `shell_exec`,
-  in every mode. The lock takes away the document tools, not the shell, and a
-  shell writes the documents straight into `/data/agent.db`. Such a write records
-  no revision, so the document's [history](agent-identity.md#version-history)
-  marks it as changed outside the app.
+  in every mode. The lock takes away the document tools, not the shell, and on
+  the host a shell writes the documents straight into `/data/agent.db`. Such a
+  write records no revision, so the document's
+  [history](agent-identity.md#version-history) marks it as changed outside the
+  app. When commands run in a container the database is not among the mounted
+  directories, so that particular route is closed — see
+  [where commands run](tools.md#where-commands-run).
 - **The Management API takes no credential from inside the container.** Auth is
   terminated in front of the container, so a shell can `PATCH
   localhost:3003/agents/locked-in` and turn the lock off. "The agent cannot unlock

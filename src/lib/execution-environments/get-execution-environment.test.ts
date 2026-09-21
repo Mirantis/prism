@@ -1,14 +1,19 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { fakeExecutionEnvironment } from '../../test-utils/fake-execution-environment';
 import {
+  __resetExecutionEnvironmentDetectionForTests,
   __setExecutionEnvironmentForTests,
   getExecutionEnvironment,
+  getExecutionEnvironmentFor,
 } from './get-execution-environment';
 
-afterEach(() => __setExecutionEnvironmentForTests(null));
+afterEach(() => __resetExecutionEnvironmentDetectionForTests());
 
 describe('getExecutionEnvironment', () => {
-  it('serves the local environment', () => {
+  it('serves the local environment until a probe says otherwise', () => {
+    // Selection is async and this accessor is not, so `local` is what every
+    // caller before boot gets — which is also what keeps the fourteen existing
+    // call sites synchronous.
     expect(getExecutionEnvironment().id).toBe('local');
   });
 
@@ -22,5 +27,32 @@ describe('getExecutionEnvironment', () => {
     expect(getExecutionEnvironment()).toBe(fake);
     __setExecutionEnvironmentForTests(null);
     expect(getExecutionEnvironment().displayName).toBe('local');
+  });
+});
+
+describe('getExecutionEnvironmentFor', () => {
+  it('uses the selected environment for a path it serves', () => {
+    const served = fakeExecutionEnvironment({ servesPath: () => true });
+    __setExecutionEnvironmentForTests(served);
+    expect(getExecutionEnvironmentFor('/data/workspace')).toBe(served);
+  });
+
+  it('falls back to local for a path the environment cannot reach', () => {
+    // A thread the terminal UI started in a repository: its root was never
+    // mounted, because the container's mounts were fixed when it was created.
+    __setExecutionEnvironmentForTests(fakeExecutionEnvironment({ servesPath: () => false }));
+    expect(getExecutionEnvironmentFor('/Users/me/dev/repo').id).toBe('local');
+  });
+
+  it('uses the selected environment when no path is given', () => {
+    // No cwd means the environment's own root, which it serves by definition.
+    const served = fakeExecutionEnvironment({ servesPath: () => false });
+    __setExecutionEnvironmentForTests(served);
+    expect(getExecutionEnvironmentFor(undefined)).toBe(served);
+  });
+
+  it('hands every unreachable path the same local environment', () => {
+    __setExecutionEnvironmentForTests(fakeExecutionEnvironment({ servesPath: () => false }));
+    expect(getExecutionEnvironmentFor('/a')).toBe(getExecutionEnvironmentFor('/b'));
   });
 });

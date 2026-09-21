@@ -11,7 +11,7 @@
  */
 
 import { captureProgram } from '../lib/execution-environments/capture';
-import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
+import { getExecutionEnvironmentFor } from '../lib/execution-environments/get-execution-environment';
 
 const TIMEOUT_MS = 2_000;
 /** A branch name; anything longer is not one. */
@@ -19,7 +19,7 @@ const OUTPUT_LIMIT = 4 * 1024;
 
 export async function getGitBranch(dir: string): Promise<string | null> {
   if (!dir) return null;
-  const environment = getExecutionEnvironment();
+  const environment = getExecutionEnvironmentFor(dir);
   const run = await captureProgram(environment, 'git', ['branch', '--show-current'], {
     cwd: dir,
     env: environment.baseEnv(),

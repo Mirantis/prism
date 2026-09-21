@@ -17,6 +17,7 @@
 import sea from 'node:sea';
 import { AgentWorkspace } from '@prisma/client';
 import { config } from '../config';
+import { getExecutionEnvironment } from './execution-environments/get-execution-environment';
 import { logger } from '../logger';
 import { trackEvent, isTelemetryEnabled } from './telemetry';
 import { modelCatalogState } from './model-catalog';
@@ -72,6 +73,7 @@ export async function trackAgentStarted(
       'tool_risk_gate.mode': config.toolRiskGateMode,
       // Which coding agent the coding_agent tools delegate to.
       'coding_agent': config.codingAgent,
+      'execution_environment': getExecutionEnvironment().id,
       'slack.enabled': String(Boolean(config.slackBotToken)),
       'nexus.enabled': String(Boolean(config.nexusApiUrl)),
       'nexus.mcp_enabled': String(Boolean(config.nexusMcpUrl)),

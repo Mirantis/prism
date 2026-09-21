@@ -12,7 +12,7 @@
 import { createInterface } from 'readline';
 import { logger } from '../../logger';
 import { AsyncChannel } from '../../utils/async-channel';
-import { getExecutionEnvironment } from '../execution-environments/get-execution-environment';
+import { getExecutionEnvironmentFor } from '../execution-environments/get-execution-environment';
 import type {
   ExecProcess,
   ExecutionEnvironment,
@@ -42,7 +42,9 @@ export interface CliRunSpec {
 
 export function runCli(
   spec: CliRunSpec,
-  environment: ExecutionEnvironment = getExecutionEnvironment(),
+  // Resolved per path, so a task in a repository the container cannot see runs
+  // on the host — the same rule the shell tools follow.
+  environment: ExecutionEnvironment = getExecutionEnvironmentFor(spec.cwd),
 ): CodingAgentRun {
   const { taskId } = spec;
   // An environment has no ambient working directory of its own, so a spec that

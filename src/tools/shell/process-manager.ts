@@ -15,7 +15,7 @@
  */
 import { randomUUID } from 'crypto';
 import { logger } from '../../logger';
-import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
+import { getExecutionEnvironmentFor } from '../../lib/execution-environments/get-execution-environment';
 import type { ExecProcess } from '../../lib/execution-environments/execution-environment';
 import { appendCappedChunk } from '../../lib/execution-environments/capture';
 
@@ -54,7 +54,7 @@ class ProcessManager {
     }
 
     const processId = randomUUID();
-    const environment = getExecutionEnvironment();
+    const environment = getExecutionEnvironmentFor(params.workdir);
     // `processGroup` makes the process the leader of its own group, so a kill
     // reaches the whole group — necessary because the shell wrapper would
     // otherwise leave any forked children behind when we kill it.

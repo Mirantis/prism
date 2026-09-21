@@ -10,7 +10,7 @@
  */
 import { z } from 'zod';
 import { captureShell } from '../../lib/execution-environments/capture';
-import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
+import { getExecutionEnvironmentFor } from '../../lib/execution-environments/get-execution-environment';
 import { resolvePath } from './workspace';
 import {
   DEFAULT_EXEC_TIMEOUT_MS,
@@ -64,14 +64,17 @@ export async function runShellExec(
   workspace: string,
   abortSignal?: AbortSignal,
 ): Promise<ExecResult> {
-  const environment = getExecutionEnvironment();
+  const cwd = input.workdir ? resolvePath(workspace, input.workdir) : workspace;
+  // Per path: a thread rooted in a repository the container cannot see runs on
+  // the host instead.
+  const environment = getExecutionEnvironmentFor(cwd);
   const outputLimit = Math.min(
     input.limit ?? DEFAULT_EXEC_OUTPUT_LIMIT_BYTES,
     MAX_EXEC_OUTPUT_BYTES,
   );
 
   const run = await captureShell(environment, input.command, {
-    cwd: input.workdir ? resolvePath(workspace, input.workdir) : workspace,
+    cwd,
     env: environment.baseEnv(),
     timeoutMs: Math.min(input.timeout ?? DEFAULT_EXEC_TIMEOUT_MS, MAX_EXEC_TIMEOUT_MS),
     limitBytes: outputLimit,
