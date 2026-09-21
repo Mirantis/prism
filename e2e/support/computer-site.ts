@@ -157,7 +157,11 @@ export async function startComputerSite(): Promise<{
           : req.headers.cookie?.includes('computer-test-login=yes')
           ? '<h1>Your inbox</h1><p>INBOX-CLEAR: Your parcel arrives on Friday.</p>'
           : '<h1>Sign in to your inbox</h1><p>Please ask your user to sign in.</p>' +
-            '<form method="post" action="/sign-in">' +
+            // The field is on the page only once the user has said they want to type one,
+            // which is what a site offering several ways in looks like. Nothing is visible
+            // to fill at the moment the agent asks for help, so this sign-in is one for
+            // the desktop rather than for the box.
+            `<form method="post" action="/sign-in"${req.url === '/inbox?password=1' ? '' : ' hidden'}>` +
             '<label>Password <input type="password" name="password" autofocus required></label> ' +
             '<button>Sign in</button></form>' +
             '<script>const field = document.querySelector("input[type=password]");' +

@@ -59,7 +59,9 @@ class ComputerHelpService {
       id: randomUUID(),
       reason,
       tab,
-      targetId: await computerService.helpTarget(tab),
+      // The tab the sign-in is really on when there is one, since that is where the
+      // credentials are typed and what the user is shown.
+      targetId: form?.targetId ?? (await computerService.helpTarget(tab)),
       ...(form
         ? { credentials: true as const, credentialFields: form.fields, site: form.origin }
         : {}),

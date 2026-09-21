@@ -67,3 +67,46 @@ describe('the sign-in site', () => {
     expect(site.signInPageLoads()).toBe(1);
   });
 });
+
+/**
+ * Which route a sign-in takes is decided by what the page shows. The inbox keeps its
+ * field until somebody asks for it, so that request is one for the desktop; the mail and
+ * files pages show theirs, so the box can answer them.
+ */
+describe('what each sign-in page offers', () => {
+  async function body(path: string): Promise<string> {
+    return (await fetch(`${address(site!.url)}${path}`)).text();
+  }
+
+  it('hides the inbox field until the address asks for it', async () => {
+    site = await startComputerSite();
+
+    expect(await body('/inbox')).toContain('type="password"');
+    expect(await body('/inbox')).toMatch(/<form[^>]*hidden/);
+    expect(await body('/inbox?password=1')).not.toMatch(/<form[^>]*hidden/);
+  });
+
+  it('shows the mail page a username and a password at once', async () => {
+    site = await startComputerSite();
+
+    const page = await body('/mail');
+    expect(page).toContain('autocomplete="username"');
+    expect(page).toContain('type="password"');
+  });
+
+  it('asks the files page for the username first, and the password after it', async () => {
+    site = await startComputerSite();
+
+    expect(await body('/files')).toContain('autocomplete="username"');
+    expect(await body('/files')).not.toContain('type="password"');
+
+    await fetch(`${address(site!.url)}/files-username`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username: 'demo-user' }).toString(),
+      redirect: 'manual',
+    });
+
+    expect(await body('/files')).toContain('type="password"');
+  });
+});

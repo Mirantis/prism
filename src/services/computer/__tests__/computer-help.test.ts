@@ -132,6 +132,7 @@ describe('a help request a username and a password answer', () => {
     vi.mocked(computerService.signInForm).mockResolvedValue({
       origin: 'https://mail.example.com',
       fields: 'both',
+      targetId: 'target-sign-in',
     });
 
     const request = await ask('Sign in to the inbox', true);
@@ -139,6 +140,8 @@ describe('a help request a username and a password answer', () => {
     expect(request.credentials).toBe(true);
     expect(request.site).toBe('https://mail.example.com');
     expect(request.credentialFields).toBe('both');
+    // The tab holding the form, which is not always the one the agent was looking at.
+    expect(request.targetId).toBe('target-sign-in');
   });
 
   it('asks for the password alone where that is the whole of the step', async () => {

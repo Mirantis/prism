@@ -324,7 +324,11 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
 
   async tabTarget(tab?: number): Promise<string | undefined> {
     const page = this.tabPage(tab);
-    if (!page) return undefined;
+    return page ? this.targetOf(page) : undefined;
+  }
+
+  private async targetOf(page: Page): Promise<string | undefined> {
+    if (page.isClosed()) return undefined;
     const session = await page.context().newCDPSession(page);
     try { return (await session.send('Target.getTargetInfo')).targetInfo.targetId; }
     finally { await session.detach(); }
@@ -350,12 +354,24 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
    */
   async signInForm(
     tab?: number,
-  ): Promise<{ origin: string; fields: 'both' | 'password' } | undefined> {
-    const page = this.tabPage(tab);
-    if (!page) return undefined;
-    const found = await this.onFrontQueue(() => findSignIn(page));
-    if (!found) return undefined;
-    return { origin: found.site, fields: found.password && !found.username ? 'password' : 'both' };
+  ): Promise<{ origin: string; fields: 'both' | 'password'; targetId?: string } | undefined> {
+    // The tab the agent named first, then every other one it has open: it asks for help
+    // with the work rather than with a tab, and the sign-in is often not where it was
+    // last looking. Whichever tab holds the form is the one the box names and the one
+    // the typing goes to.
+    const named = this.tabPage(tab);
+    const pages = [...(named ? [named] : []), ...(this.browser?.listTabs() ?? [])];
+    for (const page of new Set(pages)) {
+      if (page.isClosed()) continue;
+      const found = await this.onFrontQueue(() => findSignIn(page));
+      if (!found) continue;
+      return {
+        origin: found.site,
+        fields: found.password && !found.username ? 'password' : 'both',
+        targetId: await this.targetOf(page),
+      };
+    }
+    return undefined;
   }
 
   /**

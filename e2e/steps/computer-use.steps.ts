@@ -201,7 +201,9 @@ async function openSignInPage(page: Page): Promise<void> {
       async () => {
         if (site!.signInPageLoads() > before) return true;
         await page.keyboard.press('Control+l');
-        await page.keyboard.type(`${site!.url}/inbox`, { delay: 20 });
+        // The sign-in field is on this address, not on the one the agent was left on: the
+        // page offers it only when somebody says they want to type a password.
+        await page.keyboard.type(`${site!.url}/inbox?password=1`, { delay: 20 });
         await page.keyboard.press('Enter');
         await page.waitForTimeout(2_000);
         return site!.signInPageLoads() > before;

@@ -55,7 +55,8 @@ export function ChatComputerHelp({
       >
         <div className="flex items-start gap-3 border-b border-primary/10 bg-primary/5 p-4">{content}</div>
         <div className="p-4">
-          <SignInForm help={current} onCancel={() => setExpanded(false)} />
+          {/* The box is the whole request here, so refusing it has to be possible here. */}
+          <SignInForm help={current} onCancel={() => setExpanded(false)} canDismiss />
         </div>
       </section>
     );
