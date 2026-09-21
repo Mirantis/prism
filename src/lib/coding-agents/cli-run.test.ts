@@ -9,13 +9,14 @@ import {
   FailedSpawnChild,
   SigkillOnlyChild,
 } from '../../test-utils/fake-child';
+import { fakeExecutionEnvironment } from '../../test-utils/fake-execution-environment';
 import {
   runCli,
   STDERR_KEEP_BYTES,
   STOP_GRACE_MS,
   type CliRunSpec,
-  type Spawner,
 } from './cli-run';
+import type { RunOptions } from '../execution-environments/execution-environment';
 import type { CodingAgentEvent, CodingAgentRun } from './coding-agent';
 
 /** Lines are the JSON of an event; `{ "skip": true }` is a line of no interest. */
@@ -34,8 +35,8 @@ const spec: CliRunSpec = {
 };
 
 function start<T extends FakeChild>(child: T): { run: CodingAgentRun; child: T } {
-  const spawner: Spawner = () => child.asChildProcess();
-  return { run: runCli(spec, spawner), child };
+  const environment = fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() });
+  return { run: runCli(spec, environment), child };
 }
 
 async function collect(run: CodingAgentRun): Promise<CodingAgentEvent[]> {
@@ -69,17 +70,33 @@ describe('runCli', () => {
         message: 'Fake Agent exited with code 1 and no result' },
     ]);
   });
-  it('passes the command, args, cwd and env to the spawn', () => {
-    let captured: Parameters<Spawner> | undefined;
-    const spawner: Spawner = (...spawnArgs) => {
-      captured = spawnArgs;
-      return new FakeChild().asChildProcess();
-    };
-    runCli({ ...spec, cwd: '/work', env: { PATH: '/bin' } }, spawner);
+  it('passes the command, args, cwd and env to the environment', () => {
+    let captured: [string, readonly string[], RunOptions] | undefined;
+    const environment = fakeExecutionEnvironment({
+      runProgram: (command, args, options) => {
+        captured = [command, args, options];
+        return new FakeChild().asExecProcess();
+      },
+    });
+    runCli({ ...spec, cwd: '/work', env: { PATH: '/bin' } }, environment);
 
     expect(captured?.[0]).toBe('fake');
     expect(captured?.[1]).toEqual(['--go']);
-    expect(captured?.[2]).toEqual({ cwd: '/work', env: { PATH: '/bin' } });
+    expect(captured?.[2]).toEqual({ cwd: '/work', env: { PATH: '/bin' }, stdin: 'pipe' });
+  });
+
+  it('runs at the workspace root when the spec names no cwd', () => {
+    let captured: RunOptions | undefined;
+    const environment = fakeExecutionEnvironment({
+      workspaceRoot: '/home/node',
+      runProgram: (_command, _args, options) => {
+        captured = options;
+        return new FakeChild().asExecProcess();
+      },
+    });
+    runCli(spec, environment);
+
+    expect(captured?.cwd).toBe('/home/node');
   });
 
   it('streams parsed events in order and closes after the agent reports', async () => {

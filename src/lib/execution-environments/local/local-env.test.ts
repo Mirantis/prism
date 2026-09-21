@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { sandboxEnv } from '../sandbox-env';
+import { localBaseEnv } from './local-env';
 
-describe('sandboxEnv', () => {
+describe('localBaseEnv', () => {
   it('strips NODE_ENV from the returned environment', () => {
     const base = { NODE_ENV: 'production', PATH: '/usr/bin', HOME: '/root' };
-    const result = sandboxEnv(base);
+    const result = localBaseEnv(base);
 
     expect(result.NODE_ENV).toBeUndefined();
     expect('NODE_ENV' in result).toBe(false);
@@ -12,7 +12,7 @@ describe('sandboxEnv', () => {
 
   it('strips HUSKY so cloned repos keep their own git hooks', () => {
     const base = { HUSKY: '0', PATH: '/usr/bin', HOME: '/root' };
-    const result = sandboxEnv(base);
+    const result = localBaseEnv(base);
 
     expect(result.HUSKY).toBeUndefined();
     expect('HUSKY' in result).toBe(false);
@@ -26,7 +26,7 @@ describe('sandboxEnv', () => {
       AWS_REGION: 'us-east-1',
       GH_TOKEN: 'ghp_abc',
     };
-    const result = sandboxEnv(base);
+    const result = localBaseEnv(base);
 
     expect(result.PATH).toBe('/usr/bin');
     expect(result.HOME).toBe('/home/user');
@@ -36,7 +36,7 @@ describe('sandboxEnv', () => {
 
   it('does not mutate the input object', () => {
     const base = { NODE_ENV: 'production', PATH: '/usr/bin' };
-    sandboxEnv(base);
+    localBaseEnv(base);
 
     expect(base.NODE_ENV).toBe('production');
   });
@@ -45,7 +45,7 @@ describe('sandboxEnv', () => {
     const original = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
     try {
-      const result = sandboxEnv();
+      const result = localBaseEnv();
       expect(result.NODE_ENV).toBeUndefined();
       expect(result.PATH).toBe(process.env.PATH);
     } finally {
@@ -56,7 +56,7 @@ describe('sandboxEnv', () => {
 
   it('works with explicit base argument', () => {
     const custom = { NODE_ENV: 'test', CUSTOM_VAR: 'hello' };
-    const result = sandboxEnv(custom);
+    const result = localBaseEnv(custom);
 
     expect(result.NODE_ENV).toBeUndefined();
     expect(result.CUSTOM_VAR).toBe('hello');

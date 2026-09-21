@@ -49,9 +49,10 @@ import { startFileJanitor } from './lib/file-janitor';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
-import { ensureWorkspaceRoot } from './tools/shell/config';
+import { getExecutionEnvironment } from './lib/execution-environments/get-execution-environment';
 import { ensureDataDirs } from './lib/data-dir';
 import { getCodingAgent } from './lib/coding-agents/get-coding-agent';
+import { ensureCodingAgentsDetected } from './lib/coding-agents/availability';
 import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
 import { createProvider } from './lib/llm-providers/create-provider';
 import { runBackfill } from './scripts/backfill-embeddings';
@@ -90,7 +91,9 @@ const initialize = async () => {
     // spawn a command there — a missing cwd surfaces as `spawn /bin/bash
     // ENOENT`, which masquerades as a missing shell (e.g. `npm run dev` on
     // macOS, where the default /home/node can't be created).
-    const ws = ensureWorkspaceRoot();
+    const executionEnvironment = getExecutionEnvironment();
+    logger.info('[Startup] execution environment: %s', executionEnvironment.displayName);
+    const ws = executionEnvironment.prepareWorkspace();
     if (ws.fellBackFrom) {
       logger.warn(
         '[Startup] shell workspace %s is not usable; falling back to %s. Set SHELL_WORKSPACE_ROOT to choose another.',
@@ -113,6 +116,9 @@ const initialize = async () => {
       );
     }
     logger.info('[Startup] skills dir: %s', dirs.skillsDir);
+    // Which agents have credentials is a question for the execution
+    // environment, so it is asked here rather than derived at import.
+    await ensureCodingAgentsDetected();
     for (const name of config.availableCodingAgents) {
       const codingAgent = getCodingAgent(name);
       const home = codingAgent.prepareHome({ dataDir: dirs.dataDir, skillsDir: dirs.skillsDir });
@@ -123,7 +129,7 @@ const initialize = async () => {
     logger.info(
       '[Startup] plugins dir: %s (%d installed)',
       dirs.pluginsDir,
-      pluginCatalogService.getPlugins().length,
+      (await pluginCatalogService.getPlugins()).length,
     );
 
     // Bring the attachment rows and the media dir back into agreement (missing

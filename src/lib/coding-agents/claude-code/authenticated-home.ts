@@ -1,20 +1,36 @@
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
-import { resolveDataDir } from '../../data-dir';
+import { captureProgram } from '../../execution-environments/capture';
+import { getExecutionEnvironment } from '../../execution-environments/get-execution-environment';
+import { resolveClaudeConfigDir } from './home';
 
-/** Startup probe: the CLI can block for up to five seconds while checking its saved login. */
-export function hasAuthenticatedClaudeHome(env: NodeJS.ProcessEnv): boolean {
-  const configDir = env.CLAUDE_CONFIG_DIR || path.join(resolveDataDir(), '.claude');
-  if (!fs.existsSync(configDir)) return false;
+/** How long the CLI gets to answer before the probe gives up on it. */
+const PROBE_TIMEOUT_MS = 5_000;
+
+/** Enough for `{"loggedIn":true}` and whatever else the CLI prints around it. */
+const PROBE_OUTPUT_LIMIT = 64 * 1024;
+
+/**
+ * Whether the CLI has a saved login in its home.
+ *
+ * Asked of the execution environment, because that is where the binary and its
+ * home are. Never throws: no answer means no saved login.
+ */
+export async function hasAuthenticatedClaudeHome(env: NodeJS.ProcessEnv): Promise<boolean> {
+  const environment = getExecutionEnvironment();
+  const configDir = resolveClaudeConfigDir(env);
   try {
-    const output = execFileSync('claude', ['auth', 'status', '--json'], {
-      env: { ...env, CLAUDE_CONFIG_DIR: configDir },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 5_000,
-    });
-    return JSON.parse(output).loggedIn === true;
+    await environment.files.stat(configDir);
+  } catch {
+    return false;
+  }
+  const run = await captureProgram(environment, 'claude', ['auth', 'status', '--json'], {
+    cwd: environment.workspaceRoot(),
+    env: { ...env, CLAUDE_CONFIG_DIR: configDir },
+    timeoutMs: PROBE_TIMEOUT_MS,
+    limitBytes: PROBE_OUTPUT_LIMIT,
+  });
+  if (run.error || run.timedOut) return false;
+  try {
+    return (JSON.parse(run.stdout) as { loggedIn?: boolean }).loggedIn === true;
   } catch {
     return false;
   }

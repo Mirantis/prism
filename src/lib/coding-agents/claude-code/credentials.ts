@@ -22,10 +22,13 @@ export function claudeCodeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv
   return env;
 }
 
-export function hasClaudeCodeCredentials(env: NodeJS.ProcessEnv): boolean {
+export async function hasClaudeCodeCredentials(env: NodeJS.ProcessEnv): Promise<boolean> {
   const resolved = claudeCodeEnvironment(env);
-  return Boolean(resolved.ANTHROPIC_API_KEY || resolved.ANTHROPIC_AUTH_TOKEN ||
-    resolved.CLAUDE_CODE_OAUTH_TOKEN || resolved.CLAUDE_CODE_USE_BEDROCK === '1' ||
-    resolved.CLAUDE_CODE_USE_VERTEX === '1' || resolved.CLAUDE_CODE_USE_FOUNDRY === '1') ||
-    hasAuthenticatedClaudeHome(env);
+  if (resolved.ANTHROPIC_API_KEY || resolved.ANTHROPIC_AUTH_TOKEN ||
+      resolved.CLAUDE_CODE_OAUTH_TOKEN || resolved.CLAUDE_CODE_USE_BEDROCK === '1' ||
+      resolved.CLAUDE_CODE_USE_VERTEX === '1' || resolved.CLAUDE_CODE_USE_FOUNDRY === '1') {
+    return true;
+  }
+  // The saved login is the last resort: it costs a run of the CLI itself.
+  return hasAuthenticatedClaudeHome(env);
 }

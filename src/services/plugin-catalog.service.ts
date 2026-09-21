@@ -21,10 +21,16 @@
  * recorded on `diagnostics` so the management API can attribute it.
  */
 
-import fs from 'fs';
 import path from 'path';
 import { logger } from '../logger';
 import { resolvePluginsDir } from '../lib/data-dir';
+import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
+import type { DirEntry, FileStat } from '../lib/execution-environments/execution-environment';
+
+/** The filesystem a command sees: the agent installs a plugin by writing there. */
+function files() {
+  return getExecutionEnvironment().files;
+}
 
 /** The one Agent Plugins manifest schema this runtime implements. */
 export const PLUGIN_SCHEMA_1_0_0 = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
@@ -89,23 +95,23 @@ class PluginCatalogService {
    * rescans only when something on disk changed, so a plugin dropped in — or
    * corrected in place — appears without a restart.
    */
-  getPlugins(): PluginEntry[] {
+  async getPlugins(): Promise<PluginEntry[]> {
     const dir = resolvePluginsDir();
-    const key = cacheKey(dir);
+    const key = await cacheKey(dir);
     if (key === null) {
       // No plugins dir (e.g. PRISM_PLUGINS_DIR points somewhere absent).
       this.cache = { key: '', entries: [] };
       return [];
     }
     if (this.cache && this.cache.key === key) return this.cache.entries;
-    const entries = scan(dir);
+    const entries = await scan(dir);
     this.cache = { key, entries };
     return entries;
   }
 
   /** Look up an installed plugin by its directory id. */
-  find(id: string): PluginEntry | undefined {
-    return this.getPlugins().find((p) => p.id === id);
+  async find(id: string): Promise<PluginEntry | undefined> {
+    return (await this.getPlugins()).find((p) => p.id === id);
   }
 
   /** Force a rescan on the next `getPlugins()` call. */
@@ -133,25 +139,25 @@ class PluginCatalogService {
  * when two writes land inside one filesystem timestamp tick. The directory's
  * own mtime still covers a `skills/` dir appearing.
  */
-function cacheKey(pluginsDir: string): string | null {
+async function cacheKey(pluginsDir: string): Promise<string | null> {
   let names: string[];
   let rootMtime: number;
   try {
-    rootMtime = fs.statSync(pluginsDir).mtimeMs;
-    names = fs.readdirSync(pluginsDir).sort();
+    rootMtime = (await files().stat(pluginsDir)).mtimeMs;
+    names = (await files().readDir(pluginsDir)).map((entry) => entry.name).sort();
   } catch {
     return null;
   }
 
-  // Guarded throughout: `throwIfNoEntry` suppresses only a missing entry, so a
-  // symlink loop or an unreadable path would still throw — and this runs on
-  // every prompt build.
-  const stamp = (p: string): string => {
+  // Guarded: a path that is missing, or present but unreadable, stamps the same
+  // — either way there is nothing here to fingerprint, and this runs on every
+  // prompt build.
+  const stamp = async (p: string): Promise<string> => {
     try {
-      const st = fs.statSync(p, { throwIfNoEntry: false });
-      return st ? `${st.mtimeMs}:${st.size}` : '-';
+      const st = await files().stat(p);
+      return `${st.mtimeMs}:${st.size}`;
     } catch {
-      return 'x';
+      return '-';
     }
   };
 
@@ -159,16 +165,16 @@ function cacheKey(pluginsDir: string): string | null {
   for (const name of names) {
     const dir = path.join(pluginsDir, name);
     parts.push(
-      `${name}:${stamp(dir)}:${stamp(path.join(dir, 'plugin.json'))}:${stamp(path.join(dir, 'mcp.json'))}`,
+      `${name}:${await stamp(dir)}:${await stamp(path.join(dir, 'plugin.json'))}:${await stamp(path.join(dir, 'mcp.json'))}`,
     );
   }
   return parts.join('|');
 }
 
-function scan(pluginsDir: string): PluginEntry[] {
-  let dirents: fs.Dirent[];
+async function scan(pluginsDir: string): Promise<PluginEntry[]> {
+  let dirents: DirEntry[];
   try {
-    dirents = fs.readdirSync(pluginsDir, { withFileTypes: true });
+    dirents = await files().readDir(pluginsDir);
   } catch {
     return [];
   }
@@ -176,19 +182,19 @@ function scan(pluginsDir: string): PluginEntry[] {
   // Sorted so the resulting skill roots — and downstream, the MCP tool block —
   // are in a deterministic order across restarts.
   const ids = dirents
-    .filter((d) => d.isDirectory() || d.isSymbolicLink())
+    .filter((d) => d.isDirectory || d.isSymbolicLink)
     .map((d) => d.name)
     .sort();
 
   const entries: PluginEntry[] = [];
   for (const id of ids) {
-    const entry = loadPlugin(pluginsDir, id);
+    const entry = await loadPlugin(pluginsDir, id);
     if (entry) entries.push(entry);
   }
   return entries;
 }
 
-function loadPlugin(pluginsDir: string, id: string): PluginEntry | null {
+async function loadPlugin(pluginsDir: string, id: string): Promise<PluginEntry | null> {
   const dir = path.join(pluginsDir, id);
   const manifestPath = path.join(dir, 'plugin.json');
 
@@ -197,17 +203,17 @@ function loadPlugin(pluginsDir: string, id: string): PluginEntry | null {
     // lstat the final component so a symlinked plugin.json is rejected — that
     // would let a bundle present a manifest from outside its own root. A
     // symlinked plugin *directory* stays fine.
-    const st = fs.lstatSync(manifestPath);
-    if (st.isSymbolicLink()) {
+    const st = await files().lstat(manifestPath);
+    if (st.isSymbolicLink) {
       logger.warn('[Plugins] skipping "%s": plugin.json is a symlink', id);
       return null;
     }
-    if (!st.isFile()) return null;
+    if (!st.isFile) return null;
     if (st.size > MAX_MANIFEST_BYTES) {
       logger.warn('[Plugins] skipping "%s": plugin.json is larger than 256 KiB', id);
       return null;
     }
-    raw = fs.readFileSync(manifestPath, 'utf8');
+    raw = await files().readText(manifestPath);
   } catch {
     // No plugin.json — not a plugin directory. Silent: the dir may be anything.
     return null;
@@ -231,21 +237,23 @@ function loadPlugin(pluginsDir: string, id: string): PluginEntry | null {
 
   // Components live at fixed locations (spec §6.1); the manifest cannot move
   // them. A location of the wrong kind disables that component type only.
+  const present = await componentNames(dir);
+
   const skillsPath = path.join(dir, 'skills');
-  const skillsStat = componentStat(skillsPath);
+  const skillsStat = present.has('skills') ? await componentStat(skillsPath) : undefined;
   if (skillsStat === 'unreadable') {
     diagnostics.push('skills cannot be read — no skills loaded');
   } else if (skillsStat) {
-    if (skillsStat.isDirectory()) entry.skillsDir = skillsPath;
+    if (skillsStat.isDirectory) entry.skillsDir = skillsPath;
     else diagnostics.push('skills exists but is not a directory — no skills loaded');
   }
 
   const mcpPath = path.join(dir, 'mcp.json');
-  const mcpStat = componentStat(mcpPath);
+  const mcpStat = present.has('mcp.json') ? await componentStat(mcpPath) : undefined;
   if (mcpStat === 'unreadable') {
     diagnostics.push('mcp.json cannot be read — no MCP servers loaded');
   } else if (mcpStat) {
-    if (mcpStat.isFile()) entry.mcpConfigPath = mcpPath;
+    if (mcpStat.isFile) entry.mcpConfigPath = mcpPath;
     else diagnostics.push('mcp.json exists but is not a regular file — no MCP servers loaded');
   }
 
@@ -254,16 +262,29 @@ function loadPlugin(pluginsDir: string, id: string): PluginEntry | null {
 }
 
 /**
- * `statSync` for a component location, guaranteed not to throw.
- * `throwIfNoEntry: false` suppresses only a *missing* entry — a symlink loop
- * (ELOOP) or a permission error still throws, and this scan's contract is that
- * one broken plugin degrades the catalog, never crashes it: `getPlugins()`
- * feeds every system-prompt build, so an uncaught throw here would fail every
- * turn. Distinguishes "absent" (undefined) from "present but unreadable".
+ * What a plugin directory holds, so a component that is simply absent is told
+ * apart from one that is present but unreadable. An empty set for a directory
+ * that cannot be listed: every component then reads as absent, which is the
+ * same outcome as the plugin having none.
  */
-function componentStat(p: string): fs.Stats | 'unreadable' | undefined {
+async function componentNames(dir: string): Promise<Set<string>> {
   try {
-    return fs.statSync(p, { throwIfNoEntry: false });
+    return new Set((await files().readDir(dir)).map((entry) => entry.name));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * `stat` for a component location, guaranteed not to throw. This scan's
+ * contract is that one broken plugin degrades the catalog, never crashes it:
+ * `getPlugins()` feeds every system-prompt build, so an uncaught throw here
+ * would fail every turn. Follows symlinks, so a symlinked `skills` directory
+ * still counts as one.
+ */
+async function componentStat(p: string): Promise<FileStat | 'unreadable'> {
+  try {
+    return await files().stat(p);
   } catch {
     return 'unreadable';
   }

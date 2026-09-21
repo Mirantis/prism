@@ -48,6 +48,17 @@ to clear.
   `CODING_AGENT` or the task's `agent` parameter), and the adapter runs it end to end:
   how the agent is launched, read and given a home is its business alone. A new agent is one
   folder plus one entry in the selector.
+- **Execution environments stay generic.** Where a command runs and what
+  filesystem it sees is an `ExecutionEnvironment` (`lib/execution-environments/`,
+  chosen by `get-execution-environment.ts`, which derives it rather than reading
+  a setting). Every process the agent starts goes through `runShell` or
+  `runProgram`, and a read or write goes through `env.files` when the agent's own
+  commands have to see the same bytes: the workspace, the attachment scratch dir,
+  skills, plugins and the saved copies of oversized tool results. The database
+  and the runtime's own processes — the updater, the meeting and computer stacks,
+  a plugin's MCP children — stay outside. `capture.ts` is the one bounded, timed,
+  cancellable run, shared by `shell_exec` and every probe. A new environment is
+  one folder plus one entry in the selector.
 - **Prove an option is needed before you add it.** A flag, a setting or an env
   var has to show that no existing product behavior, no provider selection and
   no better default can cover the case. Each one is a fork in the code and a
@@ -864,9 +875,16 @@ src/
 │   │   ├── codex/
 │   │   │   └── codex-agent.ts             # Codex CLI adapter
 │   │   └── claude-code/
-│   │       ├── authenticated-home.ts # Saved CLI login detection
+│   │       ├── authenticated-home.ts # Saved CLI login detection, by running the CLI in the execution environment
 │   │       ├── credentials.ts # Claude CLI authentication settings
+│   │       ├── home.ts        # Where the CLI keeps its state, resolved off the env the CLI will run with
 │   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (gate mode → permission flags, plan-only instruction), the stream-json parser, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink
+│   ├── execution-environments/ # Where a command runs and what filesystem it sees, plus the shared contract and the selector
+│   │   ├── execution-environment.ts # The contract: `runShell` / `runProgram` returning an `ExecProcess` (`ended` for exit accounting, `closed` once the pipes drain), and `ExecutionFiles`
+│   │   ├── get-execution-environment.ts # Selector: derives the environment (no setting), one instance per process
+│   │   ├── capture.ts         # The one bounded, timed, cancellable run — `shell_exec` and every probe format their own result out of it
+│   │   ├── workspace.ts       # `resolveWorkspace`: the single owner of the per-thread-vs-default fallback
+│   │   └── local/             # Commands as children of this process, on the filesystem it sees
 │   ├── embedding-providers/    # Memory-embedding vendors, a feature of their own decoupled from the chat provider (`EMBEDDING_PROVIDER`)
 │   │   ├── embedding-provider.ts # Shared `EmbeddingProvider` type: `model(modelId)` + the vendor's `providerOptions` fragment carrying the 1024-dim truncation target; `EMBEDDING_DIMENSIONS`
 │   │   ├── create-embedding-provider.ts # Embedding selector: picks vendor (bedrock/azure-openai/openai/openrouter) off `config.embeddingProvider`, passes each its own gateway mount; `none` → null

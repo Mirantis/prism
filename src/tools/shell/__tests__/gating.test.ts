@@ -4,7 +4,7 @@
  */
 import { afterEach, describe, it, expect } from 'vitest';
 import { getShellTools } from '../index';
-import { codingAgentInput } from '../coding-agent';
+import { buildCodingAgentInput } from '../coding-agent';
 import { config } from '../../../config';
 
 const originalDefault = config.codingAgent;
@@ -30,9 +30,9 @@ describe('getShellTools', () => {
   });
 
   it('accepts an optional supported agent parameter', () => {
-    expect(codingAgentInput.parse({ prompt: 'Inspect' }).agent).toBeUndefined();
-    expect(codingAgentInput.parse({ prompt: 'Inspect', agent: 'codex' }).agent).toBe('codex');
-    expect(() => codingAgentInput.parse({ prompt: 'Inspect', agent: 'unknown' })).toThrow();
+    expect(buildCodingAgentInput().parse({ prompt: 'Inspect' }).agent).toBeUndefined();
+    expect(buildCodingAgentInput().parse({ prompt: 'Inspect', agent: 'codex' }).agent).toBe('codex');
+    expect(() => buildCodingAgentInput().parse({ prompt: 'Inspect', agent: 'unknown' })).toThrow();
   });
 
   it('returns the expected tools', () => {

@@ -5,25 +5,30 @@
  * with the branch its workspace root is on. Returns null when the directory
  * isn't a git work tree, is in detached-HEAD state, or git isn't available —
  * callers fall back to showing just the path.
+ *
+ * Asked of the execution environment: the directory is a thread's workspace
+ * root, which is where the agent's own commands run.
  */
 
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { captureProgram } from '../lib/execution-environments/capture';
+import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
 
-const execFileAsync = promisify(execFile);
+const TIMEOUT_MS = 2_000;
+/** A branch name; anything longer is not one. */
+const OUTPUT_LIMIT = 4 * 1024;
 
 export async function getGitBranch(dir: string): Promise<string | null> {
   if (!dir) return null;
-  try {
-    const { stdout } = await execFileAsync('git', ['-C', dir, 'branch', '--show-current'], {
-      timeout: 2000,
-      windowsHide: true,
-    });
-    const branch = stdout.trim();
-    return branch.length > 0 ? branch : null;
-  } catch {
-    // Not a git repo, detached HEAD (empty output is handled above), or git
-    // missing — no branch to show.
-    return null;
-  }
+  const environment = getExecutionEnvironment();
+  const run = await captureProgram(environment, 'git', ['branch', '--show-current'], {
+    cwd: dir,
+    env: environment.baseEnv(),
+    timeoutMs: TIMEOUT_MS,
+    limitBytes: OUTPUT_LIMIT,
+  });
+  // Not a git repo, detached HEAD (empty output), git missing, or a directory
+  // that isn't there — no branch to show.
+  if (run.error || run.exitCode !== 0) return null;
+  const branch = run.stdout.trim();
+  return branch.length > 0 ? branch : null;
 }

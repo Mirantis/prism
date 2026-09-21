@@ -2,15 +2,15 @@
  * `shell_exec` tool — in-process port of the upstream Lens Agents shell
  * sandbox's `shell_exec` handler.
  *
- * Runs a single shell command in a bash subprocess with a timeout.
+ * Runs a single shell command in the execution environment with a timeout.
  * Captures stdout + stderr (up to MAX_EXEC_OUTPUT_BYTES each) and
  * returns them alongside the exit code. Input schema + return shape
  * are identical to upstream so the agent's tool contract doesn't
  * change between modes.
  */
-import { agentProcesses } from '../../lib/agent-processes';
 import { z } from 'zod';
-import { sandboxEnv } from './sandbox-env';
+import { captureShell } from '../../lib/execution-environments/capture';
+import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
 import { resolvePath } from './workspace';
 import {
   DEFAULT_EXEC_TIMEOUT_MS,
@@ -56,35 +56,6 @@ export interface ExecResult {
 }
 
 /**
- * Append a chunk to a capped buffer list. Tracks the running byte
- * count so a later `Buffer.concat(chunks, countRef.n)` produces the
- * correct length (without this, the partial chunk at the cap
- * boundary would be silently dropped).
- *
- * Exported for unit tests.
- */
-export function appendCappedChunk(
-  chunk: Buffer,
-  chunks: Buffer[],
-  countRef: { n: number },
-  truncRef: { t: boolean },
-  cap: number,
-): void {
-  if (truncRef.t) return;
-  const remaining = cap - countRef.n;
-  if (chunk.length <= remaining) {
-    chunks.push(chunk);
-    countRef.n += chunk.length;
-  } else {
-    if (remaining > 0) {
-      chunks.push(chunk.subarray(0, remaining));
-      countRef.n += remaining;
-    }
-    truncRef.t = true;
-  }
-}
-
-/**
  * Core exec path — exposed separately for testing without wiring
  * through the AI SDK tool surface.
  */
@@ -93,124 +64,38 @@ export async function runShellExec(
   workspace: string,
   abortSignal?: AbortSignal,
 ): Promise<ExecResult> {
-  const cwd = input.workdir ? resolvePath(workspace, input.workdir) : workspace;
-  const timeoutMs = Math.min(input.timeout ?? DEFAULT_EXEC_TIMEOUT_MS, MAX_EXEC_TIMEOUT_MS);
+  const environment = getExecutionEnvironment();
   const outputLimit = Math.min(
     input.limit ?? DEFAULT_EXEC_OUTPUT_LIMIT_BYTES,
     MAX_EXEC_OUTPUT_BYTES,
   );
 
-  return new Promise<ExecResult>((resolve) => {
-    const child = agentProcesses.spawn('/bin/bash', ['-c', input.command], {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: sandboxEnv(),
-    });
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let stdoutTruncated = false;
-    let stderrTruncated = false;
-
-    const collect = (
-      chunk: Buffer,
-      chunks: Buffer[],
-      countRef: { n: number },
-      truncRef: { t: boolean },
-    ) => appendCappedChunk(chunk, chunks, countRef, truncRef, outputLimit);
-
-    const outState = { n: stdoutBytes };
-    const outTrunc = { t: stdoutTruncated };
-    const errState = { n: stderrBytes };
-    const errTrunc = { t: stderrTruncated };
-
-    child.stdout?.on('data', (chunk: Buffer) => collect(chunk, stdoutChunks, outState, outTrunc));
-    child.stderr?.on('data', (chunk: Buffer) => collect(chunk, stderrChunks, errState, errTrunc));
-
-    // SIGTERM, then escalate to SIGKILL if the child hasn't exited shortly
-    // after. Shared by the timeout and the cancel (abort) paths.
-    const terminate = () => {
-      agentProcesses.kill(child, 'SIGTERM');
-      setTimeout(() => {
-        if (child.exitCode === null) agentProcesses.kill(child, 'SIGKILL');
-      }, 2000).unref();
-    };
-
-    // The budget counts the time the command runs, so the clock stops while a secure
-    // takeover holds the command stopped and restarts with what was left.
-    let timedOut = false;
-    let remainingMs = timeoutMs;
-    let armedAt = 0;
-    let timer: NodeJS.Timeout | undefined;
-    const arm = () => {
-      if (timer) return;
-      armedAt = Date.now();
-      timer = setTimeout(() => {
-        timedOut = true;
-        terminate();
-      }, remainingMs);
-      timer.unref();
-    };
-    const pauseClock = () => {
-      if (!timer) return;
-      clearTimeout(timer);
-      timer = undefined;
-      remainingMs = Math.max(0, remainingMs - (Date.now() - armedAt));
-    };
-    if (!agentProcesses.isSuspended) arm();
-    agentProcesses.on('suspend', pauseClock);
-    agentProcesses.on('resume', arm);
-
-    // Cancel propagation: when the turn is aborted mid-command, kill the child
-    // so it doesn't run on to its own timeout in the background. The signal is
-    // the per-turn AbortSignal threaded from generateText's tool execution.
-    let aborted = false;
-    const onAbort = () => {
-      aborted = true;
-      terminate();
-    };
-    if (abortSignal) {
-      if (abortSignal.aborted) onAbort();
-      else abortSignal.addEventListener('abort', onAbort, { once: true });
-    }
-
-    const done = (exitCode: number) => {
-      clearTimeout(timer);
-      agentProcesses.off('suspend', pauseClock);
-      agentProcesses.off('resume', arm);
-      abortSignal?.removeEventListener('abort', onAbort);
-      stdoutBytes = outState.n;
-      stderrBytes = errState.n;
-      stdoutTruncated = outTrunc.t;
-      stderrTruncated = errTrunc.t;
-      let stdout = Buffer.concat(stdoutChunks, stdoutBytes).toString('utf8');
-      let stderr = Buffer.concat(stderrChunks, stderrBytes).toString('utf8');
-      const marker = `\n... (truncated; exceeded ${outputLimit} bytes)`;
-      if (stdoutTruncated) stdout += marker;
-      if (stderrTruncated) stderr += marker;
-      const result: ExecResult = { stdout, stderr, exitCode };
-      if (timedOut) result.timedOut = true;
-      if (aborted) result.aborted = true;
-      resolve(result);
-    };
-
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      agentProcesses.off('suspend', pauseClock);
-      agentProcesses.off('resume', arm);
-      abortSignal?.removeEventListener('abort', onAbort);
-      resolve({
-        stdout: '',
-        stderr: err instanceof Error ? err.message : String(err),
-        exitCode: -1,
-      });
-    });
-    child.on('close', (code, signal) => {
-      done(typeof code === 'number' ? code : signal ? 128 + signalNumber(signal) : -1);
-    });
+  const run = await captureShell(environment, input.command, {
+    cwd: input.workdir ? resolvePath(workspace, input.workdir) : workspace,
+    env: environment.baseEnv(),
+    timeoutMs: Math.min(input.timeout ?? DEFAULT_EXEC_TIMEOUT_MS, MAX_EXEC_TIMEOUT_MS),
+    limitBytes: outputLimit,
+    abortSignal,
   });
+
+  if (run.error) {
+    return { stdout: '', stderr: run.error.message, exitCode: -1 };
+  }
+
+  const marker = `\n... (truncated; exceeded ${outputLimit} bytes)`;
+  const result: ExecResult = {
+    stdout: run.stdoutTruncated ? run.stdout + marker : run.stdout,
+    stderr: run.stderrTruncated ? run.stderr + marker : run.stderr,
+    exitCode: exitCodeOf(run.exitCode, run.signal),
+  };
+  if (run.timedOut) result.timedOut = true;
+  if (run.aborted) result.aborted = true;
+  return result;
+}
+
+function exitCodeOf(exitCode: number | null, signal: NodeJS.Signals | null): number {
+  if (typeof exitCode === 'number') return exitCode;
+  return signal ? 128 + signalNumber(signal) : -1;
 }
 
 function signalNumber(signal: NodeJS.Signals): number {

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { FakeChild } from '../../../test-utils/fake-child';
 import type { CodingAgentEvent, CodingAgentTask } from '../coding-agent';
 import { createCodexAgent } from './codex-agent';
-import type { Spawner } from '../cli-run';
+import { fakeExecutionEnvironment, type FakeRun } from '../../../test-utils/fake-execution-environment';
 import { resolveCodexHome } from './credentials';
 import { trackEvent } from '../../telemetry';
 
@@ -29,7 +29,7 @@ afterEach(() => {
 
 async function collect(lines: object[]) {
   const child = new FakeChild();
-  const run = createCodexAgent(() => child.asChildProcess()).run(task);
+  const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() })).run(task);
   for (const line of lines) child.emitLine(JSON.stringify(line));
   child.finish(0);
   return Array.fromAsync(run.events);
@@ -42,11 +42,11 @@ describe('Codex adapter', () => {
     ['edit', 'enforce', 'workspace-write'],
   ] as const)('uses %s mode with the %s gate', async (mode, gateMode, sandbox) => {
     const child = new FakeChild();
-    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
-    const run = createCodexAgent(spawner).run({ ...task, mode, gateMode });
+    const spawner = vi.fn<FakeRun>(() => child.asExecProcess());
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner })).run({ ...task, mode, gateMode });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
       'exec', '--json', 'approval_policy="never"', `sandbox_mode="${sandbox}"`,
-    ]), { cwd: '/work', env: { OPENAI_API_KEY: 'test-key', CODEX_API_KEY: 'test-key', CODEX_HOME: resolveCodexHome(task.env) } });
+    ]), { cwd: '/work', env: { OPENAI_API_KEY: 'test-key', CODEX_API_KEY: 'test-key', CODEX_HOME: resolveCodexHome(task.env) }, stdin: 'pipe' });
     child.finish(1);
     await Array.fromAsync(run.events);
   });
@@ -57,8 +57,8 @@ describe('Codex adapter', () => {
     { AWS_PROFILE: 'test-profile', AWS_DEFAULT_REGION: 'us-west-2' },
   ])('configures Bedrock authentication: %j', async (env) => {
     const child = new FakeChild();
-    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
-    const run = createCodexAgent(spawner).run({ ...task, env });
+    const spawner = vi.fn<FakeRun>(() => child.asExecProcess());
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner })).run({ ...task, env });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
       'model_provider="amazon-bedrock"', 'model="openai.gpt-5.6-terra"',
       'model_providers.amazon-bedrock.aws.region="us-west-2"',
@@ -69,8 +69,8 @@ describe('Codex adapter', () => {
 
   it('passes the default region with IAM credentials', async () => {
     const child = new FakeChild();
-    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
-    const run = createCodexAgent(spawner).run({ ...task, env: { AWS_PROFILE: 'test-profile' } });
+    const spawner = vi.fn<FakeRun>(() => child.asExecProcess());
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner })).run({ ...task, env: { AWS_PROFILE: 'test-profile' } });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
       'model_providers.amazon-bedrock.aws.region="us-east-1"',
     ]), expect.anything());
@@ -80,8 +80,8 @@ describe('Codex adapter', () => {
 
   it('prefers a direct OpenAI key when AWS credentials are also present', async () => {
     const child = new FakeChild();
-    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
-    const run = createCodexAgent(spawner).run({ ...task,
+    const spawner = vi.fn<FakeRun>(() => child.asExecProcess());
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner })).run({ ...task,
       env: { ...task.env, AWS_BEARER_TOKEN_BEDROCK: 'test-bedrock-key' } });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
       'model_provider="openai"', 'forced_login_method="api"',
@@ -95,8 +95,8 @@ describe('Codex adapter', () => {
       auth_mode: 'chatgpt', tokens: { access_token: 'test-access', refresh_token: 'test-refresh' },
     }));
     const child = new FakeChild();
-    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
-    const run = createCodexAgent(spawner).run({ ...task, env: {
+    const spawner = vi.fn<FakeRun>(() => child.asExecProcess());
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner })).run({ ...task, env: {
       CODEX_HOME: authHome, OPENAI_API_KEY: apiKey, AWS_PROFILE: 'test-profile',
     } });
     const args = spawner.mock.calls[0][1] as string[];
@@ -119,8 +119,8 @@ describe('Codex adapter', () => {
 
   it('preserves an explicit Codex API key', async () => {
     const child = new FakeChild();
-    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
-    const run = createCodexAgent(spawner).run({ ...task,
+    const spawner = vi.fn<FakeRun>(() => child.asExecProcess());
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner })).run({ ...task,
       env: { ...task.env, CODEX_API_KEY: 'test-codex-key' } });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
       'forced_login_method="api"',
@@ -136,7 +136,7 @@ describe('Codex adapter', () => {
   it('reports a saved-login failure once', async () => {
     fs.writeFileSync(path.join(authHome, 'auth.json'), '{}');
     const child = new FakeChild();
-    const run = createCodexAgent(() => child.asChildProcess()).run({ ...task,
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() })).run({ ...task,
       env: { CODEX_HOME: authHome } });
     child.emitLine(JSON.stringify({ type: 'turn.failed', error: { message: 'Login required' } }));
     child.finish(1);
@@ -151,7 +151,7 @@ describe('Codex adapter', () => {
   it('reports cancellation separately from a failed saved login', async () => {
     fs.writeFileSync(path.join(authHome, 'auth.json'), '{}');
     const child = new FakeChild();
-    const run = createCodexAgent(() => child.asChildProcess()).run({ ...task,
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() })).run({ ...task,
       env: { CODEX_HOME: authHome } });
     expect(run.exited).toBe(false);
     run.stop();
@@ -165,8 +165,8 @@ describe('Codex adapter', () => {
 
   it('resumes with the requested permissions and preserves prompt text', async () => {
     const child = new FakeChild();
-    const spawner = vi.fn<Spawner>(() => child.asChildProcess());
-    const run = createCodexAgent(spawner).run({ ...task, sessionId: 'session-1',
+    const spawner = vi.fn<FakeRun>(() => child.asExecProcess());
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner })).run({ ...task, sessionId: 'session-1',
       prompt: '--inspect', appendSystemPrompt: 'Use "examples".\nKeep it short.' });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
       'developer_instructions="Use \\"examples\\".\\nKeep it short."',
@@ -209,7 +209,7 @@ describe('Codex adapter', () => {
   it('keeps concurrent task results separate', async () => {
     const children = [new FakeChild(), new FakeChild()];
     let index = 0;
-    const agent = createCodexAgent(() => children[index++].asChildProcess());
+    const agent = createCodexAgent(fakeExecutionEnvironment({ runProgram: () => children[index++].asExecProcess() }));
     const runs = [agent.run(task), agent.run(task)];
     children[0].emitLine(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'First' } }));
     children[1].emitLine(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Second' } }));
@@ -231,7 +231,9 @@ describe('Codex adapter', () => {
       const home = createCodexAgent().prepareHome({ dataDir: root, skillsDir });
       expect(home).toEqual({ configDir: path.join(root, '.codex'), skillsLinked: true });
       expect(fs.realpathSync(path.join(home.configDir, 'skills'))).toBe(fs.realpathSync(skillsDir));
-      expect(process.env.CODEX_HOME).toBe(home.configDir);
+      // Nothing is written to this process's env: a task states the home on
+      // its own env, so a run in another environment does not inherit ours.
+      expect(process.env.CODEX_HOME).toBe('');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -245,10 +247,14 @@ describe('model tier and effort', () => {
     it.each(tiers)('maps %s for session ' + sessionId, async (modelTier) => {
       const child = new FakeChild();
       let args: readonly string[] = [];
-      const run = createCodexAgent((_command, argv) => {
-        args = argv;
-        return child.asChildProcess();
-      }).run({ ...task, modelTier, sessionId });
+      const run = createCodexAgent(
+        fakeExecutionEnvironment({
+          runProgram: (_command, argv) => {
+            args = argv;
+            return child.asExecProcess();
+          },
+        }),
+      ).run({ ...task, modelTier, sessionId });
       expect(args[args.indexOf('--model') + 1]).toBe(models[tiers.indexOf(modelTier)]);
       child.finish(0);
       await Array.fromAsync(run.events);
@@ -257,10 +263,14 @@ describe('model tier and effort', () => {
     it.each(['low', 'medium', 'high'] as const)('passes %s effort for session ' + sessionId, async (effort) => {
       const child = new FakeChild();
       let args: readonly string[] = [];
-      const run = createCodexAgent((_command, argv) => {
-        args = argv;
-        return child.asChildProcess();
-      }).run({ ...task, effort, sessionId });
+      const run = createCodexAgent(
+        fakeExecutionEnvironment({
+          runProgram: (_command, argv) => {
+            args = argv;
+            return child.asExecProcess();
+          },
+        }),
+      ).run({ ...task, effort, sessionId });
       expect(args).toContain('model_reasoning_effort="' + effort + '"');
       expect(args).not.toContain('--model');
       child.finish(0);
@@ -275,10 +285,14 @@ describe('model tier and effort', () => {
     try {
       const child = new FakeChild();
       let args: readonly string[] = [];
-      const run = createCodexAgent((_command, argv) => {
-        args = argv;
-        return child.asChildProcess();
-      }).run({ ...task, modelTier, effort: 'high', sessionId: 'session-1' });
+      const run = createCodexAgent(
+        fakeExecutionEnvironment({
+          runProgram: (_command, argv) => {
+            args = argv;
+            return child.asExecProcess();
+          },
+        }),
+      ).run({ ...task, modelTier, effort: 'high', sessionId: 'session-1' });
       expect(args[args.indexOf('--model') + 1]).toBe('custom-model');
       child.finish(0);
       await Array.fromAsync(run.events);
@@ -290,10 +304,14 @@ describe('model tier and effort', () => {
   it('preserves deployment defaults when both parameters are omitted', async () => {
     const child = new FakeChild();
     let args: readonly string[] = [];
-    const run = createCodexAgent((_command, argv) => {
-      args = argv;
-      return child.asChildProcess();
-    }).run(task);
+    const run = createCodexAgent(
+      fakeExecutionEnvironment({
+        runProgram: (_command, argv) => {
+          args = argv;
+          return child.asExecProcess();
+        },
+      }),
+    ).run(task);
     expect(args).not.toContain('--model');
     expect(args).not.toContain('--effort');
     expect(args.some(arg => arg.startsWith('model_reasoning_effort='))).toBe(false);
@@ -309,10 +327,14 @@ it.each([
 ] as const)('uses the Bedrock model for %s', async (modelTier, model) => {
   const child = new FakeChild();
   let args: readonly string[] = [];
-  const run = createCodexAgent((_command, argv) => {
-    args = argv;
-    return child.asChildProcess();
-  }).run({ ...task, env: { AWS_PROFILE: 'test-profile' }, modelTier, effort: 'low', sessionId: 'session-1' });
+  const run = createCodexAgent(
+    fakeExecutionEnvironment({
+      runProgram: (_command, argv) => {
+        args = argv;
+        return child.asExecProcess();
+      },
+    }),
+  ).run({ ...task, env: { AWS_PROFILE: 'test-profile' }, modelTier, effort: 'low', sessionId: 'session-1' });
   expect(args[args.indexOf('--model') + 1]).toBe(model);
   expect(args.some(arg => arg.startsWith('model='))).toBe(false);
   expect(args).toContain('model_reasoning_effort="low"');

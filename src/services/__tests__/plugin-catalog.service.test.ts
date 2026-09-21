@@ -45,11 +45,11 @@ afterEach(() => {
 });
 
 describe('PluginCatalogService.getPlugins', () => {
-  it('loads a minimal plugin with only the two required manifest fields', () => {
+  it('loads a minimal plugin with only the two required manifest fields', async () => {
     writePlugin('demo', manifest('demo'));
     pluginCatalogService.invalidate();
 
-    const plugins = pluginCatalogService.getPlugins();
+    const plugins = await pluginCatalogService.getPlugins();
     expect(plugins).toHaveLength(1);
     expect(plugins[0]).toMatchObject({ id: 'demo', name: 'demo', diagnostics: [] });
     // Neither component type is present, which is valid.
@@ -57,56 +57,56 @@ describe('PluginCatalogService.getPlugins', () => {
     expect(plugins[0].mcpConfigPath).toBeUndefined();
   });
 
-  it('records the fixed component locations when they exist', () => {
+  it('records the fixed component locations when they exist', async () => {
     const dir = writePlugin('demo', manifest('demo', { version: '1.2.0', description: 'A demo' }));
     fs.mkdirSync(path.join(dir, 'skills', 'greet'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'mcp.json'), '{}');
     pluginCatalogService.invalidate();
 
-    const [plugin] = pluginCatalogService.getPlugins();
+    const [plugin] = await pluginCatalogService.getPlugins();
     expect(plugin.version).toBe('1.2.0');
     expect(plugin.description).toBe('A demo');
     expect(plugin.skillsDir).toBe(path.join(dir, 'skills'));
     expect(plugin.mcpConfigPath).toBe(path.join(dir, 'mcp.json'));
   });
 
-  it('returns plugins in directory-name order', () => {
+  it('returns plugins in directory-name order', async () => {
     writePlugin('zeta', manifest('zeta'));
     writePlugin('alpha', manifest('alpha'));
     pluginCatalogService.invalidate();
 
-    expect(pluginCatalogService.getPlugins().map((p) => p.id)).toEqual(['alpha', 'zeta']);
+    expect((await pluginCatalogService.getPlugins()).map((p) => p.id)).toEqual(['alpha', 'zeta']);
   });
 
-  it('skips a directory with no plugin.json', () => {
+  it('skips a directory with no plugin.json', async () => {
     fs.mkdirSync(path.join(pluginsDir, 'not-a-plugin'), { recursive: true });
     pluginCatalogService.invalidate();
 
-    expect(pluginCatalogService.getPlugins()).toEqual([]);
+    expect(await pluginCatalogService.getPlugins()).toEqual([]);
   });
 
-  it('skips a malformed plugin without affecting its siblings', () => {
+  it('skips a malformed plugin without affecting its siblings', async () => {
     writePlugin('broken', '{ not json');
     writePlugin('good', manifest('good'));
     pluginCatalogService.invalidate();
 
-    expect(pluginCatalogService.getPlugins().map((p) => p.id)).toEqual(['good']);
+    expect((await pluginCatalogService.getPlugins()).map((p) => p.id)).toEqual(['good']);
   });
 
-  it('disables only the skills component when skills is not a directory', () => {
+  it('disables only the skills component when skills is not a directory', async () => {
     const dir = writePlugin('demo', manifest('demo'));
     fs.writeFileSync(path.join(dir, 'skills'), 'oops');
     fs.writeFileSync(path.join(dir, 'mcp.json'), '{}');
     pluginCatalogService.invalidate();
 
-    const [plugin] = pluginCatalogService.getPlugins();
+    const [plugin] = await pluginCatalogService.getPlugins();
     expect(plugin.skillsDir).toBeUndefined();
     // The other component type is unaffected.
     expect(plugin.mcpConfigPath).toBe(path.join(dir, 'mcp.json'));
     expect(plugin.diagnostics.join()).toContain('skills exists but is not a directory');
   });
 
-  it('survives a component that cannot even be stat-ed, disabling only that component', () => {
+  it('survives a component that cannot even be stat-ed, disabling only that component', async () => {
     // A self-referential symlink makes stat throw ELOOP — which
     // `throwIfNoEntry: false` does NOT suppress. getPlugins() feeds every
     // system-prompt build, so it must degrade this plugin, not throw.
@@ -115,7 +115,7 @@ describe('PluginCatalogService.getPlugins', () => {
     fs.writeFileSync(path.join(dir, 'mcp.json'), '{}');
     pluginCatalogService.invalidate();
 
-    const plugins = pluginCatalogService.getPlugins();
+    const plugins = await pluginCatalogService.getPlugins();
     expect(plugins).toHaveLength(1);
     expect(plugins[0].skillsDir).toBeUndefined();
     // The other component type is unaffected.
@@ -123,66 +123,66 @@ describe('PluginCatalogService.getPlugins', () => {
     expect(plugins[0].diagnostics.join()).toContain('skills cannot be read');
   });
 
-  it('rescans when the plugins dir changes', () => {
+  it('rescans when the plugins dir changes', async () => {
     writePlugin('one', manifest('one'));
     pluginCatalogService.invalidate();
-    expect(pluginCatalogService.getPlugins()).toHaveLength(1);
+    expect(await pluginCatalogService.getPlugins()).toHaveLength(1);
 
     writePlugin('two', manifest('two'));
     pluginCatalogService.invalidate();
-    expect(pluginCatalogService.getPlugins()).toHaveLength(2);
+    expect(await pluginCatalogService.getPlugins()).toHaveLength(2);
   });
 
-  it('notices a plugin corrected in place, without touching the plugins dir', () => {
+  it('notices a plugin corrected in place, without touching the plugins dir', async () => {
     // A directory's mtime moves only when an *immediate* child changes, so
     // keying the cache on the plugins dir alone would see a plugin appear or
     // vanish but never see one edited — which is exactly the fix-it-and-retry
     // loop an author is in.
     writePlugin('demo', '{ not json');
-    expect(pluginCatalogService.getPlugins()).toEqual([]);
+    expect(await pluginCatalogService.getPlugins()).toEqual([]);
 
     // Correct the manifest in place. Nothing about `plugins/` itself changes.
     fs.writeFileSync(path.join(pluginsDir, 'demo', 'plugin.json'), manifest('demo'));
 
-    expect(pluginCatalogService.getPlugins().map((p) => p.id)).toEqual(['demo']);
+    expect((await pluginCatalogService.getPlugins()).map((p) => p.id)).toEqual(['demo']);
   });
 
-  it('notices an mcp.json added to an already-loaded plugin', () => {
+  it('notices an mcp.json added to an already-loaded plugin', async () => {
     const dir = writePlugin('demo', manifest('demo'));
-    expect(pluginCatalogService.getPlugins()[0].mcpConfigPath).toBeUndefined();
+    expect((await pluginCatalogService.getPlugins())[0].mcpConfigPath).toBeUndefined();
 
     fs.writeFileSync(path.join(dir, 'mcp.json'), '{}');
 
-    expect(pluginCatalogService.getPlugins()[0].mcpConfigPath).toBe(path.join(dir, 'mcp.json'));
+    expect((await pluginCatalogService.getPlugins())[0].mcpConfigPath).toBe(path.join(dir, 'mcp.json'));
   });
 
-  it('is empty when the plugins dir does not exist', () => {
+  it('is empty when the plugins dir does not exist', async () => {
     process.env.PRISM_PLUGINS_DIR = path.join(tmp, 'absent');
     pluginCatalogService.invalidate();
 
-    expect(pluginCatalogService.getPlugins()).toEqual([]);
+    expect(await pluginCatalogService.getPlugins()).toEqual([]);
   });
 });
 
 describe('PluginCatalogService.find', () => {
-  it('looks a plugin up by its directory id', () => {
+  it('looks a plugin up by its directory id', async () => {
     writePlugin('demo', manifest('demo'));
     pluginCatalogService.invalidate();
 
-    expect(pluginCatalogService.find('demo')?.name).toBe('demo');
-    expect(pluginCatalogService.find('missing')).toBeUndefined();
+    expect((await pluginCatalogService.find('demo'))?.name).toBe('demo');
+    expect(await pluginCatalogService.find('missing')).toBeUndefined();
   });
 });
 
 describe('manifest validation', () => {
   const ok = (raw: string, id = 'demo') => __test.validateManifest(raw, id);
 
-  it('accepts the minimal manifest', () => {
+  it('accepts the minimal manifest', async () => {
     const result = ok(manifest('demo'));
     expect(result.ok).toBe(true);
   });
 
-  it('rejects a manifest targeting an Agent Plugins version we do not implement', () => {
+  it('rejects a manifest targeting an Agent Plugins version we do not implement', async () => {
     const result = ok(
       JSON.stringify({
         $schema: 'https://agent-plugins.org/schemas/2.0.0/plugin.schema.json',
@@ -197,13 +197,13 @@ describe('manifest validation', () => {
     }
   });
 
-  it('distinguishes a foreign plugin.json from an unsupported version', () => {
+  it('distinguishes a foreign plugin.json from an unsupported version', async () => {
     const result = ok(JSON.stringify({ $schema: 'https://example.com/other.json', name: 'demo' }));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain('not an Agent Plugins manifest');
   });
 
-  it('rejects a missing $schema', () => {
+  it('rejects a missing $schema', async () => {
     const result = ok(JSON.stringify({ name: 'demo' }));
     expect(result.ok).toBe(false);
   });
@@ -225,7 +225,7 @@ describe('manifest validation', () => {
     expect(__test.isValidPluginName(name)).toBe(true);
   });
 
-  it('reports unknown top-level fields but still loads the plugin', () => {
+  it('reports unknown top-level fields but still loads the plugin', async () => {
     const result = ok(manifest('demo', { hooks: './hooks', commands: [] }));
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -234,13 +234,13 @@ describe('manifest validation', () => {
     }
   });
 
-  it('reports a non-object extensions field but still loads the plugin', () => {
+  it('reports a non-object extensions field but still loads the plugin', async () => {
     const result = ok(manifest('demo', { extensions: 'nope' }));
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.diagnostics.join()).toContain('ignoring "extensions"');
   });
 
-  it('never validates the contents of an extension namespace', () => {
+  it('never validates the contents of an extension namespace', async () => {
     const result = ok(
       manifest('demo', { extensions: { 'com.example.client': { anything: [1, 2] } } }),
     );
@@ -248,24 +248,24 @@ describe('manifest validation', () => {
     if (result.ok) expect(result.diagnostics).toEqual([]);
   });
 
-  it('accepts loose metadata — a non-semver version is not a rejection', () => {
+  it('accepts loose metadata — a non-semver version is not a rejection', async () => {
     const result = ok(manifest('demo', { version: 'release-2026-07', license: 'whatever' }));
     expect(result.ok).toBe(true);
   });
 
-  it('rejects metadata of the wrong type', () => {
+  it('rejects metadata of the wrong type', async () => {
     expect(ok(manifest('demo', { version: 12 })).ok).toBe(false);
     expect(ok(manifest('demo', { keywords: 'not-an-array' })).ok).toBe(false);
     expect(ok(manifest('demo', { author: 'someone' })).ok).toBe(false);
   });
 
-  it('notes when the manifest name differs from the directory name', () => {
+  it('notes when the manifest name differs from the directory name', async () => {
     const result = ok(manifest('other-name'), 'demo');
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.diagnostics.join()).toContain('differs from directory name');
   });
 
-  it('rejects a manifest that is not a JSON object', () => {
+  it('rejects a manifest that is not a JSON object', async () => {
     expect(ok('[]').ok).toBe(false);
     expect(ok('"a string"').ok).toBe(false);
   });

@@ -1,8 +1,8 @@
 /**
  * Process manager for the generic `shell_spawn` family.
  *
- * In-process map of spawned background processes; the agent uses
- * this to start long-running tasks (e.g. `npm run test`), feed
+ * In-process map of background processes the execution environment started;
+ * the agent uses this to start long-running tasks (e.g. `npm run test`), feed
  * them stdin, drain their stdout/stderr, and kill them.
  *
  * Port of the relevant bits of the upstream Lens Agents shell sandbox's
@@ -13,18 +13,17 @@
  * agent-driven background tasks; the cap exists to prevent runaway
  * fork-bomb scenarios, not to gate user concurrency.
  */
-import { ChildProcess } from 'child_process';
-import { agentProcesses } from '../../lib/agent-processes';
 import { randomUUID } from 'crypto';
 import { logger } from '../../logger';
-import { appendCappedChunk } from './exec';
-import { sandboxEnv } from './sandbox-env';
+import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
+import type { ExecProcess } from '../../lib/execution-environments/execution-environment';
+import { appendCappedChunk } from '../../lib/execution-environments/capture';
 
 export const MAX_PROCESSES = 10;
 export const MAX_OUTPUT_BUFFER = 10 * 1024 * 1024; // 10 MiB per stream
 
 interface ProcessState {
-  child: ChildProcess;
+  proc: ExecProcess;
   stdoutChunks: Buffer[];
   stderrChunks: Buffer[];
   stdoutCount: { n: number };
@@ -55,18 +54,19 @@ class ProcessManager {
     }
 
     const processId = randomUUID();
-    // The spawner makes the child the leader of its own process group. We can then
-    // signal the whole group via process.kill(-pid) — necessary because the shell
-    // wrapper would otherwise leave any forked children behind when we kill bash
-    // itself — and a secure takeover can stop everything the agent started.
-    const child = agentProcesses.spawn('/bin/bash', ['-c', params.command], {
+    const environment = getExecutionEnvironment();
+    // `processGroup` makes the process the leader of its own group, so a kill
+    // reaches the whole group — necessary because the shell wrapper would
+    // otherwise leave any forked children behind when we kill it.
+    const proc = environment.runShell(params.command, {
       cwd: params.workdir,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...sandboxEnv(), ...params.env },
+      env: { ...environment.baseEnv(), ...params.env },
+      stdin: 'pipe',
+      processGroup: true,
     });
 
     const state: ProcessState = {
-      child,
+      proc,
       stdoutChunks: [],
       stderrChunks: [],
       stdoutCount: { n: 0 },
@@ -80,23 +80,21 @@ class ProcessManager {
     };
     this.processes.set(processId, state);
 
-    child.stdout?.on('data', (chunk: Buffer) =>
+    proc.stdout?.on('data', (chunk: Buffer) =>
       appendCappedChunk(chunk, state.stdoutChunks, state.stdoutCount, state.stdoutTrunc, MAX_OUTPUT_BUFFER),
     );
-    child.stderr?.on('data', (chunk: Buffer) =>
+    proc.stderr?.on('data', (chunk: Buffer) =>
       appendCappedChunk(chunk, state.stderrChunks, state.stderrCount, state.stderrTrunc, MAX_OUTPUT_BUFFER),
     );
-    // 'exit' fires when the spawned process exits, regardless of
-    // whether its stdio pipes are still open (stdio may stay open if
-    // grandchildren inherit them). 'close' would block until pipes
-    // drain — too late for our running/exit accounting.
-    child.on('exit', (code, signal) => {
+    // `ended` rather than `closed`: it settles when the process exits whether
+    // or not its stdio pipes are still open (they stay open if grandchildren
+    // inherit them), and waiting for the pipes to drain would be too late for
+    // our running/exit accounting.
+    void proc.ended.then((end) => {
       state.exited = true;
-      state.exitCode = typeof code === 'number' ? code : null;
-      state.signal = signal;
-    });
-    child.on('error', (err) => {
-      logger.error({ err, processId }, '[ProcessManager] child error');
+      state.exitCode = end.exitCode;
+      state.signal = end.signal;
+      if (end.error) logger.error({ err: end.error, processId }, '[ProcessManager] child error');
     });
 
     return processId;
@@ -110,11 +108,12 @@ class ProcessManager {
     const state = this.processes.get(processId);
     if (!state) throw new Error(`Process ${processId} not found`);
     if (state.exited) throw new Error(`Process ${processId} has already exited`);
-    if (!state.child.stdin || state.child.stdin.destroyed) {
+    const stdin = state.proc.stdin;
+    if (!stdin || stdin.destroyed) {
       throw new Error(`Process ${processId} stdin is not writable`);
     }
     try {
-      state.child.stdin.write(data);
+      stdin.write(data);
     } catch (err) {
       // The process may have just died between the destroyed check and
       // the write — surface the EPIPE/etc. as a clean error rather than
@@ -188,25 +187,14 @@ class ProcessManager {
 
   /**
    * Send a signal to the process group (children of the spawned
-   * shell wrapper get the signal too, courtesy of `detached: true`
-   * in spawn()). Defaults to SIGTERM.
+   * shell wrapper get the signal too, courtesy of `processGroup` in
+   * spawn()). Defaults to SIGTERM.
    */
   kill(processId: string, signal: NodeJS.Signals = 'SIGTERM'): boolean {
     const state = this.processes.get(processId);
     if (!state) return false;
     if (state.exited) return false;
-    const pid = state.child.pid;
-    if (pid === undefined) return false;
-    // Try the process-group route first so any forked grandchildren of
-    // the bash wrapper get the signal too. Falls back to a direct
-    // child.kill() if the group lookup fails (e.g., environments where
-    // detached spawn doesn't establish a new pgid).
-    try {
-      process.kill(-pid, signal);
-      return true;
-    } catch {
-      return state.child.kill(signal);
-    }
+    return state.proc.kill(signal);
   }
 
   /**
@@ -227,7 +215,7 @@ class ProcessManager {
   /** Kill everything (test cleanup). */
   killAll(signal: NodeJS.Signals = 'SIGTERM'): void {
     for (const [id, s] of this.processes) {
-      if (!s.exited) s.child.kill(signal);
+      if (!s.exited) s.proc.kill(signal);
       this.processes.delete(id);
     }
   }

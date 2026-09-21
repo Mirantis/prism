@@ -7,7 +7,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { resolveWorkspace, resolveWorkspaceRoot } from '../config';
+import { resolveWorkspace } from '../../../lib/execution-environments/workspace';
+import { getExecutionEnvironment } from '../../../lib/execution-environments/get-execution-environment';
 import { getShellTools } from '../index';
 
 describe('resolveWorkspace (single fallback owner)', () => {
@@ -27,8 +28,8 @@ describe('resolveWorkspace (single fallback owner)', () => {
 
   it('falls back to the global root when empty / whitespace / undefined', () => {
     process.env.SHELL_WORKSPACE_ROOT = '/global/ws';
-    expect(resolveWorkspace('   ')).toBe(resolveWorkspaceRoot());
-    expect(resolveWorkspace(undefined)).toBe(resolveWorkspaceRoot());
+    expect(resolveWorkspace('   ')).toBe(getExecutionEnvironment().workspaceRoot());
+    expect(resolveWorkspace(undefined)).toBe(getExecutionEnvironment().workspaceRoot());
     expect(resolveWorkspace(null)).toBe(path.resolve('/global/ws'));
   });
 });

@@ -1,7 +1,5 @@
 import './lib/environment';
 export { dotenvLoadInfo } from './lib/environment';
-import { codexAuthMethod } from './lib/coding-agents/codex/credentials';
-import { hasClaudeCodeCredentials } from './lib/coding-agents/claude-code/credentials';
 import sea from 'node:sea';
 import {
   ATTACHMENT_CONTENT_TTL_HOURS,
@@ -630,28 +628,23 @@ const toolRiskGateMode = isValidToolRiskGateMode
   : 'off';
 const invalidToolRiskGateMode = isValidToolRiskGateMode ? null : rawToolRiskGateMode;
 
-// Prefer Claude credentials even when an OpenAI key is also available.
+// Which agents are actually available is asked of the execution environment at
+// boot — it runs the CLI and reads its saved login, neither of which a module
+// evaluated at import can do. `lib/coding-agents/availability.ts` fills both
+// fields below; until it has, no agent is offered.
 export const CODING_AGENTS = ['claude-code', 'codex'] as const;
 export type CodingAgentName = (typeof CODING_AGENTS)[number];
-const hasClaudeCredentials = hasClaudeCodeCredentials(process.env);
-const hasCodexCredentials = Boolean(codexAuthMethod(process.env));
-const availableCodingAgents: CodingAgentName[] = [
-  ...(hasClaudeCredentials ? ['claude-code' as const] : []),
-  ...(hasCodexCredentials ? ['codex' as const] : []),
-];
-const defaultCodingAgent: CodingAgentName = hasClaudeCredentials || !hasCodexCredentials
-  ? 'claude-code'
-  : 'codex';
+const availableCodingAgents: CodingAgentName[] = [];
 const rawCodingAgent = process.env.CODING_AGENT?.trim().toLowerCase();
 const isValidCodingAgent = !rawCodingAgent || (CODING_AGENTS as readonly string[]).includes(rawCodingAgent);
-const codingAgent: CodingAgentName = isValidCodingAgent && rawCodingAgent
-  ? rawCodingAgent as CodingAgentName
-  : defaultCodingAgent;
+/** The operator's explicit choice, which detection leaves alone. */
+const configuredCodingAgent: CodingAgentName | null =
+  isValidCodingAgent && rawCodingAgent ? (rawCodingAgent as CodingAgentName) : null;
+const codingAgent: CodingAgentName = configuredCodingAgent ?? 'claude-code';
 if (!isValidCodingAgent) {
-  logger.warn(
-    { configuredAgent: rawCodingAgent, effectiveAgent: codingAgent },
-    '[Startup] invalid CODING_AGENT; using the default',
-  );
+  // No effective agent to name yet: detection picks it, and reports it on its
+  // own startup line.
+  logger.warn({ configuredAgent: rawCodingAgent }, '[Startup] invalid CODING_AGENT; using the detected default');
 }
 
 function codingAgentModelOverride(name: string): string | undefined {
@@ -939,6 +932,7 @@ export const config = {
   codingAgent,
   codingAgentModels,
   availableCodingAgents,
+  configuredCodingAgent,
 
   // Overrides the input-context window used by the context-window indicator.
   // Normally derived from the model ID via the models.dev catalog
