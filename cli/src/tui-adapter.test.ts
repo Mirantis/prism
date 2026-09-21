@@ -367,6 +367,27 @@ describe('the sign-in in a message', () => {
     });
   });
 
+  it('carries the thread it belongs to, so another conversation does not open the panel', () => {
+    const seen: { id: string; threadId?: string }[] = [];
+    tuiAdapterService.events.on('signIn', (request) => void seen.push(request));
+
+    lastClient.current?.events.emit('envelope', {
+      type: 'chat',
+      payload: {
+        id: 'm1',
+        threadId: 'thread-b',
+        role: 'AGENT',
+        content: 'Sign in to the mail',
+        createdAt: new Date().toISOString(),
+        blocks: [help],
+      },
+    });
+
+    expect(seen).toEqual([
+      expect.objectContaining({ id: 'help-1', threadId: 'thread-b' }),
+    ]);
+  });
+
   it('passes over a request of any other kind, and one already answered', () => {
     expect(signInRequestIn([{ ...help, credentials: undefined }])).toBeNull();
     expect(signInRequestIn([{ ...help, status: 'continued' }])).toBeNull();

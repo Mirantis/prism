@@ -11,7 +11,7 @@
  * driven the same way, one step at a time. The user answers one box either way.
  */
 
-import type { Page } from 'playwright-core';
+import type { Frame, Page } from 'playwright-core';
 import { logger } from '../../logger';
 import { withTimeout } from '../../utils/with-timeout';
 
@@ -74,6 +74,8 @@ export interface SignInShape {
   password: boolean;
   /** The page has a field for the username. */
   username: boolean;
+  /** The origin of the frame holding the form, which is where the credentials go. */
+  site: string;
 }
 
 /** The slice of the DOM this touches; see `secure-window.ts` for why it is structural. */
@@ -210,11 +212,33 @@ function pageArgument(username: string | null, password: string | null): PageArg
 
 const NOTHING: SignInResult = { found: false, username: false, submitted: false };
 
-/** Ask every frame, and answer with the first holding a sign-in. */
-async function run(page: Page, arg: PageArgument): Promise<SignInResult> {
-  if (page.isClosed()) return NOTHING;
-  let best = NOTHING;
+/** Where a frame is. A frame on no page at all answers nothing, and is passed over. */
+export function frameOrigin(frame: Frame): string | undefined {
+  try {
+    const { origin } = new URL(frame.url());
+    return origin === 'null' ? undefined : origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/** What one frame answered, and which frame that was. */
+interface FrameResult extends SignInResult {
+  frame: Frame;
+}
+
+/**
+ * Ask each frame, and answer with the first holding a sign-in.
+ *
+ * `site` keeps the credentials where they were promised: a sign-in form can sit in an
+ * iframe from another origin, so what the user was shown is the origin of the frame that
+ * holds the form, and only that frame is asked again when the typing happens.
+ */
+async function run(page: Page, arg: PageArgument, site?: string): Promise<FrameResult | null> {
+  if (page.isClosed()) return null;
+  let best: FrameResult | null = null;
   for (const frame of page.frames()) {
+    if (site && frameOrigin(frame) !== site) continue;
     const result = await withTimeout(frame.evaluate(signInInPage, arg), FILL_TIMEOUT_MS).catch(
       (err: unknown) => {
         // A frame part-way through a navigation answers nothing. That is a step of an
@@ -223,18 +247,20 @@ async function run(page: Page, arg: PageArgument): Promise<SignInResult> {
         return NOTHING;
       },
     );
-    if (result.found) return result;
+    if (result.found) return { ...result, frame };
     // A first step: keep it, in case a later frame holds the whole form.
-    if (result.username) best = result;
+    if (result.username && !best) best = { ...result, frame };
   }
   return best;
 }
 
-/** The sign-in this page holds, or null when it holds none. */
-export async function findSignIn(page: Page): Promise<SignInShape | null> {
-  const result = await run(page, pageArgument(null, null));
-  if (!result.found && !result.username) return null;
-  return { password: result.found, username: result.username };
+/** The sign-in this page holds, and the origin it goes to, or null when it holds none. */
+export async function findSignIn(page: Page, site?: string): Promise<SignInShape | null> {
+  const result = await run(page, pageArgument(null, null), site);
+  if (!result) return null;
+  const origin = frameOrigin(result.frame);
+  if (!origin) return null;
+  return { password: result.found, username: result.username, site: origin };
 }
 
 /** Press what submits this step, when the page did not submit it itself. */
@@ -243,21 +269,22 @@ async function submitStep(page: Page, result: SignInResult): Promise<void> {
 }
 
 /** Wait for the screen that asks for the password, as a person waits for it to load. */
-async function waitForPasswordStep(page: Page): Promise<boolean> {
+async function waitForPasswordStep(page: Page, site: string): Promise<boolean> {
   const deadline = Date.now() + PASSWORD_STEP_TIMEOUT_MS;
   for (;;) {
-    if ((await run(page, pageArgument(null, null))).found) return true;
+    if ((await run(page, pageArgument(null, null), site))?.found) return true;
     if (Date.now() >= deadline) return false;
     await page.waitForTimeout(PASSWORD_STEP_POLL_MS);
   }
 }
 
 /**
- * Type the credentials into the page's sign-in and submit it.
+ * Type the credentials into the sign-in on this page and submit it.
  *
- * A page asking for both at once takes one step. A page asking for the username first
- * takes two: the username goes in, that step is submitted, and the password follows once
- * the page shows a field for it.
+ * Only a frame whose origin is `site` is touched, which is the origin the user was shown
+ * when they answered. A page asking for both at once takes one step. A page asking for
+ * the username first takes two: the username goes in, that step is submitted, and the
+ * password follows once the page shows a field for it.
  *
  * A page whose form submits itself needs nothing more. One without a form gets a real key
  * press on the field the fill left focused, which is what a person does and what a page
@@ -266,27 +293,28 @@ async function waitForPasswordStep(page: Page): Promise<boolean> {
 export async function fillSignInForm(
   page: Page,
   credentials: SignInCredentials,
+  site: string,
 ): Promise<'filled' | 'no_form' | 'no_password_step'> {
-  const shape = await findSignIn(page);
+  const shape = await findSignIn(page, site);
   if (!shape) return 'no_form';
 
   if (!shape.password) {
-    const first = await run(page, pageArgument(credentials.username, null));
-    if (!first.username) return 'no_form';
+    const first = await run(page, pageArgument(credentials.username, null), site);
+    if (!first?.username) return 'no_form';
     await submitStep(page, first);
-    if (!(await waitForPasswordStep(page))) {
+    if (!(await waitForPasswordStep(page, site))) {
       logger.warn('[Computer] A sign-in took the username and never asked for the password');
       return 'no_password_step';
     }
-    const second = await run(page, pageArgument(null, credentials.password));
-    if (!second.found) return 'no_password_step';
+    const second = await run(page, pageArgument(null, credentials.password), site);
+    if (!second?.found) return 'no_password_step';
     await submitStep(page, second);
     logger.info('[Computer] Signed in over two steps');
     return 'filled';
   }
 
-  const result = await run(page, pageArgument(credentials.username, credentials.password));
-  if (!result.found) return 'no_form';
+  const result = await run(page, pageArgument(credentials.username, credentials.password), site);
+  if (!result?.found) return 'no_form';
   await submitStep(page, result);
   logger.info(`[Computer] Signed in on ${result.username ? 'two fields' : 'a password field'}`);
   return 'filled';

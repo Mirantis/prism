@@ -66,6 +66,14 @@ Feature: The agent's computer in the browser
     When I fill in the username and password and submit
     Then the website has both of them, and Prism reports the mail
 
+  Scenario: A sign-in asked over two screens is answered from the same box
+    Given the runtime can give the agent a computer
+    And a website with a sign-in page and public notes
+    When I ask Prism to read my files, whose sign-in asks in two screens
+    Then Prism asks for the sign-in in the chat, with a box for it
+    When I fill in the username and password and submit
+    Then the website has both, one screen after the other, and Prism reports the files
+
   Scenario: Human control pauses queued work and survives closing the viewer
     Given the runtime can give the agent a computer
     And a website with a sign-in page and public notes

@@ -109,6 +109,12 @@ computerRouter.post('/computer/help/:id/credentials', async (req, res) => {
     res.status(409).json({ error: 'That sign-in request is closed. Reload the page.' });
     return;
   }
+  // A page that asks for both takes both: signing in with an empty username would clear
+  // the field the page filled in for itself and submit a sign-in that cannot work.
+  if (help.credentialFields !== 'password' && !body.data.username) {
+    res.status(400).json({ error: 'A username is required.' });
+    return;
+  }
   const outcome = await computerService.signIn(
     help,
     { username: body.data.username, password: body.data.password },

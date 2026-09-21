@@ -84,6 +84,8 @@ export interface SignInRequest {
   reason: string;
   site?: string;
   fields?: 'both' | 'password';
+  /** The conversation it belongs to. A request from another one is not this session's. */
+  threadId?: string;
 }
 
 /** The sign-in in a message's blocks, when it holds one that is still waiting. */
@@ -440,7 +442,7 @@ class TuiAdapter {
         if (msg) {
           this.events.emit('message', msg);
           const signIn = signInRequestIn(msg.blocks);
-          if (signIn) this.events.emit('signIn', signIn);
+          if (signIn) this.events.emit('signIn', { ...signIn, threadId: msg.threadId });
           // Deliberately does NOT flip to idle. A turn publishes each of its
           // text steps as it arrives, and after a mid-turn message the exchange
           // runs another turn — so a reply landing is not evidence the work is
