@@ -43,7 +43,10 @@ export function engineCall(
 ): Promise<CaptureResult> {
   const environment = hostEnvironment();
   return captureProgram(environment, DOCKER, args, {
-    cwd: environment.workspaceRoot(),
+    // This process's own directory, which is certain to exist. Where the
+    // engine's client runs makes no difference to the subcommand, and the
+    // agent's workspace is not a host path under every environment.
+    cwd: process.cwd(),
     env: { ...environment.baseEnv(), ...options.env },
     timeoutMs: options.timeoutMs,
     limitBytes: CONTROL_OUTPUT_LIMIT,

@@ -5,6 +5,7 @@
 import type { ExecutionEnvironment } from '../execution-environment';
 import { localBaseEnv } from './local-env';
 import { localFiles } from './local-files';
+import { localAgentPaths } from './local-paths';
 import { runLocalProgram, runLocalShell } from './local-process';
 import { prepareLocalWorkspace, resolveLocalWorkspaceRoot } from './local-workspace';
 
@@ -13,6 +14,7 @@ export function createLocalEnvironment(): ExecutionEnvironment {
     id: 'local',
     displayName: 'local',
     workspaceRoot: resolveLocalWorkspaceRoot,
+    paths: localAgentPaths,
     prepareWorkspace: prepareLocalWorkspace,
     // Nothing to bring up or tear down: a command here is a child of this
     // process, and the filesystem is the one this process already has.

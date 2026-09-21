@@ -6,20 +6,26 @@
  * local implementation's — only the argv differs.
  *
  * Signalling is the part that is not free. Killing the `docker exec` client
- * leaves the process it started running inside the container, so the payload
- * records its own process group id into a bind-mounted file and `kill()` sends
- * the signal with a second `docker exec`. `setsid` is what makes that id a
- * *group*: the wrapper becomes a session leader, so `$$` is the group id and
- * one signal reaches every grandchild — the same guarantee `processGroup: true`
- * gives locally.
+ * leaves the process it started running inside the container, so the signal
+ * is delivered by a second `docker exec`, which has to find the right process
+ * once it is in there. The wrapper records its own id into a file in the
+ * container before it starts the command, and the kill reads that file on the
+ * same side. `setsid` is what makes one signal reach every grandchild: the
+ * wrapper becomes a session leader, so `$$` is the process-group id — the
+ * guarantee `processGroup: true` gives locally.
+ *
+ * The id has to be written down rather than looked up, because `exec`
+ * replaces the command line: a name given to the wrapper is gone the moment
+ * the command starts, while the pid it already wrote is still the group's.
  */
 import { randomUUID } from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
 import { logger } from '../../../logger';
 import type { ExecProcess, RunOptions } from '../execution-environment';
 import { runLocalProgram } from '../local/local-process';
 import { DOCKER } from './engine';
+
+/** How long the signalling `docker exec` gets before it is abandoned. */
+const KILL_TIMEOUT_MS = 10_000;
 
 /**
  * `$1` is where to write the group id; everything after it is the program and
@@ -28,13 +34,29 @@ import { DOCKER } from './engine';
  */
 const RECORD_PGID = 'echo $$ > "$1"; shift; exec "$@"';
 
-/** How long the signalling `docker exec` gets before it is abandoned. */
-const KILL_TIMEOUT_MS = 10_000;
+/**
+ * Read the group id the wrapper recorded and signal the whole group.
+ *
+ * `$1` is the file, `$2` the signal name. The leader's pid is the group id, so
+ * the negative pid reaches every descendant. Exit 1 when the file holds
+ * nothing, which is a command that has already ended or has yet to start.
+ */
+const SIGNAL_GROUP =
+  'p=$(cat "$1" 2>/dev/null); [ -n "$p" ] || exit 1; kill -"$2" -"$p"';
+
+/**
+ * Where a command records its group id, inside the container.
+ *
+ * Nothing outside reads it, so it needs no volume — and nothing removes it
+ * either: the file is a handful of bytes and the container is rebuilt on every
+ * restart, which is cheaper than a second `docker exec` per command to tidy up.
+ */
+function pidFileFor(id: string): string {
+  return `/tmp/prism-exec-${id}.pid`;
+}
 
 export interface DockerExecContext {
   container: string;
-  /** Bind-mounted at the same path on both sides, so the host can read the file. */
-  runDir: string;
 }
 
 export function runDockerShell(
@@ -57,7 +79,7 @@ export function runDockerProgram(
 }
 
 function exec(payload: string[], options: RunOptions, ctx: DockerExecContext): ExecProcess {
-  const pidFile = path.join(ctx.runDir, `${randomUUID()}.pid`);
+  const pidFile = pidFileFor(randomUUID());
 
   // `-e NAME` without a value tells the engine to take it from its own client's
   // environment, which is the child we spawn below — so a credential reaches
@@ -88,16 +110,17 @@ function exec(payload: string[], options: RunOptions, ctx: DockerExecContext): E
     ...payload,
   ];
 
+  // The engine's client is a host process, so it is started in a host
+  // directory — `-w` above is what puts the command in the caller's cwd, which
+  // is a path inside the container and exists nowhere out here.
+  //
   // The engine's client always reads our stdin, so it is piped whatever the
   // caller asked for; `-i` above is what decides whether the container sees it.
   const client = runLocalProgram(DOCKER, argv, {
-    cwd: options.cwd,
+    cwd: process.cwd(),
     env: { ...process.env, ...options.env },
     stdin: options.stdin,
   });
-
-  const cleanUp = () => fs.promises.rm(pidFile, { force: true }).catch(() => {});
-  void client.closed.then(cleanUp);
 
   return {
     get stdin() {
@@ -122,21 +145,15 @@ function exec(payload: string[], options: RunOptions, ctx: DockerExecContext): E
 }
 
 /**
- * Signal the command, by its process group inside the container when that
- * group is known and by the engine's client when it is not.
+ * Signal the command's process group inside the container.
  *
- * The fallback is what makes the kill unconditional. A caller kills to *end*
- * the run — `captureShell` does it on its timeout and on a cancel, then waits
- * on the same process — so a signal that reaches nothing leaves that caller
- * waiting for a command it already gave up on. The group id is missing for
- * about as long as the engine takes to start the payload, and a cancel can
- * land inside that window.
- *
- * Killing the client does not reach into the container, so a payload that
- * starts after that is left running. It is a few hundred milliseconds of
- * exposure against a container the runtime removes on the way out, and the
- * payload's first write to a closed pipe usually ends it anyway — worth it to
- * make the kill an answer rather than a maybe.
+ * A terminating signal has to end something the caller is waiting on, and the
+ * group kill alone cannot promise that: between the engine starting and the
+ * wrapper running, the file holds nothing. `SIGKILL` therefore also kills
+ * the engine's client, which settles `ended` and `closed` whatever happened
+ * inside. It is left out of the gentler signals so a command still gets to
+ * flush its output on `SIGTERM`, and `captureShell` escalates to `SIGKILL`
+ * after its grace period, so the guarantee holds with that delay at worst.
  */
 function killPayload(
   container: string,
@@ -144,40 +161,24 @@ function killPayload(
   signal: NodeJS.Signals,
   client: ExecProcess,
 ): boolean {
-  const pgid = readGroupId(pidFile);
-  if (pgid === null) return client.kill(signal);
-
-  // Through a shell, using its builtin `kill`, and with the `SIG` prefix
-  // stripped: that is the POSIX spelling every shell accepts, while the
-  // separate `kill` binaries disagree — Debian's procps rejects
-  // `kill -SIGKILL -<pgid>` outright and wants `-- ` before a negative pid.
+  // POSIX spelling, which every shell's builtin `kill` accepts, while the
+  // separate binaries disagree — Debian's procps rejects `kill -SIGKILL` and
+  // wants `--` before a negative pid.
   const name = signal.replace(/^SIG/, '');
   const signaller = runLocalProgram(
     DOCKER,
-    ['exec', container, 'sh', '-c', `kill -${name} -${pgid}`],
+    ['exec', container, 'sh', '-c', SIGNAL_GROUP, 'prism-kill', pidFile, name],
     { cwd: process.cwd(), env: process.env, stdin: 'ignore' },
   );
   const abandon = setTimeout(() => signaller.kill('SIGKILL'), KILL_TIMEOUT_MS);
   abandon.unref();
   void signaller.ended.then((end) => {
     clearTimeout(abandon);
-    // Exit 1 is the ordinary "no such process": the group ended between the
-    // read and the signal. Anything else is worth a line.
+    // Exit 1 is the ordinary "nothing to signal": the command ended between
+    // the decision and the signal. Anything else is worth a line.
     if (end.error) logger.warn({ err: end.error, container }, '[Docker] could not signal');
   });
-  return true;
-}
 
-/**
- * The payload's process group id, or null while the wrapper has yet to record
- * one — which also covers a command that has ended and cleaned its file up.
- */
-function readGroupId(pidFile: string): string | null {
-  let recorded: string;
-  try {
-    recorded = fs.readFileSync(pidFile, 'utf8').trim();
-  } catch {
-    return null;
-  }
-  return /^\d+$/.test(recorded) ? recorded : null;
+  if (signal === 'SIGKILL') return client.kill(signal);
+  return true;
 }

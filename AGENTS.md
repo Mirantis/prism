@@ -55,10 +55,10 @@ to clear.
   `runProgram`, and a read or write goes through `env.files` when the agent's own
   commands have to see the same bytes: the workspace, the attachment scratch dir,
   skills, plugins and the saved copies of oversized tool results. The database
-  and the runtime's own processes — the updater, the meeting and computer stacks,
-  a plugin's MCP children — stay outside. `capture.ts` is the one bounded, timed,
-  cancellable run, shared by `shell_exec` and every probe. A new environment is
-  one folder plus one entry in the selector.
+  and the runtime's own processes — the updater, the meeting and computer stacks
+  — stay outside. `capture.ts` is the one bounded, timed, cancellable run,
+  shared by `shell_exec` and every probe. A new environment is one folder plus
+  one entry in the selector.
 - **An environment is chosen per deployment, and per path.** `detect()` prefers
   `docker` when an engine answers, stays `local` when the runtime is itself in a
   container, and takes `EXECUTION_ENVIRONMENT` over both. Selection is async, so
@@ -69,14 +69,28 @@ to clear.
   turn. A call site holding a cwd asks `getExecutionEnvironmentFor(cwd)`
   instead, because an environment serves only part of the filesystem and a
   thread rooted outside it runs on the host.
-- **Docker keeps files on the host.** Every path the container serves is
-  bind-mounted at the identical absolute path, so no code translates one into
-  the other and the container holds nothing durable — its `files` member *is*
-  the local filesystem. The database, the media store, the plugin scratch and
-  the browser profiles are not mounted. A command is one `docker exec` under
-  `setsid --wait`, recording its process group into a mounted pid file so a
-  kill can reach inside; the image runs tini as PID 1, because everything the
-  agent leaves behind is re-parented there and `sleep` reaps nothing.
+- **Docker keeps the agent's storage in named volumes.** Every durable path is
+  a volume the engine owns, mounted at a fixed path under `/prism`
+  (`docker/volumes.ts`), so the environment works on a remote engine and costs
+  no host bind mount on macOS. The runtime cannot open those files, so
+  `docker/docker-files.ts` serves `ExecutionFiles` through one `docker exec` per
+  call — affordable because no such path is hot. `Dockerfile.exec` creates each
+  mount point, which is what makes a fresh volume writable by a container
+  running as the runtime's uid, and that list has to stay in step with
+  `CONTAINER_PATHS`. The volumes outlive the container: `shutdown` removes the
+  container alone. The database, the media store, the plugin scratch and the
+  browser profiles stay on the host and out of the container entirely. A command
+  is one `docker exec` under `setsid --wait`, recording its process group into a
+  pid file **inside** the container that the kill reads on the same side — `exec`
+  replaces a command line, so a name given to the wrapper is gone the moment the
+  payload starts, while the pid it wrote is still the group's. The image runs
+  tini as PID 1, because everything the agent leaves behind is re-parented there
+  and `sleep` reaps nothing.
+- **An environment owns the agent's directories, not just its workspace.**
+  `environment.paths()` answers for skills, plugins, saved tool outputs and each
+  coding agent's home; `lib/data-dir.ts` keeps what is the runtime's alone. A
+  plugin's MCP server therefore starts in the environment too
+  (`exec-stdio-transport.ts`), since its files are the environment's.
 - **Prove an option is needed before you add it.** A flag, a setting or an env
   var has to show that no existing product behavior, no provider selection and
   no better default can cover the case. Each one is a fork in the code and a
@@ -898,16 +912,18 @@ src/
 │   │       ├── home.ts        # Where the CLI keeps its state, resolved off the env the CLI will run with
 │   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (gate mode → permission flags, plan-only instruction), the stream-json parser, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink
 │   ├── execution-environments/ # Where a command runs and what filesystem it sees, plus the shared contract and the selector
-│   │   ├── execution-environment.ts # The contract: `runShell` / `runProgram` returning an `ExecProcess` (`ended` for exit accounting, `closed` once the pipes drain), and `ExecutionFiles`
+│   │   ├── execution-environment.ts # The contract: `runShell` / `runProgram` returning an `ExecProcess` (`ended` for exit accounting, `closed` once the pipes drain), `ExecutionFiles`, and `paths()` — the agent's directories in this environment
+│   │   ├── exec-stdio-transport.ts # MCP stdio over `runProgram`, so a plugin's server runs where its files are
 │   │   ├── get-execution-environment.ts # Selector: derives the environment (no setting), one instance per process
 │   │   ├── capture.ts         # The one bounded, timed, cancellable run — `shell_exec` and every probe format their own result out of it
 │   │   ├── workspace.ts       # `resolveWorkspace`: the single owner of the per-thread-vs-default fallback
 │   │   ├── local/             # Commands as children of this process, on the filesystem it sees
-│   │   └── docker/            # Commands in a container, files still on the host
+│   │   └── docker/            # Commands in a container, and its storage in named volumes
 │   │       ├── detect.ts      # Which environment serves this deployment, in four steps
 │   │       ├── engine.ts      # The `docker` CLI, always run on the host
 │   │       ├── container.ts   # The container's lifetime, which is the runtime's
-│   │       ├── mounts.ts      # What it can see, and `servesPath`
+│   │       ├── volumes.ts     # The named volumes, their container paths, and `servesPath`
+│   │       ├── docker-files.ts # `ExecutionFiles` over `docker exec`, one call per operation
 │   │       ├── docker-env.ts  # What a command inherits; a longer deny-list than local's
 │   │       └── docker-process.ts # `docker exec` under `setsid --wait`, and the pid-file kill
 │   ├── embedding-providers/    # Memory-embedding vendors, a feature of their own decoupled from the chat provider (`EMBEDDING_PROVIDER`)

@@ -7,7 +7,7 @@ import { FakeChild } from '../../../test-utils/fake-child';
 import type { CodingAgentEvent, CodingAgentTask } from '../coding-agent';
 import { createCodexAgent } from './codex-agent';
 import { fakeExecutionEnvironment, type FakeRun } from '../../../test-utils/fake-execution-environment';
-import { resolveCodexHome } from './credentials';
+import { localFiles } from '../../execution-environments/local/local-files';
 import { trackEvent } from '../../telemetry';
 
 vi.mock('../../telemetry', () => ({ trackEvent: vi.fn() }));
@@ -43,10 +43,10 @@ describe('Codex adapter', () => {
   ] as const)('uses %s mode with the %s gate', async (mode, gateMode, sandbox) => {
     const child = new FakeChild();
     const spawner = vi.fn<FakeRun>(() => child.asExecProcess());
-    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner })).run({ ...task, mode, gateMode });
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner, paths: { codexHome: authHome }, files: localFiles })).run({ ...task, mode, gateMode });
     expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
       'exec', '--json', 'approval_policy="never"', `sandbox_mode="${sandbox}"`,
-    ]), { cwd: '/work', env: { OPENAI_API_KEY: 'test-key', CODEX_API_KEY: 'test-key', CODEX_HOME: resolveCodexHome(task.env) }, stdin: 'pipe' });
+    ]), { cwd: '/work', env: { OPENAI_API_KEY: 'test-key', CODEX_API_KEY: 'test-key', CODEX_HOME: authHome }, stdin: 'pipe' });
     child.finish(1);
     await Array.fromAsync(run.events);
   });
@@ -96,9 +96,13 @@ describe('Codex adapter', () => {
     }));
     const child = new FakeChild();
     const spawner = vi.fn<FakeRun>(() => child.asExecProcess());
-    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner })).run({ ...task, env: {
-      CODEX_HOME: authHome, OPENAI_API_KEY: apiKey, AWS_PROFILE: 'test-profile',
-    } });
+    const agent = createCodexAgent(
+      fakeExecutionEnvironment({ runProgram: spawner, paths: { codexHome: authHome }, files: localFiles }),
+    );
+    // The saved login is read when availability is probed, which is what a
+    // task's argv then reflects.
+    await agent.isAvailable({ AWS_PROFILE: 'test-profile' });
+    const run = agent.run({ ...task, env: { OPENAI_API_KEY: apiKey, AWS_PROFILE: 'test-profile' } });
     const args = spawner.mock.calls[0][1] as string[];
     expect(args).toContain('model_provider="openai"');
     expect(args.includes('forced_login_method="api"')).toBe(Boolean(apiKey));
@@ -136,8 +140,11 @@ describe('Codex adapter', () => {
   it('reports a saved-login failure once', async () => {
     fs.writeFileSync(path.join(authHome, 'auth.json'), '{}');
     const child = new FakeChild();
-    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() })).run({ ...task,
-      env: { CODEX_HOME: authHome } });
+    const agent = createCodexAgent(
+      fakeExecutionEnvironment({ runProgram: () => child.asExecProcess(), paths: { codexHome: authHome }, files: localFiles }),
+    );
+    await agent.isAvailable({});
+    const run = agent.run({ ...task, env: {} });
     child.emitLine(JSON.stringify({ type: 'turn.failed', error: { message: 'Login required' } }));
     child.finish(1);
     expect((await Array.fromAsync(run.events)).at(-1)).toMatchObject({ stopReason: 'error' });
@@ -151,8 +158,11 @@ describe('Codex adapter', () => {
   it('reports cancellation separately from a failed saved login', async () => {
     fs.writeFileSync(path.join(authHome, 'auth.json'), '{}');
     const child = new FakeChild();
-    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() })).run({ ...task,
-      env: { CODEX_HOME: authHome } });
+    const agent = createCodexAgent(
+      fakeExecutionEnvironment({ runProgram: () => child.asExecProcess(), paths: { codexHome: authHome }, files: localFiles }),
+    );
+    await agent.isAvailable({});
+    const run = agent.run({ ...task, env: {} });
     expect(run.exited).toBe(false);
     run.stop();
     child.finish(1);
@@ -222,17 +232,23 @@ describe('Codex adapter', () => {
     expect(events[1].at(-1)).toMatchObject({ message: 'Second' });
   });
 
-  it('prepares an isolated home with shared skills', () => {
+  it('prepares an isolated home with shared skills', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-codex-test-'));
     try {
       vi.stubEnv('CODEX_HOME', '');
       const skillsDir = path.join(root, 'skills');
+      const codexHome = path.join(root, '.codex');
       fs.mkdirSync(skillsDir);
-      const home = createCodexAgent().prepareHome({ dataDir: root, skillsDir });
-      expect(home).toEqual({ configDir: path.join(root, '.codex'), skillsLinked: true });
+      // The real local filesystem behind a fake environment, so the link is a
+      // link rather than a recorded call.
+      const home = await createCodexAgent(
+        fakeExecutionEnvironment({ paths: { skillsDir, codexHome }, files: localFiles }),
+      ).prepareHome();
+
+      expect(home).toEqual({ configDir: codexHome, skillsLinked: true });
       expect(fs.realpathSync(path.join(home.configDir, 'skills'))).toBe(fs.realpathSync(skillsDir));
-      // Nothing is written to this process's env: a task states the home on
-      // its own env, so a run in another environment does not inherit ours.
+      // Nothing is written to this process's env: the home comes from the
+      // environment, so a run elsewhere does not inherit ours.
       expect(process.env.CODEX_HOME).toBe('');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

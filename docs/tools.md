@@ -71,9 +71,9 @@ Create and manage its own [scheduled tasks](scheduled-tasks.md):
 ## Shell
 
 The agent can act on a real shell — this is what lets it do work rather than
-just talk about it. By default it works inside a workspace directory (the
-`workspace` folder in your install, or `/home/node` in the container): relative
-paths resolve from there.
+just talk about it. By default it works inside a workspace directory — the
+`workspace` folder in your install, or `/prism/workspace` when commands run in a
+container: relative paths resolve from there.
 
 - **Run a command** — execute a shell command and get back stdout, stderr, and
   the exit code. Commands have a timeout (default ~30s, up to 20 minutes) and
@@ -86,25 +86,33 @@ paths resolve from there.
 
 ### Where commands run
 
-When Docker is available, the agent's commands run in a container and the files
-they work on stay on your machine — the workspace, your skills and your plugins
-are mounted into it, so a command sees the same files you do. Nothing to set up:
-the runtime finds the engine and uses it. Set `EXECUTION_ENVIRONMENT=local` to
-keep commands on the host, or `docker` to require the container.
+When Docker is available, the agent's commands run in a container, and so does
+everything it works with: the workspace at `/prism/workspace`, your skills, your
+plugins, and each coding agent's login. Nothing to set up — the runtime finds
+the engine and uses it. Set `EXECUTION_ENVIRONMENT=local` to keep commands on
+your machine, or `docker` to require the container.
 
-Two things follow. Anything written **outside** the mounted directories — in
-`/tmp` inside the container, say — is gone when the agent restarts, so keep work
-in the workspace. And a conversation you start with `prism` inside a repository
-runs its commands on the host instead, because that repository is not one of
-the mounted directories; the startup log says so when it happens.
+That storage is kept by Docker, not in a folder of yours, and it outlives the
+container: restart the agent, upgrade it, and the workspace is as the agent left
+it. To put a file in or take one out, run `docker cp` yourself — the agent has no
+Docker client inside the container, so it cannot. For example,
+`docker cp ./my-skill prism-agent-exec-<id>:/prism/skills/` installs a skill,
+which the agent then picks up without a restart. `docker ps` names the container.
 
-> **On confinement:** in a container, a command reaches the mounted directories
-> and nothing else of yours — not your home directory, and not the agent's own
-> database. On the host it is different: the file read/write/edit tools reject
-> paths outside the workspace, but running a command does not — `shell_exec` can
-> run anything the runtime's OS user is permitted to. There the workspace is a
-> default working directory rather than a boundary. Neither case limits the
-> network; for that, run Prism Agent under **[Lens Sandbox](lens-sandbox.md)**.
+Two things follow. Anything written **outside** `/prism` — in `/tmp` inside the
+container, say — is gone when the agent restarts, so keep work in the workspace.
+And a conversation you start with `prism` inside a repository runs its commands
+on your machine instead, because the container has no access to that repository;
+the startup log says so when it happens.
+
+> **On confinement:** in a container, a command reaches the agent's own storage
+> and nothing else of yours — not your files, not your home directory, and not
+> the agent's database. On your machine it is different: the file
+> read/write/edit tools reject paths outside the workspace, but running a
+> command does not — `shell_exec` can run anything the runtime's OS user is
+> permitted to. There the workspace is a default working directory rather than a
+> boundary. Neither case limits the network; for that, run Prism Agent under
+> **[Lens Sandbox](lens-sandbox.md)**.
 
 In the published container image, the shell comes with common tooling
 preinstalled — `git`, `gh` (GitHub CLI), `kubectl`, `aws`, `jq`, `yq`, and
@@ -140,8 +148,10 @@ pass `agent: "claude-code"` or `agent: "codex"` to choose one for a task, or omi
 The Docker image includes both CLIs; for a local installation, run
 `npm install -g @anthropic-ai/claude-code @openai/codex`.
 
-If you set `CLAUDE_CONFIG_DIR`, Claude Code uses that directory; link its `skills`
-directory to your Prism skills directory to share installed skills.
+If you set `CLAUDE_CONFIG_DIR`, Claude Code uses that directory and Prism leaves
+it untouched; link its `skills` directory to your Prism skills directory to share
+installed skills. When commands run in a container, each CLI keeps its login
+with the agent's other storage and that setting does not apply.
 
 - **Start** a coding task with a prompt, in `edit` or `plan` mode, with a
   turn budget for Claude Code.

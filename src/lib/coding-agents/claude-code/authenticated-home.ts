@@ -1,6 +1,5 @@
 import { captureProgram } from '../../execution-environments/capture';
 import { getExecutionEnvironment } from '../../execution-environments/get-execution-environment';
-import { resolveClaudeConfigDir } from './home';
 
 /** How long the CLI gets to answer before the probe gives up on it. */
 const PROBE_TIMEOUT_MS = 5_000;
@@ -16,7 +15,7 @@ const PROBE_OUTPUT_LIMIT = 64 * 1024;
  */
 export async function hasAuthenticatedClaudeHome(env: NodeJS.ProcessEnv): Promise<boolean> {
   const environment = getExecutionEnvironment();
-  const configDir = resolveClaudeConfigDir(env);
+  const configDir = environment.paths().claudeHome;
   try {
     await environment.files.stat(configDir);
   } catch {

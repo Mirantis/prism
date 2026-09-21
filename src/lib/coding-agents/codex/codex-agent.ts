@@ -1,13 +1,12 @@
 import { bedrockRegion } from '../bedrock-credentials';
-import fs from 'fs';
-import path from 'path';
 import { config } from '../../../config';
 import { trackEvent } from '../../telemetry';
-import { ensureSymlink } from '../../data-dir';
 import { runCli } from '../cli-run';
 import type { ExecutionEnvironment } from '../../execution-environments/execution-environment';
 import type { CodingAgent, CodingAgentEvent, CodingAgentTask } from '../coding-agent';
-import { codexApiKey, codexAuthMethod, resolveCodexHome } from './credentials';
+import { codexApiKey, codexAuthMethod, hasSavedCodexLogin } from './credentials';
+import { getExecutionEnvironment } from '../../execution-environments/get-execution-environment';
+import { prepareSharedSkillsHome } from '../shared-skills-home';
 
 interface StreamLine {
   type: string;
@@ -18,18 +17,24 @@ interface StreamLine {
 }
 
 export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgent {
+  const target = () => environment ?? getExecutionEnvironment();
+  // Read once, when availability is probed at boot: a task's argv is built
+  // synchronously and the home may be a round trip away.
+  let savedLogin = false;
+
   return {
     id: 'codex',
     displayName: 'Codex',
-    prepareHome: ({ dataDir, skillsDir }) => {
-      const configDir = resolveCodexHome(process.env, dataDir);
-      fs.mkdirSync(configDir, { recursive: true });
-      const skillsLinked = ensureSymlink(skillsDir, path.join(configDir, 'skills'));
-      return { configDir, skillsLinked };
+    prepareHome: () => {
+      const env = target();
+      return prepareSharedSkillsHome(env, env.paths().codexHome, process.env.CODEX_HOME);
     },
-    isAvailable: (env) => Promise.resolve(Boolean(codexAuthMethod(env))),
+    isAvailable: async (env) => {
+      savedLogin = await hasSavedCodexLogin(target());
+      return Boolean(codexAuthMethod(env, savedLogin));
+    },
     run: (task) => {
-      const authMethod = codexAuthMethod(task.env);
+      const authMethod = codexAuthMethod(task.env, savedLogin);
       const startedAt = Date.now();
       const props = { 'task.id': task.taskId, 'auth.method': authMethod ?? 'none' };
       trackEvent('codex task started', config.ownerUserId, props);
@@ -41,7 +46,7 @@ export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgen
         cwd: task.workdir,
         env: {
           ...task.env,
-          CODEX_HOME: resolveCodexHome(task.env),
+          CODEX_HOME: target().paths().codexHome,
           CODEX_API_KEY: codexApiKey(task.env),
           ...(task.debug ? { RUST_LOG: 'debug' } : {}),
         },

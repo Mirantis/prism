@@ -12,18 +12,22 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-const { mockCreateMCPClient, MockStdioTransport, transportArgs } = vi.hoisted(() => {
+const { mockCreateMCPClient, MockExecTransport, transportArgs } = vi.hoisted(() => {
   const transportArgs: Record<string, unknown>[] = [];
-  class MockStdioTransport {
-    constructor(config: Record<string, unknown>) {
+  // The second argument is what the service resolved for this server; the
+  // first is the execution environment the server will run in.
+  class MockExecTransport {
+    constructor(_environment: unknown, config: Record<string, unknown>) {
       transportArgs.push(config);
     }
   }
-  return { mockCreateMCPClient: vi.fn(), MockStdioTransport, transportArgs };
+  return { mockCreateMCPClient: vi.fn(), MockExecTransport, transportArgs };
 });
 
 vi.mock('@ai-sdk/mcp', () => ({ experimental_createMCPClient: mockCreateMCPClient }));
-vi.mock('@ai-sdk/mcp/mcp-stdio', () => ({ Experimental_StdioMCPTransport: MockStdioTransport }));
+vi.mock('../../lib/execution-environments/exec-stdio-transport', () => ({
+  ExecStdioTransport: MockExecTransport,
+}));
 
 import { pluginMcpService, __test } from '../plugin-mcp.service';
 import { pluginCatalogService, PLUGIN_SCHEMA_1_0_0 } from '../plugin-catalog.service';

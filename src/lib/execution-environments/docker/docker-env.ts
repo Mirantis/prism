@@ -25,6 +25,10 @@ const HOST_PROCESS_VARS = [
   'TERM',
   'SHLVL',
   '_',
+  // Both name a directory on this machine, and the container keeps each
+  // coding agent's home in a volume of its own.
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME',
 ] as const;
 
 /** The runtime's own wiring: about the server, meaningless to a command. */

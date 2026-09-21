@@ -131,14 +131,14 @@ const initialize = async () => {
     await ensureCodingAgentsDetected();
     for (const name of config.availableCodingAgents) {
       const codingAgent = getCodingAgent(name);
-      const home = codingAgent.prepareHome({ dataDir: dirs.dataDir, skillsDir: dirs.skillsDir });
+      const home = await codingAgent.prepareHome();
       logger.info({ agent: name, ...home }, '[Startup] coding agent');
     }
     // Scanning here also surfaces any malformed plugin's warning at boot rather
     // than on whichever turn first happens to build a system prompt.
     logger.info(
       '[Startup] plugins dir: %s (%d installed)',
-      dirs.pluginsDir,
+      getExecutionEnvironment().paths().pluginsDir,
       (await pluginCatalogService.getPlugins()).length,
     );
 

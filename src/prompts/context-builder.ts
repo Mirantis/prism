@@ -14,8 +14,8 @@ import type { AttachmentMeta } from '../services/attachment.service';
 import { humanFileSize } from '../services/attachment.service';
 import { SlackTriggerMessage } from '../types';
 import { skillCatalogService, type SkillSource } from '../services/skill-catalog.service';
+import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
-import { resolveSkillsDir, resolvePluginsDir } from '../lib/data-dir';
 import { toModelToolName } from '../lib/tool-names';
 import { renderLegacyStoredOutput } from '../lib/tool-output-limiter';
 
@@ -357,7 +357,7 @@ const MAX_PLUGINS_LISTED = 50;
  */
 async function buildSkillsSection(workspaceRoot?: string, lockedIn = false): Promise<string> {
   const skills = await skillCatalogService.getCatalog(workspaceRoot);
-  const skillsDir = resolveSkillsDir();
+  const skillsDir = getExecutionEnvironment().paths().skillsDir;
 
   // Where skills live + how to add more. Phrased around the canonical dir so
   // it's correct regardless of where an ecosystem installer fetches to — the
@@ -440,7 +440,7 @@ async function buildSkillsSection(workspaceRoot?: string, lockedIn = false): Pro
  * are not using beyond knowing it exists.
  */
 async function buildPluginsSection(): Promise<string> {
-  const pluginsDir = resolvePluginsDir();
+  const pluginsDir = getExecutionEnvironment().paths().pluginsDir;
   const plugins = await pluginCatalogService.getPlugins();
 
   const install =

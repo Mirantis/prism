@@ -85,6 +85,7 @@ describe('writeToolOutput / readToolOutput', () => {
     // sibling and no readable id.
     __setExecutionEnvironmentForTests(
       fakeExecutionEnvironment({
+        paths: { toolOutputDir: resolveToolOutputDir() },
         files: { ...localFiles, rename: () => Promise.reject(new Error('boom')) },
       }),
     );

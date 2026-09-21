@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { codexAuthMethod, resolveCodexHome } from './credentials';
+import { codexAuthMethod, hasSavedCodexLogin, resolveCodexHome } from './credentials';
+import { fakeExecutionEnvironment } from '../../../test-utils/fake-execution-environment';
+import { localFiles } from '../../execution-environments/local/local-files';
 
 let dataDir: string;
 beforeEach(() => {
@@ -15,18 +17,31 @@ afterEach(() => {
 });
 
 describe('Codex credentials', () => {
-  it('finds a saved login in the default Prism home', () => {
+  it('finds a saved login in the environment the CLI will run in', async () => {
     const home = path.join(dataDir, '.codex');
     fs.mkdirSync(home);
     fs.writeFileSync(path.join(home, 'auth.json'), '{}');
     expect(resolveCodexHome({})).toBe(home);
-    expect(codexAuthMethod({})).toBe('saved');
+
+    // Read through the environment, not this process's filesystem: under a
+    // container the home is the container's.
+    const environment = fakeExecutionEnvironment({
+      paths: { codexHome: home },
+      files: localFiles,
+    });
+    expect(await hasSavedCodexLogin(environment)).toBe(true);
+    expect(codexAuthMethod({}, true)).toBe('saved');
   });
 
-  it('uses the explicit home even when the default has a saved login', () => {
+  it('reports no saved login when the home holds none', async () => {
     fs.mkdirSync(path.join(dataDir, '.codex'));
     fs.writeFileSync(path.join(dataDir, '.codex', 'auth.json'), '{}');
-    expect(codexAuthMethod({ CODEX_HOME: path.join(dataDir, 'other') })).toBeUndefined();
+    const elsewhere = fakeExecutionEnvironment({
+      paths: { codexHome: path.join(dataDir, 'other') },
+      files: localFiles,
+    });
+    expect(await hasSavedCodexLogin(elsewhere)).toBe(false);
+    expect(codexAuthMethod({}, false)).toBeUndefined();
   });
 
   it('resolves a relative home before the child changes working directory', () => {
@@ -34,7 +49,7 @@ describe('Codex credentials', () => {
   });
 
   it('uses Bedrock when a saved login and API key are unavailable', () => {
-    expect(codexAuthMethod({ AWS_PROFILE: 'test-profile' })).toBe('bedrock');
-    expect(codexAuthMethod({})).toBeUndefined();
+    expect(codexAuthMethod({ AWS_PROFILE: 'test-profile' }, false)).toBe('bedrock');
+    expect(codexAuthMethod({}, false)).toBeUndefined();
   });
 });

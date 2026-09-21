@@ -6,25 +6,22 @@
  * runtime's environment: the CLI picks up the same Bedrock or Anthropic
  * credentials the agent itself uses.
  *
- * Its home is `<data dir>/.claude`, pointed at through `CLAUDE_CONFIG_DIR`, so
- * the CLI's own state (sessions, `.claude.json`) stays out of the data-dir root
- * and the user's real `~/.claude` is never touched. The CLI discovers skills
- * under `$CLAUDE_CONFIG_DIR/skills`, which is a symlink to the runtime's skills
- * dir: both read the same bytes.
+ * Its home is the execution environment's `claudeHome`, pointed at through
+ * `CLAUDE_CONFIG_DIR`, so the CLI's own state (sessions, `.claude.json`) stays
+ * out of the data-dir root and the user's real `~/.claude` is never touched.
+ * The CLI discovers skills under `$CLAUDE_CONFIG_DIR/skills`, a symlink to the
+ * environment's skills dir: both read the same bytes.
  */
 
 import { claudeCodeEnvironment, hasClaudeCodeCredentials } from './credentials';
-import { resolveClaudeConfigDir } from './home';
 import { config } from '../../../config';
-import fs from 'fs';
-import path from 'path';
-import { ensureSymlink } from '../../data-dir';
 import { runCli } from '../cli-run';
+import { getExecutionEnvironment } from '../../execution-environments/get-execution-environment';
 import type { ExecutionEnvironment } from '../../execution-environments/execution-environment';
+import { prepareSharedSkillsHome } from '../shared-skills-home';
 import type {
   CodingAgent,
   CodingAgentEvent,
-  CodingAgentHome,
   CodingAgentRun,
   CodingAgentStopReason,
   CodingAgentTask,
@@ -58,7 +55,10 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
   return {
     id: 'claude-code',
     displayName: DISPLAY_NAME,
-    prepareHome,
+    prepareHome: () => {
+      const env = environment ?? getExecutionEnvironment();
+      return prepareSharedSkillsHome(env, env.paths().claudeHome, process.env.CLAUDE_CONFIG_DIR);
+    },
     isAvailable: hasClaudeCodeCredentials,
     run: (task: CodingAgentTask): CodingAgentRun =>
       runCli(
@@ -72,41 +72,13 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
             ...claudeCodeEnvironment(task.env),
             // Stated on the task's env rather than inherited from this
             // process: the CLI runs in the execution environment.
-            CLAUDE_CONFIG_DIR: resolveClaudeConfigDir(task.env),
+            CLAUDE_CONFIG_DIR: (environment ?? getExecutionEnvironment()).paths().claudeHome,
           },
           parseLine,
         },
         environment,
       ),
   };
-}
-
-function prepareHome(dirs: { dataDir: string; skillsDir: string }): CodingAgentHome {
-  // Report the operator's home and whether it links to the shared skills.
-  const override = process.env.CLAUDE_CONFIG_DIR;
-  if (override) {
-    return { configDir: override, skillsLinked: pointsAt(path.join(override, 'skills'), dirs.skillsDir) };
-  }
-
-  const configDir = resolveClaudeConfigDir(process.env, dirs.dataDir);
-  fs.mkdirSync(configDir, { recursive: true });
-
-  // Only the skills dir is linked into the config dir. Claude Code's own plugin
-  // layout is `plugins/repos/…` plus a `config.json`, so linking the runtime's
-  // Agent Plugins dir there would present it a tree it can't read — and a
-  // plugin's skills already reach the CLI through the skills catalog.
-  const skillsLinked = ensureSymlink(dirs.skillsDir, path.join(configDir, 'skills'));
-
-  return { configDir, skillsLinked };
-}
-
-/** Whether `candidate` resolves to the same directory as `target`. */
-function pointsAt(candidate: string, target: string): boolean {
-  try {
-    return fs.realpathSync(candidate) === fs.realpathSync(target);
-  } catch {
-    return false;
-  }
 }
 
 function buildArgs(task: CodingAgentTask): string[] {

@@ -24,7 +24,6 @@
 
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { resolveToolOutputDir } from './data-dir';
 import { getExecutionEnvironment } from './execution-environments/get-execution-environment';
 import { logger } from '../logger';
 
@@ -57,6 +56,15 @@ export interface SpillResult {
  * only the exact uuid shape passes, which leaves no room for a separator or a
  * traversal to be argued about.
  */
+/**
+ * The directory the saved copies go in, which belongs to the execution
+ * environment: the agent reads one back with the shell, so it has to be a path
+ * that environment's commands can open. Joined as POSIX for the same reason.
+ */
+function toolOutputDir(): string {
+  return getExecutionEnvironment().paths().toolOutputDir;
+}
+
 export function isToolOutputId(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
 }
@@ -66,7 +74,7 @@ export function isToolOutputId(id: string): boolean {
  * then renames, so a reader never sees a half-written copy.
  */
 export async function writeToolOutput(text: string): Promise<SpillResult> {
-  const dir = resolveToolOutputDir();
+  const dir = toolOutputDir();
   // Defensive: ensureDataDirs() creates this at boot, but its temp-dir fallback
   // can repin PRISM_DATA_DIR afterwards.
   await files().mkdir(dir);
@@ -108,7 +116,7 @@ function charBoundaryAtOrBefore(buf: Buffer, limit: number): number {
  * resolved against the shell workspace.
  */
 export function toolOutputPath(id: string): string {
-  return path.join(resolveToolOutputDir(), id);
+  return path.posix.join(toolOutputDir(), id);
 }
 
 /**
@@ -118,7 +126,7 @@ export function toolOutputPath(id: string): string {
  */
 export async function readToolOutput(id: string): Promise<string | null> {
   if (!isToolOutputId(id)) return null;
-  const full = path.join(resolveToolOutputDir(), id);
+  const full = path.posix.join(toolOutputDir(), id);
   try {
     await files().lstat(full);
   } catch {
@@ -133,11 +141,11 @@ export async function readToolOutput(id: string): Promise<string | null> {
  * referenced by nothing. The TTL sweep is the backstop for whatever this misses.
  */
 export async function removeToolOutputs(ids: readonly string[]): Promise<number> {
-  const dir = resolveToolOutputDir();
+  const dir = toolOutputDir();
   let removed = 0;
   for (const id of ids) {
     if (!isToolOutputId(id)) continue;
-    const full = path.join(dir, id);
+    const full = path.posix.join(dir, id);
     try {
       // Already gone is the expected case, so the count reports what was really
       // there rather than how many ids the caller named.
@@ -161,7 +169,7 @@ export async function removeToolOutputs(ids: readonly string[]): Promise<number>
  * Also sweeps `.tmp` files a crash left between write and rename.
  */
 export async function reapExpiredToolOutputs(ttlMs: number): Promise<number> {
-  const dir = resolveToolOutputDir();
+  const dir = toolOutputDir();
   let entries: string[];
   try {
     entries = (await files().readDir(dir)).map((entry) => entry.name);
