@@ -240,7 +240,8 @@ When('I ask Prism to read my mail using its computer', async ({ page }) => {
   const home = new HomePage(page);
   await home.typeMessage(
     `Use your computer to read my mail at ${site!.url}/mail and report what it says. ` +
-      'Ask me for the username and password when you need them.',
+      'It needs a sign-in you cannot do: call computer_help with credentials true so I can ' +
+      'give you the username and the password.',
   );
   await home.sendMessage();
   await home.waitForAgentResponse(180_000);
@@ -259,7 +260,8 @@ When('I ask Prism to read my files, whose sign-in asks in two screens', async ({
   const home = new HomePage(page);
   await home.typeMessage(
     `Use your computer to read my files at ${site!.url}/files and report what they say. ` +
-      'Ask me for the sign-in when you reach it.',
+      'It needs a sign-in you cannot do: call computer_help with credentials true so I can ' +
+      'give you the username and the password.',
   );
   await home.sendMessage();
   await home.waitForAgentResponse(180_000);
