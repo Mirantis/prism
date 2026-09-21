@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ConversationMessage } from '@/types';
+import type { ComputerStatus, ConversationMessage } from '@/types';
 import type { VoiceCall } from '@/hooks/use-voice-call';
 import type { VoiceEvent } from '@/hooks/use-websocket';
 
@@ -20,6 +20,9 @@ const { wsHolder } = vi.hoisted(() => ({
     // call through a ref. Captured here so a test can deliver one.
     onVoiceEvent: undefined as ((e: unknown) => void) | undefined,
     onVoiceAudio: undefined as ((f: ArrayBuffer) => void) | undefined,
+    // The state of the desktop arrives on the same socket. Captured so a test can
+    // deliver one without a runtime.
+    onComputerStatus: undefined as ((s: ComputerStatus) => void) | undefined,
     isTyping: false,
     sendFollowup: vi.fn(),
     sendVoiceStart: vi.fn(() => true),
@@ -33,10 +36,12 @@ vi.mock('@/hooks/use-websocket', () => ({
     onMessage?: (m: ConversationMessage) => void;
     onVoiceEvent?: (e: unknown) => void;
     onVoiceAudio?: (f: ArrayBuffer) => void;
+    onComputerStatus?: (s: ComputerStatus) => void;
   }) => {
     wsHolder.onMessage = opts.onMessage;
     wsHolder.onVoiceEvent = opts.onVoiceEvent;
     wsHolder.onVoiceAudio = opts.onVoiceAudio;
+    wsHolder.onComputerStatus = opts.onComputerStatus;
     return {
       status: 'connected',
       isTyping: wsHolder.isTyping,
@@ -57,9 +62,36 @@ vi.mock('@/lib/voice-audio', () => ({
   startVoiceAudio: async () => voiceAudio,
 }));
 
+// A computer-enabled agent, which is what puts the waiting banner's query on the page.
 vi.mock('@/lib/agent-context', () => ({
-  useAgent: () => ({ agentId: 'a1', userId: 'u1', name: 'Prism' }),
+  useAgent: () => ({ agentId: 'a1', userId: 'u1', name: 'Prism', hasComputer: true }),
 }));
+
+/** A desktop nobody is using. */
+const idleComputer: ComputerStatus = {
+  available: true,
+  running: false,
+  starting: false,
+  paused: false,
+  controller: null,
+  owner: null,
+  waiting: [],
+  help: [],
+};
+
+const { mockComputerRequest } = vi.hoisted(() => ({
+  mockComputerRequest: vi.fn(async () => ({
+    available: true,
+    running: false,
+    starting: false,
+    paused: false,
+    controller: null,
+    owner: null,
+    waiting: [],
+    help: [],
+  })),
+}));
+vi.mock('@/api/computer', () => ({ computerRequest: mockComputerRequest }));
 
 const { mockGetThread } = vi.hoisted(() => ({ mockGetThread: vi.fn() }));
 vi.mock('@/api/runtime-client', () => ({
@@ -191,6 +223,73 @@ describe('AgentChat mid-turn send (steering)', () => {
     await waitFor(() => expect(screen.getByTestId('list').textContent).toContain(':t1'));
 
     cleanup();
+  });
+});
+
+describe('AgentChat computer state', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    wsHolder.onComputerStatus = undefined;
+    wsHolder.isTyping = false;
+    mockGetThread.mockResolvedValue({ id: 't1', messages: [] });
+  });
+
+  function renderChat() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <AgentChat threadId="t1" />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('asks the runtime for the desktop state once and then waits for the socket', async () => {
+    vi.useFakeTimers();
+    try {
+      renderChat();
+
+      await vi.waitFor(() => expect(mockComputerRequest).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6000);
+      });
+
+      // Three times over the old two-second interval, and still one request.
+      expect(mockComputerRequest).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      cleanup();
+    }
+  });
+
+  it('raises the waiting banner from a frame for the viewed thread, and for no other', async () => {
+    try {
+      renderChat();
+      await waitFor(() => expect(wsHolder.onComputerStatus).toBeTypeOf('function'));
+
+      act(() =>
+        wsHolder.onComputerStatus!({
+          ...idleComputer,
+          running: true,
+          waiting: [{ id: 'use-1', threadId: 't1', mode: 'cron' }],
+        }),
+      );
+      // A cron turn queued for the desktop: the frame reports the wait whichever
+      // caller is in it.
+      await waitFor(() =>
+        expect(screen.getByRole('status').textContent).toContain('Waiting for the computer'),
+      );
+
+      act(() =>
+        wsHolder.onComputerStatus!({
+          ...idleComputer,
+          running: true,
+          waiting: [{ id: 'use-2', threadId: 't2', mode: 'chat' }],
+        }),
+      );
+      await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+    } finally {
+      cleanup();
+    }
   });
 });
 
