@@ -259,7 +259,8 @@ When('I dismiss the sign-in request and ask about pending computer help', async 
     .getByLabel('Computer help', { exact: true })
     .getByRole('button', { name: 'Dismiss', exact: true })
     .click();
-  await expect(page.getByLabel('Computer help', { exact: true })).toContainText('Dismissed');
+  await expect(page.getByLabel('Computer help status')).toContainText('Computer help dismissed');
+  await expect(page.getByLabel('Computer help panel')).toHaveCount(0, { timeout: 15_000 });
   const home = new HomePage(page);
   await home.typeMessage('Do you still need me to sign in, or is that help request closed?');
   await home.sendMessage();
