@@ -379,8 +379,10 @@ export interface ComputerHelp {
   id: string;
   reason: string;
   tab?: number;
-  /** A sign-in answered with a username and a password rather than at the keyboard. */
+  /** A sign-in answered here rather than at the keyboard. */
   credentials?: boolean;
+  /** What the page asks for. A second step of a sign-in asks for the password alone. */
+  credentialFields?: 'both' | 'password';
   /** Where those are typed. */
   site?: string;
   threadId?: string;

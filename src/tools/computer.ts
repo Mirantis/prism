@@ -120,7 +120,7 @@ export function getComputerTools(
   });
   result.computer_help = tool({
     description:
-      'When computer work is blocked by a step only the user can complete, ask them for help, such as signing in, solving a CAPTCHA, or approving a device. Preserves this help request and releases the computer for independent work. Explain what the user needs to do. Continue independent tasks; when only blocked work remains, end this turn and wait for the user. Never ask for passwords in chat. Set credentials when a sign-in form asking for a username and a password is the whole of what blocks you: the user then types them where they are and the runtime enters them for you. A CAPTCHA, a device approval, or a second factor leaves it false.',
+      'When computer work is blocked by a step only the user can complete, ask them for help, such as signing in, solving a CAPTCHA, or approving a device. Set credentials for any sign-in screen — one asking for a username and a password, for the username alone, or for the password alone — and the user is asked for their username and password where they are, and the runtime types both in, screen by screen. Never ask for either in chat and never offer to try one. A CAPTCHA, a device approval, or a second factor leaves credentials false. Preserves this help request and releases the computer for independent work. Explain what the user needs to do. Continue independent tasks; when only blocked work remains, end this turn and wait for the user.',
     inputSchema: z.object({
       reason: z.string().min(1).max(2000),
       tab: z.number().int().positive().optional(),

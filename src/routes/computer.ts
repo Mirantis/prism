@@ -78,6 +78,8 @@ computerRouter.post('/computer/stop', (_req, res) => {
 /** What the user is told when a sign-in did not go in. */
 const SIGN_IN_REFUSALS: Record<Exclude<SignInOutcome, 'filled'>, string> = {
   no_form: 'That page has no sign-in form any more. Open Computer and take control instead.',
+  no_password_step:
+    'That sign-in took the username and never asked for the password. Open Computer and take control instead.',
   tab_gone: 'The tab needing that sign-in has closed. Open Computer and take control instead.',
   site_changed: 'That tab is on another site now. Open Computer and take control instead.',
   in_use: 'Somebody has control of the computer. Hand it back, then try again.',

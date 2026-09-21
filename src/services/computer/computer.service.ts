@@ -11,6 +11,7 @@ import { trackEvent } from '../../lib/telemetry';
 export type SignInOutcome =
   | 'filled'
   | 'no_form'
+  | 'no_password_step'
   | 'tab_gone'
   | 'site_changed'
   | 'in_use'
@@ -130,8 +131,10 @@ class ComputerService {
     return this.computer?.tabTarget(tab);
   }
 
-  /** The site of a sign-in the user can answer with a username and a password. */
-  async signInSite(tab?: number): Promise<string | undefined> {
+  /** The sign-in on a tab, when it holds one the user can answer. */
+  async signInForm(
+    tab?: number,
+  ): Promise<{ origin: string; fields: 'both' | 'password' } | undefined> {
     return this.computer?.signInForm(tab);
   }
 

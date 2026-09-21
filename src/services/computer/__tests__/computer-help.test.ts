@@ -22,7 +22,7 @@ vi.mock('../computer.service', async () => {
       handBack: (id: string) => access.handBack(id),
       continueFromChat: () => access.handBack(access.human ?? 'chat'),
       helpTarget: vi.fn(),
-      signInSite: vi.fn(),
+      signInForm: vi.fn(),
     },
   };
 });
@@ -117,7 +117,7 @@ it('rejects another viewer before resolving the help request', async () => {
 describe('a help request a username and a password answer', () => {
   beforeEach(() => {
     vi.mocked(computerService.helpTarget).mockResolvedValue('target-1');
-    vi.mocked(computerService.signInSite).mockResolvedValue(undefined);
+    vi.mocked(computerService.signInForm).mockResolvedValue(undefined);
   });
 
   const ask = (reason: string, credentials?: boolean) =>
@@ -128,13 +128,26 @@ describe('a help request a username and a password answer', () => {
       credentials,
     );
 
-  it('records the sign-in and the site of the tab it goes to', async () => {
-    vi.mocked(computerService.signInSite).mockResolvedValue('https://mail.example.com');
+  it('records the sign-in, the site it goes to, and the fields the page asks for', async () => {
+    vi.mocked(computerService.signInForm).mockResolvedValue({
+      origin: 'https://mail.example.com',
+      fields: 'both',
+    });
 
     const request = await ask('Sign in to the inbox', true);
 
     expect(request.credentials).toBe(true);
     expect(request.site).toBe('https://mail.example.com');
+    expect(request.credentialFields).toBe('both');
+  });
+
+  it('asks for the password alone where that is the whole of the step', async () => {
+    vi.mocked(computerService.signInForm).mockResolvedValue({
+      origin: 'https://mail.example.com',
+      fields: 'password',
+    });
+
+    expect((await ask('Enter the password', true)).credentialFields).toBe('password');
   });
 
   it('asks for the desktop instead when that tab holds no sign-in form', async () => {
@@ -147,7 +160,7 @@ describe('a help request a username and a password answer', () => {
   it('leaves the browser alone for a request of any other kind', async () => {
     const request = await ask('Solve the CAPTCHA');
 
-    expect(computerService.signInSite).not.toHaveBeenCalled();
+    expect(computerService.signInForm).not.toHaveBeenCalled();
     expect(request.credentials).toBeUndefined();
   });
 });

@@ -88,7 +88,7 @@ describe('a sign-in the agent asked for', () => {
   it('never opens the live desktop for one', () => {
     const onOpen = renderSignIn();
 
-    fireEvent.click(screen.getByText('Cancel'));
+    fireEvent.click(screen.getByText('Hide'));
     fireEvent.click(screen.getByLabelText('Open sign-in'));
 
     expect(onOpen).not.toHaveBeenCalled();
