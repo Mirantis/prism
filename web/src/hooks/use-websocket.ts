@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { webSocketUrl } from '@/api/runtime-client';
-import type { CompactionEvent, ContextUsage, ConversationMessage, UpdateEvent } from '@/types';
+import type {
+  CompactionEvent,
+  ComputerStatus,
+  ContextUsage,
+  ConversationMessage,
+  UpdateEvent,
+} from '@/types';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 export type MessageMode = 'followup' | 'collect';
@@ -25,6 +31,7 @@ interface WebSocketMessage {
     | 'context'
     | 'compaction'
     | 'update'
+    | 'computer'
     | 'voice_state'
     | 'voice_error'
     | 'voice_hello'
@@ -80,6 +87,12 @@ interface UseWebSocketOptions {
   /** Self-update progress (available/updating/failed). Install-level, not thread-scoped. */
   onUpdate?: (event: UpdateEvent) => void;
   /**
+   * The state of the desktop: which threads wait for it, who holds it, and the open
+   * help requests. Install-level as well — the caller filters by thread where it shows
+   * the state.
+   */
+  onComputerStatus?: (status: ComputerStatus) => void;
+  /**
    * A voice control frame arrived. A callback for the same reason as the two
    * above: the voice session belongs to the caller, which owns the microphone
    * and the playback.
@@ -102,6 +115,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     onContextUsage,
     onCompaction,
     onUpdate,
+    onComputerStatus,
     onVoiceEvent,
     onVoiceAudio,
     reconnectInterval = 3000,
@@ -123,6 +137,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const onContextUsageRef = useRef(onContextUsage);
   const onCompactionRef = useRef(onCompaction);
   const onUpdateRef = useRef(onUpdate);
+  const onComputerStatusRef = useRef(onComputerStatus);
   const onVoiceEventRef = useRef(onVoiceEvent);
   const onVoiceAudioRef = useRef(onVoiceAudio);
   onMessageRef.current = onMessage;
@@ -130,6 +145,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   onContextUsageRef.current = onContextUsage;
   onCompactionRef.current = onCompaction;
   onUpdateRef.current = onUpdate;
+  onComputerStatusRef.current = onComputerStatus;
   onVoiceEventRef.current = onVoiceEvent;
   onVoiceAudioRef.current = onVoiceAudio;
 
@@ -226,6 +242,16 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
               (p.status === 'available' || p.status === 'updating' || p.status === 'failed')
             ) {
               onUpdateRef.current?.(p as UpdateEvent);
+            }
+            break;
+          }
+          case 'computer': {
+            const p = data.payload as Partial<ComputerStatus> | undefined;
+            // Same strictness as the context case. The banner and the computer page
+            // read `waiting` directly, so a frame without it throws in render, and the
+            // cache holds it until the desktop changes again.
+            if (Array.isArray(p?.waiting)) {
+              onComputerStatusRef.current?.(p as ComputerStatus);
             }
             break;
           }

@@ -6,6 +6,7 @@ import { runtimeApi } from '@/api/runtime-client';
 import { ApiError } from '@/api/errors';
 import { useAgent } from '@/lib/agent-context';
 import { useWebSocket } from '@/hooks/use-websocket';
+import { useComputerStatusFeed } from '@/hooks/use-computer-status';
 import { useVoiceCall, type VoiceCall } from '@/hooks/use-voice-call';
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
@@ -40,6 +41,8 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   // two is read late. The socket's callbacks are bound once, so the call goes through a
   // ref and the socket is not re-bound as the call's state changes.
   const voiceRef = useRef<VoiceCall | null>(null);
+
+  const writeComputerStatus = useComputerStatusFeed();
 
   const {
     status,
@@ -84,6 +87,10 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     onThreadUpdate: () => {
       queryClient.invalidateQueries({ queryKey: ['threads', agent.agentId, 'recents'] });
     },
+    // The state of the desktop. Written to the cache the waiting banner and the help
+    // cards read, so they follow a wait or a resolution as it happens and the page
+    // makes no repeating request. Install-level: the banner filters by thread itself.
+    onComputerStatus: writeComputerStatus,
     onVoiceEvent: (event) => voiceRef.current?.handleEvent(event),
     onVoiceAudio: (frame) => voiceRef.current?.handleAudio(frame),
   });

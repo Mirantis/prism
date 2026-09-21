@@ -156,6 +156,45 @@ describe('useWebSocket', () => {
     });
   });
 
+  describe('computer frames', () => {
+    const payload = {
+      available: true,
+      running: true,
+      starting: false,
+      paused: false,
+      controller: null,
+      owner: null,
+      waiting: [{ id: 'use-1', threadId: 't1', mode: 'chat' }],
+      help: [],
+    };
+
+    it('routes a computer frame to the latest onComputerStatus', async () => {
+      const first = vi.fn();
+      const { rerender, ws } = await renderConnected({ onComputerStatus: first });
+
+      const second = vi.fn();
+      rerender({ onComputerStatus: second });
+
+      act(() => ws.deliver({ type: 'computer', payload }));
+
+      expect(first).not.toHaveBeenCalled();
+      expect(second).toHaveBeenCalledWith(payload);
+    });
+
+    it('keeps the last good reading when a frame arrives with no waiting list', async () => {
+      // The banner and the computer page read `waiting` directly, so forwarding a
+      // frame without it would throw in render.
+      const onComputerStatus = vi.fn();
+      const { ws } = await renderConnected({ onComputerStatus });
+
+      act(() => ws.deliver({ type: 'computer', payload }));
+      act(() => ws.deliver({ type: 'computer', payload: { running: true } }));
+      act(() => ws.deliver({ type: 'computer' }));
+
+      expect(onComputerStatus.mock.calls).toEqual([[payload]]);
+    });
+  });
+
   it('keeps isTyping set across a verbose turn until the runtime ends it', async () => {
     const onMessage = vi.fn();
     const { result, ws } = await renderConnected({ onMessage });
