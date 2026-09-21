@@ -3,6 +3,7 @@ import type { Page } from 'playwright-core';
 import {
   fillSignInForm,
   findSignIn,
+  inPageSignIn,
   PASSWORD_FIELDS,
   signInInPage,
   type PageArgument,
@@ -147,6 +148,43 @@ function scripted(answers: ReturnType<typeof signInInPage>[]) {
   } as unknown as Page;
   return { page, asked, pressed };
 }
+
+/**
+ * The page runs this function on its own, with nothing of the runtime around it. The
+ * transpiler that serves a development runtime wraps the functions inside it in a helper
+ * of its own, and a page has none, so every sign-in read as missing until the page was
+ * handed one.
+ */
+describe('the function handed to the page', () => {
+  it('runs where the helpers around the runtime do not exist', () => {
+    const password = new Field();
+    const username = new Field();
+    password.form = new Form({ [TIERS[0]]: [username] });
+    const globals = globalThis as unknown as { document?: Root };
+    const previous = globals.document;
+    globals.document = new Root({ [PASSWORD_FIELDS]: [password] });
+
+    try {
+      // Called as the page calls it: a function built from source, with only its argument.
+      expect(
+        inPageSignIn({
+          password: null,
+          username: null,
+          passwordFields: PASSWORD_FIELDS,
+          usernameFields: TIERS,
+          namedUsernameTiers: 2,
+          submitControls: SUBMIT,
+        }),
+      ).toEqual({ found: true, username: true, submitted: false });
+    } finally {
+      globals.document = previous;
+    }
+  });
+
+  it('carries the helper it may have been built with', () => {
+    expect(inPageSignIn.toString()).toContain('__name');
+  });
+});
 
 describe('filling a sign-in form', () => {
   it('fills both fields, tells the page about each, and submits with its own control', () => {

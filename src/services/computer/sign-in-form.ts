@@ -199,6 +199,23 @@ export function signInInPage(arg: PageArgument): SignInResult {
   return { found, username: username !== null, submitted: true };
 }
 
+/**
+ * The page half, rebuilt as a function of its own for the page to run.
+ *
+ * The runtime runs from source in development and from `dist` in the image, and the
+ * transpiler behind the first wraps the functions inside this one in a `__name` helper of
+ * its own making. A page has no such helper, so the call throws there and every sign-in
+ * reads as missing — which is how it read on every development runtime until CI showed it.
+ * The page is handed one, which costs nothing where the build did not ask for it.
+ *
+ * The values it types are passed as its argument rather than written into this source, so
+ * a password cannot turn up in the text of an error about the page.
+ */
+export const inPageSignIn = new Function(
+  'arg',
+  `const __name = (fn) => fn; return (${signInInPage.toString()})(arg);`,
+) as (arg: PageArgument) => SignInResult;
+
 function pageArgument(username: string | null, password: string | null): PageArgument {
   return {
     password,
@@ -239,7 +256,8 @@ async function run(page: Page, arg: PageArgument, site?: string): Promise<FrameR
   let best: FrameResult | null = null;
   for (const frame of page.frames()) {
     if (site && frameOrigin(frame) !== site) continue;
-    const result = await withTimeout(frame.evaluate(signInInPage, arg), FILL_TIMEOUT_MS).catch(
+    const evaluated = frame.evaluate(inPageSignIn, arg);
+    const result = await withTimeout(evaluated, FILL_TIMEOUT_MS).catch(
       (err: unknown) => {
         // A frame part-way through a navigation answers nothing. That is a step of an
         // ordinary sign-in rather than a fault, and the caller asks again.
