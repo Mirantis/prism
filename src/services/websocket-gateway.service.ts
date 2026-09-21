@@ -20,7 +20,10 @@ import { serveUpgrades } from './websocket-upgrades';
 /** Where the Web UI's chat and its voice connect. The screen has its own path; see
  * `services/computer/computer-endpoint.ts`. */
 const CHAT_PATH = '/api/ws';
-import { conversationEngineService } from './conversation-engine.service';
+import {
+  conversationEngineService,
+  type TurnActivityEvent,
+} from './conversation-engine.service';
 import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
 import { compactionService, type CompactionEvent } from './compaction.service';
@@ -247,6 +250,17 @@ class WebSocketGatewayService {
     computerService.access.on('change', () => {
       void this.publishComputer();
     });
+
+    // Push whether a turn is running, so a client shows the agent working for as long as
+    // it does. The engine brackets every exchange, which is what puts the indicator on a
+    // turn the runtime starts itself — the continuation after a computer help request,
+    // for one — rather than only on the messages this gateway is handed.
+    conversationEngineService.events.on(
+      'activity',
+      ({ userId, threadId, active }: TurnActivityEvent) => {
+        this.broadcast(userId, { type: 'status', payload: { processing: active, threadId } });
+      },
+    );
   }
 
   /**
@@ -424,6 +438,13 @@ class WebSocketGatewayService {
       type: 'status',
       payload: { connected: true },
     }));
+
+    // A turn that started before this connection has already been announced, so say what
+    // is running now: a page opened or reloaded mid-turn otherwise shows the agent idle
+    // until the turn it cannot see ends.
+    for (const threadId of conversationEngineService.runningThreads()) {
+      ws.send(JSON.stringify({ type: 'status', payload: { processing: true, threadId } }));
+    }
 
     // And the state of the desktop, so a client that opens or reconnects during a wait
     // shows it without asking. The frames sent while the socket was down reached
@@ -914,14 +935,6 @@ class WebSocketGatewayService {
     this.activeRequests.set(userId, controller);
 
     try {
-      // Send processing indicator
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'status',
-          payload: { processing: true },
-        }));
-      }
-
       logger.info('Calling conversation engine for %s', userId);
 
       // Process through local conversation engine (direct call, no HTTP).
@@ -959,10 +972,8 @@ class WebSocketGatewayService {
       this.processingUsers.delete(userId);
       this.activeRequests.delete(userId);
 
-      // Tell every one of the user's connections the turn is done so the
-      // STOP button / spinner resets even when a cancel produced no new
-      // message to deliver.
-      this.broadcast(userId, { type: 'status', payload: { processing: false } });
+      // The turn's own end is announced by the engine, which brackets every
+      // exchange; a cancel is answered at once in `handleCancelMessage`.
 
       // Process queued messages
       await this.processQueue(userId);

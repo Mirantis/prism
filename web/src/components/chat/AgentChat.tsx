@@ -109,6 +109,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     onVoiceEvent: (event) => voiceRef.current?.handleEvent(event),
     onVoiceAudio: (frame) => voiceRef.current?.handleAudio(frame),
     onDictationEvent: (event) => dictationRef.current?.handleEvent(event),
+    activeThreadId,
   });
 
   const voice = useVoiceCall({

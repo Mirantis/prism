@@ -6,6 +6,7 @@
  * responses via the local MessageDeliveryService.
  */
 
+import { EventEmitter } from 'node:events';
 import { callModel } from '../lib/model-call';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
 import { conversationService } from './conversation.service';
@@ -44,6 +45,20 @@ interface StreamedTurn {
   toolCalls: ToolCallRecord[];
   blocks: UIBlock[];
   agentMessage: Awaited<ReturnType<typeof messageDeliveryService.publish>> | undefined;
+}
+
+/**
+ * A turn is running for this user, or the last one has ended — emitted as `'activity'`.
+ *
+ * Nothing here knows about WebSockets: transports subscribe and show whatever they show
+ * while the agent works, matching `thread-title.service.ts`. It covers every exchange the
+ * engine runs, including the ones the runtime starts itself, such as the continuation
+ * after a computer help request.
+ */
+export interface TurnActivityEvent {
+  userId: string;
+  threadId: string;
+  active: boolean;
 }
 
 // ============================================================================
@@ -109,6 +124,33 @@ export interface ChatResponse {
 // ============================================================================
 
 class ConversationEngineService {
+  readonly events = new EventEmitter();
+  /**
+   * Exchanges running per thread. An exchange waiting for the thread is one of them, so a
+   * turn queued behind another holds the report open rather than ending it early.
+   */
+  private readonly running = new Map<string, number>();
+
+  /**
+   * The threads a turn is running on.
+   *
+   * A client that connects part-way through one has missed the announcement, and asking
+   * is the only way it can show the agent working rather than waiting for the next turn.
+   */
+  runningThreads(): string[] {
+    return [...this.running.keys()];
+  }
+
+  /** Announce the first exchange on a thread, and the end of the last. */
+  private turnActivity(userId: string, threadId: string, active: boolean): void {
+    const count = (this.running.get(threadId) ?? 0) + (active ? 1 : -1);
+    if (count > 0) this.running.set(threadId, count);
+    else this.running.delete(threadId);
+    if (active ? count === 1 : count === 0) {
+      this.events.emit('activity', { userId, threadId, active });
+    }
+  }
+
   /**
    * Single place deciding whether to ask the user for 👍/👎 feedback on the
    * current turn. Gates run cheap→expensive; all must pass:
@@ -344,71 +386,76 @@ Respond with exactly one word: WORTHY or SKIP`;
     // follow-ups — so a background goal turn can't interleave between them.
     // A `create_goal` call made during this turn kicks its loop fire-and-forget;
     // that loop's first turn queues behind this and runs once we release.
-    await claim.run(async () => {
-      titleSet = (await stored).titleSet;
+    this.turnActivity(userId, threadId, true);
+    try {
+      await claim.run(async () => {
+        titleSet = (await stored).titleSet;
 
-      // Snapshot the verbose flag once inside the lock and thread it through the
-      // whole exchange (InvokeRequest → context → delivery gating in streamTurn),
-      // so prompt construction and delivery never diverge if it is toggled
-      // mid-turn — including across any coalesced follow-up.
-      const agent = await agentWorkspaceService.getAgent();
-      verbose = agent.verbose;
+        // Snapshot the verbose flag once inside the lock and thread it through the
+        // whole exchange (InvokeRequest → context → delivery gating in streamTurn),
+        // so prompt construction and delivery never diverge if it is toggled
+        // mid-turn — including across any coalesced follow-up.
+        const agent = await agentWorkspaceService.getAgent();
+        verbose = agent.verbose;
 
-      let prompt = message;
-      let appendPrompt = false;
-      // Notices describe events from preparing *this* message (e.g. an
-      // attachment that failed to download), so they belong to the first turn
-      // only — repeating them in a follow-up would re-report stale events.
-      let runtimeNotices = input.runtimeNotices;
+        let prompt = message;
+        let appendPrompt = false;
+        // Notices describe events from preparing *this* message (e.g. an
+        // attachment that failed to download), so they belong to the first turn
+        // only — repeating them in a follow-up would re-report stale events.
+        let runtimeNotices = input.runtimeNotices;
 
-      for (;;) {
-        const streamed = await this.streamTurn({
-          userId,
-          agentId,
-          threadId,
-          workspaceRoot,
-          prompt,
-          appendPrompt,
-          verbose,
-          channelOrigin,
-          channelContext,
-          metadata,
-          runtimeNotices,
-          abortSignal: input.abortSignal,
-          onToolEvent: input.onToolEvent,
-          // Drained at every step boundary, so a message handed to us — even one
-          // that arrived while we were still storing or waiting for the mutex —
-          // reaches the model on the next step.
-          steering: () => this.loadSteering(claim.drain()),
-        });
+        for (;;) {
+          const streamed = await this.streamTurn({
+            userId,
+            agentId,
+            threadId,
+            workspaceRoot,
+            prompt,
+            appendPrompt,
+            verbose,
+            channelOrigin,
+            channelContext,
+            metadata,
+            runtimeNotices,
+            abortSignal: input.abortSignal,
+            onToolEvent: input.onToolEvent,
+            // Drained at every step boundary, so a message handed to us — even one
+            // that arrived while we were still storing or waiting for the mutex —
+            // reaches the model on the next step.
+            steering: () => this.loadSteering(claim.drain()),
+          });
 
-        if (streamed.text) responseTexts.push(streamed.text);
-        allToolCalls.push(...streamed.toolCalls);
-        allBlocks.push(...streamed.blocks);
-        if (streamed.agentMessage) agentMessage = streamed.agentMessage;
+          if (streamed.text) responseTexts.push(streamed.text);
+          allToolCalls.push(...streamed.toolCalls);
+          allBlocks.push(...streamed.blocks);
+          if (streamed.agentMessage) agentMessage = streamed.agentMessage;
 
-        // A canceled turn must not auto-start another one — the user asked to
-        // stop. Anything still pending is cleared when the claim releases, and
-        // stays in history for the next turn (see thread-turn.service.ts).
-        if (input.abortSignal?.aborted) break;
+          // A canceled turn must not auto-start another one — the user asked to
+          // stop. Anything still pending is cleared when the claim releases, and
+          // stays in history for the next turn (see thread-turn.service.ts).
+          if (input.abortSignal?.aborted) break;
 
-        // Messages that landed after the last step boundary never reached the
-        // model. Answer them in ONE coalesced follow-up rather than a turn each,
-        // restating them as the trailing user message (see `appendPrompt`).
-        //
-        // An empty inbox ends the exchange and releases the thread in the same
-        // synchronous act, so no message can be handed to a claim that is about
-        // to end — the next one starts a turn of its own.
-        const leftover = claim.drainOrRelease();
-        if (leftover.length === 0) break;
+          // Messages that landed after the last step boundary never reached the
+          // model. Answer them in ONE coalesced follow-up rather than a turn each,
+          // restating them as the trailing user message (see `appendPrompt`).
+          //
+          // An empty inbox ends the exchange and releases the thread in the same
+          // synchronous act, so no message can be handed to a claim that is about
+          // to end — the next one starts a turn of its own.
+          const leftover = claim.drainOrRelease();
+          if (leftover.length === 0) break;
 
-        // Text only: any files these carried are already linked to their stored
-        // message rows, so the follow-up's context build picks them up.
-        prompt = leftover.map((p) => p.text).join('\n\n');
-        appendPrompt = true;
-        runtimeNotices = undefined;
-      }
-    });
+          // Text only: any files these carried are already linked to their stored
+          // message rows, so the follow-up's context build picks them up.
+          prompt = leftover.map((p) => p.text).join('\n\n');
+          appendPrompt = true;
+          runtimeNotices = undefined;
+        }
+      });
+    } finally {
+      this.turnActivity(userId, threadId, false);
+    }
 
     const response = responseTexts.join('\n\n');
 
