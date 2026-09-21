@@ -24,9 +24,12 @@ import { useScreenRecording } from '@/hooks/use-screen-recording';
 import { useScreenShare } from '@/hooks/use-screen-share';
 import { computerRequest } from '@/api/computer';
 import { ComputerHelpPanel } from './computer-help-panel';
+import { FloatingControls } from './floating-controls';
+import { useComputerWindow } from './computer-window-provider';
 import { cn } from '@/lib/utils';
 
 export function ComputerView({ helpId }: { helpId?: string }) {
+  const computerWindow = useComputerWindow();
   const call = useComputerVoice();
   // The call as it stands now, for a handler that reads it after an await: a closure's
   // copy is the one from the render the click happened in. See `toggleRecording`.
@@ -181,13 +184,22 @@ export function ComputerView({ helpId }: { helpId?: string }) {
               : 'Ready';
 
   return (
-    <div className={cn('grid items-start gap-4', selected && 'xl:grid-cols-[minmax(0,1fr)_20rem]')}>
+    <div
+      className={cn(
+        computerWindow.popup ? 'relative h-full w-full' : 'grid items-start gap-4',
+        !computerWindow.popup && selected && 'xl:grid-cols-[minmax(0,1fr)_20rem]',
+      )}
+    >
       <section
         aria-label="Live computer"
-        className="order-2 w-full min-w-0 max-w-[calc((100dvh-12rem)*16/9)] justify-self-center overflow-hidden rounded-xl border bg-card shadow-sm xl:order-1"
+        className={
+          computerWindow.popup
+            ? 'h-full w-full'
+            : 'order-2 w-full min-w-0 max-w-[calc((100dvh-8rem)*16/9)] justify-self-center overflow-hidden rounded-xl border bg-card shadow-sm xl:order-1'
+        }
       >
         <ScreenView
-          className="rounded-none"
+          className={cn('rounded-none', computerWindow.popup && 'h-full aspect-auto')}
           screenRef={screen.screenRef}
           hasScreen={screen.hasScreen}
           controllable={ownControl && !busy}
@@ -196,6 +208,172 @@ export function ComputerView({ helpId }: { helpId?: string }) {
           onInput={screen.sendInput}
           onRelease={() => void handBack()}
           connecting={!screen.message}
+          floatingControls={(fullscreenButton) => (
+            <FloatingControls>
+              <div
+                aria-label="Computer controls"
+                className="flex flex-wrap items-center justify-between gap-2"
+              >
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2 text-sm font-medium" role="status">
+                    <span
+                      className={cn(
+                        'size-2 shrink-0 rounded-full',
+                        state?.paused || (selected && !state?.owner)
+                          ? 'bg-amber-500'
+                          : screen.hasScreen
+                            ? 'bg-emerald-500'
+                            : 'bg-muted-foreground animate-pulse',
+                      )}
+                    />
+                    {label}
+                    {Boolean(state?.waiting.length) && (
+                      <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                        {state?.waiting.length} waiting
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {conversationThreadId && (
+                      <a
+                        href={`/chat/${conversationThreadId}`}
+                        target={computerWindow.popup ? '_blank' : undefined}
+                        rel="noopener"
+                        aria-label="Open conversation"
+                        title="Open conversation"
+                        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        <MessageSquare className="size-3.5" /> Chat
+                      </a>
+                    )}
+                    {state?.owner && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label="Stop current task"
+                        disabled={busy}
+                        onClick={() => void action('/stop')}
+                      >
+                        <Square className="size-3" /> Stop
+                      </Button>
+                    )}
+                    {state?.paused && !anotherController && !selected && (
+                      <Button
+                        size="sm"
+                        disabled={busy || !screen.clientId}
+                        onClick={() => void handBack()}
+                      >
+                        <Play className="size-3.5" /> Return control
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  {fullscreenButton}
+                  {!computerWindow.popup && (
+                    <Button
+                      variant="outline"
+                      onClick={() => computerWindow.open(helpId)}
+                      disabled={call.status !== 'idle'}
+                      title={
+                        call.status !== 'idle'
+                          ? 'End voice before moving the computer to another window'
+                          : undefined
+                      }
+                    >
+                      Pop out
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    aria-label={audio.enabled ? 'Mute sound' : 'Play sound'}
+                    aria-pressed={audio.enabled}
+                    onClick={() => void audio.toggle()}
+                  >
+                    {audio.enabled ? (
+                      <Volume2 className="size-4" />
+                    ) : (
+                      <VolumeX className="size-4" />
+                    )}
+                    Sound {audio.enabled ? 'on' : 'off'}
+                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {call.isSpeaking && (
+                      <AudioLines
+                        aria-label="Speaking"
+                        className="size-4 animate-pulse text-sky-500"
+                      />
+                    )}
+                    {/* Both show the agent something during a call, so neither is offered
+                    while there is no call to show it to. */}
+                    {call.status !== 'idle' && (
+                      <>
+                        <ShareButton
+                          sharing={share.sharing}
+                          disabled={call.status !== 'live' || recording}
+                          onToggle={() => (share.sharing ? share.stop() : void share.start())}
+                        />
+                        <RecordButton
+                          recording={recording}
+                          elapsedMs={recorder.elapsedMs}
+                          // Readiness gates starting a recording, never ending one: a socket
+                          // that goes while one runs would otherwise leave the control dead and
+                          // the microphone held until the length limit.
+                          disabled={!recording && (call.status !== 'live' || !screen.clientId)}
+                          onToggle={() => void toggleRecording()}
+                        />
+                      </>
+                    )}
+                    {call.status === 'idle' ? (
+                      <Button variant="outline" className="h-10" onClick={call.start}>
+                        <Mic className="size-4" /> Talk
+                      </Button>
+                    ) : (
+                      <>
+                        <MuteButton
+                          muted={call.isMuted}
+                          disabled={call.status !== 'live' || recording}
+                          onToggle={call.toggleMute}
+                        />
+                        <Button variant="outline" className="h-10" onClick={call.stop}>
+                          <Pause className="size-4" /> End voice
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {anotherController ? (
+                  'You’re watching. Another viewer is using the computer.'
+                ) : ownControl ? (
+                  'You have the mouse and keyboard. Press Esc to hand control back.'
+                ) : (
+                  <>
+                    Click the screen to take control.{' '}
+                    <kbd className="rounded border bg-muted px-1 py-0.5 text-[10px]">Esc</kbd> hands
+                    it back to Prism.
+                  </>
+                )}
+              </p>
+              {(computerWindow.error ||
+                error ||
+                screen.message ||
+                call.error ||
+                share.error ||
+                audio.error) && (
+                <p role="alert" className="text-sm text-destructive">
+                  {computerWindow.error ||
+                    error ||
+                    screen.message ||
+                    call.error ||
+                    share.error ||
+                    audio.error}
+                </p>
+              )}
+            </FloatingControls>
+          )}
         >
           {share.stream && (
             <div className="absolute left-3 top-3">
@@ -203,146 +381,24 @@ export function ComputerView({ helpId }: { helpId?: string }) {
             </div>
           )}
         </ScreenView>
-        <div className="space-y-2 border-t px-3 py-2">
-          <div
-            aria-label="Computer controls"
-            className="flex flex-wrap items-center justify-between gap-2"
-          >
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2 text-sm font-medium" role="status">
-                <span
-                  className={cn(
-                    'size-2 shrink-0 rounded-full',
-                    state?.paused || (selected && !state?.owner)
-                      ? 'bg-amber-500'
-                      : screen.hasScreen
-                        ? 'bg-emerald-500'
-                        : 'bg-muted-foreground animate-pulse',
-                  )}
-                />
-                {label}
-                {Boolean(state?.waiting.length) && (
-                  <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
-                    {state?.waiting.length} waiting
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {conversationThreadId && (
-                  <a
-                    href={`/chat/${conversationThreadId}`}
-                    aria-label="Open conversation"
-                    title="Open conversation"
-                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    <MessageSquare className="size-3.5" /> Chat
-                  </a>
-                )}
-                {state?.owner && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    aria-label="Stop current task"
-                    disabled={busy}
-                    onClick={() => void action('/stop')}
-                  >
-                    <Square className="size-3" /> Stop
-                  </Button>
-                )}
-                {state?.paused && !anotherController && !selected && (
-                  <Button
-                    size="sm"
-                    disabled={busy || !screen.clientId}
-                    onClick={() => void handBack()}
-                  >
-                    <Play className="size-3.5" /> Return control
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              <Button
-                variant="ghost"
-                aria-label={audio.enabled ? 'Mute sound' : 'Play sound'}
-                aria-pressed={audio.enabled}
-                onClick={() => void audio.toggle()}
-              >
-                {audio.enabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
-                Sound {audio.enabled ? 'on' : 'off'}
-              </Button>
-              <div className="flex flex-wrap items-center gap-2">
-                {call.isSpeaking && (
-                  <AudioLines aria-label="Speaking" className="size-4 animate-pulse text-sky-500" />
-                )}
-                {/* Both show the agent something during a call, so neither is offered
-                    while there is no call to show it to. */}
-                {call.status !== 'idle' && (
-                  <>
-                    <ShareButton
-                      sharing={share.sharing}
-                      disabled={call.status !== 'live' || recording}
-                      onToggle={() => (share.sharing ? share.stop() : void share.start())}
-                    />
-                    <RecordButton
-                      recording={recording}
-                      elapsedMs={recorder.elapsedMs}
-                      // Readiness gates starting a recording, never ending one: a socket
-                      // that goes while one runs would otherwise leave the control dead and
-                      // the microphone held until the length limit.
-                      disabled={!recording && (call.status !== 'live' || !screen.clientId)}
-                      onToggle={() => void toggleRecording()}
-                    />
-                  </>
-                )}
-                {call.status === 'idle' ? (
-                  <Button variant="outline" className="h-10" onClick={call.start}>
-                    <Mic className="size-4" /> Talk
-                  </Button>
-                ) : (
-                  <>
-                    <MuteButton
-                      muted={call.isMuted}
-                      disabled={call.status !== 'live' || recording}
-                      onToggle={call.toggleMute}
-                    />
-                    <Button variant="outline" className="h-10" onClick={call.stop}>
-                      <Pause className="size-4" /> End voice
-                    </Button>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {anotherController ? (
-              'You’re watching. Another viewer is using the computer.'
-            ) : ownControl ? (
-              'You have the mouse and keyboard. Press Esc to hand control back.'
-            ) : (
-              <>
-                Click the screen to take control.{' '}
-                <kbd className="rounded border bg-muted px-1 py-0.5 text-[10px]">Esc</kbd> hands it
-                back to Prism.
-              </>
-            )}
-          </p>
-          {(error || screen.message || call.error || share.error || audio.error) && (
-            <p role="alert" className="text-sm text-destructive">
-              {error || screen.message || call.error || share.error || audio.error}
-            </p>
-          )}
-        </div>
       </section>
       {selected && (
-        <ComputerHelpPanel
-          requests={waiting}
-          selected={selected}
-          clientId={screen.clientId}
-          disabled={busy || anotherController || !screen.clientId}
-          canSelect={!ownControl && !busy}
-          onSelect={setSelectedHelpId}
-        />
+        <div
+          className={
+            computerWindow.popup
+              ? 'absolute bottom-3 right-3 z-10 max-h-[50%] w-80 max-w-full overflow-auto rounded-xl bg-card'
+              : 'contents'
+          }
+        >
+          <ComputerHelpPanel
+            requests={waiting}
+            selected={selected}
+            clientId={screen.clientId}
+            disabled={busy || anotherController || !screen.clientId}
+            canSelect={!ownControl && !busy}
+            onSelect={setSelectedHelpId}
+          />
+        </div>
       )}
     </div>
   );

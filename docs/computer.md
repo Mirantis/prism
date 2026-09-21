@@ -10,6 +10,10 @@ Run the published container image, which includes the desktop packages. Signed-i
 
 Opening **Computer** shows the live desktop at 1920×1080, scaled to fit your window. Work continues when you leave the page. The status shows who has control and links to the active conversation.
 
+**Pop out** opens the desktop in a resizable window that you can move to another monitor; use **Focus window**, **Restore**, or close that window to return to the embedded viewer. Drag the floating controls by their handle, or focus the handle and use arrow keys, to move them over the desktop.
+
+End an active voice call before choosing **Pop out**, then choose **Talk** in the other window to start a call there. If the browser blocks the window, allow popups for this site and try again.
+
 Click the screen to use the mouse and keyboard. Paste types into the focused field. Press Esc or **Return control** to hand the computer back to Prism. Closing the page while you have control keeps Prism paused.
 
 While you have control, ask Prism to inspect the screen if you need guidance. Desktop sound is on; use **Sound** to mute it. Choose **Talk** to start optional [voice chat](voice-chat.md), initially muted.

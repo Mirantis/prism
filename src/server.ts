@@ -17,6 +17,7 @@
  */
 
 import express from 'express';
+import { computerWindowRouter } from './routes/computer-window';
 import { computerRouter } from './routes/computer';
 import path from 'path';
 import fs from 'fs';
@@ -50,6 +51,7 @@ export function createApp() {
   // Management routes (heartbeat, cron lifecycle)
   app.use('/agents', managementRouter);
   app.use('/agents', computerRouter);
+  app.use('/agents', computerWindowRouter);
 
   // Inbound webhook ingestion (POST /agents/webhooks/:name)
   app.use('/agents', webhookRouter);

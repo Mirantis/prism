@@ -26,6 +26,7 @@ interface ScreenViewProps {
   onRelease: () => void;
   /** Laid over the screen, e.g. the agent's tile. */
   children?: ReactNode;
+  floatingControls?: (fullscreenButton: ReactNode) => ReactNode;
 }
 
 const BUTTONS: Record<number, 'left' | 'middle' | 'right'> = { 0: 'left', 1: 'middle', 2: 'right' };
@@ -42,6 +43,7 @@ export function ScreenView({
   onInput,
   onRelease,
   children,
+  floatingControls,
 }: ScreenViewProps) {
   const releaseRef = useRef(onRelease);
   releaseRef.current = onRelease;
@@ -285,6 +287,17 @@ export function ScreenView({
     else void box.requestFullscreen();
   };
 
+  const fullscreenButton = hasScreen && (
+    <button
+      type="button"
+      aria-label={fullscreen ? 'Exit fullscreen' : 'Open fullscreen'}
+      onClick={toggleFullscreen}
+      className="flex size-9 cursor-pointer items-center justify-center rounded-md bg-black/50 text-zinc-300 hover:bg-black/70 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+    >
+      {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
+    </button>
+  );
+
   const canTake = canTakeControl && hasScreen && !controlling && !acquiring;
 
   return (
@@ -339,24 +352,18 @@ export function ScreenView({
           Your control · <kbd className="rounded bg-white/20 px-1.5">Esc</kbd> to return
         </div>
       )}
-      {hasScreen && (
+      {hasScreen && !floatingControls && (
         <div className="absolute right-3 top-3 flex items-center gap-2">
           {canTake && fullscreen && (
             <p className="hidden rounded-md bg-black/70 px-2 py-1 text-xs sm:block text-zinc-300">
               Click to control the screen · paste types into it
             </p>
           )}
-          <button
-            type="button"
-            aria-label={fullscreen ? 'Exit fullscreen' : 'Open fullscreen'}
-            onClick={toggleFullscreen}
-            className="flex size-9 cursor-pointer items-center justify-center rounded-md bg-black/50 text-zinc-300 hover:bg-black/70 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-          >
-            {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
-          </button>
+          {fullscreenButton}
         </div>
       )}
       {children}
+      {floatingControls?.(fullscreenButton)}
       {/* Keep the border inside the screen so the page's scroll container preserves every edge. */}
       <div
         aria-hidden="true"
