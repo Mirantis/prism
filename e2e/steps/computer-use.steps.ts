@@ -128,12 +128,15 @@ Then('I can enlarge the chat computer to fullscreen', async ({ page }) => {
 When('I sign in through the live computer', async ({ page, $testInfo }) => {
   page.setDefaultTimeout(15_000);
   await page.getByLabel("The agent's screen").click();
+  const controlStatus = page.getByText('Taking control…', { exact: true });
+  await expect(controlStatus).toBeVisible();
   await expect
     .poll(async () => {
       const status = await (await page.request.get('/agents/computer')).json();
       return status.controller;
     }, { timeout: 30_000 })
     .toBeTruthy();
+  await expect(controlStatus).toHaveCount(0, { timeout: 30_000 });
   await page.keyboard.type('demo-user', { delay: 80 });
   await page.screenshot({
     path: $testInfo.outputPath('computer-controlling.png'),
