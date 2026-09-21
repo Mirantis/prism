@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CircleCheck, CircleX, Monitor } from 'lucide-react';
+import { CircleCheck, CircleX, LockKeyhole, Monitor } from 'lucide-react';
 import { useComputerStatus } from '@/hooks/use-computer-status';
 import { SignInForm } from '@/components/computer/sign-in-form';
 import type { ComputerHelp } from '@/types';
@@ -16,7 +16,7 @@ export function ChatComputerHelp({
   const [expanded, setExpanded] = useState(true);
   const dismissed = current.status === 'dismissed';
   const completed = current.status === 'continued';
-  const Icon = dismissed ? CircleX : completed ? CircleCheck : Monitor;
+  const Icon = dismissed ? CircleX : completed ? CircleCheck : current.credentials ? LockKeyhole : Monitor;
   const label = dismissed
     ? 'Computer help dismissed'
     : completed
@@ -29,13 +29,12 @@ export function ChatComputerHelp({
       <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0">
         <p className="font-medium text-foreground">{label}</p>
-        <p className="mt-0.5 break-words text-xs text-muted-foreground">{help.reason}</p>
+        <p className="mt-1 break-words text-sm text-muted-foreground">{current.reason}</p>
       </div>
     </>
   );
 
-  // A sign-in is answered here rather than on the desktop, so the box for it opens with
-  // the message and the live screen is never slid over the chat for one.
+  // Credential requests open directly in the conversation.
   if (!dismissed && !completed && current.credentials) {
     if (!expanded) {
       return (
@@ -52,10 +51,12 @@ export function ChatComputerHelp({
     return (
       <section
         aria-label="Computer sign-in"
-        className="space-y-3 rounded-lg border bg-muted/40 px-3 py-2 text-sm"
+        className="w-full max-w-md overflow-hidden rounded-xl border border-primary/20 bg-card text-sm shadow-sm"
       >
-        <div className="flex items-start gap-2">{content}</div>
-        <SignInForm help={current} onCancel={() => setExpanded(false)} />
+        <div className="flex items-start gap-3 border-b border-primary/10 bg-primary/5 p-4">{content}</div>
+        <div className="p-4">
+          <SignInForm help={current} onCancel={() => setExpanded(false)} />
+        </div>
       </section>
     );
   }

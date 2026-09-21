@@ -27,7 +27,7 @@ recording stops itself after five minutes.
 
 ## When Prism needs help
 
-When a website asks only for a username and a password, the request comes with a box for them: in the chat, in the terminal UI, and on the Computer page for anyone following the link. Fill it in and press **Sign in**. Prism signs in for you and carries on, stopped while they are typed in and never given either value. **Cancel** closes the box; the live desktop below is still there.
+When a website asks only for a username and a password, the request comes with a box for them: in the chat, in the terminal UI, and on the Computer page for anyone following the link. A site that asks for the username first and the password on the next screen still takes one box; Prism works through both screens. Check the website shown above the fields, fill them in, and press **Sign in**. Prism signs in for you and carries on, stopped while they are typed in and never given either value. In Chat, **Hide** collapses the box; click the request to reopen it.
 
 When Prism needs help, the live desktop opens in a resizable panel on the right side of chat. Close it with the X to hand back control, then reopen it from the request in chat; use fullscreen for more room. Click the desktop, finish the step, and press Esc or **I’m done** to resume the request. The chat shows a completed or dismissed status where the request appeared.
 

@@ -37,7 +37,7 @@ import { describeElements, findElements, readScreenElements } from './screen-ele
 import { actOnWindow, findWindows, listWindows, type WindowAction } from './desktop-windows';
 import { DesktopInput, type InputFrame } from './desktop-input';
 import { clearPasswordFields } from './secure-window';
-import { fillSignInForm, hasSignInForm, type SignInCredentials } from './sign-in-form';
+import { fillSignInForm, findSignIn, type SignInCredentials } from './sign-in-form';
 import { hasBinaries, missingBinary } from '../../lib/has-binary';
 import { COMPUTER_BINARIES, unsupportedReason } from './supported';
 import { VideoStream } from './video-stream';
@@ -343,18 +343,23 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   }
 
   /**
-   * The origin of a tab whose sign-in a username and a password can answer.
+   * The sign-in on a tab: where it goes, and what the box for it asks for.
    *
-   * Asked when the agent says a help request is that kind, so the box for it is only
-   * offered where the runtime can really type it, and the user is told which site it
-   * goes to.
+   * Asked when the agent says a help request is that kind, so the box is only offered
+   * where the runtime can really type it, and names the site the user signs in to. A page
+   * that asks for the username first needs both, since the runtime answers its second
+   * screen as well; only a page that asks for the password alone drops the username.
    */
-  async signInForm(tab?: number): Promise<string | undefined> {
+  async signInForm(
+    tab?: number,
+  ): Promise<{ origin: string; fields: 'both' | 'password' } | undefined> {
     const page = this.tabPage(tab);
     if (!page) return undefined;
     const origin = originOf(page);
     if (!origin) return undefined;
-    return (await this.onFrontQueue(() => hasSignInForm(page))) ? origin : undefined;
+    const found = await this.onFrontQueue(() => findSignIn(page));
+    if (!found) return undefined;
+    return { origin, fields: found.password && !found.username ? 'password' : 'both' };
   }
 
   /**
@@ -367,7 +372,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
     targetId: string,
     site: string,
     credentials: SignInCredentials,
-  ): Promise<'filled' | 'no_form' | 'tab_gone' | 'site_changed'> {
+  ): Promise<'filled' | 'no_form' | 'no_password_step' | 'tab_gone' | 'site_changed'> {
     const found = await this.pageForTarget(targetId);
     if (!found) return 'tab_gone';
     if (originOf(found.page) !== site) return 'site_changed';

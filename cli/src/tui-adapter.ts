@@ -83,6 +83,7 @@ export interface SignInRequest {
   id: string;
   reason: string;
   site?: string;
+  fields?: 'both' | 'password';
 }
 
 /** The sign-in in a message's blocks, when it holds one that is still waiting. */
@@ -96,6 +97,7 @@ export function signInRequestIn(blocks: unknown): SignInRequest | null {
       reason?: unknown;
       site?: unknown;
       credentials?: unknown;
+      credentialFields?: unknown;
       status?: unknown;
     };
     if (help.type !== 'computer_help' || help.credentials !== true) continue;
@@ -105,6 +107,7 @@ export function signInRequestIn(blocks: unknown): SignInRequest | null {
       id: help.id,
       reason: help.reason,
       ...(typeof help.site === 'string' ? { site: help.site } : {}),
+      ...(help.credentialFields === 'password' ? { fields: 'password' as const } : {}),
     };
   }
   return null;

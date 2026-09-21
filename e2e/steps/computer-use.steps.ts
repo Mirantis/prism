@@ -230,6 +230,11 @@ Then('Prism asks for the sign-in in the chat, with a box for it', async ({ page,
   await expect(box).toBeVisible({ timeout: 60_000 });
   await expect(box.getByText(new URL(site!.url).origin)).toBeVisible();
   await expect(page.getByLabel('Computer help panel')).toHaveCount(0);
+  await box.getByRole('button', { name: 'Hide', exact: true }).click();
+  await expect(page.getByLabel('Sign in for Prism')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open sign-in' }).click();
+  await expect(box.getByLabel('Username', { exact: true })).toBeVisible();
+  await expect(box.getByLabel('Password', { exact: true })).toHaveAttribute('type', 'password');
   await page.screenshot({ path: $testInfo.outputPath('computer-sign-in-box.png'), fullPage: true });
 });
 

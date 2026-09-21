@@ -38,6 +38,22 @@ function renderForm() {
 }
 
 describe('the box a sign-in is answered in', () => {
+  it('disables the fields and shows progress until submission completes', async () => {
+    let finish!: (value: object) => void;
+    computerRequest.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const { username, password, fill } = renderForm();
+    fill();
+    fireEvent.click(screen.getByText('Sign in'));
+
+    expect(username.disabled).toBe(true);
+    expect(password.disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Signing in…' }) as HTMLButtonElement).disabled).toBe(true);
+
+    finish({ success: true });
+    await waitFor(() => expect(password.disabled).toBe(false));
+    expect(password.value).toBe('');
+  });
+
   it('hides the password and sends both to the runtime', async () => {
     computerRequest.mockResolvedValue({ success: true });
     const { password, fill } = renderForm();

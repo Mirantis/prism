@@ -16,6 +16,8 @@ export interface SignInRequest {
   reason: string;
   /** Where the credentials are typed, when the runtime named it. */
   site?: string;
+  /** What the page asks for. A second step of a sign-in asks for the password alone. */
+  fields?: 'both' | 'password';
 }
 
 interface Props {
@@ -27,7 +29,8 @@ interface Props {
 export const SignInPanel: React.FC<Props> = ({ api, request, onClose }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [focusedField, setFocusedField] = useState<0 | 1>(0);
+  const onePage = request.fields === 'password';
+  const [focusedField, setFocusedField] = useState<0 | 1>(onePage ? 1 : 0);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -60,6 +63,7 @@ export const SignInPanel: React.FC<Props> = ({ api, request, onClose }) => {
       void submit();
       return;
     }
+    if (onePage) return;
     if (key.tab || key.upArrow || key.downArrow) setFocusedField((field) => (field === 0 ? 1 : 0));
   });
 
@@ -69,19 +73,21 @@ export const SignInPanel: React.FC<Props> = ({ api, request, onClose }) => {
         Prism needs a sign-in
       </Text>
       <Text>{request.reason}</Text>
-      <Box marginTop={1}>
-        <Box width={12}>
-          <Text color={focusedField === 0 ? 'cyan' : undefined} bold={focusedField === 0}>
-            Username
-          </Text>
+      {request.fields !== 'password' && (
+        <Box marginTop={1}>
+          <Box width={12}>
+            <Text color={focusedField === 0 ? 'cyan' : undefined} bold={focusedField === 0}>
+              Username
+            </Text>
+          </Box>
+          <TextInput
+            key={focusedField === 0 ? 'username-active' : 'username'}
+            value={username}
+            onChange={setUsername}
+            focus={focusedField === 0 && !submitting}
+          />
         </Box>
-        <TextInput
-          key={focusedField === 0 ? 'username-active' : 'username'}
-          value={username}
-          onChange={setUsername}
-          focus={focusedField === 0 && !submitting}
-        />
-      </Box>
+      )}
       <Box>
         <Box width={12}>
           <Text color={focusedField === 1 ? 'cyan' : undefined} bold={focusedField === 1}>

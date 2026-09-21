@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { Page } from 'playwright-core';
 import {
   fillSignInForm,
-  hasSignInForm,
+  findSignIn,
   PASSWORD_FIELDS,
   signInInPage,
   type PageArgument,
@@ -70,12 +70,16 @@ class Root {
 }
 
 /** Run the in-page half against a document of the test's own. */
-function inPage(document: Root, credentials: { username: string; password: string } | null) {
+function inPage(
+  document: Root,
+  credentials: { username?: string | null; password?: string | null } | null,
+) {
   const arg: PageArgument = {
     password: credentials?.password ?? null,
-    username: credentials?.username ?? '',
+    username: credentials?.username ?? null,
     passwordFields: PASSWORD_FIELDS,
     usernameFields: TIERS,
+    namedUsernameTiers: 2,
     submitControls: SUBMIT,
   };
   const globals = globalThis as unknown as { document?: Root };
@@ -94,6 +98,7 @@ function tab(frames: (ReturnType<typeof signInInPage> | Error)[], closed = false
   const page = {
     isClosed: () => closed,
     keyboard: { press: vi.fn(async (key: string) => void pressed.push(key)) },
+    waitForTimeout: vi.fn(async () => {}),
     frames: () =>
       frames.map((answer) => ({
         evaluate: vi.fn(async () => {
@@ -103,6 +108,35 @@ function tab(frames: (ReturnType<typeof signInInPage> | Error)[], closed = false
       })),
   } as unknown as Page;
   return { page, pressed };
+}
+
+/**
+ * A tab whose one frame answers each ask in turn, and records what it was given. A
+ * sign-in in two steps asks four times: the shape, the username, the shape again, the
+ * password.
+ */
+function scripted(answers: ReturnType<typeof signInInPage>[]) {
+  const asked: PageArgument[] = [];
+  const pressed: string[] = [];
+  // The wait between looks passes on a clock of the test's own, so a screen that never
+  // comes runs out in milliseconds rather than in the seconds a person would wait.
+  let now = Date.now();
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const frame = {
+    evaluate: vi.fn(async (_fn: unknown, arg: PageArgument) => {
+      asked.push(arg);
+      return answers[Math.min(asked.length - 1, answers.length - 1)];
+    }),
+  };
+  const page = {
+    isClosed: () => false,
+    keyboard: { press: vi.fn(async (key: string) => void pressed.push(key)) },
+    waitForTimeout: vi.fn(async (ms: number) => {
+      now += ms;
+    }),
+    frames: () => [frame],
+  } as unknown as Page;
+  return { page, asked, pressed };
 }
 
 describe('filling a sign-in form', () => {
@@ -226,18 +260,78 @@ describe('the sign-in across a page', () => {
     expect(pressed).toEqual([]);
   });
 
-  it('is a sign-in for the box only when both fields are there', async () => {
+  it('answers with the fields the page asks for, and nothing for a page with none', async () => {
     const both = tab([{ found: true, username: true, submitted: false }]);
     const passwordOnly = tab([{ found: true, username: false, submitted: false }]);
+    const none = tab([{ found: false, username: false, submitted: false }]);
 
-    expect(await hasSignInForm(both.page)).toBe(true);
-    expect(await hasSignInForm(passwordOnly.page)).toBe(false);
+    expect(await findSignIn(both.page)).toEqual({ password: true, username: true });
+    expect(await findSignIn(passwordOnly.page)).toEqual({ password: true, username: false });
+    expect(await findSignIn(none.page)).toBeNull();
   });
 
   it('leaves a closed tab alone', async () => {
     const { page } = tab([{ found: true, username: true, submitted: true }], true);
 
-    expect(await hasSignInForm(page)).toBe(false);
+    expect(await findSignIn(page)).toBeNull();
     expect(await fillSignInForm(page, { username: 'u', password: 'p' })).toBe('no_form');
+  });
+});
+
+/**
+ * A sign-in that asks for the username first. The user answered one box, so the runtime
+ * takes both screens: username, submit, wait for the password field, password, submit.
+ */
+describe('a sign-in in two steps', () => {
+  const firstStep = { found: false, username: true, submitted: true };
+  const secondStep = { found: true, username: false, submitted: true };
+
+  it('types the username, then the password the next screen asks for', async () => {
+    const { page, asked } = scripted([firstStep, firstStep, secondStep, secondStep]);
+
+    expect(await fillSignInForm(page, { username: 'demo-user', password: 'a-password' })).toBe(
+      'filled',
+    );
+    expect(asked.map((arg) => [arg.username, arg.password])).toEqual([
+      [null, null],
+      ['demo-user', null],
+      [null, null],
+      [null, 'a-password'],
+    ]);
+  });
+
+  it('waits for the password screen rather than giving up on the first look', async () => {
+    const { page, asked } = scripted([
+      firstStep,
+      firstStep,
+      firstStep, // still on the username screen
+      secondStep,
+      secondStep,
+    ]);
+
+    expect(await fillSignInForm(page, { username: 'demo-user', password: 'a-password' })).toBe(
+      'filled',
+    );
+    expect(asked).toHaveLength(5);
+  });
+
+  it('says so when the password screen never comes', async () => {
+    const { page } = scripted([firstStep]);
+
+    expect(await fillSignInForm(page, { username: 'demo-user', password: 'a-password' })).toBe(
+      'no_password_step',
+    );
+  });
+
+  it('presses Enter for a step the page did not submit itself', async () => {
+    const { page, pressed } = scripted([
+      { ...firstStep, submitted: false },
+      { ...firstStep, submitted: false },
+      { ...secondStep, submitted: false },
+      { ...secondStep, submitted: false },
+    ]);
+
+    await fillSignInForm(page, { username: 'demo-user', password: 'a-password' });
+    expect(pressed).toEqual(['Enter', 'Enter']);
   });
 });

@@ -15,8 +15,10 @@ export interface ComputerHelp {
   reason: string;
   tab?: number;
   targetId?: string;
-  /** The user answers this one with a username and a password, typed into `site`. */
+  /** The user answers this one with the credentials below, typed into `site`. */
   credentials?: true;
+  /** What the page asks for. A second step of a sign-in asks for the password alone. */
+  credentialFields?: 'both' | 'password';
   /** Where those go: the origin of the tab that asked, as it read when it asked. */
   site?: string;
   threadId?: string;
@@ -35,9 +37,10 @@ class ComputerHelpService {
   private voice = new Map<string, ComputerHelp>();
 
   /**
-   * @param credentials a sign-in that a username and a password answer. Recorded only
-   * when the tab really holds such a form, so the box for it is never offered where the
-   * runtime could not type it.
+   * @param credentials a sign-in the user answers with what the page asks for. Recorded
+   * only when the tab really holds such a form, so the box for it is never offered where
+   * the runtime could not type it; a request that loses the flag says so in the log and
+   * in what the tool answers.
    */
   async request(
     use: ComputerUse,
@@ -45,14 +48,21 @@ class ComputerHelpService {
     tab?: number,
     credentials = false,
   ): Promise<ComputerHelp> {
-    const site = credentials ? await computerService.signInSite(tab) : undefined;
+    const form = credentials ? await computerService.signInForm(tab) : undefined;
+    if (credentials && !form) {
+      logger.info(
+        '[Computer] No sign-in form on the tab a help request named; asking for the desktop instead',
+      );
+    }
     const help: ComputerHelp = {
       type: 'computer_help',
       id: randomUUID(),
       reason,
       tab,
       targetId: await computerService.helpTarget(tab),
-      ...(site ? { credentials: true as const, site } : {}),
+      ...(form
+        ? { credentials: true as const, credentialFields: form.fields, site: form.origin }
+        : {}),
       status: 'waiting',
       threadId: use.threadId,
       originChannel: use.originChannel,
