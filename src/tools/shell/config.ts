@@ -1,15 +1,10 @@
 /**
- * Shared constants for the shell tools.
+ * Shared limits for the shell tools.
  *
- * `workspaceRoot` mirrors upstream's `/home/sandbox` concept — the
- * default cwd for commands and the base used to resolve relative
- * paths. The agent can still hand absolute paths to any tool; those
- * bypass the workspace and are governed by filesystem permissions,
- * matching upstream's contract.
+ * Where a command runs and what filesystem it sees is the execution
+ * environment's (`lib/execution-environments/`); these are the caps the tools
+ * apply on top of it.
  */
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 
 export const DEFAULT_EXEC_TIMEOUT_MS = 30_000;
 export const MAX_EXEC_TIMEOUT_MS = 1_200_000; // 20 minutes
@@ -19,45 +14,3 @@ export const MAX_EXEC_OUTPUT_BYTES = 10 * 1024 * 1024;
 export const MAX_EXEC_OUTPUT_LIMIT = '10 MiB';
 /** Default per-stream output cap when the caller doesn't pass `limit`. */
 export const DEFAULT_EXEC_OUTPUT_LIMIT_BYTES = 10000;
-
-export function resolveWorkspaceRoot(): string {
-  return path.resolve(process.env.SHELL_WORKSPACE_ROOT || '/home/node');
-}
-
-/**
- * Ensure the shell workspace root exists, creating it if needed.
- *
- * Called once at startup. The default `/home/node` exists in the container but
- * not when running locally (e.g. `npm run dev` on macOS, where `/home` isn't
- * writable). Spawning a shell with a non-existent `cwd` fails as
- * `spawn <cmd> ENOENT` — which looks like a missing shell rather than a missing
- * directory. When the configured root can't be created, fall back to a
- * writable temp dir and pin it via `SHELL_WORKSPACE_ROOT` so every subsequent
- * `resolveWorkspaceRoot()` agrees.
- *
- * Returns the usable root plus, when it differs, the path we couldn't create.
- */
-export function ensureWorkspaceRoot(): { root: string; fellBackFrom: string | null } {
-  const desired = resolveWorkspaceRoot();
-  try {
-    fs.mkdirSync(desired, { recursive: true });
-    return { root: desired, fellBackFrom: null };
-  } catch {
-    const fallback = path.join(os.tmpdir(), 'prism-workspace');
-    fs.mkdirSync(fallback, { recursive: true });
-    process.env.SHELL_WORKSPACE_ROOT = fallback;
-    return { root: fallback, fellBackFrom: desired };
-  }
-}
-
-/**
- * The single owner of the per-thread-vs-global fallback: returns the given
- * thread workspace root when it's a non-empty path, otherwise the global
- * `resolveWorkspaceRoot()`. Every shell-tool invocation resolves its cwd
- * through here (via `getShellTools`), so the fallback lives in exactly one
- * place.
- */
-export function resolveWorkspace(workspaceRoot?: string | null): string {
-  const trimmed = workspaceRoot?.trim();
-  return trimmed ? path.resolve(trimmed) : resolveWorkspaceRoot();
-}

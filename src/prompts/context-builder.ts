@@ -163,14 +163,14 @@ export async function buildSystemPromptParts(
   // (a thread's workspaceRoot is fixed) and rescans only when a skills dir changes.
   // While locked in, the guidance on installing more skills is suppressed — it
   // points the agent at its own config directory.
-  stableSections.push(buildSkillsSection(workspaceRoot, context.lockedIn));
+  stableSections.push(await buildSkillsSection(workspaceRoot, context.lockedIn));
 
   // Plugins — Agent Plugins (agent-plugins.org). Deliberately not a second
   // skill listing: a plugin's skills already appear above, so this says only
   // which plugins are installed, what each contributed, and how a plugin's
   // tools are named — the one thing the tools block itself cannot convey.
   // Cacheable on the same terms as the skills section.
-  stableSections.push(buildPluginsSection());
+  stableSections.push(await buildPluginsSection());
 
   // Concise delivery instructions (chat only, non-verbose)
   if (mode === 'chat' && !context.verbose) {
@@ -355,8 +355,8 @@ const MAX_PLUGINS_LISTED = 50;
  * turn has a `workspaceRoot`, the repo's own skills are listed first under a
  * labeled group. Always rendered so the agent can bootstrap its first skill too.
  */
-function buildSkillsSection(workspaceRoot?: string, lockedIn = false): string {
-  const skills = skillCatalogService.getCatalog(workspaceRoot);
+async function buildSkillsSection(workspaceRoot?: string, lockedIn = false): Promise<string> {
+  const skills = await skillCatalogService.getCatalog(workspaceRoot);
   const skillsDir = resolveSkillsDir();
 
   // Where skills live + how to add more. Phrased around the canonical dir so
@@ -439,9 +439,9 @@ function buildSkillsSection(workspaceRoot?: string, lockedIn = false): string {
  * have no plugins, and they should not pay for a section about a feature they
  * are not using beyond knowing it exists.
  */
-function buildPluginsSection(): string {
+async function buildPluginsSection(): Promise<string> {
   const pluginsDir = resolvePluginsDir();
-  const plugins = pluginCatalogService.getPlugins();
+  const plugins = await pluginCatalogService.getPlugins();
 
   const install =
     `Plugins are installed in \`${pluginsDir}\` — each is a directory holding a ` +
@@ -456,7 +456,7 @@ function buildPluginsSection(): string {
 
   const listed = plugins.slice(0, MAX_PLUGINS_LISTED);
   const overflow = plugins.length - listed.length;
-  const skills = skillCatalogService.getCatalog();
+  const skills = await skillCatalogService.getCatalog();
 
   const lines = listed.map((p) => {
     // Only the skills this plugin actually contributed — one it shipped that

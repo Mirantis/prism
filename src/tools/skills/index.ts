@@ -19,8 +19,8 @@ export const SKILL_TOOL_NAME = 'skill';
  * no skills are available, so the tool isn't offered when there's nothing it
  * could load.
  */
-export function getSkillTools(workspaceRoot?: string): Record<string, Tool> {
-  if (skillCatalogService.getCatalog(workspaceRoot).length === 0) return {};
+export async function getSkillTools(workspaceRoot?: string): Promise<Record<string, Tool>> {
+  if ((await skillCatalogService.getCatalog(workspaceRoot)).length === 0) return {};
 
   return {
     [SKILL_TOOL_NAME]: tool({
@@ -34,11 +34,11 @@ export function getSkillTools(workspaceRoot?: string): Record<string, Tool> {
         name: z.string().describe('The skill name, exactly as shown in the # Skills list'),
       }),
       execute: async ({ name }) => {
-        const found = skillCatalogService.getSkillBody(name, workspaceRoot);
+        const found = await skillCatalogService.getSkillBody(name, workspaceRoot);
         if (!found) {
           return {
             error: `No available skill named "${name}".`,
-            availableSkills: skillCatalogService.getCatalog(workspaceRoot).map((s) => s.name),
+            availableSkills: (await skillCatalogService.getCatalog(workspaceRoot)).map((s) => s.name),
           };
         }
         const { entry, body } = found;

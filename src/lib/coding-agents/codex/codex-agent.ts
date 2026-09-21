@@ -4,7 +4,8 @@ import path from 'path';
 import { config } from '../../../config';
 import { trackEvent } from '../../telemetry';
 import { ensureSymlink } from '../../data-dir';
-import { runCli, type Spawner } from '../cli-run';
+import { runCli } from '../cli-run';
+import type { ExecutionEnvironment } from '../../execution-environments/execution-environment';
 import type { CodingAgent, CodingAgentEvent, CodingAgentTask } from '../coding-agent';
 import { codexApiKey, codexAuthMethod, resolveCodexHome } from './credentials';
 
@@ -16,8 +17,7 @@ interface StreamLine {
   message?: string;
 }
 
-/** The optional spawner is a test hook; without one, `runCli` spawns the real binary. */
-export function createCodexAgent(spawner?: Spawner): CodingAgent {
+export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgent {
   return {
     id: 'codex',
     displayName: 'Codex',
@@ -25,9 +25,9 @@ export function createCodexAgent(spawner?: Spawner): CodingAgent {
       const configDir = resolveCodexHome(process.env, dataDir);
       fs.mkdirSync(configDir, { recursive: true });
       const skillsLinked = ensureSymlink(skillsDir, path.join(configDir, 'skills'));
-      process.env.CODEX_HOME = configDir;
       return { configDir, skillsLinked };
     },
+    isAvailable: (env) => Promise.resolve(Boolean(codexAuthMethod(env))),
     run: (task) => {
       const authMethod = codexAuthMethod(task.env);
       const startedAt = Date.now();
@@ -46,7 +46,7 @@ export function createCodexAgent(spawner?: Spawner): CodingAgent {
           ...(task.debug ? { RUST_LOG: 'debug' } : {}),
         },
         parseLine: createParser(),
-      }, spawner);
+      }, environment);
       let stopped = false;
       async function* events(): AsyncGenerator<CodingAgentEvent> {
         let status = 'error';

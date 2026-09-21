@@ -9,7 +9,7 @@ import * as path from 'path';
 import { resolvePath, isInsideWorkspace } from '../workspace';
 import { applyEdit } from '../edit';
 import { formatFileContent } from '../format';
-import { appendCappedChunk } from '../exec';
+import { appendCappedChunk } from '../../../lib/execution-environments/capture';
 
 describe('workspace.resolvePath', () => {
   it('resolves relative paths from the workspace root', () => {
@@ -110,7 +110,7 @@ describe('edit.applyEdit', () => {
   });
 });
 
-describe('exec.appendCappedChunk', () => {
+describe('capture.appendCappedChunk', () => {
   const fresh = () => ({
     chunks: [] as Buffer[],
     countRef: { n: 0 },

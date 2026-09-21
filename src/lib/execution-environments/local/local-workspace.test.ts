@@ -1,5 +1,5 @@
 /**
- * Tests for ensureWorkspaceRoot — the boot-time guard that creates the shell
+ * Tests for prepareLocalWorkspace — the boot-time guard that creates the shell
  * workspace dir (and falls back when the configured root can't be created, so
  * `npm run dev` on macOS doesn't fail every shell command with
  * `spawn /bin/bash ENOENT`).
@@ -13,9 +13,9 @@ import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { ensureWorkspaceRoot } from '../config';
+import { prepareLocalWorkspace } from './local-workspace';
 
-describe('ensureWorkspaceRoot', () => {
+describe('prepareLocalWorkspace', () => {
   const original = process.env.SHELL_WORKSPACE_ROOT;
   const tmpPaths: string[] = [];
 
@@ -31,7 +31,7 @@ describe('ensureWorkspaceRoot', () => {
     const root = path.join(base, 'nested', 'workspace');
     process.env.SHELL_WORKSPACE_ROOT = root;
 
-    const result = ensureWorkspaceRoot();
+    const result = prepareLocalWorkspace();
 
     expect(result).toEqual({ root: path.resolve(root), fellBackFrom: null });
     expect(fs.existsSync(root)).toBe(true);
@@ -47,10 +47,10 @@ describe('ensureWorkspaceRoot', () => {
     process.env.SHELL_WORKSPACE_ROOT = desired;
 
     const fallback = path.join(os.tmpdir(), 'prism-workspace');
-    const result = ensureWorkspaceRoot();
+    const result = prepareLocalWorkspace();
 
     expect(result).toEqual({ root: fallback, fellBackFrom: path.resolve(desired) });
-    // Pins the fallback so every later resolveWorkspaceRoot() agrees.
+    // Pins the fallback so every later resolveLocalWorkspaceRoot() agrees.
     expect(process.env.SHELL_WORKSPACE_ROOT).toBe(fallback);
     expect(fs.existsSync(fallback)).toBe(true);
   });

@@ -22,7 +22,7 @@ import type {
   CodingAgentStopReason,
   CodingAgentTask,
 } from '../../lib/coding-agents/coding-agent';
-import { sandboxEnv } from './sandbox-env';
+import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
 
 export const MAX_CONCURRENT = 3;
 export const DEFAULT_WAIT_MS = 5_000;
@@ -107,7 +107,7 @@ export class AgentTaskManager {
       taskId,
       prompt: params.prompt,
       workdir: params.workdir,
-      env: sandboxEnv(),
+      env: getExecutionEnvironment().baseEnv(),
       mode: params.mode ?? 'edit',
       modelTier: params.modelTier,
       effort: params.effort,

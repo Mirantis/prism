@@ -25,11 +25,17 @@
  * when its mtime changes, so a skill the user drops in appears without a restart.
  */
 
-import fs from 'fs';
+import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
+import type { DirEntry } from '../lib/execution-environments/execution-environment';
 import path from 'path';
 import { logger } from '../logger';
 import { resolveSkillsDir } from '../lib/data-dir';
 import { pluginCatalogService } from './plugin-catalog.service';
+
+/** The filesystem a command sees: the skill tool hands out paths for the shell. */
+function files() {
+  return getExecutionEnvironment().files;
+}
 
 /** Where a skill was discovered. */
 export type SkillSource = 'workspace' | 'global' | 'plugin';
@@ -78,7 +84,7 @@ class SkillCatalogService {
    * Claude-native location wins a name clash, and plugin roots come last so a
    * plugin never shadows a skill the user installed.
    */
-  private roots(workspaceRoot?: string): SkillRoot[] {
+  private async roots(workspaceRoot?: string): Promise<SkillRoot[]> {
     const roots: SkillRoot[] = [];
     const trimmed = workspaceRoot?.trim();
     if (trimmed) {
@@ -89,7 +95,7 @@ class SkillCatalogService {
     roots.push({ dir: resolveSkillsDir(), source: 'global' });
     // Plugins are enumerated in id order, so a clash between two plugins
     // resolves the same way on every boot.
-    for (const plugin of pluginCatalogService.getPlugins()) {
+    for (const plugin of await pluginCatalogService.getPlugins()) {
       if (plugin.skillsDir) {
         roots.push({ dir: plugin.skillsDir, source: 'plugin', pluginId: plugin.id });
       }
@@ -103,10 +109,10 @@ class SkillCatalogService {
    * are reused after a single `stat`. Across directories, the first occurrence
    * of a name wins (workspace over global, `.claude` over `.agents`).
    */
-  getCatalog(workspaceRoot?: string): SkillEntry[] {
+  async getCatalog(workspaceRoot?: string): Promise<SkillEntry[]> {
     const byName = new Map<string, SkillEntry>();
-    for (const root of this.roots(workspaceRoot)) {
-      for (const entry of this.scanCached(root)) {
+    for (const root of await this.roots(workspaceRoot)) {
+      for (const entry of await this.scanCached(root)) {
         const key = entry.name.toLowerCase();
         if (!byName.has(key)) byName.set(key, entry);
       }
@@ -120,9 +126,9 @@ class SkillCatalogService {
   }
 
   /** Look up a skill by its frontmatter name (case-insensitive). */
-  find(name: string, workspaceRoot?: string): SkillEntry | undefined {
+  async find(name: string, workspaceRoot?: string): Promise<SkillEntry | undefined> {
     const key = name.trim().toLowerCase();
-    return this.getCatalog(workspaceRoot).find((s) => s.name.toLowerCase() === key);
+    return (await this.getCatalog(workspaceRoot)).find((s) => s.name.toLowerCase() === key);
   }
 
   /**
@@ -130,21 +136,21 @@ class SkillCatalogService {
    * so an in-place edit to the body is always reflected. Returns null when the
    * named skill isn't installed.
    */
-  getSkillBody(
+  async getSkillBody(
     name: string,
     workspaceRoot?: string,
-  ): { entry: SkillEntry; body: string } | null {
-    const entry = this.find(name, workspaceRoot);
+  ): Promise<{ entry: SkillEntry; body: string } | null> {
+    const entry = await this.find(name, workspaceRoot);
     if (!entry) return null;
-    const raw = fs.readFileSync(entry.skillMdPath, 'utf8');
+    const raw = await files().readText(entry.skillMdPath);
     return { entry, body: stripFrontmatter(raw) };
   }
 
   /** Scan one root, reusing the cached entries when its mtime is unchanged. */
-  private scanCached(root: SkillRoot): SkillEntry[] {
+  private async scanCached(root: SkillRoot): Promise<SkillEntry[]> {
     let mtimeMs: number;
     try {
-      mtimeMs = fs.statSync(root.dir).mtimeMs;
+      mtimeMs = (await files().stat(root.dir)).mtimeMs;
     } catch {
       // Directory doesn't exist (e.g. a repo with no .agents/skills) — empty.
       this.cache.set(root.dir, { mtimeMs: -1, entries: [] });
@@ -152,22 +158,22 @@ class SkillCatalogService {
     }
     const cached = this.cache.get(root.dir);
     if (cached && cached.mtimeMs === mtimeMs) return cached.entries;
-    const entries = this.scan(root);
+    const entries = await this.scan(root);
     this.cache.set(root.dir, { mtimeMs, entries });
     return entries;
   }
 
-  private scan(root: SkillRoot): SkillEntry[] {
+  private async scan(root: SkillRoot): Promise<SkillEntry[]> {
     const { dir, source } = root;
-    let dirents: fs.Dirent[];
+    let dirents: DirEntry[];
     try {
-      dirents = fs.readdirSync(dir, { withFileTypes: true });
+      dirents = await files().readDir(dir);
     } catch {
       return [];
     }
     // Deterministic order: sort folder names; first one wins on a name clash.
     const subdirs = dirents
-      .filter((d) => d.isDirectory() || d.isSymbolicLink())
+      .filter((d) => d.isDirectory || d.isSymbolicLink)
       .map((d) => d.name)
       .sort();
 
@@ -182,20 +188,15 @@ class SkillCatalogService {
         // rejected — that would let a bundle read an arbitrary file outside the
         // skills dir. A symlinked *bundle directory* is still fine (lstat
         // traverses the intermediate dir symlink and sees a real SKILL.md).
-        const st = fs.lstatSync(skillMdPath);
-        if (st.isSymbolicLink()) {
+        const st = await files().lstat(skillMdPath);
+        if (st.isSymbolicLink) {
           logger.warn('[Skills] skipping "%s": SKILL.md is a symlink', dirName);
           continue;
         }
-        if (!st.isFile()) continue;
-        const fd = fs.openSync(skillMdPath, 'r');
-        try {
-          const buf = Buffer.alloc(Math.min(FRONTMATTER_READ_LIMIT, st.size));
-          fs.readSync(fd, buf, 0, buf.length, 0);
-          head = buf.toString('utf8');
-        } finally {
-          fs.closeSync(fd);
-        }
+        if (!st.isFile) continue;
+        head = await files().readText(skillMdPath, {
+          maxBytes: Math.min(FRONTMATTER_READ_LIMIT, st.size),
+        });
       } catch {
         continue; // no SKILL.md → not a skill bundle
       }

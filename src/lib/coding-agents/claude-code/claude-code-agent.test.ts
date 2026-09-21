@@ -9,9 +9,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { FakeChild } from '../../../test-utils/fake-child';
-import type { Spawner } from '../cli-run';
+import { fakeExecutionEnvironment } from '../../../test-utils/fake-execution-environment';
+import type { RunOptions } from '../../execution-environments/execution-environment';
 import type { CodingAgentEvent, CodingAgentTask } from '../coding-agent';
 import { createClaudeCodeAgent, PLAN_ONLY_INSTRUCTION } from './claude-code-agent';
+import { resolveClaudeConfigDir } from './home';
 
 const baseTask: CodingAgentTask = {
   taskId: 't1',
@@ -22,20 +24,22 @@ const baseTask: CodingAgentTask = {
   gateMode: 'off',
 };
 
-/** Start a task with a spawner that records the spawn instead of running anything. */
+/** Start a task in an environment that records the launch instead of running anything. */
 function capture(task: Partial<CodingAgentTask>): {
   command: string;
   args: readonly string[];
-  options: { cwd?: string; env: NodeJS.ProcessEnv };
+  options: RunOptions;
 } {
-  let captured: Parameters<Spawner> | undefined;
-  const spawner: Spawner = (...spawnArgs) => {
-    captured = spawnArgs;
-    return new FakeChild().asChildProcess();
-  };
-  createClaudeCodeAgent(spawner).run({ ...baseTask, ...task });
-  if (!captured) throw new Error('spawner was not called');
-  return { command: captured[0], args: captured[1], options: captured[2] };
+  let captured: { command: string; args: readonly string[]; options: RunOptions } | undefined;
+  const environment = fakeExecutionEnvironment({
+    runProgram: (command, args, options) => {
+      captured = { command, args, options };
+      return new FakeChild().asExecProcess();
+    },
+  });
+  createClaudeCodeAgent(environment).run({ ...baseTask, ...task });
+  if (!captured) throw new Error('the environment was not asked to run anything');
+  return captured;
 }
 
 /** The value carried by a flag, or undefined when the flag is absent. */
@@ -47,7 +51,9 @@ function valueOf(args: readonly string[], flag: string): string | undefined {
 /** Feed stream-json lines to a fake `claude` and collect what the adapter reads. */
 async function eventsFor(lines: object[]): Promise<CodingAgentEvent[]> {
   const child = new FakeChild();
-  const run = createClaudeCodeAgent(() => child.asChildProcess()).run(baseTask);
+  const run = createClaudeCodeAgent(
+    fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() }),
+  ).run(baseTask);
   for (const line of lines) child.emitLine(JSON.stringify(line));
   child.finish(0);
   const events: CodingAgentEvent[] = [];
@@ -82,7 +88,17 @@ describe('run: the spawn', () => {
   it("hands the task's cwd and env to the child", () => {
     const { options } = capture({ workdir: '/work' });
     expect(options.cwd).toBe('/work');
-    expect(options.env).toEqual({ PATH: '/bin' });
+    // The home rides the task env: the CLI runs in the execution environment
+    // and inherits that environment's variables, not this process's.
+    expect(options.env).toEqual({
+      PATH: '/bin',
+      CLAUDE_CONFIG_DIR: resolveClaudeConfigDir({ PATH: '/bin' }),
+    });
+  });
+
+  it('honours an operator CLAUDE_CONFIG_DIR carried on the task env', () => {
+    const { options } = capture({ env: { PATH: '/bin', CLAUDE_CONFIG_DIR: '/theirs' } });
+    expect(options.env.CLAUDE_CONFIG_DIR).toBe('/theirs');
   });
 
   it('resumes a session and turns on debug when asked', () => {
@@ -221,7 +237,9 @@ describe('run: reading the stream', () => {
     const child = new FakeChild();
     child.stdout.end();
     child.stderr.end();
-    const run = createClaudeCodeAgent(() => child.asChildProcess()).run(baseTask);
+    const run = createClaudeCodeAgent(
+    fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() }),
+  ).run(baseTask);
     process.nextTick(() => child.emit('error', new Error('spawn claude ENOENT')));
     const events: CodingAgentEvent[] = [];
     for await (const event of run.events) events.push(event);
@@ -254,7 +272,7 @@ describe('prepareHome', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('creates the config dir, links the skills dir into it and sets CLAUDE_CONFIG_DIR', () => {
+  it('creates the config dir and links the skills dir into it', () => {
     const skillsDir = path.join(tmp, 'skills');
     const home = agent.prepareHome({ dataDir: tmp, skillsDir });
 
@@ -264,7 +282,9 @@ describe('prepareHome', () => {
     const link = path.join(home.configDir, 'skills');
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(link)).toBe(fs.realpathSync(skillsDir));
-    expect(process.env.CLAUDE_CONFIG_DIR).toBe(home.configDir);
+    // Nothing is written to this process's env: a task states the home on its
+    // own env, so a run in another environment is not left inheriting ours.
+    expect(process.env.CLAUDE_CONFIG_DIR).toBeUndefined();
     // Only skills are exposed — Claude Code's plugin layout differs from the
     // Agent Plugins one, so plugins are deliberately not linked across.
     expect(fs.existsSync(path.join(home.configDir, 'plugins'))).toBe(false);
@@ -311,10 +331,14 @@ describe('model tier and effort', () => {
     it.each(tiers)('maps %s for session ' + sessionId, async (modelTier) => {
       const child = new FakeChild();
       let args: readonly string[] = [];
-      const run = createClaudeCodeAgent((_command, argv) => {
-        args = argv;
-        return child.asChildProcess();
-      }).run({ ...baseTask, modelTier, sessionId });
+      const run = createClaudeCodeAgent(
+        fakeExecutionEnvironment({
+          runProgram: (_command, argv) => {
+            args = argv;
+            return child.asExecProcess();
+          },
+        }),
+      ).run({ ...baseTask, modelTier, sessionId });
       expect(args[args.indexOf('--model') + 1]).toBe(models[tiers.indexOf(modelTier)]);
       child.finish(0);
       await Array.fromAsync(run.events);
@@ -323,10 +347,14 @@ describe('model tier and effort', () => {
     it.each(['low', 'medium', 'high'] as const)('passes %s effort for session ' + sessionId, async (effort) => {
       const child = new FakeChild();
       let args: readonly string[] = [];
-      const run = createClaudeCodeAgent((_command, argv) => {
-        args = argv;
-        return child.asChildProcess();
-      }).run({ ...baseTask, effort, sessionId });
+      const run = createClaudeCodeAgent(
+        fakeExecutionEnvironment({
+          runProgram: (_command, argv) => {
+            args = argv;
+            return child.asExecProcess();
+          },
+        }),
+      ).run({ ...baseTask, effort, sessionId });
       expect(args[args.indexOf('--effort') + 1]).toBe(effort);
       expect(args).not.toContain('--model');
       child.finish(0);
@@ -341,10 +369,14 @@ describe('model tier and effort', () => {
     try {
       const child = new FakeChild();
       let args: readonly string[] = [];
-      const run = createClaudeCodeAgent((_command, argv) => {
-        args = argv;
-        return child.asChildProcess();
-      }).run({ ...baseTask, modelTier, effort: 'high', sessionId: 'session-1' });
+      const run = createClaudeCodeAgent(
+        fakeExecutionEnvironment({
+          runProgram: (_command, argv) => {
+            args = argv;
+            return child.asExecProcess();
+          },
+        }),
+      ).run({ ...baseTask, modelTier, effort: 'high', sessionId: 'session-1' });
       expect(args[args.indexOf('--model') + 1]).toBe('custom-model');
       child.finish(0);
       await Array.fromAsync(run.events);
@@ -356,10 +388,14 @@ describe('model tier and effort', () => {
   it('preserves deployment defaults when both parameters are omitted', async () => {
     const child = new FakeChild();
     let args: readonly string[] = [];
-    const run = createClaudeCodeAgent((_command, argv) => {
-      args = argv;
-      return child.asChildProcess();
-    }).run(baseTask);
+    const run = createClaudeCodeAgent(
+      fakeExecutionEnvironment({
+        runProgram: (_command, argv) => {
+          args = argv;
+          return child.asExecProcess();
+        },
+      }),
+    ).run(baseTask);
     expect(args).not.toContain('--model');
     expect(args).not.toContain('--effort');
     expect(args.some(arg => arg.startsWith('model_reasoning_effort='))).toBe(false);

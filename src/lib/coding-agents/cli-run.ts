@@ -1,21 +1,25 @@
 /**
  * Run a coding agent's CLI as one `CodingAgentRun`.
  *
- * Shared plumbing for the adapters whose agent is a command-line program: spawn
- * it, turn each stdout line into events through the adapter's parser, wait for
- * it to exit, and close the stream with a `result` when the agent reported
- * none. The contract in `coding-agent.ts` knows nothing of this; an adapter
- * that is not a CLI builds its run another way.
+ * Shared plumbing for the adapters whose agent is a command-line program: start
+ * it in the execution environment, turn each stdout line into events through
+ * the adapter's parser, wait for it to exit, and close the stream with a
+ * `result` when the agent reported none. The contract in `coding-agent.ts`
+ * knows nothing of this; an adapter that is not a CLI builds its run another
+ * way.
  */
 
-import { ChildProcess } from 'child_process';
-import { agentProcesses } from '../agent-processes';
 import { createInterface } from 'readline';
 import { logger } from '../../logger';
 import { AsyncChannel } from '../../utils/async-channel';
+import { getExecutionEnvironment } from '../execution-environments/get-execution-environment';
+import type {
+  ExecProcess,
+  ExecutionEnvironment,
+} from '../execution-environments/execution-environment';
 import type { CodingAgentEvent, CodingAgentRun } from './coding-agent';
 
-/** How long a stopped child gets to honour SIGTERM before SIGKILL. */
+/** How long a stopped process gets to honour SIGTERM before SIGKILL. */
 export const STOP_GRACE_MS = 2_000;
 
 /** How much of stderr is kept for the closing message of a run that reports nothing. */
@@ -36,44 +40,27 @@ export interface CliRunSpec {
   parseLine(line: string): CodingAgentEvent[];
 }
 
-/** `spawn`-shaped hook so tests can stand in a fake child for the real binary. */
-export type Spawner = (
-  command: string,
-  args: readonly string[],
-  options: { cwd?: string; env: NodeJS.ProcessEnv },
-) => ChildProcess;
-
-const spawnAgent: Spawner = (command, args, options) =>
-  agentProcesses.spawn(command, args, options);
-
-export function runCli(spec: CliRunSpec, spawner: Spawner = spawnAgent): CodingAgentRun {
+export function runCli(
+  spec: CliRunSpec,
+  environment: ExecutionEnvironment = getExecutionEnvironment(),
+): CodingAgentRun {
   const { taskId } = spec;
-  const child = spawner(spec.command, spec.args, { cwd: spec.cwd, env: spec.env });
+  // An environment has no ambient working directory of its own, so a spec that
+  // names none runs at the workspace root.
+  const proc = environment.runProgram(spec.command, spec.args, {
+    cwd: spec.cwd ?? environment.workspaceRoot(),
+    env: spec.env,
+    stdin: 'pipe',
+  });
   // Prompts are argv inputs; Codex also reads piped stdin until EOF.
-  child.stdin?.end();
+  proc.stdin?.end();
   const events = new AsyncChannel<CodingAgentEvent>();
-
-  // A spawn failure — a missing binary, a workdir that doesn't exist — emits
-  // 'error' at once, before the pump below gets as far as attaching its own
-  // listener. Unhandled, that event takes the whole runtime down, so claim it
-  // here and let the closing result report it as a failed run.
-  let spawnError: Error | undefined;
-  child.once('error', (err: Error) => {
-    spawnError = err;
-    logger.error({ err, taskId }, '[AgentTask] child process error');
-  });
-
-  // Attach before reading stdout: a signal exit can precede the last pipe close.
-  const exited = new Promise<number | null>((resolve) => {
-    child.once('exit', (code) => resolve(typeof code === 'number' ? code : null));
-    child.once('error', () => resolve(null));
-  });
 
   const pump = async (): Promise<void> => {
     const stderrChunks: string[] = [];
     let stderrBytes = 0;
-    if (child.stderr) {
-      const stderrReader = createInterface({ input: child.stderr });
+    if (proc.stderr) {
+      const stderrReader = createInterface({ input: proc.stderr });
       stderrReader.on('line', (line) => {
         logger.debug({ taskId, line }, '[AgentTask] stderr');
         if (stderrBytes < STDERR_KEEP_BYTES) {
@@ -85,8 +72,8 @@ export function runCli(spec: CliRunSpec, spawner: Spawner = spawnAgent): CodingA
     }
 
     let reported = false;
-    if (child.stdout) {
-      const stdoutReader = createInterface({ input: child.stdout });
+    if (proc.stdout) {
+      const stdoutReader = createInterface({ input: proc.stdout });
       for await (const line of stdoutReader) {
         if (line.length === 0) continue;
         let parsed: CodingAgentEvent[];
@@ -104,15 +91,18 @@ export function runCli(spec: CliRunSpec, spawner: Spawner = spawnAgent): CodingA
     }
 
     // Wait for the process to actually exit (stdout closing doesn't always
-    // mean the child is fully reaped).
-    const exitCode = await exited;
+    // mean the process is fully reaped).
+    const end = await proc.ended;
+    // A launch failure — a missing binary, a workdir that doesn't exist — never
+    // reaches the parser, so it is reported here and as the closing result.
+    if (end.error) logger.error({ err: end.error, taskId }, '[AgentTask] child process error');
 
     if (!reported) {
       events.push({
         type: 'result',
         stopReason: 'error',
         turns: 0,
-        message: closingMessage(spec.displayName, spawnError, exitCode, stderrChunks.join('\n')),
+        message: closingMessage(spec.displayName, end.error, end.exitCode, stderrChunks.join('\n')),
       });
     }
     events.close();
@@ -128,21 +118,21 @@ export function runCli(spec: CliRunSpec, spawner: Spawner = spawnAgent): CodingA
   return {
     events,
     get exited(): boolean {
-      return child.exitCode !== null || child.signalCode !== null;
+      return proc.exitCode !== null || proc.signal !== null;
     },
-    stop: () => terminateChild(child, taskId),
+    stop: () => terminate(proc, taskId),
   };
 }
 
 /** The `result` message for a run that ended without the agent reporting one. */
 function closingMessage(
   displayName: string,
-  spawnError: Error | undefined,
+  launchError: Error | null,
   exitCode: number | null,
   stderr: string,
 ): string {
   // It never ran, so "exited with code N" would be a fiction.
-  if (spawnError) return `${displayName} failed to start: ${spawnError.message}`;
+  if (launchError) return `${displayName} failed to start: ${launchError.message}`;
   const code = exitCode ?? 1;
   return stderr.length > 0
     ? `${displayName} exited with code ${code}: ${stderr}`
@@ -150,15 +140,17 @@ function closingMessage(
 }
 
 /**
- * SIGTERM, then escalate to SIGKILL if the child is still alive — the same
+ * SIGTERM, then escalate to SIGKILL if the process is still alive — the same
  * two-stage shape `shell_exec` uses for its timeout and cancel paths.
  */
-function terminateChild(child: ChildProcess, taskId: string): void {
-  // The whole group: a task stopped by a secure takeover holds a stopped group.
-  agentProcesses.kill(child, 'SIGTERM');
+function terminate(proc: ExecProcess, taskId: string): void {
+  if (!proc.kill('SIGTERM')) {
+    logger.warn({ taskId }, '[AgentTask] SIGTERM was not delivered');
+    return;
+  }
   setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) {
-      agentProcesses.kill(child, 'SIGKILL');
+    if (proc.exitCode === null && proc.signal === null) {
+      if (!proc.kill('SIGKILL')) logger.warn({ taskId }, '[AgentTask] SIGKILL was not delivered');
     }
   }, STOP_GRACE_MS).unref();
 }

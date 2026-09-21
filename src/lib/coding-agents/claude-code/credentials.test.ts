@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { hasAuthenticatedClaudeHome } from './authenticated-home';
-vi.mock('./authenticated-home', () => ({ hasAuthenticatedClaudeHome: vi.fn(() => false) }));
-afterEach(() => vi.mocked(hasAuthenticatedClaudeHome).mockReturnValue(false));
+vi.mock('./authenticated-home', () => ({ hasAuthenticatedClaudeHome: vi.fn(async () => false) }));
+afterEach(() => vi.mocked(hasAuthenticatedClaudeHome).mockResolvedValue(false));
 
 import { claudeCodeEnvironment, hasClaudeCodeCredentials } from './credentials';
 
@@ -10,8 +10,8 @@ describe('coding agent credentials', () => {
     { AWS_BEARER_TOKEN_BEDROCK: 'test-key' },
     { AWS_ACCESS_KEY_ID: 'test-id', AWS_SECRET_ACCESS_KEY: 'test-secret' },
     { AWS_PROFILE: 'test-profile' },
-  ])('enables Bedrock for AWS credentials: %j', (env) => {
-    expect(hasClaudeCodeCredentials(env)).toBe(true);
+  ])('enables Bedrock for AWS credentials: %j', async (env) => {
+    expect(await hasClaudeCodeCredentials(env)).toBe(true);
     expect(claudeCodeEnvironment(env)).toEqual({ ...env, CLAUDE_CODE_USE_BEDROCK: '1', AWS_REGION: 'us-east-1' });
     expect(env).not.toHaveProperty('CLAUDE_CODE_USE_BEDROCK');
   });
@@ -34,18 +34,18 @@ describe('coding agent credentials', () => {
     expect(claudeCodeEnvironment({ ...env, CLAUDE_CODE_USE_BEDROCK: '1' }).AWS_REGION).toBe(region);
   });
 
-  it('detects a saved CLI login without environment credentials', () => {
-    vi.mocked(hasAuthenticatedClaudeHome).mockReturnValue(true);
-    expect(hasClaudeCodeCredentials({})).toBe(true);
+  it('detects a saved CLI login without environment credentials', async () => {
+    vi.mocked(hasAuthenticatedClaudeHome).mockResolvedValue(true);
+    expect(await hasClaudeCodeCredentials({})).toBe(true);
   });
 
   it.each(['ANTHROPIC_FOUNDRY_API_KEY', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN', 'AZURE_API_KEY'])(
-    'requires a Foundry resource or endpoint with %s', (key) => {
+    'requires a Foundry resource or endpoint with %s', async (key) => {
       const env = { [key]: 'test-key' };
-      expect(hasClaudeCodeCredentials(env)).toBe(false);
+      expect(await hasClaudeCodeCredentials(env)).toBe(false);
       expect(claudeCodeEnvironment(env)).toEqual(env);
-      expect(hasClaudeCodeCredentials({ ...env, ANTHROPIC_FOUNDRY_RESOURCE: 'test-resource' })).toBe(true);
-      expect(hasClaudeCodeCredentials({ ...env, ANTHROPIC_FOUNDRY_BASE_URL: 'https://test.example/anthropic' })).toBe(true);
+      expect(await hasClaudeCodeCredentials({ ...env, ANTHROPIC_FOUNDRY_RESOURCE: 'test-resource' })).toBe(true);
+      expect(await hasClaudeCodeCredentials({ ...env, ANTHROPIC_FOUNDRY_BASE_URL: 'https://test.example/anthropic' })).toBe(true);
     },
   );
 

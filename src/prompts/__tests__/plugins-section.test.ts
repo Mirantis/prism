@@ -50,7 +50,7 @@ function writePlugin(id: string, fixture: PluginFixture = {}): void {
   if (fixture.mcp) fs.writeFileSync(path.join(dir, 'mcp.json'), '{}');
 }
 
-function section(): string {
+async function section(): Promise<string> {
   pluginCatalogService.invalidate();
   skillCatalogService.invalidate();
   return __test.buildPluginsSection();
@@ -84,39 +84,39 @@ afterEach(() => {
 });
 
 describe('buildPluginsSection', () => {
-  it('collapses to one sentence when nothing is installed', () => {
-    const out = section();
+  it('collapses to one sentence when nothing is installed', async () => {
+    const out = await section();
     expect(out).toContain('# Plugins');
     expect(out).toContain('No Agent Plugins are installed');
     // Most installs have no plugins; they must not pay for a full section.
     expect(out.split('\n\n')).toHaveLength(2);
   });
 
-  it('always names the plugins directory, so the agent can install one itself', () => {
-    expect(section()).toContain(pluginsDir);
+  it('always names the plugins directory, so the agent can install one itself', async () => {
+    expect(await section()).toContain(pluginsDir);
     writePlugin('demo');
-    expect(section()).toContain(pluginsDir);
+    expect(await section()).toContain(pluginsDir);
   });
 
-  it('lists each plugin with its version and description', () => {
+  it('lists each plugin with its version and description', async () => {
     writePlugin('acme-deploy', { version: '1.2.0', description: 'Deploy helpers.' });
-    expect(section()).toContain('- **acme-deploy** v1.2.0 — Deploy helpers.');
+    expect(await section()).toContain('- **acme-deploy** v1.2.0 — Deploy helpers.');
   });
 
-  it('omits the version and description when the manifest has none', () => {
+  it('omits the version and description when the manifest has none', async () => {
     writePlugin('bare');
-    const out = section();
+    const out = await section();
     expect(out).toContain('- **bare**');
     expect(out).not.toContain('bare** v');
     expect(out).not.toContain('bare** —');
   });
 
-  it('names the skills a plugin contributed', () => {
+  it('names the skills a plugin contributed', async () => {
     writePlugin('notes', { skill: 'summarize' });
-    expect(section()).toContain('skills: summarize');
+    expect(await section()).toContain('skills: summarize');
   });
 
-  it('does not credit a plugin for a skill that lost a name clash', () => {
+  it('does not credit a plugin for a skill that lost a name clash', async () => {
     // A global skill of the same name wins, so the plugin's copy is not
     // available and claiming it here would be a lie.
     writePlugin('notes', { skill: 'summarize' });
@@ -127,41 +127,41 @@ describe('buildPluginsSection', () => {
       '---\nname: summarize\ndescription: Mine.\n---\nbody\n',
     );
 
-    const out = section();
+    const out = await section();
     expect(out).toContain('- **notes**');
     expect(out).not.toContain('skills: summarize');
   });
 
-  it('points at a plugin tool prefix only when it declares MCP servers', () => {
+  it('points at a plugin tool prefix only when it declares MCP servers', async () => {
     writePlugin('withmcp', { mcp: true });
     writePlugin('nomcp', { skill: 'thing' });
-    const out = section();
+    const out = await section();
     expect(out).toContain('tools prefixed `withmcp__`');
     expect(out).not.toContain('tools prefixed `nomcp__`');
   });
 
-  it('explains the tool naming scheme, which the tool set itself cannot', () => {
+  it('explains the tool naming scheme, which the tool set itself cannot', async () => {
     writePlugin('demo', { mcp: true });
-    expect(section()).toContain('`<plugin>__<server>__<tool>`');
+    expect(await section()).toContain('`<plugin>__<server>__<tool>`');
   });
 
-  it('does not repeat the skill descriptions already in the Skills section', () => {
+  it('does not repeat the skill descriptions already in the Skills section', async () => {
     writePlugin('notes', { skill: 'summarize' });
     // The name is enough to correlate the two sections; the description is not
     // worth paying for twice.
-    expect(section()).not.toContain('Does summarize.');
+    expect(await section()).not.toContain('Does summarize.');
   });
 
-  it('lists plugins in id order', () => {
+  it('lists plugins in id order', async () => {
     writePlugin('zeta');
     writePlugin('alpha');
-    const out = section();
+    const out = await section();
     expect(out.indexOf('**alpha**')).toBeLessThan(out.indexOf('**zeta**'));
   });
 
-  it('caps the listing and reports the remainder', () => {
+  it('caps the listing and reports the remainder', async () => {
     for (let i = 0; i < 55; i++) writePlugin(`p${String(i).padStart(3, '0')}`);
-    const out = section();
+    const out = await section();
     expect(out).toContain('(+5 more installed.)');
   });
 });

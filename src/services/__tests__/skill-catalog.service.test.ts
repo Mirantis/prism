@@ -53,13 +53,13 @@ afterEach(() => {
 });
 
 describe('SkillCatalogService.getCatalog', () => {
-  it('lists a well-formed skill (name + description, no body)', () => {
+  it('lists a well-formed skill (name + description, no body)', async () => {
     writeSkill(
       'pdf-processing',
       `---\nname: pdf-processing\ndescription: Extract text from PDFs.\n---\n\nDo the thing.\n`,
     );
     skillCatalogService.invalidate();
-    const catalog = skillCatalogService.getCatalog();
+    const catalog = await skillCatalogService.getCatalog();
     expect(catalog).toHaveLength(1);
     expect(catalog[0]).toMatchObject({
       name: 'pdf-processing',
@@ -70,37 +70,37 @@ describe('SkillCatalogService.getCatalog', () => {
     expect(catalog[0]).not.toHaveProperty('body');
   });
 
-  it('tolerates an unquoted colon in the description', () => {
+  it('tolerates an unquoted colon in the description', async () => {
     writeSkill(
       'colon',
       `---\nname: colon\ndescription: Use when X: then do Y.\n---\n\nbody\n`,
     );
     skillCatalogService.invalidate();
-    const [entry] = skillCatalogService.getCatalog();
+    const [entry] = await skillCatalogService.getCatalog();
     expect(entry.description).toBe('Use when X: then do Y.');
   });
 
-  it('skips a skill missing name or description', () => {
+  it('skips a skill missing name or description', async () => {
     writeSkill('no-desc', `---\nname: no-desc\n---\n\nbody\n`);
     writeSkill('no-name', `---\ndescription: orphan\n---\n\nbody\n`);
     writeSkill('ok', `---\nname: ok\ndescription: fine\n---\n\nbody\n`);
     skillCatalogService.invalidate();
-    const names = skillCatalogService.getCatalog().map((s) => s.name);
+    const names = (await skillCatalogService.getCatalog()).map((s) => s.name);
     expect(names).toEqual(['ok']);
   });
 
-  it('returns an empty catalog when no skills are installed', () => {
+  it('returns an empty catalog when no skills are installed', async () => {
     skillCatalogService.invalidate();
-    expect(skillCatalogService.getCatalog()).toEqual([]);
+    expect(await skillCatalogService.getCatalog()).toEqual([]);
   });
 
-  it('returns an empty catalog when the skills dir is absent', () => {
+  it('returns an empty catalog when the skills dir is absent', async () => {
     fs.rmSync(skillsDir, { recursive: true, force: true });
     skillCatalogService.invalidate();
-    expect(skillCatalogService.getCatalog()).toEqual([]);
+    expect(await skillCatalogService.getCatalog()).toEqual([]);
   });
 
-  it('skips a skill whose SKILL.md is a symlink (no reading arbitrary files)', () => {
+  it('skips a skill whose SKILL.md is a symlink (no reading arbitrary files)', async () => {
     const secret = path.join(tmp, 'secret.md');
     fs.writeFileSync(secret, `---\nname: evil\ndescription: leaked\n---\nsecret body\n`);
     const dir = path.join(skillsDir, 'evil');
@@ -109,15 +109,15 @@ describe('SkillCatalogService.getCatalog', () => {
     // A normal skill alongside it still loads.
     writeSkill('ok', `---\nname: ok\ndescription: fine\n---\nbody\n`);
     skillCatalogService.invalidate();
-    const names = skillCatalogService.getCatalog().map((s) => s.name);
+    const names = (await skillCatalogService.getCatalog()).map((s) => s.name);
     expect(names).toEqual(['ok']);
   });
 
-  it('keeps the first (by sorted dir name) on a name collision', () => {
+  it('keeps the first (by sorted dir name) on a name collision', async () => {
     writeSkill('a-dir', `---\nname: dup\ndescription: from a\n---\nbody\n`);
     writeSkill('b-dir', `---\nname: dup\ndescription: from b\n---\nbody\n`);
     skillCatalogService.invalidate();
-    const catalog = skillCatalogService.getCatalog();
+    const catalog = await skillCatalogService.getCatalog();
     expect(catalog).toHaveLength(1);
     expect(catalog[0]).toMatchObject({ dirName: 'a-dir', description: 'from a' });
   });
@@ -132,30 +132,30 @@ describe('SkillCatalogService.find / getSkillBody', () => {
     skillCatalogService.invalidate();
   });
 
-  it('find is case-insensitive on the skill name', () => {
-    expect(skillCatalogService.find('GREET')?.name).toBe('greet');
-    expect(skillCatalogService.find('nope')).toBeUndefined();
+  it('find is case-insensitive on the skill name', async () => {
+    expect((await skillCatalogService.find('GREET'))?.name).toBe('greet');
+    expect(await skillCatalogService.find('nope')).toBeUndefined();
   });
 
-  it('getSkillBody returns the body with frontmatter stripped', () => {
-    const found = skillCatalogService.getSkillBody('greet');
+  it('getSkillBody returns the body with frontmatter stripped', async () => {
+    const found = await skillCatalogService.getSkillBody('greet');
     expect(found).not.toBeNull();
     expect(found!.body).toBe('# Greet\n\nSay hello to the user.');
     expect(found!.body).not.toContain('name: greet');
   });
 
-  it('getSkillBody returns null for an unknown skill', () => {
-    expect(skillCatalogService.getSkillBody('missing')).toBeNull();
+  it('getSkillBody returns null for an unknown skill', async () => {
+    expect(await skillCatalogService.getSkillBody('missing')).toBeNull();
   });
 });
 
 describe('SkillCatalogService plugin skills', () => {
-  it('merges a plugin skills/ dir into the catalog, tagged with its plugin', () => {
+  it('merges a plugin skills/ dir into the catalog, tagged with its plugin', async () => {
     writePluginSkill('demo', 'summarize', `---\nname: summarize\ndescription: Summarize.\n---\nbody\n`);
     skillCatalogService.invalidate();
     pluginCatalogService.invalidate();
 
-    const catalog = skillCatalogService.getCatalog();
+    const catalog = await skillCatalogService.getCatalog();
     expect(catalog).toHaveLength(1);
     expect(catalog[0]).toMatchObject({
       name: 'summarize',
@@ -164,24 +164,24 @@ describe('SkillCatalogService plugin skills', () => {
     });
   });
 
-  it('leaves pluginId unset on skills that did not come from a plugin', () => {
+  it('leaves pluginId unset on skills that did not come from a plugin', async () => {
     writeSkill('plain', `---\nname: plain\ndescription: p\n---\nbody\n`);
     skillCatalogService.invalidate();
 
-    expect(skillCatalogService.find('plain')).not.toHaveProperty('pluginId');
+    expect(await skillCatalogService.find('plain')).not.toHaveProperty('pluginId');
   });
 
-  it('loads a plugin skill body through the same progressive-disclosure path', () => {
+  it('loads a plugin skill body through the same progressive-disclosure path', async () => {
     writePluginSkill('demo', 'summarize', `---\nname: summarize\ndescription: s\n---\n# Sum\n\nDo it.\n`);
     skillCatalogService.invalidate();
     pluginCatalogService.invalidate();
 
-    const found = skillCatalogService.getSkillBody('summarize');
+    const found = await skillCatalogService.getSkillBody('summarize');
     expect(found?.entry.pluginId).toBe('demo');
     expect(found?.body).toBe('# Sum\n\nDo it.');
   });
 
-  it('ignores a plugin whose manifest is invalid', () => {
+  it('ignores a plugin whose manifest is invalid', async () => {
     writePluginSkill('broken', 'ghost', `---\nname: ghost\ndescription: g\n---\nbody\n`);
     // Replace the good manifest with one targeting a version we do not implement.
     fs.writeFileSync(
@@ -191,16 +191,16 @@ describe('SkillCatalogService plugin skills', () => {
     skillCatalogService.invalidate();
     pluginCatalogService.invalidate();
 
-    expect(skillCatalogService.getCatalog()).toEqual([]);
+    expect(await skillCatalogService.getCatalog()).toEqual([]);
   });
 
-  it('resolves a clash between two plugins by plugin id order', () => {
+  it('resolves a clash between two plugins by plugin id order', async () => {
     writePluginSkill('zeta', 'dup', `---\nname: dup\ndescription: from zeta\n---\nbody\n`);
     writePluginSkill('alpha', 'dup', `---\nname: dup\ndescription: from alpha\n---\nbody\n`);
     skillCatalogService.invalidate();
     pluginCatalogService.invalidate();
 
-    expect(skillCatalogService.find('dup')).toMatchObject({
+    expect(await skillCatalogService.find('dup')).toMatchObject({
       pluginId: 'alpha',
       description: 'from alpha',
     });
@@ -223,13 +223,13 @@ describe('SkillCatalogService workspace skills', () => {
     skillCatalogService.invalidate();
   });
 
-  it('merges workspace (.claude + .agents) with global, tagging source', () => {
+  it('merges workspace (.claude + .agents) with global, tagging source', async () => {
     writeSkill('global-only', `---\nname: global-only\ndescription: g\n---\nbody\n`);
     writeWorkspaceSkill('.claude', 'repo-claude', `---\nname: repo-claude\ndescription: c\n---\nbody\n`);
     writeWorkspaceSkill('.agents', 'repo-agents', `---\nname: repo-agents\ndescription: a\n---\nbody\n`);
     skillCatalogService.invalidate();
 
-    const catalog = skillCatalogService.getCatalog(workspaceRoot);
+    const catalog = await skillCatalogService.getCatalog(workspaceRoot);
     const bySource = Object.fromEntries(catalog.map((s) => [s.name, s.source]));
     expect(bySource).toEqual({
       'repo-claude': 'workspace',
@@ -238,87 +238,87 @@ describe('SkillCatalogService workspace skills', () => {
     });
   });
 
-  it('workspace overrides global on a name collision', () => {
+  it('workspace overrides global on a name collision', async () => {
     writeSkill('dup', `---\nname: dup\ndescription: from global\n---\nbody\n`);
     writeWorkspaceSkill('.claude', 'dup', `---\nname: dup\ndescription: from workspace\n---\nbody\n`);
     skillCatalogService.invalidate();
 
-    const entry = skillCatalogService.find('dup', workspaceRoot);
+    const entry = await skillCatalogService.find('dup', workspaceRoot);
     expect(entry).toMatchObject({ source: 'workspace', description: 'from workspace' });
     // Without a workspaceRoot, the global one is returned.
-    expect(skillCatalogService.find('dup')).toMatchObject({ source: 'global', description: 'from global' });
+    expect(await skillCatalogService.find('dup')).toMatchObject({ source: 'global', description: 'from global' });
   });
 
-  it('.claude wins over .agents on a name collision', () => {
+  it('.claude wins over .agents on a name collision', async () => {
     writeWorkspaceSkill('.claude', 'dup', `---\nname: dup\ndescription: from claude\n---\nbody\n`);
     writeWorkspaceSkill('.agents', 'dup', `---\nname: dup\ndescription: from agents\n---\nbody\n`);
     skillCatalogService.invalidate();
 
-    expect(skillCatalogService.find('dup', workspaceRoot)).toMatchObject({ description: 'from claude' });
+    expect(await skillCatalogService.find('dup', workspaceRoot)).toMatchObject({ description: 'from claude' });
   });
 
-  it('plugin skills lose to both workspace and global on a name collision', () => {
+  it('plugin skills lose to both workspace and global on a name collision', async () => {
     writePluginSkill('demo', 'dup', `---\nname: dup\ndescription: from plugin\n---\nbody\n`);
     writeSkill('dup', `---\nname: dup\ndescription: from global\n---\nbody\n`);
     writeWorkspaceSkill('.claude', 'dup', `---\nname: dup\ndescription: from workspace\n---\nbody\n`);
     skillCatalogService.invalidate();
     pluginCatalogService.invalidate();
 
-    expect(skillCatalogService.find('dup', workspaceRoot)).toMatchObject({
+    expect(await skillCatalogService.find('dup', workspaceRoot)).toMatchObject({
       source: 'workspace',
       description: 'from workspace',
     });
     // Even with no workspace in play, the user's own global skill still wins.
-    expect(skillCatalogService.find('dup')).toMatchObject({
+    expect(await skillCatalogService.find('dup')).toMatchObject({
       source: 'global',
       description: 'from global',
     });
   });
 
-  it('getSkillBody resolves a workspace skill body', () => {
+  it('getSkillBody resolves a workspace skill body', async () => {
     writeWorkspaceSkill('.claude', 'repo-skill', `---\nname: repo-skill\ndescription: c\n---\n# Repo\n\nDo repo things.\n`);
     skillCatalogService.invalidate();
 
-    const found = skillCatalogService.getSkillBody('repo-skill', workspaceRoot);
+    const found = await skillCatalogService.getSkillBody('repo-skill', workspaceRoot);
     expect(found?.entry.source).toBe('workspace');
     expect(found?.body).toBe('# Repo\n\nDo repo things.');
     // Not visible without the workspaceRoot.
-    expect(skillCatalogService.getSkillBody('repo-skill')).toBeNull();
+    expect(await skillCatalogService.getSkillBody('repo-skill')).toBeNull();
   });
 
-  it('missing workspace skill dirs fall back to global only', () => {
+  it('missing workspace skill dirs fall back to global only', async () => {
     writeSkill('global-only', `---\nname: global-only\ndescription: g\n---\nbody\n`);
     skillCatalogService.invalidate();
     // workspaceRoot has no .claude/skills or .agents/skills.
-    const catalog = skillCatalogService.getCatalog(workspaceRoot);
+    const catalog = await skillCatalogService.getCatalog(workspaceRoot);
     expect(catalog.map((s) => s.name)).toEqual(['global-only']);
     expect(catalog[0].source).toBe('global');
   });
 });
 
 describe('frontmatter parsing helpers', () => {
-  it('parses simple and quoted values', () => {
+  it('parses simple and quoted values', async () => {
     expect(__test.parseFrontmatter(`---\nname: foo\ndescription: "a: b"\n---\nx`)).toEqual({
       name: 'foo',
       description: 'a: b',
     });
   });
 
-  it('folds a block-scalar description', () => {
+  it('folds a block-scalar description', async () => {
     const fm = __test.parseFrontmatter(
       `---\nname: foo\ndescription: |\n  line one\n  line two\n---\nbody`,
     );
     expect(fm.description).toBe('line one line two');
   });
 
-  it('ignores nested (indented) keys', () => {
+  it('ignores nested (indented) keys', async () => {
     const fm = __test.parseFrontmatter(
       `---\nname: foo\ndescription: d\nmetadata:\n  name: nested\n---\nbody`,
     );
     expect(fm.name).toBe('foo');
   });
 
-  it('stripFrontmatter returns the original text when there is no frontmatter', () => {
+  it('stripFrontmatter returns the original text when there is no frontmatter', async () => {
     expect(__test.stripFrontmatter('just a body')).toBe('just a body');
   });
 });

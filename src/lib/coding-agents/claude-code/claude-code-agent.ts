@@ -13,12 +13,14 @@
  * dir: both read the same bytes.
  */
 
-import { claudeCodeEnvironment } from './credentials';
+import { claudeCodeEnvironment, hasClaudeCodeCredentials } from './credentials';
+import { resolveClaudeConfigDir } from './home';
 import { config } from '../../../config';
 import fs from 'fs';
 import path from 'path';
 import { ensureSymlink } from '../../data-dir';
-import { runCli, type Spawner } from '../cli-run';
+import { runCli } from '../cli-run';
+import type { ExecutionEnvironment } from '../../execution-environments/execution-environment';
 import type {
   CodingAgent,
   CodingAgentEvent,
@@ -51,12 +53,13 @@ interface StreamLine {
   session_id?: string;
 }
 
-/** The optional spawner is a test hook; without one, `runCli` spawns the real binary. */
-export function createClaudeCodeAgent(spawner?: Spawner): CodingAgent {
+/** The optional environment is a test hook; production runs the real binary. */
+export function createClaudeCodeAgent(environment?: ExecutionEnvironment): CodingAgent {
   return {
     id: 'claude-code',
     displayName: DISPLAY_NAME,
     prepareHome,
+    isAvailable: hasClaudeCodeCredentials,
     run: (task: CodingAgentTask): CodingAgentRun =>
       runCli(
         {
@@ -65,10 +68,15 @@ export function createClaudeCodeAgent(spawner?: Spawner): CodingAgent {
           command: COMMAND,
           args: buildArgs(task),
           cwd: task.workdir,
-          env: claudeCodeEnvironment(task.env),
+          env: {
+            ...claudeCodeEnvironment(task.env),
+            // Stated on the task's env rather than inherited from this
+            // process: the CLI runs in the execution environment.
+            CLAUDE_CONFIG_DIR: resolveClaudeConfigDir(task.env),
+          },
           parseLine,
         },
-        spawner,
+        environment,
       ),
   };
 }
@@ -80,7 +88,7 @@ function prepareHome(dirs: { dataDir: string; skillsDir: string }): CodingAgentH
     return { configDir: override, skillsLinked: pointsAt(path.join(override, 'skills'), dirs.skillsDir) };
   }
 
-  const configDir = path.join(dirs.dataDir, '.claude');
+  const configDir = resolveClaudeConfigDir(process.env, dirs.dataDir);
   fs.mkdirSync(configDir, { recursive: true });
 
   // Only the skills dir is linked into the config dir. Claude Code's own plugin
@@ -88,9 +96,6 @@ function prepareHome(dirs: { dataDir: string; skillsDir: string }): CodingAgentH
   // Agent Plugins dir there would present it a tree it can't read — and a
   // plugin's skills already reach the CLI through the skills catalog.
   const skillsLinked = ensureSymlink(dirs.skillsDir, path.join(configDir, 'skills'));
-
-  // The spawned CLI inherits process.env, so this is how it finds the home.
-  process.env.CLAUDE_CONFIG_DIR = configDir;
 
   return { configDir, skillsLinked };
 }

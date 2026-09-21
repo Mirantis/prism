@@ -18,7 +18,7 @@
  * The skills and plugins directories are reachable as well, since that is where a skill
  * or a plugin is installed and the prompt tells the agent to put one there.
  */
-import * as fs from 'fs/promises';
+import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
 import * as path from 'path';
 import { z } from 'zod';
 import { resolvePluginsDir, resolveSkillsDir } from '../../lib/data-dir';
@@ -79,6 +79,11 @@ function installDirs(): string[] {
   return [resolveSkillsDir(), resolvePluginsDir()];
 }
 
+/** The filesystem a command sees, so a write here and a `shell_exec` agree. */
+function files() {
+  return getExecutionEnvironment().files;
+}
+
 function rejectOutsideWorkspace(fullPath: string, workspace: string): string | null {
   if (isInsideWorkspace(fullPath, workspace)) return null;
   const reachable = installDirs();
@@ -94,7 +99,7 @@ export async function runReadFile(
   const rejected = rejectOutsideWorkspace(fullPath, workspace);
   if (rejected) return { error: rejected };
   try {
-    const raw = await fs.readFile(fullPath, 'utf8');
+    const raw = await files().readText(fullPath);
     return { content: formatFileContent(raw, input.offset, input.limit) };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
@@ -109,8 +114,8 @@ export async function runWriteFile(
   const rejected = rejectOutsideWorkspace(fullPath, workspace);
   if (rejected) return { error: rejected };
   try {
-    await fs.mkdir(path.dirname(fullPath), { recursive: true });
-    await fs.writeFile(fullPath, input.content, 'utf8');
+    await files().mkdir(path.dirname(fullPath));
+    await files().writeText(fullPath, input.content);
     return { ok: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
@@ -126,14 +131,14 @@ export async function runEditFile(
   if (rejected) return { error: rejected };
   let original: string;
   try {
-    original = await fs.readFile(fullPath, 'utf8');
+    original = await files().readText(fullPath);
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
   const edit = applyEdit(original, input.old_string, input.new_string, input.replace_all ?? false);
   if (!edit.ok) return { error: edit.message };
   try {
-    await fs.writeFile(fullPath, edit.content, 'utf8');
+    await files().writeText(fullPath, edit.content);
     return { ok: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };

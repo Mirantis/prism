@@ -180,7 +180,7 @@ class PluginMcpService {
   // -------------------------------------------------------------------------
 
   private async refresh(): Promise<Record<string, Tool>> {
-    const desired = this.scanDesired();
+    const desired = await this.scanDesired();
 
     // Drop anything that vanished or whose config changed.
     let changed = false;
@@ -211,11 +211,11 @@ class PluginMcpService {
   }
 
   /** The servers that *should* be connected, from what is on disk right now. */
-  private scanDesired(): Map<string, DesiredServer> {
+  private async scanDesired(): Promise<Map<string, DesiredServer>> {
     const desired = new Map<string, DesiredServer>();
     const seenPlugins = new Set<string>();
 
-    for (const plugin of pluginCatalogService.getPlugins()) {
+    for (const plugin of await pluginCatalogService.getPlugins()) {
       if (!plugin.mcpConfigPath) continue;
       seenPlugins.add(plugin.id);
 

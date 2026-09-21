@@ -36,8 +36,8 @@ export async function trackAgentStarted(
   try {
     // No workspaceRoot at boot — this counts the globally installed skills,
     // which includes any a plugin contributes.
-    const skills = skillCatalogService.getCatalog();
-    const plugins = pluginCatalogService.getPlugins();
+    const skills = await skillCatalogService.getCatalog();
+    const plugins = await pluginCatalogService.getPlugins();
     const subagents = await agentWorkspaceService.getSubagents(agent.id);
 
     trackEvent('agent started', agent.userId, {

@@ -221,12 +221,17 @@ describe('PluginMcpService.getTools', () => {
     writePlugin('slow', { probe: { type: 'stdio', command: 'node' } });
     pluginCatalogService.invalidate();
 
-    vi.useFakeTimers();
+    // Only the timers, so `setImmediate` below still turns the event loop.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       let resolveCreate!: (client: unknown) => void;
       mockCreateMCPClient.mockReturnValue(new Promise((resolve) => { resolveCreate = resolve; }));
 
       const pending = pluginMcpService.getTools();
+      // The catalog scan reads the disk before the connect timeout is armed,
+      // and a fake clock does not drive a read. Wait for that timer to exist,
+      // or the advance below lands before there is anything to fire.
+      while (vi.getTimerCount() === 0) await new Promise((resolve) => setImmediate(resolve));
       await vi.advanceTimersByTimeAsync(10_000);
       expect(await pending).toEqual({});
 
@@ -326,7 +331,7 @@ describe('PluginMcpService.getTools', () => {
     pluginCatalogService.invalidate();
     // Record both mcp.json paths in the catalog, then break tricky's without
     // touching the plugins dir (so the catalog keeps the recorded path).
-    expect(pluginCatalogService.getPlugins()).toHaveLength(2);
+    expect(await pluginCatalogService.getPlugins()).toHaveLength(2);
     fs.rmSync(path.join(trickyDir, 'mcp.json'));
     fs.symlinkSync('mcp.json', path.join(trickyDir, 'mcp.json'));
 

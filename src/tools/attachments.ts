@@ -8,15 +8,21 @@
  * cross-thread data leakage even when the model hallucinates attachment ids.
  */
 
-import * as fs from 'fs/promises';
+import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
 import * as path from 'path';
 import { ModelMessage, Tool, tool } from 'ai';
 import { z } from 'zod';
 import { attachmentService, classifyMediaType, isBedrockImageType } from '../services/attachment.service';
 import { sanitizeFilename } from '../lib/media-store';
 import { MAX_FILE_SIZE_BYTES } from '../constants';
-import { resolveWorkspace } from './shell/config';
+import { resolveWorkspace } from '../lib/execution-environments/workspace';
+import type { DirEntry } from '../lib/execution-environments/execution-environment';
 import { trackEvent } from '../lib/telemetry';
+
+/** The filesystem a command sees, so a hydrated file is one the shell can read. */
+function files() {
+  return getExecutionEnvironment().files;
+}
 
 export interface HydrateAttachmentSuccess {
   success: true;
@@ -72,7 +78,7 @@ export async function runHydrateAttachment(
 
   const ws = resolveWorkspace(workspaceRoot);
   const scratchDir = path.join(ws, '.attachments', threadId, attachmentId);
-  await fs.mkdir(scratchDir, { recursive: true });
+  await files().mkdir(scratchDir);
 
   const filename = sanitizeFilename(row.filename, attachmentId);
   const destPath = path.resolve(scratchDir, filename);
@@ -86,7 +92,7 @@ export async function runHydrateAttachment(
     return { success: false, error: 'Attachment not found.' };
   }
 
-  await fs.writeFile(destPath, bytes);
+  await files().writeBytes(destPath, bytes);
 
   const category = classifyMediaType(row.mediaType);
   trackEvent('attachment hydrated', userId, {
@@ -118,9 +124,9 @@ export async function reapScratchDirs(
   const ws = resolveWorkspace(workspaceRoot);
   const baseDir = path.join(ws, '.attachments');
 
-  let threadDirs: string[];
+  let threadDirs: DirEntry[];
   try {
-    threadDirs = await fs.readdir(baseDir);
+    threadDirs = await files().readDir(baseDir);
   } catch {
     return 0;
   }
@@ -129,32 +135,32 @@ export async function reapScratchDirs(
   let reaped = 0;
 
   for (const threadDir of threadDirs) {
-    const threadPath = path.join(baseDir, threadDir);
-    const threadStat = await fs.lstat(threadPath).catch(() => null);
-    if (!threadStat || !threadStat.isDirectory()) continue;
+    const threadPath = path.join(baseDir, threadDir.name);
+    const threadStat = await files().lstat(threadPath).catch(() => null);
+    if (!threadStat?.isDirectory) continue;
 
-    let attachmentDirs: string[];
+    let attachmentDirs: DirEntry[];
     try {
-      attachmentDirs = await fs.readdir(threadPath);
+      attachmentDirs = await files().readDir(threadPath);
     } catch {
       continue;
     }
 
     for (const attDir of attachmentDirs) {
-      const attPath = path.join(threadPath, attDir);
-      const attStat = await fs.lstat(attPath).catch(() => null);
-      if (!attStat || !attStat.isDirectory()) continue;
+      const attPath = path.join(threadPath, attDir.name);
+      const attStat = await files().lstat(attPath).catch(() => null);
+      if (!attStat?.isDirectory) continue;
 
       if (attStat.mtimeMs < cutoff) {
-        await fs.rm(attPath, { recursive: true, force: true });
+        await files().remove(attPath);
         reaped++;
       }
     }
 
     // Clean up empty thread dirs
-    const remaining = await fs.readdir(threadPath).catch(() => ['_']);
+    const remaining = await files().readDir(threadPath).catch(() => [null]);
     if (remaining.length === 0) {
-      await fs.rmdir(threadPath).catch(() => {});
+      await files().removeDir(threadPath).catch(() => {});
     }
   }
 

@@ -22,11 +22,16 @@
  * same way an expired copy does, which is the behaviour either way.
  */
 
-import fs from 'fs/promises';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { resolveToolOutputDir } from './data-dir';
+import { getExecutionEnvironment } from './execution-environments/get-execution-environment';
 import { logger } from '../logger';
+
+/** The filesystem a command sees: the agent reads a saved copy with the shell. */
+function files() {
+  return getExecutionEnvironment().files;
+}
 
 /**
  * Ceiling on one saved copy. Paired with `MAX_EXEC_OUTPUT_BYTES` in
@@ -64,7 +69,7 @@ export async function writeToolOutput(text: string): Promise<SpillResult> {
   const dir = resolveToolOutputDir();
   // Defensive: ensureDataDirs() creates this at boot, but its temp-dir fallback
   // can repin PRISM_DATA_DIR afterwards.
-  await fs.mkdir(dir, { recursive: true });
+  await files().mkdir(dir);
 
   const buf = Buffer.from(text, 'utf8');
   const capped = buf.length > MAX_SPILL_BYTES;
@@ -76,8 +81,8 @@ export async function writeToolOutput(text: string): Promise<SpillResult> {
   const id = randomUUID();
   const finalPath = path.join(dir, id);
   const tmpPath = `${finalPath}.tmp`;
-  await fs.writeFile(tmpPath, data);
-  await fs.rename(tmpPath, finalPath);
+  await files().writeBytes(tmpPath, data);
+  await files().rename(tmpPath, finalPath);
 
   return { id, path: finalPath, bytes: data.length, capped };
 }
@@ -113,12 +118,13 @@ export function toolOutputPath(id: string): string {
  */
 export async function readToolOutput(id: string): Promise<string | null> {
   if (!isToolOutputId(id)) return null;
+  const full = path.join(resolveToolOutputDir(), id);
   try {
-    return await fs.readFile(path.join(resolveToolOutputDir(), id), 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
+    await files().lstat(full);
+  } catch {
+    return null;
   }
+  return files().readText(full);
 }
 
 /**
@@ -131,14 +137,19 @@ export async function removeToolOutputs(ids: readonly string[]): Promise<number>
   let removed = 0;
   for (const id of ids) {
     if (!isToolOutputId(id)) continue;
+    const full = path.join(dir, id);
     try {
-      await fs.unlink(path.join(dir, id));
+      // Already gone is the expected case, so the count reports what was really
+      // there rather than how many ids the caller named.
+      await files().lstat(full);
+    } catch {
+      continue;
+    }
+    try {
+      await files().remove(full);
       removed++;
     } catch (err) {
-      // Already gone is the expected case, not a problem.
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        logger.warn({ err }, `[ToolOutputStore] could not delete saved output ${id}`);
-      }
+      logger.warn({ err }, `[ToolOutputStore] could not delete saved output ${id}`);
     }
   }
   return removed;
@@ -153,7 +164,7 @@ export async function reapExpiredToolOutputs(ttlMs: number): Promise<number> {
   const dir = resolveToolOutputDir();
   let entries: string[];
   try {
-    entries = await fs.readdir(dir);
+    entries = (await files().readDir(dir)).map((entry) => entry.name);
   } catch {
     return 0; // never created, or the data dir moved — nothing to sweep
   }
@@ -163,9 +174,9 @@ export async function reapExpiredToolOutputs(ttlMs: number): Promise<number> {
   for (const entry of entries) {
     const full = path.join(dir, entry);
     try {
-      const st = await fs.lstat(full);
-      if (!st.isFile() || st.mtimeMs >= cutoff) continue;
-      await fs.unlink(full);
+      const st = await files().lstat(full);
+      if (!st.isFile || st.mtimeMs >= cutoff) continue;
+      await files().remove(full);
       removed++;
     } catch {
       // A file that vanished under us, or one we can't stat — either way, skip it

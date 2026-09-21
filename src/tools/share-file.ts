@@ -28,12 +28,18 @@
  * the inbound upload limit.
  */
 
-import * as fs from 'fs/promises';
+import type { FileStat } from '../lib/execution-environments/execution-environment';
 import * as path from 'path';
 import { Tool, tool } from 'ai';
 import { z } from 'zod';
 import { resolvePath, isInsideWorkspace } from './shell/workspace';
-import { resolveWorkspace, resolveWorkspaceRoot } from './shell/config';
+import { resolveWorkspace } from '../lib/execution-environments/workspace';
+import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
+
+/** The filesystem a command sees, so what was written is what is shared. */
+function files() {
+  return getExecutionEnvironment().files;
+}
 import type { PendingFileWrites } from '../lib/pending-file-writes';
 import { logger } from '../logger';
 import {
@@ -88,8 +94,8 @@ export interface ShareFileDeps {
  * Both halves matter — an edit that keeps the length is still a different file.
  */
 function moved(
-  before: Awaited<ReturnType<typeof fs.stat>>,
-  after: Awaited<ReturnType<typeof fs.stat>>,
+  before: FileStat,
+  after: FileStat,
   data: Buffer,
 ): boolean {
   return after.size !== data.length || after.mtimeMs !== before.mtimeMs;
@@ -111,7 +117,7 @@ export const PENDING_WRITE_TIMEOUT_MS = 20_000;
  */
 export async function runShareFile(
   input: z.infer<typeof shareFileInput>,
-  workspace: string = resolveWorkspaceRoot(),
+  workspace: string = getExecutionEnvironment().workspaceRoot(),
   deps: ShareFileDeps = {},
 ): Promise<ShareFileSuccess | ShareFileFailure> {
   const fullPath = resolvePath(workspace, input.path);
@@ -125,13 +131,13 @@ export async function runShareFile(
   const barrier = await awaitPendingWrites(fullPath, deps);
   if (barrier) return barrier;
 
-  let stat: Awaited<ReturnType<typeof fs.stat>>;
+  let stat: FileStat;
   try {
-    stat = await fs.stat(fullPath);
+    stat = await files().stat(fullPath);
   } catch {
     return { success: false, error: `File not found: ${input.path}` };
   }
-  if (stat.isDirectory()) {
+  if (stat.isDirectory) {
     return { success: false, error: `${input.path} is a directory — share a single file.` };
   }
   if (stat.size === 0) {
@@ -152,12 +158,12 @@ export async function runShareFile(
   let data: Buffer;
   try {
     let before = stat;
-    data = await fs.readFile(fullPath);
-    let after = await fs.stat(fullPath);
+    data = await files().readBytes(fullPath);
+    let after = await files().stat(fullPath);
     if (moved(before, after, data)) {
       before = after;
-      data = await fs.readFile(fullPath);
-      after = await fs.stat(fullPath);
+      data = await files().readBytes(fullPath);
+      after = await files().stat(fullPath);
       // Compare against the stat taken just before the retry, and on mtime as
       // well as size — a same-size edit is still a different revision, and size
       // alone would let one through.

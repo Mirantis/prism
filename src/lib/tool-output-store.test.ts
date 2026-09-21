@@ -18,6 +18,9 @@ import {
   MAX_SPILL_BYTES,
 } from './tool-output-store';
 import { resolveToolOutputDir } from './data-dir';
+import { localFiles } from './execution-environments/local/local-files';
+import { __setExecutionEnvironmentForTests } from './execution-environments/get-execution-environment';
+import { fakeExecutionEnvironment } from '../test-utils/fake-execution-environment';
 
 let dataDir: string;
 const originalDataDir = process.env.PRISM_DATA_DIR;
@@ -80,9 +83,16 @@ describe('writeToolOutput / readToolOutput', () => {
   it('leaves no file under the final name if the write never finishes', async () => {
     // The rename is what publishes the copy, so a crash before it leaves a .tmp
     // sibling and no readable id.
-    const spy = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('boom'));
-    await expect(writeToolOutput('half')).rejects.toThrow('boom');
-    spy.mockRestore();
+    __setExecutionEnvironmentForTests(
+      fakeExecutionEnvironment({
+        files: { ...localFiles, rename: () => Promise.reject(new Error('boom')) },
+      }),
+    );
+    try {
+      await expect(writeToolOutput('half')).rejects.toThrow('boom');
+    } finally {
+      __setExecutionEnvironmentForTests(null);
+    }
 
     const entries = await fs.readdir(resolveToolOutputDir());
     expect(entries.every((e) => e.endsWith('.tmp'))).toBe(true);

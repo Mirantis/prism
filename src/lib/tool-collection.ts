@@ -23,6 +23,7 @@ import { getCronTools } from '../tools/cron';
 import { getGoalTools } from '../tools/goals';
 import { getAgentConfigTools } from '../tools/agent-config';
 import { getShellTools } from '../tools/shell/index';
+import { ensureCodingAgentsDetected } from './coding-agents/availability';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from '../tools/share-file';
 import { getAttachmentTools } from '../tools/attachments';
 import { getSkillTools } from '../tools/skills/index';
@@ -116,6 +117,10 @@ export interface CollectedTools {
  */
 export async function collectTools(input: CollectToolsInput): Promise<CollectedTools> {
   const originChannel = input.originChannel ?? 'websocket';
+  // The shell tools name the available coding agents in their descriptions, and
+  // the tools block has to be byte-identical from turn to turn for the prompt
+  // cache. Memoized, so only a turn that beats boot to it pays anything.
+  await ensureCodingAgentsDetected();
   const builtInTools: Record<string, Tool> = {
     ...getMemoryTools(input.userId, input.agentId),
     ...(hasComputerForMode(input.mode) ? getComputerTools(input.computerUse) : {}),
@@ -136,7 +141,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md
     // body on demand. workspaceRoot merges the repo's skills with the global
     // ones. Empty (and omitted) when no skills are available.
-    ...getSkillTools(input.workspaceRoot),
+    ...(await getSkillTools(input.workspaceRoot)),
     // Live voice meetings. Empty unless the host has the browser/audio
     // toolchain and an OpenAI key — see `meetingToolsAvailable`.
     ...(meetingToolsAvailable

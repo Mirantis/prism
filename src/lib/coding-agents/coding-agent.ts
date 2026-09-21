@@ -23,6 +23,12 @@ export interface CodingAgent {
    */
   prepareHome(dirs: { dataDir: string; skillsDir: string }): CodingAgentHome;
   /**
+   * Whether this agent has what it needs to run: its own credential rules,
+   * answered against the execution environment, since that is where its binary
+   * and its saved login are. Asked once at boot — see `availability.ts`.
+   */
+  isAvailable(env: NodeJS.ProcessEnv): Promise<boolean>;
+  /**
    * Start one task. Never throws for a launch failure: that arrives as the run's
    * closing `result` event, so the caller has one path for every outcome.
    */

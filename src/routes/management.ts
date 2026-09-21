@@ -2395,7 +2395,7 @@ router.get('/skills', async (req: Request, res: Response) => {
       const latest = await conversationService.getLatestThread(config.ownerUserId);
       workspaceRoot = latest?.workspaceRoot ?? undefined;
     }
-    const skills = skillCatalogService.getCatalog(workspaceRoot).map((s) => ({
+    const skills = (await skillCatalogService.getCatalog(workspaceRoot)).map((s) => ({
       name: s.name,
       description: s.description,
       dirName: s.dirName,
@@ -2459,7 +2459,7 @@ router.post('/skills/:name/run', async (req: Request, res: Response) => {
     const workspaceRoot =
       (await conversationService.getThreadWorkspaceRoot(threadId)) ?? undefined;
 
-    const entry = skillCatalogService.find(skillName, workspaceRoot);
+    const entry = await skillCatalogService.find(skillName, workspaceRoot);
     if (!entry) {
       res.status(404).json({ error: `No available skill named "${skillName}".` });
       return;
@@ -2503,14 +2503,14 @@ router.post('/skills/:name/run', async (req: Request, res: Response) => {
  */
 router.get('/plugins', async (_req: Request, res: Response) => {
   try {
-    const catalog = skillCatalogService.getCatalog();
+    const catalog = await skillCatalogService.getCatalog();
     // Connect anything not yet connected so a server that fails to start is
     // reported here rather than only in the logs. Idempotent and cached, so
     // this is a no-op once a turn has already collected tools.
     await pluginMcpService.getTools();
     const statuses = pluginMcpService.getServerStatuses();
 
-    const plugins = pluginCatalogService.getPlugins().map((p) => {
+    const plugins = (await pluginCatalogService.getPlugins()).map((p) => {
       const diagnostics = [...p.diagnostics];
       let mcpServers: string[] = [];
 

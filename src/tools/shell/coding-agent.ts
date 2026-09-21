@@ -16,7 +16,14 @@ import { config, CODING_AGENTS } from '../../config';
 import { resolvePath } from './workspace';
 import { AgentTaskParams, getAgentTaskManager } from './agent-task-manager';
 
-export const codingAgentInput = z.object({
+/**
+ * Built per tool-set rather than once at module load: which agents are
+ * available is settled by a boot probe, which runs after this module is
+ * imported. The `agent` enum stays the compile-time list; only the description
+ * is derived, and it is stable for the rest of the process once the probe has
+ * settled — which is what the prompt cache needs.
+ */
+export const buildCodingAgentInput = () => z.object({
   agent: z.enum(CODING_AGENTS).optional().describe(
     `Coding agent to use. Available values: ${config.availableCodingAgents.join(', ') || 'none detected'}. Default: ${config.codingAgent}. Use the same agent when resuming a session.`,
   ),
@@ -77,7 +84,7 @@ export const codingAgentStopInput = z.object({
 });
 
 export async function runCodingAgent(
-  input: z.infer<typeof codingAgentInput>,
+  input: z.infer<ReturnType<typeof buildCodingAgentInput>>,
   workspace: string,
 ) {
   const workdir = input.workdir ? resolvePath(workspace, input.workdir) : workspace;
