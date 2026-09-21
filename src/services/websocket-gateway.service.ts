@@ -25,6 +25,8 @@ import { threadTitleService, type ThreadTitleChange } from './thread-title.servi
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
 import { compactionService, type CompactionEvent } from './compaction.service';
 import { updateService, type UpdateEvent } from './update/update.service';
+import { computerService } from './computer/computer.service';
+import { computerHelpService } from './computer/computer-help.service';
 import {
   voiceChatService,
   type VoiceChatEndStatus,
@@ -79,6 +81,7 @@ interface WebSocketResponse {
     | 'context'
     | 'compaction'
     | 'update'
+    | 'computer'
     | 'voice_state'
     | 'voice_error'
     | 'voice_hello'
@@ -185,6 +188,11 @@ class WebSocketGatewayService {
     ws: AuthenticatedWebSocket;
     cancelled: VoiceChatEndStatus | null;
   } | null = null;
+  // Whether a computer-state frame is being built, and whether the desktop changed
+  // again while it was. One build at a time keeps a burst of changes to one database
+  // read, and the flag makes the last frame sent the newest state.
+  private computerPublishing = false;
+  private computerChangedAgain = false;
 
   constructor() {
     // Push thread-title changes (placeholder + LLM upgrade) to the user's web
@@ -212,6 +220,63 @@ class WebSocketGatewayService {
     updateService.events.on('update', (payload: UpdateEvent) => {
       this.broadcast(config.ownerUserId, { type: 'update', payload });
     });
+
+    // Push the state of the desktop: which threads wait for it, who holds it, and
+    // the open help requests. The emitter is the access gate itself, so every caller
+    // that queues for the desktop reaches the web client, whichever turn asked.
+    // Install-level, like the update frame above.
+    computerService.access.on('change', () => {
+      void this.publishComputer();
+    });
+  }
+
+  /**
+   * Broadcast the state of the desktop, coalescing a burst of changes into one frame.
+   *
+   * The payload needs a database read, and one call on the access gate emits twice —
+   * a turn taking a free desktop is queued and then holds it — so the first build
+   * waits for the current tick to finish, and a change that lands during a build
+   * schedules exactly one more.
+   */
+  private async publishComputer(): Promise<void> {
+    if (this.computerPublishing) {
+      this.computerChangedAgain = true;
+      return;
+    }
+    this.computerPublishing = true;
+    try {
+      let again = true;
+      while (again) {
+        // Let the rest of this tick emit before the state is read, so changes made
+        // together are read together.
+        await Promise.resolve();
+        this.computerChangedAgain = false;
+        await this.sendComputerState((message) => this.broadcast(config.ownerUserId, message));
+        again = this.computerChangedAgain;
+      }
+    } finally {
+      this.computerPublishing = false;
+      this.computerChangedAgain = false;
+    }
+  }
+
+  /**
+   * Build the current state of the desktop — the body of `GET /computer` — and hand
+   * it to `send`. Nothing is sent while no agent is loaded. A failed build is logged
+   * and dropped: the next change, or the next client to connect, corrects the client.
+   */
+  private async sendComputerState(send: (message: WebSocketResponse) => void): Promise<void> {
+    const agentId = config.agentId;
+    if (!agentId) return;
+    try {
+      const payload = {
+        ...computerService.status(),
+        help: await computerHelpService.list(agentId, config.ownerUserId),
+      };
+      send({ type: 'computer', payload });
+    } catch (error) {
+      logger.warn({ err: error }, '[Computer] Could not publish the computer state');
+    }
   }
 
   /**
@@ -340,6 +405,16 @@ class WebSocketGatewayService {
       payload: { connected: true },
     }));
 
+    // And the state of the desktop, so a client that opens or reconnects during a wait
+    // shows it without asking. The frames sent while the socket was down reached
+    // nobody, so this is the reading a reconnecting client starts from. A publish
+    // already in flight covers this socket, which is registered above, and its state
+    // is read later than one read here, so the send is left to it.
+    if (!this.computerPublishing) {
+      void this.sendComputerState((message) => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+      });
+    }
   }
 
   /**

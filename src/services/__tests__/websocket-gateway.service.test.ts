@@ -12,9 +12,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Use vi.hoisted to create mocks that are available before vi.mock hoisting
-const { mockChat, mockConfig, mockTitleEvents, mockVoice } = vi.hoisted(() => {
+const {
+  mockChat,
+  mockConfig,
+  mockTitleEvents,
+  mockVoice,
+  mockComputerAccess,
+  mockComputerStatus,
+  mockHelpList,
+} = vi.hoisted(() => {
   const listeners: Array<(payload: unknown) => void> = [];
+  const computerListeners: Array<() => void> = [];
   return {
+    // The desktop's access gate. The gateway subscribes to its 'change' event in the
+    // constructor; a test drives a transition with `.emit('change')`.
+    mockComputerAccess: {
+      on: (_event: string, cb: () => void) => {
+        computerListeners.push(cb);
+      },
+      emit: (_event: string) => {
+        computerListeners.forEach((cb) => cb());
+      },
+    },
+    mockComputerStatus: vi.fn(),
+    mockHelpList: vi.fn(),
     mockChat: vi.fn(),
     // The voice session owner. The gateway carries its control frames and its
     // audio, so what a test asserts here is what goes to which socket.
@@ -64,6 +85,16 @@ vi.mock('../voice/voice-chat.service', () => ({
   voiceChatService: mockVoice,
 }));
 
+// Stubbed rather than driven for real: `computer.service` imports the browser
+// automation the desktop runs on, which a unit test must not load.
+vi.mock('../computer/computer.service', () => ({
+  computerService: { access: mockComputerAccess, status: mockComputerStatus },
+}));
+
+vi.mock('../computer/computer-help.service', () => ({
+  computerHelpService: { list: mockHelpList },
+}));
+
 // Import after mocking
 import { webSocketGatewayService } from '../websocket-gateway.service';
 
@@ -91,6 +122,25 @@ function createMockWebSocket() {
   };
 }
 
+/** A desktop nobody is using: the shape `computerService.status()` returns. */
+const IDLE_COMPUTER = {
+  available: true,
+  running: false,
+  starting: false,
+  paused: false,
+  controller: null,
+  owner: null,
+  waiting: [],
+};
+
+/**
+ * Let the computer frame finish being built. The payload needs a database read, so
+ * `publishComputer` sends on a later microtask than the change that asked for it.
+ */
+function settleComputer(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 /** Build a minimal JWT with the given payload (no signature verification needed). */
 function buildTestJwt(payload: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'test-key' })).toString('base64url');
@@ -113,6 +163,8 @@ describe('Requirement: WebSocket Gateway', () => {
     service.activeRequests = new Map();
     service.voiceSocket = null;
     service.voiceStarting = null;
+    service.computerPublishing = false;
+    service.computerChangedAgain = false;
 
     // Default mock responses. `steered: false` is the engine's answer when no
     // turn is live on the thread, which is what the gateway checks before
@@ -122,6 +174,9 @@ describe('Requirement: WebSocket Gateway', () => {
     mockVoice.start.mockResolvedValue(true);
     mockVoice.stop.mockResolvedValue(undefined);
     mockVoice.pushAudio.mockReturnValue(undefined);
+    // An idle desktop with nothing queued and no help asked for.
+    mockComputerStatus.mockReturnValue(IDLE_COMPUTER);
+    mockHelpList.mockResolvedValue([]);
   });
 
   describe('Scenario: Connection tracking', () => {
@@ -605,6 +660,120 @@ describe('Requirement: WebSocket Gateway', () => {
           title: 'Database Schema Migration',
         }),
       ).not.toThrow();
+    });
+  });
+
+  describe('Scenario: Computer state broadcast', () => {
+    // The desktop's access gate owns the transitions (a wait starting or ending,
+    // control moving, a help request raised or resolved) and emits one 'change' for
+    // each. The gateway translates that into a 'computer' frame for every open
+    // client, whichever caller queued for the desktop.
+    const owner = '00000000-0000-0000-0000-000000000001';
+
+    function connect() {
+      const ws = createMockWebSocket();
+      ws.userId = owner;
+      ws.readyState = 1;
+      service.connections.set(owner, [ws]);
+      return ws;
+    }
+
+    it('broadcasts the desktop state when the access gate reports a change', async () => {
+      const ws = connect();
+      const waiting = { ...IDLE_COMPUTER, waiting: [{ id: 'use-1', threadId: 't1', mode: 'chat' }] };
+      mockComputerStatus.mockReturnValue(waiting);
+      mockHelpList.mockResolvedValue([{ type: 'computer_help', id: 'h1', status: 'waiting' }]);
+
+      mockComputerAccess.emit('change');
+      await settleComputer();
+
+      expect(ws.send).toHaveBeenCalledWith(
+        JSON.stringify({
+          type: 'computer',
+          payload: {
+            ...waiting,
+            help: [{ type: 'computer_help', id: 'h1', status: 'waiting' }],
+          },
+        }),
+      );
+    });
+
+    it('sends one frame, holding the newest state, for a burst of changes', async () => {
+      const ws = connect();
+      const latest = { ...IDLE_COMPUTER, running: true, owner: { id: 'use-1', threadId: 't1', mode: 'chat' } };
+
+      // A turn taking a free desktop emits twice in one tick: once queued, once
+      // holding it. One frame reports it as held, where a frame per change would
+      // raise the waiting banner for a wait that was already over.
+      mockComputerAccess.emit('change');
+      mockComputerStatus.mockReturnValue(latest);
+      mockComputerAccess.emit('change');
+      await settleComputer();
+
+      expect(ws.send).toHaveBeenCalledTimes(1);
+      expect(ws.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: 'computer', payload: { ...latest, help: [] } }),
+      );
+      // And one database read, not one per change.
+      expect(mockHelpList).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends a second frame for a change that lands while one is being built', async () => {
+      const ws = connect();
+      let finishRead: (help: unknown[]) => void = () => {};
+      mockHelpList.mockReturnValueOnce(new Promise<unknown[]>((resolve) => (finishRead = resolve)));
+
+      mockComputerAccess.emit('change');
+      await settleComputer();
+      expect(ws.send).not.toHaveBeenCalled();
+
+      // The wait ends while the first frame is still waiting on its help read.
+      const latest = { ...IDLE_COMPUTER, running: true };
+      mockComputerStatus.mockReturnValue(latest);
+      mockComputerAccess.emit('change');
+      finishRead([]);
+      await settleComputer();
+
+      expect(ws.send).toHaveBeenCalledTimes(2);
+      expect(ws.send).toHaveBeenLastCalledWith(
+        JSON.stringify({ type: 'computer', payload: { ...latest, help: [] } }),
+      );
+    });
+
+    it('sends nothing while no agent is loaded', async () => {
+      const ws = connect();
+      mockConfig.agentId = undefined;
+
+      mockComputerAccess.emit('change');
+      await settleComputer();
+
+      expect(ws.send).not.toHaveBeenCalled();
+      expect(mockHelpList).not.toHaveBeenCalled();
+    });
+
+    it('does not throw when nobody is connected', async () => {
+      expect(() => mockComputerAccess.emit('change')).not.toThrow();
+      await settleComputer();
+      expect(mockHelpList).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends the desktop state to a socket that has just connected', async () => {
+      const ws = createMockWebSocket();
+      const waiting = { ...IDLE_COMPUTER, waiting: [{ id: 'use-1', threadId: 't1', mode: 'cron' }] };
+      mockComputerStatus.mockReturnValue(waiting);
+
+      service.handleConnection(ws, { url: '/api/ws', headers: { host: 'localhost:3003' } });
+      await settleComputer();
+
+      // The handshake first, then the state — so a client that reconnects mid-wait
+      // shows the banner without asking for it.
+      expect(ws.send.mock.calls.map(([frame]: [string]) => JSON.parse(frame).type)).toEqual([
+        'status',
+        'computer',
+      ]);
+      expect(ws.send).toHaveBeenLastCalledWith(
+        JSON.stringify({ type: 'computer', payload: { ...waiting, help: [] } }),
+      );
     });
   });
 
