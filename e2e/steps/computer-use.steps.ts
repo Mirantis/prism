@@ -61,7 +61,7 @@ Then(
     await page.setViewportSize({ width: 1440, height: 900 });
     const help = page.getByRole('complementary', { name: 'Computer assistance' });
     const screen = page.getByLabel("The agent's screen");
-    const controls = page.getByLabel('Computer controls');
+    const controls = page.getByLabel('Floating computer controls', { exact: true });
     await expect(help).toBeVisible();
     await expect
       .poll(async () => {
@@ -74,7 +74,10 @@ Then(
           controlsBox &&
           helpBox.x >= screenBox.x + screenBox.width &&
           helpBox.y + helpBox.height <= 900 &&
-          controlsBox.y + controlsBox.height <= 900,
+          controlsBox.x >= screenBox.x &&
+          controlsBox.y >= screenBox.y &&
+          controlsBox.x + controlsBox.width <= screenBox.x + screenBox.width &&
+          controlsBox.y + controlsBox.height <= screenBox.y + screenBox.height,
         );
       })
       .toBe(true);
