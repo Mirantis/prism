@@ -297,7 +297,11 @@ Then(
 Then('Prism asks for the sign-in in the chat, with a box for it', async ({ page, $testInfo }) => {
   const box = page.getByLabel('Computer sign-in');
   await expect(box).toBeVisible({ timeout: 60_000 });
-  await expect(box.getByText(new URL(site!.url).origin)).toBeVisible();
+  // The site the box names, which is the line of its own above the fields: the request's
+  // own words carry the address too.
+  await expect(
+    page.getByLabel('Sign in for Prism').getByText(new URL(site!.url).origin, { exact: true }),
+  ).toBeVisible();
   await expect(page.getByLabel('Computer help panel')).toHaveCount(0);
   await box.getByRole('button', { name: 'Hide', exact: true }).click();
   await expect(page.getByLabel('Sign in for Prism')).toHaveCount(0);
