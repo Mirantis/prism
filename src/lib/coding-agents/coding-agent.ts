@@ -18,10 +18,12 @@ export interface CodingAgent {
   /** The name shown to the model in the tool description and in the startup log. */
   readonly displayName: string;
   /**
-   * Boot-time setup: a home for the agent inside the runtime's data dir that
-   * shares the runtime's skills dir, so both work from one set of skills.
+   * Boot-time setup: a home for the agent in the execution environment that
+   * shares that environment's skills dir, so both work from one set of skills.
+   * Asynchronous because the environment's filesystem may not be this
+   * process's own.
    */
-  prepareHome(dirs: { dataDir: string; skillsDir: string }): CodingAgentHome;
+  prepareHome(): Promise<CodingAgentHome>;
   /**
    * Whether this agent has what it needs to run: its own credential rules,
    * answered against the execution environment, since that is where its binary

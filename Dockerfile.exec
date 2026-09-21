@@ -13,8 +13,8 @@
 #      with its cache and config there too — the runtime image puts mise under
 #      /home/node/.local, which only works for uid 1000.
 #   2. Nothing is written to the container's HOME at build time. The runtime
-#      points HOME at a bind-mounted directory, so anything baked into a home
-#      here would be shadowed.
+#      mounts a volume over it, so anything baked into a home here would be
+#      shadowed.
 #
 # Debian bookworm with Node, rather than bare Debian: `runShell` execs
 # /bin/bash, which rules out Alpine's busybox, and both coding-agent CLIs are
@@ -41,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Everything mise owns lives in /opt so any uid can read it. The cache and
 # config dirs are named explicitly for the same reason: their defaults are
-# under $HOME, which here is a bind mount that does not exist at build time.
+# under $HOME, which the runtime mounts a volume over.
 ENV MISE_DATA_DIR=/opt/mise \
     MISE_CONFIG_DIR=/opt/mise/config \
     MISE_CACHE_DIR=/opt/mise/cache \
@@ -89,15 +89,26 @@ RUN chmod -R a+rX /opt/mise \
  && mkdir -p /opt/mise/cache /opt/mise/state \
  && chmod -R a+rwX /opt/mise/cache /opt/mise/state
 
-# A uid with no /etc/passwd entry gets no home from the OS, and some tools read
-# $HOME before anything sets it. The runtime overrides this with a bind-mounted
-# path; this is the fallback that keeps a bare `docker run` usable.
+# Where the runtime mounts its volumes. Creating them here is what makes them
+# writable: the engine seeds a new named volume from the image's directory,
+# mode included, and the container runs as the runtime's own uid, which has no
+# /etc/passwd entry and owns nothing. 1777 rather than 777 so one uid cannot
+# remove another's files.
 #
-# A real directory rather than /tmp, and 1777 rather than 777: codex refuses to
-# lay down its helper binaries under a temporary dir, so `codex --version`
-# warns when HOME is /tmp. Sticky, so one uid cannot remove another's files.
-RUN mkdir -p /home/agent && chmod 1777 /home/agent
-ENV HOME=/home/agent
+# Keep this list in step with CONTAINER_PATHS in
+# src/lib/execution-environments/docker/volumes.ts: a path missing here becomes
+# a root-owned volume the agent cannot write.
+RUN mkdir -p /prism/workspace /prism/skills /prism/plugins /prism/tool-outputs \
+             /prism/claude /prism/codex /prism/home \
+ && chmod 1777 /prism /prism/*
+
+# A uid with no /etc/passwd entry gets no home from the OS, and some tools read
+# $HOME before anything sets it. The runtime points HOME at /prism/home; this
+# is the same directory, so a bare `docker run` behaves the same way.
+#
+# A real directory rather than /tmp: codex refuses to lay down its helper
+# binaries under a temporary dir, so `codex --version` warns when HOME is /tmp.
+ENV HOME=/prism/home
 
 # Held open by the runtime, which creates the container at boot and removes it
 # at shutdown, then runs each command with `docker exec`. Nothing runs here on

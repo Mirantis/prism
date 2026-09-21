@@ -1,17 +1,20 @@
 /**
- * The exec container's lifetime, which is the runtime's.
+ * The exec container's lifetime, which is the runtime's — and the volumes',
+ * which is longer.
  *
- * Created at boot, running the whole time, removed at shutdown — no lazy
- * creation and no idle reaping, so a `shell_spawn` background process and a
- * long `coding_agent` task live between turns exactly as they do when they are
- * children of the runtime.
+ * The container is created at boot, runs the whole time and is removed at
+ * shutdown, so a `shell_spawn` background process and a long `coding_agent`
+ * task live between turns exactly as they do when they are children of the
+ * runtime. The volumes it mounts are never removed: they hold the workspace,
+ * the skills, the plugins and both coding agents' logins, and losing them on a
+ * restart would lose the agent's work.
  */
 import * as os from 'os';
 import { config } from '../../../config';
 import { trackEvent } from '../../telemetry';
 import { logger } from '../../../logger';
 import { engineCall, engineFailure } from './engine';
-import { mountPaths, type ContainerPaths } from './mounts';
+import { CONTAINER_PATHS, volumeMounts } from './volumes';
 
 /** Pulling an image over a slow link is the one step that can take minutes. */
 const PULL_TIMEOUT_MS = 10 * 60_000;
@@ -22,7 +25,8 @@ export interface ContainerSpec {
   image: string;
   /** The tag is republished, so the engine's cached copy of it can be stale. */
   refreshImage: boolean;
-  paths: ContainerPaths;
+  /** Names the volumes after the deployment, so two runtimes never share one. */
+  deployment: string;
   /** Passed by name, so the values ride the engine client's env, not an argv. */
   env: NodeJS.ProcessEnv;
 }
@@ -35,28 +39,31 @@ export interface ContainerSpec {
 export async function startContainer(spec: ContainerSpec): Promise<void> {
   const startedAt = Date.now();
   await ensureImage(spec.image, spec.refreshImage);
-  // A container from a previous run holds the name and has stale mounts, so it
-  // is removed rather than reused: its bind mounts were fixed at *its* create.
+  // A container from a previous run holds the name, so it is removed rather
+  // than reused: its mounts were fixed at *its* create. The volumes it was
+  // using are untouched and the new container picks the same ones back up.
   await removeContainer(spec.name);
 
   const names = Object.keys(spec.env).filter((name) => spec.env[name] !== undefined);
-  const mounts = mountPaths(spec.paths);
+  const mounts = volumeMounts(spec.deployment);
 
   const argv = [
     'run',
     '--detach',
     '--name',
     spec.name,
-    // Files the container writes into a mount are owned by the runtime user,
-    // so the janitor and the file tools can still manage them afterwards.
+    // The runtime's own user, so a file the agent creates in a volume is owned
+    // by whoever will read it back through the engine. A fresh volume takes
+    // the mode of the image's directory, which `Dockerfile.exec` makes
+    // world-writable for exactly this reason.
     '--user',
     `${os.userInfo().uid}:${os.userInfo().gid}`,
     '--workdir',
-    spec.paths.workspaceRoot,
+    CONTAINER_PATHS.workspaceRoot,
     '--env',
-    `HOME=${spec.paths.homeDir}`,
+    `HOME=${CONTAINER_PATHS.homeDir}`,
     ...names.flatMap((name) => ['--env', name]),
-    ...mounts.flatMap((p) => ['--volume', `${p}:${p}`]),
+    ...mounts.flatMap((mount) => ['--volume', `${mount.name}:${mount.path}`]),
     spec.image,
     // Held open by the image's own command; nothing runs here until a
     // `docker exec` arrives.
@@ -73,16 +80,22 @@ export async function startContainer(spec: ContainerSpec): Promise<void> {
     });
     throw new Error(engineFailure('could not start the exec container', run));
   }
-  logger.info({ container: spec.name, image: spec.image, mounts }, '[Docker] exec container ready');
+  logger.info(
+    { container: spec.name, image: spec.image, volumes: mounts.map((m) => m.name) },
+    '[Docker] exec container ready',
+  );
   trackEvent('exec container started', config.ownerUserId, {
     ...eventProps(spec.image),
     status: 'ready',
-    mounts: String(mounts.length),
+    volumes: String(mounts.length),
     elapsed_ms: String(Date.now() - startedAt),
   });
 }
 
-/** Remove the container. Never throws: the process is leaving either way. */
+/**
+ * Remove the container and leave every volume in place. Never throws: the
+ * process is leaving either way.
+ */
 export async function stopContainer(name: string, image: string): Promise<void> {
   const startedAt = Date.now();
   const run = await removeContainer(name);

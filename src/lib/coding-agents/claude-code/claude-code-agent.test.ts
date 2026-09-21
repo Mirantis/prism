@@ -10,10 +10,10 @@ import os from 'os';
 import path from 'path';
 import { FakeChild } from '../../../test-utils/fake-child';
 import { fakeExecutionEnvironment } from '../../../test-utils/fake-execution-environment';
+import { localFiles } from '../../execution-environments/local/local-files';
 import type { RunOptions } from '../../execution-environments/execution-environment';
 import type { CodingAgentEvent, CodingAgentTask } from '../coding-agent';
 import { createClaudeCodeAgent, PLAN_ONLY_INSTRUCTION } from './claude-code-agent';
-import { resolveClaudeConfigDir } from './home';
 
 const baseTask: CodingAgentTask = {
   taskId: 't1',
@@ -88,17 +88,15 @@ describe('run: the spawn', () => {
   it("hands the task's cwd and env to the child", () => {
     const { options } = capture({ workdir: '/work' });
     expect(options.cwd).toBe('/work');
-    // The home rides the task env: the CLI runs in the execution environment
-    // and inherits that environment's variables, not this process's.
-    expect(options.env).toEqual({
-      PATH: '/bin',
-      CLAUDE_CONFIG_DIR: resolveClaudeConfigDir({ PATH: '/bin' }),
-    });
+    // The home comes from the execution environment, since that is the
+    // filesystem it is on — a path this process resolved could name nothing
+    // there.
+    expect(options.env).toEqual({ PATH: '/bin', CLAUDE_CONFIG_DIR: '/workspace/.claude' });
   });
 
-  it('honours an operator CLAUDE_CONFIG_DIR carried on the task env', () => {
+  it('takes the home from the environment, not from the task env', () => {
     const { options } = capture({ env: { PATH: '/bin', CLAUDE_CONFIG_DIR: '/theirs' } });
-    expect(options.env.CLAUDE_CONFIG_DIR).toBe('/theirs');
+    expect(options.env.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
   });
 
   it('resumes a session and turns on debug when asked', () => {
@@ -255,15 +253,22 @@ describe('run: reading the stream', () => {
 });
 
 describe('prepareHome', () => {
-  const agent = createClaudeCodeAgent();
   let savedConfigDir: string | undefined;
   let tmp: string;
+  let skillsDir: string;
+  let claudeHome: string;
+
+  /** A fake environment over the real filesystem, so a link is a real link. */
+  const environmentFor = () =>
+    fakeExecutionEnvironment({ paths: { skillsDir, claudeHome }, files: localFiles });
 
   beforeEach(() => {
     savedConfigDir = process.env.CLAUDE_CONFIG_DIR;
     delete process.env.CLAUDE_CONFIG_DIR;
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-claude-home-'));
-    fs.mkdirSync(path.join(tmp, 'skills'));
+    skillsDir = path.join(tmp, 'skills');
+    claudeHome = path.join(tmp, '.claude');
+    fs.mkdirSync(skillsDir);
   });
 
   afterEach(() => {
@@ -272,54 +277,55 @@ describe('prepareHome', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('creates the config dir and links the skills dir into it', () => {
-    const skillsDir = path.join(tmp, 'skills');
-    const home = agent.prepareHome({ dataDir: tmp, skillsDir });
+  it('creates the config dir and links the skills dir into it', async () => {
+    const home = await createClaudeCodeAgent(environmentFor()).prepareHome();
 
-    expect(home.configDir).toBe(path.join(tmp, '.claude'));
+    expect(home.configDir).toBe(claudeHome);
     expect(fs.statSync(home.configDir).isDirectory()).toBe(true);
     expect(home.skillsLinked).toBe(true);
     const link = path.join(home.configDir, 'skills');
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(link)).toBe(fs.realpathSync(skillsDir));
-    // Nothing is written to this process's env: a task states the home on its
-    // own env, so a run in another environment is not left inheriting ours.
+    // Nothing is written to this process's env: the home comes from the
+    // environment, so a run elsewhere is not left inheriting ours.
     expect(process.env.CLAUDE_CONFIG_DIR).toBeUndefined();
     // Only skills are exposed — Claude Code's plugin layout differs from the
     // Agent Plugins one, so plugins are deliberately not linked across.
     expect(fs.existsSync(path.join(home.configDir, 'plugins'))).toBe(false);
   });
 
-  it.each(['theirs', 'theirs '])('reports the operator-set home %j', (directory) => {
+  it.each(['theirs', 'theirs '])('leaves the operator-set home %j alone', async (directory) => {
     const theirs = path.join(tmp, directory);
     fs.mkdirSync(theirs);
     process.env.CLAUDE_CONFIG_DIR = theirs;
+    claudeHome = theirs;
 
-    const home = agent.prepareHome({ dataDir: tmp, skillsDir: path.join(tmp, 'skills') });
+    const home = await createClaudeCodeAgent(environmentFor()).prepareHome();
 
-    expect(process.env.CLAUDE_CONFIG_DIR).toBe(theirs);
     expect(home).toEqual({ configDir: theirs, skillsLinked: false });
+    // Their directory is usually their real ~/.claude, so nothing is put in it.
     expect(fs.readdirSync(theirs)).toEqual([]);
-    expect(fs.existsSync(path.join(tmp, '.claude'))).toBe(false);
   });
 
-  it('reports skills as linked when the operator-set home already points at them', () => {
+  it('reports skills as linked when the operator-set home already points at them', async () => {
     const theirs = path.join(tmp, 'theirs');
     fs.mkdirSync(theirs);
-    fs.symlinkSync(path.join(tmp, 'skills'), path.join(theirs, 'skills'));
+    fs.symlinkSync(skillsDir, path.join(theirs, 'skills'));
     process.env.CLAUDE_CONFIG_DIR = theirs;
+    claudeHome = theirs;
 
-    const home = agent.prepareHome({ dataDir: tmp, skillsDir: path.join(tmp, 'skills') });
+    const home = await createClaudeCodeAgent(environmentFor()).prepareHome();
     expect(home).toEqual({ configDir: theirs, skillsLinked: true });
   });
 
-  it('reports the skills as unlinked when a populated dir sits at the link path', () => {
-    const claudeSkills = path.join(tmp, '.claude', 'skills');
+  it('reports the skills as unlinked when a populated dir sits at the link path', async () => {
+    const claudeSkills = path.join(claudeHome, 'skills');
     fs.mkdirSync(claudeSkills, { recursive: true });
     fs.writeFileSync(path.join(claudeSkills, 'keep.txt'), 'x');
 
-    const home = agent.prepareHome({ dataDir: tmp, skillsDir: path.join(tmp, 'skills') });
+    const home = await createClaudeCodeAgent(environmentFor()).prepareHome();
     expect(home.skillsLinked).toBe(false);
+    // Somebody's files, so the link is refused rather than written over them.
     expect(fs.existsSync(path.join(claudeSkills, 'keep.txt'))).toBe(true);
   });
 });

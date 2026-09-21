@@ -54,16 +54,17 @@ afterEach(() => {
 });
 
 describe('saved Claude Code authentication', () => {
-  it.each([
-    [{ CLAUDE_CONFIG_DIR: '/custom-home' }, '/custom-home'],
-    [{}, '/test-data/.claude'],
-  ])('checks the CLI home: %j', async (env, configDir) => {
-    standIn({ stdout: '{"loggedIn":true}' });
-    expect(await hasAuthenticatedClaudeHome(env)).toBe(true);
-    expect(runs[0].command).toBe('claude');
-    expect(runs[0].args).toEqual(['auth', 'status', '--json']);
-    expect(runs[0].options.env).toEqual({ ...env, CLAUDE_CONFIG_DIR: configDir });
-  });
+  it.each([{ CLAUDE_CONFIG_DIR: '/custom-home' }, {}])(
+    'checks the home the environment keeps, whatever the caller carries: %j',
+    async (env) => {
+      standIn({ stdout: '{"loggedIn":true}' });
+      expect(await hasAuthenticatedClaudeHome(env)).toBe(true);
+      expect(runs[0].command).toBe('claude');
+      expect(runs[0].args).toEqual(['auth', 'status', '--json']);
+      // The probe runs in the environment, so it asks about the home there.
+      expect(runs[0].options.env).toEqual({ ...env, CLAUDE_CONFIG_DIR: '/workspace/.claude' });
+    },
+  );
 
   it('ignores an empty home', async () => {
     standIn({ stdout: '{"loggedIn":false}' });

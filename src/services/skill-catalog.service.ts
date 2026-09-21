@@ -29,7 +29,6 @@ import { getExecutionEnvironment } from '../lib/execution-environments/get-execu
 import type { DirEntry } from '../lib/execution-environments/execution-environment';
 import path from 'path';
 import { logger } from '../logger';
-import { resolveSkillsDir } from '../lib/data-dir';
 import { pluginCatalogService } from './plugin-catalog.service';
 
 /** The filesystem a command sees: the skill tool hands out paths for the shell. */
@@ -92,7 +91,7 @@ class SkillCatalogService {
       roots.push({ dir: path.join(ws, '.claude', 'skills'), source: 'workspace' });
       roots.push({ dir: path.join(ws, '.agents', 'skills'), source: 'workspace' });
     }
-    roots.push({ dir: resolveSkillsDir(), source: 'global' });
+    roots.push({ dir: getExecutionEnvironment().paths().skillsDir, source: 'global' });
     // Plugins are enumerated in id order, so a clash between two plugins
     // resolves the same way on every boot.
     for (const plugin of await pluginCatalogService.getPlugins()) {

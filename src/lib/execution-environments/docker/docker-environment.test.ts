@@ -1,17 +1,19 @@
 /**
  * What the environment is pointed at before it starts anything: the image it
- * pairs with, the container it claims, and the mounts it refuses to create.
+ * pairs with, the container and volumes it claims, and the paths it hands the
+ * rest of the runtime.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as os from 'os';
 import * as path from 'path';
 import {
   EXEC_IMAGE_REPO,
-  containerName,
   createDockerEnvironment,
+  deploymentId,
   execImage,
   isMovingImage,
 } from './docker-environment';
+import { CONTAINER_PATHS, volumeName } from './volumes';
 
 const dataDir = path.join(os.tmpdir(), 'prism-exec-env-a');
 const otherDataDir = path.join(os.tmpdir(), 'prism-exec-env-b');
@@ -35,65 +37,76 @@ describe('execImage', () => {
   });
 });
 
-describe('containerName', () => {
-  it('names a container before the agent id is known', () => {
+describe('deploymentId', () => {
+  it('names a deployment before the agent id is known', () => {
     // `start()` runs before the agent is resolved, so the id is still unset on
     // a first boot and every such install would otherwise answer to one name.
     vi.stubEnv('AGENT_ID', '');
     vi.stubEnv('PRISM_DATA_DIR', dataDir);
-    expect(containerName()).toMatch(/^prism-agent-exec-[0-9a-f]{12}$/);
+    expect(deploymentId()).toMatch(/^[0-9a-f]{12}$/);
   });
 
-  it('gives one deployment the same container back on every restart', () => {
+  it('gives one deployment the same container and volumes back on every restart', () => {
     vi.stubEnv('PRISM_DATA_DIR', dataDir);
-    const first = containerName();
+    const first = deploymentId();
     vi.stubEnv('PRISM_DATA_DIR', otherDataDir);
     vi.stubEnv('PRISM_DATA_DIR', dataDir);
-    expect(containerName()).toBe(first);
+    expect(deploymentId()).toBe(first);
   });
 
   it('separates two runtimes that hold separate data', () => {
     vi.stubEnv('PRISM_DATA_DIR', dataDir);
-    const mine = containerName();
+    const mine = deploymentId();
     vi.stubEnv('PRISM_DATA_DIR', otherDataDir);
-    expect(containerName()).not.toBe(mine);
+    const theirs = deploymentId();
+
+    expect(theirs).not.toBe(mine);
+    // Which is what keeps one runtime's workspace out of the other's.
+    expect(volumeName(mine, 'workspaceRoot')).not.toBe(volumeName(theirs, 'workspaceRoot'));
   });
 });
 
-describe('what the container can see', () => {
-  it('serves the mounts derived from the data dir it was created with', () => {
+describe('the environment it builds', () => {
+  it('puts the agent in the container, not on this machine', () => {
     vi.stubEnv('PRISM_DATA_DIR', dataDir);
     const environment = createDockerEnvironment();
 
-    expect(environment.servesPath(path.join(dataDir, 'skills'))).toBe(true);
-    expect(environment.servesPath(path.join(otherDataDir, 'skills'))).toBe(false);
+    expect(environment.workspaceRoot()).toBe(CONTAINER_PATHS.workspaceRoot);
+    expect(environment.paths()).toEqual({
+      skillsDir: CONTAINER_PATHS.skillsDir,
+      pluginsDir: CONTAINER_PATHS.pluginsDir,
+      toolOutputDir: CONTAINER_PATHS.toolOutputDir,
+      claudeHome: CONTAINER_PATHS.claudeHome,
+      codexHome: CONTAINER_PATHS.codexHome,
+    });
   });
 
-  it('leaves the data dir itself unserved, so no command reaches the database', () => {
+  it('ignores a data dir that names nothing inside the container', () => {
+    // The volumes are the engine's, so where this machine keeps its data
+    // changes which volumes are used, never where the agent finds them.
+    vi.stubEnv('PRISM_DATA_DIR', dataDir);
+    const mine = createDockerEnvironment().paths();
+    vi.stubEnv('PRISM_DATA_DIR', otherDataDir);
+    expect(createDockerEnvironment().paths()).toEqual(mine);
+  });
+
+  it('serves the container tree and leaves the rest to the local environment', () => {
     vi.stubEnv('PRISM_DATA_DIR', dataDir);
     const environment = createDockerEnvironment();
 
+    expect(environment.servesPath(`${CONTAINER_PATHS.skillsDir}/my-skill`)).toBe(true);
+    // The database, and a repository the terminal UI was started in.
     expect(environment.servesPath(path.join(dataDir, 'agent.db'))).toBe(false);
-    expect(environment.servesPath(path.join(dataDir, 'media'))).toBe(false);
+    expect(environment.servesPath('/Users/me/dev/repo')).toBe(false);
   });
 
-  it("mounts the coding agent's home where an operator moved it", () => {
+  it('needs nothing prepared on this machine for its workspace', () => {
     vi.stubEnv('PRISM_DATA_DIR', dataDir);
-    vi.stubEnv('CLAUDE_CONFIG_DIR', path.join(os.tmpdir(), 'elsewhere-claude'));
-    const environment = createDockerEnvironment();
-
-    // Without this the CLI writes its sessions into a path the container has
-    // no mount for, and loses them with the container.
-    expect(environment.servesPath(path.join(os.tmpdir(), 'elsewhere-claude'))).toBe(true);
-  });
-
-  it('refuses to start when the workspace root swallows the data dir', async () => {
-    vi.stubEnv('PRISM_DATA_DIR', dataDir);
-    vi.stubEnv('SHELL_WORKSPACE_ROOT', path.dirname(dataDir));
-    const environment = createDockerEnvironment();
-
-    // The throw lands before the first mkdir, and the selector reads it as a
-    // reason to stay local rather than hand the database over.
-    await expect(environment.start()).rejects.toThrow(/holds the runtime's own data directory/);
+    // The image creates the directory and the engine seeds the volume from it,
+    // so there is no host directory to make and nothing to fall back from.
+    expect(createDockerEnvironment().prepareWorkspace()).toEqual({
+      root: CONTAINER_PATHS.workspaceRoot,
+      fellBackFrom: null,
+    });
   });
 });

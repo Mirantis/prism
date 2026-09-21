@@ -23,7 +23,6 @@
 
 import path from 'path';
 import { logger } from '../logger';
-import { resolvePluginsDir } from '../lib/data-dir';
 import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
 import type { DirEntry, FileStat } from '../lib/execution-environments/execution-environment';
 
@@ -96,7 +95,7 @@ class PluginCatalogService {
    * corrected in place — appears without a restart.
    */
   async getPlugins(): Promise<PluginEntry[]> {
-    const dir = resolvePluginsDir();
+    const dir = getExecutionEnvironment().paths().pluginsDir;
     const key = await cacheKey(dir);
     if (key === null) {
       // No plugins dir (e.g. PRISM_PLUGINS_DIR points somewhere absent).

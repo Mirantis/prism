@@ -4,6 +4,7 @@
  * call fails loudly rather than reaching the real host.
  */
 import type {
+  AgentPaths,
   ExecutionEnvironment,
   ExecutionFiles,
   RunOptions,
@@ -21,7 +22,20 @@ export interface FakeEnvironmentParts {
   workspaceRoot?: string;
   baseEnv?: NodeJS.ProcessEnv;
   servesPath?: (path: string) => boolean;
+  paths?: Partial<AgentPaths>;
   files?: Partial<ExecutionFiles>;
+}
+
+/** The agent's directories under a fake root, so a test can assert on them. */
+function fakePaths(root: string, over: Partial<AgentPaths> = {}): AgentPaths {
+  return {
+    skillsDir: `${root}/skills`,
+    pluginsDir: `${root}/plugins`,
+    toolOutputDir: `${root}/tool-outputs`,
+    claudeHome: `${root}/.claude`,
+    codexHome: `${root}/.codex`,
+    ...over,
+  };
 }
 
 export function fakeExecutionEnvironment(parts: FakeEnvironmentParts = {}): ExecutionEnvironment {
@@ -33,6 +47,7 @@ export function fakeExecutionEnvironment(parts: FakeEnvironmentParts = {}): Exec
     id: 'local',
     displayName: 'fake',
     workspaceRoot: () => parts.workspaceRoot ?? '/workspace',
+    paths: () => fakePaths(parts.workspaceRoot ?? '/workspace', parts.paths),
     prepareWorkspace: () => ({ root: parts.workspaceRoot ?? '/workspace', fellBackFrom: null }),
     start: () => Promise.resolve(),
     shutdown: () => Promise.resolve(),

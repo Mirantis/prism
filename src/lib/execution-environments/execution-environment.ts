@@ -10,7 +10,7 @@
  * plugins and the saved copies of oversized tool results, since each of those
  * is a path the runtime hands the model and tells it to use the shell on. The
  * database and the runtime's own processes — the updater, the meeting and
- * computer stacks, a plugin's MCP children — stay outside.
+ * computer stacks — stay outside.
  *
  * Errors are thrown, not returned: every caller already turns a failed file
  * operation into its own `{ error }` or an empty result.
@@ -27,6 +27,15 @@ export interface ExecutionEnvironment {
 
   /** Default cwd for a command, and the base a relative path resolves from. */
   workspaceRoot(): string;
+  /**
+   * Where the agent's own directories are, in this environment's namespace.
+   *
+   * The runtime keeps its data directory to itself — the database, the media
+   * store, a plugin's scratch — while everything the agent works with is the
+   * environment's to place, because an environment whose storage is not this
+   * machine's filesystem has its own names for all of it.
+   */
+  paths(): AgentPaths;
   /**
    * Boot-time: make that root usable. `fellBackFrom` names the root that could
    * not be used, so the caller can warn; null when the intended one works.
@@ -54,6 +63,16 @@ export interface ExecutionEnvironment {
   runProgram(command: string, args: readonly string[], options: RunOptions): ExecProcess;
 
   readonly files: ExecutionFiles;
+}
+
+/** The agent's directories. Every one of them is reached through `files`. */
+export interface AgentPaths {
+  skillsDir: string;
+  pluginsDir: string;
+  toolOutputDir: string;
+  /** `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, which the coding agents are told. */
+  claudeHome: string;
+  codexHome: string;
 }
 
 export interface RunOptions {
@@ -117,6 +136,10 @@ export interface ExecutionFiles {
   remove(path: string): Promise<void>;
   /** Only when the directory is empty. */
   removeDir(path: string): Promise<void>;
+  /** Point `linkPath` at `target`, replacing whatever link is there. */
+  symlink(target: string, linkPath: string): Promise<void>;
+  /** The path with every link resolved. Throws when it does not exist. */
+  realpath(path: string): Promise<string>;
 }
 
 export interface FileStat {

@@ -66,6 +66,20 @@ export const localFiles: ExecutionFiles = {
   async removeDir(path) {
     await fs.rmdir(path);
   },
+
+  async symlink(target, linkPath) {
+    // Replace an existing *link*, which may point somewhere stale, and refuse
+    // anything else: a real directory there holds somebody's files. `ln -sfn`
+    // draws the same line, so both environments answer alike.
+    try {
+      if ((await fs.lstat(linkPath)).isSymbolicLink()) await fs.unlink(linkPath);
+    } catch {
+      // Nothing there, which is the ordinary case.
+    }
+    await fs.symlink(target, linkPath);
+  },
+
+  realpath: (path) => fs.realpath(path),
 };
 
 function toFileStat(st: Stats): FileStat {

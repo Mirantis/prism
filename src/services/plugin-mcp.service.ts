@@ -27,7 +27,8 @@
 import fs from 'fs';
 import type { Tool } from 'ai';
 import { experimental_createMCPClient } from '@ai-sdk/mcp';
-import { Experimental_StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
+import { ExecStdioTransport } from '../lib/execution-environments/exec-stdio-transport';
+import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
 import { logger } from '../logger';
 import { resolvePluginDataDir } from '../lib/data-dir';
 import { sanitizeToolNameSegment, toModelToolName } from '../lib/tool-names';
@@ -397,16 +398,14 @@ function buildTransport(server: ResolvedServer) {
   if (server.kind !== 'stdio') {
     return { type: server.kind, url: server.url, headers: server.headers };
   }
-  return new Experimental_StdioMCPTransport({
+  // Started in the execution environment, not as a child of this process: a
+  // plugin's files are the environment's, so its server has to run where they
+  // are and with the toolchain that is there.
+  return new ExecStdioTransport(getExecutionEnvironment(), {
     command: server.command,
     args: server.args,
     env: server.env,
     cwd: server.cwd,
-    // 'inherit' rather than 'pipe': the transport keeps the child process
-    // private, so there is no way to drain a pipe from out here — and an
-    // undrained pipe fills its buffer and blocks the server. Inheriting our
-    // stderr costs the child's output being unstructured, but it cannot stall.
-    stderr: 'inherit',
   });
 }
 

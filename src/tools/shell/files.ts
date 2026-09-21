@@ -21,7 +21,6 @@
 import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
 import * as path from 'path';
 import { z } from 'zod';
-import { resolvePluginsDir, resolveSkillsDir } from '../../lib/data-dir';
 import { resolvePath, isInsideWorkspace } from './workspace';
 import { applyEdit } from './edit';
 import { formatFileContent } from './format';
@@ -76,7 +75,8 @@ export const editFileInput = z.object({
  * business in them.
  */
 function installDirs(): string[] {
-  return [resolveSkillsDir(), resolvePluginsDir()];
+  const { skillsDir, pluginsDir } = getExecutionEnvironment().paths();
+  return [skillsDir, pluginsDir];
 }
 
 /** The filesystem a command sees, so a write here and a `shell_exec` agree. */
