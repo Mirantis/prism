@@ -37,7 +37,12 @@ import { describeElements, findElements, readScreenElements } from './screen-ele
 import { actOnWindow, findWindows, listWindows, type WindowAction } from './desktop-windows';
 import { DesktopInput, type InputFrame } from './desktop-input';
 import { clearPasswordFields } from './secure-window';
-import { fillSignInForm, findSignIn, type SignInCredentials } from './sign-in-form';
+import {
+  fillSignInForm,
+  findSignIn,
+  frameOrigin,
+  type SignInCredentials,
+} from './sign-in-form';
 import { hasBinaries, missingBinary } from '../../lib/has-binary';
 import { COMPUTER_BINARIES, unsupportedReason } from './supported';
 import { VideoStream } from './video-stream';
@@ -56,16 +61,6 @@ export interface ModelChannel {
   showImage(imageUrl: string, note: string): boolean;
   /** Tell the model something in words, without asking it to answer. */
   notify(text: string): void;
-}
-
-/** Where a tab is, as a sign-in is judged by. A tab on no page at all has no origin. */
-function originOf(page: Page): string | undefined {
-  try {
-    const { origin } = new URL(page.url());
-    return origin === 'null' ? undefined : origin;
-  } catch {
-    return undefined;
-  }
 }
 
 /** Whether a capture chunk is nothing but silence, which is most of them. */
@@ -346,25 +341,28 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
    * The sign-in on a tab: where it goes, and what the box for it asks for.
    *
    * Asked when the agent says a help request is that kind, so the box is only offered
-   * where the runtime can really type it, and names the site the user signs in to. A page
-   * that asks for the username first needs both, since the runtime answers its second
-   * screen as well; only a page that asks for the password alone drops the username.
+   * where the runtime can really type it, and names the site the user signs in to. The
+   * site is the origin of the frame holding the form rather than the tab's own, since a
+   * sign-in is often an iframe from somewhere else, and that is where the password goes.
+   * A page that asks for the username first needs both fields, since the runtime answers
+   * its second screen as well; only a page that asks for the password alone drops the
+   * username.
    */
   async signInForm(
     tab?: number,
   ): Promise<{ origin: string; fields: 'both' | 'password' } | undefined> {
     const page = this.tabPage(tab);
     if (!page) return undefined;
-    const origin = originOf(page);
-    if (!origin) return undefined;
     const found = await this.onFrontQueue(() => findSignIn(page));
     if (!found) return undefined;
-    return { origin, fields: found.password && !found.username ? 'password' : 'both' };
+    return { origin: found.site, fields: found.password && !found.username ? 'password' : 'both' };
   }
 
   /**
    * Type a sign-in the user answered, into the tab that asked for it.
    *
+   * Only a frame whose origin is the one the user was shown is touched, so a page that
+   * has moved on, or an iframe that has been replaced by another site's, takes nothing.
    * The tab is brought to the front first: a background tab takes no key press, and the
    * sign-in happens where anybody watching the screen can see it.
    */
@@ -375,10 +373,10 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
   ): Promise<'filled' | 'no_form' | 'no_password_step' | 'tab_gone' | 'site_changed'> {
     const found = await this.pageForTarget(targetId);
     if (!found) return 'tab_gone';
-    if (originOf(found.page) !== site) return 'site_changed';
+    if (!found.page.frames().some((frame) => frameOrigin(frame) === site)) return 'site_changed';
     return this.onFrontQueue(async () => {
       await this.browser?.selectTab(found.index);
-      return fillSignInForm(found.page, credentials);
+      return fillSignInForm(found.page, credentials, site);
     });
   }
 

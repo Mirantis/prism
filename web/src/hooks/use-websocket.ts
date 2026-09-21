@@ -130,6 +130,29 @@ interface UseWebSocketOptions {
   maxReconnectAttempts?: number;
 }
 
+/** A turn the runtime reported without naming a thread; it belongs to every view. */
+const ANY_THREAD = '';
+
+/**
+ * The set a frame leaves behind.
+ *
+ * A frame that names no thread is either the answer to a cancel or a runtime older than
+ * the per-thread report, so its end clears every turn rather than one.
+ */
+function nextRunning(
+  current: ReadonlySet<string>,
+  threadId: string | undefined,
+  active: boolean,
+): ReadonlySet<string> {
+  const key = threadId ?? ANY_THREAD;
+  if (!active && key === ANY_THREAD) return current.size ? new Set() : current;
+  if (current.has(key) === active) return current;
+  const next = new Set(current);
+  if (active) next.add(key);
+  else next.delete(key);
+  return next;
+}
+
 export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const {
     onMessage,
@@ -178,7 +201,19 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   activeThreadIdRef.current = activeThreadId;
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
-  const [isTyping, setIsTyping] = useState(false);
+  /**
+   * The threads a turn is running on, as the runtime reports them.
+   *
+   * A set rather than a flag: turns run per thread and the user can move between threads
+   * mid-turn, so what this view shows is a question asked of the thread on screen. A
+   * frame naming no thread — the answer to a cancel — ends whatever is running.
+   */
+  const [running, setRunning] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * The thread a message was just sent to, until the runtime reports its turn. The empty
+   * string is a message sent before a thread had been named.
+   */
+  const [sent, setSent] = useState<string | null>(null);
 
   const handleMessage = useCallback(
     (event: MessageEvent) => {
@@ -195,7 +230,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
         const data = JSON.parse(event.data) as WebSocketMessage;
         switch (data.type) {
           case 'chat': {
-            // Deliberately does NOT clear isTyping: in verbose mode a turn
+            // Deliberately does NOT clear the running set: in verbose mode a turn
             // delivers every intermediate step, so an inbound message is not
             // evidence the turn is over. The runtime's `status.processing`
             // (below) brackets the turn and is the sole source of truth.
@@ -205,7 +240,8 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
           }
           case 'typing': {
             const p = data.payload as { isTyping?: boolean } | undefined;
-            setIsTyping(p?.isTyping ?? false);
+            const thread = activeThreadIdRef.current;
+            setRunning((prev) => nextRunning(prev, thread, p?.isTyping ?? false));
             break;
           }
           case 'status': {
@@ -218,11 +254,12 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             // `processing` key, hence the boolean guard.
             const p = data.payload as { processing?: boolean; threadId?: string } | undefined;
             if (typeof p?.processing !== 'boolean') break;
-            // A turn on another thread is not this view's. A frame naming no thread —
-            // the answer to a cancel — belongs to whatever is on screen.
-            const thread = activeThreadIdRef.current;
-            if (p.threadId && thread && p.threadId !== thread) break;
-            setIsTyping(p.processing);
+            setRunning((prev) => nextRunning(prev, p.threadId, p.processing === true));
+            // The runtime is reporting this thread now, so the optimistic state a send
+            // put up has been taken over, whichever way the report went.
+            setSent((prev) =>
+              prev === null || prev === p.threadId || prev === ANY_THREAD ? null : prev,
+            );
             break;
           }
           case 'thread': {
@@ -439,7 +476,9 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
       return;
     }
     wsRef.current.send(JSON.stringify({ type: 'chat', payload: message }));
-    setIsTyping(true);
+    // The runtime reports the turn a moment later; this covers the gap, and only for the
+    // thread the message went to.
+    setSent(message.threadId ?? ANY_THREAD);
   }, []);
 
   const sendFollowup = useCallback(
@@ -449,7 +488,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     [sendMessage],
   );
 
-  // The voice senders. None of them touches `isTyping`: a call is not a turn, and
+  // The voice senders. None of them touches the running set: a call is not a turn, and
   // the composer's spinner and STOP button belong to the text conversation.
   //
   // `mode` is left unset on purpose, which the runtime reads as `open` — every
@@ -496,7 +535,8 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'cancel' }));
     }
-    setIsTyping(false);
+    setSent(null);
+    setRunning((prev) => nextRunning(prev, activeThreadIdRef.current, false));
   }, []);
 
   useEffect(() => {
@@ -514,6 +554,13 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // What this view shows: a turn running on the thread it has open, or the moment between
+  // a message being sent and the runtime reporting the turn it starts.
+  const isTyping =
+    running.has(ANY_THREAD) ||
+    (activeThreadId ? running.has(activeThreadId) : running.size > 0) ||
+    (sent !== null && (sent === ANY_THREAD || sent === activeThreadId));
 
   return {
     status,

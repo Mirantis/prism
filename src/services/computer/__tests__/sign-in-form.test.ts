@@ -92,22 +92,30 @@ function inPage(
   }
 }
 
+/** The site every fake frame is on, unless a test gives it another. */
+const SITE = 'https://mail.example.com';
+
 /** A tab whose frames answer with what the in-page half reports. */
-function tab(frames: (ReturnType<typeof signInInPage> | Error)[], closed = false) {
+function tab(
+  frames: (ReturnType<typeof signInInPage> | Error)[],
+  { closed = false, origins }: { closed?: boolean; origins?: string[] } = {},
+) {
   const pressed: string[] = [];
+  // Built once, so a test can see which frame was asked and which was passed over.
+  const built = frames.map((answer, index) => ({
+    url: () => `${origins?.[index] ?? SITE}/sign-in`,
+    evaluate: vi.fn(async () => {
+      if (answer instanceof Error) throw answer;
+      return answer;
+    }),
+  }));
   const page = {
     isClosed: () => closed,
     keyboard: { press: vi.fn(async (key: string) => void pressed.push(key)) },
     waitForTimeout: vi.fn(async () => {}),
-    frames: () =>
-      frames.map((answer) => ({
-        evaluate: vi.fn(async () => {
-          if (answer instanceof Error) throw answer;
-          return answer;
-        }),
-      })),
+    frames: () => built,
   } as unknown as Page;
-  return { page, pressed };
+  return { page, pressed, frames: built };
 }
 
 /**
@@ -123,6 +131,7 @@ function scripted(answers: ReturnType<typeof signInInPage>[]) {
   let now = Date.now();
   vi.spyOn(Date, 'now').mockImplementation(() => now);
   const frame = {
+    url: () => `${SITE}/sign-in`,
     evaluate: vi.fn(async (_fn: unknown, arg: PageArgument) => {
       asked.push(arg);
       return answers[Math.min(asked.length - 1, answers.length - 1)];
@@ -233,14 +242,14 @@ describe('the sign-in across a page', () => {
   it('presses Enter when the page did not submit the form itself', async () => {
     const { page, pressed } = tab([{ found: true, username: true, submitted: false }]);
 
-    expect(await fillSignInForm(page, { username: 'u', password: 'p' })).toBe('filled');
+    expect(await fillSignInForm(page, { username: 'u', password: 'p' }, SITE)).toBe('filled');
     expect(pressed).toEqual(['Enter']);
   });
 
   it('leaves the keyboard alone when the form submitted itself', async () => {
     const { page, pressed } = tab([{ found: true, username: true, submitted: true }]);
 
-    await fillSignInForm(page, { username: 'u', password: 'p' });
+    await fillSignInForm(page, { username: 'u', password: 'p' }, SITE);
     expect(pressed).toEqual([]);
   });
 
@@ -250,13 +259,13 @@ describe('the sign-in across a page', () => {
       { found: true, username: false, submitted: true },
     ]);
 
-    expect(await fillSignInForm(page, { username: 'u', password: 'p' })).toBe('filled');
+    expect(await fillSignInForm(page, { username: 'u', password: 'p' }, SITE)).toBe('filled');
   });
 
   it('reports a page with nothing to fill', async () => {
     const { page, pressed } = tab([{ found: false, username: false, submitted: false }]);
 
-    expect(await fillSignInForm(page, { username: 'u', password: 'p' })).toBe('no_form');
+    expect(await fillSignInForm(page, { username: 'u', password: 'p' }, SITE)).toBe('no_form');
     expect(pressed).toEqual([]);
   });
 
@@ -265,16 +274,62 @@ describe('the sign-in across a page', () => {
     const passwordOnly = tab([{ found: true, username: false, submitted: false }]);
     const none = tab([{ found: false, username: false, submitted: false }]);
 
-    expect(await findSignIn(both.page)).toEqual({ password: true, username: true });
-    expect(await findSignIn(passwordOnly.page)).toEqual({ password: true, username: false });
+    expect(await findSignIn(both.page)).toEqual({ password: true, username: true, site: SITE });
+    expect(await findSignIn(passwordOnly.page)).toEqual({
+      password: true,
+      username: false,
+      site: SITE,
+    });
     expect(await findSignIn(none.page)).toBeNull();
   });
 
+  /**
+   * A sign-in form is often an iframe from another origin, and that origin is what the
+   * box names. Nothing else on the page is offered the credentials, whatever it holds.
+   */
+  it('names the frame holding the form, not the page around it', async () => {
+    const { page } = tab(
+      [
+        { found: false, username: false, submitted: false },
+        { found: true, username: true, submitted: false },
+      ],
+      { origins: ['https://news.example.com', 'https://accounts.example.com'] },
+    );
+
+    expect(await findSignIn(page)).toEqual({
+      password: true,
+      username: true,
+      site: 'https://accounts.example.com',
+    });
+  });
+
+  it('types into that frame alone, and into no other', async () => {
+    const { page, frames } = tab(
+      [
+        { found: true, username: true, submitted: true },
+        { found: true, username: true, submitted: true },
+      ],
+      { origins: ['https://evil.example.com', SITE] },
+    );
+
+    expect(await fillSignInForm(page, { username: 'u', password: 'p' }, SITE)).toBe('filled');
+    expect(frames[0].evaluate).not.toHaveBeenCalled();
+    expect(frames[1].evaluate).toHaveBeenCalled();
+  });
+
+  it('refuses a page whose frames have all moved to another site', async () => {
+    const { page } = tab([{ found: true, username: true, submitted: true }], {
+      origins: ['https://evil.example.com'],
+    });
+
+    expect(await fillSignInForm(page, { username: 'u', password: 'p' }, SITE)).toBe('no_form');
+  });
+
   it('leaves a closed tab alone', async () => {
-    const { page } = tab([{ found: true, username: true, submitted: true }], true);
+    const { page } = tab([{ found: true, username: true, submitted: true }], { closed: true });
 
     expect(await findSignIn(page)).toBeNull();
-    expect(await fillSignInForm(page, { username: 'u', password: 'p' })).toBe('no_form');
+    expect(await fillSignInForm(page, { username: 'u', password: 'p' }, SITE)).toBe('no_form');
   });
 });
 
@@ -289,7 +344,7 @@ describe('a sign-in in two steps', () => {
   it('types the username, then the password the next screen asks for', async () => {
     const { page, asked } = scripted([firstStep, firstStep, secondStep, secondStep]);
 
-    expect(await fillSignInForm(page, { username: 'demo-user', password: 'a-password' })).toBe(
+    expect(await fillSignInForm(page, { username: 'demo-user', password: 'a-password' }, SITE)).toBe(
       'filled',
     );
     expect(asked.map((arg) => [arg.username, arg.password])).toEqual([
@@ -309,7 +364,7 @@ describe('a sign-in in two steps', () => {
       secondStep,
     ]);
 
-    expect(await fillSignInForm(page, { username: 'demo-user', password: 'a-password' })).toBe(
+    expect(await fillSignInForm(page, { username: 'demo-user', password: 'a-password' }, SITE)).toBe(
       'filled',
     );
     expect(asked).toHaveLength(5);
@@ -318,7 +373,7 @@ describe('a sign-in in two steps', () => {
   it('says so when the password screen never comes', async () => {
     const { page } = scripted([firstStep]);
 
-    expect(await fillSignInForm(page, { username: 'demo-user', password: 'a-password' })).toBe(
+    expect(await fillSignInForm(page, { username: 'demo-user', password: 'a-password' }, SITE)).toBe(
       'no_password_step',
     );
   });
@@ -331,7 +386,7 @@ describe('a sign-in in two steps', () => {
       { ...secondStep, submitted: false },
     ]);
 
-    await fillSignInForm(page, { username: 'demo-user', password: 'a-password' });
+    await fillSignInForm(page, { username: 'demo-user', password: 'a-password' }, SITE);
     expect(pressed).toEqual(['Enter', 'Enter']);
   });
 });

@@ -140,9 +140,15 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
           : prev,
       );
     };
-    // The newest request wins: the agent asks for one sign-in at a time, and a second
-    // one means the first is no longer what it is waiting for.
-    const onSignIn = (request: SignInRequest) => setSignInRequest(request);
+    // The newest request of this conversation wins: the agent asks for one sign-in at a
+    // time, and a second means the first is no longer what it is waiting for. A delivery
+    // reaches every one of the user's clients, so a request from another conversation —
+    // the Web UI's, or Slack's — is not this session's to answer.
+    const onSignIn = (request: SignInRequest) => {
+      const thread = activeThreadIdRef.current;
+      if (request.threadId && thread && request.threadId !== thread) return;
+      setSignInRequest(request);
+    };
     tuiAdapterService.events.on('message', onMessage);
     tuiAdapterService.events.on('status', onStatus);
     tuiAdapterService.events.on('thread', onThread);

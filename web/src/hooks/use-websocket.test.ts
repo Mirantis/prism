@@ -216,6 +216,46 @@ describe('useWebSocket', () => {
     expect(result.current.isTyping).toBe(false);
   });
 
+  /**
+   * A turn runs on a thread, and the user reads one thread at a time. What the page shows
+   * is therefore a question asked of the thread on screen, not a flag for the whole user.
+   */
+  it('follows the thread on screen when the reader moves between them', async () => {
+    const { result, rerender, ws } = await renderConnected({
+      onMessage: vi.fn(),
+      activeThreadId: 't1',
+    });
+
+    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't1' } }));
+    expect(result.current.isTyping).toBe(true);
+
+    // Reading an idle thread while t1 works: its turn is not this view's.
+    rerender({ onMessage: vi.fn(), activeThreadId: 't2' });
+    expect(result.current.isTyping).toBe(false);
+
+    // And a turn that started on t2 while t1 was on screen is not lost.
+    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't2' } }));
+    expect(result.current.isTyping).toBe(true);
+
+    rerender({ onMessage: vi.fn(), activeThreadId: 't1' });
+    expect(result.current.isTyping).toBe(true);
+
+    act(() => ws.deliver({ type: 'status', payload: { processing: false, threadId: 't1' } }));
+    expect(result.current.isTyping).toBe(false);
+  });
+
+  it('shows the agent working the moment a message is sent to the thread on screen', async () => {
+    const { result, ws } = await renderConnected({ onMessage: vi.fn(), activeThreadId: 't1' });
+
+    act(() => result.current.sendFollowup('hello', 'a1', 't1', []));
+    expect(result.current.isTyping).toBe(true);
+
+    // The runtime takes over the report, and its end is the one that counts.
+    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't1' } }));
+    act(() => ws.deliver({ type: 'status', payload: { processing: false, threadId: 't1' } }));
+    expect(result.current.isTyping).toBe(false);
+  });
+
   it('sends a mid-turn followup with its thread id instead of suppressing it', async () => {
     const { result, ws } = await renderConnected({ onMessage: vi.fn() });
 

@@ -224,6 +224,50 @@ When('I ask Prism to read my mail using its computer', async ({ page }) => {
   await home.waitForStreamComplete(180_000);
 });
 
+/**
+ * The same ask, of a site that wants the username on one screen and the password on the
+ * next. The request is asked for outright: whether the agent raises one for a screen that
+ * shows a username field alone is its own judgement, and this scenario is about what the
+ * runtime does once it has.
+ */
+When('I ask Prism to read my files, whose sign-in asks in two screens', async ({ page }) => {
+  test.setTimeout(300_000);
+  await page.goto('/chat');
+  const home = new HomePage(page);
+  await home.typeMessage(
+    `Use your computer to read my files at ${site!.url}/files and report what they say. ` +
+      'Ask me for the sign-in when you reach it.',
+  );
+  await home.sendMessage();
+  await home.waitForAgentResponse(180_000);
+  await home.waitForStreamComplete(180_000);
+});
+
+Then(
+  'the website has both, one screen after the other, and Prism reports the files',
+  async ({ page, $testInfo }) => {
+    await expect.poll(() => site!.filesCredentials(), { timeout: 90_000 }).toEqual({
+      username: 'demo-user',
+      password: 'a-password',
+    });
+    await expect
+      .poll(
+        async () => {
+          const messages = await dbHelper.getPrisma().conversationMessage.findMany({
+            where: { thread: { agentId: DEFAULT_AGENT_ID }, role: 'AGENT', internalStep: false },
+          });
+          return messages.map((row) => row.content).join('\n');
+        },
+        { timeout: 180_000 },
+      )
+      .toContain('FILES-CLEAR');
+    await page.screenshot({
+      path: $testInfo.outputPath('computer-signed-in-two-steps.png'),
+      fullPage: true,
+    });
+  },
+);
+
 /** A sign-in is answered where the message is, so the live desktop never slides over it. */
 Then('Prism asks for the sign-in in the chat, with a box for it', async ({ page, $testInfo }) => {
   const box = page.getByLabel('Computer sign-in');
@@ -501,6 +545,23 @@ When('I open the help request on the Computer page', async ({ page }) => {
   };
   const waiting = status.help?.find((item) => item.status === 'waiting');
   expect(waiting).toBeDefined();
+  await page.goto(`/computer?help=${waiting!.id}`);
+  await expect(page.getByLabel("The agent's screen")).toBeVisible({ timeout: 60_000 });
+});
+
+/**
+ * Open the request on the Computer page.
+ *
+ * In chat the marker slides the desktop in beside the conversation; this scenario is
+ * about the page the request's own link names, which is where somebody arriving from
+ * Slack lands.
+ */
+When('I open the Computer help request', async ({ page }) => {
+  const { help } = await (await page.request.get('/agents/computer')).json();
+  const waiting = (help as { id: string; status: string }[]).find(
+    (item) => item.status === 'waiting',
+  );
+  expect(waiting, 'Prism has no waiting help request to open').toBeTruthy();
   await page.goto(`/computer?help=${waiting!.id}`);
   await expect(page.getByLabel("The agent's screen")).toBeVisible({ timeout: 60_000 });
 });

@@ -57,6 +57,7 @@ function signInRequest(overrides: Record<string, unknown> = {}) {
     id: HELP_ID,
     reason: 'Sign in to the inbox',
     credentials: true,
+    credentialFields: 'both',
     site: 'https://mail.example.com',
     targetId: 'target-1',
     status: 'waiting',
@@ -97,6 +98,23 @@ describe('answering a sign-in request', () => {
 
     expect(response.status).toBe(400);
     expect(mockSignIn).not.toHaveBeenCalled();
+  });
+
+  it('needs a username for a page that asks for one', async () => {
+    const response = await post({ username: '', password: 'a-password' });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain('username');
+    expect(mockSignIn).not.toHaveBeenCalled();
+  });
+
+  it('takes a password alone where that is the whole of the step', async () => {
+    mockList.mockResolvedValue([signInRequest({ credentialFields: 'password' })]);
+
+    const response = await post({ username: '', password: 'a-password' });
+
+    expect(response.status).toBe(200);
+    expect(mockSignIn).toHaveBeenCalled();
   });
 
   it('refuses a request that has already been answered', async () => {

@@ -14,6 +14,28 @@ function mailPage(signedIn: boolean): string {
 }
 
 /**
+ * The same sign-in asked over two screens, the way a large provider asks it: the username
+ * first, the password only once the site knows who is signing in.
+ */
+function filesPage(user: string | null, signedIn: boolean): string {
+  if (signedIn) return '<h1>Your files</h1><p>FILES-CLEAR: The contract was signed on Monday.</p>';
+  if (!user) {
+    return (
+      '<h1>Sign in to your files</h1><p>Enter your username to continue.</p>' +
+      '<form method="post" action="/files-username">' +
+      '<label>Username <input name="username" autocomplete="username" required></label> ' +
+      '<button>Next</button></form>'
+    );
+  }
+  return (
+    `<h1>Welcome back, ${user}</h1><p>Enter your password.</p>` +
+    '<form method="post" action="/files-password">' +
+    '<label>Password <input type="password" name="password" autocomplete="current-password" required></label> ' +
+    '<button>Sign in</button></form>'
+  );
+}
+
+/**
  * The password the site accepts, which only the test knows.
  *
  * The agent has the computer tools and a form in front of it, so it does try the sign-in
@@ -37,17 +59,46 @@ export async function startComputerSite(): Promise<{
   passwordLength: () => number;
   signInPageLoads: () => number;
   mailCredentials: () => { username: string; password: string } | null;
+  filesCredentials: () => { username: string; password: string } | null;
 }> {
   let signedIn = false;
   let passwordLength = 0;
   let signInPageLoads = 0;
   let mailCredentials: { username: string; password: string } | null = null;
+  let filesUser: string | null = null;
+  let filesCredentials: { username: string; password: string } | null = null;
   const server: Server = createServer((req, res) => {
     if (req.method === 'POST' && req.url?.startsWith('/typed')) {
       passwordLength = Number(new URL(req.url, 'http://site').searchParams.get('length')) || 0;
       req.resume();
       res.writeHead(204);
       res.end();
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/files-username') {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', () => {
+        filesUser = new URLSearchParams(body).get('username');
+        res.writeHead(303, { location: '/files' });
+        res.end();
+      });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/files-password') {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', () => {
+        filesCredentials = {
+          username: filesUser ?? '',
+          password: new URLSearchParams(body).get('password') ?? '',
+        };
+        res.writeHead(303, {
+          'set-cookie': 'computer-test-files=yes; Path=/; HttpOnly',
+          location: '/files',
+        });
+        res.end();
+      });
       return;
     }
     if (req.method === 'POST' && req.url === '/sign-in-mail') {
@@ -88,12 +139,19 @@ export async function startComputerSite(): Promise<{
       return;
     }
     res.setHeader('content-type', 'text/html; charset=utf-8');
-    if (req.url !== '/notes' && !req.headers.cookie?.includes('computer-test-login=yes')) {
+    if (
+      req.url !== '/notes' &&
+      req.url !== '/files' &&
+      req.url !== '/mail' &&
+      !req.headers.cookie?.includes('computer-test-login=yes')
+    ) {
       signInPageLoads += 1;
     }
     const content =
       req.url === '/notes'
         ? '<h1>Public notes</h1><p>Reference: NOTES-42. The workshop starts at 10:00.</p>'
+        : req.url === '/files'
+          ? filesPage(filesUser, req.headers.cookie?.includes('computer-test-files=yes') ?? false)
         : req.url === '/mail'
           ? mailPage(req.headers.cookie?.includes('computer-test-mail=yes') ?? false)
           : req.headers.cookie?.includes('computer-test-login=yes')
@@ -121,6 +179,7 @@ export async function startComputerSite(): Promise<{
     passwordLength: () => passwordLength,
     signInPageLoads: () => signInPageLoads,
     mailCredentials: () => mailCredentials,
+    filesCredentials: () => filesCredentials,
     url: `http://${randomUUID()}.localhost:${address.port}`,
     close: () =>
       new Promise((resolve, reject) => {
