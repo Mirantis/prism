@@ -48,6 +48,22 @@ function deliveredMessages(role: 'USER' | 'AGENT') {
   });
 }
 
+Given('the chat model is {string}', async ({ page }, model: string) => {
+  const response = await page.request.patch('/agents/model', { data: { model } });
+  expect(response.ok()).toBe(true);
+  expect(await response.json()).toEqual({ model });
+});
+
+Then('the recorded chat model is {string}', async ({}, model: string) => {
+  await expect.poll(async () => {
+    const thread = await dbHelper.getPrisma().conversationThread.findFirst({
+      where: { agentId: DEFAULT_AGENT_ID },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return thread?.contextModel;
+  }).toBe(model);
+});
+
 When('I type {string} in the chat input', async ({ page }, text: string) => {
   const homePage = new HomePage(page);
   await homePage.typeMessage(text);

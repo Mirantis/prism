@@ -140,7 +140,7 @@ describe('config', () => {
   it('reads BEDROCK_MODEL_ID with default', async () => {
     delete process.env.BEDROCK_MODEL_ID;
     const cfg = await loadConfig();
-    expect(cfg.bedrockModelId).toBe('global.anthropic.claude-opus-5');
+    expect(cfg.bedrockModelId).toBe('global.anthropic.claude-opus-5-5');
   });
 
   it('reads BEDROCK_CLASSIFICATION_MODEL_ID with default', async () => {
@@ -454,6 +454,14 @@ describe('config', () => {
       delete process.env.LLM_PROVIDER;
       const cfg = await loadConfig();
       expect(cfg.llmProvider).toBe('bedrock');
+      expect(cfg.chatModelId).toBe('global.anthropic.claude-opus-5-5');
+    });
+
+    it('preserves an explicit Bedrock chat model', async () => {
+      process.env.LLM_PROVIDER = 'bedrock';
+      process.env.BEDROCK_MODEL_ID = 'global.anthropic.claude-opus-5';
+      const cfg = await loadConfig();
+      expect(cfg.bedrockModelId).toBe('global.anthropic.claude-opus-5');
       expect(cfg.chatModelId).toBe('global.anthropic.claude-opus-5');
     });
 

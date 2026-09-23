@@ -135,8 +135,8 @@ describe('createBedrockProvider', () => {
 
   it('routes Anthropic model IDs through the Anthropic-native provider', () => {
     const provider = createBedrockProvider();
-    provider('us.anthropic.claude-opus-4-7');
-    expect(mockAnthropicModel).toHaveBeenCalledWith('us.anthropic.claude-opus-4-7');
+    provider('global.anthropic.claude-opus-5-5');
+    expect(mockAnthropicModel).toHaveBeenCalledWith('global.anthropic.claude-opus-5-5');
     expect(mockGenericModel).not.toHaveBeenCalled();
   });
 
@@ -152,7 +152,7 @@ describe('createBedrockProvider', () => {
   });
 
   it('gives Anthropic models the Anthropic cacheControl fragment', () => {
-    expect(createBedrockProvider().cachePoint('us.anthropic.claude-opus-5')).toEqual({
+    expect(createBedrockProvider().cachePoint('global.anthropic.claude-opus-5-5')).toEqual({
       anthropic: { cacheControl: { type: 'ephemeral' } },
     });
   });
@@ -177,7 +177,7 @@ describe('createBedrockProvider', () => {
     // names no vendor, so the answer has to come from here.
     const provider = createBedrockProvider();
 
-    expect(provider.promptCacheState?.('global.anthropic.claude-opus-5')).toBe('on');
+    expect(provider.promptCacheState?.('global.anthropic.claude-opus-5-5')).toBe('on');
     expect(provider.promptCacheState?.('us.xai.grok-4.6')).toBe('off');
     expect(provider.promptCacheState?.('us.amazon.nova-2-lite-v1:0')).toBe('off');
   });

@@ -16,7 +16,7 @@ import { contextWindowFor } from './context-window';
 // The IDs `src/config.ts` actually defaults to. If the models.dev snapshot
 // ever stops covering these, the indicator silently disappears for every default
 // deployment — so assert them explicitly rather than trusting the generator.
-const BEDROCK_CHAT_DEFAULT = 'global.anthropic.claude-opus-5';
+const BEDROCK_CHAT_DEFAULT = 'global.anthropic.claude-opus-5-5';
 const BEDROCK_CLASSIFICATION_DEFAULT = 'global.anthropic.claude-haiku-4-5-20251001-v1:0';
 const AZURE_CHAT_DEFAULT = 'claude-opus-5';
 const AZURE_CLASSIFICATION_DEFAULT = 'claude-haiku-4-5';
@@ -147,5 +147,5 @@ describe('contextWindowFor', () => {
       expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000 });
     });
   });
-});
 
+});
