@@ -22,6 +22,17 @@ Feature: Agent Chat
     Then I should see the message "What is Kubernetes?" in the conversation
     And I should see the message "Kubernetes is..." in the conversation
 
+  Scenario: Chat with Opus 5.5
+    Given the chat model is "global.anthropic.claude-opus-5-5"
+    When I navigate to the agent chat page
+    And I type "Reply with exactly OPUS_55_OK" in the chat input
+    And I send the message
+    Then the agent reply contains "OPUS_55_OK"
+    And no reply is an error
+    And the recorded chat model is "global.anthropic.claude-opus-5-5"
+    And the context indicator shows a usage percentage
+    And the indicator percentage matches the stored snapshot
+
   Scenario: Cancel an in-progress response
     When I navigate to the agent chat page
     And I type "Write a long, detailed essay about the full history of computing." in the chat input
