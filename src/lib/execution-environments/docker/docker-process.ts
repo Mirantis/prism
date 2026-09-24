@@ -155,15 +155,17 @@ const ENGINE_ERROR_BYTES = 1024;
  * A second listener on stderr beside the caller's: every caller attaches its
  * own in the same tick this returns, before any output can arrive, so both see
  * every chunk. Only the head is kept, since the engine writes its error before
- * the command could have written anything.
+ * the command could have written anything. A caller may set an encoding on the
+ * stream, which turns every listener's chunks into strings.
  */
 function watchForLostContainer(client: ExecProcess, container: string): void {
   const head: Buffer[] = [];
   let kept = 0;
-  client.stderr?.on('data', (chunk: Buffer) => {
+  client.stderr?.on('data', (chunk: Buffer | string) => {
     if (kept >= ENGINE_ERROR_BYTES) return;
-    head.push(chunk);
-    kept += chunk.length;
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+    head.push(bytes);
+    kept += bytes.length;
   });
   void client.ended.then((end) => {
     if (end.exitCode === 0) return;

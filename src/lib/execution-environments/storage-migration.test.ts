@@ -88,12 +88,16 @@ vi.mock('./get-execution-environment', () => ({
   getExecutionEnvironment: () => ({ id: currentEnvironment }),
 }));
 
+/** A directory whose listing fails for a reason other than being absent. */
+const UNREADABLE: string[] = [];
+
 /** A filesystem over a map of directory to entry names. */
 function filesOver(dirs: Map<string, string[]>) {
   return {
     readDir: (path: string): Promise<DirEntry[]> => {
       const names = dirs.get(path);
-      if (!names) return Promise.reject(new Error('ENOENT'));
+      if (!names) return Promise.reject(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+      if (names === UNREADABLE) return Promise.reject(new Error('docker exec timed out'));
       return Promise.resolve(
         names.map((name) => ({ name, isFile: true, isDirectory: false, isSymbolicLink: false })),
       );
@@ -282,6 +286,18 @@ describe('when a copy fails', () => {
     // A copy that stopped part-way would otherwise sit at the target, and the
     // next attempt skips a name the target already has.
     expect(removed).toEqual(['/prism/skills/bad']);
+  });
+
+  it('copies nothing into a destination it could not list', async () => {
+    hostDirs.set('/host/skills', ['a-skill']);
+    containerDirs.set('/prism/skills', UNREADABLE);
+
+    const report = await migrateStorageIfEnvironmentChanged();
+    // Its entries are unknown, and a copy onto one that exists would nest in it.
+    expect(report).toMatchObject({ failures: 1 });
+    expect(copies.map((c) => c.from)).not.toContain('/host/skills/a-skill');
+    expect(removed).toEqual([]);
+    expect(state.get('lastExecutionEnvironment')).toBe('local');
   });
 
   it('keeps the old environment recorded, so the next boot tries again', async () => {

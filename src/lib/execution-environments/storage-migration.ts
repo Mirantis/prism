@@ -189,7 +189,18 @@ async function move(opts: {
   const entries = await source.list().catch(() => null);
   if (entries === null || entries.length === 0) return; // nothing there to move
 
-  const held = new Set((await target.list().catch(() => [])).map((entry) => entry.name));
+  // Only a missing target is empty. Any other failure leaves what it holds
+  // unknown, and copying over it would nest entries inside existing ones.
+  const listed = await target.list().then(
+    (held) => held,
+    (err: unknown) => ((err as NodeJS.ErrnoException).code === 'ENOENT' ? [] : err),
+  );
+  if (!Array.isArray(listed)) {
+    report.failures++;
+    logger.warn({ err: listed, what }, '[Startup] could not list the destination');
+    return;
+  }
+  const held = new Set(listed.map((entry) => entry.name));
   await target.ensure();
 
   for (const entry of entries) {

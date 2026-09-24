@@ -57,10 +57,18 @@ const RUNTIME_SERVER_VARS = [
 /**
  * The runtime's own credentials, by family. The agent's shell has no use for
  * them, and with one it could post as the Slack bot, sign in to the meeting
- * account, or write to the runtime's traces and telemetry. A prefix, so a new
- * variable in one of these families stays out without a change here.
+ * account, open the runtime's voice sessions, or write to the runtime's traces
+ * and telemetry. A prefix, so a new variable in one of these families stays out
+ * without a change here.
  */
-const RUNTIME_SECRET_PREFIXES = ['SLACK_', 'GOOGLE_BOT_', 'LANGFUSE_', 'OTEL_', 'NEXUS_'] as const;
+const RUNTIME_SECRET_PREFIXES = [
+  'SLACK_',
+  'GOOGLE_BOT_',
+  'LANGFUSE_',
+  'OTEL_',
+  'NEXUS_',
+  'OPENAI_REALTIME_',
+] as const;
 
 export function dockerBaseEnv(
   base: NodeJS.ProcessEnv = process.env,

@@ -43,19 +43,6 @@ export function resolvePluginsDir(): string {
 }
 
 /**
- * The persistent scratch dir handed to a plugin's MCP servers as `PLUGIN_DATA`.
- *
- * A *sibling* of the plugins dir, not a child of the plugin itself: the Agent
- * Plugins spec requires this directory to survive a plugin update, and an
- * update here means deleting and re-dropping the plugin folder.
- */
-export function resolvePluginDataDir(pluginId: string): string {
-  // Plugin ids are directory names read from disk, so they can't contain a
-  // separator — basename is belt-and-braces against a caller passing a path.
-  return path.join(resolveDataDir(), 'plugin-data', path.basename(pluginId));
-}
-
-/**
  * Media directory for attachment content (`/data/media` in the container).
  * Attachment bytes live here as files — the DB row keeps only metadata plus
  * the file's basename (see `lib/media-store.ts`, the sole reader/writer).

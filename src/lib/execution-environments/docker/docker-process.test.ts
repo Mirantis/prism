@@ -18,6 +18,11 @@ vi.mock('../local/local-process', () => ({
   },
 }));
 
+const lost: Array<{ container: string; said: string }> = [];
+vi.mock('./container-lost', () => ({
+  reportIfContainerLost: (container: string, said: string) => lost.push({ container, said }),
+}));
+
 const { runDockerProgram, runDockerShell } = await import('./docker-process');
 
 const ctx = () => ({ container: 'agent-exec-test' });
@@ -31,6 +36,7 @@ const options = (over: Partial<RunOptions> = {}): RunOptions => ({
 
 beforeEach(() => {
   launches.length = 0;
+  lost.length = 0;
   child = new FakeChild();
 });
 
@@ -133,5 +139,23 @@ describe('killing it', () => {
     expect(proc.kill('SIGKILL')).toBe(true);
     expect(child.signals).toEqual(['SIGKILL']);
     await expect(proc.closed).resolves.toBeTruthy();
+  });
+});
+
+describe('a container that is gone', () => {
+  it("reads the engine's error off stderr, even when the caller decodes it", async () => {
+    const proc = runDockerProgram('node', ['server.js'], options(), ctx());
+    // A plugin's MCP transport sets an encoding on stderr, which hands every
+    // listener strings instead of buffers.
+    proc.stderr!.setEncoding('utf8');
+    proc.stderr!.on('data', () => {});
+    child.stderr.write('Error response from daemon: No such container: agent-exec-test\n');
+    child.finish(1);
+    await proc.ended;
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(lost).toEqual([
+      { container: 'agent-exec-test', said: expect.stringContaining('No such container') },
+    ]);
   });
 });

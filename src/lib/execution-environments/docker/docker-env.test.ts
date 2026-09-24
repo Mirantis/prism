@@ -11,6 +11,7 @@ describe('dockerBaseEnv', () => {
       LANGFUSE_SECRET_KEY: 'test-secret',
       OTEL_EXPORTER_OTLP_API_KEY: 'test-otel-key',
       NEXUS_API_URL: 'https://nexus.example.test',
+      OPENAI_REALTIME_API_KEY: 'test-realtime-key',
     });
     // With any of these the agent's shell could post as the Slack bot or sign
     // in to the meeting account.

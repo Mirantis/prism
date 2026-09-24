@@ -103,13 +103,16 @@ When you install a container engine, or take one away, the agent's files move
 with it: its workspace, skills, plugins and both coding-agent logins are copied
 across on the next start, and nothing already on the other side is overwritten.
 Its memory, conversations and identity are not affected either way, because
-those live in the agent's database, which stays on your machine.
+those live in the agent's database, which stays on your machine. If you remove
+the engine for good, set `EXECUTION_ENVIRONMENT=local`, or each start first
+waits for the engine the last run used.
 
 Two things follow. Anything written **outside** `/prism` — in `/tmp` inside the
 container, say — is gone when the agent restarts, so keep work in the workspace.
 And a conversation you start with `prism` inside a repository runs its commands
 on your machine instead, because the container has no access to that repository;
-the startup log says so when it happens.
+the startup log says so when it happens. If the container is removed while the
+agent runs, its commands fail until you restart the agent.
 
 > **On confinement:** in a container, a command reaches the agent's own storage
 > and nothing else of yours — not your files, not your home directory, and not
