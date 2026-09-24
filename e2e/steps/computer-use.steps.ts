@@ -1,7 +1,7 @@
 import { createBdd } from 'playwright-bdd';
 import { expect, test, type Page } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
-import { startComputerSite } from '../support/computer-site';
+import { SIGN_IN_PASSWORD, startComputerSite } from '../support/computer-site';
 import * as dbHelper from '../support/db-helper';
 import { getSlackState } from '../support/slack-state';
 import { DEFAULT_AGENT_ID } from '../fixtures/test-data';
@@ -176,6 +176,40 @@ Then('I can close and reopen the panel after control loses focus', async ({ page
   await expect(panel).toHaveAttribute('data-state', 'open');
 });
 
+/**
+ * Put the sign-in page in front of whatever the agent left in the tab.
+ *
+ * A help request preserves the tab, not the page: asked for something else as well, the
+ * agent may navigate that tab on before it hands over, and the keystrokes would land
+ * wherever it went. Done the way a person would fix it — the address bar, the address,
+ * Enter — which also puts the caret in the password field, since the page asks for it on
+ * load.
+ */
+async function openSignInPage(page: Page): Promise<void> {
+  // A click first, where the pointer already is, which is over the browser: taking
+  // control claims the pointer but focuses nothing on the desktop, and a key only
+  // reaches the window that has the keyboard. Measured on a desktop nobody had touched:
+  // without this the address below arrives nowhere, however often it is typed.
+  await page.mouse.down();
+  await page.mouse.up();
+  const before = site!.signInPageLoads();
+  // Typed again until the site has served the page: a key can be lost on its way to a
+  // desktop that has just changed hands, and the load is the only proof it arrived.
+  await expect
+    .poll(
+      async () => {
+        if (site!.signInPageLoads() > before) return true;
+        await page.keyboard.press('Control+l');
+        await page.keyboard.type(`${site!.url}/inbox`, { delay: 20 });
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(2_000);
+        return site!.signInPageLoads() > before;
+      },
+      { timeout: 60_000, intervals: [1_000] },
+    )
+    .toBe(true);
+}
+
 When('I sign in through the live computer', async ({ page, $testInfo }) => {
   page.setDefaultTimeout(15_000);
   await page.getByLabel("The agent's screen").click();
@@ -188,7 +222,9 @@ When('I sign in through the live computer', async ({ page, $testInfo }) => {
     }, { timeout: 30_000 })
     .toBeTruthy();
   await expect(controlStatus).toHaveCount(0, { timeout: 30_000 });
-  await page.keyboard.type('demo-user', { delay: 80 });
+  await openSignInPage(page);
+  await page.keyboard.type(SIGN_IN_PASSWORD, { delay: 60 });
+  await expect.poll(() => site!.passwordLength(), { timeout: 15_000 }).toBeGreaterThan(0);
   await page.screenshot({
     path: $testInfo.outputPath('computer-controlling.png'),
     fullPage: true,

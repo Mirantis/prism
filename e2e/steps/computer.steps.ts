@@ -81,10 +81,13 @@ async function canvasSize(page: Page): Promise<string> {
   return size.width === 0 ? 'nothing drawn yet' : `${size.width}x${size.height}`;
 }
 
-Given('the runtime can give the agent a computer', async () => {
+Given('the runtime can give the agent a computer', async ({ page }) => {
   const response = await fetch('http://localhost:3003/agents/me');
   const { hasComputer } = (await response.json()) as { hasComputer?: boolean };
-  if (hasComputer) return;
+  if (hasComputer) {
+    await returnAbandonedControl(page);
+    return;
+  }
   // A desktop is what this page is, so there is nothing to assert without one. CI
   // installs the toolchain, so a missing computer there is a broken job rather than a
   // host that was never going to have one — and a scenario that quietly stops running
@@ -96,6 +99,28 @@ Given('the runtime can give the agent a computer', async () => {
   }
   test.skip(true, 'this host has no desktop toolchain, so the agent has no computer');
 });
+
+/**
+ * Hand the desktop back where a scenario ended while it held control.
+ *
+ * Closing the viewer keeps the desktop paused for that viewer's return, which is what a
+ * person wants and what the next scenario cannot work around: its own computer work would
+ * wait for a hand-back nobody is left to give.
+ */
+async function returnAbandonedControl(page: Page): Promise<void> {
+  const paused = async () =>
+    (await (await fetch('http://localhost:3003/agents/computer')).json()).paused === true;
+  if (!(await paused())) return;
+  await page.goto('/computer');
+  await page.getByLabel("The agent's screen").waitFor({ timeout: 60_000 });
+  // Whichever way back the page offers: a help request left waiting shows its own
+  // button and hides the plain one.
+  const done = page.getByRole('button', { name: 'I’m done', exact: true });
+  const back = page.getByRole('button', { name: 'Return control', exact: true });
+  if (await back.count()) await back.click();
+  else await done.first().click();
+  await expect.poll(paused, { timeout: 30_000 }).toBe(false);
+}
 
 /**
  * A screen for the page to share, since this runner has none.
