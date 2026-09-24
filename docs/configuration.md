@@ -376,7 +376,8 @@ model IDs are plain OpenAI API model names**; **OpenRouter model IDs are
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-[compact](compaction.md) a conversation when its context occupancy reaches this percent of the model's window. `0` disables auto-compaction; out-of-range values fall back to the default. | `90` |
 | `COMPACTION_TAIL_MESSAGES` | How many of the newest messages stay out of compaction and remain in the context verbatim. `0` is allowed. | `6` |
-| `DISABLE_UPDATER` | Set to `1` (or `true`) to turn off [automatic updates](installation.md#automatic-updates): the hourly check, the auto-install, and the `prism update` command. Only native installs self-update — in Docker and dev runs the updater is already off. | — (updater on for native installs) |
+| `DISABLE_UPDATER` | Set to `1` (or `true`) to turn off [automatic updates](installation.md#automatic-updates): the hourly check, the auto-install, the `prism update` command, and `RESTART_ON_RELEASE`. | — (updater on for native installs) |
+| `RESTART_ON_RELEASE` | Set to `1` (or `true`) on a container from a release image to stop the runtime when a newer release is out and the agent is idle. Use it only where the platform starts the container again, pulls the image each time, and keeps `/data` (see [Docker](docker.md)). A native install ignores it. | — (off) |
 
 The mantle **chat and classification** variables deliberately do **not** fall
 back to their `BEDROCK_*` counterparts, since those carry a cross-region prefix

@@ -140,9 +140,10 @@ prism update
 ```
 
 Set `DISABLE_UPDATER=1` in `~/.prism/.env` to turn off the checks, the
-automatic updates, and the `prism update` command. Docker doesn't have
-auto-update — pull a newer image tag and recreate the container instead (see
-**[Docker](docker.md)**).
+automatic updates, and the `prism update` command. A container does not install
+updates. Pull a newer image tag and recreate the container, or set
+`RESTART_ON_RELEASE=1` on a platform that pulls the image again when it restarts
+the container (see **[Docker](docker.md)**).
 
 Each update replaces the binaries and their sidecar files, but not the service
 definition (the launchd plist, systemd unit, or scheduled task). If a release
