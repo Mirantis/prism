@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { PageHeader } from '@/components/shared/page-header';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Card,
@@ -80,40 +81,38 @@ function ProfilePage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Profile</h2>
-          <p className="text-sm text-muted-foreground">
-            Shape how your agent thinks, works, and remembers.
-          </p>
-        </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button variant="outline" size="sm">
-                <Archive className="size-4" />
-                Backup
-                <ChevronDown className="size-4 opacity-60" />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
+    <div className="page-content space-y-8">
+      <PageHeader
+        title="Profile"
+        description="Shape how your agent thinks, works, and remembers."
+        actions={
+          <DropdownMenu>
+            <DropdownMenuTrigger
               render={
-                <a href="/agents/export" download>
-                  <Download className="size-4" />
-                  Export
-                </a>
+                <Button variant="outline" size="sm">
+                  <Archive className="size-4" />
+                  Backup
+                  <ChevronDown className="size-4 opacity-60" />
+                </Button>
               }
             />
-            <DropdownMenuItem onClick={() => setRestoreOpen(true)}>
-              <Upload className="size-4" />
-              Restore
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                render={
+                  <a href="/agents/export" download>
+                    <Download className="size-4" />
+                    Export
+                  </a>
+                }
+              />
+              <DropdownMenuItem onClick={() => setRestoreOpen(true)}>
+                <Upload className="size-4" />
+                Restore
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        }
+      />
 
       <RestoreBackupDialog
         open={restoreOpen}

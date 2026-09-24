@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { PageHeader } from '@/components/shared/page-header';
 import { LlmUsageCards } from '@/components/activity/llm-usage-cards';
 import { ToolCallList } from '@/components/activity/tool-call-list';
 
@@ -8,11 +9,11 @@ export const Route = createFileRoute('/activity')({
 
 function ActivityPage() {
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Activity</h2>
-        <p className="text-sm text-muted-foreground">What the agent has spent, and what it has done.</p>
-      </div>
+    <div className="page-content space-y-8">
+      <PageHeader
+        title="Activity"
+        description="Keep track of model usage and the work your agent has done."
+      />
 
       <section className="space-y-3">
         <div>

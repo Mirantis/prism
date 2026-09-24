@@ -57,9 +57,6 @@ export function ToolCallList() {
     // short page keeps loading until the viewport is full.
     if (!node || !hasNextPage || isFetchingNextPage || isFetchNextPageError) return;
 
-    // The app shell lets the document scroll rather than a pane of its own, so
-    // the default root — the viewport — is what the watcher is measured
-    // against.
     const observer = new IntersectionObserver((entries) => {
       if (entries[0]?.isIntersecting) void fetchNextPage();
     });

@@ -1,19 +1,20 @@
-import { Bot } from 'lucide-react';
+import { useAgent } from '@/lib/agent-context';
 
 export default function ChatWelcome() {
+  const agent = useAgent();
   return (
-    <div className="flex h-full flex-col items-center justify-center px-4">
-      <div className="w-full max-w-lg rounded-xl border bg-card p-8 text-center">
-        <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
-          <Bot className="size-6 text-muted-foreground" />
-        </div>
-        <h2 className="text-lg font-semibold text-foreground">
-          Hey there! I'm your AI companion.
-        </h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Just say hello and we'll get started — it only takes a minute!
-        </p>
+    <div className="flex min-h-full flex-col items-center justify-center px-6 py-12 text-center">
+      <div className="welcome-mark mb-7 flex size-20 items-center justify-center rounded-3xl border border-border bg-card">
+        <img src="/prism-logo.svg" alt="" className="size-11" />
       </div>
+      <p className="eyebrow mb-3">A little direction goes a long way</p>
+      <h2 className="max-w-xl text-3xl font-semibold tracking-tight sm:text-4xl">
+        What shall we work on?
+      </h2>
+      <p className="mt-4 max-w-md text-sm leading-7 text-muted-foreground">
+        Share an idea, ask a question, or give {agent.name} a task. Start with whatever is on your
+        mind.
+      </p>
     </div>
   );
 }

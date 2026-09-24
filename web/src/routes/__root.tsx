@@ -17,11 +17,14 @@ function RootLayout() {
   return (
     <AgentProvider>
       <TooltipProvider>
-        <SidebarProvider>
+        <SidebarProvider className="app-shell">
+          <a href="#main-content" className="skip-link">
+            Skip to content
+          </a>
           <AppSidebar />
           <HeaderActionsProvider>
-            <SidebarInset className="flex flex-col">
-              <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+            <SidebarInset className="workspace-panel flex min-w-0 flex-col">
+              <header className="workspace-header flex h-16 shrink-0 items-center gap-2 border-b border-border/60">
                 <div className="flex min-w-0 items-center gap-2 px-4">
                   <SidebarTrigger className="-ml-1" />
                   <Separator orientation="vertical" className="mr-2 h-4" />
@@ -30,9 +33,13 @@ function RootLayout() {
                 <HeaderActionsSlot />
               </header>
               <UpdateBanner />
-              <main className="relative flex-1 overflow-auto p-4 pt-0 min-w-0">
+              <div
+                id="main-content"
+                tabIndex={-1}
+                className="workspace-main relative min-h-0 min-w-0 flex-1 overflow-auto p-5 sm:p-8 lg:p-10"
+              >
                 <Outlet />
-              </main>
+              </div>
             </SidebarInset>
           </HeaderActionsProvider>
         </SidebarProvider>

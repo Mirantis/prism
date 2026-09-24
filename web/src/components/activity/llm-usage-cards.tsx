@@ -31,7 +31,7 @@ function UsageCard({
   isLoading: boolean;
 }) {
   return (
-    <Card>
+    <Card className="stat-card">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardDescription>{label}</CardDescription>
         <Icon className="size-4 text-muted-foreground" />
@@ -41,7 +41,7 @@ function UsageCard({
           <Skeleton className="h-7 w-20" />
         ) : (
           <>
-            <div className="text-2xl font-bold" data-testid={testId}>
+            <div className="text-3xl font-semibold tracking-tight tabular-nums" data-testid={testId}>
               {value}
             </div>
             <p className="text-xs text-muted-foreground">{detail}</p>
@@ -79,7 +79,7 @@ export function LlmUsageCards() {
     unavailable ? 'Could not be read' : `${(n ?? 0).toLocaleString()} ${suffix}`;
 
   return (
-    <div className="grid gap-4 md:grid-cols-4">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <UsageCard
         testId="activity-total-tokens"
         label="Total tokens"

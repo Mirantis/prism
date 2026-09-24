@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { EmptyState } from '@/components/shared/empty-state';
+import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -96,17 +98,17 @@ function CronPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Scheduled Tasks</h2>
-          <p className="text-sm text-muted-foreground">Recurring agent runs scheduled via cron expressions.</p>
-        </div>
-        <Button onClick={() => setIsCreating(true)}>
-          <Plus className="mr-1 h-4 w-4" />
-          New task
-        </Button>
-      </div>
+    <div className="page-content space-y-8">
+      <PageHeader
+        title="Scheduled Tasks"
+        description="Put recurring work on autopilot with scheduled agent runs."
+        actions={
+          <Button onClick={() => setIsCreating(true)}>
+            <Plus className="size-4" />
+            New task
+          </Button>
+        }
+      />
 
       {tasks && tasks.length > 0 ? (
         <Card>
@@ -143,6 +145,7 @@ function CronPage() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        aria-label={`Delete ${t.name}`}
                         onClick={(e: React.MouseEvent) => {
                           e.stopPropagation();
                           setDeleteTarget({ id: t.id, name: t.name });
@@ -160,11 +163,17 @@ function CronPage() {
       ) : (
         <Card>
           <CardContent>
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Clock className="h-10 w-10 mb-2 opacity-50" />
-              <p className="text-sm">No scheduled tasks</p>
-              <p className="text-xs">Create a cron task to run the agent on a schedule.</p>
-            </div>
+            <EmptyState
+              icon={Clock}
+              title="No scheduled tasks"
+              description="Let your agent take care of recurring work. Create a task to get started."
+              action={
+                <Button variant="outline" onClick={() => setIsCreating(true)}>
+                  <Plus className="size-4" />
+                  Create your first task
+                </Button>
+              }
+            />
           </CardContent>
         </Card>
       )}

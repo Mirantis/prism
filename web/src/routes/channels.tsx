@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { EmptyState } from '@/components/shared/empty-state';
+import { PageHeader } from '@/components/shared/page-header';
 import {
   Card,
   CardContent,
@@ -67,26 +69,25 @@ function ChannelsPage() {
   const isConfigured = workspace !== undefined;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Channels</h2>
-        <p className="text-sm text-muted-foreground">
-          Link the agent to messaging channels and configure a heartbeat trigger. Currently
-          supports Slack; more integrations coming.
-        </p>
-      </div>
+    <div className="page-content space-y-8">
+      <PageHeader
+        title="Channels"
+        description="Connect your agent to Slack and manage where it works."
+      />
 
       {!isConfigured ? (
         <Card>
           <CardContent>
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Slack className="h-10 w-10 mb-2 opacity-50" />
-              <p className="text-sm">No Slack workspace configured</p>
-              <p className="text-xs">
-                Set <code>SLACK_BOT_TOKEN</code> + <code>SLACK_APP_TOKEN</code> in the runtime env
-                and restart.
-              </p>
-            </div>
+            <EmptyState
+              icon={Slack}
+              title="No Slack workspace configured"
+              description={
+                <>
+                  Set <code>SLACK_BOT_TOKEN</code> and <code>SLACK_APP_TOKEN</code> in the runtime
+                  environment, then restart to connect your workspace.
+                </>
+              }
+            />
           </CardContent>
         </Card>
       ) : (

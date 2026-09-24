@@ -235,7 +235,7 @@ export default function ChatInput({
   return (
     <div className="bg-background">
       <div
-        className="mx-auto w-full max-w-3xl px-4 pt-2 pb-4"
+        className="mx-auto w-full max-w-3xl px-4 pt-2 pb-3 sm:pb-5"
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -282,7 +282,7 @@ export default function ChatInput({
           {/* One card: what is being written on top, and a toolbar under it — attach on
               the left, everything that acts on the message on the right. */}
           <InputGroup
-            className={`h-auto rounded-2xl bg-card shadow-sm dark:bg-card ${
+            className={`h-auto rounded-2xl border-border bg-card shadow-lg dark:bg-card ${
               isDragging ? 'ring-2 ring-primary ring-offset-1' : ''
             }`}
           >
@@ -291,13 +291,14 @@ export default function ChatInput({
             ) : (
               <InputGroupTextarea
                 ref={textareaRef}
+                aria-label="Message your agent"
                 value={value}
                 onChange={(e) => handleChange(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 placeholder={isDragging ? 'Drop files to attach…' : 'Message your agent...'}
                 rows={1}
-                className="max-h-48 min-h-[52px] px-4 pt-3.5 text-[15px] leading-6"
+                className="max-h-48 min-h-[68px] px-5 pt-4 text-[15px] leading-6"
               />
             )}
             <InputGroupAddon align="block-end" className="gap-1 px-2 pb-2">
@@ -418,6 +419,9 @@ export default function ChatInput({
             onChange={handlePickFiles}
           />
         </form>
+        <p className="mt-2.5 text-center text-[11px] text-muted-foreground">
+          <span className="hidden sm:inline">Enter to send · Shift + Enter for a new line · </span>Type / for commands
+        </p>
       </div>
     </div>
   );

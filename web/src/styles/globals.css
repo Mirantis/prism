@@ -4,9 +4,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* LDS token bridge — shadcn reads these, LDS provides the values.
- * Mirrors the Lens Agents platform UI's globals.css so primitives look
- * identical across it and the Prism Agent Web UI. */
+/* Shared LDS palette for application surfaces and controls. */
 :root {
   --background: #1b1a1c;
   --foreground: var(--lds-color-text-primary);
@@ -19,14 +17,14 @@
   --secondary: var(--lds-color-bg-tertiary);
   --secondary-foreground: var(--lds-color-text-accent);
   --muted: var(--lds-color-surface-muted);
-  --muted-foreground: var(--lds-color-text-muted);
+  --muted-foreground: color-mix(in srgb, var(--lds-color-text-primary) 80%, var(--lds-color-text-muted));
   --accent: var(--lds-color-surface-hover);
   --accent-foreground: var(--lds-color-text-accent);
   --destructive: var(--lds-color-critical);
   --border: var(--lds-color-border);
   --input: var(--lds-color-border);
   --ring: var(--lds-color-border-focus);
-  --radius: 0.25rem;
+  --radius: 0.625rem;
   --chart-1: var(--lds-color-workspace-blue);
   --chart-2: var(--lds-color-workspace-green);
   --chart-3: var(--lds-color-workspace-orange);
@@ -87,8 +85,8 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    scrollbar-width: auto;
-    scrollbar-color: #3a4149 rgba(255, 255, 255, 0.03);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
   }
   body {
     @apply bg-background text-foreground;
@@ -101,38 +99,128 @@
   }
 }
 
-/* Custom scrollbars (Webkit) — quality-of-life polish; the platform UI
- * doesn't ship one yet, but it's harmless and we already wrote it. */
-::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+/* Application surfaces use the existing LDS palette. */
+@layer components {
+  .app-shell {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .workspace-panel {
+    min-height: 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    box-shadow: 0 12px 36px rgb(0 0 0 / 0.12);
+  }
+  .workspace-main > .page-content {
+    max-width: 1200px;
+    margin-inline: auto;
+  }
+  .page-content h1, .page-content h2, .page-content h3,
+  [data-slot="card-title"], .stat-card .text-3xl,
+  [data-testid="chat-messages"] h2 {
+    color: var(--lds-color-text-accent);
+  }
+  .eyebrow {
+    color: var(--muted-foreground);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  .overview-hero {
+    background: linear-gradient(115deg, var(--card), var(--background));
+  }
+  .stat-card {
+    padding-block: 22px;
+    gap: 20px;
+  }
+  .stat-card [data-slot="card-header"],
+  .stat-card [data-slot="card-content"] {
+    padding-inline: 22px;
+  }
+  .stat-link {
+    display: block;
+    min-width: 0;
+    border-radius: var(--radius-xl);
+  }
+  .stat-link [data-slot="card"] {
+    transition: background 150ms, box-shadow 150ms;
+  }
+  .stat-link:hover [data-slot="card"] {
+    background: var(--accent);
+  }
+  .action-tile {
+    min-width: 0;
+    padding: 22px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--card);
+    transition: background 150ms, border-color 150ms;
+  }
+  .action-tile:hover {
+    background: var(--accent);
+    border-color: var(--muted-foreground);
+  }
+  .app-sidebar [data-slot="sidebar-group"] {
+    padding-inline: 12px;
+  }
+  .app-sidebar [data-slot="sidebar-group-label"] {
+    margin-bottom: 8px;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .app-sidebar [data-slot="sidebar-menu-button"][data-active] {
+    background: color-mix(in srgb, var(--primary) 12%, var(--sidebar));
+    color: var(--foreground);
+    box-shadow: inset 2px 0 var(--primary);
+  }
+  .app-sidebar [data-slot="sidebar-menu-button"][data-active] > svg {
+    color: var(--primary);
+  }
+  .welcome-mark {
+    box-shadow: 0 8px 32px rgb(0 0 0 / 0.12);
+  }
+  .skip-link {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 100;
+    padding: 12px 18px;
+    border-radius: var(--radius);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    transform: translateY(-150%);
+  }
+  .skip-link:focus {
+    transform: translateY(0);
+  }
 }
 
-::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 6px;
+@layer base {
+  html { color-scheme: dark; }
+  body { -webkit-font-smoothing: antialiased; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #3a4149 0%, #2d333b 100%);
-  border-radius: 6px;
-  border: 3px solid transparent;
-  background-clip: padding-box;
-  min-height: 40px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #4a525a 0%, #3d444d 100%);
-  border: 3px solid transparent;
+  background: var(--border);
+  border: 2px solid transparent;
+  border-radius: 8px;
   background-clip: padding-box;
 }
-
-::-webkit-scrollbar-thumb:active {
-  background: linear-gradient(180deg, var(--lds-color-primary, #3d90ce) 0%, #2d7ab8 100%);
-  border: 3px solid transparent;
-  background-clip: padding-box;
-}
-
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
+::-webkit-scrollbar-thumb:hover { background-color: var(--muted-foreground); }
+::-webkit-scrollbar-corner { background: transparent; }

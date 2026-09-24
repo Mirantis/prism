@@ -13,14 +13,14 @@ to the runtime.)
 
 The UI is organized around a left sidebar with seven sections: **Overview**,
 **Chat**, **Channels**, **Scheduled Tasks**, **Webhooks**, **Profile**, and
-**Activity**.
+**Activity**. On a phone, use the menu button at the top left; selecting a page closes the menu.
 
 ## Overview
 
 The landing page. It shows the agent's status (RUNNING / IDLE / ERROR), its
 heartbeat state, a count of linked Slack channels, the number of scheduled
-tasks, and when the agent was created. The stat cards are clickable shortcuts
-into Profile, Channels, Scheduled Tasks, and Chat. (To rename the agent, use the
+tasks, and when the agent was created. Select **Heartbeat**, **Channels**, or **Scheduled Tasks** to open its settings.
+Use **Start a conversation** to open Chat, or **View activity** to review usage and tool calls. (To rename the agent, use the
 Name field on the [Profile](#profile) page.)
 
 On a native install, a strip under the header announces a newer release with an

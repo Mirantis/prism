@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { EmptyState } from '@/components/shared/empty-state';
+import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -161,21 +163,21 @@ function WebhooksPage() {
   const enabled = receiver?.enabled === true;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Webhooks</h2>
-          <p className="text-sm text-muted-foreground">
-            Let external systems (Alertmanager, PagerDuty, GitHub, …) trigger the agent via HTTP.
-          </p>
-        </div>
-        {enabled && (
-          <Button onClick={() => setIsCreating(true)}>
-            <Plus className="mr-1 h-4 w-4" />
-            New subscription
-          </Button>
-        )}
-      </div>
+    <div className="page-content space-y-8">
+      <PageHeader
+        title="Webhooks"
+        description="Connect external events to your agent and choose where responses go."
+        actions={
+          <>
+            {enabled && (
+              <Button onClick={() => setIsCreating(true)}>
+                <Plus className="size-4" />
+                New subscription
+              </Button>
+            )}
+          </>
+        }
+      />
 
       {!enabled && (
         <Card className="border-amber-500/50">
@@ -297,11 +299,19 @@ function WebhooksPage() {
       ) : (
         <Card>
           <CardContent>
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <WebhookIcon className="h-10 w-10 mb-2 opacity-50" />
-              <p className="text-sm">No webhook subscriptions yet.</p>
-              <p className="text-xs">Create a subscription to give an external system its own endpoint.</p>
-            </div>
+            <EmptyState
+              icon={WebhookIcon}
+              title="No webhook subscriptions yet."
+              description="Give an external system its own endpoint and choose what your agent does next."
+              action={
+                enabled ? (
+                  <Button variant="outline" onClick={() => setIsCreating(true)}>
+                    <Plus className="size-4" />
+                    Create a subscription
+                  </Button>
+                ) : undefined
+              }
+            />
           </CardContent>
         </Card>
       )}

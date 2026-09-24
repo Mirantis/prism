@@ -21,6 +21,8 @@ vi.mock('@/components/ui/sidebar', () => {
     SidebarGroup: passthrough('div'),
     SidebarGroupLabel: passthrough('div'),
     SidebarHeader: passthrough('div'),
+    SidebarFooter: passthrough('div'),
+    useSidebar: () => ({ setOpenMobile: vi.fn() }),
     SidebarMenu: passthrough('div'),
     SidebarMenuButton: passthrough('button'),
     SidebarMenuItem: passthrough('div'),
