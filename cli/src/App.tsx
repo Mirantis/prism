@@ -121,6 +121,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // Subscribe to adapter event bus.
   useEffect(() => {
     const onMessage = (msg: TuiMessage) => {
+      // A chat message on another thread is not part of this conversation.
+      const threadId = activeThreadIdRef.current;
+      const onOtherThread = threadId !== undefined && msg.threadId !== threadId;
+      if (msg.triggeredBy === 'USER_INPUT' && onOtherThread) return;
       setEntries((prev) => [...prev, { kind: 'message', message: msg }]);
     };
     // A frame naming another thread is a turn in another conversation — Slack's, or the

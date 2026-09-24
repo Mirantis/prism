@@ -196,6 +196,62 @@ describe('App', () => {
     });
   });
 
+  describe('messages from other clients', () => {
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
+    const message = (overrides: Record<string, unknown>) => ({
+      id: 'm1',
+      threadId: 'thread-mine',
+      role: 'USER',
+      content: 'from another client',
+      triggeredBy: 'USER_INPUT',
+      toolCalls: null,
+      blocks: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    });
+
+    it('shows a message another client sent on this thread', async () => {
+      adapterStub.startNewSession.mockResolvedValueOnce('thread-mine');
+      const { lastFrame, unmount } = render(<App {...baseProps} />);
+      await flush();
+
+      adapterStub.events.emit('message', message({}));
+      await flush();
+
+      expect(lastFrame() ?? '').toContain('from another client');
+      unmount();
+    });
+
+    it('shows an autonomous delivery on another thread', async () => {
+      adapterStub.startNewSession.mockResolvedValueOnce('thread-mine');
+      const { lastFrame, unmount } = render(<App {...baseProps} />);
+      await flush();
+
+      adapterStub.events.emit(
+        'message',
+        message({ threadId: 'thread-other', role: 'AGENT', triggeredBy: 'HEARTBEAT', content: 'disk is full' }),
+      );
+      await flush();
+
+      expect(lastFrame() ?? '').toContain('disk is full');
+      unmount();
+    });
+
+    it('drops a message another client sent on another thread', async () => {
+      adapterStub.startNewSession.mockResolvedValueOnce('thread-mine');
+      const { lastFrame, unmount } = render(<App {...baseProps} />);
+      await flush();
+
+      adapterStub.events.emit('message', message({ threadId: 'thread-other' }));
+      await flush();
+
+      expect(lastFrame() ?? '').not.toContain('from another client');
+      unmount();
+    });
+  });
+
   it('starts a fresh conversation thread on mount', () => {
     const { unmount } = render(<App {...baseProps} />);
     expect(adapterStub.startNewSession).toHaveBeenCalledTimes(1);
