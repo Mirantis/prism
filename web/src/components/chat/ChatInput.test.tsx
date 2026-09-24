@@ -135,6 +135,24 @@ describe('ChatInput', () => {
       expect(mic).toBe(send - 1);
     });
 
+    it('says why it cannot record while a call holds the microphone', () => {
+      render(
+        <ChatInput
+          {...baseProps}
+          dictation={dictation()}
+          dictationBlockedReason="End the call to record a voice message"
+        />,
+      );
+      const mic = screen.getByTestId('dictation-button');
+      expect(mic).toBeDisabled();
+      // On the wrapper, which still takes the pointer while the button is disabled.
+      expect(screen.getByTestId('dictation-button-hint')).toHaveAttribute(
+        'title',
+        'End the call to record a voice message',
+      );
+      expect(mic).toHaveAttribute('aria-description', 'End the call to record a voice message');
+    });
+
     it('cannot record while disconnected', () => {
       render(<ChatInput {...baseProps} connectionStatus="disconnected" dictation={dictation()} />);
       expect(screen.getByTestId('dictation-button')).toBeDisabled();

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
-/** How long the recording has run, as `m:ss`. */
-export default function DictationTimer({ startedAt }: { startedAt: number }) {
+/** How long something has run since `startedAt`, as `m:ss`: a recording, a call. */
+export default function ElapsedTime({ startedAt }: { startedAt: number }) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
