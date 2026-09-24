@@ -38,9 +38,9 @@ export class HomePage extends BasePage {
   /** "New chat" at the top of the sidebar, shown on every page. */
   readonly sidebarNewChatButton: Locator;
   /**
-   * The "agent is working" indicator in the message list. Driven by the same
-   * `isTyping` state as the STOP button (AgentChat passes it as both `isTyping`
-   * and `isPending`), so it is the one signal for "a turn is in flight".
+   * The "agent is working" indicator in the message list. It shows while the
+   * runtime reports a turn on the thread on screen, on every open client. STOP
+   * shows only on the client that sent the message.
    */
   readonly typingIndicator: Locator;
   /** Slash-command suggestion popup shown above the composer when "/" is typed. */
@@ -124,9 +124,9 @@ export class HomePage extends BasePage {
   /**
    * Send the staged message and confirm the send actually went out.
    *
-   * The indicator is set optimistically inside the send — `use-websocket.ts`
-   * flips `isTyping` right after `ws.send()`, before any runtime frame — so it
-   * is in the DOM by the time the click resolves. What this wait therefore
+   * STOP is set optimistically inside the send — `use-websocket.ts` flips
+   * `isTyping` right after `ws.send()`, before any runtime frame — so it is in
+   * the DOM by the time the click resolves. What this wait therefore
    * proves is that the socket *accepted* the message, and its one real failure
    * mode is the one that matters here: when the socket is not OPEN,
    * `sendMessage()` logs to the console and returns without flipping `isTyping`,
@@ -135,7 +135,7 @@ export class HomePage extends BasePage {
    * Without it, that lost send surfaces further down as an empty conversation or
    * a missing thread row — an assertion failure pointing at the feature rather
    * than at the dropped message. It also makes `waitForStreamComplete()`'s
-   * `detached` wait sound: that wait is only meaningful once the indicator is
+   * `hidden` wait on STOP sound: that wait is only meaningful once STOP is
    * known to have appeared.
    *
    * Cheap by construction (the state is already set locally when the click
@@ -143,7 +143,7 @@ export class HomePage extends BasePage {
    *
    * Note it proves *a* turn is in flight, not specifically this one: send twice
    * without waiting and the gateway queues the second behind the first, whose
-   * indicator is already up.
+   * STOP is already up.
    *
    * Exception: a slash command. `AgentChat.handleSend` matches the staged text
    * against its command registry and, on a hit, returns before the WebSocket
@@ -167,7 +167,7 @@ export class HomePage extends BasePage {
     sendBaseline.set(this.page, await this.getAgentMessages().count());
     await this.sendButton.click();
     if (staged.startsWith('/')) return;
-    await this.typingIndicator.waitFor({ state: 'visible', timeout: turnStartTimeout });
+    await this.stopButton.waitFor({ state: 'visible', timeout: turnStartTimeout });
   }
 
   /**
@@ -236,12 +236,14 @@ export class HomePage extends BasePage {
   }
 
   /**
-   * Wait for streaming to finish — the typing indicator disappears when
-   * isTyping flips to false at end-of-stream.
+   * Wait for streaming to finish. The typing indicator goes when the runtime
+   * reports the turn over, which is a few milliseconds before the last reply
+   * is stored and delivered. STOP goes after that delivery, so the wait
+   * includes it.
    *
-   * This is the second half of the condition; `sendMessage()` waits for the
-   * indicator to appear, without which a `detached` wait is satisfied by a DOM
-   * that never had one — a send the socket dropped, say. (It follows that this
+   * This is the second half of the condition; `sendMessage()` waits for STOP
+   * to appear, without which a `hidden` wait is satisfied by a DOM that never
+   * had one — a send the socket dropped, say. (It follows that this
    * is only meaningful for a message send: after a slash command there is no
    * turn to wait for, and no step calls it there.) Callers that reach here after `waitForAgentResponse()`
    * may find the turn already finished, which is a correct pass — the turn is
@@ -249,6 +251,7 @@ export class HomePage extends BasePage {
    */
   async waitForStreamComplete(timeout = 60_000) {
     await this.typingIndicator.waitFor({ state: 'detached', timeout });
+    await this.stopButton.waitFor({ state: 'hidden', timeout });
   }
 
   // ---- File sharing ----
