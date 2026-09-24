@@ -27,6 +27,7 @@ const { wsHolder } = vi.hoisted(() => ({
     // deliver one without a runtime.
     onComputerStatus: undefined as ((s: ComputerStatus) => void) | undefined,
     isTyping: false,
+    workingThreadIds: new Set<string>() as ReadonlySet<string>,
     sendFollowup: vi.fn(),
     sendVoiceStart: vi.fn(() => true),
     sendVoiceStop: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock('@/hooks/use-websocket', () => ({
     onVoiceEvent?: (e: unknown) => void;
     onVoiceAudio?: (f: ArrayBuffer) => void;
     onComputerStatus?: (s: ComputerStatus) => void;
+    activeThreadId?: string;
   }) => {
     wsHolder.onMessage = opts.onMessage;
     wsHolder.onDictationEvent = opts.onDictationEvent;
@@ -52,6 +54,10 @@ vi.mock('@/hooks/use-websocket', () => ({
     return {
       status: 'connected',
       isTyping: wsHolder.isTyping,
+      workingThreadIds: wsHolder.workingThreadIds,
+      isThreadWorking: opts.activeThreadId
+        ? wsHolder.workingThreadIds.has(opts.activeThreadId)
+        : false,
       sendFollowup: wsHolder.sendFollowup,
       cancel: vi.fn(),
       sendVoiceStart: wsHolder.sendVoiceStart,
@@ -123,8 +129,10 @@ vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn() }));
 // Render messages as plain `id:threadId` tokens so the test can assert what's
 // on screen without pulling in the full message/markdown renderer.
 vi.mock('./ChatMessageList', () => ({
-  default: ({ messages }: { messages: ConversationMessage[] }) => (
-    <div data-testid="list">{messages.map((m) => `${m.id}:${m.threadId}`).join(',')}</div>
+  default: ({ messages, isTyping }: { messages: ConversationMessage[]; isTyping: boolean }) => (
+    <div data-testid="list" data-typing={String(isTyping)}>
+      {messages.map((m) => `${m.id}:${m.threadId}`).join(',')}
+    </div>
   ),
 }));
 // Composer stub: enough of the real contract (controlled value + a submit
@@ -134,16 +142,18 @@ vi.mock('./ChatInput', () => ({
     value,
     onChange,
     onSend,
+    isPending,
     dictation,
     dictationBlockedReason,
   }: {
     value: string;
     onChange: (v: string) => void;
     onSend: (e: { preventDefault: () => void }) => void;
+    isPending: boolean;
     dictation?: Dictation;
     dictationBlockedReason?: string | null;
   }) => (
-    <div data-testid="input">
+    <div data-testid="input" data-pending={String(isPending)}>
       <input data-testid="composer" value={value} onChange={(e) => onChange(e.target.value)} />
       <button data-testid="send" onClick={() => onSend({ preventDefault: () => {} })}>
         send
@@ -210,6 +220,55 @@ describe('AgentChat inbound message scoping', () => {
     // Each delivery invalidates its own thread's cache (not a stale active id).
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['thread', 'a1', 't1'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['thread', 'a1', 't2'] });
+
+    cleanup();
+  });
+});
+
+describe('AgentChat working indicator', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    wsHolder.isTyping = false;
+    wsHolder.workingThreadIds = new Set();
+    mockGetThread.mockResolvedValue({ id: 't1', messages: [] });
+  });
+
+  function renderChat() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AgentChat threadId="t1" />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('shows the spinner, and no STOP, for a turn another client started on the thread on screen', async () => {
+    wsHolder.workingThreadIds = new Set(['t1']);
+    renderChat();
+
+    await waitFor(() => expect(screen.getByTestId('list').dataset.typing).toBe('true'));
+    expect(screen.getByTestId('input').dataset.pending).toBe('false');
+
+    cleanup();
+  });
+
+  it('shows no spinner for a turn on another thread', async () => {
+    wsHolder.workingThreadIds = new Set(['t2']);
+    renderChat();
+
+    await waitFor(() => expect(mockGetThread).toHaveBeenCalledWith('a1', 'u1', 't1'));
+    expect(screen.getByTestId('list').dataset.typing).toBe('false');
+
+    cleanup();
+  });
+
+  it('keeps STOP on the client that started the turn', async () => {
+    wsHolder.isTyping = true;
+    wsHolder.workingThreadIds = new Set(['t1']);
+    renderChat();
+
+    await waitFor(() => expect(screen.getByTestId('input').dataset.pending).toBe('true'));
+    expect(screen.getByTestId('list').dataset.typing).toBe('true');
 
     cleanup();
   });

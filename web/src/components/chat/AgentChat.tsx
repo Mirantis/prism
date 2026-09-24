@@ -60,6 +60,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   const {
     status,
     isTyping,
+    isThreadWorking,
     sendFollowup,
     cancel,
     sendVoiceStart,
@@ -69,10 +70,8 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     sendDictationStop,
   } = useWebSocket({
     onMessage: (msg) => {
-      // Deliveries are broadcast to all of the user's connections tagged with
-      // their own thread id — a heartbeat, a cron task, a Slack turn, or a turn
-      // in another tab can all arrive for a *different* thread than the one on
-      // screen. Only render messages that belong to the thread being viewed.
+      // Every connection gets every delivery, tagged with its thread id. Only
+      // render messages that belong to the thread being viewed.
       if (msg.threadId === activeThreadId) {
         setLocalMessages((prev) => [...prev, msg]);
       }
@@ -436,7 +435,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
       <ChatMessageList
         messages={localMessages}
         agentName={agent.name}
-        isTyping={isTyping}
+        isTyping={isThreadWorking}
         isLoading={isLoadingThread}
         threadId={activeThreadId}
         onSuggestion={status === 'connected' && activeThreadId ? sendChat : undefined}
@@ -463,6 +462,8 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
           value={message}
           onChange={setMessage}
           onSend={handleSend}
+          // STOP stays on the client that sent the message. Pass `isThreadWorking` here and in
+          // `handleCancel` to show it on every client of the thread.
           isPending={isTyping}
           onCancel={handleCancel}
           connectionStatus={activeThreadId ? status : 'connecting'}

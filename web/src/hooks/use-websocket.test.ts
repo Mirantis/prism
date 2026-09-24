@@ -216,62 +216,113 @@ describe('useWebSocket', () => {
     expect(result.current.isTyping).toBe(false);
   });
 
-  /**
-   * A turn runs on a thread, and the user reads one thread at a time. What the page shows
-   * is therefore a question asked of the thread on screen, not a flag for the whole user.
-   */
-  it('follows the thread on screen when the reader moves between them', async () => {
-    const { result, rerender, ws } = await renderConnected({
-      onMessage: vi.fn(),
-      activeThreadId: 't1',
+  describe('thread activity', () => {
+    const working = (threadId: string, value: boolean) => ({
+      type: 'status',
+      payload: { threadId, working: value },
     });
 
-    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't1' } }));
-    expect(result.current.isTyping).toBe(true);
+    it('tracks the working threads, apart from the sender state', async () => {
+      const { result, ws } = await renderConnected({});
 
-    // Reading an idle thread while t1 works: its turn is not this view's.
-    rerender({ onMessage: vi.fn(), activeThreadId: 't2' });
-    expect(result.current.isTyping).toBe(false);
+      act(() => ws.deliver(working('t1', true)));
+      expect([...result.current.workingThreadIds]).toEqual(['t1']);
+      expect(result.current.isTyping).toBe(false);
 
-    // And a turn that started on t2 while t1 was on screen is not lost.
-    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't2' } }));
-    expect(result.current.isTyping).toBe(true);
+      act(() => ws.deliver(working('t1', false)));
+      expect(result.current.workingThreadIds.size).toBe(0);
+    });
 
-    rerender({ onMessage: vi.fn(), activeThreadId: 't1' });
-    expect(result.current.isTyping).toBe(true);
+    it('tracks each thread on its own', async () => {
+      const { result, ws } = await renderConnected({});
 
-    act(() => ws.deliver({ type: 'status', payload: { processing: false, threadId: 't1' } }));
-    expect(result.current.isTyping).toBe(false);
-  });
+      act(() => {
+        ws.deliver(working('t1', true));
+        ws.deliver(working('t2', true));
+        ws.deliver(working('t1', false));
+      });
+      expect([...result.current.workingThreadIds]).toEqual(['t2']);
+    });
 
-  it('shows the agent working the moment a message is sent to the thread on screen', async () => {
-    const { result, ws } = await renderConnected({ onMessage: vi.fn(), activeThreadId: 't1' });
+    it('forgets every working thread when the socket closes', async () => {
+      const { result, ws } = await renderConnected({});
 
-    act(() => result.current.sendFollowup('hello', 'a1', 't1', []));
-    expect(result.current.isTyping).toBe(true);
+      act(() => ws.deliver(working('t1', true)));
+      act(() => ws.onclose?.({ code: 1000 }));
+      expect(result.current.workingThreadIds.size).toBe(0);
+    });
 
-    // The runtime takes over the report, and its end is the one that counts.
-    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't1' } }));
-    act(() => ws.deliver({ type: 'status', payload: { processing: false, threadId: 't1' } }));
-    expect(result.current.isTyping).toBe(false);
-  });
+    /**
+     * The user reads one thread at a time, so the spinner shows the state of the thread on
+     * screen, not one flag for the whole user.
+     */
+    it('follows the thread on screen when the reader moves between them', async () => {
+      const { result, rerender, ws } = await renderConnected({
+        onMessage: vi.fn(),
+        activeThreadId: 't1',
+      });
 
-  it('stops showing the agent working when the message fails before its turn starts', async () => {
-    const { result, ws } = await renderConnected({ onMessage: vi.fn(), activeThreadId: 't1' });
+      act(() => ws.deliver(working('t1', true)));
+      expect(result.current.isThreadWorking).toBe(true);
 
-    act(() => result.current.sendFollowup('hello', 'a1', 't1', []));
-    expect(result.current.isTyping).toBe(true);
+      // Reading an idle thread while t1 works.
+      rerender({ onMessage: vi.fn(), activeThreadId: 't2' });
+      expect(result.current.isThreadWorking).toBe(false);
 
-    act(() => ws.deliver({ type: 'error', payload: { error: 'thread lookup failed' } }));
-    expect(result.current.isTyping).toBe(false);
-  });
+      // Work that started on t2 while t1 was on screen shows on t2.
+      act(() => ws.deliver(working('t2', true)));
+      expect(result.current.isThreadWorking).toBe(true);
 
-  it('keeps a turn the runtime reported running through an error envelope', async () => {
-    const { result, ws } = await renderConnected({ onMessage: vi.fn(), activeThreadId: 't1' });
+      rerender({ onMessage: vi.fn(), activeThreadId: 't1' });
+      expect(result.current.isThreadWorking).toBe(true);
 
-    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't1' } }));
-    act(() => ws.deliver({ type: 'error', payload: { error: 'unrelated' } }));
-    expect(result.current.isTyping).toBe(true);
+      act(() => ws.deliver(working('t1', false)));
+      expect(result.current.isThreadWorking).toBe(false);
+    });
+
+    it('shows the agent working the moment a message is sent to the thread on screen', async () => {
+      const { result, rerender, ws } = await renderConnected({
+        onMessage: vi.fn(),
+        activeThreadId: 't1',
+      });
+
+      act(() => result.current.sendFollowup('hello', 'a1', 't1', []));
+      expect(result.current.isThreadWorking).toBe(true);
+      expect(result.current.isTyping).toBe(true);
+
+      // The send shows on its own thread only.
+      rerender({ onMessage: vi.fn(), activeThreadId: 't2' });
+      expect(result.current.isThreadWorking).toBe(false);
+      rerender({ onMessage: vi.fn(), activeThreadId: 't1' });
+
+      // The runtime's report replaces the state that the send showed.
+      act(() => ws.deliver(working('t1', true)));
+      act(() => ws.deliver(working('t1', false)));
+      expect(result.current.isThreadWorking).toBe(false);
+    });
+
+    it('stops showing the agent working when the message fails before its turn starts', async () => {
+      const { result, ws } = await renderConnected({ onMessage: vi.fn(), activeThreadId: 't1' });
+
+      act(() => result.current.sendFollowup('hello', 'a1', 't1', []));
+      expect(result.current.isThreadWorking).toBe(true);
+
+      act(() => ws.deliver({ type: 'error', payload: { error: 'thread lookup failed' } }));
+      expect(result.current.isThreadWorking).toBe(false);
+      expect(result.current.isTyping).toBe(false);
+    });
+
+    it('keeps a request the runtime reported running through an error envelope', async () => {
+      const { result, ws } = await renderConnected({ onMessage: vi.fn(), activeThreadId: 't1' });
+
+      act(() => {
+        ws.deliver({ type: 'status', payload: { processing: true, threadId: 't1' } });
+        ws.deliver(working('t1', true));
+      });
+      act(() => ws.deliver({ type: 'error', payload: { error: 'unrelated' } }));
+      expect(result.current.isThreadWorking).toBe(true);
+      expect(result.current.isTyping).toBe(true);
+    });
   });
 
   it('sends a mid-turn followup with its thread id instead of suppressing it', async () => {

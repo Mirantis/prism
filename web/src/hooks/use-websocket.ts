@@ -121,36 +121,13 @@ interface UseWebSocketOptions {
   /** A dictation control frame arrived. The dictation belongs to the caller, like a call. */
   onDictationEvent?: (event: DictationEvent) => void;
   /**
-   * The thread on screen. A turn runs on one thread, and the runtime says which, so this
-   * is what keeps work on another thread — a Slack conversation, a goal — from showing
-   * the agent typing here.
+   * The thread on screen. The runtime reports which threads are working, so this keeps
+   * work on another thread, such as a Slack conversation or a goal, from showing the
+   * agent working here.
    */
   activeThreadId?: string;
   reconnectInterval?: number;
   maxReconnectAttempts?: number;
-}
-
-/** A turn the runtime reported without naming a thread; it belongs to every view. */
-const ANY_THREAD = '';
-
-/**
- * The set a frame leaves behind.
- *
- * A frame that names no thread is the cancel of a turn sent without one, or a runtime
- * older than the per-thread report, so its end clears every turn rather than one.
- */
-function nextRunning(
-  current: ReadonlySet<string>,
-  threadId: string | undefined,
-  active: boolean,
-): ReadonlySet<string> {
-  const key = threadId ?? ANY_THREAD;
-  if (!active && key === ANY_THREAD) return current.size ? new Set() : current;
-  if (current.has(key) === active) return current;
-  const next = new Set(current);
-  if (active) next.add(key);
-  else next.delete(key);
-  return next;
 }
 
 export function useWebSocket(opts: UseWebSocketOptions = {}) {
@@ -188,7 +165,6 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const onVoiceEventRef = useRef(onVoiceEvent);
   const onVoiceAudioRef = useRef(onVoiceAudio);
   const onDictationEventRef = useRef(onDictationEvent);
-  const activeThreadIdRef = useRef(activeThreadId);
   onMessageRef.current = onMessage;
   onThreadUpdateRef.current = onThreadUpdate;
   onContextUsageRef.current = onContextUsage;
@@ -198,22 +174,20 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   onVoiceEventRef.current = onVoiceEvent;
   onVoiceAudioRef.current = onVoiceAudio;
   onDictationEventRef.current = onDictationEvent;
-  activeThreadIdRef.current = activeThreadId;
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   /**
-   * The threads a turn is running on, as the runtime reports them.
-   *
-   * A set rather than a flag: turns run per thread and the user can move between threads
-   * mid-turn, so what this view shows is a question asked of the thread on screen. A
-   * frame naming no thread — the answer to a cancel — ends whatever is running.
+   * The runtime reports a request from this user in flight: `{ processing }`. With `sent`,
+   * this shows the STOP control on the client that sent the message.
    */
-  const [running, setRunning] = useState<ReadonlySet<string>>(() => new Set());
+  const [processing, setProcessing] = useState(false);
   /**
-   * The thread a message was just sent to, until the runtime reports its turn. The empty
-   * string is a message sent before a thread had been named.
+   * The thread a message was just sent to, until the runtime reports that thread or the
+   * request ends. The empty string is a message sent before a thread had been named.
    */
   const [sent, setSent] = useState<string | null>(null);
+  // The threads that are working on the runtime: `{ threadId, working }`.
+  const [workingThreadIds, setWorkingThreadIds] = useState<ReadonlySet<string>>(new Set());
 
   const handleMessage = useCallback(
     (event: MessageEvent) => {
@@ -230,7 +204,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
         const data = JSON.parse(event.data) as WebSocketMessage;
         switch (data.type) {
           case 'chat': {
-            // Deliberately does NOT clear the running set: in verbose mode a turn
+            // Deliberately does NOT clear `processing`: in verbose mode a turn
             // delivers every intermediate step, so an inbound message is not
             // evidence the turn is over. The runtime's `status.processing`
             // (below) brackets the turn and is the sole source of truth.
@@ -240,8 +214,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
           }
           case 'typing': {
             const p = data.payload as { isTyping?: boolean } | undefined;
-            const thread = activeThreadIdRef.current;
-            setRunning((prev) => nextRunning(prev, thread, p?.isTyping ?? false));
+            setProcessing(p?.isTyping ?? false);
             break;
           }
           case 'status': {
@@ -252,14 +225,29 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             // revert even when a cancel produced no new message to deliver.
             // The connect handshake sends { connected: true } with no
             // `processing` key, hence the boolean guard.
-            const p = data.payload as { processing?: boolean; threadId?: string } | undefined;
-            if (typeof p?.processing !== 'boolean') break;
-            setRunning((prev) => nextRunning(prev, p.threadId, p.processing === true));
-            // The runtime is reporting this thread now, so the optimistic state a send
-            // put up has been taken over, whichever way the report went.
-            setSent((prev) =>
-              prev === null || prev === p.threadId || prev === ANY_THREAD ? null : prev,
-            );
+            //
+            // A thread is working or not: { threadId, working }. Every client gets it,
+            // whoever started the work.
+            const p = data.payload as
+              | { processing?: boolean; threadId?: string; working?: boolean }
+              | undefined;
+            if (typeof p?.processing === 'boolean') {
+              setProcessing(p.processing);
+              if (!p.processing) setSent(null);
+            }
+            if (typeof p?.threadId === 'string' && typeof p.working === 'boolean') {
+              const { threadId, working } = p;
+              setWorkingThreadIds((prev) => {
+                if (prev.has(threadId) === working) return prev;
+                const next = new Set(prev);
+                if (working) next.add(threadId);
+                else next.delete(threadId);
+                return next;
+              });
+              // The runtime reports this thread now, so the report replaces the state
+              // that the send showed.
+              setSent((prev) => (prev === threadId ? null : prev));
+            }
             break;
           }
           case 'thread': {
@@ -402,7 +390,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
           case 'error':
             console.error('[ws] server error:', data.payload);
             // A request that failed before its turn started gets no status frame, so the
-            // optimistic report ends here. A turn the runtime reported stays in `running`.
+            // optimistic state ends here. A request the runtime reported stays in `processing`.
             setSent(null);
             break;
           default:
@@ -441,6 +429,9 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
         wsRef.current = null;
         if (!isMountedRef.current) return;
         setStatus('disconnected');
+        // A thread can stop working while the socket is down. The runtime sends the
+        // working threads when the socket opens again.
+        setWorkingThreadIds(new Set());
         if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
           reconnectTimeoutRef.current = setTimeout(() => {
@@ -481,7 +472,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     wsRef.current.send(JSON.stringify({ type: 'chat', payload: message }));
     // The runtime reports the turn a moment later; this covers the gap, and only for the
     // thread the message went to.
-    setSent(message.threadId ?? ANY_THREAD);
+    setSent(message.threadId ?? '');
   }, []);
 
   const sendFollowup = useCallback(
@@ -491,7 +482,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     [sendMessage],
   );
 
-  // The voice senders. None of them touches the running set: a call is not a turn, and
+  // The voice senders. None of them touches the turn state: a call is not a turn, and
   // the composer's spinner and STOP button belong to the text conversation.
   //
   // `mode` is left unset on purpose, which the runtime reads as `open` — every
@@ -539,7 +530,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
       wsRef.current.send(JSON.stringify({ type: 'cancel' }));
     }
     setSent(null);
-    setRunning((prev) => nextRunning(prev, activeThreadIdRef.current, false));
+    setProcessing(false);
   }, []);
 
   useEffect(() => {
@@ -558,20 +549,22 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // What this view shows: a turn running on the thread it has open, or the moment between
-  // a message being sent and the runtime reporting the turn it starts.
-  const isTyping =
-    running.has(ANY_THREAD) ||
-    (activeThreadId ? running.has(activeThreadId) : running.size > 0) ||
-    (sent !== null && (sent === ANY_THREAD || sent === activeThreadId));
-  /** A turn on any of the user's threads, which is what the presence mark shows. */
-  const isAgentBusy = running.size > 0 || sent !== null;
+  // This client has a request in flight: the STOP control.
+  const isTyping = processing || sent !== null;
+  // The thread on screen is working, or a message was just sent to it: the spinner.
+  const isThreadWorking =
+    (activeThreadId !== undefined && workingThreadIds.has(activeThreadId)) ||
+    (sent !== null && (sent === '' || sent === activeThreadId));
+  /** Work on any of the user's threads, which is what the presence mark shows. */
+  const isAgentBusy = workingThreadIds.size > 0 || isTyping;
 
   return {
     status,
     isConnected: status === 'connected',
     isTyping,
     isAgentBusy,
+    isThreadWorking,
+    workingThreadIds,
     sendFollowup,
     cancel,
     sendVoiceStart,
