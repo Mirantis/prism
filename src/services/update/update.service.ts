@@ -346,19 +346,6 @@ class UpdateService {
   }
 
   /**
-   * Whether nothing is in flight that a restart would interrupt.
-   *
-   * `isBusy()` counts model invocations, which is not the same as "the agent
-   * has nothing running". Two kinds of work outlive the turn that started it,
-   * and both would die unannounced in a restart:
-   *
-   * - a chat exchange, which spans the gap between a turn and the follow-up
-   *   coalesced after it, and holds its claim across that gap;
-   * - a `shell_spawn` child or a `coding_agent` task, started by one tool call
-   *   and polled from later turns — killing one leaves the agent's next status
-   *   poll with nothing to report.
-   */
-  /**
    * Windows only: the staged installer is supposed to kill this process, so
    * reaching the deadline means it did not. Nothing else would notice — the
    * Unix path has a supervisor, this one has the installer and nothing more —
@@ -391,6 +378,19 @@ class UpdateService {
     timer.unref();
   }
 
+  /**
+   * Whether nothing is in flight that a restart would interrupt.
+   *
+   * `isBusy()` counts model invocations, which is not the same as "the agent
+   * has nothing running". Two kinds of work outlive the turn that started it,
+   * and both would die unannounced in a restart:
+   *
+   * - a chat exchange, which spans the gap between a turn and the follow-up
+   *   coalesced after it, and holds its claim across that gap;
+   * - a `shell_spawn` child or a `coding_agent` task, started by one tool call
+   *   and polled from later turns — killing one leaves the agent's next status
+   *   poll with nothing to report.
+   */
   private async isIdle(): Promise<boolean> {
     if (
       agentStatusService.isBusy() ||
@@ -404,13 +404,19 @@ class UpdateService {
     }
 
     // Imported here rather than at the top: this service is reachable from the
-    // WebSocket gateway, and the shell tool modules have no business in that
-    // import graph. An updater that never runs never loads them.
-    const [{ getProcessManager }, { getAgentTaskManager }] = await Promise.all([
+    // WebSocket gateway, and the shell tool modules and the voice chat's tool
+    // set have no business in that import graph. An updater that never runs
+    // never loads them.
+    const [{ getProcessManager }, { getAgentTaskManager }, { voiceChatService }] = await Promise.all([
       import('../../tools/shell/process-manager'),
       import('../../tools/shell/agent-task-manager'),
+      import('../voice/voice-chat.service'),
     ]);
-    return getProcessManager().runningCount() === 0 && getAgentTaskManager().runningCount() === 0;
+    return (
+      getProcessManager().runningCount() === 0 &&
+      getAgentTaskManager().runningCount() === 0 &&
+      !voiceChatService.isLive
+    );
   }
 
   /**
