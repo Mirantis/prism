@@ -383,6 +383,16 @@ export interface ComputerHelp {
   status: 'waiting' | 'continued' | 'dismissed';
 }
 
+export function computerHelpBlocks(message: ConversationMessage): ComputerHelp[] {
+  return message.blocks?.filter(
+    (block): block is ComputerHelp =>
+      block !== null &&
+      typeof block === 'object' &&
+      'type' in block &&
+      block.type === 'computer_help',
+  ) ?? [];
+}
+
 export interface ComputerStatus {
   available: boolean;
   running: boolean;

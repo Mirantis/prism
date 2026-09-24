@@ -71,13 +71,17 @@ Then('the live computer opens over the chat', async ({ page, $testInfo }) => {
   await expect.poll(async () => {
     const panelBox = await panel.boundingBox();
     const messagesBox = await messages.boundingBox();
+    // Stop sits left of Send, so Send's right edge bounds both controls.
+    const sendBox = await page.getByRole('button', { name: /^Send/ }).boundingBox();
     const viewport = page.viewportSize();
     return Boolean(
       panelBox &&
       messagesBox &&
+      sendBox &&
       viewport &&
       Math.abs(panelBox.width - viewport.width * 0.5) < 2 &&
       panelBox.x < messagesBox.x + messagesBox.width &&
+      sendBox.x + sendBox.width <= panelBox.x &&
       panelBox.y === 0 &&
       panelBox.height === viewport.height &&
       panelBox.x + panelBox.width === viewport.width,
@@ -86,12 +90,28 @@ Then('the live computer opens over the chat', async ({ page, $testInfo }) => {
   await page.screenshot({ path: $testInfo.outputPath('computer-in-chat.png'), fullPage: true });
 });
 
+Then('the Computer page shows the same help beside the screen', async ({ page, context }) => {
+  const status = await (await page.request.get('/agents/computer')).json() as {
+    help?: { id: string; reason: string; status: string }[];
+  };
+  const waiting = status.help?.find((item) => item.status === 'waiting');
+  expect(waiting).toBeDefined();
+  const viewer = await context.newPage();
+  try {
+    await viewer.goto(`/computer?help=${waiting!.id}`);
+    await expect(viewer.getByLabel('Computer assistance')).toContainText(waiting!.reason);
+    await expect(viewer.getByLabel("The agent's screen")).toBeVisible();
+  } finally {
+    await viewer.close();
+  }
+});
+
 Then('I can close and reopen the computer panel', async ({ page }) => {
   const panel = page.getByLabel('Computer help panel');
   await page.getByRole('button', { name: 'Close computer panel' }).click();
   await expect(panel).toHaveAttribute('data-state', 'closed');
   await expect(panel).toHaveCount(0, { timeout: 15_000 });
-  await page.getByRole('button', { name: 'Open computer help' }).click();
+  await page.getByRole('button', { name: /Computer help requested/ }).click();
   await expect(page.getByLabel('Computer help panel')).toHaveAttribute('data-state', 'open');
 });
 

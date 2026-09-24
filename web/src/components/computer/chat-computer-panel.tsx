@@ -16,9 +16,11 @@ const MIN_PANEL_WIDTH = 320;
 export function ChatComputerPanel({
   requests,
   reopenRequest,
+  onLayoutChange,
 }: {
   requests: ComputerHelp[];
   reopenRequest?: { id: string; token: number };
+  onLayoutChange?: (width: string | null) => void;
 }) {
   const queryClient = useQueryClient();
   const { data } = useComputerStatus();
@@ -30,11 +32,16 @@ export function ChatComputerPanel({
   const waiting = [...current].reverse().find((request) => request.status === 'waiting');
   const [displayed, setDisplayed] = useState<ComputerHelp | null>(waiting ?? null);
   const [open, setOpen] = useState(false);
+  const openRef = useRef(open);
+  openRef.current = open;
   const [width, setWidth] = useState<number | null>(null);
+  const widthRef = useRef(width);
+  widthRef.current = width;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
+  const controlHelpIdRef = useRef<string | null>(null);
   const autoOpenedIdRef = useRef<string | null>(null);
   const resizeRef = useRef<{ startX: number; startWidth: number; maxWidth: number } | null>(
     null,
@@ -48,6 +55,12 @@ export function ChatComputerPanel({
   const displayedCurrent =
     current.find((request) => request.id === displayed?.id) ?? displayed;
   const displayedStatus = displayedCurrent?.status;
+  const displayedIdRef = useRef(displayedCurrent?.id);
+  displayedIdRef.current = displayedCurrent?.id;
+  const ownControlRef = useRef(ownControl);
+  ownControlRef.current = ownControl;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   const active = open && displayedStatus === 'waiting';
   const reopenedId = reopenRequest
     ? current.find(
@@ -61,12 +74,16 @@ export function ChatComputerPanel({
       closeTimerRef.current = null;
     }
     setDisplayed(help);
-    const frame = window.requestAnimationFrame(() => setOpen(true));
+    const frame = window.requestAnimationFrame(() => {
+      setOpen(true);
+      onLayoutChange?.(widthRef.current === null ? '50vw' : `${widthRef.current}px`);
+    });
     return () => window.cancelAnimationFrame(frame);
-  }, []);
+  }, [onLayoutChange]);
 
   const showPanelById = useCallback(
     (id: string) => {
+      if ((ownControlRef.current || busyRef.current) && id !== displayedIdRef.current) return;
       const help = currentRef.current.find(
         (request) => request.id === id && request.status === 'waiting',
       );
@@ -76,31 +93,36 @@ export function ChatComputerPanel({
     [showPanel],
   );
 
-  const hidePanel = useCallback(() => {
+  const hidePanel = useCallback((id: string) => {
     setOpen(false);
+    onLayoutChange?.(null);
     if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
     closeTimerRef.current = window.setTimeout(
       () => {
         closeTimerRef.current = null;
-        setDisplayed(null);
+        setDisplayed((value) => (value?.id === id ? null : value));
       },
       PANEL_TRANSITION_MS,
     );
-  }, []);
+  }, [onLayoutChange]);
 
   useEffect(() => {
+    if (ownControl || busy) return;
     if (!waitingId) {
       autoOpenedIdRef.current = null;
       return;
     }
     if (autoOpenedIdRef.current === waitingId) return;
-    autoOpenedIdRef.current = waitingId;
     const cancelOpen = showPanelById(waitingId);
+    if (!cancelOpen) return;
+    autoOpenedIdRef.current = waitingId;
     return () => {
       cancelOpen?.();
-      if (autoOpenedIdRef.current === waitingId) autoOpenedIdRef.current = null;
+      if (!openRef.current && autoOpenedIdRef.current === waitingId) {
+        autoOpenedIdRef.current = null;
+      }
     };
-  }, [showPanelById, waitingId]);
+  }, [busy, ownControl, showPanelById, waitingId]);
 
   useEffect(() => {
     if (!reopenRequest || !reopenedId) return;
@@ -109,14 +131,20 @@ export function ChatComputerPanel({
 
   useEffect(() => {
     if (!displayedCurrent || displayedStatus === 'waiting' || !open) return;
-    hidePanel();
-  }, [displayedCurrent, displayedStatus, hidePanel, open]);
+    if (ownControl || busy) return;
+    if (waiting && waiting.id !== displayedCurrent.id) {
+      showPanelById(waiting.id);
+      return;
+    }
+    hidePanel(displayedCurrent.id);
+  }, [busy, displayedCurrent, displayedStatus, hidePanel, open, ownControl, showPanelById, waiting]);
 
   useEffect(
     () => () => {
       if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+      onLayoutChange?.(null);
     },
-    [],
+    [onLayoutChange],
   );
 
   const request = useCallback(
@@ -129,6 +157,7 @@ export function ChatComputerPanel({
           clientId: screen.clientId,
           helpId: displayedCurrent.id,
         });
+        if (path === '/control') controlHelpIdRef.current = displayedCurrent.id;
         await queryClient.invalidateQueries({ queryKey: ['computer'] });
         return true;
       } catch (cause) {
@@ -142,21 +171,32 @@ export function ChatComputerPanel({
   );
 
   const finish = useCallback(async () => {
-    if (!displayedCurrent) return;
+    const controlledId = controlHelpIdRef.current;
+    const waitingHelp = currentRef.current.find(
+      (item) => item.id === controlledId && item.status === 'waiting',
+    );
+    const helpId = waitingHelp?.id ?? (controlledId ? null : displayedCurrent?.id);
+    if (!helpId && !controlledId) return;
     setBusy(true);
     setError(null);
     try {
-      await computerRequest(`/help/${displayedCurrent.id}`, {
-        action: 'continue',
+      await computerRequest(helpId ? `/help/${helpId}` : '/continue', {
+        ...(helpId ? { action: 'continue' } : {}),
         clientId: screen.clientId,
       });
+      controlHelpIdRef.current = null;
       await queryClient.invalidateQueries({ queryKey: ['computer'] });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }
-  }, [displayedCurrent, queryClient, screen.clientId]);
+  }, [displayedCurrent?.id, queryClient, screen.clientId]);
+
+  const changeWidth = (next: number) => {
+    setWidth(next);
+    if (open) onLayoutChange?.(`${next}px`);
+  };
 
   const startResize = (event: PointerEvent<HTMLButtonElement>) => {
     const panel = panelRef.current;
@@ -172,7 +212,7 @@ export function ChatComputerPanel({
   const continueResize = (event: PointerEvent<HTMLButtonElement>) => {
     const resize = resizeRef.current;
     if (!resize) return;
-    setWidth(
+    changeWidth(
       Math.min(
         resize.maxWidth,
         Math.max(MIN_PANEL_WIDTH, resize.startWidth + resize.startX - event.clientX),
@@ -183,7 +223,7 @@ export function ChatComputerPanel({
   const resizeWithKeyboard = (direction: number) => {
     const panel = panelRef.current;
     if (!panel) return;
-    setWidth(
+    changeWidth(
       Math.min(
         window.innerWidth,
         Math.max(MIN_PANEL_WIDTH, panel.offsetWidth + direction * 32),
@@ -238,7 +278,7 @@ export function ChatComputerPanel({
           aria-label="Close computer panel"
           title="Close"
           onClick={() => {
-            hidePanel();
+            hidePanel(displayedCurrent.id);
           }}
           className="ml-auto flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
@@ -263,7 +303,6 @@ export function ChatComputerPanel({
           <ComputerHelpCard
             help={displayedCurrent}
             clientId={screen.clientId}
-            inComputer
             showConversationLink={false}
             showHeader={false}
             disabled={busy || anotherController || !screen.clientId}

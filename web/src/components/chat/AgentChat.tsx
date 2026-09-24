@@ -15,9 +15,9 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   type Attachment,
   type CompactionEvent,
-  type ComputerHelp,
   type ContextUsage,
   type ConversationMessage,
+  computerHelpBlocks,
 } from '@/types';
 import ChatMessageList from './ChatMessageList';
 import ChatInput from './ChatInput';
@@ -42,6 +42,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     id: string;
     token: number;
   }>();
+  const [computerPanelWidth, setComputerPanelWidth] = useState<string | null>(null);
   // Terminal compaction frame pending a SYSTEM note. Staged as state (not
   // appended directly in the WS callback) so the note goes through
   // appendSystemMessage, which is declared further down.
@@ -118,16 +119,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   });
   voiceRef.current = voice;
 
-  const computerHelp = localMessages.flatMap(
-    (item) =>
-      item.blocks?.filter(
-        (block): block is ComputerHelp =>
-          block !== null &&
-          typeof block === 'object' &&
-          'type' in block &&
-          block.type === 'computer_help',
-      ) ?? [],
-  );
+  const computerHelp = localMessages.flatMap(computerHelpBlocks);
   const openComputerPanel = useCallback((id: string) => {
     setComputerPanelRequest((current) => ({ id, token: (current?.token ?? 0) + 1 }));
   }, []);
@@ -444,26 +436,35 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         onOpenComputerHelp={openComputerPanel}
       />
       {computerHelp.length > 0 && (
-        <ChatComputerPanel requests={computerHelp} reopenRequest={computerPanelRequest} />
+        <ChatComputerPanel
+          requests={computerHelp}
+          reopenRequest={computerPanelRequest}
+          onLayoutChange={setComputerPanelWidth}
+        />
       )}
       <div className="mx-auto w-full max-w-3xl px-4 empty:hidden">
         <ComputerWaiting threadId={activeThreadId} />
       </div>
-      <ChatInput
-        value={message}
-        onChange={setMessage}
-        onSend={handleSend}
-        isPending={isTyping}
-        onCancel={handleCancel}
-        connectionStatus={activeThreadId ? status : 'connecting'}
-        attachments={attachments}
-        onFilesSelected={handleFilesSelected}
-        onRemoveAttachment={handleRemoveAttachment}
-        contextUsage={contextUsage}
-        isCompacting={isCompacting}
-        dictation={dictation}
-        dictationBlockedReason={dictationBlockedReason}
-      />
+      <div
+        style={{ marginRight: computerPanelWidth ?? undefined }}
+        className="transition-[margin-right] duration-[1200ms] ease-in-out motion-reduce:transition-none"
+      >
+        <ChatInput
+          value={message}
+          onChange={setMessage}
+          onSend={handleSend}
+          isPending={isTyping}
+          onCancel={handleCancel}
+          connectionStatus={activeThreadId ? status : 'connecting'}
+          attachments={attachments}
+          onFilesSelected={handleFilesSelected}
+          onRemoveAttachment={handleRemoveAttachment}
+          contextUsage={contextUsage}
+          isCompacting={isCompacting}
+          dictation={dictation}
+          dictationBlockedReason={dictationBlockedReason}
+        />
+      </div>
     </div>
   );
 }
