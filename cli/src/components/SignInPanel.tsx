@@ -2,8 +2,8 @@
  * The username and password for a sign-in the agent asked for.
  *
  * What is typed here goes to the runtime, which enters it in the agent's browser and
- * submits the form. The agent is stopped while that happens and is given neither value,
- * and nothing is written to the conversation.
+ * submits the form. The agent is stopped while that happens, any password left in a field
+ * is cleared afterwards, and nothing is written to the conversation.
  */
 
 import React, { useState } from 'react';
@@ -105,8 +105,8 @@ export const SignInPanel: React.FC<Props> = ({ api, request, onClose }) => {
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>
           {request.site
-            ? `Prism types these into ${request.site} and signs in. It never sees them.`
-            : 'Prism types these into the page it is on and signs in. It never sees them.'}
+            ? `Prism types these into ${request.site} and signs in. It never sees the password.`
+            : 'Prism types these into the page it is on and signs in. It never sees the password.'}
         </Text>
       </Box>
       {errorMsg && <Text color="red">{errorMsg}</Text>}

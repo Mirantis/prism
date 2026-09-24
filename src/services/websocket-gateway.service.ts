@@ -187,10 +187,11 @@ class WebSocketGatewayService {
   private connections: Map<string, AuthenticatedWebSocket[]> = new Map();
   private messageQueues: Map<string, Array<{ message: WebSocketMessage; resolve: (response: WebSocketResponse) => void }>> = new Map();
   private processingUsers: Set<string> = new Set();
-  // The AbortController for the user's in-flight chat turn. A `cancel` message
-  // aborts it, which stops the LLM generation mid-turn (see invokeStream).
-  // Single-flight per user, so one controller per userId is sufficient.
-  private activeRequests: Map<string, AbortController> = new Map();
+  // The user's in-flight chat turn: the AbortController a `cancel` message aborts,
+  // which stops the LLM generation mid-turn (see invokeStream), and the thread it
+  // runs on. Single-flight per user, so one entry per userId is sufficient.
+  private activeRequests: Map<string, { controller: AbortController; threadId?: string }> =
+    new Map();
   // The socket whose request holds the voice session, from the moment the gateway
   // decides to open one until it is over — so closing it ends the call. Taken
   // before the service is asked, because the service reports `live` from inside
@@ -519,14 +520,19 @@ class WebSocketGatewayService {
    * every one of the user's connections/tabs resets promptly — if the abort
    * is slow to land (e.g. a tool is mid-flight), waiting for processMessage's
    * `finally` would leave the other UIs stuck in "pending". The `finally`
-   * broadcast remains as an idempotent safety net.
+   * broadcast remains as an idempotent safety net. The frame names the cancelled
+   * turn's thread, so a turn on another thread keeps showing as running.
    */
   private handleCancelMessage(userId: string): void {
-    const controller = this.activeRequests.get(userId);
-    if (controller) {
+    const active = this.activeRequests.get(userId);
+    if (active) {
       logger.info('Cancel requested by %s', userId);
-      controller.abort();
-      this.broadcast(userId, { type: 'status', payload: { processing: false } });
+      active.controller.abort();
+      const { threadId } = active;
+      this.broadcast(userId, {
+        type: 'status',
+        payload: { processing: false, ...(threadId ? { threadId } : {}) },
+      });
     }
     this.messageQueues.delete(userId);
   }
@@ -932,7 +938,7 @@ class WebSocketGatewayService {
     // A `cancel` message aborts this controller, which stops the LLM
     // generation mid-turn (signal threaded into generateText).
     const controller = new AbortController();
-    this.activeRequests.set(userId, controller);
+    this.activeRequests.set(userId, { controller, threadId: message.threadId });
 
     try {
       logger.info('Calling conversation engine for %s', userId);

@@ -117,7 +117,12 @@ export function signInRequestIn(blocks: unknown): SignInRequest | null {
 
 export interface TuiAdapterEvents {
   message: (msg: TuiMessage) => void;
-  status: (status: TuiStatus, detail?: string) => void;
+  /**
+   * `threadId` is set when the runtime names the thread whose turn started or ended. A
+   * delivery reaches every one of the user's clients, so a frame for another thread is
+   * not this session's.
+   */
+  status: (status: TuiStatus, detail?: string, threadId?: string) => void;
   /**
    * The runtime named the thread this session is on. A backstop for a failed
    * `startNewSession()`: without a threadId a mid-turn message cannot be steered
@@ -453,7 +458,9 @@ class TuiAdapter {
         break;
       }
       case 'status': {
-        const payload = env.payload as { connected?: boolean; processing?: boolean } | undefined;
+        const payload = env.payload as
+          | { connected?: boolean; processing?: boolean; threadId?: unknown }
+          | undefined;
         // `true` when a turn starts; `false` from the gateway's `finally` on every
         // exit — normal end, error and cancel alike. The connect handshake sends
         // `{ connected: true }` with no `processing` key, and the socket's `open`
@@ -461,7 +468,8 @@ class TuiAdapter {
         // than a truthiness test, which would clear the spinner mid-turn if the
         // handshake were ever re-sent.
         if (typeof payload?.processing === 'boolean') {
-          this.events.emit('status', payload.processing ? 'thinking' : 'idle');
+          const threadId = typeof payload.threadId === 'string' ? payload.threadId : undefined;
+          this.events.emit('status', payload.processing ? 'thinking' : 'idle', undefined, threadId);
         }
         break;
       }

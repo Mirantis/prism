@@ -39,8 +39,8 @@ class ComputerHelpService {
   /**
    * @param credentials a sign-in the user answers with what the page asks for. Recorded
    * only when the tab really holds such a form, so the box for it is never offered where
-   * the runtime could not type it; a request that loses the flag says so in the log and
-   * in what the tool answers.
+   * the runtime could not type it; a request that loses the flag says so in the log, and
+   * `computer_help` tells the agent which answer the user was offered.
    */
   async request(
     use: ComputerUse,

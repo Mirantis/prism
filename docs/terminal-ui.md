@@ -138,7 +138,7 @@ Opens by itself when the agent's [computer](computer.md) is blocked by a sign-in
 that a username and a password answer. Tab or the arrows move between the two
 fields, the password is shown as dots, Enter signs in, and **Escape** closes the
 panel and leaves the request for the Web UI. The agent is stopped while the
-sign-in is typed in and is given neither value.
+sign-in is typed in and is never given the password.
 
 ### Editing the agent guide (`/agent-guide`)
 

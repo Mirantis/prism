@@ -417,7 +417,7 @@ describe('Requirement: WebSocket Gateway', () => {
 
   describe('Scenario: Cancellation', () => {
     /** Start a chat turn that blocks on a controllable chat promise. */
-    function startBlockingTurn(userId: string) {
+    function startBlockingTurn(userId: string, threadId?: string) {
       const ws = createMockWebSocket();
       ws.userId = userId;
       ws.readyState = 1;
@@ -435,7 +435,7 @@ describe('Requirement: WebSocket Gateway', () => {
 
       // Kick off processing; it stays pending on the blocking chat promise.
       const processing = service.handleChatMessage(ws, userId, {
-        type: 'chat', mode: 'followup', content: 'Hello', agentId: 'agent-123',
+        type: 'chat', mode: 'followup', content: 'Hello', agentId: 'agent-123', threadId,
       });
 
       return { ws, processing, getSignal: () => capturedSignal, settle: (...a: ['resolve' | 'reject', unknown?]) => settle(...a) };
@@ -476,6 +476,20 @@ describe('Requirement: WebSocket Gateway', () => {
       await turn.processing;
     });
 
+    it('names the cancelled thread, so a turn on another thread keeps running', async () => {
+      const userId = 'user-123';
+      const turn = startBlockingTurn(userId, 'thread-a');
+      await Promise.resolve();
+
+      await service.handleMessage(turn.ws, userId, { type: 'cancel' });
+
+      expect(turn.ws.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: 'status', payload: { processing: false, threadId: 'thread-a' } }),
+      );
+      turn.settle('resolve');
+      await turn.processing;
+    });
+
     it('does not surface an error envelope when the turn was cancelled', async () => {
       const userId = 'user-123';
       const turn = startBlockingTurn(userId);
@@ -496,7 +510,7 @@ describe('Requirement: WebSocket Gateway', () => {
       const ws = createMockWebSocket();
       ws.userId = userId;
       service.messageQueues.set(userId, [{ message: { type: 'chat' }, resolve: () => {} }]);
-      service.activeRequests.set(userId, new AbortController());
+      service.activeRequests.set(userId, { controller: new AbortController() });
 
       service.handleMessage(ws, userId, { type: 'cancel' });
 

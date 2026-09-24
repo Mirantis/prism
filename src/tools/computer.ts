@@ -131,12 +131,16 @@ export function getComputerTools(
       const help = await computerService.access.run(use, () =>
         computerHelpService.request(use, reason, tab, credentials),
       );
+      // Asked for credentials and offered the desktop: the tab held no sign-in form.
+      const desktop = credentials && !help.credentials;
       return {
         success: true,
         helpId: help.id,
         url: computerLink(help.id),
-        message:
-          'Help requested. Continue independent work or finish this turn while waiting for the user.',
+        credentials: help.credentials ?? false,
+        message: desktop
+          ? 'No sign-in form was found, so the user is asked to take over the desktop instead. Continue independent work or finish this turn while waiting for the user.'
+          : 'Help requested. Continue independent work or finish this turn while waiting for the user.',
       };
     },
   });

@@ -160,6 +160,23 @@ describe('a help request a username and a password answer', () => {
     expect(request.site).toBeUndefined();
   });
 
+  it('tells the agent which answer the user was offered', async () => {
+    await computerService.access.handBack('viewer');
+    const { computer_help } = getComputerTools(
+      computerService.access.create({ ...caller, threadId: 'thread' }),
+    );
+    const call = () =>
+      computer_help.execute!({ reason: 'Sign in to the inbox', credentials: true }, options);
+
+    expect(await call()).toMatchObject({ credentials: false, message: /take over the desktop/ });
+
+    vi.mocked(computerService.signInForm).mockResolvedValue({
+      origin: 'https://mail.example.com',
+      fields: 'both',
+    });
+    expect(await call()).toMatchObject({ credentials: true, message: /^Help requested/ });
+  });
+
   it('leaves the browser alone for a request of any other kind', async () => {
     const request = await ask('Solve the CAPTCHA');
 
