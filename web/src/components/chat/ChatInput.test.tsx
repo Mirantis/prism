@@ -4,6 +4,7 @@ import { render, screen, cleanup, fireEvent, within } from '@testing-library/rea
 import '@testing-library/jest-dom/vitest';
 import { useState, type FormEvent } from 'react';
 import ChatInput from './ChatInput';
+import type { Dictation } from '@/hooks/use-dictation';
 
 afterEach(cleanup);
 
@@ -97,9 +98,74 @@ describe('ChatInput', () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it('offers no voice control when the surface passes no call', () => {
+  it('offers no voice message when the surface passes no dictation', () => {
     render(<ChatInput {...baseProps} />);
-    expect(screen.queryByTestId('voice-call-button')).toBeNull();
+    expect(screen.queryByTestId('dictation-button')).toBeNull();
+  });
+
+  describe('voice message', () => {
+    const dictation = (overrides: Partial<Dictation> = {}): Dictation => ({
+      status: 'idle',
+      levels: [],
+      startedAt: null,
+      error: null,
+      start: vi.fn(),
+      send: vi.fn(),
+      cancel: vi.fn(),
+      handleEvent: vi.fn(),
+      ...overrides,
+    });
+
+    it('starts a recording from the microphone', () => {
+      const d = dictation();
+      render(<ChatInput {...baseProps} dictation={d} />);
+      fireEvent.click(screen.getByTestId('dictation-button'));
+      expect(d.start).toHaveBeenCalledTimes(1);
+    });
+
+    it('cannot record while disconnected', () => {
+      render(<ChatInput {...baseProps} connectionStatus="disconnected" dictation={dictation()} />);
+      expect(screen.getByTestId('dictation-button')).toBeDisabled();
+    });
+
+    it('puts the recording in the text field\'s place, with discard and send', () => {
+      const d = dictation({ status: 'recording', startedAt: Date.now() });
+      render(<ChatInput {...baseProps} dictation={d} />);
+
+      expect(screen.getByRole('status')).toHaveTextContent('Recording');
+      expect(screen.queryByPlaceholderText('Message your agent...')).toBeNull();
+      expect(screen.queryByTestId('dictation-button')).toBeNull();
+
+      fireEvent.click(screen.getByTestId('dictation-send'));
+      expect(d.send).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByTestId('dictation-cancel'));
+      expect(d.cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the timer out of what a screen reader announces', () => {
+      render(<ChatInput {...baseProps} dictation={dictation({ status: 'recording', startedAt: Date.now() })} />);
+      expect(screen.getByRole('status').textContent).toBe('Recording');
+    });
+
+    it('moves focus to discard when recording starts, and back to the text field after', () => {
+      const idle = dictation();
+      const { rerender } = render(<ChatInput {...baseProps} dictation={idle} />);
+      rerender(<ChatInput {...baseProps} dictation={dictation({ status: 'recording', startedAt: Date.now() })} />);
+      expect(screen.getByTestId('dictation-cancel')).toHaveFocus();
+      rerender(<ChatInput {...baseProps} dictation={idle} />);
+      expect(screen.getByPlaceholderText('Message your agent...')).toHaveFocus();
+    });
+
+    it('waits for the words with send disabled', () => {
+      render(<ChatInput {...baseProps} dictation={dictation({ status: 'transcribing' })} />);
+      expect(screen.getByTestId('dictation-bar')).toHaveTextContent('Transcribing…');
+      expect(screen.getByTestId('dictation-send')).toBeDisabled();
+    });
+
+    it('says why a dictation failed', () => {
+      render(<ChatInput {...baseProps} dictation={dictation({ error: 'No speech was heard.' })} />);
+      expect(screen.getByTestId('dictation-error')).toHaveTextContent('No speech was heard.');
+    });
   });
 
   describe('context meter in the meta strip', () => {

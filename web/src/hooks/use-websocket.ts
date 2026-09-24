@@ -35,7 +35,11 @@ interface WebSocketMessage {
     | 'voice_state'
     | 'voice_error'
     | 'voice_hello'
-    | 'voice_clear';
+    | 'voice_clear'
+    | 'dictation_hello'
+    | 'dictation_delta'
+    | 'dictation_result'
+    | 'dictation_error';
   payload?: unknown;
 }
 
@@ -55,6 +59,16 @@ export type VoiceEvent =
   /** `desktop` comes with `live` on a session that has a computer the client may drive. */
   | { type: 'state'; state: 'live' | 'ended'; desktop?: boolean }
   | { type: 'clear' }
+  | { type: 'error'; error: string };
+
+/**
+ * A dictation control frame, normalized. The microphone goes up as binary frames through
+ * `sendVoiceAudio`, and nothing comes back but these. See docs/dictation.md.
+ */
+export type DictationEvent =
+  | { type: 'hello'; format: VoiceFormat }
+  | { type: 'delta'; text: string }
+  | { type: 'result'; text: string }
   | { type: 'error'; error: string };
 
 /** What a client asks for beyond a plain call. */
@@ -104,6 +118,8 @@ interface UseWebSocketOptions {
    * `clear` that cancels them arrive in the order the runtime sent them.
    */
   onVoiceAudio?: (frame: ArrayBuffer) => void;
+  /** A dictation control frame arrived. The dictation belongs to the caller, like a call. */
+  onDictationEvent?: (event: DictationEvent) => void;
   reconnectInterval?: number;
   maxReconnectAttempts?: number;
 }
@@ -118,6 +134,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     onComputerStatus,
     onVoiceEvent,
     onVoiceAudio,
+    onDictationEvent,
     reconnectInterval = 3000,
     maxReconnectAttempts = 10,
   } = opts;
@@ -140,6 +157,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const onComputerStatusRef = useRef(onComputerStatus);
   const onVoiceEventRef = useRef(onVoiceEvent);
   const onVoiceAudioRef = useRef(onVoiceAudio);
+  const onDictationEventRef = useRef(onDictationEvent);
   onMessageRef.current = onMessage;
   onThreadUpdateRef.current = onThreadUpdate;
   onContextUsageRef.current = onContextUsage;
@@ -148,6 +166,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   onComputerStatusRef.current = onComputerStatus;
   onVoiceEventRef.current = onVoiceEvent;
   onVoiceAudioRef.current = onVoiceAudio;
+  onDictationEventRef.current = onDictationEvent;
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [isTyping, setIsTyping] = useState(false);
@@ -294,6 +313,36 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             });
             break;
           }
+          case 'dictation_hello': {
+            const p = data.payload as { format?: Partial<VoiceFormat> } | undefined;
+            const format = p?.format;
+            if (
+              typeof format?.encoding === 'string' &&
+              typeof format.sampleRate === 'number' &&
+              typeof format.channels === 'number'
+            ) {
+              onDictationEventRef.current?.({ type: 'hello', format: format as VoiceFormat });
+            }
+            break;
+          }
+          case 'dictation_delta':
+          case 'dictation_result': {
+            const p = data.payload as { text?: unknown } | undefined;
+            if (typeof p?.text !== 'string') break;
+            onDictationEventRef.current?.({
+              type: data.type === 'dictation_delta' ? 'delta' : 'result',
+              text: p.text,
+            });
+            break;
+          }
+          case 'dictation_error': {
+            const p = data.payload as { error?: string } | undefined;
+            onDictationEventRef.current?.({
+              type: 'error',
+              error: p?.error?.trim() || 'The dictation could not be transcribed.',
+            });
+            break;
+          }
           case 'heartbeat':
             if (wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({ type: 'pong' }));
@@ -412,6 +461,20 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     wsRef.current.send(frame);
   }, []);
 
+  // The dictation senders. The audio goes through `sendVoiceAudio`: a socket carries one
+  // microphone, and the runtime routes it to whichever of the two this socket started.
+  const sendDictationStart = useCallback(() => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return false;
+    wsRef.current.send(JSON.stringify({ type: 'dictation_start', payload: {} }));
+    return true;
+  }, []);
+
+  /** `commit` transcribes the recording; `false` discards it. */
+  const sendDictationStop = useCallback((commit: boolean) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: 'dictation_stop', payload: { commit } }));
+  }, []);
+
   // Cancel the in-flight turn: tell the runtime to abort the LLM generation
   // and optimistically clear the typing state so the STOP button reverts
   // immediately (the runtime also broadcasts a terminal { processing: false }).
@@ -447,5 +510,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     sendVoiceStart,
     sendVoiceStop,
     sendVoiceAudio,
+    sendDictationStart,
+    sendDictationStop,
   };
 }

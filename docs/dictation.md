@@ -1,8 +1,8 @@
 # Dictation
 
-A client can send a spoken message instead of a typed one. You hold the
-microphone and speak, and when you let go, the words arrive as your message in
-the chat. The agent does not speak back, and the recording is not kept.
+You can speak a message instead of typing it. Press the microphone, speak, and
+press send: the words arrive as your message in the chat. The agent does not
+speak back, and the recording is not kept.
 
 ## What you need
 
@@ -15,19 +15,22 @@ or a Meet call is live on another connection.
 
 ## Using it
 
-The Lens Agents iOS app has a microphone in its chat composer. Hold it to record,
-and release to send. Tap it to record hands-free, then press send, or press ✕ to
-discard the recording.
+Press the microphone next to the paperclip in the [Web UI](web-ui.md#chat)'s chat
+composer, and speak. The browser asks for the microphone the first time. Press
+send when you are done, or ✕ to discard the recording.
 
-Any other client speaks the dictation frames on the chat connection:
+Another client speaks the dictation frames on the chat connection:
 `dictation_start`, binary pcm16 audio, and `dictation_stop`, with
 `commit: false` to discard. `src/services/websocket-gateway.service.ts` defines
 them.
 
 ## When it doesn't work
 
-- **The dictation is refused.** The text says why: a voice chat is running on
-  the same connection, or the agent has no managed voice provider.
+- **The dictation is refused.** The text at the top of the composer says why: a voice
+  chat is running on the same connection, or the agent has no managed voice
+  provider.
+- **The microphone is blocked.** Allow it for the page in the browser's site
+  settings, then press the microphone again.
 - **Nothing is sent.** The recording had no speech in it.
 - **A recording stops by itself.** It reached five minutes, and what you said
   is sent.

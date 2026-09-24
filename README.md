@@ -272,6 +272,12 @@ authority while you speak. It needs the same Realtime credential as a meeting an
 nothing else, so it works wherever chat works — a hosted sandbox and the
 installed binary included. See [docs/voice-chat.md](docs/voice-chat.md).
 
+### Voice messages
+
+The Web UI's chat microphone turns speech into a message: speak, press send, and
+your words arrive in the thread. It uses the same Realtime credential, and the agent
+does not speak back. See [docs/dictation.md](docs/dictation.md).
+
 ### Sessions and idle handling
 
 A configurable daily reset (default 4 AM local time) and idle timeouts give

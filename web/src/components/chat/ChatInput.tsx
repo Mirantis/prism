@@ -15,16 +15,14 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from '@/components/ui/input-group';
-import { ArrowUp, Paperclip, Square } from 'lucide-react';
+import { ArrowUp, Mic, Paperclip, Square, X } from 'lucide-react';
 import type { ConnectionStatus } from '@/hooks/use-websocket';
-import type { VoiceCall } from '@/hooks/use-voice-call';
+import type { Dictation } from '@/hooks/use-dictation';
 import type { ContextUsage } from '@/types';
 import { PendingAttachmentChip, type PendingAttachment } from './ChatAttachmentChip';
 import CommandPopup from './CommandPopup';
 import ContextMeter from './context-meter';
-import VoiceCallButton from './voice-call-button';
-import VoiceCallStatus from './voice-call-status';
-import VoiceMuteButton from './voice-mute-button';
+import DictationBar from './dictation-bar';
 import { filterByPrefix, isSlashMode, type SlashCommand } from './commands';
 
 interface ChatInputProps {
@@ -46,8 +44,8 @@ interface ChatInputProps {
   contextUsage: ContextUsage | null;
   /** A compaction is running for the active thread — show a note in the meta strip. */
   isCompacting?: boolean;
-  /** The voice chat, or nothing when the surface does not offer one. */
-  voice?: VoiceCall;
+  /** Speaking a message instead of typing it, or nothing when the surface does not offer it. */
+  dictation?: Dictation;
 }
 
 const statusColors: Record<ConnectionStatus, string> = {
@@ -69,9 +67,10 @@ export default function ChatInput({
   onRemoveAttachment,
   contextUsage,
   isCompacting = false,
-  voice,
+  dictation,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const cancelDictationRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   // Slash-command popup state (mirrors the TUI). `dismissed` lets Escape hide
@@ -109,10 +108,21 @@ export default function ChatInput({
         ? 'Send — the running turn will pick this up'
         : 'Send message';
 
-  // A running call and a refused one both have something to say, so the strip opens for
-  // either. A refusal has to be readable text somewhere, and the composer is where the
+  // A dictation takes the text field's place from the press until its words are sent.
+  const isDictating = dictation !== undefined && dictation.status !== 'idle';
+  // A failed dictation has to be readable text somewhere, and the composer is where the
   // user pressed the button.
-  const hasVoiceNotice = voice ? voice.status !== 'idle' || voice.error !== null : false;
+  const dictationError = dictation?.error ?? null;
+
+  // The control that was pressed goes away when the composer swaps its contents, so focus
+  // goes to the one that takes its place: discard while recording, the text field after.
+  const wasDictating = useRef(false);
+  useEffect(() => {
+    if (isDictating === wasDictating.current) return;
+    wasDictating.current = isDictating;
+    if (isDictating) cancelDictationRef.current?.focus();
+    else textareaRef.current?.focus();
+  }, [isDictating]);
 
   // Filtered command list shown while typing a leading "/" with no space yet.
   // '/' alone lists everything; '/sk' filters by prefix. Mirrors the TUI's
@@ -221,7 +231,7 @@ export default function ChatInput({
         Connection notice on the left, context on the right; when only one is
         present it still lands on its own side.
       */}
-      {(connectionStatus !== 'connected' || contextUsage || isCompacting || hasVoiceNotice) && (
+      {(connectionStatus !== 'connected' || contextUsage || isCompacting || dictationError) && (
         <div className="flex items-center justify-between gap-2 bg-muted/50 px-4 py-1.5 text-xs text-muted-foreground">
           <span className="flex items-center gap-2">
             {connectionStatus !== 'connected' && (
@@ -236,12 +246,10 @@ export default function ChatInput({
                 Compacting conversation…
               </span>
             )}
-            {voice && (
-              <VoiceCallStatus
-                status={voice.status}
-                isSpeaking={voice.isSpeaking}
-                error={voice.error}
-              />
+            {dictationError && (
+              <span data-testid="dictation-error" className="text-destructive">
+                {dictationError}
+              </span>
             )}
           </span>
           {contextUsage && <ContextMeter usage={contextUsage} />}
@@ -275,38 +283,62 @@ export default function ChatInput({
                 className={`inline-block size-2 rounded-full ${statusColors[connectionStatus]}`}
                 title={connectionStatus}
               />
-              <InputGroupButton
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                onClick={() => fileInputRef.current?.click()}
-                title="Attach files"
-                aria-label="Attach files"
-              >
-                <Paperclip className="size-3.5" />
-              </InputGroupButton>
-              {voice && (
-                <VoiceCallButton
-                  status={voice.status}
-                  disabled={connectionStatus !== 'connected'}
-                  onStart={voice.start}
-                  onStop={voice.stop}
-                />
-              )}
-              {voice && voice.status !== 'idle' && (
-                <VoiceMuteButton isMuted={voice.isMuted} onToggle={voice.toggleMute} />
+              {dictation && isDictating ? (
+                <InputGroupButton
+                  ref={cancelDictationRef}
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  onClick={dictation.cancel}
+                  title="Discard voice message"
+                  aria-label="Discard voice message"
+                  data-testid="dictation-cancel"
+                >
+                  <X className="size-3.5" />
+                </InputGroupButton>
+              ) : (
+                <>
+                  <InputGroupButton
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Attach files"
+                    aria-label="Attach files"
+                  >
+                    <Paperclip className="size-3.5" />
+                  </InputGroupButton>
+                  {dictation && (
+                    <InputGroupButton
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      disabled={connectionStatus !== 'connected'}
+                      onClick={dictation.start}
+                      title={connectionStatus !== 'connected' ? 'Not connected' : 'Voice message'}
+                      aria-label="Voice message"
+                      data-testid="dictation-button"
+                    >
+                      <Mic className="size-3.5" />
+                    </InputGroupButton>
+                  )}
+                </>
               )}
             </InputGroupAddon>
-            <InputGroupTextarea
-              ref={textareaRef}
-              value={value}
-              onChange={(e) => handleChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={isDragging ? 'Drop files to attach…' : 'Message your agent...'}
-              rows={1}
-              className="max-h-40 min-h-[36px]"
-            />
+            {dictation && isDictating ? (
+              <DictationBar dictation={dictation} />
+            ) : (
+              <InputGroupTextarea
+                ref={textareaRef}
+                value={value}
+                onChange={(e) => handleChange(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                placeholder={isDragging ? 'Drop files to attach…' : 'Message your agent...'}
+                rows={1}
+                className="max-h-40 min-h-[36px]"
+              />
+            )}
             {/*
               STOP joins send while pending rather than replacing it, so the
               user can redirect the running turn instead of only killing it.
@@ -331,17 +363,35 @@ export default function ChatInput({
                   <Square className="size-3 fill-current" />
                 </InputGroupButton>
               )}
-              <InputGroupButton
-                type="submit"
-                size="icon-xs"
-                variant={isDisabled ? 'ghost' : 'default'}
-                disabled={isDisabled}
-                title={sendLabel}
-                aria-label={sendLabel}
-                className="rounded-full"
-              >
-                <ArrowUp className="size-3.5" />
-              </InputGroupButton>
+              {dictation && isDictating ? (
+                // The send slot stays where it is, so a recording is sent from the same
+                // place a typed message is.
+                <InputGroupButton
+                  type="button"
+                  size="icon-xs"
+                  variant={dictation.status === 'recording' ? 'default' : 'ghost'}
+                  disabled={dictation.status !== 'recording'}
+                  onClick={dictation.send}
+                  title="Send voice message"
+                  aria-label="Send voice message"
+                  data-testid="dictation-send"
+                  className="rounded-full"
+                >
+                  <ArrowUp className="size-3.5" />
+                </InputGroupButton>
+              ) : (
+                <InputGroupButton
+                  type="submit"
+                  size="icon-xs"
+                  variant={isDisabled ? 'ghost' : 'default'}
+                  disabled={isDisabled}
+                  title={sendLabel}
+                  aria-label={sendLabel}
+                  className="rounded-full"
+                >
+                  <ArrowUp className="size-3.5" />
+                </InputGroupButton>
+              )}
             </InputGroupAddon>
           </InputGroup>
           </div>
