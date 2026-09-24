@@ -1,56 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Coins, ArrowDownToLine, ArrowUpFromLine, Zap } from 'lucide-react';
+import { StatCard } from '@/components/shared/stat-card';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
+import { formatTokens } from '@/lib/format';
 
 const WINDOW_HOURS = 24;
-
-/** 1234567 → "1.23M", with the exact figure shown alongside it. */
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-function UsageCard({
-  testId,
-  label,
-  value,
-  detail,
-  icon: Icon,
-  isLoading,
-}: {
-  testId: string;
-  label: string;
-  value: string;
-  /** Visible detail under the figure, so a keyboard and a touchscreen reach it. */
-  detail: string;
-  icon: typeof Coins;
-  isLoading: boolean;
-}) {
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardDescription>{label}</CardDescription>
-        <Icon className="size-4 text-muted-foreground" />
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <Skeleton className="h-7 w-20" />
-        ) : (
-          <>
-            <div className="text-2xl font-bold" data-testid={testId}>
-              {value}
-            </div>
-            <p className="text-xs text-muted-foreground">{detail}</p>
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
 
 /** Token spend over the last 24 hours, as four cards. */
 export function LlmUsageCards() {
@@ -79,8 +34,8 @@ export function LlmUsageCards() {
     unavailable ? 'Could not be read' : `${(n ?? 0).toLocaleString()} ${suffix}`;
 
   return (
-    <div className="grid gap-4 md:grid-cols-4">
-      <UsageCard
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      <StatCard
         testId="activity-total-tokens"
         label="Total tokens"
         value={figure(usage?.totalTokens)}
@@ -91,25 +46,28 @@ export function LlmUsageCards() {
               `${calls} model call${calls === 1 ? '' : 's'}`
         }
         icon={Coins}
+        tone="primary"
         isLoading={loading}
       />
-      <UsageCard
+      <StatCard
         testId="activity-input-tokens"
         label="Input"
         value={figure(usage?.inputTokens)}
         detail={exact(usage?.inputTokens, 'tokens, cache included')}
         icon={ArrowDownToLine}
+        tone="teal"
         isLoading={loading}
       />
-      <UsageCard
+      <StatCard
         testId="activity-output-tokens"
         label="Output"
         value={figure(usage?.outputTokens)}
         detail={exact(usage?.outputTokens, 'tokens generated')}
         icon={ArrowUpFromLine}
+        tone="success"
         isLoading={loading}
       />
-      <UsageCard
+      <StatCard
         testId="activity-cache-hit-rate"
         label="Cache hit rate"
         value={unavailable || noCacheDetail ? '—' : `${usage?.cacheHitPercent}%`}
@@ -122,6 +80,7 @@ export function LlmUsageCards() {
                 `${((usage?.cacheReadTokens ?? 0) + (usage?.cacheWriteTokens ?? 0) + (usage?.noCacheTokens ?? 0)).toLocaleString()} read from cache`
         }
         icon={Zap}
+        tone="warning"
         isLoading={loading}
       />
     </div>

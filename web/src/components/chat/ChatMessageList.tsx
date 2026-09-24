@@ -9,9 +9,17 @@ interface ChatMessageListProps {
   agentName: string;
   isTyping: boolean;
   isLoading: boolean;
+  /** Send one of the empty conversation's suggestions; absent while nothing can be sent. */
+  onSuggestion?: (prompt: string) => void;
 }
 
-export default function ChatMessageList({ messages, agentName, isTyping, isLoading }: ChatMessageListProps) {
+export default function ChatMessageList({
+  messages,
+  agentName,
+  isTyping,
+  isLoading,
+  onSuggestion,
+}: ChatMessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -23,11 +31,11 @@ export default function ChatMessageList({ messages, agentName, isTyping, isLoadi
   return (
     <div className="flex-1 overflow-y-auto" data-testid="chat-messages">
       {isEmpty ? (
-        <ChatWelcome />
+        <ChatWelcome agentName={agentName} onSuggestion={onSuggestion} />
       ) : (
         // One readable column, however wide the window: a reply that runs the full width of
         // a large screen is a line the eye cannot follow back.
-        <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6">
+        <div className="mx-auto w-full max-w-3xl space-y-7 px-4 py-6">
           {messages.map((msg) => (
             <ChatMessage key={msg.id} message={msg} agentName={agentName} />
           ))}

@@ -3,6 +3,8 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/shared/empty-state';
+import { Wrench, TriangleAlert } from 'lucide-react';
 import ToolCallCard from '@/components/chat/tool-call-card';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
@@ -87,12 +89,12 @@ export function ToolCallList() {
   if (isError && calls.length === 0) {
     return (
       <Card>
-        <CardContent
-          data-testid="activity-tool-calls-error"
-          className="py-8 text-center text-sm text-muted-foreground"
-        >
-          The tool call history could not be read.
-        </CardContent>
+        <EmptyState
+          testId="activity-tool-calls-error"
+          icon={TriangleAlert}
+          title="The tool call history could not be read."
+          className="py-10"
+        />
       </Card>
     );
   }
@@ -102,12 +104,13 @@ export function ToolCallList() {
   if (calls.length === 0 && !hasNextPage) {
     return (
       <Card>
-        <CardContent
-          data-testid="activity-tool-calls-empty"
-          className="py-8 text-center text-sm text-muted-foreground"
-        >
-          No tool calls yet. They appear here as the agent uses its tools.
-        </CardContent>
+        <EmptyState
+          testId="activity-tool-calls-empty"
+          icon={Wrench}
+          title="No tool calls yet"
+          description="They appear here as the agent uses its tools."
+          className="py-10"
+        />
       </Card>
     );
   }

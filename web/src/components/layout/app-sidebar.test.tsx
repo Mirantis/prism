@@ -10,6 +10,7 @@ vi.mock('@tanstack/react-router', () => ({
   useRouterState: () => '/',
 }));
 vi.mock('./recents-nav', () => ({ RecentsNav: () => null }));
+vi.mock('./new-chat-button', () => ({ NewChatButton: () => null }));
 vi.mock('@/components/ui/sidebar', () => {
   const passthrough =
     (tag: string) =>
@@ -24,6 +25,8 @@ vi.mock('@/components/ui/sidebar', () => {
     SidebarMenu: passthrough('div'),
     SidebarMenuButton: passthrough('button'),
     SidebarMenuItem: passthrough('div'),
+    SidebarRail: passthrough('div'),
+    useSidebar: () => ({ setOpenMobile: () => {} }),
   };
 });
 

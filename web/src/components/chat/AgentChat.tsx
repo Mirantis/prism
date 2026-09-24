@@ -421,6 +421,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         agentName={agent.name}
         isTyping={isTyping}
         isLoading={isLoadingThread}
+        onSuggestion={status === 'connected' && activeThreadId ? sendChat : undefined}
       />
       <div className="mx-auto w-full max-w-3xl px-4 empty:hidden">
         <ComputerWaiting threadId={activeThreadId} />

@@ -4,9 +4,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* LDS token bridge — shadcn reads these, LDS provides the values.
- * Mirrors the Lens Agents platform UI's globals.css so primitives look
- * identical across it and the Prism Agent Web UI. */
+/* LDS token bridge — shadcn reads these, LDS provides every color. */
 :root {
   --background: #1b1a1c;
   --foreground: var(--lds-color-text-primary);
@@ -26,7 +24,11 @@
   --border: var(--lds-color-border);
   --input: var(--lds-color-border);
   --ring: var(--lds-color-border-focus);
-  --radius: 0.25rem;
+  --radius: 0.625rem;
+  --strong: var(--lds-color-text-accent);
+  --success: var(--lds-color-success);
+  --warning: var(--lds-color-warning);
+  --info: var(--lds-color-info);
   --chart-1: var(--lds-color-workspace-blue);
   --chart-2: var(--lds-color-workspace-green);
   --chart-3: var(--lds-color-workspace-orange);
@@ -74,6 +76,10 @@
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-foreground: var(--foreground);
+  --color-strong: var(--strong);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
   --color-background: var(--background);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -87,48 +93,81 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    scrollbar-width: auto;
-    scrollbar-color: #3a4149 rgba(255, 255, 255, 0.03);
+    scrollbar-width: thin;
+    scrollbar-color: var(--lds-color-scrollbar-thumb) transparent;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+    text-rendering: optimizeLegibility;
   }
   html {
     @apply font-sans;
   }
+  ::selection {
+    background: var(--lds-color-selection);
+  }
+  h1, h2, h3, h4, [data-slot="card-title"], [data-slot="dialog-title"], [data-slot="alert-dialog-title"] {
+    @apply text-strong;
+  }
   code:not(pre code) {
-    @apply rounded bg-muted px-1 py-0.5 text-xs font-mono text-foreground;
+    @apply rounded-md bg-muted/60 px-1.5 py-0.5 font-mono text-[0.85em] text-strong;
   }
 }
 
-/* Custom scrollbars (Webkit) — quality-of-life polish; the platform UI
- * doesn't ship one yet, but it's harmless and we already wrote it. */
+@layer components {
+  /* The content canvas: a faint primary glow at the top edge gives the page depth. */
+  .app-canvas {
+    background-image: radial-gradient(
+      ellipse 70% 40% at 50% -8%,
+      color-mix(in srgb, var(--primary) 9%, transparent),
+      transparent 70%
+    );
+  }
+
+  /* The agent's mark: the logo on a tile lit from the top-left. */
+  .brand-tile {
+    background:
+      radial-gradient(circle at 30% 20%, color-mix(in srgb, var(--primary) 30%, transparent), transparent 70%),
+      var(--lds-color-bg-tertiary);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--strong) 8%, transparent),
+      0 8px 24px -12px color-mix(in srgb, var(--primary) 60%, transparent);
+  }
+}
+
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 ::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 6px;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #3a4149 0%, #2d333b 100%);
-  border-radius: 6px;
+  background: var(--lds-color-scrollbar-thumb);
+  border-radius: 999px;
   border: 3px solid transparent;
   background-clip: padding-box;
   min-height: 40px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #4a525a 0%, #3d444d 100%);
-  border: 3px solid transparent;
-  background-clip: padding-box;
-}
-
-::-webkit-scrollbar-thumb:active {
-  background: linear-gradient(180deg, var(--lds-color-primary, #3d90ce) 0%, #2d7ab8 100%);
+  background: var(--lds-color-scrollbar-thumb-hover);
   border: 3px solid transparent;
   background-clip: padding-box;
 }

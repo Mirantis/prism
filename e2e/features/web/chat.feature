@@ -13,6 +13,28 @@ Feature: Agent Chat
     Then I should see my message "hello" in the conversation
     And I should see an agent response in the conversation
 
+  Scenario: A suggestion on an empty conversation is sent as the first message
+    When I navigate to the agent chat page
+    And I send the "What can you do?" suggestion
+    Then I should see my message "What can you do? Give me a short tour of your abilities." in the conversation
+    And I should see an agent response in the conversation
+
+  Scenario: Copy an agent reply
+    Given I have a conversation with the following messages:
+      | role  | content                             |
+      | USER  | What is Kubernetes?                 |
+      | AGENT | Kubernetes orchestrates containers. |
+    When I navigate to the agent chat page
+    And I copy the agent reply
+    Then the clipboard holds "Kubernetes orchestrates containers."
+
+  Scenario: Copy a code block from a reply
+    Given the agent replied with a "bash" code block holding "kubectl get pods -A"
+    When I navigate to the agent chat page
+    Then the code block is labelled "bash"
+    When I copy the code block
+    Then the clipboard holds "kubectl get pods -A"
+
   Scenario: Chat shows message history
     Given I have a conversation with the following messages:
       | role  | content             |

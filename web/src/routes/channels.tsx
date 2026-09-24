@@ -12,6 +12,10 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Hash, ScrollText, Plus, Trash2, Slack, Star } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Page } from '@/components/layout/page';
+import { PageHeader } from '@/components/layout/page-header';
+import { EmptyState } from '@/components/shared/empty-state';
+import { IconTile } from '@/components/shared/icon-tile';
 import {
   Table,
   TableBody,
@@ -67,36 +71,37 @@ function ChannelsPage() {
   const isConfigured = workspace !== undefined;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Channels</h2>
-        <p className="text-sm text-muted-foreground">
-          Link the agent to messaging channels and configure a heartbeat trigger. Currently
-          supports Slack; more integrations coming.
-        </p>
-      </div>
+    <Page>
+      <PageHeader
+        title="Channels"
+        description="Link the agent to messaging channels and set up a heartbeat trigger."
+      />
 
       {!isConfigured ? (
         <Card>
-          <CardContent>
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Slack className="h-10 w-10 mb-2 opacity-50" />
-              <p className="text-sm">No Slack workspace configured</p>
-              <p className="text-xs">
-                Set <code>SLACK_BOT_TOKEN</code> + <code>SLACK_APP_TOKEN</code> in the runtime env
-                and restart.
-              </p>
-            </div>
-          </CardContent>
+          <EmptyState
+            icon={Slack}
+            title="No Slack workspace configured"
+            description={
+              <>
+                Set <code>SLACK_BOT_TOKEN</code> and <code>SLACK_APP_TOKEN</code> in the runtime
+                environment and restart.
+              </>
+            }
+          />
         </Card>
       ) : (
         <div className="space-y-4">
-          <div className="flex items-center justify-between border-b pb-3">
-            <div className="flex items-center gap-2">
-              <Slack className="size-5 text-muted-foreground" />
-              <h3 className="text-base font-semibold">Slack</h3>
+          <div className="flex items-center justify-between gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10">
+            <div className="flex items-center gap-3">
+              <IconTile icon={Slack} tone="primary" size="md" />
+              <div>
+                <h3 className="text-base font-semibold">Slack</h3>
+                <p className="text-xs text-muted-foreground">Connected workspace</p>
+              </div>
             </div>
-            <Badge variant="secondary" className="font-mono text-xs">
+            <Badge variant="secondary" className="h-6 gap-1.5 px-2.5 text-xs">
+              <span className="size-1.5 rounded-full bg-success" aria-hidden="true" />
               {workspace.teamName}
             </Badge>
           </div>
@@ -125,7 +130,7 @@ function ChannelsPage() {
           />
         </div>
       )}
-    </div>
+    </Page>
   );
 }
 
@@ -235,14 +240,14 @@ function SlackModeSections({
   const isPersonalLinked = Boolean(linkStatus?.hasDmMapping);
 
   const personalSection = (
-    <div className="rounded-lg border p-3">
+    <div className="rounded-xl bg-muted/15 p-4 ring-1 ring-border ring-inset">
       <h4 className="text-sm font-semibold mb-1">Personal Mode</h4>
       <p className="text-sm text-muted-foreground mb-3">
         Chat privately with this agent via Slack DM
       </p>
       {isPersonalLinked ? (
         <>
-          <div className="flex items-center justify-between p-2 rounded-md bg-accent">
+          <div className="flex items-center justify-between rounded-lg bg-accent p-2 pl-3">
             <span className="flex items-center gap-2 text-sm">
               Linked to DM with {linkStatus?.slackUserId}
             </span>
@@ -264,7 +269,7 @@ function SlackModeSections({
           <p className="text-sm mb-1">
             Send this code to <strong>@{agentName}</strong> in a Slack DM:
           </p>
-          <div className="font-mono text-2xl font-bold tracking-widest text-primary bg-primary/10 p-2 rounded-md mb-2 select-all">
+          <div className="mb-2 rounded-lg bg-primary/10 p-2 font-mono text-2xl font-bold tracking-widest text-primary select-all">
             {verificationCode}
           </div>
           <p className="text-xs text-muted-foreground mb-2">Expires in 15 minutes</p>
@@ -295,7 +300,7 @@ function SlackModeSections({
   );
 
   const teamSection = (
-    <div className="rounded-lg border p-3">
+    <div className="rounded-xl bg-muted/15 p-4 ring-1 ring-border ring-inset">
       <div className="flex items-center justify-between mb-1">
         <h4 className="text-sm font-semibold">Team Mode</h4>
         {!channelLinkCode && (
@@ -304,7 +309,7 @@ function SlackModeSections({
             onClick={() => channelCodeMutation.mutate()}
             disabled={channelCodeMutation.isPending}
           >
-            <Plus className="mr-1 size-4" />
+            <Plus />
             {channelCodeMutation.isPending ? 'Generating...' : 'Add channel'}
           </Button>
         )}
@@ -322,11 +327,11 @@ function SlackModeSections({
       )}
 
       {channelLinkCode && (
-        <div className="rounded-md border bg-primary/5 p-3 mb-3 text-center">
+        <div className="mb-3 rounded-xl bg-primary/5 p-4 text-center ring-1 ring-primary/20 ring-inset">
           <p className="text-sm mb-1">
             Invite <strong>@{agentName}</strong> to the channel, then paste this code:
           </p>
-          <div className="font-mono text-2xl font-bold tracking-widest text-primary bg-primary/10 p-2 rounded-md mb-2 select-all">
+          <div className="mb-2 rounded-lg bg-primary/10 p-2 font-mono text-2xl font-bold tracking-widest text-primary select-all">
             {channelLinkCode}
           </div>
           <p className="text-xs text-muted-foreground mb-2">
@@ -362,10 +367,8 @@ function SlackModeSections({
                 <TableRow key={ch.id}>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <div className="flex size-8 items-center justify-center rounded-md bg-muted">
-                        <Hash className="size-4 text-muted-foreground" />
-                      </div>
-                      <span className="font-medium">
+                      <IconTile icon={Hash} tone={ch.isMain ? 'primary' : 'neutral'} />
+                      <span className="font-medium text-strong">
                         #{(ch.channelName || ch.channelId).replace(/^#/, '')}
                       </span>
                     </div>
@@ -407,11 +410,12 @@ function SlackModeSections({
         </>
       ) : (
         !channelLinkCode && (
-          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-            <Hash className="h-10 w-10 mb-2 opacity-50" />
-            <p className="text-sm">No channels linked</p>
-            <p className="text-xs">Invite the agent to a Slack channel to get started.</p>
-          </div>
+          <EmptyState
+            icon={Hash}
+            title="No channels linked"
+            description="Invite the agent to a Slack channel to get started."
+            className="py-8"
+          />
         )
       )}
     </div>
@@ -537,7 +541,7 @@ function HeartbeatTriggersCard({
           <CardTitle>Heartbeat trigger</CardTitle>
           {triggers.length === 0 && (
             <Button size="sm" onClick={() => setIsCreating(true)}>
-              <Plus className="mr-1 size-4" />
+              <Plus />
               Add trigger
             </Button>
           )}
@@ -562,10 +566,8 @@ function HeartbeatTriggersCard({
                 <TableRow key={t.id}>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <div className="flex size-8 items-center justify-center rounded-md bg-muted">
-                        <Hash className="size-4 text-muted-foreground" />
-                      </div>
-                      <span className="font-medium">
+                      <IconTile icon={Hash} />
+                      <span className="font-medium text-strong">
                         {t.slackChannelName
                           ? t.slackChannelName.replace(/^#/, '')
                           : t.slackChannelId}
@@ -596,14 +598,12 @@ function HeartbeatTriggersCard({
         </CardContent>
       ) : (
         <CardContent>
-          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-            <ScrollText className="h-10 w-10 mb-2 opacity-50" />
-            <p className="text-sm">No heartbeat trigger</p>
-            <p className="text-xs">
-              When a message arrives in a configured Slack channel, the agent runs a heartbeat
-              with those messages as context.
-            </p>
-          </div>
+          <EmptyState
+            icon={ScrollText}
+            title="No heartbeat trigger"
+            description="When a message arrives in a configured Slack channel, the agent runs a heartbeat with those messages as context."
+            className="py-8"
+          />
         </CardContent>
       )}
 

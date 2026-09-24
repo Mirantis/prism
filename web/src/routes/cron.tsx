@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -22,6 +22,13 @@ import {
   FieldLabel,
 } from '@/components/ui/field';
 import { Clock, Plus, Trash2 } from 'lucide-react';
+import { Page } from '@/components/layout/page';
+import { PageHeader } from '@/components/layout/page-header';
+import { EmptyState } from '@/components/shared/empty-state';
+import { IconTile } from '@/components/shared/icon-tile';
+import { CRON_PRESETS, describeSchedule } from '@/lib/cron-presets';
+import { formatRelativeTime } from '@/lib/format';
+import { cn } from '@/lib/utils';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { useFormErrors } from '@/hooks/use-form-errors';
@@ -87,62 +94,86 @@ function CronPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-4 w-96" />
-        <Skeleton className="h-64 mt-6" />
-      </div>
+      <Page>
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+        <Skeleton className="h-64" />
+      </Page>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Scheduled Tasks</h2>
-          <p className="text-sm text-muted-foreground">Recurring agent runs scheduled via cron expressions.</p>
-        </div>
-        <Button onClick={() => setIsCreating(true)}>
-          <Plus className="mr-1 h-4 w-4" />
-          New task
-        </Button>
-      </div>
+    <Page>
+      <PageHeader
+        title="Scheduled Tasks"
+        description="Recurring agent runs on a cron schedule. Each run can report back to you."
+        actions={
+          <Button onClick={() => setIsCreating(true)}>
+            <Plus />
+            New task
+          </Button>
+        }
+      />
 
       {tasks && tasks.length > 0 ? (
-        <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Task</TableHead>
-                  <TableHead>Schedule</TableHead>
-                  <TableHead className="hidden md:table-cell">Last run</TableHead>
-                  <TableHead className="w-[50px]" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tasks.map((t) => (
+        <Card className="py-0">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="pl-4">Task</TableHead>
+                <TableHead>Schedule</TableHead>
+                <TableHead className="hidden md:table-cell">Status</TableHead>
+                <TableHead className="hidden lg:table-cell">Last run</TableHead>
+                <TableHead className="w-[50px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tasks.map((t) => {
+                const described = describeSchedule(t.schedule);
+                return (
                   <TableRow key={t.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <div className="flex size-8 items-center justify-center rounded-md bg-muted">
-                          <Clock className="size-4 text-muted-foreground" />
+                    <TableCell className="pl-4">
+                      <div className="flex items-center gap-3">
+                        <IconTile icon={Clock} tone={t.isActive ? 'warning' : 'neutral'} />
+                        <div className="min-w-0">
+                          <div className="font-medium text-strong">{t.name}</div>
+                          {t.instruction && (
+                            <div className="max-w-md truncate text-xs text-muted-foreground">{t.instruction}</div>
+                          )}
                         </div>
-                        <span className="font-medium">{t.name}</span>
                       </div>
                     </TableCell>
                     <TableCell>
-                      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-                        {t.schedule}
-                      </code>
+                      <div className="flex flex-col items-start gap-1">
+                        {described && <span className="text-sm">{described}</span>}
+                        <code className="font-mono text-xs">{t.schedule}</code>
+                      </div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                      {t.lastRunAt ? new Date(t.lastRunAt).toLocaleString() : '—'}
+                    <TableCell className="hidden text-sm md:table-cell">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span
+                          aria-hidden="true"
+                          className={cn('size-1.5 rounded-full', t.isActive ? 'bg-success' : 'bg-muted-foreground')}
+                        />
+                        {t.isActive ? 'Active' : 'Paused'}
+                      </span>
+                      {t.isActive && t.nextRunAt && (
+                        <span className="block text-xs text-muted-foreground" title={new Date(t.nextRunAt).toLocaleString()}>
+                          Next run {formatRelativeTime(t.nextRunAt)}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
+                      {t.lastRunAt ? new Date(t.lastRunAt).toLocaleString() : 'Never'}
                     </TableCell>
                     <TableCell>
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        aria-label={`Delete ${t.name}`}
+                        className="text-muted-foreground hover:text-destructive"
                         onClick={(e: React.MouseEvent) => {
                           e.stopPropagation();
                           setDeleteTarget({ id: t.id, name: t.name });
@@ -152,20 +183,24 @@ function CronPage() {
                       </Button>
                     </TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
+                );
+              })}
+            </TableBody>
+          </Table>
         </Card>
       ) : (
         <Card>
-          <CardContent>
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Clock className="h-10 w-10 mb-2 opacity-50" />
-              <p className="text-sm">No scheduled tasks</p>
-              <p className="text-xs">Create a cron task to run the agent on a schedule.</p>
-            </div>
-          </CardContent>
+          <EmptyState
+            icon={Clock}
+            title="No scheduled tasks"
+            description="Create a task to run the agent on a schedule, or ask it in chat: “every morning at 9, check my inbox”."
+            action={
+              <Button variant="outline" onClick={() => setIsCreating(true)}>
+                <Plus />
+                New task
+              </Button>
+            }
+          />
         </Card>
       )}
 
@@ -200,11 +235,32 @@ function CronPage() {
               placeholder="0 9 * * *"
               className="font-mono"
             />
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Common schedules">
+              {CRON_PRESETS.map((p) => {
+                const selected = form.schedule.trim() === p.schedule;
+                return (
+                  <button
+                    key={p.schedule}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setField('schedule', p.schedule)}
+                    className={cn(
+                      'rounded-full px-2.5 py-1 text-xs ring-1 transition-colors ring-inset',
+                      selected
+                        ? 'bg-primary/15 text-strong ring-primary/40'
+                        : 'text-muted-foreground ring-border hover:bg-muted/50 hover:text-strong',
+                    )}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
             {fieldErrors.schedule ? (
               <FieldError>{fieldErrors.schedule}</FieldError>
             ) : (
               <FieldDescription>
-                Example: <code>0 9 * * *</code> = every day at 09:00.
+                A cron expression: minute, hour, day of month, month, day of week.
               </FieldDescription>
             )}
           </Field>
@@ -233,6 +289,6 @@ function CronPage() {
           entityName={deleteTarget.name}
         />
       )}
-    </div>
+    </Page>
   );
 }

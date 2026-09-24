@@ -9,7 +9,6 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import {
@@ -43,6 +42,9 @@ import { ModelField } from '@/components/profile/model-field';
 import { VerbosityField } from '@/components/profile/verbosity-field';
 import { LockedInField } from '@/components/profile/locked-in-field';
 import { DocumentWorkspace } from '@/components/profile/document-workspace';
+import { Page } from '@/components/layout/page';
+import { PageHeader } from '@/components/layout/page-header';
+import { StatusPill } from '@/components/shared/status-pill';
 import type { AgentDetails } from '@/types';
 
 const SECTIONS = [
@@ -70,24 +72,23 @@ function ProfilePage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-4 w-96" />
-        <Skeleton className="h-32 mt-6" />
+      <Page>
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+        <Skeleton className="h-32" />
         <Skeleton className="h-64" />
-      </div>
+      </Page>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Profile</h2>
-          <p className="text-sm text-muted-foreground">
-            Shape how your agent thinks, works, and remembers.
-          </p>
-        </div>
+    <Page className="space-y-6">
+      <PageHeader
+        title="Profile"
+        description="Shape how your agent thinks, works, and remembers."
+        actions={
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -113,7 +114,8 @@ function ProfilePage() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      </div>
+        }
+      />
 
       <RestoreBackupDialog
         open={restoreOpen}
@@ -122,7 +124,7 @@ function ProfilePage() {
 
       <Card>
         <CardHeader><CardTitle>Agent settings</CardTitle></CardHeader>
-        <CardContent className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0 [&>*]:rounded-xl [&>*]:bg-muted/15 [&>*]:p-3.5 [&>*]:ring-1 [&>*]:ring-border [&>*]:ring-inset [&>*]:break-words">
           <AgentNameField />
           <ModelField
             label="Model"
@@ -149,6 +151,8 @@ function ProfilePage() {
           {details && <LockedInField details={details} />}
         </CardContent>
       </Card>
+
+      <StatusPanel details={details} isLoading={isLoading} />
 
       <Card>
         <CardHeader>
@@ -178,8 +182,7 @@ function ProfilePage() {
         </CardContent>
       </Card>
 
-      <StatusPanel details={details} isLoading={isLoading} />
-    </div>
+    </Page>
   );
 }
 
@@ -288,9 +291,6 @@ function StatusPanel({ details, isLoading }: { details: AgentDetails | undefined
     mutationFn: () => runtimeApi.heartbeatTrigger(),
   });
 
-  const statusLabel = details?.status ?? 'unknown';
-  const statusVariant: 'default' | 'secondary' | 'destructive' =
-    statusLabel === 'RUNNING' ? 'default' : statusLabel === 'ERROR' ? 'destructive' : 'secondary';
 
   return (
     <Card>
@@ -299,14 +299,10 @@ function StatusPanel({ details, isLoading }: { details: AgentDetails | undefined
           <Activity className="size-4 text-muted-foreground" />
           Heartbeat Status
         </CardTitle>
-        {!isLoading && (
-          <Badge variant={statusVariant} className="uppercase">
-            {statusLabel}
-          </Badge>
-        )}
+        {!isLoading && details && <StatusPill status={details.status} />}
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 [&>*]:rounded-xl [&>*]:bg-muted/15 [&>*]:p-3.5 [&>*]:ring-1 [&>*]:ring-border [&>*]:ring-inset">
           <Field label="Heartbeat">
             {hbStatus ? (
               <span className={hbStatus.isActive ? 'text-foreground' : 'text-muted-foreground'}>
@@ -337,7 +333,7 @@ function StatusPanel({ details, isLoading }: { details: AgentDetails | undefined
             )}
           </Field>
         </div>
-        <div className="flex gap-2 border-t border-border pt-4">
+        <div className="flex flex-wrap gap-2">
           {hbStatus?.isActive ? (
             <Button size="sm" variant="outline" onClick={() => stopMut.mutate()} disabled={stopMut.isPending}>
               <Power className="size-3.5" /> Stop heartbeat

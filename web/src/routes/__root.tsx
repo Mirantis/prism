@@ -20,17 +20,17 @@ function RootLayout() {
         <SidebarProvider>
           <AppSidebar />
           <HeaderActionsProvider>
-            <SidebarInset className="flex flex-col">
-              <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-                <div className="flex min-w-0 items-center gap-2 px-4">
-                  <SidebarTrigger className="-ml-1" />
-                  <Separator orientation="vertical" className="mr-2 h-4" />
+            <SidebarInset className="app-canvas flex flex-col md:ring-1 md:ring-foreground/5">
+              <header className="flex h-14 shrink-0 items-center gap-2">
+                <div className="flex min-w-0 items-center gap-2 px-4 md:px-6">
+                  <SidebarTrigger className="-ml-1.5 text-muted-foreground hover:text-strong" />
+                  <Separator orientation="vertical" className="mr-1 h-4" />
                   <AppBreadcrumb />
                 </div>
                 <HeaderActionsSlot />
               </header>
               <UpdateBanner />
-              <main className="relative flex-1 overflow-auto p-4 pt-0 min-w-0">
+              <main className="relative min-w-0 flex-1 overflow-auto px-4 pt-2 pb-6 md:px-8">
                 <Outlet />
               </main>
             </SidebarInset>

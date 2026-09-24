@@ -11,16 +11,17 @@ to the runtime.)
 
 ![Prism Agent Web UI](images/web-ui.png)
 
-The UI is organized around a left sidebar with seven sections: **Overview**,
-**Chat**, **Channels**, **Scheduled Tasks**, **Webhooks**, **Profile**, and
-**Activity**.
+The left sidebar groups the pages: **Overview** and **Chat**; **Channels**,
+**Scheduled Tasks** and **Webhooks**; **Profile** and **Activity**. **New chat** at
+its top starts a conversation from any page. Press **Ctrl+B** (**⌘B** on a Mac), or
+the button at the top left, to collapse the sidebar to icons.
 
 ## Overview
 
-The landing page. It shows the agent's status (RUNNING / IDLE / ERROR), its
-heartbeat state, a count of linked Slack channels, the number of scheduled
-tasks, and when the agent was created. The stat cards are clickable shortcuts
-into Profile, Channels, Scheduled Tasks, and Chat. (To rename the agent, use the
+The landing page. It shows the agent's status (Working / Idle / Error), its
+model, and four cards: heartbeat state, linked Slack channels, scheduled tasks,
+and tokens used in the last 24 hours. Each card opens the page that manages it.
+Below them are your most recent conversations. (To rename the agent, use the
 Name field on the [Profile](#profile) page.)
 
 On a native install, a strip under the header announces a newer release with an
@@ -34,7 +35,8 @@ The main conversation surface.
 
 - **Sending messages.** Type in the input pinned to the bottom and press send.
   Responses **stream** in as the agent works — you see intermediate text from
-  multi-step responses in real time rather than one block at the end.
+  multi-step responses in real time rather than one block at the end. An empty
+  conversation offers a few first messages; press one to send it.
 - **Slash commands.** Type `/` to open a command popup, the same as the
   **[Terminal UI](terminal-ui.md#slash-commands)**: filter by typing, arrow keys
   to move the selection, **Tab** or **Enter** to complete it, then **Enter** to
@@ -85,11 +87,13 @@ The main conversation surface.
   expandable section with the tool name, its input, and its output — so you can
   see exactly what it did.
 - **Markdown & downloads.** Agent messages render as markdown (headings, lists,
-  code blocks with highlighting, links). Files the agent shares back appear as
-  downloadable chips.
+  code blocks, links). Files the agent shares back appear as downloadable chips.
+  The copy button under a reply, and the one on each code block, copy it to the
+  clipboard.
 - **Threads.** Each conversation is a thread. Recent threads are listed in the
-  sidebar under **Chat** (newest first); click one to reopen it. Start a fresh
-  conversation with the pen button next to the **Recents** heading — clicking
+  sidebar under **Chat**, newest first and grouped by the day they started; click
+  one to reopen it. Start a fresh conversation with **New chat**, or the pen
+  button next to the **Recents** heading — clicking
   it again while the new thread is still empty reuses that thread instead of
   piling up empty ones. The thread ID is in the URL (`/chat/<threadId>`), so
   conversations are deep-linkable. A new thread is also created automatically
@@ -147,10 +151,11 @@ incoming messages wake the agent's heartbeat, with a configurable throttle
 
 List, create, and delete the agent's cron-driven runs.
 
-- The table shows each task's name, its cron schedule (e.g. `0 9 * * *`), and
-  its last run time.
+- The table shows each task's name, its cron schedule (e.g. `0 9 * * *`), whether
+  it is active, and its last run time.
 - **Create** opens a form: a name, a cron expression, and an optional
-  instruction describing what the agent should do on each tick.
+  instruction describing what the agent should do on each tick. Common schedules,
+  such as **Weekdays at 09:00**, fill in the expression with one press.
 - **Delete** removes a task after a confirmation.
 
 The Web UI's create form takes raw cron expressions. (The agent itself, and the
